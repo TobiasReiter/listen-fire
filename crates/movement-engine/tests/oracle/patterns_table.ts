@@ -341,11 +341,16 @@ export const PATTERNS: Pattern[] = [
   // ── Statements and right-hand sides ──────────────────────────────────────
   {
     reason: 'statement:call',
-    routes: 'refused',
-    note: "a call statement of a closure or a built-in: needs the remaining call forms (closures as callees, a collection op or built-in as a statement)",
+    routes: 'whole',
+    note: "closed by chunk 7A Task 6: a call statement of a closure bound to a name runs on Rust (`executeClosureCall`); a type's values read and dropped stays the checker's to refuse",
     programs: [
       (pick) => ({ body: `  note = (a: <text>) => {\n    write crm-[:notes]-> { body: a }\n  }\n  note("${pick(NAMES)}")` }),
       () => ({ body: '  shout = (t: <text>) => {\n    write crm-[:notes]-> { body: UPPER(t) }\n  }\n  shout(msg.`subject`)' }),
+      (pick) => ({ body: `  tag = (c: <crm-[:company]->>, label: <text>) => {\n    write crm-[:notes]-> { body: CONCAT(c.\`name\`, label) }\n  }\n  co = write crm-[:companies]-> { name: "${pick(NAMES)}" }\n  tag(co, "!")` }),
+      () => ({ body: '  stop = (t: <text>) => {\n    match crm-[:companies]-> { unique by (`name`), name: t }\n    write crm-[:notes]-> { body: "found" }\n  }\n  stop("nobody")\n  write crm-[:notes]-> { body: "after" }', version: 3 }),
+      () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    write crm-[:notes]-> { body: t }\n  }\n  later(msg.`subject`)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => state }),
+      () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    write crm-[:notes]-> { body: t }\n  }\n  later(msg.`subject`)' }),
+      (pick) => ({ body: `  down = (n: <number>) => {\n    if n > 0 {\n      write crm-[:notes]-> { body: "\${n}" }\n      down(n - 1)\n    }\n  }\n  down(${pick([2, 3])})` }),
     ],
   },
   {
@@ -359,11 +364,14 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'function_call',
-    routes: 'refused',
-    note: 'a bound call of a closure (or a non-movement callee): needs closures as callees',
+    routes: 'whole',
+    note: "closed by chunk 7A Task 6: a bound call of a closure bound to a name runs on Rust; refused by name only where the program binds closures of one name that differ in what their parameters take, which needs the callee's parameters read at run time",
     programs: [
       (pick) => ({ body: `  f = (n: <number>) => {\n    return n + ${pick([1, 2, 5])}\n  }\n  y = f(2)\n  write crm-[:notes]-> { body: "\${y}" }` }),
       () => ({ body: '  base = 5\n  f = (n: <number>) => n + base\n  y = f(n: 3)\n  write crm-[:notes]-> { body: "${y}" }' }),
+      () => ({ body: '  name_of = (r: <crm-[:company]->>) => {\n    return r.`name`\n  }\n  co = write crm-[:companies]-> { name: "a" }\n  n = name_of(r: co)\n  write crm-[:notes]-> { body: UPPER(n) }' }),
+      (pick) => ({ body: `  f = (n: <number>) => n * 2\n  g = (k: <number>) => k + 1\n  y = g(k: f(n: ${pick([1, 4])}))\n  write crm-[:notes]-> { body: "\${y}" }` }),
+      () => ({ body: '  f = (n: <number>) => {\n    return n\n  }\n  y = f(1, 2)\n  write crm-[:notes]-> { body: "${y}" }', checks: false, routes: 'whole' }),
     ],
   },
   {

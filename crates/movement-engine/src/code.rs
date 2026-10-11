@@ -18,6 +18,19 @@ pub(crate) enum Found<'p> {
     Closure(&'p ClosureExpression),
     /// A kept walk: its head, and the mapping its landings go through.
     Walk(&'p PathHead, Option<&'p NodeLiteral>),
+    /// A closure bound to a name (`f = (…) => { … }`).
+    Bound(&'p str, &'p ClosureExpression),
+}
+
+/// Every closure the program binds to a name, anywhere, by that name.
+pub(crate) fn bound_closures(program: &Program) -> Vec<(&str, &ClosureExpression)> {
+    let mut found = Vec::new();
+    visit(&program.statements, &mut |node| {
+        if let Found::Bound(name, closure) = node {
+            found.push((name, closure));
+        }
+    });
+    found
 }
 
 /// The closure written at `span`.
@@ -100,7 +113,12 @@ pub(crate) fn span_json(value: &Js) -> Option<(Span, Json)> {
 fn visit<'p>(statements: &'p [Statement], f: &mut dyn FnMut(Found<'p>)) {
     for statement in statements {
         match statement {
-            Statement::Assign(assign) => rvalue(&assign.value, f),
+            Statement::Assign(assign) => {
+                if let RValue::Closure { closure: c } = &assign.value {
+                    f(Found::Bound(&assign.name, c));
+                }
+                rvalue(&assign.value, f)
+            }
             Statement::Return(ret) => rvalue(&ret.value, f),
             Statement::Movement(movement) => visit(&movement.body, f),
             Statement::Call(call) => call_args(call, f),

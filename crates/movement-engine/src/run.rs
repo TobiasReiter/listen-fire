@@ -1304,8 +1304,8 @@ impl Run<'_> {
                 let bound = self.plugin_call(&call.callee, &plugin_args(call)?, scope).await?;
                 scope.declare(name, bound);
             }
-            // A movement's name in a construction's spelling is a call too.
-            RValue::Construct { construct } if self.calls_movement(&construct.callee, scope) => {
+            // A function's name in a construction's spelling is a call too.
+            RValue::Construct { construct } if self.calls_function(&construct.callee, scope) => {
                 let call = ast::CallStatement {
                     callee: construct.callee.clone(),
                     args: construct.args.iter().map(|a| ast::CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect(),
@@ -1315,7 +1315,7 @@ impl Run<'_> {
                 let value = self.call(&call, scope, at, &format!("{path}/value/construct")).await?;
                 scope.declare(name, self.call_value(&call.callee, value)?);
             }
-            RValue::Call { call } if self.calls_movement(&call.callee, scope) => {
+            RValue::Call { call } if self.calls_function(&call.callee, scope) => {
                 let value = self.call(call, scope, at, &format!("{path}/value/call")).await?;
                 scope.declare(name, self.call_value(&call.callee, value)?);
             }

@@ -674,6 +674,10 @@ struct Callees<'p> {
     held_kinds: Vec<Kind>,
     /// What each file-level binding holds, as far as a record goes.
     file_holders: BTreeMap<String, Holder>,
+    /// The closures bound to a name anywhere, by name: the parameters a
+    /// call of one binds; `None` where closures of that name differ in
+    /// what their parameters take.
+    closures: BTreeMap<String, Option<Vec<ast::MovementParam>>>,
 }
 
 impl<'p> Callees<'p> {
@@ -703,7 +707,28 @@ impl<'p> Callees<'p> {
         let keeps_walks = movements.iter().any(|m| holds_lazy(m));
         let held_kinds = HELD_KINDS.iter().copied().filter(|k| *k != Kind::Lazy || keeps_walks).collect();
         let file_holders = file_holders(program);
-        Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds, file_holders }
+        let mut callees = Callees { movements, plugin_binds, types, file_scope, language_version, returns: RefCell::default(), held_kinds, file_holders, closures: BTreeMap::new() };
+        for (name, closure) in crate::code::bound_closures(program) {
+            let takes = |params: &[ast::MovementParam]| params.iter().map(|p| (p.name.clone(), callees.takes_value(p))).collect::<Vec<_>>();
+            let same = match callees.closures.get(name) {
+                None => true,
+                Some(None) => false,
+                Some(Some(seen)) => takes(seen) == takes(&closure.params),
+            };
+            let entry = same.then(|| closure.params.clone());
+            callees.closures.insert(name.to_string(), entry);
+        }
+        callees
+    }
+
+    /// The parameters of the closure a call names from version 3 (a
+    /// closure bound to that name exactly, no movement of it): `Some(None)`
+    /// where the program's closures of that name differ.
+    fn closure(&self, written: &str) -> Option<Option<&Vec<ast::MovementParam>>> {
+        if self.language_version < 3 || self.movement(written).is_some() {
+            return None;
+        }
+        self.closures.get(written).map(Option::as_ref)
     }
 
     /// The movement declared as `name`, exactly.
@@ -1025,6 +1050,8 @@ impl<'c> Bound<'c> {
                         RValue::Match { r#match } if self.into_node(&r#match.target) => Kind::Member,
                         RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
                         RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call_kind(&construction_as_call(construct)),
+                        RValue::Construct { construct } if self.calls_closure(&construct.callee) => Kind::Value,
+                        RValue::Call { call } if self.calls_closure(&call.callee) => Kind::Value,
                         RValue::Construct { construct } => self.plugin_kind(&construct.callee).unwrap_or(Kind::Instance),
                         RValue::Call { call } if self.callee(&call.callee).is_some() => self.call_kind(call),
                         RValue::Call { call } => match (self.plugin_kind(&call.callee), &call.expression) {
@@ -1061,6 +1088,9 @@ impl<'c> Bound<'c> {
                             // Read once the block's own names are bound, below.
                             RValue::Block { .. } => Holder::Free,
                             RValue::Expr { expr } => self.holds(&expr.raw),
+                            // What a closure returns may be any binding.
+                            RValue::Call { call } if self.calls_closure(&call.callee) => Holder::Other,
+                            RValue::Construct { construct } if self.calls_closure(&construct.callee) => Holder::Other,
                             RValue::Call { call } if self.plugin_kind(&call.callee).is_none() => call.expression.as_ref().map_or(Holder::Other, |e| self.holds(&e.raw)),
                             // A plugin's records output: a list of records whose
                             // fields are the data it found.
@@ -1207,9 +1237,16 @@ impl<'c> Bound<'c> {
         self.callees?.callee(written, bound_in_body)
     }
 
+    /// Whether a call names a closure bound to that name (`Callees::closure`).
+    fn calls_closure(&self, written: &str) -> bool {
+        self.callee(written).is_none() && self.callees.is_some_and(|c| c.closure(written).is_some())
+    }
+
     /// What a right-hand side binds, for what a `return` of it hands back.
     fn value_kind(&mut self, value: &RValue) -> Option<Kind> {
         Some(match value {
+            RValue::Call { call } if self.calls_closure(&call.callee) => return None,
+            RValue::Construct { construct } if self.calls_closure(&construct.callee) => return None,
             RValue::Expr { expr } => self.expression_kind(&expr.raw),
             RValue::Node { node } if node.graph.is_some() => Kind::Graph,
             RValue::Node { .. } => Kind::Node,
@@ -1647,6 +1684,8 @@ impl Names<'_> {
                 RValue::Await { r#await } => sleep(&r#await.source),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
+                RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
+                RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
                 RValue::Construct { construct } if self.plugin(&construct.callee) => {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
@@ -1717,6 +1756,7 @@ impl Names<'_> {
             Statement::Error(statement) => self.slot(&statement.message),
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             Statement::Call(call) if self.callee(&call.callee).is_some() => self.call(call),
+            Statement::Call(call) if self.calls_closure(&call.callee) => self.closure_call(call),
             Statement::Collection(statement) => self.collection_op(&statement.collection, "statement:collection"),
             Statement::Call(call) if let Some(reading) = self.reading(call)? => match reading {
                 crate::collection::Reading::Collection(op) => self.collection_op(&op, "statement:collection"),
@@ -1771,8 +1811,8 @@ impl Names<'_> {
     }
 
     /// A closure's body, its parameters holding `held`.
-    fn closure_with(&self, params: &[ast::MovementParam], body: &[Statement], held: Holder) -> Admitted {
-        let params: BTreeSet<String> = params.iter().map(|p| p.name.clone()).collect();
+    fn closure_with(&self, declared: &[ast::MovementParam], body: &[Statement], held: Holder) -> Admitted {
+        let params: BTreeSet<String> = declared.iter().map(|p| p.name.clone()).collect();
         let without = |set: &BTreeSet<String>| -> BTreeSet<String> { set.difference(&params).cloned().collect() };
         let values: BTreeSet<String> = self.values.union(&params).cloned().collect();
         let (events, handles, nodes, landings, members, lazies, extracts, graphs) = (
@@ -1788,6 +1828,16 @@ impl Names<'_> {
         let mut value_holders = self.value_holders.clone();
         for param in &params {
             value_holders.insert(param.clone(), held);
+        }
+        // A parameter typed by a field type (`<text>`) takes a value no
+        // record is (the checker holds the argument to it).
+        for param in declared {
+            if let Some(ParamTypeRef::Name(type_)) = &param.type_
+                && type_.hops_raw.is_none()
+                && movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some()
+            {
+                value_holders.insert(param.name.clone(), Holder::Free);
+            }
         }
         let inner = Names {
             value_holders: &value_holders,
@@ -1843,6 +1893,7 @@ impl Names<'_> {
                 CallArg::Write { write, .. } => self.write(write)?,
                 CallArg::Node { node, .. } => self.node(node, node.graph.is_some())?,
                 CallArg::Call { call, .. } if self.callee(&call.callee).is_some() => self.call(call)?,
+                CallArg::Call { call, .. } if self.calls_closure(&call.callee) => self.closure_call(call)?,
                 CallArg::Call { call, .. } if takes_value => self.slot(self.builtin_value(call)?)?,
                 CallArg::Call { call, .. } => self.assigned(self.builtin_value(call)?)?,
                 CallArg::Closure { .. } => return refuse("rvalue:closure"),
@@ -1850,6 +1901,36 @@ impl Names<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A call of a closure bound to a name (`executeClosureCall`, from
+    /// version 3): its arguments walked as a movement call's are, by what
+    /// its parameters take; its body was walked where it is written, its
+    /// parameters holding whatever a call hands them.
+    fn closure_call(&self, call: &CallStatement) -> Admitted {
+        let Some(Some(params)) = self.callees.closure(&call.callee) else { return refuse("function_call") };
+        for (position, arg) in call.args.iter().enumerate() {
+            let param = arg.name().map(String::from).or_else(|| params.get(position).map(|p| p.name.clone()));
+            let takes_value = param.and_then(|p| params.iter().find(|d| d.name == p)).is_some_and(|p| self.callees.takes_value(p));
+            match arg {
+                CallArg::Expr { expr, .. } if takes_value => self.slot(expr)?,
+                CallArg::Expr { expr, .. } => self.assigned(expr)?,
+                CallArg::Write { write, .. } => self.write(write)?,
+                CallArg::Node { node, .. } => self.node(node, node.graph.is_some())?,
+                CallArg::Call { call, .. } if self.callee(&call.callee).is_some() => self.call(call)?,
+                CallArg::Call { call, .. } if self.calls_closure(&call.callee) => self.closure_call(call)?,
+                CallArg::Call { call, .. } if takes_value => self.slot(self.builtin_value(call)?)?,
+                CallArg::Call { call, .. } => self.assigned(self.builtin_value(call)?)?,
+                CallArg::Closure { .. } => return refuse("rvalue:closure"),
+                CallArg::Type { .. } => return refuse("builtin_call_form"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a call names a closure bound to that name (`Callees::closure`).
+    fn calls_closure(&self, written: &str) -> bool {
+        self.callee(written).is_none() && self.callees.closure(written).is_some()
     }
 
     /// A traversal block over an adapter edge (crate::traverse): one hop
@@ -2151,6 +2232,8 @@ impl Names<'_> {
         match value {
             RValue::Expr { expr } => self.slot(expr),
             RValue::Call { call } if self.plugin(&call.callee) => self.plugin_call(call),
+            RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
+            RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
             RValue::Call { call } => self.slot(self.builtin_value(call)?),
             other => refuse(format!("rvalue:{}", rvalue_kind(other))),
         }
@@ -3238,7 +3321,6 @@ mod tests {
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
-            ("  f = (n: <number>) => n + 1\n  r = f(n: 3)", "function_call"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }
@@ -3362,6 +3444,27 @@ mod tests {
         assert_eq!(refused("  x = ONLY([1, 2])"), None);
         assert_eq!(refused("  x = ONLY(msg-[:_resources]->.`name`)").as_deref(), Some("aggregate:only"));
         assert_eq!(refused("  g = graph { file: ONLY(msg-[:files]->) }").as_deref(), Some("aggregate:only"));
+    }
+
+    /// A closure bound to a name called as a function (`executeClosureCall`):
+    /// as a statement, bound, in the construction's spelling, returned and
+    /// as another call's argument; refused by name where the program's
+    /// closures of that name differ in what their parameters take.
+    #[test]
+    fn admits_calls_of_a_closure_bound_to_a_name() {
+        for body in [
+            "  f = (n: <number>) => n + 1\n  r = f(n: 3)",
+            "  f = (n: <number>) => n + 1\n  r = f(3)",
+            "  f = (n: <number>) => {\n    write crm-[:companies]-> { name: \"a\" }\n  }\n  f(n: 1)",
+            "  f = (r) => r.`name`\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = f(r: co)",
+            "  f = (n: <number>) => n + 1\n  g = (k: <number>) => k * 2\n  x = g(k: f(n: 1))",
+        ] {
+            assert_eq!(refused(body), None, "{body}");
+        }
+        assert_eq!(
+            refused("  if msg.`a` {\n    f = (n: <number>) => n\n  } else {\n    f = (n) => n\n  }\n  x = f(n: 1)").as_deref(),
+            Some("function_call")
+        );
     }
 
     #[test]

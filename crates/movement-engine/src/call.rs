@@ -1,6 +1,8 @@
 //! Calls of the movements a program declares: run.ts's `executeCall` →
 //! `runCall`, for `persist(n: node { … })`, `x = summarise(d)` and the
-//! construction spelling `x = persist(n: d)` of the same.
+//! construction spelling `x = persist(n: d)` of the same; from version 3 a
+//! closure bound to a name is called the same way (`executeClosureCall`),
+//! its body run in the scope it captured.
 //!
 //! A call is one of its statement's steps (`… .c k`, address.ts): what runs
 //! inside the k-th call a statement makes is addressed under that step. The
@@ -50,9 +52,14 @@ impl Run<'_> {
         scope.resolve_function(written).unwrap_or_else(|| written.to_string())
     }
 
-    /// Whether `written` resolves to a movement the program declares.
-    pub(crate) fn calls_movement(&self, written: &str, scope: &Scope) -> bool {
-        matches!(scope.resolve(&self.callee_name(written, scope)), Some(Binding::Movement(_)))
+    /// Whether `written` names a function this run calls: a movement, or
+    /// from version 3 a closure bound to a name.
+    pub(crate) fn calls_function(&self, written: &str, scope: &Scope) -> bool {
+        match scope.resolve(&self.callee_name(written, scope)) {
+            Some(Binding::Movement(_)) => true,
+            Some(Binding::Closure(_)) => self.version() >= 3,
+            _ => false,
+        }
     }
 
     /// `executeCall`: the statement's next call opened, then the callee run.
@@ -76,6 +83,8 @@ impl Run<'_> {
             let name = self.callee_name(&call.callee, scope);
             let declaration = match scope.resolve(&name) {
                 Some(Binding::Movement(declared)) => self.declaration(&declared)?,
+                // A closure bound to a name is a function too (language version 3).
+                Some(Binding::Closure(closure)) if self.version() >= 3 => return self.closure_call(call, &closure, scope, at, path, event).await,
                 Some(Binding::Opaque) => {
                     return Err(Stop::Thrown(Failure::unsupported(
                         &format!("calling the import '{}'", call.callee),
@@ -145,6 +154,57 @@ impl Run<'_> {
                 // Find-on-missing inside a callee ends the callee's scope;
                 // the caller goes on after the call.
                 Ok(Flow::FellThrough) | Err(Stop::EndedQuietly) => Ok(None),
+                Err(other) => Err(other),
+            }
+        })
+    }
+
+    /// `executeClosureCall`: `f(3)` where `f` names a closure — called as a
+    /// movement is (arguments bound by name or by order, evaluated in the
+    /// caller's source order), its body run in the closure's captured scope
+    /// under this call's step, its value what it returned.
+    fn closure_call<'s>(
+        &'s self,
+        call: &'s CallStatement,
+        closure: &'s Rc<crate::bindings::Closure>,
+        scope: &'s Rc<Scope>,
+        at: &'s Address,
+        path: &'s str,
+        event: &'s CallEvent,
+    ) -> Called<'s> {
+        Box::pin(async move {
+            let params = &closure.code.ast.params;
+            if call.args.len() != params.len() {
+                return Err(Stop::Thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{}' takes {} argument(s), got {} — the checker should have caught this", call.callee, params.len(), call.args.len()),
+                )));
+            }
+            let mut bound: Vec<(String, Binding)> = Vec::new();
+            for (position, arg) in call.args.iter().enumerate() {
+                let param = arg.name().map(String::from).or_else(|| params.get(position).map(|p| p.name.clone()));
+                let Some(declared) = param.as_deref().and_then(|p| params.iter().find(|d| d.name == p)) else {
+                    let which = arg.name().map_or_else(|| "for this argument".to_string(), |n| format!("'{n}'"));
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("'{}' has no parameter {which} — the checker should have caught this", call.callee),
+                    )));
+                };
+                let takes_value = self.takes_value(declared.type_.as_ref());
+                let binding = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
+                match bound.iter_mut().find(|(p, _)| *p == declared.name) {
+                    Some(slot) => slot.1 = binding,
+                    None => bound.push((declared.name.clone(), binding)),
+                }
+            }
+            let name = self.callee_name(&call.callee, scope);
+            let address = self.call_address(event, at);
+            let ran = self.within_call(event, &name, self.within_named_call(Some(&name), self.invoke_closure_bound(closure, bound, &address))).await;
+            match ran {
+                Ok((Flow::Returned, child)) => Ok(child.resolve_own(crate::run::RETURN_SLOT)),
+                // Find-on-missing inside the closure ends the closure's
+                // scope, as it ends a called movement's.
+                Ok((Flow::FellThrough, _)) | Err(Stop::EndedQuietly) => Ok(None),
                 Err(other) => Err(other),
             }
         })

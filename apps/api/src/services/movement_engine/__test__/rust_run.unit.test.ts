@@ -236,7 +236,7 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  x = KG_VALUE("why?")'))).toBe('expression:kg_value');
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
     expect(await admission(program('  x = crm.`name`'))).toBe('admitted');
-    expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('rvalue:collection');
+    expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('admitted');
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {
@@ -562,7 +562,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = 1\n  r = x(2)'), 'function_call'],
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
       // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
-      [movement('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'), 'rvalue:collection'],
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
       [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],

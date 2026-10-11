@@ -306,14 +306,26 @@ impl Run<'_> {
     /// `invokeClosure`: its captured scope, its parameters bound from
     /// `values` (a record as itself), its body at `address`.
     pub(crate) async fn invoke_closure(&self, closure: &Rc<Closure>, values: &[(String, Js)], address: &Address) -> Result<(Flow, Rc<Scope>), Stop> {
+        let bound = values.iter().filter(|(_, v)| !v.is_nullish()).map(|(name, v)| (name.clone(), crate::record::bind_value(v.clone(), Some(Trail::default()), false))).collect();
+        self.invoke_closure_bound(closure, bound, address).await
+    }
+
+    /// `invokeClosure` handed bindings (a named call's arguments, each
+    /// already the binding `bindValue` makes of it); a parameter handed
+    /// none binds null.
+    pub(crate) async fn invoke_closure_bound(&self, closure: &Rc<Closure>, bound: Vec<(String, Binding)>, address: &Address) -> Result<(Flow, Rc<Scope>), Stop> {
         let child = closure.captured.child();
         // Its own name first, so a parameter of the same name shadows it.
         if let Some(name) = &closure.self_name {
             child.declare(name.clone(), Binding::Closure(closure.clone()));
         }
         for param in &closure.code.ast.params {
-            let value = values.iter().find(|(name, _)| *name == param.name).map(|(_, v)| v.clone()).filter(|v| !v.is_nullish()).unwrap_or(Js::Null);
-            child.declare(param.name.clone(), crate::record::bind_value(value, Some(Trail::default()), false));
+            let binding = bound
+                .iter()
+                .find(|(name, _)| *name == param.name)
+                .map(|(_, b)| b.clone())
+                .unwrap_or_else(|| crate::record::bind_value(Js::Null, Some(Trail::default()), false));
+            child.declare(param.name.clone(), binding);
         }
         let path = format!("{}/body", closure.code.path);
         let flow = self.body(&closure.code.ast.body, &child, address, &path, 0).await?;
