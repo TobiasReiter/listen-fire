@@ -17,8 +17,10 @@ import { openRunContext } from '../run_context';
 import {
   admissionDryRunEvery,
   assertEngineChoiceConfigured,
+  dryAdmitFire,
   dryAdmitResume,
   dryAdmitRun,
+  dryAdmitSettle,
   type EngineProtocol,
   type EngineStep,
 } from '../rust_engine';
@@ -210,6 +212,36 @@ describe('the admission dry run, through the real artifact', () => {
     // The state crosses on the eval wire, as a real resume's does.
     expect(starts[0]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]], answer: 'yes' } });
     expect(rustRunStats.dryRun.first).toEqual({ park_state: 1 });
+  });
+
+  // The two routes a parked run continues by besides a resume: each is put
+  // to the start entry as the real segment would be, so the refusal
+  // inventory covers every run the TypeScript engine runs.
+  it("puts a race's settlement and a callback's firing to the engine's start as the real ones", async () => {
+    const { segment, asked } = await failingSegment(ADMITTED, 'run-parked');
+    const starts: unknown[] = [];
+    const engine: EngineProtocol = {
+      start: (input) => {
+        starts.push(input);
+        return { done: { refused: 'resume_state_version', reasons: ['resume_state_version'] } };
+      },
+      answer: () => {
+        throw new Error('test: a dry run answered the engine');
+      },
+      finish: () => undefined,
+    };
+    const state = { version: 1 } as never;
+    dryAdmitSettle({ input: { ...segment.input, state, frameAddress: 's0' }, context: segment.context }, engine);
+    dryAdmitFire({ input: { ...segment.input, state, values: { ok: true }, callIndex: 2 }, context: segment.context }, engine);
+    expect(asked).toEqual([]);
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]] }, settle: { frameAddress: 's0' } });
+    expect(starts[1]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]] }, fire: { values: ['o', expect.any(Number), [['ok', true]]], callIndex: 2 } });
+    expect(rustRunStats.dryRun).toMatchObject({ sampled: 2, first: { resume_state_version: 2 } });
+    expect(admissionVerdicts).toEqual([
+      { runId: 'run-parked', languageVersion: 3, reasons: ['resume_state_version'] },
+      { runId: 'run-parked', languageVersion: 3, reasons: ['resume_state_version'] },
+    ]);
   });
 });
 

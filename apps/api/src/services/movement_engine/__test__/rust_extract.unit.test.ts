@@ -114,10 +114,9 @@ function suspendingSink(parked: unknown[]) {
     commitSuspension: async (input: { address: string; state: unknown }) => {
       parked.push(['commitSuspension', input.address, JSON.stringify(input.state)]);
     },
-    // A request's fields, not their order: the engines name the segment in
-    // different places, which no host reads.
+    // As text: the request's key order is the TypeScript's, the segment last.
     commitLimitPause: async (pause: unknown) => {
-      parked.push(['commitLimitPause', pause]);
+      parked.push(['commitLimitPause', JSON.stringify(pause)]);
     },
   };
 }
@@ -317,7 +316,10 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const c: Case = { source, spend: { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 }, messages: [{ name: 'one' }, { name: 'two' }] };
     const parked = await agree({ ...c, parks: true }, { runsWhole: true });
     expect(parked.invoked).toEqual([]);
-    expect(parked.parked.map((p) => (p as unknown[])[0])).toEqual(expect.arrayContaining(['commitLimitPause', 'commitSuspension']));
+    // The pause first, then each member's suspension, in that order (and
+    // the same text on both engines: `agree` compared them).
+    expect(parked.parked.map((p) => (p as unknown[])[0])).toEqual(['commitLimitPause', 'commitSuspension', 'commitSuspension']);
+    expect((parked.parked[0] as unknown[])[1]).toMatch(/^\{"limit":"cost","capMicrodollars":\d+,"spentMicrodollars":\d+,"segmentId":"[^"]+"\}$/);
     const failed = await agree(c, { runsWhole: true });
     expect('error' in failed && runFailureCause(failed.error)).toBeInstanceOf(RunCostCapExceeded);
   });

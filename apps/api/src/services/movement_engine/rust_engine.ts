@@ -172,8 +172,12 @@ export async function settleSegmentInRust(
   segment: RustSegment<SettleRaceInput & { host: RunMovementInput['host'] }>,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  const { input } = segment;
-  return segmentInRust(segment, { state: input.state, settle: { frameAddress: input.frameAddress } }, engine);
+  return segmentInRust(segment, settlementOf(segment.input), engine);
+}
+
+/** What a race settlement hands the engine. */
+function settlementOf(input: SettleRaceInput): Resumption {
+  return { state: input.state, settle: { frameAddress: input.frameAddress } };
 }
 
 /** A fired callback's body run in the Rust engine (`fireCallbackBody`):
@@ -182,8 +186,12 @@ export async function fireSegmentInRust(
   segment: RustSegment<CallbackBodyInput & { host: RunMovementInput['host'] }>,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  const { input } = segment;
-  return segmentInRust(segment, { state: input.state, fire: { values: input.values, callIndex: input.callIndex } }, engine);
+  return segmentInRust(segment, firingOf(segment.input), engine);
+}
+
+/** What a callback's firing hands the engine. */
+function firingOf(input: CallbackBodyInput): Resumption {
+  return { state: input.state, fire: { values: input.values, callIndex: input.callIndex } };
 }
 
 /** What a segment resumes from, and how. */
@@ -338,6 +346,24 @@ export function dryAdmitRun(segment: RustSegment, engine?: EngineProtocol): stri
  *  resume the Rust engine would be handed (`resumeSegmentInRust`). */
 export function dryAdmitResume(segment: RustSegment<ResumeMovementInput>, engine?: EngineProtocol): string[] | undefined {
   return dryAdmit(segment, resumptionOf(segment.input), engine);
+}
+
+/** `dryAdmitRun` for a deferred race the TypeScript engine settles: the
+ *  settlement the Rust engine would be handed (`settleSegmentInRust`). */
+export function dryAdmitSettle(
+  segment: RustSegment<SettleRaceInput & { host: RunMovementInput['host'] }>,
+  engine?: EngineProtocol,
+): string[] | undefined {
+  return dryAdmit(segment, settlementOf(segment.input), engine);
+}
+
+/** `dryAdmitRun` for a callback's body the TypeScript engine runs: the
+ *  firing the Rust engine would be handed (`fireSegmentInRust`). */
+export function dryAdmitFire(
+  segment: RustSegment<CallbackBodyInput & { host: RunMovementInput['host'] }>,
+  engine?: EngineProtocol,
+): string[] | undefined {
+  return dryAdmit(segment, firingOf(segment.input), engine);
 }
 
 /** Whether a dry run asks about one firing in this many: 1 asks about

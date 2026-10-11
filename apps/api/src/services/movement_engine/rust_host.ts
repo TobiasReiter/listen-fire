@@ -290,11 +290,13 @@ const ROUTES: Record<string, Route> = {
     const sink = host.park.sink;
     if (sink?.commitLimitPause === undefined) throw notServed('park.sink.commitLimitPause');
     if (request.limit !== 'cost') throw new RustShimError('park.sink.commitLimitPause limit is "cost"');
+    // The segment last, as run_context.ts's sink binding adds it to the
+    // TypeScript's pause: the two requests are the same text.
     await sink.commitLimitPause({
-      segmentId: segmentOf(request),
       limit: 'cost',
       capMicrodollars: microdollars(request.capMicrodollars, 'park.sink.commitLimitPause capMicrodollars'),
       spentMicrodollars: microdollars(request.spentMicrodollars, 'park.sink.commitLimitPause spentMicrodollars'),
+      segmentId: segmentOf(request),
     });
     return undefined;
   },

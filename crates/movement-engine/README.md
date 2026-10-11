@@ -544,7 +544,8 @@ mutation — the TypeScript engine throws the same.
   `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
   since it started.
 - **The admission dry run** (`rustRunStats.dryRun`, under `runs.dryRun` in
-  engine-stats): every run and resume the TypeScript engine runs because
+  engine-stats): every run, resume, race settlement and callback firing the
+  TypeScript engine runs because
   `MOVEMENT_ENGINE` did not choose this engine is also put to this engine's
   admission, without running it. The shim builds the segment input a real
   run would, calls the start entry, and reads the first step: a `refused`

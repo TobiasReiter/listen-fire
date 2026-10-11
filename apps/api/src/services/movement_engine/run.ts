@@ -348,8 +348,10 @@ import {
 import { checkPinned, type CheckInput } from './program_check';
 import {
   ENGINE_CHOICE_TS,
+  dryAdmitFire,
   dryAdmitResume,
   dryAdmitRun,
+  dryAdmitSettle,
   engineChoice,
   noteEngine,
   fireSegmentInRust,
@@ -813,13 +815,14 @@ export async function settleRaceFrame(
     });
   }
   const { program, prepared } = parseAndCheck(input);
-  return inRunContext(input, (context) =>
-    new Interpreter(input, { ...prepared, context }).settleRaceFrame({
+  return inRunContext(input, (context) => {
+    recordTypeScriptRun(input, dryAdmitSettle({ input, context }));
+    return new Interpreter(input, { ...prepared, context }).settleRaceFrame({
       program,
       state: input.state,
       frameAddress: input.frameAddress,
-    }),
-  );
+    });
+  });
 }
 
 /**
@@ -849,14 +852,15 @@ export async function fireCallbackBody(
     });
   }
   const { program, prepared } = parseAndCheck(input);
-  return inRunContext(input, (context) =>
-    new Interpreter(input, { ...prepared, context }).fireCallback({
+  return inRunContext(input, (context) => {
+    recordTypeScriptRun(input, dryAdmitFire({ input, context }));
+    return new Interpreter(input, { ...prepared, context }).fireCallback({
       program,
       state: input.state,
       values: input.values,
       callIndex: input.callIndex,
-    }),
-  );
+    });
+  });
 }
 
 /** The shape `validateAnswer` produces for a `Correct` answer — the curated +
