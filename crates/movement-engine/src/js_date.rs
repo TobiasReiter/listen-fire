@@ -125,6 +125,12 @@ impl<'a> LocalZone<'a> {
         LocalZone { zone: zone.map(|zone| (zone, services)) }
     }
 
+    /// Whether the environment reads `zone` at all: one it does not would
+    /// read every offset as 0, silently UTC.
+    pub fn is_known(zone: &str, services: &dyn EnvServices) -> bool {
+        services.tz_convert("1970-01-01T00:00:00.000Z", zone).is_some()
+    }
+
     /// The zone's offset at a UTC instant, in milliseconds.
     fn offset_at(zone: &str, services: &dyn EnvServices, instant: f64) -> f64 {
         services
@@ -954,7 +960,7 @@ mod tests {
             ("3/4", "2001-03-04T00:00:00.000Z"),
             ("Jan 5", "2001-01-05T00:00:00.000Z"),
             ("2026-1-9", "2026-01-09T00:00:00.000Z"),
-                        (" 2026-01-01", "2026-01-01T00:00:00.000Z"),
+            (" 2026-01-01", "2026-01-01T00:00:00.000Z"),
             ("12/03/2026", "2026-12-03T00:00:00.000Z"),
             ("March 12, 2026 9:30 PM", "2026-03-12T21:30:00.000Z"),
             ("Thu, 12 Mar 2026 09:30:00 GMT+0530 (India Standard Time)", "2026-03-12T04:00:00.000Z"),

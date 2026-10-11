@@ -8,7 +8,7 @@ import { parseMovementExpression } from 'movement-lang';
 import { MovementEngineError } from '../errors';
 import { Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
 import type { Provenance } from '../provenance';
-import { evalInRust, processLocalZone, rustCanEval } from '../rust_engine';
+import { evalInRust, LOCAL_ZONE_UNVERIFIED, processLocalZone, rustCanEval } from '../rust_engine';
 import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
 
 /** Every evaluation in a run carries the run's pin: version 3, which no
@@ -118,41 +118,51 @@ describe('the Rust evaluator switch', () => {
     expect(inRust('SPLIT(s, "")', ctx)).toBeUndefined();
   });
 
+  // Jest hands each suite a copy of the environment, so assigning `TZ` here
+  // moves no clock: these two run in the zone the process started in, and
+  // local_zone_matrix.unit.test.ts starts them under each zone of its own.
   it("reads a date text as this process's Date reads it, in this process's zone", async () => {
+    const named = processLocalZone();
+    expectZoneStanding(named);
+    if (named === undefined) return;
+    // The zone the shim hands the engine is the one `Date` reads in: the
+    // same wall clock, to the second (local mean time included).
+    for (const instant of ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z', '2011-12-30T12:00:00Z', '1850-01-01T00:00:00Z']) {
+      const at = new Date(instant);
+      const parts = Object.fromEntries(
+        new Intl.DateTimeFormat('en-US', { timeZone: named, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+          .formatToParts(at)
+          .map((part) => [part.type, Number(part.value)]),
+      );
+      expect([instant, parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second]).toEqual([
+        instant, at.getFullYear(), at.getMonth() + 1, at.getDate(), at.getHours(), at.getMinutes(), at.getSeconds(),
+      ]);
+    }
     const texts = [
       '2026-03-12T09:30', '2026-03-08T02:30', '2026-11-01T01:30', '2026-03-29T01:30', '2011-12-30T12:00', 'March 12, 2026 9:30 PM',
       '3/4', 'Thu, 12 Mar 2026 09:30:00 GMT+0530', '2026-03-12', 'nonsense',
     ];
-    /** The zone's offset at an instant, in minutes, as `Intl` reads it. */
-    const offsetIn = (at: Date, timeZone: string): number => {
-      const parts = Object.fromEntries(
-        new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
-          .formatToParts(at)
-          .map((part) => [part.type, Number(part.value)]),
-      );
-      return (Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!) - at.getTime()) / 60_000;
-    };
-    const saved = process.env.TZ;
-    try {
-      for (const zone of ['UTC', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'Pacific/Apia']) {
-        process.env.TZ = zone;
-        // The zone the shim hands the engine is the one `Date` reads in.
-        for (const instant of ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z', '2011-12-30T12:00:00Z', '1850-01-01T00:00:00Z']) {
-          const at = new Date(instant);
-          expect(offsetIn(at, processLocalZone()) + at.getTimezoneOffset()).toBe(0);
-        }
-        for (const [i, t] of texts.entries()) {
-          const ctx = contextOf({ t, u: texts[(i + 1) % texts.length] });
-          for (const text of ['DATETIME(t)', 'DATE.FORMAT(t, "YYYY-MM-DD HH:mm")', 't < u']) {
-            const { rust, ts } = await both(text, ctx);
-            expect(rust).toBeDefined();
-            expect([zone, t, text, rust?.value]).toEqual([zone, t, text, ts.value]);
-          }
-        }
+    for (const [i, t] of texts.entries()) {
+      const ctx = contextOf({ t, u: texts[(i + 1) % texts.length] });
+      for (const text of ['DATETIME(t)', 'DATE.FORMAT(t, "YYYY-MM-DD HH:mm")', 't < u']) {
+        const { rust, ts } = await both(text, ctx);
+        expect(rust).toBeDefined();
+        expect([named, t, text, rust?.value]).toEqual([named, t, text, ts.value]);
       }
+    }
+  });
+
+  it("hands a date text back to TypeScript, by name, when Intl cannot name the zone Date reads in, in this process's zone", async () => {
+    expectZoneStanding(processLocalZone());
+    if (processLocalZone() !== undefined) return;
+    resetRustEvalStats();
+    try {
+      const { rust, ts } = await both('DATETIME(t)', contextOf({ t: '2026-03-08T02:30' }));
+      expect(rust).toBeUndefined();
+      expect(ts.value).toBe(new Date('2026-03-08T02:30').toISOString());
+      expect(rustEvalStats.fallback).toEqual({ [LOCAL_ZONE_UNVERIFIED]: 1 });
     } finally {
-      if (saved === undefined) delete process.env.TZ;
-      else process.env.TZ = saved;
+      resetRustEvalStats();
     }
   });
 
@@ -172,3 +182,10 @@ describe('the Rust evaluator switch', () => {
     expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   });
 });
+
+/** Under local_zone_matrix, which starts this suite with a `TZ` it knows the
+ *  standing of: whether the shim names the zone. */
+function expectZoneStanding(named: string | undefined): void {
+  const expected = process.env.EXPECT_LOCAL_ZONE;
+  if (expected !== undefined) expect([process.env.TZ, named === undefined ? 'unverified' : 'named']).toEqual([process.env.TZ, expected]);
+}

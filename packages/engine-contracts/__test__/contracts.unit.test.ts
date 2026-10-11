@@ -133,3 +133,49 @@ describe('a park state version is refused on read unless this release reads it',
     );
   });
 });
+
+// The Rust engine's own input (`SegmentInput`, crates/movement-engine/src/
+// run.rs), read from its source as the version table is: the README's
+// `engine_start` member list names every field, optional ones marked `?`,
+// and host-families.md's "Inputs only the Rust engine takes" names every
+// field the shim reads from its process or deployment (a field whose doc
+// says "so the engine reads no environment").
+describe("the Rust engine's segment input is the one its documents name", () => {
+  const repo = path.resolve(__dirname, '../../..');
+  const source = fs.readFileSync(path.join(repo, 'crates/movement-engine/src/run.rs'), 'utf8');
+  const struct = /^pub struct SegmentInput \{\n([\s\S]*?)^\}/m.exec(source);
+  if (struct === null) throw new Error('run.rs no longer spells SegmentInput as this test reads it');
+  const camel = (name: string) => name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  const fields: Array<{ name: string; optional: boolean; fromEnvironment: boolean }> = [];
+  let preamble: string[] = [];
+  for (const line of struct[1].split('\n')) {
+    const field = /^ {4}pub (\w+): (.+),$/.exec(line.trimEnd());
+    if (field === null) {
+      preamble.push(line);
+      continue;
+    }
+    const attributes = preamble.join('\n');
+    fields.push({
+      name: camel(field[1]),
+      optional: field[2].startsWith('Option<') || /#\[serde\(default/.test(attributes),
+      fromEnvironment: /so the engine reads no\s+(?:\/\/\/\s+)?environment/.test(attributes),
+    });
+    preamble = [];
+  }
+
+  it('the README lists every field, its optional ones marked', () => {
+    const readme = fs.readFileSync(path.join(repo, 'crates/movement-engine/README.md'), 'utf8');
+    const list = /\*\*The input\*\* \(`engine_start`\): `\{([^}]*)\}`/.exec(readme);
+    if (list === null) throw new Error('the README no longer spells the engine_start input as this test reads it');
+    const listed = list[1].split(',').map((member) => member.trim().split(':')[0]!.trim());
+    expect(listed).toEqual(['entry', ...fields.map(({ name, optional }) => (optional ? `${name}?` : name))]);
+  });
+
+  it("host-families.md names each input the shim reads so the engine reads no environment", () => {
+    const doc = fs.readFileSync(path.join(repo, 'docs/contracts/host-families.md'), 'utf8');
+    const section = /^- \*\*Inputs only the Rust engine takes\.\*\*[^\n]*\n((?: {2}- [^\n]*\n)+)/m.exec(doc);
+    if (section === null) throw new Error('host-families.md no longer spells the inputs only the Rust engine takes as this test reads them');
+    const named = [...section[1].matchAll(/^ {2}- `(\w+)`:/gm)].map(([, name]) => name);
+    expect(named).toEqual(fields.filter((f) => f.fromEnvironment).map((f) => f.name));
+  });
+});

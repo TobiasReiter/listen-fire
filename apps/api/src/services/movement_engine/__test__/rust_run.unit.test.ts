@@ -22,7 +22,7 @@ import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { runSegmentInRust } from '../rust_engine';
+import { LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from '../rust_engine';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000a1');
@@ -382,32 +382,55 @@ describe('a whole run in the Rust engine', () => {
     expect(rustRunStats.hostCalls).toMatchObject({ 'builtins.function': 1 });
   });
 
-  it("reads a date text in this process's zone as TypeScript does, asking no TypeScript member", async () => {
-    const saved = process.env.TZ;
-    try {
-      for (const zone of ['UTC', 'America/New_York', 'Pacific/Apia']) {
-        process.env.TZ = zone;
-        resetRustRunStats();
-        const { rust } = await agree({
-          source: [
-            'movement m(msg: <inbox-[:message]->>) {',
-            '  iso = DATE.FORMAT_ISO(msg.`text`)',
-            '  later = msg.`text` > "March 8, 2026 1:45 AM"',
-            '  if later {',
-            '    day = DATE(msg.`text`)',
-            '  }',
-            '}',
-          ].join('\n'),
-          event: webhook({ text: '2026-03-08T02:30' }),
-        });
-        expect(rust.result).toBeDefined();
-        expect(rustRunStats.hostCalls['builtins.function']).toBeUndefined();
-        expect(rustRunStats.hostCalls['builtins.compare']).toBeUndefined();
-      }
-    } finally {
-      if (saved === undefined) delete process.env.TZ;
-      else process.env.TZ = saved;
-    }
+  // Jest hands each suite a copy of the environment, so assigning `TZ` here
+  // moves no clock: these run in the zone the process started in, and
+  // local_zone_matrix.unit.test.ts starts them under each zone of its own.
+  it("reads a date text as TypeScript does, asking no TypeScript member, in this process's zone", async () => {
+    expectZoneStanding(processLocalZone());
+    if (processLocalZone() === undefined) return;
+    resetRustRunStats();
+    const { rust } = await agree({
+      source: [
+        'movement m(msg: <inbox-[:message]->>) {',
+        '  iso = DATE.FORMAT_ISO(msg.`text`)',
+        '  later = msg.`text` > "March 8, 2026 1:45 AM"',
+        '  if later {',
+        '    day = DATE(msg.`text`)',
+        '  }',
+        '}',
+      ].join('\n'),
+      event: webhook({ text: '2026-03-08T02:30' }),
+    });
+    expect(rust.result).toBeDefined();
+    expect(rustRunStats.hostCalls['builtins.function']).toBeUndefined();
+    expect(rustRunStats.hostCalls['builtins.compare']).toBeUndefined();
+  });
+
+  it("pins an offset-less firing instant as new Date(firedAt) reads it, in this process's zone", async () => {
+    expectZoneStanding(processLocalZone());
+    if (processLocalZone() === undefined) return;
+    // Under Europe/London, 12:00 on 15 July is 11:00Z on both engines; a
+    // pin read otherwise fails the run (DATE.ADD_DAYS past the end of time).
+    const pinned = new Date('2026-07-15T12:00').toISOString();
+    const run = (firedAt: string) =>
+      agree({
+        source: ['movement m(msg: <inbox-[:message]->>) {', '  pin = @current_timestamp', `  if pin != DATETIME("${pinned}") {`, '    bad = DATE.ADD_DAYS("2026-01-01", 1000000000)', '  }', '}'].join('\n'),
+        event: webhook({}),
+        firedAt,
+      });
+    const first = (await run('2026-07-15T12:00')).rust;
+    expect('result' in first).toBe(true);
+    expect('error' in (await run('2026-07-15T12:00:00Z')).rust).toBe(processLocalZone() !== 'UTC' && pinned !== '2026-07-15T12:00:00.000Z');
+  });
+
+  it("refuses a run by name when Intl cannot name the zone Date reads in, in this process's zone", async () => {
+    expectZoneStanding(processLocalZone());
+    if (processLocalZone() !== undefined) return;
+    resetRustRunStats();
+    const { outcome, resolved } = await segmentOf('movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}');
+    expect(outcome).toEqual({ declined: LOCAL_ZONE_UNVERIFIED });
+    expect(resolved).toEqual([]);
+    expect(rustRunStats.notAdmitted).toEqual({ [LOCAL_ZONE_UNVERIFIED]: 1 });
   });
 
   it('reads twenty event fields in one expression, in order, one walk', async () => {
@@ -711,4 +734,11 @@ async function admission(source: string): Promise<string> {
   // Admitted: it ran in Rust, to its end or its own failure.
   expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ranWhole: 1 });
   return 'admitted';
+}
+
+/** Under local_zone_matrix, which starts this suite with a `TZ` it knows the
+ *  standing of: whether the shim names the zone. */
+function expectZoneStanding(named: string | undefined): void {
+  const expected = process.env.EXPECT_LOCAL_ZONE;
+  if (expected !== undefined) expect([process.env.TZ, named === undefined ? 'unverified' : 'named']).toEqual([process.env.TZ, expected]);
 }

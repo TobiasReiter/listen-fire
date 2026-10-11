@@ -408,6 +408,29 @@ describe('writes in the Rust engine', () => {
     expect(rust.result?.writes.every((w) => !w.committed)).toBe(true);
   });
 
+  it('asks the TypeScript comparator for a WITHIN, mid-run, once per narrowed candidate', async () => {
+    // The corpus's last comparisons handed back are of this shape
+    // (unique_by_post_filter): WITHIN reads the clock's answer, which only the
+    // TypeScript comparator is handed.
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  write crm-[:companies]-> {',
+      '    unique by (`domain`, `updated` WITHIN 30d)',
+      '    name: msg.`subject`',
+      '    domain: "nova.example"',
+      '  }',
+      '}',
+    ].join('\n');
+    const updated = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const { rust } = await agree({
+      source,
+      event: webhook({ subject: 'Nova' }),
+      attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-1', data: { domain: 'nova.example', updated } }] },
+    });
+    expect(rustRunStats.hostCalls['builtins.compare']).toBe(1);
+    expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['update']);
+  });
+
   it('updates the one candidate the search finds, merging ?:, +: and +?: into its current values', async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',

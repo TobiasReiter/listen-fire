@@ -207,7 +207,9 @@ async function segmentInRust(
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
   const wire = new WireOut({ whole: true });
-  const start = segmentInput(input, context, resume, wire);
+  const localZone = processLocalZone();
+  if (localZone === undefined) return notAdmitted(input, LOCAL_ZONE_UNVERIFIED);
+  const start = segmentInput(input, context, { resume, localZone }, wire);
   if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
   rustRunStats.routed += 1;
   const hostErrors: unknown[] = [];
@@ -268,6 +270,11 @@ function canonicalJson(bySource: Record<string, number>): string {
 /** Why a run whose event, source or parked state cannot cross the eval wire
  *  is not admitted. */
 export const EVENT_DOES_NOT_CROSS = 'event_does_not_cross';
+
+/** Why a run (or an expression) is left to the TypeScript engine when this
+ *  process's `Date` reads in a zone `Intl` cannot name (`TZ=GMT+3`,
+ *  `TZ=utc`): no zone sent could make the Rust engine read as it does. */
+export const LOCAL_ZONE_UNVERIFIED = 'local_zone_unverified';
 
 /** The reason a run the Rust engine ran is logged with. */
 const ADMITTED = 'admitted';
@@ -387,7 +394,9 @@ function admissionReasons(
   resume: Resumption | undefined,
   engine: EngineProtocol | undefined,
 ): string[] {
-  const start = segmentInput(input, context, resume, new WireOut({ whole: true }));
+  const localZone = processLocalZone();
+  if (localZone === undefined) return [LOCAL_ZONE_UNVERIFIED];
+  const start = segmentInput(input, context, { resume, localZone }, new WireOut({ whole: true }));
   if (start === undefined) return [EVENT_DOES_NOT_CROSS];
   const segment = engine ?? openWasmEngine();
   try {
@@ -495,7 +504,12 @@ class SettleQueue {
  *  resumed state, on the eval wire, so their objects keep their key order
  *  (a stored state's is the order it was stored in). Undefined for an input
  *  that cannot cross as itself. */
-function segmentInput(input: RunMovementInput, context: RunContext, resume: Resumption | undefined, wire: WireOut): unknown {
+function segmentInput(
+  input: RunMovementInput,
+  context: RunContext,
+  { resume, localZone }: { resume: Resumption | undefined; localZone: string },
+  wire: WireOut,
+): unknown {
   // The event is data, whatever keys it carries: a dict shaped like a
   // binding crosses, and is read, as the dict it is.
   const event = wire.value(input.event);
@@ -546,8 +560,8 @@ function segmentInput(input: RunMovementInput, context: RunContext, resume: Resu
       // The run's pinned instant, as the TypeScript interpreter pins it.
       now: input.firedAt ?? context.pinnedNow.toISOString(),
       // The zone a date-time text with no offset is read in: this
-      // process's, as its `Date` reads one.
-      localZone: processLocalZone(),
+      // process's, as its `Date` reads one (verified against it).
+      localZone,
       catalog: input.catalog,
       // What the host serves: the engine asks an optional family's method
       // only of a host that serves it, as the TypeScript engine reads its
@@ -794,14 +808,62 @@ function holdsBinding(value: unknown, seen = new Set<object>()): boolean {
 
 /**
  * The zone this process's `Date` reads a date-time text with no offset in
- * (`new Date("2026-03-12T09:30")`, `Date.parse("March 12, 2026")`): V8 and
- * `Intl` share ICU's default zone, which `TZ` sets, so `Intl` names it. The
- * Rust engine reads no environment, so it is handed this with every segment
- * and every expression; an ICU canonical name (`Asia/Calcutta`, not
- * `Asia/Kolkata`).
+ * (`new Date("2026-03-12T09:30")`, `Date.parse("March 12, 2026")`), as an
+ * IANA name the Rust engine is handed (it reads no environment) — or
+ * undefined when `Intl` names no zone `Date` agrees with.
+ *
+ * `Intl`'s resolved zone is `Date`'s for an IANA `TZ` only: under
+ * `TZ=GMT+3` it says `+03:00` where `Date` reads POSIX's three hours WEST,
+ * under `TZ=UTC+3` or `TZ=utc` it names none, under `TZ=""` `Etc/Unknown`.
+ * So the name is checked against `Date`'s own wall clock at a winter, a
+ * summer, a historic and a far-future instant; an ICU canonical name passes
+ * (`Asia/Calcutta`, not `Asia/Kolkata`).
  */
-export function processLocalZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+export function processLocalZone(): string | undefined {
+  const zone: unknown = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (typeof zone !== 'string' || zone === '' || zone === 'Etc/Unknown') return undefined;
+  const key = `${process.env.TZ ?? ''}\u0000${zone}`;
+  const known = verifiedZones.get(key);
+  if (known !== undefined) return known ? zone : undefined;
+  // The wall clock each reads, to the second: `getTimezoneOffset` drops a
+  // local mean time's seconds (Monrovia's −0:44:30 in 1950).
+  const agrees = ZONE_PROBES.map((iso) => new Date(iso)).every(
+    (at) => wallInZone(at, zone) === wallOfDate(at),
+  );
+  verifiedZones.set(key, agrees);
+  return agrees ? zone : undefined;
+}
+
+/** Winter and summer in both hemispheres, an instant before most zones'
+ *  present rules, and one under their final rules. Fixed instants: an
+ *  engine file reads no clock (seam_guard). */
+const ZONE_PROBES = ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z', '1950-07-01T12:00:00Z', '2100-07-15T12:00:00Z'];
+
+/** Per `TZ` and resolved name: whether `Date` agrees with the name. */
+const verifiedZones = new Map<string, boolean>();
+
+/** `at` on `zone`'s wall clock, as `Intl` reads it. */
+function wallInZone(at: Date, zone: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    })
+      .formatToParts(at)
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return [parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second].join(' ');
+}
+
+/** `at` on the wall clock this process's `Date` reads. */
+function wallOfDate(at: Date): string {
+  return [at.getFullYear(), at.getMonth() + 1, at.getDate(), at.getHours(), at.getMinutes(), at.getSeconds()].join(' ');
 }
 
 /**
@@ -835,6 +897,11 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     };
   }
   rustEvalStats.admitted += 1;
+  const localZone = processLocalZone();
+  if (localZone === undefined) {
+    rustEvalStats.fallback[LOCAL_ZONE_UNVERIFIED] = (rustEvalStats.fallback[LOCAL_ZONE_UNVERIFIED] ?? 0) + 1;
+    return undefined;
+  }
   const envelope = {
     bindings,
     origins: wire.origins.length,
@@ -842,7 +909,7 @@ export function evalInRust(expr: Expression, ctx: MovementExprContext): Movement
     // The run's pinned instant, which DATE.TODAY reads.
     now: pinnedNow(ctx).toISOString(),
     // The zone a date-time text with no offset is read in.
-    localZone: processLocalZone(),
+    localZone,
   };
   const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
   const answer = record(reply.json, 'the Rust evaluator reply');

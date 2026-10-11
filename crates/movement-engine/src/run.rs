@@ -108,8 +108,9 @@ pub struct SegmentInput {
     /// The run's pinned instant (`firedAt`, else when the run began).
     pub now: String,
     /// The zone a date-time text with no offset of its own is read in (an
-    /// IANA name): the shim sends its process's, the zone V8's `Date`
-    /// reads such a text in there. Absent: UTC.
+    /// IANA name), `now` among them: the zone V8's `Date` reads such a text
+    /// in, in the shim's process. The shim reads it, so the engine reads no
+    /// environment. Absent: UTC.
     #[serde(default)]
     pub local_zone: Option<String>,
     /// Kept as text: the catalog's maps are ordered.
@@ -465,16 +466,19 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // host sent first.
     let wire = env::Wire::default();
     let event = wire.decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
-    let Some(now_ms) = js_date::parse(&input.now, js_date::LocalZone::UTC) else {
-        return Err(Stop::Declined("instant_does_not_read".into()));
-    };
     // A zone the environment does not know reads no date text as the
     // TypeScript's process does.
     if let Some(zone) = &input.local_zone
-        && env_services::current().tz_convert(&js_date::to_iso_string(now_ms), zone).is_none()
+        && !js_date::LocalZone::is_known(zone, env_services::current())
     {
         return Err(Stop::Declined("local_zone_does_not_read".into()));
     }
+    // The pinned instant is read as `new Date(firedAt)` reads it
+    // (run_context.ts): an offset-less one in the run's zone.
+    let local = js_date::LocalZone::new(input.local_zone.as_deref(), env_services::current());
+    let Some(now_ms) = js_date::parse(&input.now, local) else {
+        return Err(Stop::Declined("instant_does_not_read".into()));
+    };
     let answer = host
         .request(host::check::program(&input.source, version, None))
         .await
@@ -2235,16 +2239,25 @@ mod tests {
         drive_serving(source, payload, &[], serve)
     }
 
-    /// `drive`, for a host that serves the optional methods `serves`.
-    fn drive_serving(source: &str, payload: Json, serves: &[&str], serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
-        let input = json!({
+    /// A segment's input, its event an email webhook with `payload`.
+    fn segment_input(source: &str, payload: Json, serves: &[&str]) -> Json {
+        json!({
             "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
             "event": env::encode_plain(&env::decode(&json!(["o", 0, [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
             ]])).unwrap()),
             "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
-        });
+        })
+    }
+
+    /// `drive`, for a host that serves the optional methods `serves`.
+    fn drive_serving(source: &str, payload: Json, serves: &[&str], serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
+        drive_input(segment_input(source, payload, serves), serve)
+    }
+
+    /// A segment of `input` driven to its end.
+    fn drive_input(input: Json, serve: impl Fn(&PendingRequest) -> Json) -> (Json, Vec<PendingRequest>) {
         let mut segment = crate::begin(&input.to_string()).unwrap();
         let mut seen = Vec::new();
         let mut step = segment.start().unwrap();
@@ -2280,6 +2293,30 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// The run's zone is checked before anything else of the run, and the
+    /// pinned instant is read in it, as `new Date(firedAt)` reads it in the
+    /// TypeScript's process: 00:30 on 15 July in London is the 14th in UTC,
+    /// so the field is read only when the zone is London's.
+    #[test]
+    fn the_local_zone_is_checked_and_the_pinned_instant_read_in_it() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-14\" {\n    s = msg.`subject`\n  }\n}";
+        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
+        input["localZone"] = json!("Mars/Base");
+        let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
+        assert_eq!(done, json!({ "declined": "local_zone_does_not_read" }));
+        assert!(seen.is_empty(), "{seen:?}");
+        input["now"] = json!("2026-07-15T00:30");
+        let reads = |input: Json| {
+            let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+            assert!(done.get("result").is_some(), "{done}");
+            seen.iter().filter(|r| r.family == "adapters" && r.method == "call").count()
+        };
+        input["localZone"] = json!("Europe/London");
+        assert!(reads(input.clone()) > 0);
+        input.as_object_mut().unwrap().remove("localZone");
+        assert_eq!(reads(input), 0);
     }
 
     const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";

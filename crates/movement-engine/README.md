@@ -1227,8 +1227,9 @@ one value. `["i", id]` (one of the caller's own objects) appears only in
 writes each value out whole, numbering it afresh.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
-movementName?, event, segmentId, credentialIds?, spend?, now, catalog, dryRun?,
-resume?, limitPaused?, suspendAt?, serves, extractionFileChars?, localZone?}`. `segmentId` is the segment the run host opened (`segment.open`),
+movementName?, event, segmentId, teamId?, credentialIds?, spend?, now, localZone?,
+catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
+extractionFileChars?, maxCallDepth?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -1244,8 +1245,12 @@ by path (`park.sink.commitTimerPark`): the engine asks an optional one only
 when it is listed; `extractionFileChars` is how much of one source file's
 text an extraction prompt takes (extraction.ts `maxFileChars`, the
 deployment's `EXTRACTION_FILE_CHARS`, 50,000 when absent); `localZone` is
-the IANA zone a date-time text with no offset is read in (the shim's
-process zone, which its `Date` reads such a text in; UTC when absent).
+the IANA zone a date-time text with no offset is read in, `now` among them
+(the shim's process zone, verified against its `Date`; UTC when absent);
+`teamId` names the run's team on the engine's log lines; `fire` and `settle`
+run a callback body or settle a deferred race against `resume`'s state;
+`maxCallDepth` is how many named calls deep a run may nest from version 3
+(call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`).
 Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or
