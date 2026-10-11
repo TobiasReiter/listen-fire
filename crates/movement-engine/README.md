@@ -1003,7 +1003,8 @@ arguments evaluated in the order written, `clock.now` either side of
 movement's pin choosing its declared output), the `plugin` entry traced
 (`returned: value | absent`), and the name bound as that output — a
 `value` output its text, a `record` output a node of the fields it
-attached and its text under `text`. A priced plugin is refused before the
+attached and its text under `text`, a `records` output one such node per
+record it found, in its order (the empty list for none). A priced plugin is refused before the
 host is asked once the run has spent its cap (`Ledger::plugin_refusal`,
 by the registered name, so an aliased import is priced too); a `through`
 stage's plugin is refused the same way.
