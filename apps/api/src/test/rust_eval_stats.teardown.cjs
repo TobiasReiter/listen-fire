@@ -64,7 +64,14 @@ const path = require('node:path');
 // 1499, v3 2556 whole; the floors are those less a margin of 2. The second
 // forward merge of cloud-native (main's fix: data is never read as an engine
 // object, 2026-10-11) leaves v1 1188, v2 1499, v3 2556 whole; the floors stay
-// those less a margin of 2. A floor
+// those less a margin of 2. The third forward merge of cloud-native (main's
+// rule: a record nested in a field's value or a plugin argument is refused at
+// validate, 2026-10-11) leaves v1 1188, v2 1499, v3 2556 whole: every corpus
+// case passes as before, so no corpus program's check changed, and the 24 v3
+// runs refused as write_field_record are values admission cannot tell from
+// records (a closure's record parameter, a graph built from a spread, an
+// awaited receipt), not records the rule refuses; the floors stay those less
+// a margin of 2. A floor
 // applies to a run of the whole corpus only: a run narrowed to some files or
 // cases checks the rest (nothing declined, no shim fault, something admitted
 // ran whole) but not it.

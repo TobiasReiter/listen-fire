@@ -390,16 +390,30 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
     it("hands a plugin the event's binding object as the data it is, and refuses any other record inside a list by name", async () => {
       const program = (body: string) => ['import { echo } from plugins', 'movement m(msg: <inbox-[:message]->>) {', body, '}'].join('\n');
+      const through = (arg: string, before: readonly string[] = []) =>
+        program([...before, `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`, '    name: "the company"', '  }'].join('\n'));
+      const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+      // A through stage's plugin arguments are untyped (main's nested-record
+      // rule leaves them so): there the event inside a value still reaches
+      // the plugin, as the data its binding object is.
       for (const [arg, q] of [
         ['[msg]', [{ kind: 'event' }]],
         ['{ k: msg }', { k: { kind: 'event' } }],
       ] as const) {
+        const ts = await agree({ source: through(arg), replies: [named] }, { runsWhole: true });
+        expect(ts.invoked).toEqual([expect.objectContaining({ plugin: 'echo', config: { q } })]);
+      }
+      // A call's argument is typed: the checker refuses a record inside it
+      // (the event's included) on both engines, before any plugin is asked.
+      for (const arg of ['[msg]', '{ k: msg }']) {
         const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { runsWhole: true });
-        expect(ts.invoked).toEqual([{ plugin: 'echo', config: { q } }]);
+        expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
+        expect(ts.invoked).toEqual([]);
       }
       // The event alone is no value: both engines fail reading it.
       await agree({ source: program('  x = echo(q: msg)') }, { runsWhole: true });
-      const refused = await agree({ source: program([...found, '  x = echo(q: [found])'].join('\n')), replies: [companies] }, { refused: 'plugin_arg_record' });
+      // Any other record inside a through stage's argument is refused by name.
+      const refused = await agree({ source: through('[found]', found), replies: [companies, named] }, { refused: 'plugin_arg_record' });
       // The TypeScript hands the plugin the extraction's binding object itself.
       expect(refused.invoked).toHaveLength(1);
     });
