@@ -31,6 +31,9 @@ pub enum TraceEntry {
     Extraction(Members),
     /// One plugin invocation, a stage's or a plain call's.
     Plugin(Members),
+    /// One `AI()` call: its prompt (cut at 300 UTF-16 units) and whether
+    /// the model answered.
+    Ai { prompt: String, has_value: bool },
 }
 
 /// An entry's members (all but `kind`), in the order the TypeScript writes
@@ -71,6 +74,9 @@ impl TraceEntry {
                 ("field", Js::str(field.clone())),
                 ("available", Js::array(available.iter().map(|k| Js::str(k.clone())).collect())),
             ]),
+            TraceEntry::Ai { prompt, has_value } => {
+                env::object_of(vec![kind("ai"), ("prompt", Js::str(prompt.clone())), ("hasValue", Js::Bool(*has_value))])
+            }
             TraceEntry::Block { root, positions } => {
                 env::object_of(vec![kind("block"), ("root", Js::str(root.clone())), ("positions", Js::Number(*positions as f64))])
             }

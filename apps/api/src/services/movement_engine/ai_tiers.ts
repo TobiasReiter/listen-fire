@@ -307,6 +307,14 @@ function extractionTiers(env: NodeJS.ProcessEnv): ExtractionTiers {
   return memo.tiers;
 }
 
+/** This deployment's tier assignments as data, for an engine that takes
+ *  them as a run input rather than reading the environment (the Rust
+ *  engine's `extractionTiers`): a tier's model and effort, each only when
+ *  `EXTRACTION_TIERS` names it. */
+export function extractionTierAssignments(env: NodeJS.ProcessEnv = process.env): Record<string, ExtractionTierAssignment> {
+  return Object.fromEntries(extractionTiers(env));
+}
+
 /** Boot: refuse a tier assignment this deployment cannot serve — a malformed
  *  entry, or a model MODEL_MAP sends nowhere callable — rather than letting
  *  the first extraction at that tier find out. */

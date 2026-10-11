@@ -144,7 +144,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
       llm: {
         client: {
           call: async (request): Promise<LlmCallResult> => {
-            asked.push({ label: request.label, model: request.model, effort: request.effort, userMessage: request.userMessage });
+            asked.push({ label: request.label, model: request.model, effort: request.effort, maxTokens: request.maxTokens, userMessage: request.userMessage });
             return { parsedJson: replies.shift() ?? {} };
           },
         },
@@ -263,12 +263,38 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     expect(ts.asked).toHaveLength(1);
   });
 
+  // The tier is a run input on Rust (`extractionTiers`), the deployment's
+  // EXTRACTION_TIERS as the TypeScript engine reads it, and AI()'s tiers a
+  // fixed table: both engines ask the same models at the same depths.
+  it("asks each tier's model and depth, the deployment's assignment over the built-in row, as the TypeScript engine does", async () => {
+    const previous = process.env.EXTRACTION_TIERS;
+    try {
+      for (const tiers of [undefined, '{"careful": {"model": "claude-opus-5", "effort": "medium"}, "thorough": {"effort": "low"}}']) {
+        if (tiers === undefined) delete process.env.EXTRACTION_TIERS;
+        else process.env.EXTRACTION_TIERS = tiers;
+        for (const tier of ['"quick" ', '"careful" ', '"thorough" ', '"smart" ', '']) {
+          const source = `movement m(msg: <inbox-[:message]->>) {\n  d = extract ${tier}from [msg.\`text\`] {\n    name: "a"\n  }\n  return AI("why ${tier.length}", ${tier === '' ? '"careful"' : tier.trim()})\n}`;
+          const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }, { value: 'because', has_value: true }] }, { runsWhole: true });
+          expect(ts.asked).toHaveLength(2);
+          if (tiers !== undefined && tier === '"careful" ') {
+            expect(ts.asked).toMatchObject([{ model: 'claude-opus-5', effort: 'medium', maxTokens: undefined }, { model: 'sonnet', effort: undefined }]);
+          }
+          if (tiers === undefined && tier === '"thorough" ') {
+            expect(ts.asked).toMatchObject([{ model: 'sonnet', effort: 'xhigh', maxTokens: 64000 }, { model: 'opus5', maxTokens: 64000 }]);
+          }
+        }
+      }
+    } finally {
+      if (previous === undefined) delete process.env.EXTRACTION_TIERS;
+      else process.env.EXTRACTION_TIERS = previous;
+    }
+  });
+
   it('refuses, before it asks its host anything, the extraction and plugin forms it does not run', async () => {
     const movement = (body: string) => `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
     for (const [c, reason] of [
       [{ source: movement('  page = fetch_url(msg.`text`)') }, 'plugin_call_form'],
       [{ source: movement('  found = find_files(q: msg.`text`)') }, 'plugin_call:records'],
-      [{ source: movement('  d = extract "careful" from [msg.`text`] {\n    name: "a"\n  }') }, 'extract_tier'],
     ] as const) {
       resetRustRunStats();
       await runOn('rust', c);

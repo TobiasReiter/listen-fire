@@ -8,6 +8,16 @@
 //! tests/extraction_pin.rs (tests/oracle/extraction.json); the walk, by the
 //! corpora and the recorded runs.
 
+/// What a deployment buys for one extraction tier (ai_tiers.ts
+/// `ExtractionTierAssignment`): each member over the built-in row's.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct TierAssignment {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
 pub mod emission;
 pub mod prompt;
 pub(crate) mod resources;

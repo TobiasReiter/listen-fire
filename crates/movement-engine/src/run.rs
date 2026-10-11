@@ -156,6 +156,12 @@ pub struct SegmentInput {
     /// environment.
     #[serde(default = "default_call_depth")]
     pub max_call_depth: usize,
+    /// What this deployment buys for each extraction tier (ai_tiers.ts
+    /// `EXTRACTION_TIERS`, parsed): a tier's model and effort, each over the
+    /// built-in row it names. The shim reads it, so the engine reads no
+    /// environment. Absent: the built-in table.
+    #[serde(default)]
+    pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
 }
 
 /// A fired callback (`fireCallbackBody`): the call's values on the eval
@@ -1558,9 +1564,30 @@ impl Run<'_> {
                 let value = self.meta_value(&key).await?;
                 Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
             }
+            Ask::Ai { prompt, tier } => self.ai(&prompt, tier.as_deref()).await.map(|value| Ok(Evaluated { value, prov: Prov::Built(Trail::default()) })),
             // Asked only of a write field's evaluation, which answers it.
             Ask::FieldFunction { id, .. } => Err(Failure::engine("MOVENG_RUNTIME", format!("{id}() was asked of no write field"))),
         }
+    }
+
+    /// `evaluateAi`: one priced `llm.client.call` at the tier's settings,
+    /// its reply read out of the structured envelope (`aiAnswer`), traced.
+    async fn ai(&self, prompt: &str, tier: Option<&str>) -> Result<Js, Failure> {
+        let settings = crate::extract::run::ai_expression_settings(tier);
+        let call = host::llm::ClientCall {
+            system: AI_EXPRESSION_SYSTEM,
+            user_message: prompt,
+            label: "movement-ai-expression",
+            model: &settings.model,
+            effort: settings.effort.as_deref(),
+            max_tokens: settings.max_tokens,
+        };
+        let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
+        crate::extract::run::refuse_uncarried(&answer, "the AI() reply")?;
+        let value = ai_answer(&event_get(&answer, "parsedJson"));
+        let traced = crate::extract::emission::cut(prompt, 300);
+        self.trace.push(TraceEntry::Ai { prompt: traced, has_value: !value.is_nullish() });
+        Ok(value)
     }
 
     /// `resolveMovementMetaKey` for the acting-user and raw-actor keys.
@@ -2024,6 +2051,11 @@ impl Reader for Reading<'_, '_> {
         self.field.is_some_and(|field| field.has(id))
     }
 
+    fn ai_origin(&self, prompt: &str, inputs: &[u32]) -> u32 {
+        let inputs = inputs.iter().map(|&id| self.run.origin(id)).collect();
+        self.run.mint_origin(env::object_of(vec![("kind", Js::str("ai")), ("prompt", Js::str(prompt)), ("inputs", Js::array(inputs))]))
+    }
+
     fn literal(&self) -> u32 {
         let mut origin = vec![("kind", Js::str("literal"))];
         if let Some(span) = &self.span {
@@ -2222,6 +2254,39 @@ fn event_text(event: &Js, key: &str) -> Option<String> {
         Js::String(text) => Some(text),
         _ => None,
     }
+}
+
+/// `AI_EXPRESSION_SYSTEM`, the system prompt every `AI()` call carries.
+const AI_EXPRESSION_SYSTEM: &str = "You are evaluating an AI() expression inside a data-movement program.\n\
+The user message is the program author's prompt. Answer it directly and\n\
+concisely — the answer becomes a field value, so no preamble and no markdown.\n\
+Respond with a JSON object of the shape\n\
+{\"value\": <your answer as a string, or null>, \"has_value\": <boolean>}.\n\
+If the prompt has no meaningful answer — nothing applies, nothing is\n\
+needed, the requested thing is absent — set \"has_value\": false and\n\
+\"value\": null. Never answer with placeholder text like \"none\" or \"N/A\".";
+
+/// `aiAnswer`: the envelope's value (null when the model said it has none),
+/// else the older `{answer}` shape, else the reply itself; made text, a
+/// blank answer read as none (`blankIsAbsent`).
+fn ai_answer(parsed: &Js) -> Js {
+    let is_object = matches!(parsed, Js::Object(_) | Js::Array(_));
+    let has = |key: &str| matches!(parsed, Js::Object(object) if object.get(key).is_some());
+    let answer = if is_object && has("has_value") {
+        if crate::js::strict_equals(&event_get(parsed, "has_value"), &Js::Bool(false)) {
+            return Js::Null;
+        }
+        event_get(parsed, "value")
+    } else if is_object && has("answer") {
+        event_get(parsed, "answer")
+    } else {
+        parsed.clone()
+    };
+    if answer.is_nullish() {
+        return Js::Null;
+    }
+    let text = if matches!(answer, Js::Object(_) | Js::Array(_)) { js::json_stringify(&answer, 0) } else { answer.to_js_string() };
+    if js::trim(&text).is_empty() { Js::Null } else { Js::String(text) }
 }
 
 fn event_get(value: &Js, key: &str) -> Js {
@@ -2595,10 +2660,10 @@ mod tests {
         };
         let prelude = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\n";
         let helper = "movement helper(e: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}\n";
-        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = AI(\"why\")\n  helper(e: msg)\n}}\n{helper}");
+        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = KG_VALUE(\"why\")\n  helper(e: msg)\n}}\n{helper}");
         match first_step(&refused) {
             Step::Done(done) => {
-                assert_eq!(done, json!({ "refused": "expression:llm", "reasons": ["expression:llm", "plugin_call"] }))
+                assert_eq!(done, json!({ "refused": "expression:kg_value", "reasons": ["expression:kg_value", "plugin_call"] }))
             }
             Step::Pending(pending) => panic!("asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
         }

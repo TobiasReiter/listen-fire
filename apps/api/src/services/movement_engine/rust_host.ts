@@ -27,7 +27,8 @@ import { getErrorMessage } from '../../lib/utils/error';
 import { logger } from '../logger';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
-import { EFFORTS, type Effort } from './ai_tiers';
+import { hasCapability, isModelName } from '../../lib/models/registry';
+import { EFFORTS, type Effort, type TierModel } from './ai_tiers';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
 import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
@@ -650,9 +651,9 @@ function isEffort(value: string): value is Effort {
   return EFFORTS.some((effort) => effort === value);
 }
 
-/** The models an extraction call names: the built-in aliases (no tier
- *  reaches the Rust engine, so no deployment's assignment does). */
-function extractionModel(value: unknown): 'opus' | 'opus5' | 'sonnet' | 'haiku' {
+/** The models a call names: the built-in aliases, or a logical model a
+ *  deployment's tier assignment chose (`TierModel`). */
+function extractionModel(value: unknown): TierModel {
   switch (value) {
     case 'opus':
     case 'opus5':
@@ -660,7 +661,8 @@ function extractionModel(value: unknown): 'opus' | 'opus5' | 'sonnet' | 'haiku' 
     case 'haiku':
       return value;
     default:
-      throw new RustShimError(`llm.client.call model ${JSON.stringify(value)} is not an extraction's model`);
+      if (typeof value === 'string' && isModelName(value) && hasCapability(value, 'chat')) return value;
+      throw new RustShimError(`llm.client.call model ${JSON.stringify(value)} is not a model a call names`);
   }
 }
 
@@ -771,6 +773,9 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       if (typeof positions !== 'number' || !Number.isInteger(positions)) throw new RustShimError('a block trace entry counts its positions');
       return { kind: 'block', root: string(entry.root, 'a block root'), positions };
     }
+    case 'ai':
+      if (typeof entry.hasValue !== 'boolean') throw new RustShimError('an ai trace entry says whether the model answered');
+      return { kind: 'ai', prompt: string(entry.prompt, 'an ai prompt'), hasValue: entry.hasValue };
     case 'extraction':
       return extractionTraceEntry(entry);
     case 'plugin':

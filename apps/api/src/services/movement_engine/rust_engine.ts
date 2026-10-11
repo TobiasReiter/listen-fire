@@ -23,6 +23,7 @@ import { callEvalExpression, openEngineSegment } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { RunCostCapExceeded } from '../../lib/run_cost';
+import { extractionTierAssignments } from './ai_tiers';
 import { CallDepthExceeded, maxCallDepth } from './call_depth';
 import { logger } from '../logger';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
@@ -600,6 +601,9 @@ function segmentInput(
       // How many named calls deep the run may nest (version 3): the
       // deployment's, read here for the same reason.
       maxCallDepth: maxCallDepth(),
+      // What this deployment buys for each extraction tier: read here so the
+      // engine reads no environment; the built-in table where it names none.
+      extractionTiers: extractionTierAssignments(),
     },
     'the segment input',
   );

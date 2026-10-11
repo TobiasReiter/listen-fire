@@ -285,7 +285,11 @@ pub mod llm {
     /// effortSteppedDown?, continuations?, cost?}`, or a budget refusal.
     pub fn client_call(segment: &str, call: ClientCall<'_>, budget: Json) -> Request {
         let ClientCall { system, user_message, label, model, effort, max_tokens } = call;
-        let mut args = json!({ "system": system, "userMessage": user_message, "label": label, "model": model, "effort": effort, "budget": budget, "wire": true });
+        let mut args = json!({ "system": system, "userMessage": user_message, "label": label, "model": model, "budget": budget, "wire": true });
+        // Absent where the settings name none: the client's own default.
+        if let Some(effort) = effort {
+            args["effort"] = json!(effort);
+        }
         if let Some(max_tokens) = max_tokens {
             args["maxTokens"] = json!(max_tokens);
         }
@@ -298,7 +302,7 @@ pub mod llm {
         pub user_message: &'a str,
         pub label: &'a str,
         pub model: &'a str,
-        pub effort: &'a str,
+        pub effort: Option<&'a str>,
         pub max_tokens: Option<u64>,
     }
 

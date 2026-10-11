@@ -386,7 +386,6 @@ refused where it stands (`is_test_declared_record`).
 | `statement:refresh` | `refresh` | its semantics (no corpus case runs one) |
 | `rvalue:extractCall` | the version-3 `extract(…)` call form | its prompt blocks, `llm.extractCall.call`, site ids `xc:<shape>#<n>` |
 | `rvalue:<kind>` | any other right-hand side, by its AST `kind`; for `return`, also `extract`, `write`, `match` and `link`, and in a block's iteration `node` and a record | a returned record binding (a return value that is a record, as a call's value already is) |
-| `extract_tier` | `extract "careful" from […]` | the deployment's tier table (ai_tiers.ts `EXTRACTION_TIERS`) as input |
 | `plugin_call` | a plugin's call this engine does not make: inside an expression (`{ page: p(…) }`), spelled in another letter case than imported, or of a plugin the input's snapshot does not describe; a `through` stage naming no imported plugin | a call bound inside an expression (checker `nested_calls`), any-case resolution |
 | `plugin_call:records` | a call of a plugin whose declared output is `records` | a records-output binding kind |
 | `plugin_call_form` | a plugin's call with a positional argument, or an argument that is not a value (a call, a node, a write) | positional arguments; arguments of every kind |
@@ -428,7 +427,7 @@ refused where it stands (`is_test_declared_record`).
 | reason | the construct | needs |
 |---|---|---|
 | `aggregate:llm`, `aggregate:only`, `aggregate:sort_key`, `aggregate_records` | the `llm` fold; `ONLY(e)` of anything but a name; `SORT(xs, key)` whose key is not a field name; `FIRST`/`LAST`/`ONLY`/`SUM`/… of a bare walk anywhere but a binding's whole right-hand side (`COUNT` of one is admitted) | the llm fold through the host, record sorts, record-valued folds |
-| `expression:<type>`, `expression:exists` | an expression kind that needs the host, by its lowered `type` (`llm`, `meta`, `resource_traverse`, `kg_value`, `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)` | host reads in expressions (AI(), KG values) |
+| `expression:<type>`, `expression:exists` | an expression kind that needs the host, by its lowered `type` (`resource_traverse`, `kg_value` and `kg_exists` — retired, refused by the checker — `edge_property` outside a hop's WHERE, …); a rootless `EXISTS(-[…]->)`. `AI()` (`llm`) runs here (chunk 7A Task 6) | host reads in expressions (KG values) |
 | `meta:<key>` | a key of the dispatch's `meta.bag` (`@trigger`, `@mutationContext`), which the checker refuses as an unknown `@` key, so no checked program reaches it (`@current_*`, `@user_*` and `@actor_*` run here, chunk 7A Task 6) | nothing a program can write; the bag's reading if the checker ever admits one |
 | `function:<id>` | a function the evaluator does not run, by its lowered id: a namespaced member it lacks, `FILE`, `READ`, `CHUNKS`, `extract`, or a name the program binds or declares, in any letter case (a call written in place: a movement's, a function's or a closure's). A name nothing answers (`DOMAIN_OF`) runs here: a function the write field advertises (`invokeFieldFunction`), else the TypeScript's own MOVENG_UNSUPPORTED (chunk 7A Task 6) | the built-ins `CHUNKS`, `FILE`, `READ`; calls written in place |
 | `within_compare` | `WITHIN` | WITHIN against the pinned instant |
@@ -613,6 +612,7 @@ TypeScript takes through its host is a host request here:
 | `ids.mint` | an extraction's resources without ids, once per batch: the `from` text, each source file, the bundle pipeline's files, then every record's fetched files in the tree's order | `host.ids.mint`: `count` distinct texts, or the run fails |
 | `lookup.resolveActingUser` | the first `@user_*` a segment reads, when the source's `methods` list `getActorCandidates`; `{triggerId?, instance, event, segmentId}`, the event on the eval wire | `host.lookup.resolveActingUser`; its answer kept for the segment, a host error read as no user (`resolveMovementActingUser`) |
 | `adapters.call` `extractActor` | the first `@actor_*` a segment reads, when the source's `methods` list it | `host.adapters.call`; its answer kept for the segment, an error read as no actor (`resolveMovementActor`) |
+| `llm.client.call` (`AI()`) | each `AI(prompt[, tier])` an expression evaluates: `{system, userMessage, label: "movement-ai-expression", model, effort?, maxTokens?, budget}` at the tier's settings (ai_tiers.ts `aiExpressionSettings`, a fixed table: no deployment input) | `host.llm.client.call`; its cost charged; the reply read out of its envelope (`aiAnswer`), traced `{kind: "ai", prompt, hasValue}` |
 | `adapters.call` `invokeFieldFunction` | a function a write's destination field advertises (`describe`'s `functions`), called in that field's value: `{recordType, fieldId, functionName, args: {instructions, data}}` (`bindMovementFieldFunctions`) | `host.adapters.call` |
 | `log.write` | the log lines the TypeScript engine writes (an extraction's skipped stage, a plugin's empty argument, a continued answer, a truncated file, a refinement kept), kept and sent as the statement's trace is handed over, so a line costs no yield inside a fan | the platform's logger, the run's id added; never the run's failure |
 
@@ -936,7 +936,12 @@ expression.ts and run.ts run it:
 ### Extraction
 
 `extract/run.rs` is extraction.ts's `Materializer` with run.ts's
-`runExtraction` around it, for `x = extract from […] { tree }` (no tier):
+`runExtraction` around it, for `x = extract ["tier"] from […] { tree }`.
+Every call the extraction makes asks for its tier's settings
+(`extractionCallSettings`): with no tier the density heuristic's model at
+`low`; with one, the built-in row (sonnet at `low`, `high`, `xhigh`) under
+the input's `extractionTiers`, and the room a reasoning depth needs
+(`maxTokens` 64,000 at `high` and `xhigh`):
 
 1. the spec built for this firing (crate::extract::spec): its words
    evaluated where they were written — the extraction's in the body, a
@@ -1241,7 +1246,7 @@ writes each value out whole, numbering it afresh.
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, teamId?, credentialIds?, spend?, now, localZone?,
 catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
-extractionFileChars?, maxCallDepth?}`. `segmentId` is the segment the run host opened (`segment.open`),
+extractionFileChars?, maxCallDepth?, extractionTiers?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -1262,7 +1267,10 @@ the IANA zone a date-time text with no offset is read in, `now` among them
 `teamId` names the run's team on the engine's log lines; `fire` and `settle`
 run a callback body or settle a deferred race against `resume`'s state;
 `maxCallDepth` is how many named calls deep a run may nest from version 3
-(call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`).
+(call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`);
+`extractionTiers` is what the deployment buys for each extraction tier
+(ai_tiers.ts, its `EXTRACTION_TIERS` parsed: `{careful: {model?, effort?},
+…}`, each member over the built-in row's; the built-in table when absent).
 Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or

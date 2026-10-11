@@ -2192,15 +2192,12 @@ impl Names<'_> {
         Ok(())
     }
 
-    /// `x = extract from […] { tree }` (crate::extract): no tier (what a
-    /// tier buys is the deployment's), the `from` slots and every word the
+    /// `x = extract from […] { tree }` (crate::extract): its tier read off
+    /// the run's input (`extractionTiers`), the `from` slots and every word the
     /// tree writes walked as expressions, each `through` plugin's arguments
     /// too — a bare name there reads the entity's field of that name first,
     /// else a value the body binds.
     fn extract(&self, extract: &ast::ExtractExpression) -> Admitted {
-        if extract.tier.is_some() {
-            return refuse("extract_tier");
-        }
         extract.from.iter().try_for_each(|slot| self.slot(slot))?;
         // A `from` datum is written into the prompt as `JSON.stringify` writes
         // it: the event's binding object is `{"kind":"event"}`, and every
@@ -2696,6 +2693,11 @@ impl Names<'_> {
                 }
                 each(args)
             }
+            // `AI()`: its prompt expression walked; the call is the run's.
+            Expression::Llm { prompt_expression, .. } => match prompt_expression {
+                Some(expression) => self.walk(expression, scoped),
+                None => Ok(()),
+            },
             other => refuse(format!("expression:{}", crate::eval::kind_of(other))),
         }
     }
@@ -2973,7 +2975,7 @@ fn holds_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder, scoped: bool
         Expression::Traverse { .. } => true,
         Expression::Aggregate { fn_: AggregationFunction::Count | AggregationFunction::Sum | AggregationFunction::Avg | AggregationFunction::Join, .. } => false,
         Expression::Aggregate { expression, .. } => at(expression),
-        Expression::Static { .. } | Expression::Meta { .. } => false,
+        Expression::Static { .. } | Expression::Meta { .. } | Expression::Llm { .. } => false,
         Expression::Compare { .. } | Expression::Logical { .. } | Expression::Not { .. } | Expression::Negate { .. } | Expression::Arithmetic { .. } | Expression::Concat { .. } => false,
         Expression::At { expression, .. } => at(expression),
         Expression::Conditional { then, else_, .. } => at(then) || at(else_),
@@ -3113,30 +3115,30 @@ mod tests {
     /// letter case, bare or backtick-quoted.
     #[test]
     fn walks_the_entry_and_what_it_reaches_and_nothing_else() {
-        let helper = "movement helper(e: <inbox-[:message]->>) {\n  x = AI(\"why\")\n}\n";
+        let helper = "movement helper(e: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}\n";
         // The helper after the entry: movements are walked in source order.
         let entry = |body: &str| format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}\n{helper}");
         assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "m", 3), Vec::<String>::new(), "an unreached helper");
-        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "helper", 3), ["expression:llm"], "the helper as the entry");
+        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "helper", 3), ["expression:kg_value"], "the helper as the entry");
         for (body, first) in [
             // A call is walked into: what the callee holds is the reason.
-            ("  helper(e: msg)", "expression:llm"),
-            ("  r = helper(e: msg)", "expression:llm"),
-            ("  r = HELPER(msg)", "expression:llm"),
-            ("  r = await parallel([helper])", "expression:llm"),
+            ("  helper(e: msg)", "expression:kg_value"),
+            ("  r = helper(e: msg)", "expression:kg_value"),
+            ("  r = HELPER(msg)", "expression:kg_value"),
+            ("  r = await parallel([helper])", "expression:kg_value"),
             // A movement handed to a collection op by name is called once per
             // member; a name read whole (here refused at run time, as the
             // TypeScript refuses it) reaches it too.
-            ("  r = MAP([msg], helper)", "expression:llm"),
-            ("  x = \"${`helper`}\"", "expression:llm"),
+            ("  r = MAP([msg], helper)", "expression:kg_value"),
+            ("  x = \"${`helper`}\"", "expression:kg_value"),
         ] {
             let reasons = reasons_of(&entry(body), "m", 3);
             assert_eq!(reasons.first().map(String::as_str), Some(first), "{body}: {reasons:?}");
-            assert!(reasons.iter().any(|r| r == "expression:llm"), "{body} reaches the helper: {reasons:?}");
+            assert!(reasons.iter().any(|r| r == "expression:kg_value"), "{body} reaches the helper: {reasons:?}");
         }
         // Transitively: the entry names `middle`, which names `helper`.
         let chain = format!("{PRELUDE}{helper}movement middle(e: <inbox-[:message]->>) {{\n  helper(e: e)\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  middle(e: msg)\n}}");
-        assert_eq!(reasons_of(&chain, "m", 3), ["expression:llm"]);
+        assert_eq!(reasons_of(&chain, "m", 3), ["expression:kg_value"]);
         // A movement taking a value is refused only where it can run.
         let valued = format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
         assert_eq!(reasons_of(&valued, "m", 3), Vec::<String>::new());
@@ -3152,8 +3154,8 @@ mod tests {
         let v2 = movement_parser::stmt::parse_program(&entry("  x = 1"), 2, false).unwrap();
         assert_eq!(reachable(&v2, Some("M"), 2).len(), 2);
         // The file's values and declarations are walked whatever the entry.
-        let valued_file = format!("{PRELUDE}y = AI(\"why\")\n{helper}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
-        assert_eq!(reasons_of(&valued_file, "m", 3), ["expression:llm"]);
+        let valued_file = format!("{PRELUDE}y = KG_VALUE(\"why\")\n{helper}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
+        assert_eq!(reasons_of(&valued_file, "m", 3), ["expression:kg_value"]);
     }
 
     /// The walk goes on past a statement's reason, into the next statement,
@@ -3162,16 +3164,16 @@ mod tests {
     /// that stopped there gives.
     #[test]
     fn notes_every_reason_in_the_order_met() {
-        let body = "  x = AI(\"why\")\n  y = AI(\"again\")\n  if x WITHIN \"7d\" {\n    write msg { a: 1 }\n  }\n  v = 1\n  v-[c:companies]-> {\n    z = TEXT.CHUNKS(c.`name`)\n    await sleep(1h)\n  }\n  helper(e: msg)";
+        let body = "  x = KG_VALUE(\"why\")\n  y = KG_VALUE(\"again\")\n  if x WITHIN \"7d\" {\n    write msg { a: 1 }\n  }\n  v = 1\n  v-[c:companies]-> {\n    z = TEXT.CHUNKS(c.`name`)\n    await sleep(1h)\n  }\n  helper(e: msg)";
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["expression:llm", "within_compare", "expression_does_not_lower", "statement:call"]
+            ["expression:kg_value", "within_compare", "expression_does_not_lower", "statement:call"]
         );
-        assert_eq!(refused(body).as_deref(), Some("expression:llm"));
+        assert_eq!(refused(body).as_deref(), Some("expression:kg_value"));
         // The file's reasons come first, then each movement's, in source order.
-        let file_first = format!("import {{ x }} from \"./lib.mov\"\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  inbox = 1\n  y = AI(\"why\")\n}}");
-        assert_eq!(reasons_of(&file_first, "m", 3), ["import_from_file", "name_shadowed", "expression:llm"]);
+        let file_first = format!("import {{ x }} from \"./lib.mov\"\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  inbox = 1\n  y = KG_VALUE(\"why\")\n}}");
+        assert_eq!(reasons_of(&file_first, "m", 3), ["import_from_file", "name_shadowed", "expression:kg_value"]);
     }
 
     #[test]
@@ -3191,7 +3193,7 @@ mod tests {
     #[test]
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  x = AI(\"why?\")", "expression:llm"),
+            ("  x = KG_VALUE(\"why?\")", "expression:kg_value"),
             ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
             ("  x = FIRST(crm-[:#foo]->)", "traversal_meta_edge"),
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
@@ -3539,7 +3541,7 @@ mod tests {
         }
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         // A file-level value reads only the file-level values before it.
-        for (value, reason) in [("y = AI(\"why\")", "expression:llm")] {
+        for (value, reason) in [("y = KG_VALUE(\"why\")", "expression:kg_value")] {
             assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
         }
         assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}page = fetch_url()\n{movement}")).as_deref(), Some("file_call"));
@@ -3578,18 +3580,21 @@ mod tests {
             assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");
         }
         for (body, reason) in [
-            ("  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "extract_tier"),
-            ("  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "expression:llm"),
+            ("  d = extract from [msg.`text`] {\n    a: \"${KG_VALUE(\"why\")}\"\n  }", "expression:kg_value"),
             ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
             ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
         }
+        // A tier is read off the run's input; `AI()` is the run's call.
+        for body in ["  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "  x = AI(msg.`text`, \"thorough\")"] {
+            assert_eq!(with(body), None, "{body}");
+        }
         // A declared shape's words are walked in the file's scope.
         let shaped = |words: &str| file(&format!("{PRELUDE}node Lead {{\n  name: <text> \"{words}\"\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"));
         assert_eq!(shaped("its name"), None);
-        assert_eq!(shaped("its ${AI(\"why\")} name").as_deref(), Some("expression:llm"));
+        assert_eq!(shaped("its ${KG_VALUE(\"why\")} name").as_deref(), Some("expression:kg_value"));
     }
 
     /// A plugin's plain call binds what the catalog snapshot declares it

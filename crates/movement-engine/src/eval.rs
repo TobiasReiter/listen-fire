@@ -176,6 +176,8 @@ pub enum Ask {
     /// A function the destination field advertises (`invokeFieldFunction`),
     /// called by its lowered name with its arguments' values.
     FieldFunction { id: String, args: Vec<Js> },
+    /// `AI(prompt[, tier])`: the model's answer (`evaluateAi`), or null.
+    Ai { prompt: String, tier: Option<String> },
 }
 
 /// The ambients a run reads through its host (`resolveMovementMetaKey`'s
@@ -199,6 +201,11 @@ pub trait Reader {
     /// An ambient's origin (`{kind: 'meta', key}`), minted as the
     /// evaluation reaches it.
     fn meta(&self, key: &str) -> u32;
+    /// An `AI()` answer's origin (`{kind: 'ai', prompt, inputs}`), the
+    /// prompt's own origins its inputs.
+    fn ai_origin(&self, _prompt: &str, _inputs: &[u32]) -> u32 {
+        0
+    }
     /// Whether the write field this evaluation is the value of advertises a
     /// function of this lowered name (`ctx.fieldFunctions`).
     fn field_function(&self, _id: &str) -> bool {
@@ -454,6 +461,31 @@ impl<'a> Evaluator<'a> {
                 let value = if key == "current_date" { instant[..10].to_string() } else { instant };
                 let id = reader.meta(key);
                 Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+            }
+            // `AI(prompt[, tier])` (`evaluateAi`): a prompt expression
+            // evaluated and made text (absent as ""), else the prompt as
+            // written; the model's answer, its origin the prompt with the
+            // trails that flowed into it.
+            Expression::Llm { prompt, prompt_expression, tier } => {
+                let Some(reader) = self.reader() else {
+                    return Err(EvalError::Fallback("AI() is the run's".into()));
+                };
+                let evaluated = match prompt_expression {
+                    Some(expression) => Some(self.eval(expression).await?),
+                    None => None,
+                };
+                let text = match &evaluated {
+                    Some(result) if result.value.is_nullish() => String::new(),
+                    Some(result) => result.value.to_js_string(),
+                    None => prompt.clone(),
+                };
+                let inputs = match &evaluated {
+                    Some(result) => self.trail_origins(&result.prov),
+                    None => Vec::new(),
+                };
+                let value = reader.ask(Ask::Ai { prompt: text.clone(), tier: tier.clone() }).await?.value;
+                let id = reader.ai_origin(&text, &inputs);
+                Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             // `@user_*` / `@actor_*`: the run's lookups, then the key's trail,
             // minted after the value as the TypeScript's `fromOrigin` is.
@@ -813,6 +845,14 @@ impl<'a> Evaluator<'a> {
 
     /// The taint union: every origin once, in the order first seen, and no
     /// `direct`.
+    /// The origins a value's trail holds (`provenance.origins`).
+    fn trail_origins(&self, prov: &Prov) -> Vec<u32> {
+        match prov {
+            Prov::Built(trail) => trail.origins.clone(),
+            Prov::Binding(name) => self.env.value(name).and_then(|b| b.trail).map(|t| t.origins).unwrap_or_default(),
+        }
+    }
+
     fn union(&self, parts: &[&Prov]) -> Prov {
         let mut origins: Vec<u32> = Vec::new();
         for part in parts {

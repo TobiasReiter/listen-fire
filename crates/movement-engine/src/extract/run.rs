@@ -56,6 +56,64 @@ pub(crate) const TRACE_URL_CHARS: usize = 200;
 const ENTITY_DENSITY_OPUS_THRESHOLD: usize = 30;
 /// Extraction's own reasoning depth (ai_tiers.ts `EXTRACTION_EFFORT`).
 const EXTRACTION_EFFORT: &str = "low";
+/// The room a call that reasons gets (ai_tiers.ts `REASONING_OUTPUT_TOKENS`).
+pub(crate) const REASONING_OUTPUT_TOKENS: u64 = 64000;
+
+/// One model call's settings (`TierCallSettings` / `ExtractionCallSettings`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct CallSettings {
+    pub model: String,
+    pub effort: Option<String>,
+    pub max_tokens: Option<u64>,
+}
+
+/// `aiTier`: a tier as written, its legacy spelling followed.
+pub(crate) fn ai_tier(written: Option<&str>) -> Option<&'static str> {
+    match written? {
+        "quick" => Some("quick"),
+        "careful" | "smart" => Some("careful"),
+        "thorough" => Some("thorough"),
+        _ => None,
+    }
+}
+
+/// `roomToThink`: the ceiling a reasoning depth needs.
+pub(crate) fn room_to_think(effort: Option<&str>) -> Option<u64> {
+    matches!(effort, Some("high" | "xhigh")).then_some(REASONING_OUTPUT_TOKENS)
+}
+
+/// `extractionCallSettings`: the tier's row (built in, then this
+/// deployment's assignment over it), or with no tier the density
+/// heuristic's model at extraction's own depth.
+pub(crate) fn extraction_call_settings(tier: Option<&str>, density_model: &str, tiers: &std::collections::BTreeMap<String, super::TierAssignment>) -> CallSettings {
+    let Some(named) = ai_tier(tier) else {
+        return CallSettings { model: density_model.into(), effort: Some(EXTRACTION_EFFORT.into()), max_tokens: None };
+    };
+    let (mut model, mut effort) = match named {
+        "careful" => ("sonnet".to_string(), "high".to_string()),
+        "thorough" => ("sonnet".to_string(), "xhigh".to_string()),
+        _ => ("sonnet".to_string(), EXTRACTION_EFFORT.to_string()),
+    };
+    if let Some(assigned) = tiers.get(named) {
+        if let Some(m) = &assigned.model {
+            model = m.clone();
+        }
+        if let Some(e) = &assigned.effort {
+            effort = e.clone();
+        }
+    }
+    let max_tokens = room_to_think(Some(&effort));
+    CallSettings { model, effort: Some(effort), max_tokens }
+}
+
+/// `aiExpressionSettings`: an `AI(prompt[, tier])` call's.
+pub(crate) fn ai_expression_settings(tier: Option<&str>) -> CallSettings {
+    match ai_tier(tier) {
+        Some("careful") => CallSettings { model: "sonnet".into(), effort: None, max_tokens: None },
+        Some("thorough") => CallSettings { model: "opus5".into(), effort: None, max_tokens: Some(REASONING_OUTPUT_TOKENS) },
+        _ => CallSettings { model: "haiku".into(), effort: Some(EXTRACTION_EFFORT.into()), max_tokens: None },
+    }
+}
 const LABEL: &str = "movement_extraction";
 
 /// A plugin's or a file reader's answer that held what the eval wire cannot
@@ -267,6 +325,9 @@ pub(crate) struct Materializer<'r, 'h> {
     pub(crate) file_memo: RefCell<Vec<(String, super::resources::FileResolution)>>,
     /// The site refs (`ExtractSiteRef`) of the calls made so far, by site id.
     site_refs: RefCell<Vec<(String, Js)>>,
+    /// The extraction's tier as its author wrote it (`extract "careful"
+    /// from`): every call it makes, at every stage, asks for it.
+    tier: Option<String>,
 }
 
 /// The entity a per-entity call refines.
@@ -301,6 +362,8 @@ enum Unanswered {
 #[derive(Default)]
 struct Telemetry {
     model: String,
+    /// What the tier asks for, the same on the retry.
+    settings: CallSettings,
     duration_ms: Option<f64>,
     last_reply: Option<Reply>,
     retried: Option<Vec<String>>,
@@ -337,6 +400,7 @@ impl Run<'_> {
             source_files: RefCell::default(),
             file_memo: RefCell::default(),
             site_refs: RefCell::default(),
+            tier: extract.tier.clone(),
         };
         let root = materializer.materialize(extract, &spec).await?;
         record_extracted_entities(self, mark, &root);
@@ -514,8 +578,9 @@ impl<'r, 'h> Materializer<'r, 'h> {
             return Ok(Vec::new());
         }
         let system = prompt::system_prompt(region);
-        let model = if region.sites() >= ENTITY_DENSITY_OPUS_THRESHOLD { "opus" } else { "sonnet" };
-        let mut telemetry = Telemetry { model: model.into(), ..Telemetry::default() };
+        let density = if region.sites() >= ENTITY_DENSITY_OPUS_THRESHOLD { "opus" } else { "sonnet" };
+        let settings = extraction_call_settings(self.tier.as_deref(), density, &self.run.input.extraction_tiers);
+        let mut telemetry = Telemetry { model: settings.model.clone(), settings, ..Telemetry::default() };
         let read = match self.call_with_retry(&system, &user.text, region, &mut telemetry).await {
             Ok(read) => read,
             Err(Unanswered::Stopped(stop)) => return Err(stop),
@@ -626,7 +691,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
     async fn call_with_retry(&self, system: &str, user_message: &str, region: &Region<'_>, telemetry: &mut Telemetry) -> Result<validate::Read, Unanswered> {
         self.run.throw_if_cancelled().await.map_err(Unanswered::Stopped)?;
         let started = self.run.clock_now().await.map_err(|f| Unanswered::Stopped(thrown(f)))?;
-        let first = self.call_model(system, user_message, LABEL, &telemetry.model).await.map_err(Unanswered::Stopped)?;
+        let first = self.call_model(system, user_message, LABEL, &telemetry.settings).await.map_err(Unanswered::Stopped)?;
         telemetry.last_reply = Some(first.clone());
         telemetry.duration_ms = Some(self.run.clock_now().await.map_err(|f| Unanswered::Stopped(thrown(f)))? - started);
         let issues = match read_reply(region, &first) {
@@ -635,15 +700,22 @@ impl<'r, 'h> Materializer<'r, 'h> {
         };
         telemetry.retried = Some(validate::issue_lines(&issues).into_iter().take(TRACE_ISSUE_LINES).collect());
         let retry_message = prompt::retry_user_message(user_message, region, &issues);
-        let retry = self.call_model(system, &retry_message, &format!("{LABEL}_retry"), &telemetry.model).await.map_err(Unanswered::Stopped)?;
+        let retry = self.call_model(system, &retry_message, &format!("{LABEL}_retry"), &telemetry.settings).await.map_err(Unanswered::Stopped)?;
         telemetry.last_reply = Some(retry.clone());
         telemetry.duration_ms = Some(self.run.clock_now().await.map_err(|f| Unanswered::Stopped(thrown(f)))? - started);
         read_reply(region, &retry).map_err(Unanswered::Invalid)
     }
 
     /// One `llm.client.call`, priced.
-    async fn call_model(&self, system: &str, user_message: &str, label: &str, model: &str) -> Result<Reply, Stop> {
-        let call = host::llm::ClientCall { system, user_message, label, model, effort: EXTRACTION_EFFORT, max_tokens: None };
+    async fn call_model(&self, system: &str, user_message: &str, label: &str, settings: &CallSettings) -> Result<Reply, Stop> {
+        let call = host::llm::ClientCall {
+            system,
+            user_message,
+            label,
+            model: &settings.model,
+            effort: settings.effort.as_deref(),
+            max_tokens: settings.max_tokens,
+        };
         let answer = self.run.priced(host::llm::client_call(self.run.segment(), call, self.run.ledger.budget())).await.map_err(thrown)?;
         let member = |key: &str| crate::unique::get(&answer, key);
         let uncarried = uncarried(&answer);

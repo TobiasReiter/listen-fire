@@ -232,7 +232,8 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = co'))).toBe('admitted');
     expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = [co]'))).toBe('admitted');
     expect(await admission(program('  x = msg'))).toBe('admitted');
-    expect(await admission(program('  x = AI("why?")'))).toBe('expression:llm');
+    expect(await admission(program('  x = AI("why?")'))).toBe('admitted');
+    expect(await admission(program('  x = KG_VALUE("why?")'))).toBe('expression:kg_value');
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
     expect(await admission(program('  x = crm.`name`'))).toBe('admitted');
     expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('rvalue:collection');
@@ -568,7 +569,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
       [movement('  x = ONLY(crm-[c:companies]->.`name`)'), 'aggregate:only'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
-      [movement('  x = @user_email'), 'meta:user_email'],
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
       [movement('  x = msg-[:files]->-[#transform]->.`name`'), 'traversal_step'],
@@ -600,7 +600,6 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\npage = fetch_url()\n${movement('  x = 1')}`, 'file_call'],
       [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'file_call'],
       // An extraction this engine does not run (chunk 6A Task 3b runs the rest).
-      [movement('  found = extract "careful" from [msg.`text`] {\n    name: "a"\n  }'), 'extract_tier'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
       // A record the TypeScript would hand its host as the binding object,
@@ -625,13 +624,13 @@ describe('a whole run in the Rust engine', () => {
     // A refused run counts once under its first reason, and once under
     // each reason it holds: the walk goes on past the first.
     resetRustRunStats();
-    const many = movement('  x = AI("why?")\n  y = @user_email\n  z = AI("again")\n  if msg.`subject` WITHIN "7d" {\n    w = 1\n  }');
+    const many = movement('  x = KG_VALUE("why?")\n  y = FIRST(crm-[:#foo]->)\n  z = KG_VALUE("again")\n  if msg.`subject` WITHIN "7d" {\n    w = 1\n  }');
     const { outcome, resolved } = await segmentOf(many);
-    expect(outcome).toEqual({ declined: 'expression:llm' });
+    expect(outcome).toEqual({ declined: 'expression:kg_value' });
     expect(resolved).toEqual([]);
     expect(rustRunStats).toMatchObject({
-      notAdmitted: { 'expression:llm': 1 },
-      allReasons: { 'expression:llm': 1, 'meta:user_email': 1, within_compare: 1 },
+      notAdmitted: { 'expression:kg_value': 1 },
+      allReasons: { 'expression:kg_value': 1, traversal_meta_edge: 1, within_compare: 1 },
       declined: {},
       hostCalls: {},
     });
@@ -642,9 +641,9 @@ describe('the run counts', () => {
   it('count a refusal only for a run the Rust engine did not run, and a whole run under no reason', async () => {
     resetRustRunStats();
     const runs = [
-      'movement m(msg: <inbox-[:message]->>) {\n  x = AI("why?")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE("why?")\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  y = @user_email\n  z = AI("again")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n  z = KG_VALUE("again")\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
     ];
     for (const source of runs) await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
@@ -654,8 +653,8 @@ describe('the run counts', () => {
     expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, declined: {} });
     const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
     expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
-    expect(rustRunStats.notAdmitted).toEqual({ 'expression:llm': 1, 'meta:user_email': 1 });
-    expect(rustRunStats.allReasons).toEqual({ 'expression:llm': 2, 'meta:user_email': 1 });
+    expect(rustRunStats.notAdmitted).toEqual({ 'expression:kg_value': 1, traversal_meta_edge: 1 });
+    expect(rustRunStats.allReasons).toEqual({ 'expression:kg_value': 2, traversal_meta_edge: 1 });
   });
 });
 
@@ -664,7 +663,7 @@ describe('admission walks what the entry reaches', () => {
   const entry = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}\n`;
 
   it('runs a program whose unreached helper holds what this engine does not run, as the TypeScript engine does', async () => {
-    for (const unsupported of ['  x = AI("why?")', '  x = @user_email', '  r = await parallel([() => {\n    y = 1\n  }])']) {
+    for (const unsupported of ['  x = e.`subject` WITHIN "7d"', '  crm-[b:bags]-> {\n    x = FIRST(b-[:#foo]->)\n  }', '  r = await parallel([() => {\n    y = 1\n  }])']) {
       const { result } = await agree({
         source: `${helper(unsupported)}${entry('  s = msg.`subject`\n  return UPPER(s)')}`,
         event: webhook({ subject: 'Acme' }),
@@ -679,9 +678,9 @@ describe('admission walks what the entry reaches', () => {
     resetRustRunStats();
     // The call itself is admitted (chunk 7A Task 2): the callee's own
     // reason refuses, and the walk goes on past it.
-    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = @user_email')}${helper('  x = AI("why?")')}`, 'm');
-    expect(outcome).toEqual({ declined: 'meta:user_email' });
-    expect(rustRunStats).toMatchObject({ notAdmitted: { 'meta:user_email': 1 }, allReasons: { 'meta:user_email': 1, 'expression:llm': 1 }, hostCalls: {} });
+    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = FIRST(crm-[:#foo]->)')}${helper('  x = KG_VALUE("why?")')}`, 'm');
+    expect(outcome).toEqual({ declined: 'traversal_meta_edge' });
+    expect(rustRunStats).toMatchObject({ notAdmitted: { traversal_meta_edge: 1 }, allReasons: { traversal_meta_edge: 1, 'expression:kg_value': 1 }, hostCalls: {} });
   });
 
   it('runs a reached helper the entry calls, as the TypeScript engine does', async () => {

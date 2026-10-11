@@ -54,8 +54,8 @@ const program = (...body: string[]) =>
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
 /** Refused by its admission: a closure in an expression. */
 const REFUSED = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  return msg.`subject`');
-/** Refused for two reasons: the closure, and a meta key read through the host. */
-const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = @user_email', '  return msg.`subject`');
+/** Refused for two reasons: the closure, and a retired knowledge-graph read. */
+const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = KG_VALUE("q")', '  return msg.`subject`');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -188,8 +188,8 @@ describe('the admission dry run, through the real artifact', () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'meta:user_email': 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'meta:user_email'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'expression:kg_value': 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'expression:kg_value'] }]);
   });
 
   it("puts a resume to the engine's start as a real resume, its answer included", async () => {
