@@ -2038,8 +2038,9 @@ function memberBaseKind(type: FieldType): BaseKind {
  *  that serializes into a JSON document. */
 function isDataShaped(type: FieldType): boolean {
   // A record is the second handle: it is a place in a graph, not a document,
-  // and nothing serialises one into a json field.
-  return baseKinds(type).every(base => base !== 'file' && base !== 'record');
+  // and nothing serialises one into a json field — nor a map or a list that
+  // holds one, at any depth.
+  return baseKinds(type).every(base => base !== 'file' && base !== 'record') && recordWithin(type) === undefined;
 }
 
 /**
@@ -2513,6 +2514,12 @@ export function fieldTypeCompatible(value: FieldType, target: FieldType): boolea
   // A tuple is written as the list it widens to; one whose members share
   // nothing is a list nobody can type, and unknown says nothing. (A reader
   // that knows the program's version has already widened it to its union.)
+  // A record held anywhere inside the value — a map's key, a list's member —
+  // is still a record, and a field that holds no records takes none of it.
+  // Asked of the value as written, ahead of widening: a tuple whose slots
+  // disagree widens to a list nobody can type, which says nothing about the
+  // record in one slot.
+  if (recordWithin(value) !== undefined && recordWithin(target) === undefined) return false;
   const written = widenTuplesBy(value, 'shared');
   if (written === undefined) return true;
   // Absence is a require-present concern (checked separately at the write site),
@@ -2647,6 +2654,182 @@ export function isRecordType(type: FieldType | undefined): boolean {
     case 'maybeAbsent':
     case 'union':
       return false;
+    default:
+      return neverAsAny(variant);
+  }
+}
+
+/** One step from a value into it: a dict's key, a slot whose place is
+ *  written down, or a member nobody can number (a list's, a run's, a key that
+ *  is data). */
+export type HeldStep = { kind: 'key'; key: string } | { kind: 'slot'; index: number } | { kind: 'member' };
+
+/**
+ * A RECORD somewhere inside a value: the steps from the value down to it (none
+ * for the value itself), and the record. `may` when the value only MAY hold it
+ * — one arm of a conditional, one member of a union.
+ */
+export interface HeldRecord {
+  steps: HeldStep[];
+  record: FieldType;
+  may: boolean;
+}
+
+const MEMBER: HeldStep = { kind: 'member' };
+
+function keyStep(key: string): HeldStep {
+  return { kind: 'key', key };
+}
+
+/** The steps as a read off the value would spell them: `.a`, `[0]`, `[…]`. */
+export function spellHeldSteps(steps: readonly HeldStep[]): string {
+  return steps
+    .map(step => {
+      switch (step.kind) {
+        case 'key':
+          return `.${quoteName(step.key)}`;
+        case 'slot':
+          return `[${step.index}]`;
+        case 'member':
+          return '[…]';
+        default:
+          return neverAsAny(step);
+      }
+    })
+    .join('');
+}
+
+/**
+ * The first record a value of this type holds, at any depth — the value
+ * itself, a list's members, a tuple's slots, a dict's values. A record is a
+ * place in a graph, not data, so a value holding one anywhere is not data
+ * either: `json` is what serialises, and a handle does not, however deep it
+ * sits.
+ */
+export function recordWithin(type: FieldType | undefined, steps: HeldStep[] = []): HeldRecord | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  switch (variant.kind) {
+    case 'record':
+      return { steps, record: variant, may: false };
+    case 'list':
+    case 'tuple':
+      return recordAmongMembers(variant, steps, index => ({ kind: 'slot', index }));
+    case 'dict': {
+      for (const [key, value] of Object.entries(variant.shape ?? {})) {
+        const held = recordWithin(value ?? undefined, [...steps, keyStep(key)]);
+        if (held !== undefined) return held;
+      }
+      return recordWithin(variant.of, [...steps, MEMBER]);
+    }
+    case 'union': {
+      for (const member of variant.of) {
+        const held = recordWithin(member, steps);
+        if (held !== undefined) return { ...held, may: true };
+      }
+      return undefined;
+    }
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'file':
+    case 'json':
+    case 'absent':
+    case 'enum':
+    case 'maybeAbsent':
+      return undefined;
+    default:
+      return neverAsAny(variant);
+  }
+}
+
+/**
+ * The first record among a collection's MEMBERS — a list's element, a tuple's
+ * slots and run — each member at `[...steps, stepFor(slot)]`. A spread into a
+ * list literal splices members, so it asks with every slot unnumbered.
+ */
+export function recordAmongMembers(
+  type: FieldType | undefined,
+  steps: HeldStep[],
+  stepFor: (slot: number) => HeldStep,
+): HeldRecord | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  switch (variant.kind) {
+    case 'list':
+      return recordWithin(variant.of, [...steps, MEMBER]);
+    case 'tuple': {
+      for (const [index, slot] of variant.of.entries()) {
+        const held = recordWithin(slot ?? undefined, [...steps, stepFor(index)]);
+        if (held !== undefined) return held;
+      }
+      return recordWithin(variant.rest?.of ?? undefined, [...steps, MEMBER]);
+    }
+    case 'union': {
+      for (const member of variant.of) {
+        const held = recordAmongMembers(member, steps, stepFor);
+        if (held !== undefined) return { ...held, may: true };
+      }
+      return undefined;
+    }
+    case 'record':
+    case 'dict':
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'file':
+    case 'json':
+    case 'absent':
+    case 'enum':
+    case 'maybeAbsent':
+      return undefined;
+    default:
+      return neverAsAny(variant);
+  }
+}
+
+/**
+ * What a spread of this type copies into a map literal: a record's FIELDS
+ * under their own names (values, so spreading a record is legal), a map's
+ * keys under theirs — and, for a union, whichever member it turns out to be.
+ */
+export function recordSpreadOf(type: FieldType | undefined, steps: HeldStep[]): HeldRecord | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  switch (variant.kind) {
+    case 'record': {
+      if (variant.position === undefined) return undefined;
+      for (const [field, fieldType] of Object.entries(recordFieldTypes(variant.position) ?? {})) {
+        const held = recordWithin(fieldType ?? undefined, [...steps, keyStep(field)]);
+        if (held !== undefined) return held;
+      }
+      return undefined;
+    }
+    case 'union': {
+      for (const member of variant.of) {
+        const held = recordSpreadOf(member, steps);
+        if (held !== undefined) return { ...held, may: true };
+      }
+      return undefined;
+    }
+    case 'list':
+    case 'tuple':
+    case 'dict':
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'file':
+    case 'json':
+    case 'absent':
+    case 'enum':
+    case 'maybeAbsent':
+      return recordWithin(type, steps);
     default:
       return neverAsAny(variant);
   }
@@ -2829,6 +3012,9 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   source = stripAbsent(source);
   target = stripAbsent(target);
   if (fieldTypeEquals(source, target)) return true;
+  // A record held anywhere inside a value, where the target holds none — the
+  // write rule's own (`fieldTypeCompatible`), asked before a tuple widens.
+  if (recordWithin(source) !== undefined && recordWithin(target) === undefined) return false;
   // TypeScript's union rules: a union reads as X when every member it may be
   // does, and X reads as a union when it reads as some member.
   if (isUnionType(source)) return source.of.every(member => fieldAssignable(member, target));
@@ -3616,6 +3802,10 @@ export class ExpressionTyping {
    *  second walk would report its diagnostics and record its effects twice). */
   private readonly readTypes = new WeakMap<Expression, FieldType | undefined>();
 
+  /** What each sub-expression was typed as, exactly (a tuple kept as one) —
+   *  what `recordHeldBy` reads the parts of a written value by. */
+  private readonly exactTypes = new WeakMap<Expression, FieldType | undefined>();
+
   constructor(
     private readonly options: {
       /** The compile context's language version — what this walker's
@@ -4089,6 +4279,69 @@ export class ExpressionTyping {
 
   /** `position` is the ambient position for rootless reads (a traversal's destination). */
   private inferExactAt(expr: Expression, position: PositionTypeRef | undefined): FieldType | undefined {
+    const type = this.typeExactAt(expr, position);
+    this.exactTypes.set(expr, type);
+    return type;
+  }
+
+  /**
+   * The first record a value written here holds, at any depth — read off what
+   * each part of it was typed as, and descending into the parts of a value the
+   * expression BUILDS (a map literal's entries, a list literal's members, both
+   * arms of a conditional), as TypeScript checks an object literal against its
+   * target member by member. That reaches the records the whole value's type
+   * no longer shows: a conditional whose arms disagree has no type, and a
+   * version-1 map literal whose values disagree is `json`. A spread of a
+   * record copies its FIELDS, which are values. Asked after `infer` walked
+   * the expression.
+   */
+  recordHeldBy(expr: Expression, steps: HeldStep[] = []): HeldRecord | undefined {
+    switch (expr.type) {
+      case 'object':
+        for (const member of expr.entries) {
+          const held = isObjectSpread(member)
+            ? this.recordSpreadBy(member.expression, steps)
+            : this.recordHeldBy(member.value, [...steps, keyStep(member.key)]);
+          if (held !== undefined) return held;
+        }
+        return undefined;
+      case 'list': {
+        // A member's place is fixed until the first spread: past it, a slot is
+        // wherever the run before it ended.
+        let numbered = true;
+        for (const [index, element] of expr.elements.entries()) {
+          if (element.type === 'spread') {
+            numbered = false;
+            const held = recordAmongMembers(this.exactTypes.get(element.expression), steps, () => MEMBER);
+            if (held !== undefined) return held;
+            continue;
+          }
+          const held = this.recordHeldBy(element, [...steps, numbered ? { kind: 'slot', index } : MEMBER]);
+          if (held !== undefined) return held;
+        }
+        return undefined;
+      }
+      case 'conditional': {
+        const held = this.recordHeldBy(expr.then, steps) ?? this.recordHeldBy(expr.else, steps);
+        return held !== undefined ? { ...held, may: true } : undefined;
+      }
+      default:
+        return recordWithin(this.exactTypes.get(expr), steps);
+    }
+  }
+
+  /** What `...x` copies into a map literal, for `recordHeldBy`: a record's
+   *  fields under their own names, or a map's keys under theirs — whichever
+   *  arm of a conditional it turns out to be. */
+  private recordSpreadBy(expr: Expression, steps: HeldStep[]): HeldRecord | undefined {
+    if (expr.type === 'conditional') {
+      const held = this.recordSpreadBy(expr.then, steps) ?? this.recordSpreadBy(expr.else, steps);
+      return held !== undefined ? { ...held, may: true } : undefined;
+    }
+    return recordSpreadOf(this.exactTypes.get(expr), steps);
+  }
+
+  private typeExactAt(expr: Expression, position: PositionTypeRef | undefined): FieldType | undefined {
     switch (expr.type) {
       case 'static':
         if (typeof expr.value === 'string') return 'text';

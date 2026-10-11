@@ -280,6 +280,10 @@ import {
   instanceOfType,
   fieldAssignable,
   fieldTypeCompatible,
+  recordSpreadOf,
+  recordWithin,
+  spellHeldSteps,
+  type HeldRecord,
   fieldTypeEquals,
   LocalEdge,
   InstanceRef,
@@ -1301,6 +1305,12 @@ type DeclaredParams = Array<{ name: string; type: PlaneType }>;
 type BoundParam = DeclaredParams[number];
 
 /** One argument against the parameter it binds, for the fit diagnostics. */
+/** What a plugin declares each named argument takes, by name — absent for an
+ *  argument it declares no type for. */
+interface PluginArgTypes {
+  declared: Readonly<Record<string, SchemaFieldType>>;
+}
+
 interface ArgFit {
   callee: string;
   param: BoundParam | undefined;
@@ -1781,6 +1791,44 @@ function escapedFromBlock(scope: Scope, member: string, blockName: string): bool
     if (s.escaped.has(member)) return s.escaped.get(member) === blockName;
   }
   return false;
+}
+
+// ── Field value messages ──
+
+/**
+ * A record written into a field that holds values — the value itself, or a
+ * record somewhere inside it. The repair is the same either way: write a field
+ * off the record in its place, or link the two records.
+ */
+function recordInFieldMessage(input: {
+  fieldName: string;
+  subject: string;
+  targetType: FieldType;
+  valueType: FieldType | undefined;
+  held: HeldRecord;
+}): string {
+  const { fieldName, subject, targetType, valueType, held } = input;
+  const direct = held.steps.length === 0;
+  const verb = held.may ? 'may be' : 'is';
+  const what = direct && !held.may && valueType !== undefined ? valueType : held.record;
+  const where = direct ? 'this' : `'${fieldName}${spellHeldSteps(held.steps)}'`;
+  return `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and ${where} ${verb} ${describeFieldType(what)} — a record, not a value. Write a field off it (${fieldOffRepair(direct ? fieldName : held)}), or join the two records with a link ('link … -[:edge]-> r').`;
+}
+
+/** A plugin argument taking structured data, with a record inside its value.
+ *  The whole argument may be a record — the plugin is handed its fields — but
+ *  a record inside a value reaches the plugin as nothing it can read. */
+function recordInPluginArgMessage(input: { callee: string; name: string; held: HeldRecord }): string {
+  const { callee, name, held } = input;
+  return `'${callee}' takes structured data for '${name}', and '${name}${spellHeldSteps(held.steps)}' ${held.may ? 'may be' : 'is'} ${describeFieldType(held.record)} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${fieldOffRepair(held)}).`;
+}
+
+/** The repair "write a field off it", placed under the key the record sat at
+ *  where there is one. */
+function fieldOffRepair(at: string | HeldRecord): string {
+  const last = typeof at === 'string' ? undefined : at.steps[at.steps.length - 1];
+  const place = typeof at === 'string' ? at : last?.kind === 'key' ? last.key : undefined;
+  return place !== undefined ? `'${place}: r.\`Name\`'` : `'r.\`Name\`'`;
 }
 
 // ── Span helpers ──
@@ -4906,9 +4954,13 @@ class Checker {
         const result = this.checkAwait(value.await, scope, name);
         // A traversal / maybe-empty landing binds a NODE (arrow plane); an
         // `until` that resolves a scalar condition binds a SCALAR (dot plane).
+        // A combinator's receipt is a list of what its arms returned — a VALUE
+        // even where nobody can type it (arms built at run time), as the
+        // un-awaited combinator binds it; on the arrow plane it would read as
+        // "a record nobody can name", which it is not.
         symbol =
-          result.fieldType !== undefined
-            ? { ...symbol, fieldType: result.fieldType, bindingPlane: 'scalar' }
+          result.fieldType !== undefined || value.await.source.kind === 'combinator'
+            ? { ...symbol, ...(result.fieldType !== undefined ? { fieldType: result.fieldType } : {}), bindingPlane: 'scalar' }
             : { ...symbol, ...(result.posType ? { posType: result.posType } : {}), bindingPlane: 'node' };
         break;
       }
@@ -6530,6 +6582,12 @@ class Checker {
    * exactly two things: write a field OFF the record, or join the two records
    * with a link. Saying "produces slack.message" and leaving the author to
    * infer that is the silence this checker exists to refuse.
+   *
+   * The same words wherever in the value the record sits — a map's key, a
+   * list's member, one arm of a conditional (`held`, found by the walk that
+   * typed the value) — since a field holds values all the way down, and a
+   * record placed inside one reached the system as the engine's own
+   * description of it.
    */
   private reportFieldValueType(
     fieldName: string,
@@ -6537,9 +6595,19 @@ class Checker {
     targetType: FieldType | undefined,
     valueType: FieldType | undefined,
     span: Span,
-    options?: { relationship?: boolean; declared?: boolean },
+    options?: { relationship?: boolean; declared?: boolean; held?: HeldRecord },
   ): void {
-    if (targetType === undefined || valueType === undefined) return;
+    if (targetType === undefined) return;
+    const held = options?.held;
+    if (held !== undefined && options?.relationship !== true && recordWithin(targetType) === undefined) {
+      this.report(
+        DiagnosticCodes.WRITE_FIELD_TYPE,
+        recordInFieldMessage({ fieldName, subject, targetType, valueType, held }),
+        span,
+      );
+      return;
+    }
+    if (valueType === undefined) return;
     if (isRecordType(valueType) && options?.relationship === true) return;
     // A field a node DECLARATION types holds what it says, as a parameter
     // typed on the declaration does (`surfaceMisfit`): the program wrote the
@@ -6558,7 +6626,7 @@ class Checker {
     if (isRecordType(valueType)) {
       this.report(
         DiagnosticCodes.WRITE_FIELD_TYPE,
-        `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and this is ${describeFieldType(valueType)} — a record, not a value. Write a field off it ('${fieldName}: r.\`Name\`'), or join the two records with a link ('link … -[:edge]-> r').`,
+        recordInFieldMessage({ fieldName, subject, targetType, valueType, held: { steps: [], record: valueType, may: false } }),
         span,
       );
       return;
@@ -7823,7 +7891,7 @@ class Checker {
                 : {}),
             }
           : undefined;
-      const { valueType } = this.checkExprSlot(field.value, scope, {
+      const { valueType, held } = this.checkExprSlot(field.value, scope, {
         ...(writeTarget !== undefined ? { writeTarget } : {}),
         writeField: true,
       });
@@ -7863,6 +7931,7 @@ class Checker {
         // about the same line.
         relationship: writtenSchema?.edges[field.name] !== undefined,
         declared: declaredTarget,
+        ...(held !== undefined ? { held } : {}),
       });
       this.checkEnumLiteralWrite(field.value, {
         targetType,
@@ -8363,12 +8432,14 @@ class Checker {
           field.span,
         );
       }
-      const { valueType } = this.checkExprSlot(field.value, scope, {
+      const { valueType, held } = this.checkExprSlot(field.value, scope, {
         ...(targetType !== undefined ? { writeTarget: { type: targetType } } : {}),
         writeField: true,
       });
       this.reportBlankableIdentityKey({ uniqueBy: match.uniqueBy, field, valueType, rootDescription, scope });
-      this.reportFieldValueType(field.name, rootDescription, targetType, valueType, field.value.span);
+      this.reportFieldValueType(field.name, rootDescription, targetType, valueType, field.value.span, {
+        ...(held !== undefined ? { held } : {}),
+      });
       this.checkEnumLiteralWrite(field.value, {
         targetType,
         subject: `'${field.name}' on ${rootDescription}`,
@@ -9550,6 +9621,9 @@ class Checker {
     });
     let params: DeclaredParams | undefined;
     let value: ReturnShape = UNKNOWN_RETURN;
+    // A plugin's argument VALUES are held to what it declares it takes where
+    // each is checked (`checkCallArg`), so one typing walk answers both.
+    let pluginArgTypes: PluginArgTypes | undefined;
     if (resolution.kind !== 'found') {
       this.reportCalleeUnresolved(statement.callee, statement.span, resolution, scope);
       // Something runs here and nobody can say what: the row is a lower bound.
@@ -9575,6 +9649,7 @@ class Checker {
       } else if (callee.kind === 'plugin') {
         // One function sort: a plugin is a function whose body isn't visible.
         value = this.checkPluginApplication(statement, callee, scope);
+        pluginArgTypes = { declared: this.catalog.plugin(callee.importedName ?? statement.callee)?.argTypes ?? {} };
       } else if (closure !== undefined) {
         // A closure bound to a name is a function: its signature is its
         // parameters, its value what its body returns, and calling it does
@@ -9614,7 +9689,7 @@ class Checker {
       recorded.argParams = bound.map(b => b.param?.name);
     }
     for (const { arg, param, index } of bound) {
-      this.checkCallArg(statement.callee, arg, param, index, scope);
+      this.checkCallArg(statement.callee, arg, param, index, scope, pluginArgTypes);
     }
     return value;
   }
@@ -9629,12 +9704,27 @@ class Checker {
     param: BoundParam | undefined,
     index: number,
     scope: Scope,
+    plugin?: PluginArgTypes,
   ): void {
     const fit: ArgFit = { callee, param, index, positional: arg.name === undefined };
     switch (arg.kind) {
       case 'expr': {
-        const { valueType, parsed } = this.checkExprSlot(arg.expr, scope);
+        const { valueType, parsed, held } = this.checkExprSlot(arg.expr, scope);
         const argType = this.bareSlotPositionType(arg.expr, scope);
+        // A plugin's named argument: a value against what the plugin takes
+        // (a positional one is refused where the call is checked).
+        if (plugin !== undefined && arg.name !== undefined) {
+          this.checkPluginArgValue({
+            callee,
+            declared: plugin.declared[arg.name],
+            name: arg.name,
+            record: argType ?? recordIn(valueType)?.position,
+            valueType,
+            ...(held !== undefined ? { held } : {}),
+            span: arg.expr.span,
+          });
+          return;
+        }
         if (param?.type.fieldType !== undefined) {
           this.checkValueArgFit(fit, param.type.fieldType, argType !== undefined ? recordOf(argType) : valueType, {
             span: arg.expr.span,
@@ -9690,6 +9780,7 @@ class Checker {
             param,
             index,
             scope,
+            plugin,
           );
           return;
         }
@@ -12792,22 +12883,15 @@ class Checker {
   ): void {
     const name = arg.name ?? '';
     switch (arg.kind) {
-      case 'expr': {
-        const valueType = this.slotValueTypeSilently(arg.expr, scope);
-        const record = this.bareSlotPositionType(arg.expr, scope) ?? recordIn(valueType)?.position;
-        this.checkPluginArgValue({ callee, declared, name, record, valueType, span: arg.expr.span });
+      // An expression, and a built-in called in place (`relay(data:
+      // UPPER(x))`) — the value it computes — are held to the declared type
+      // where the argument is checked (`checkCallArg`), off the one walk that
+      // types it, nested calls included.
+      case 'expr':
         return;
-      }
       case 'call': {
         const reading = this.readCallAt(arg.call, scope, 'argument');
-        if (reading.kind === 'value') {
-          // A built-in called here (`relay(data: UPPER(x))`) is the value it
-          // computes — an ordinary expression argument.
-          const { valueType } = this.checkExprSlot(reading.expr, scope);
-          const record = this.bareSlotPositionType(reading.expr, scope) ?? recordIn(valueType)?.position;
-          this.checkPluginArgValue({ callee, declared, name, record, valueType, span: arg.call.span });
-          return;
-        }
+        if (reading.kind === 'value') return;
         if (reading.kind === 'refused') {
           this.reportCallRefusal(reading.refusal);
           return;
@@ -12849,9 +12933,23 @@ class Checker {
     name: string;
     record: PositionTypeRef | undefined;
     valueType: FieldType | undefined;
+    /** The record the argument's value holds, found by the walk that typed it. */
+    held?: HeldRecord;
     span: Span;
   }): void {
-    const { callee, declared, name, record, valueType, span } = at;
+    const { callee, declared, name, record, valueType, held, span } = at;
+    // Where a plugin takes a record at all (structured data, or no declared
+    // type), it takes it as the WHOLE argument and is handed its fields — the
+    // spread `{ ...r }` would copy. A record anywhere inside that value (a
+    // map's key, a list's member, a field of the record handed over) reaches
+    // the plugin as the engine's own description of it.
+    if (declared === 'json' || declared === undefined) {
+      const nested = held !== undefined && held.steps.length > 0 ? held : recordSpreadOf(valueType, []);
+      if (nested !== undefined) {
+        this.report(DiagnosticCodes.CALL_ARG_TYPE, recordInPluginArgMessage({ callee, name, held: nested }), span);
+        return;
+      }
+    }
     if (declared === 'json') {
       // Handed its fields, all at once: a record whose fields are read from
       // its system one at a time has none to hand, and a function's parameter
@@ -12984,7 +13082,7 @@ class Checker {
     slot: ExprSlot,
     scope: Scope,
     options?: SlotOptions,
-  ): { valueType?: FieldType; parsed?: Expression } {
+  ): { valueType?: FieldType; parsed?: Expression; held?: HeldRecord } {
     const trimmed = slot.raw.trim();
     if (BARE_IDENT.test(trimmed)) {
       if (EXPR_LITERALS.has(trimmed.toUpperCase())) {
@@ -12997,9 +13095,10 @@ class Checker {
       // A bare name short-circuits the parse, but it still HAS a value type —
       // the binding's own. Without this its absence would die here, at the very
       // sites (a plain write field) that require presence.
-      const held = this.bareNameValueType(scope, trimmed);
-      const valueType = options?.holdsValue === true ? held : this.readHeldValue(held, slot.span);
-      return valueType !== undefined ? { valueType } : {};
+      const bound = this.bareNameValueType(scope, trimmed);
+      const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
+      const held = recordWithin(bound);
+      return { ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);
@@ -13022,7 +13121,8 @@ class Checker {
     const valueType = options?.holdsValue === true
       ? typing.inferExact(parsed, options.writeTarget)
       : typing.infer(parsed, options?.writeTarget);
-    return { parsed, ...(valueType !== undefined ? { valueType } : {}) };
+    const held = typing.recordHeldBy(parsed) ?? recordWithin(valueType);
+    return { parsed, ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
   }
 
   /** A held value READ — a tuple as the list it widens to, refused where it
