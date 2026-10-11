@@ -22,6 +22,7 @@
     "refresh:valuations-cache": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/refresh_valuations_cache.ts",
     "adapter:conformance": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r tsconfig-paths/register src/scripts/adapter_conformance.ts",
     "engine:refusals": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/engine_refusals.ts",
+    "engine:patterns": "TS_NODE_PROJECT=tsconfig.json ts-node --transpile-only ../../crates/movement-engine/tests/oracle/patterns_report.ts",
     "listeners:paused": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/list_paused_listeners.ts",
     "deploy:check": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/dev/deploy_check.ts",
     "export:kg-sqlite": "TZ=utc ts-node --project tsconfig.dev.json --transpile-only -r dotenv/config -r tsconfig-paths/register src/scripts/export_kg_sqlite.ts",

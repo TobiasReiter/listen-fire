@@ -28,7 +28,13 @@
 //     writes, the trace and the parked state (./handles_oracle.ts);
 //   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
 //   - dates.json: V8's date parser, and the members that read dates through
-//     it, under five local zones (./dates_oracle.ts).
+//     it, under five local zones (./dates_oracle.ts);
+//   - patterns.json: the retirement proof — seeded programs for every
+//     admission pattern the README's port list names, and every one chunk 7A
+//     closed, each run on both engines through the real shim against one
+//     scripted host and compared (./patterns_oracle.ts; the report is
+//     ./patterns_report.ts, `pnpm engine:patterns`). A program that ends where
+//     its pattern does not say fails the generator.
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started — all but dates_oracle.ts,
@@ -68,6 +74,7 @@ import { writeParallelOracle } from './parallel_oracle';
 import { writeRecordsOracle } from './records_oracle';
 import { writeTailOracles } from './tail_oracle';
 import { writeDatesOracle } from './dates_oracle';
+import { writePatternsOracle } from './patterns_oracle';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
 function wire(value: unknown): unknown {
@@ -397,6 +404,8 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
+  // Both engines: the movement.wasm the shim loads is the one committed.
+  await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
   process.exitCode = 1;
