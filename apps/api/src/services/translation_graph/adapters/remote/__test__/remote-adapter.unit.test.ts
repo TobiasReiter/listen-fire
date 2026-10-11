@@ -771,7 +771,7 @@ describe('RemoteAdapter files by envelope', () => {
   });
 
   it('asks the catalog once per type, and never for a scalar answer', async () => {
-    enqueue('h@x.com', describedWith('file'), spelled, spelled);
+    enqueue('h@x.com', spelled, describedWith('file'), spelled);
     const adapter = buildAdapter();
     expect(await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' })).toBe('h@x.com');
     await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
@@ -819,5 +819,46 @@ describe('RemoteAdapter files by envelope', () => {
     expect(params.position.resources[0]?.fileRef).toEqual(wire);
     expect(params.position.resources[0]?.data.file).toEqual(wire);
     expect(params.position.evidence.from.sourceResourceRef.fileRef).toEqual(wire);
+  });
+
+  it("strips the credential from a resource position's own data and from a write's parent payload", async () => {
+    const owned = {
+      __brand: 'FileRef',
+      name: 'memo.pdf',
+      source: { adapterType: 'attio', credentialId: 'cred-host', constructionArgs: { workspace: 'w' }, handle: 'att-1' },
+    };
+    const wire = { __brand: 'FileRef', name: 'memo.pdf', source: { ownerAdapterType: 'attio', handle: 'att-1' } };
+    const resourcePosition = {
+      ...samplePosition,
+      originRef: { kind: 'resource' as const, nodeId: 'n-1' },
+      identity: { kind: 'unstable' as const, data: { type: 'FILE', fileRef: owned, data: { file: owned } } },
+    };
+    enqueue('h@x.com', { adapterType: 'remote-email', externalId: 'r-1', data: {} });
+    const adapter = buildAdapter();
+    await adapter.getFieldValue({ position: resourcePosition, fieldId: 'from' });
+    await adapter.createRecord({
+      recordType: 'Note',
+      fields: {},
+      parentLinks: [{ recordType: 'Resource', externalId: 'r-0', edgeName: 'Notes', data: { type: 'FILE', fileRef: owned } }],
+      mutationContext: { source: {}, occurredAt: '2026-10-11T00:00:00.000Z' },
+    } as unknown as Parameters<RemoteAdapter['createRecord']>[0]);
+    for (const call of postRpcMock.mock.calls) expect(JSON.stringify(call[0].params)).not.toContain('cred-host');
+    const read = postRpcMock.mock.calls[0]?.[0].params as { position: { identity: { data: { fileRef: unknown; data: { file: unknown } } } } };
+    expect(read.position.identity.data.fileRef).toEqual(wire);
+    expect(read.position.identity.data.data.file).toEqual(wire);
+    const written = postRpcMock.mock.calls[1]?.[0].params as { parentLinks: Array<{ data: { fileRef: unknown } }> };
+    expect(written.parentLinks[0]?.data.fileRef).toEqual(wire);
+  });
+
+  it('a describe that fails fails the read, by name, and is asked again next time', async () => {
+    const theirs = { __brand: 'FileRef', name: 'deck.pdf', source: { ownerAdapterType: 'remote-email', handle: 'h-1' } };
+    enqueue(theirs, { typeId: 7 }, theirs, describedWith('file'));
+    const adapter = buildAdapter();
+    await expect(adapter.getFieldValue({ position: samplePosition, fieldId: 'from' })).rejects.toThrow(
+      /describe\("email:message"\) failed, so whether "from" holds a file is not known/,
+    );
+    const ref = await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
+    expect(ref).toMatchObject({ source: { adapterType: 'remote-email', credentialId: 'cred-1' } });
+    expect(calledMethods()).toEqual(['getFieldValue', 'describe', 'getFieldValue', 'describe']);
   });
 });

@@ -179,9 +179,11 @@ function fileSourceOf(value: unknown): FileSource | EarlierFileSource | undefine
   let constructionArgs: Record<string, string> | undefined;
   if (args !== undefined) {
     if (!isPlainObject(args)) return undefined;
-    const entries = Object.entries(args);
-    if (!entries.every(([, entry]) => typeof entry === 'string')) return undefined;
-    constructionArgs = Object.fromEntries(entries) as Record<string, string>;
+    constructionArgs = {};
+    for (const [key, entry] of Object.entries(args)) {
+      if (typeof entry !== 'string') return undefined;
+      constructionArgs[key] = entry;
+    }
   }
   return {
     adapterType,

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
-import { PROTOCOL_VERSION } from 'engine-contracts';
+import { fileDescriptorOf, PROTOCOL_VERSION } from 'engine-contracts';
 import { canonicalJson } from 'engine-contracts/conformance';
 
 import type { TeamId } from '../generated/kysely/core/Team';
@@ -528,8 +528,11 @@ async function checkRecords(input: {
     for (const field of descriptor.fields) {
       if (field.readable === false) continue;
       const value = await adapter.getFieldValue({ position, fieldId: field.displayName });
+      // A file ref, branded or not (the wire allows either).
       const spelled = (Array.isArray(value) ? value : [value]).some(
-        (member) => member !== null && typeof member === 'object' && Reflect.get(member, '__brand') === 'FileRef',
+        (member) =>
+          (member !== null && typeof member === 'object' && Reflect.get(member, '__brand') === 'FileRef') ||
+          fileDescriptorOf(member) !== undefined,
       );
       if (field.kind === 'file') files++;
       else if (spelled) undeclared.push(field.displayName);

@@ -193,9 +193,9 @@ export type WireLinkedObjectShape = z.infer<typeof WireLinkedObject>;
  * in `resolveFileRef`.
  */
 export const WireFileRef = z.object({
-  // `FileRef`'s brand — what `isFileRef` recognises a file by on either side.
-  // Optional so a remote that omits it is not refused (it was never revived
-  // as a file without it).
+  // The descriptor's spelling, read by nobody: what makes a ref a file is the
+  // field it sits in (one the catalog declares a file) or a resource's
+  // `fileRef` slot. Optional, so a remote that omits it is not refused.
   __brand: z.literal('FileRef').optional(),
   name: z.string().optional(),
   contentType: z.string().optional(),

@@ -105,6 +105,21 @@ import {
   type FileSource,
 } from '../../adapter';
 
+/**
+ * A remote's catalog could not be read for the field a read answered, so
+ * whether its answer is a file is not known: that read fails, naming why,
+ * rather than taking the answer for data.
+ */
+export class RemoteDescribeFailed extends Error {
+  constructor(adapterType: string, recordType: string, fieldId: string, cause: unknown) {
+    super(
+      `Remote adapter "${adapterType}": describe(${JSON.stringify(recordType)}) failed, so whether ${JSON.stringify(fieldId)} holds a file is not known — ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = 'RemoteDescribeFailed';
+  }
+}
+
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
   adapterType: string;
@@ -302,10 +317,21 @@ export class RemoteAdapter implements Adapter {
     if (recordType === null) return undefined;
     let descriptor = this.described.get(recordType);
     if (descriptor === undefined) {
-      descriptor = this.describe(recordType).catch(() => null);
-      this.described.set(recordType, descriptor);
+      const asked = this.describe(recordType);
+      descriptor = asked;
+      this.described.set(recordType, asked);
+      // A failure is this call's, never remembered: the next read asks again.
+      asked.catch(() => {
+        if (this.described.get(recordType) === asked) this.described.delete(recordType);
+      });
     }
-    return (await descriptor)?.fields.find((field) => field.displayName === fieldId || field.fieldId === fieldId);
+    let described: SchemaTypeDescriptor | null;
+    try {
+      described = await descriptor;
+    } catch (error) {
+      throw new RemoteDescribeFailed(this.adapterType, recordType, fieldId, error);
+    }
+    return described?.fields.find((field) => field.displayName === fieldId || field.fieldId === fieldId);
   }
 
   /**
@@ -380,12 +406,17 @@ export class RemoteAdapter implements Adapter {
       fields[name] = await this.exposeWriteFileRefs(value);
     }
     const resources = input.resources
-      ? ((await Promise.all(input.resources.map((r) => this.exposeWriteFileRefs(r)))) as T['resources'])
+      ? (await Promise.all(input.resources.map((r) => this.exposeWriteFileRefs(r)))).map(wireResourceShaped)
       : undefined;
+    // A parent's payload (a resource parent's is the resource) names no
+    // credential either.
+    const parentLinks = writeParentLinks(input).map((link) =>
+      link.data !== undefined ? { ...link, data: wireResourceRecord(link.data) } : link,
+    );
     return {
       ...input,
       fields,
-      parentLinks: writeParentLinks(input),
+      parentLinks,
       ...(resources !== undefined ? { resources } : {}),
     };
   }
@@ -588,22 +619,24 @@ function wireHandle(source: unknown): string | undefined {
  * evidence in the wire's spelling — the owner type and handle, never this
  * side's credential or construction args. Everything else as it stands.
  */
-function wirePosition(position: SourcePosition): SourcePosition {
-  const { resources, evidence } = position as SourcePosition & {
-    resources?: Resource[];
-    evidence?: Record<string, FieldEvidence>;
-  };
-  if (resources === undefined && evidence === undefined) return position;
+function wirePosition(position: SourcePosition): Record<string, unknown> {
+  // Read off the position rather than typed onto it: `resources` and
+  // `evidence` ride on positions an automation produced, which the in-process
+  // type does not declare, so each is validated as it is read.
+  const resources: unknown = Reflect.get(position, 'resources');
+  const evidence: unknown = Reflect.get(position, 'evidence');
+  const data = wireResourceShaped(position.identity.data);
   return {
     ...position,
-    ...(resources !== undefined ? { resources: resources.map(wireResource) } : {}),
-    ...(evidence !== undefined
+    ...(data !== position.identity.data ? { identity: { ...position.identity, data } } : {}),
+    ...(Array.isArray(resources) ? { resources: resources.map(wireResourceShaped) } : {}),
+    ...(isPlainRecord(evidence)
       ? {
           evidence: Object.fromEntries(
             Object.entries(evidence).map(([field, entry]) => [
               field,
-              entry.sourceResourceRef?.fileRef !== undefined
-                ? { ...entry, sourceResourceRef: { ...entry.sourceResourceRef, fileRef: wireFile(entry.sourceResourceRef.fileRef) } }
+              isPlainRecord(entry) && isPlainRecord(entry.sourceResourceRef)
+                ? { ...entry, sourceResourceRef: wireResourceRecord(entry.sourceResourceRef) }
                 : entry,
             ]),
           ),
@@ -612,11 +645,26 @@ function wirePosition(position: SourcePosition): SourcePosition {
   };
 }
 
-function wireResource(resource: Resource): Resource {
-  if (resource.fileRef === undefined) return resource;
-  const file = wireFile(resource.fileRef);
-  const data = resource.data !== undefined && Object.hasOwn(resource.data, 'file') ? { ...resource.data, file } : resource.data;
-  return { ...resource, fileRef: file, ...(data !== undefined ? { data } : {}) };
+/** A resource-shaped value (a position's resource, a resource position's
+ *  data, a parent's payload) with its `fileRef` slot — and its `data.file`,
+ *  the same file — in the wire's spelling; anything else as it stands. */
+function wireResourceShaped(value: unknown): unknown {
+  return isPlainRecord(value) ? wireResourceRecord(value) : value;
+}
+
+function wireResourceRecord(value: Record<string, unknown>): Record<string, unknown> {
+  const slot = value.fileRef;
+  const ref = isFileValue(slot) ? { ...slot } : fileDescriptorOf(slot);
+  if (ref === undefined) return value;
+  const file = wireFile(ref);
+  const data = isPlainRecord(value.data) && Object.hasOwn(value.data, 'file') ? { ...value.data, file } : value.data;
+  return { ...value, fileRef: file, ...(value.data !== undefined ? { data } : {}) };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /** A descriptor in the wire's spelling: its metadata, its url, its owner type
