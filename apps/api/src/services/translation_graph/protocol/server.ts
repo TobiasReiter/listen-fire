@@ -24,7 +24,13 @@
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 
+import { z } from 'zod';
+
+import { neverAsAny } from '../../../lib/utils/types';
 import type { Adapter } from '../adapter';
+import { edgeNaturalName } from '../adapters/name_resolution';
+import { META_RECORD_TYPE } from '../types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
 import { RpcRequest, METHODS } from './schema';
 import type { MethodName, RpcResponseShape } from './schema';
 
@@ -80,6 +86,213 @@ function callArgs(method: MethodName, params: unknown): unknown[] {
  * `Adapter` methods the instance pruned to `undefined` (the `RemoteAdapter`
  * pattern) or never defined are excluded.
  */
+// ── Wire ids → natural names ─────────────────────────────────────────────
+//
+// The wire speaks the adapter's INTERNAL ids: the remote shim resolves the
+// program's natural names against the manifest it fetched and forwards the ids
+// (Decision #3, wire protocol unchanged). An in-process `Adapter` takes NATURAL
+// names and resolves them itself. So this bridge turns the ids back into
+// natural names, from the adapter's own introspection, before the call — the
+// mirror of the shim's forward translation, method for method. Without it an
+// adapter whose ids differ from its names (email: edge `attachments`, named
+// `Attachments`) reads every id as an unknown name and reports drift.
+//
+// An id with no natural name passes through as itself, so the adapter is
+// still the one that judges it.
+
+/** Reverse lookups over one adapter's introspection, fetched on first use and
+ *  kept for the handler's lifetime (the shim's resolver has the same span). */
+interface WireNames {
+  typeName(typeId: string): Promise<string>;
+  fieldName(typeRef: string, fieldId: string): Promise<string>;
+  edgeName(typeRef: string, edgeReadId: string): Promise<string>;
+}
+
+function wireNames(adapter: Adapter): WireNames {
+  let entries: Promise<SchemaEntryPoint[]> | undefined;
+  const descriptors = new Map<string, Promise<SchemaTypeDescriptor | null>>();
+  const entryList = (): Promise<SchemaEntryPoint[]> => {
+    entries ??= adapter.listEntryPoints().catch((err: unknown) => {
+      entries = undefined;
+      throw err;
+    });
+    return entries;
+  };
+  /** A position's type is the NATURAL name (the shim never rewrites a
+   *  position); a write's is the internal id. Accept either. */
+  const descriptorOf = async (typeRef: string): Promise<SchemaTypeDescriptor | null> => {
+    const list = await entryList();
+    const entry =
+      list.find((e) => e.displayName === typeRef) ?? list.find((e) => e.typeId === typeRef);
+    if (!entry) return null;
+    let descriptor = descriptors.get(entry.typeId);
+    if (!descriptor) {
+      descriptor = adapter.describe(entry.typeId).catch((err: unknown) => {
+        descriptors.delete(entry.typeId);
+        throw err;
+      });
+      descriptors.set(entry.typeId, descriptor);
+    }
+    return descriptor;
+  };
+  return {
+    typeName: async (typeId) =>
+      (await entryList()).find((e) => e.typeId === typeId)?.displayName ?? typeId,
+    fieldName: async (typeRef, fieldId) =>
+      (await descriptorOf(typeRef))?.fields.find((f) => f.fieldId === fieldId)?.displayName ??
+      fieldId,
+    edgeName: async (typeRef, edgeReadId) => {
+      const ref = (await descriptorOf(typeRef))?.references.find((r) => r.fieldId === edgeReadId);
+      return ref ? edgeNaturalName(ref) : edgeReadId;
+    },
+  };
+}
+
+// Only the name-bearing members are read; `passthrough` keeps the rest of the
+// params exactly as the client sent them.
+const RelatedNames = z
+  .object({
+    position: z.object({ recordType: z.string().nullable() }).passthrough(),
+    fieldId: z.string(),
+  })
+  .passthrough();
+const WriteNames = z
+  .object({
+    recordType: z.string(),
+    fields: z.record(z.string(), z.unknown()),
+    evidence: z.record(z.string(), z.unknown()).optional(),
+    parentLinks: z.array(z.object({ recordType: z.string() }).passthrough()).optional(),
+  })
+  .passthrough();
+const ResolveEntityNames = z
+  .object({
+    recordType: z.string(),
+    record: z.record(z.string(), z.unknown()),
+    constraints: z
+      .object({
+        any: z.array(
+          z.object({ all: z.array(z.object({ field: z.string() }).passthrough()) }).passthrough(),
+        ),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+const RecordTypeNames = z.object({ recordType: z.string() }).passthrough();
+const FieldFunctionNames = z.object({ recordType: z.string(), fieldId: z.string() }).passthrough();
+const EntityTypeNames = z.object({ entityType: z.string() }).passthrough();
+const TypeRefNames = z.object({ typeRef: z.string() }).passthrough();
+
+async function renameKeys(
+  bag: Record<string, unknown>,
+  rename: (key: string) => Promise<string>,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(bag)) out[await rename(key)] = value;
+  return out;
+}
+
+/** A method's wire params with every internal id the shim produced turned
+ *  back into the adapter's natural name. Methods that carry no translated
+ *  name (positions the adapter minted, raw events, opaque ids) pass through. */
+async function naturalParams(method: MethodName, params: unknown, names: WireNames): Promise<unknown> {
+  switch (method) {
+    case 'getFieldValue': {
+      const p = RelatedNames.parse(params);
+      if (p.position.recordType === null) return p;
+      return { ...p, fieldId: await names.fieldName(p.position.recordType, p.fieldId) };
+    }
+    case 'getRelated':
+    case 'iterateRelated': {
+      const p = RelatedNames.parse(params);
+      const holder = p.position.recordType;
+      if (holder === null) return p;
+      // A meta-root hop names a collection (a type); any other hop names an
+      // edge on the position's type.
+      if (holder === META_RECORD_TYPE) return { ...p, fieldId: await names.typeName(p.fieldId) };
+      return { ...p, fieldId: await names.edgeName(holder, p.fieldId) };
+    }
+    case 'createRecord':
+    case 'updateRecord': {
+      const p = WriteNames.parse(params);
+      const field = (id: string): Promise<string> => names.fieldName(p.recordType, id);
+      return {
+        ...p,
+        recordType: await names.typeName(p.recordType),
+        fields: await renameKeys(p.fields, field),
+        ...(p.evidence ? { evidence: await renameKeys(p.evidence, field) } : {}),
+        // A parent link's edge already rides as its natural name (the shim
+        // sends the write name, which is the reference name where one is set).
+        ...(p.parentLinks
+          ? {
+              parentLinks: await Promise.all(
+                p.parentLinks.map(async (link) => ({
+                  ...link,
+                  recordType: await names.typeName(link.recordType),
+                })),
+              ),
+            }
+          : {}),
+      };
+    }
+    case 'deleteRecord': {
+      const p = RecordTypeNames.parse(params);
+      return { ...p, recordType: await names.typeName(p.recordType) };
+    }
+    case 'resolveEntity': {
+      const p = ResolveEntityNames.parse(params);
+      const field = (id: string): Promise<string> => names.fieldName(p.recordType, id);
+      return {
+        ...p,
+        recordType: await names.typeName(p.recordType),
+        record: await renameKeys(p.record, field),
+        constraints: {
+          ...p.constraints,
+          any: await Promise.all(
+            p.constraints.any.map(async (branch) => ({
+              ...branch,
+              all: await Promise.all(
+                branch.all.map(async (entry) => ({ ...entry, field: await field(entry.field) })),
+              ),
+            })),
+          ),
+        },
+      };
+    }
+    case 'invokeFieldFunction': {
+      const p = FieldFunctionNames.parse(params);
+      return {
+        ...p,
+        recordType: await names.typeName(p.recordType),
+        fieldId: await names.fieldName(p.recordType, p.fieldId),
+      };
+    }
+    case 'translateFilter': {
+      const p = EntityTypeNames.parse(params);
+      return { ...p, entityType: await names.typeName(p.entityType) };
+    }
+    case 'getDedupRules': {
+      const p = TypeRefNames.parse(params);
+      return { ...p, typeRef: await names.typeName(p.typeRef) };
+    }
+    // `describe` takes an internal id or a natural name alike; positions and
+    // events are the adapter's own; the rest carry no names.
+    case 'manifest':
+    case 'listEntryPoints':
+    case 'describe':
+    case 'edgesFrom':
+    case 'preprocessInbound':
+    case 'listEventTypes':
+    case 'readRecord':
+    case 'getActorCandidates':
+    case 'extractActor':
+    case 'describeOpaqueId':
+    case 'resolveFileRef':
+      return params;
+    default:
+      return neverAsAny(method);
+  }
+}
+
 function implementedMethods(adapter: Adapter): MethodName[] {
   const all = Object.keys(METHODS) as MethodName[];
   return all.filter((method) => {
@@ -132,6 +345,7 @@ export function createAdapterProtocolHandler(opts: {
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { adapter, authenticate } = opts;
   const advertisedMethods = opts.methods ?? implementedMethods(adapter);
+  const names = wireNames(adapter);
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // ── Auth ──────────────────────────────────────────────────────────────
@@ -228,8 +442,11 @@ export function createAdapterProtocolHandler(opts: {
     }
 
     // ── Dispatch ──────────────────────────────────────────────────────────
-    const args = callArgs(method as MethodName, params);
     try {
+      const args = callArgs(
+        method as MethodName,
+        await naturalParams(method as MethodName, params, names),
+      );
       if (STREAMING_METHODS.has(method as MethodName)) {
         const result = await drainStream(member.call(adapter, ...args));
         send(res, 200, { ok: true, result });
