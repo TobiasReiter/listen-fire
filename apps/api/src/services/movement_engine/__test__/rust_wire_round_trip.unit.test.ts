@@ -10,6 +10,14 @@
 // crosses as itself, a read of it reads the own value, `TEXT.SERIALISE`
 // prints it, and wherever the TypeScript engine assigns keys one by one
 // (`Object.assign`, `object[key] = …`) it sets the prototype on both engines.
+//
+// A string is any run of UTF-16 code units, a lone surrogate included
+// (`JSON.parse('"\\ud83d"')` makes one; a cut through a pair, a `split("")`
+// or a match through one makes another): it crosses the eval wire as its code
+// units (`["s16", units]`), the host's JSON text as the escape
+// `JSON.stringify` writes (transition artefacts row 9), and every reading of
+// it — its length, a cut, a split, a regex, a print — is JavaScript's on both
+// engines.
 
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
@@ -273,6 +281,128 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
         double.serve(conversation);
         resetRustRunStats();
         const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
+        const outcome = await underEngine(engine, async () => {
+          try {
+            return { result: JSON.parse(JSON.stringify(await runMovement(input))) };
+          } catch (error) {
+            return { failure: recordedError(error) };
+          }
+        });
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ ...endedInRust(undefined), shimFaults: 0 });
+        expect([engine, verdictOf(recording, conversation, outcome)]).toEqual([engine, { kind: 'same' }]);
+      }
+    } finally {
+      await double.close();
+    }
+  });
+});
+
+/** A lone high half, a lone low half, and a pair, as `JSON.parse` makes them. */
+const LONE = JSON.parse('{"hi":"a\\ud83d","lo":"\\ude00b","pair":"x😀y","\\udc00key":"\\ud800","astral":"😀𝒜"}');
+
+describe('lone surrogates on the wire, on both engines', () => {
+  it('reads an event field holding them as JavaScript does: counted, cut, split, matched, printed, compared', async () => {
+    const { ended } = await agree({
+      source: program(
+        '  v = msg.`meta`',
+        '  hi = v.`hi`',
+        '  joined = "${hi}${v.`lo`}"',
+        '  halves = SPLIT(v.`pair`, "")',
+        '  half = TEXT.REGEX_EXTRACT(v.`pair`, ".(.)")',
+        '  ERROR("${LENGTH(hi)} ${LENGTH(joined)} ${joined == "a😀b"} ${COUNT(halves)} ${TEXT.SERIALISE(halves, "JSON")} ${TEXT.SERIALISE(half, "JSON")} ${LENGTH(half)} ${UPPER(hi)} ${TEXT.SERIALISE(v, "JSON")} ${v.`pair` CONTAINS half} ${hi < v.`lo`}")',
+      ),
+      meta: LONE,
+    });
+    // The halves written side by side are the pair; `split("")` and `.`
+    // part an astral character into its halves.
+    expect(ended).toContain('MOVENG_ERROR: 2 4 true 4');
+    expect(ended).toContain('"\\ud83d"');
+    expect(ended).toContain('"\\udc00key": "\\ud800"');
+  });
+
+  it("reads a plugin's answer holding them: a record's data, and a records plugin's text spread into its code units", async () => {
+    const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":["a😀"]}');
+    const { ended } = await agree({
+      source: program(
+        '  page = probe(q: msg.`subject`)',
+        '  found = finds(q: msg.`subject`)',
+        '  ERROR("${page.name} ${LENGTH(page.name)} ${TEXT.SERIALISE(page, "JSON")} ${TEXT.SERIALISE(found, "JSON")}")',
+      ),
+      invoked: answer,
+    });
+    expect(ended).toContain('"\\udfffAcme"');
+    // `{ ..."a😀" }`: three code units, the pair's halves apart.
+    expect(ended).toContain('"1": "\\ud83d"');
+  });
+
+  it('reads a model reply holding them, and traces an AI() prompt cut through a pair as JavaScript cuts it', async () => {
+    const ai = await agree({
+      source: program('  x = AI("${msg.`subject`}")', '  ERROR("${TEXT.SERIALISE(x, "JSON")} ${LENGTH(x.`a`)}")'),
+      meta: LONE,
+      replies: [JSON.parse('{"value":{"a":"\\ud800","\\udbffk":2}}')],
+    });
+    expect(ai.asked).toHaveLength(1);
+    expect(ai.ended).toContain('\\\\ud800');
+    // The trace keeps the prompt's first 300 code units: the high half.
+    const long = { ...event(LONE), payload: { subject: `${'p'.repeat(299)}😀 tail`, meta: LONE } };
+    for (const engine of ['ts', 'rust'] as const) {
+      const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
+      const input = { ...inputOf({ source: program('  x = AI("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
+      resetRustRunStats();
+      const result = await underEngine(engine, () => runMovement(input));
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+      const traced = result.trace.find((entry) => Reflect.get(entry, 'kind') === 'ai');
+      expect([engine, JSON.stringify(traced)]).toEqual([engine, expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`)]);
+    }
+    const extraction = await agree({
+      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  ERROR("${found.name} ${LENGTH(found.name)}")'),
+      replies: [JSON.parse(`{"x:extract_result#1":[{"name":{"evidence":"q","value":"${'n'.repeat(199)}😀\\udc00"}}]}`)],
+    });
+    // Read in one call (before: the Rust engine retried).
+    expect(extraction.asked).toEqual(['movement_extraction']);
+    expect(extraction.ended).toContain(' 202');
+  });
+
+  it('parks a value holding them as JavaScript writes it, and either park resumes to the same ending', async () => {
+    const source = program('  v = msg.`meta`', '  h = SPLIT(v.`pair`, "")', '  await sleep(1h)', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(h, "JSON")}")');
+    const ts = await runOn('ts', { source, meta: LONE });
+    resetRustRunStats();
+    const rust = await runOn('rust', { source, meta: LONE });
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rust).toEqual(ts);
+    expect(ts.parks).toContain('\\ud83d');
+    const state: ParkedScopeState = JSON.parse(ts.parks)[0].state;
+    const resumed = async (engine: 'ts' | 'rust') => {
+      const seen = { invoked: [], asked: [] };
+      const input = { ...inputOf({ source, meta: LONE }, makeFakeParkSink(), seen), state: JSON.parse(JSON.stringify(state)) };
+      return underEngine(engine, () => ending(() => resumeMovement(input)));
+    };
+    const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
+    expect(onRust).toBe(onTs);
+    expect(onTs).toContain('"\\udc00key": "\\ud800"');
+  });
+
+  it('crosses a host that is itself a wire (the HTTP host double), its JSON text holding the escapes', async () => {
+    const source = program('  v = msg.`meta`', '  x = AI("${v.`hi`}")', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(x, "JSON")}")');
+    const kept: HostRecording[] = [];
+    const park = makeFakeParkSink();
+    const recorded = {
+      entry: 'run',
+      input: inputOf({ source, meta: LONE, replies: [JSON.parse('{"value":"\\udbff!"}')] }, park, { invoked: [], asked: [] }),
+      run: runMovement,
+      keep: (r: HostRecording) => kept.push(r),
+    } as const;
+    await underEngine('ts', () => recordEntry(recorded).catch(() => undefined));
+    const recording = kept[0];
+    if (recording === undefined) throw new Error('test: the run was recorded');
+    expect(JSON.stringify(recording)).toContain('\\udbff!');
+    const double = await startHostDouble();
+    try {
+      for (const engine of ['ts', 'rust'] as const) {
+        const conversation = new RecordedConversation(recording.requests);
+        double.serve(conversation);
+        resetRustRunStats();
+        const input = { ...inputOf({ source, meta: LONE }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
         const outcome = await underEngine(engine, async () => {
           try {
             return { result: JSON.parse(JSON.stringify(await runMovement(input))) };

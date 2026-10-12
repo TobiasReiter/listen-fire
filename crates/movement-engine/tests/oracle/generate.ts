@@ -29,6 +29,9 @@
 //   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
 //   - dates.json: V8's date parser, and the members that read dates through
 //     it, under five local zones (./dates_oracle.ts);
+//   - strings.json: strings as JavaScript holds them — the built-ins, the
+//     comparator, cuts, JSON's quoting and the JSON text boundary over seeded
+//     texts holding lone, paired and astral code units (./strings_oracle.ts);
 //   - patterns.json: the retirement proof — seeded programs for every
 //     admission pattern the README's port list names, and every one chunk 7A
 //     closed, each run on both engines through the real shim against one
@@ -76,6 +79,7 @@ import { writeRecordsOracle } from './records_oracle';
 import { writeTailOracles } from './tail_oracle';
 import { writeDatesOracle } from './dates_oracle';
 import { writePatternsOracle } from './patterns_oracle';
+import { writeStringsOracle } from './strings_oracle';
 import { outcome, wire } from './wire';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
@@ -371,6 +375,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
+  writeStringsOracle(mulberry32(20261016), (name, text) => writeFileSync(path.join(__dirname, name), text));
   // Both engines: the movement.wasm the shim loads is the one committed.
   await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
