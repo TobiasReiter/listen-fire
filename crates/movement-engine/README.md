@@ -1344,7 +1344,7 @@ writes back the same way.
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, localZone?,
 catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
-extractionFileChars?, maxCallDepth?, extractionTiers?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
+extractionFileChars?, maxCallDepth?, extractionTiers?, chatModels?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a

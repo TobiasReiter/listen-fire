@@ -162,6 +162,7 @@ pub struct SegmentInput {
     /// The chat models the deployment's model registry knows (registry.ts
     /// `chatModelNames`): an extraction call's `model` is held to it, as
     /// `parseChatModelName` holds it. Absent: the catalog snapshot's `models`.
+    /// The shim reads the registry, so the engine reads no environment.
     #[serde(default)]
     pub chat_models: Option<Vec<String>>,
     /// The admission dry run's start (rust_engine.ts `dryAdmit`): never
