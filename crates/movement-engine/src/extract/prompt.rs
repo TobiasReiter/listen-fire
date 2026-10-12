@@ -180,10 +180,14 @@ pub fn retry_user_message(user_message: &str, region: &Region<'_>, issues: &[Iss
 }
 
 /// `segmentForDatum`: a `from` datum as a segment — text, a `{content,
-/// type?}` record, or anything else as its JSON.
-pub fn segment_for_datum(datum: &Js) -> Segment {
+/// type?}` record, or anything else as its JSON. A file inside the datum, at
+/// any depth, refuses (`fieldsValueOf`): its descriptor is the engine's own,
+/// and a file is read only as an input of its own, before this. So does a
+/// datum that contains itself, which has no finite text. A file that is the
+/// datum itself keeps its printable members (no reader in the path).
+pub fn segment_for_datum(datum: &Js) -> Result<Segment, UnwritableDatum> {
     if let Js::String(text) = datum {
-        return Segment { classification: "TEXT".into(), content: text.clone() };
+        return Ok(Segment { classification: "TEXT".into(), content: text.clone() });
     }
     if let Js::Object(object) = datum
         && let Some(Js::String(content)) = object.get("content")
@@ -192,10 +196,71 @@ pub fn segment_for_datum(datum: &Js) -> Segment {
             Some(Js::String(type_)) => type_.clone(),
             _ => "TEXT".into(),
         };
-        return Segment { classification, content: content.clone() };
+        return Ok(Segment { classification, content: content.clone() });
+    }
+    if !matches!(datum, Js::File(_)) {
+        refuse_held_file(datum, &mut Vec::new())?;
     }
     // `safeStringify`: `JSON.stringify`, else (a value holding itself) its text.
-    Segment { classification: "FRAGMENT".into(), content: js::json_stringify(datum, 0) }
+    Ok(Segment { classification: "FRAGMENT".into(), content: js::json_stringify(datum, 0) })
+}
+
+/// A `from` datum the prompt cannot carry: `fieldsValueOf`'s refusals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnwritableDatum {
+    /// A file anywhere inside it.
+    FileInside,
+    /// A list or map on its own path.
+    ContainsItself,
+}
+
+impl UnwritableDatum {
+    /// Its `unsupported(construct, detail)` words, as extraction.ts raises them.
+    pub fn words(self) -> (&'static str, &'static str) {
+        match self {
+            UnwritableDatum::FileInside => (
+                "a file inside an extraction input",
+                "hand the file over as an input of its own, or put its text in its place with READ(f) (the checker should have caught this)",
+            ),
+            UnwritableDatum::ContainsItself => ("an extraction input that contains itself", ""),
+        }
+    }
+
+    /// The `MOVENG_UNSUPPORTED` message the run fails with.
+    pub fn message(self) -> String {
+        let (construct, detail) = self.words();
+        crate::run::unsupported_message(construct, detail)
+    }
+}
+
+/// `fieldsValueOf`'s refusals, walked as it walks: a file anywhere in the
+/// value, and a value on its own path. A record is walked through its data
+/// object (admission keeps every other record from a `from` datum).
+fn refuse_held_file(value: &Js, path: &mut Vec<*const ()>) -> Result<(), UnwritableDatum> {
+    let address: *const () = match value {
+        Js::File(_) => return Err(UnwritableDatum::FileInside),
+        Js::Array(list) => std::rc::Rc::as_ptr(list).cast(),
+        Js::Object(object) => std::rc::Rc::as_ptr(object).cast(),
+        Js::Record(record) => {
+            return match crate::record::data_object(record) {
+                Some(data) => refuse_held_file(&data, path),
+                None => Ok(()),
+            };
+        }
+        _ => return Ok(()),
+    };
+    if path.contains(&address) {
+        return Err(UnwritableDatum::ContainsItself);
+    }
+    path.push(address);
+    let members: Vec<Js> = match value {
+        Js::Array(list) => list.items().clone(),
+        Js::Object(object) => object.entries().iter().map(|(_, member)| member.clone()).collect(),
+        _ => unreachable!("matched above"),
+    };
+    let walked = members.iter().try_for_each(|member| refuse_held_file(member, path));
+    path.pop();
+    walked
 }
 
 /// `transformResultSegments`: a bundle-level plugin's text and data, each a
@@ -218,5 +283,41 @@ fn has_keys(value: &Js) -> bool {
         Js::Array(list) => !list.items().is_empty(),
         Js::String(s) => !s.is_empty(),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A list a GROUPBY filing pushed into itself has no finite text: the
+    /// datum refuses as `fieldsValueOf` does, never written as `null`.
+    #[test]
+    fn a_datum_that_holds_itself_refuses() {
+        let ring = Js::array(vec![Js::str("a")]);
+        let Js::Array(list) = &ring else { unreachable!("an array") };
+        list.push(ring.clone());
+        assert_eq!(segment_for_datum(&ring), Err(UnwritableDatum::ContainsItself));
+        assert_eq!(
+            UnwritableDatum::ContainsItself.message(),
+            "an extraction input that contains itself is not supported by the movement engine yet"
+        );
+    }
+
+    /// One object held twice is no cycle: only a value on its own path is.
+    #[test]
+    fn an_object_held_twice_writes() {
+        let shared = Js::array(vec![Js::Number(1.0)]);
+        let datum = Js::array(vec![shared.clone(), Js::array(vec![shared])]);
+        assert_eq!(segment_for_datum(&datum).map(|s| s.content), Ok("[[1],[[1]]]".to_string()));
+    }
+
+    /// A file inside a datum refuses; a file that is the datum writes its
+    /// printable members.
+    #[test]
+    fn a_file_inside_a_datum_refuses() {
+        let file = crate::file::for_test(0, Some("h"), Some("deck.pdf"));
+        assert_eq!(segment_for_datum(&Js::array(vec![file.clone()])), Err(UnwritableDatum::FileInside));
+        assert!(segment_for_datum(&file).is_ok());
     }
 }

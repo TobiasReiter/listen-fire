@@ -95,9 +95,10 @@ fn file_resource(file: &Js, read: Option<(&str, &Js)>) -> Js {
     env::object_of(entries)
 }
 
-/// `textResourceForDatum`: a datum with text as a TEXT resource.
-fn text_resource(datum: &Js) -> Option<Js> {
-    let segment = prompt::segment_for_datum(datum);
+/// `textResourceForDatum`: a datum's segment, when it has text, as a TEXT
+/// resource.
+fn text_resource(segment: &Segment) -> Option<Js> {
+    let segment = segment.clone();
     if js::trim(&segment.content).is_empty() {
         return None;
     }
@@ -316,10 +317,14 @@ impl Materializer<'_, '_> {
                     }
                     continue;
                 }
-                segments.push(prompt::segment_for_datum(&datum));
-                if let Some(resource) = text_resource(&datum) {
+                let segment = prompt::segment_for_datum(&datum).map_err(|unwritable| {
+                    let (construct, detail) = unwritable.words();
+                    thrown(Failure::unsupported(construct, detail))
+                })?;
+                if let Some(resource) = text_resource(&segment) {
                     resources.push(resource);
                 }
+                segments.push(segment);
             }
         }
         let resources = self.run.stamp_resources(resources).await.map_err(thrown)?;

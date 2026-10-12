@@ -11,7 +11,7 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use movement_engine::env::{js_of_serialized, json_of_js};
+use movement_engine::env::{decode, js_of_serialized, json_of_js};
 use movement_engine::extract::prompt::{self, Enrichment, Entity, Segment};
 use movement_engine::extract::spec::{self, Firing, NodeSpec, Region, SpecError, WordsScope};
 use movement_engine::extract::validate::{self, Issue, PathKey};
@@ -162,7 +162,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
     let schemas: BTreeMap<String, InstanceSchema> = serde_json::from_value(world["schemas"].clone()).expect("the schemas read");
     let plugins: JsMap<PluginSpec> = serde_json::from_value(world["plugins"].clone()).expect("the plugins read");
     let firing = Stand { schemas: &schemas };
-    let (mut programs, mut regions_seen, mut replies, mut messages, mut data, mut priced) = (0, 0, 0, 0, 0, 0);
+    let (mut programs, mut regions_seen, mut replies, mut messages, mut data, mut wired, mut priced) = (0, 0, 0, 0, 0, 0, 0);
     let (mut prototype_replies, mut prototyped) = (0, 0);
 
     for case in &cases[1..] {
@@ -252,7 +252,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
             "datum" => {
                 data += 1;
                 let datum = reply_of(case["datum"].as_str().unwrap());
-                let segment = prompt::segment_for_datum(&datum);
+                let segment = prompt::segment_for_datum(&datum).expect("a JSON datum holds no file and not itself");
                 assert_eq!(json!({ "classification": segment.classification, "content": segment.content }), case["segment"], "{}", case["datum"]);
                 if let Some(expected) = case.get("asPlugin") {
                     let segments = match &datum {
@@ -261,6 +261,17 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                     };
                     let got: Vec<Json> = segments.iter().map(|s| json!({ "classification": s.classification, "content": s.content })).collect();
                     assert_eq!(&Json::Array(got), expected, "{}", case["datum"]);
+                }
+            }
+            "wiredDatum" => {
+                wired += 1;
+                let datum = decode(&case["datum"]).expect("the wire decodes");
+                match (prompt::segment_for_datum(&datum), case.get("refused")) {
+                    (Ok(segment), None) => {
+                        assert_eq!(json!({ "classification": segment.classification, "content": segment.content }), case["segment"], "{case}");
+                    }
+                    (Err(unwritable), Some(refused)) => assert_eq!(format!("MOVENG_UNSUPPORTED: {}", unwritable.message()), refused.as_str().unwrap(), "{case}"),
+                    (got, _) => panic!("{case}: read {got:?}"),
                 }
             }
             "priced" => {
@@ -300,7 +311,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
         }
     }
     // A pin that silently lost its cases would hold nothing.
-    assert!(programs >= 160 && regions_seen >= 300 && replies >= 1500 && messages >= 100 && data >= 15 && priced >= 80);
+    assert!(programs >= 160 && regions_seen >= 300 && replies >= 1500 && messages >= 100 && data >= 15 && wired >= 8 && priced >= 80);
     // Program 0's replies with prototype-named fields: every one is held to
     // TypeScript's verdict as it stands, those whose read set a prototype too.
     assert!(prototype_replies >= 16 && prototyped >= 3, "{prototype_replies} prototype replies, {prototyped} prototyped");

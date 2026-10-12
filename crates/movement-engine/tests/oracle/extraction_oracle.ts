@@ -20,6 +20,11 @@
 //     segments, an entity's context and its enrichments.
 //   - `datum`: a `from` datum as `segmentForDatum` reads it, and a plugin's
 //     answer as `transformResultSegments` does.
+//   - `wiredDatum`: a `from` datum JSON cannot spell — a file at the top or
+//     inside it, one object held twice — on the eval wire, and the segment
+//     `segmentForDatum` reads, or the `MOVENG_UNSUPPORTED` message it
+//     refuses with. A value that holds itself does not cross the wire; the
+//     crate's own test holds its refusal (extract/prompt.rs).
 //   - `priced`: a `through` plugin's invocation under a seeded ledger
 //     (`pricedCalls`): refused before the host is asked once the cap is
 //     spent, or invoked with the run's budget and its cost charged — and the
@@ -52,6 +57,8 @@ import { shapeChain, type ShapeBinding } from '../../../../apps/api/src/services
 import { pricedCalls, RunLedger } from '../../../../apps/api/src/services/movement_engine/run_context';
 import type { EngineHost } from '../../../../apps/api/src/services/movement_engine/host';
 import { binding } from '../../../../apps/api/src/services/movement_engine/expression';
+import { REFUSED, WireOut } from '../../../../apps/api/src/services/movement_engine/rust_wire';
+import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 
 type Rand = () => number;
 
@@ -722,6 +729,28 @@ const DATA: unknown[] = [
   { content: 3 }, { type: 'X' }, {}, [], { b: 1, a: [1, { c: 'é' }], '10': 'ten', '2': 'two' }, 'Ünïcode ✓\n', 1e21,
 ];
 
+/** Data only the wire spells: a file is a value the envelope declares, and an
+ *  object can be held twice. */
+function wiredData(): unknown[] {
+  const file = fileValue({
+    __brand: 'FileRef',
+    name: 'deck.pdf',
+    contentType: 'application/pdf',
+    source: { ownerAdapterType: 'attio', handle: 'S3CRET' },
+  });
+  const shared = { n: 1 };
+  return [
+    file,
+    { a: file },
+    [{ a: file }],
+    { k: [1, { deep: file }] },
+    [1, file],
+    { content: 'body', scan: file },
+    { first: shared, again: shared },
+    [shared, [shared]],
+  ];
+}
+
 // ── Priced plugins ───────────────────────────────────────────────────────────
 
 const PLUGINS: PluginSpecs = {
@@ -780,6 +809,17 @@ export async function writeExtractionOracle(rand: Rand): Promise<void> {
         ? { asPlugin: transformResultSegments('p', { data: datum as Record<string, unknown> }) }
         : typeof datum === 'string' ? { asPlugin: transformResultSegments('p', { text: datum }) } : {}),
     });
+  }
+  for (const datum of wiredData()) {
+    let read: { segment: unknown } | { refused: string };
+    try {
+      read = { segment: segmentForDatum(datum) };
+    } catch (error) {
+      read = { refused: (error as Error).message };
+    }
+    const wired = new WireOut().value(datum);
+    if (wired === REFUSED) throw new Error('extraction.json: a wired datum did not cross the wire');
+    cases.push({ kind: 'wiredDatum', datum: wired, ...read });
   }
   for (let i = 0; i < 80; i++) cases.push({ kind: 'priced', ...((await pricedCase(rand)) as object) });
   // A generator that silently lost its programs would pin nothing.
