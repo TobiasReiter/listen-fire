@@ -4123,6 +4123,33 @@ function plainValueOf(value: unknown, path: Set<Binding>): unknown {
   return value;
 }
 
+/**
+ * A value as an extraction's prompt reads it: a record — the value itself, a
+ * list's member, a map's entry — as its FIELDS (its dot plane, `recordFields`),
+ * never the engine's object; lists and maps walked; everything else as it is.
+ * A record whose fields are not in hand refuses, as a whole-record read does.
+ */
+export function fieldsValueOf(value: unknown): unknown {
+  const binding = bindingOf(value);
+  if (binding !== undefined) {
+    switch (binding.kind) {
+      case 'positions':
+        return binding.landings.map(fieldsValueOf);
+      case 'tuple':
+        return binding.slots.map(fieldsValueOf);
+      case 'value':
+        return fieldsValueOf(binding.value);
+      default:
+        return fieldsValueOf(recordFields(binding));
+    }
+  }
+  if (Array.isArray(value)) return value.map(fieldsValueOf);
+  if (isDictValue(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, fieldsValueOf(member)]));
+  }
+  return value;
+}
+
 function plainRecordOf(binding: Binding, path: Set<Binding>): unknown {
   if (path.has(binding)) {
     throw unsupported('writing out a record that contains itself through its edges');
