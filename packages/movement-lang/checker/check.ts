@@ -284,6 +284,7 @@ import {
   handleKindsTaken,
   handleSpreadOf,
   handleWithin,
+  isCollectionType,
   heldWalk,
   spellHeldSteps,
   type HandleKind,
@@ -1790,6 +1791,25 @@ function escapedFromBlock(scope: Scope, member: string, blockName: string): bool
     if (s.escaped.has(member)) return s.escaped.get(member) === blockName;
   }
   return false;
+}
+
+/** What an extraction input's walk passes over: a record there is rendered
+ *  as its fields. */
+const RECORDS_ONLY: ReadonlySet<HandleKind> = new Set(['record']);
+
+function fileInExtractInputMessage(written: string, held: HeldHandle): string {
+  const steps = spellHeldSteps(held.steps);
+  const where = BARE_IDENT.test(written)
+    ? `'${written}${steps}' ${held.may ? 'may be' : 'is'} a file inside it`
+    : `'${written}' ${held.may ? 'may hold' : 'holds'} a file at '${steps}'`;
+  const own = BARE_IDENT.test(written) ? ` (\`from [${written}${steps}]\`)` : '';
+  return `An extraction reads a file only as an input of its own, and ${where} — a file, not a value. Hand it over as its own input${own}, or put its text in its place (${repairAt(held, 'READ(f)')})`;
+}
+
+/** Does `wider` hold a kind of engine object `type` does not show? */
+function showsMoreHandles(wider: FieldType, type: FieldType | undefined): boolean {
+  const shown = handleKindsTaken(type);
+  return [...handleKindsTaken(wider)].some(kind => !shown.has(kind));
 }
 
 // ── Field value messages ──
@@ -3560,6 +3580,7 @@ class Checker {
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
       },
       resolveScalar: name => this.symbolScalarType(scope, name),
+      resolveMayHold: name => this.symbolMayHold(scope, name),
       isRecordName: name => this.nodePlaneSymbol(name, scope) !== undefined,
       pluralOrderOf: name => this.pluralOrderOf(name, scope),
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
@@ -3597,6 +3618,12 @@ class Checker {
     return resolution.symbol.bindingPlane === 'scalar' ? resolution.symbol.fieldType : undefined;
   }
 
+  /** What a bound name may hold beyond its type — `ScopeSymbol.mayHold`. */
+  private symbolMayHold(scope: Scope, name: string): FieldType | undefined {
+    const resolution = scope.resolve(name);
+    return resolution.kind === 'found' ? resolution.symbol.mayHold : undefined;
+  }
+
   /** A diagnostic the expression walker raised, at the severity it asked for. */
   private reportTyped(code: string, message: string, at: Span, severity: Parameters<TypingReporter>[3]): void {
     switch (severity) {
@@ -3626,6 +3653,7 @@ class Checker {
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
       },
       resolveScalar: name => this.symbolScalarType(scope, name),
+      resolveMayHold: name => this.symbolMayHold(scope, name),
       isRecordName: name => this.nodePlaneSymbol(name, scope) !== undefined,
       pluralOrderOf: name => this.pluralOrderOf(name, scope),
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
@@ -3646,6 +3674,7 @@ class Checker {
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
       },
       resolveScalar: name => this.symbolScalarType(scope, name),
+      resolveMayHold: name => this.symbolMayHold(scope, name),
       isRecordName: name => this.nodePlaneSymbol(name, scope) !== undefined,
       pluralOrderOf: name => this.pluralOrderOf(name, scope),
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
@@ -5096,7 +5125,7 @@ class Checker {
         // is, so `AT(t, 0)` off the name reads its slot. A value handed back
         // (`return`, no name) is read, and a returned tuple is the list it
         // widens to: a body's return type stays a list.
-        const { valueType, parsed } = this.checkExprSlot(
+        const { valueType, parsed, mayHold } = this.checkExprSlot(
           value.expr,
           scope,
           name !== undefined ? { holdsValue: true } : undefined,
@@ -5145,10 +5174,16 @@ class Checker {
         // literals (`done = true`) short-circuit name resolution in
         // checkExprSlot and yield no valueType, so type them directly here.
         const fieldType = valueType ?? scalarLiteralType(value.expr.raw);
+        // The arms a conditional (or COALESCE, or MULTI) was built of travel
+        // with the name where its type no longer shows an engine object they
+        // hold — `x = IF c THEN f ELSE org END` has no type, and `org` in it
+        // must not reach a file field through `x`.
+        const revealed = mayHold !== undefined && showsMoreHandles(mayHold, fieldType) ? mayHold : undefined;
         symbol = {
           ...symbol,
           bindingPlane: 'scalar',
           ...(fieldType !== undefined ? { fieldType } : {}),
+          ...(revealed !== undefined ? { mayHold: revealed } : {}),
           ...(this.isManyValuedValue(value.expr, parsed, scope) ? { plural: true as const } : {}),
         };
         break;
@@ -12351,7 +12386,7 @@ class Checker {
       else this.report(d.code, d.message, extract.span);
     }
     for (const slot of extract.from) {
-      this.checkExprSlot(slot, scope);
+      this.checkExtractInput(slot, scope);
     }
     this.checkExtractStages(extract.stages, scope, new Set());
     const node = buildExtractGraph(EXTRACT_ROOT_NAME, extract.stages, {
@@ -12366,6 +12401,45 @@ class Checker {
       node,
     });
     return { kind: 'extract', node };
+  }
+
+  /**
+   * One input of `extract from [ … ]`, against what the prompt is built of.
+   * An input is text, a file (read as a file), a record (rendered as its
+   * fields — the fields in hand, as a plugin taking structured data is
+   * handed them), or a map or list of those; a list's members are inputs of
+   * their own. A file anywhere below an input — under a key, in a record's
+   * fields — would reach the prompt as the engine's own descriptor of it.
+   */
+  private checkExtractInput(slot: ExprSlot, scope: Scope): void {
+    const { valueType, held, mayHold } = this.checkExprSlot(slot, scope, { heldTakes: RECORDS_ONLY });
+    const written = slot.raw.trim();
+    const shape = valueType ?? mayHold;
+    const items = isCollectionType(shape) ? 1 : 0;
+    const asItem = held !== undefined && held.steps.length <= items && held.steps.every(step => step.kind !== 'key');
+    const fileBelow = held !== undefined && !asItem ? held : undefined;
+    if (fileBelow !== undefined) {
+      this.report(DiagnosticCodes.EXTRACT_CONTENT, fileInExtractInputMessage(written, fileBelow), slot.span);
+      return;
+    }
+    // A record handed whole is rendered as its fields: they have to be in
+    // hand, and none of them may be a file.
+    const record = recordIn(valueType)?.position ?? this.bareSlotPositionType(slot, scope);
+    if (record === undefined) return;
+    const fileField = handleSpreadOf(recordOf(record), heldWalk(RECORDS_ONLY));
+    if (fileField !== undefined) {
+      this.report(DiagnosticCodes.EXTRACT_CONTENT, fileInExtractInputMessage(written, fileField), slot.span);
+      return;
+    }
+    if (holdsFieldsInHand(record, token => this.declaredShapeTokens.has(token))) {
+      noteFieldsNeeded(record, `hands it to an extraction as an input, which reads every field (line ${slot.span.start.line})`);
+      return;
+    }
+    this.report(
+      DiagnosticCodes.EXTRACT_CONTENT,
+      `An extraction reads a record as its fields, and '${written}' is ${describePosition(record)}, whose fields are read from its system one at a time. Pass the fields it needs (\`from [{ name: ${written}.name, … }]\`), or one field as text (\`from [${written}.\`Name\`]\`)`,
+      slot.span,
+    );
   }
 
   /**
@@ -12779,7 +12853,18 @@ class Checker {
     this.reportPluginMissingArgs(plugin.plugin, spec, supplied, plugin.span);
     for (const arg of plugin.args) {
       this.reportPluginBadArg(plugin.plugin, spec, arg.name, arg.value.span);
-      this.checkExprSlot(arg.value, scope, { fields });
+      // Held to what the plugin takes exactly as a plain call's argument is:
+      // a stage is the same call, and the engine hands it the same value.
+      const { valueType, held } = this.checkExprSlot(arg.value, scope, { fields });
+      this.checkPluginArgValue({
+        callee: plugin.plugin,
+        declared: spec?.argTypes?.[arg.name],
+        name: arg.name,
+        record: this.bareSlotPositionType(arg.value, scope) ?? recordIn(valueType)?.position,
+        valueType,
+        ...(held !== undefined ? { held } : {}),
+        span: arg.value.span,
+      });
     }
   }
 
@@ -13126,7 +13211,7 @@ class Checker {
     slot: ExprSlot,
     scope: Scope,
     options?: SlotOptions,
-  ): { valueType?: FieldType; parsed?: Expression; held?: HeldHandle } {
+  ): { valueType?: FieldType; parsed?: Expression; held?: HeldHandle; mayHold?: FieldType } {
     const trimmed = slot.raw.trim();
     if (BARE_IDENT.test(trimmed)) {
       if (EXPR_LITERALS.has(trimmed.toUpperCase())) {
@@ -13141,8 +13226,13 @@ class Checker {
       // sites (a plain write field) that require presence.
       const bound = this.bareNameValueType(scope, trimmed);
       const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
-      const held = handleWithin(bound, heldWalk(options?.heldTakes));
-      return { ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
+      const mayHold = this.symbolMayHold(scope, trimmed);
+      const held = handleWithin(bound, heldWalk(options?.heldTakes)) ?? handleWithin(mayHold, heldWalk(options?.heldTakes));
+      return {
+        ...(valueType !== undefined ? { valueType } : {}),
+        ...(held !== undefined ? { held } : {}),
+        ...(mayHold !== undefined ? { mayHold } : {}),
+      };
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);
@@ -13167,7 +13257,13 @@ class Checker {
       : typing.infer(parsed, options?.writeTarget);
     const walk = heldWalk(options?.heldTakes);
     const held = typing.handleHeldBy(parsed, walk) ?? handleWithin(valueType, walk);
-    return { parsed, ...(valueType !== undefined ? { valueType } : {}), ...(held !== undefined ? { held } : {}) };
+    const mayHold = typing.mayHoldType(parsed);
+    return {
+      parsed,
+      ...(valueType !== undefined ? { valueType } : {}),
+      ...(held !== undefined ? { held } : {}),
+      ...(mayHold !== undefined ? { mayHold } : {}),
+    };
   }
 
   /** A held value READ — a tuple as the list it widens to, refused where it

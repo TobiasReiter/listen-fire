@@ -128,6 +128,12 @@ export interface ScopeSymbol {
    *  `type`: the closed enum the declaration names — the same shape a borrowed
    *  option set resolves to, so an annotation cannot tell the two apart. */
   fieldType?: FieldType;
+  /** For a `scalar`-plane `binding` whose value is a conditional, a
+   *  `COALESCE` or a `MULTI` (or a literal built of them) holding a record or
+   *  a file its `fieldType` does not show — arms that disagree have no type:
+   *  what it may hold, as the walk for an engine object reads it
+   *  (`ExpressionTyping.mayHoldType`). A walk input, never a type. */
+  mayHold?: FieldType;
   /** The text reads through this binding that a guard in scope has proven
    *  not `""` (`x.F != ""`, `LENGTH(x) > 0`) — a narrowing, declared by the
    *  same shadowing move as a presence proof. `value` is the binding's own
