@@ -118,6 +118,18 @@ const OBJECT_PROTOTYPE_BUILTINS: ReadonlyMap<string, unknown> = new Map<string, 
     .map((name): [string, unknown] => [`Array#${name}`, Reflect.get(Array.prototype, name)]),
 ]);
 
+/**
+ * `object[key] = value` as `JSON.parse` and a spread write it: an own,
+ * enumerable entry, whatever the key. An assignment would run
+ * `Object.prototype`'s `__proto__` setter instead, making a host's own
+ * `__proto__` key the object's prototype. A null-prototype object would keep
+ * the key too, but would read no `Object.prototype` member, which the
+ * engine's dicts do.
+ */
+export function ownEntry(object: object, key: string, value: unknown): void {
+  Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function builtinName(value: unknown): ['f', string] | undefined {
   for (const [name, builtin] of OBJECT_PROTOTYPE_BUILTINS) if (builtin === value) return ['f', name];
   return undefined;
@@ -223,7 +235,8 @@ export class WireOut {
   private writing = 0;
 
   /** `value` on the wire, or REFUSED where it would not cross as itself: a
-   *  function, a Date, a class instance, a lone surrogate. A record the
+   *  function, a Date, a class instance, a lone surrogate (an own `__proto__`
+   *  key crosses as the key it is). A record the
    *  engine handed out crosses back as itself; nothing else is a record. */
   value(value: unknown): unknown {
     if (this.options.whole === true && this.writing === 0) this.ids.clear();
@@ -302,8 +315,11 @@ export class WireOut {
         }
         return ['l', id, items];
       }
+      // An own `__proto__` key (`JSON.parse` makes one) is a key like any
+      // other: the engine holds it as an own entry, and `read` hands it back
+      // as one.
       const keys = Object.keys(value);
-      if (Object.getOwnPropertyNames(value).length !== keys.length || keys.includes('__proto__')) return REFUSED;
+      if (Object.getOwnPropertyNames(value).length !== keys.length) return REFUSED;
       const entries: unknown[] = [];
       for (const key of keys) {
         if (LONE_SURROGATE.test(key)) return REFUSED;
@@ -378,7 +394,7 @@ export class WireOut {
         made.set(a, object);
         for (const entry of b) {
           if (!Array.isArray(entry) || typeof entry[0] !== 'string') throw new RustShimError('a wire entry is [key, value]');
-          object[entry[0]] = this.read(entry[1], made);
+          ownEntry(object, entry[0], this.read(entry[1], made));
         }
         // `["o", id, entries, prototype]`: what a GROUPBY or KEYBY filing
         // under `__proto__` made the object's prototype.
@@ -449,10 +465,10 @@ export function filesInParkState(value: unknown): unknown {
   if (kind === 'file' && Object.hasOwn(value, 'file')) return { ...value, file: fileValueOf(value.file) ?? value.file };
   const out: Record<string, unknown> = {};
   for (const [key, member] of Object.entries(value)) {
-    if (PARKED_DATA_MEMBERS.has(key)) out[key] = member;
-    else if (key === 'resource' && kind === 'resource') out[key] = resourceFiles(member);
-    else if (key === 'resources' && Array.isArray(member)) out[key] = member.map(resourceFiles);
-    else out[key] = filesInParkState(member);
+    if (PARKED_DATA_MEMBERS.has(key)) ownEntry(out, key, member);
+    else if (key === 'resource' && kind === 'resource') ownEntry(out, key, resourceFiles(member));
+    else if (key === 'resources' && Array.isArray(member)) ownEntry(out, key, member.map(resourceFiles));
+    else ownEntry(out, key, filesInParkState(member));
   }
   return out;
 }

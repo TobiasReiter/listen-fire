@@ -697,6 +697,21 @@ mod tests {
         assert_eq!(encode(&pair), json!(["l", 0, [["l", 1, []], ["r", 1], ["n", "-0"], ["n", "Infinity"]]]));
     }
 
+    /// A host's own `__proto__` key (`JSON.parse` makes one) is an own
+    /// entry: read as the key it is, never the prototype, and written back
+    /// as one.
+    #[test]
+    fn an_own_proto_key_crosses_as_a_key() {
+        let wire = Wire::default();
+        let sent = json!(["o", 0, [["a", 1], ["__proto__", ["o", 1, [["x", 2]]]]]]);
+        let Js::Object(object) = wire.decode(&sent).unwrap() else { panic!("an object") };
+        assert!(object.proto.is_none());
+        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a", "__proto__"]);
+        assert!(matches!(crate::js::object_property(&object, "__proto__"), Js::Object(own) if own.get("x").is_some()));
+        assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [["a", 1.0], ["__proto__", ["o", 1, [["x", 2.0]]]]]]));
+        assert_eq!(json_of_js(&Js::Object(object)), json!({ "a": 1, "__proto__": { "x": 2 } }));
+    }
+
     #[test]
     fn a_segment_reads_each_answer_whole_in_any_order() {
         let wire = Wire::default();

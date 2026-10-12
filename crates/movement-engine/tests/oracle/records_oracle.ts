@@ -108,8 +108,9 @@ function scalar(rand: Rand): unknown {
 
 /** A dict as an adapter answers one: a `kind` (a binding's, a prototype
  *  name, an ordinary word, or none) and some keys, each a scalar, a dict or
- *  a list. Own `__proto__` keys are left out: the shim refuses an event that
- *  holds one (`event_does_not_cross`), and so does a JSON host. */
+ *  a list. Own `__proto__` keys are left out, so the seed's stream stays
+ *  the one recorded: the wire carries them as keys, and apps/api's
+ *  rust_wire_round_trip.unit.test.ts holds them on both engines. */
 function dict(rand: Rand, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const roll = rand();

@@ -437,9 +437,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
   describe('a model reply this engine cannot read (a named divergence: the TypeScript reads on)', () => {
     const source = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
-    // `JSON.parse`, so the surrogate and the key are the reply's own.
+    // `JSON.parse`, so the surrogate is the reply's own. (A reply's own
+    // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"\\ud800"}}]}');
-    const proto = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"Acme"},"__proto__":{"x":1}}]}');
     const valid = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
     async function onEach(replies: unknown[]) {
@@ -451,11 +451,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       return { ts, rust };
     }
 
-    it.each([
-      ['a lone surrogate', lone],
-      ['a `__proto__` key', proto],
-    ])('asks again when the reply holds %s, as for any reply the guide does not describe', async (_what, unreadable) => {
-      const { ts, rust } = await onEach([unreadable, valid]);
+    it('asks again when the reply holds a lone surrogate, as for any reply the guide does not describe', async () => {
+      const { ts, rust } = await onEach([lone, valid]);
       // TypeScript reads the reply as it is, in one call.
       expect('result' in ts).toBe(true);
       expect(ts.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual(['movement_extraction']);
@@ -463,7 +460,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       const trace = 'result' in rust && rust.result !== undefined ? rust.result.trace : [];
       expect(trace[0]).toMatchObject({
         kind: 'extraction',
-        retried: ['  - : the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)'],
+        retried: ['  - : the reply held a text this engine cannot read (a lone surrogate)'],
       });
     });
 
@@ -481,12 +478,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   });
 
   describe("a plugin's or a file reader's answer this engine cannot read (a named divergence: the TypeScript reads on)", () => {
-    // `JSON.parse`, so the surrogate and the key are the answer's own.
+    // `JSON.parse`, so the surrogate is the answer's own. (An answer's own
+    // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"text":"\\ud800"}');
-    // Inside a member: a stray top-level `__proto__` is no member either
-    // engine reads, so the shim's object drops it and both read on. A file
-    // reader's members are texts, so only a surrogate can reach one.
-    const proto = JSON.parse('{"text":"a page","data":{"__proto__":{"x":1}}}');
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
     const plugin = ['import { fetch_url } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch_url(url: msg.`text`)', '}'].join('\n');
     const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
@@ -495,7 +489,6 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
     it.each([
       ["a plugin's answer", 'a lone surrogate', { source: plugin, invoked: lone }, "'fetch_url''s answer", 'text'],
-      ["a plugin's answer", 'a `__proto__` key', { source: plugin, invoked: proto }, "'fetch_url''s answer", 'data'],
       ["a file reader's answer", 'a lone surrogate', { source: file, event: withDeck, fileText: lone, replies: [reply] }, "a file's text", 'text'],
     ] as const)('fails the statement when %s holds %s, naming the member', async (_whose, _what, c, named, member) => {
       const ts = await runOn('ts', c);
@@ -508,7 +501,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
       const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
       expect(cause).toContain('MOVENG_UNSUPPORTED');
-      expect(cause).toContain(`${named} holding a \`__proto__\` key or a lone surrogate (in ${member})`);
+      expect(cause).toContain(`${named} holding a lone surrogate (in ${member})`);
     });
   });
 

@@ -165,9 +165,11 @@ impl Run<'_> {
                 if let Some(text) = result.text() {
                     fields.set(FETCHED_TEXT_FIELD.into(), Js::str(text));
                 }
+                // `Object.assign(fields, result.data)`: an own `__proto__`
+                // key in the data sets the fields' prototype.
                 if let Some(Js::Object(data)) = &result.data {
                     for (key, value) in data.entries() {
-                        fields.set(key.clone(), value.clone());
+                        fields.assign(key.clone(), value.clone());
                     }
                 }
                 let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();

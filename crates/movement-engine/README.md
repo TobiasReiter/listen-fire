@@ -473,7 +473,7 @@ refused where it stands (`is_test_declared_record`).
 | `meta:<key>` | a key of the dispatch's `meta.bag` (`@trigger`, `@mutationContext`), which the checker refuses as an unknown `@` key, so no checked program reaches it (`@current_*`, `@user_*` and `@actor_*` run here, chunk 7A Task 6) | **Closed**: no checked program reaches it. Takes: nothing a program can write; the bag's reading if the checker ever admits one |
 | `function:<id>` | a function the evaluator does not run, by its lowered id: a namespaced member it lacks, `CHUNKS`, or a name the program binds or declares that no nested call reads (a call written in place of a closure, a plugin or an extraction is staged since chunk 7A Task 6: `nested_movement_call` below). A name nothing answers (`DOMAIN_OF`) runs here: a function the write field advertises (`invokeFieldFunction`), else the TypeScript's own MOVENG_UNSUPPORTED; so do `FILE` (`files.render`) and `READ` (`files.resolveFileText`, traced `{kind: "read"}`) (chunk 7A Task 6) | **Open** (met in the corpora, every reason: v1 3, v2 3, v3 4). Takes: the built-in `CHUNKS` |
 | `within_compare` | `WITHIN` | **Open** (no corpus run meets it). Takes: WITHIN against the pinned instant |
-| `static_number`, `proto_key` | a numeric literal JSON cannot carry (`Infinity`, `-0`); a `__proto__` key written in an object literal | **Open** (no corpus run meets it). Takes: wire support for those values (the transition artefacts' strings and keys rows) |
+| `static_number`, `proto_key` | a numeric literal JSON cannot carry (`Infinity`, `-0`); a `__proto__` key written in an object literal | **Open** (no corpus run meets it). Takes: for `static_number`, the literal's value on the wire; for `proto_key`, the literal assigning its key as the TypeScript's `value[key] = …` does (`JsObject::assign`): the wire carries an own `__proto__` key already (transition artefacts row 7) |
 
 A hop's WHERE and ORDER BY key, and a write's or a match's target WHERE, are
 walked as expressions scoped at the landed record (the candidate, for a
@@ -501,7 +501,7 @@ never resumes it wrong.
 
 | reason | the input | status, and what closing it takes |
 |---|---|---|
-| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | **Open** (no corpus run meets it). Takes: a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
+| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or any non-plain prototype, a shared open reference, an array hole, a lone surrogate; an own `__proto__` key crosses as a key, transition artefacts row 7) | **Open** (no corpus run meets it). Takes: a `Date` and a lone surrogate on the wire (the transition artefacts' surrogate row) |
 
 **After the check** (`declined`):
 
@@ -557,8 +557,8 @@ for byte and how the run ended; none differs, none is refused. Regenerated twice
 ### What admission cannot decide
 
 These depend on what a value holds, not on what the program says, and stay
-mid-run failures ("Errors a run can meet mid-run" below): a `__proto__` key
-spread in from a value, a record held in a value handed to the host. A
+mid-run failures ("Errors a run can meet mid-run" below): a record held in
+a value handed to the host. A
 name typed as a value may hold a record at run time (a member of a walk
 read as a list), so
 admission walks a collection op's function, a closure's body and a
@@ -1258,11 +1258,13 @@ TypeScript engine runs the segment, having seen only reads.
   is traced and before the source is resolved, read off the catalog
   snapshot (a `describe` would be an adapter call, after which nothing may
   decline).
-- A plugin's answer, or a file reader's, holding a `__proto__` key or a
-  lone surrogate (the shim carries the rest and names what it left out,
+- A plugin's answer, a file reader's, or an `AI()` reply, holding a lone
+  surrogate (the shim carries the rest and names what it left out,
   `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
-  members. The TypeScript reads on. (A model reply that does is a
-  validation failure instead: "Transition artefacts to mirror" below.)
+  members. The TypeScript reads on. (An extraction's model reply that does
+  is a validation failure instead: "Transition artefacts to mirror" below.)
+  An own `__proto__` key in any of them crosses as the key it is
+  (transition artefacts row 7).
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
@@ -1463,12 +1465,12 @@ Sizes are estimates (XS, S, M, L).
 | 4 | ORDER BY and `SORT` over mixed key kinds | mirrored (chunk 7A Task 5): V8's ArrayTimSort ported step for step (crate::order_limit: the minimum run, runs found and reversed, binary insertion, the pending-run invariants, `merge_lo`/`merge_hi` with galloping and the shared `minGallop`, the early exits an inconsistent comparator takes), so keys mixing numbers with texts land where JavaScript lands them at every length; the 64-record refusal is gone | oracle mixed_sort.json (400 seeded key lists, 1 to 2,000 keys, seed 20261014, tests/tail_oracle.rs; the stable merge it replaces got 317 of them wrong) | tests/oracle/mixed_sort.json (tests/tail_oracle.rs) | done |
 | 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. A field or node DECLARED `__proto__` (inline in an extraction, or in a node declaration: every such name is program text) is the checker's `MOV_SHAPE_FIELD_PROTO` (chunk 7A Task 6, a bug fix without a version: past the read the TypeScript's entity never held it as a field, its context's prototype was set from the reply's `__proto__.value`), so the run ends at the check on either engine; the validator's reading of a declared `__proto__` stays, pinned by the oracle's spec trees, which no checked program now reaches | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | tests/oracle/extraction.json (tests/extraction_pin.rs) | done |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | none: the oracle's replies are JSON text, which cannot hold the number; pinned by `validate::tests` and rust_extract.unit.test.ts on both engines | 0 |
-| 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | none yet: rust_extract.unit.test.ts pins today's reading on both engines | follows 9 |
+| 7 | a host's value (an event, an adapter's, a plugin's or a model's answer, a parked state) holding an own `__proto__` key or a lone surrogate | `__proto__` mirrored (chunk 8A Task 8): the eval wire carries an own `__proto__` key as a key both ways (rust_wire.ts writes it, and reads it back with `Object.defineProperty`, never `object[key] = …`; env.rs holds it as an own entry), a read of it reads the own value, and every copy path assigns where the TypeScript assigns (`Object.assign` in a spread and in a record plugin's data, `object[key] = …` in a park's map, its rehydration, `withFileFields`, `fileFieldsOf` and `plainRecordOf`), so a `__proto__` key there sets the prototype on both engines, and keeps it own where the TypeScript spreads or `JSON.parse`s. A lone surrogate: `uncarried`, one issue at a model reply's root | a lone surrogate follows row 9 | apps/api's rust_wire_round_trip.unit.test.ts (an event field, an adapter's answer, a record and a records plugin's answer, an `AI()` reply, an extraction reply, a park and both resumes, the HTTP host double; both engines) | `__proto__` done; a lone surrogate follows 9 |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | none: the recorded runs (engine-runs.v1/v2) hold the order; the call-site allowance names the cases that depend on it | 0 to S |
 | 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole, except an `AI()` prompt's trace cut, which fails ("Errors a run can meet mid-run") | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | none yet: comes with the mirror | L |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | tests/oracle/file_bound.json (tests/tail_oracle.rs) | done |
 | 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (4,482 whole programs, seed 20261010, tests/records_oracle.rs; regenerated from the fixed TypeScript engine by forward merge 2, so the payloads shaped like engine objects prove both engines read them as data) | tests/oracle/records.json (tests/records_oracle.rs) | done |
-| 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused | the wire carrying them | none: refused at admission until the wire carries them | — |
+| 12 | `__proto__` keys in literals; `-0` and `Infinity` literals | `proto_key`, `static_number` refused (a `__proto__` key in a value crosses: row 7) | a literal's `__proto__` assigned as the TypeScript assigns it; the numbers on the wire | none: refused at admission | — |
 | 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | none: declined (`event_field_dated`) until the wire carries one | — |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | none: refused at admission | — |
 | 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again UNCHANGED, under the id it was first sent under, decodes as the one object already held; an object the host MUTATES between two answers decodes fresh the second time, where the TypeScript holds the one object (see "Known divergences") | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | none: rust_engine.unit.test.ts pins the identity the wire keeps, and rust_write.unit.test.ts an answer mutated between re-sends | — |
@@ -1527,8 +1529,8 @@ mirror replaces that plan):
     prototype is set from the reply's `__proto__.value` (an object) or lost
     (`null`), and its provenance's likewise. The name is program text, so
     the checker refuses it (`MOV_SHAPE_FIELD_PROTO`) on either engine. A reply's own
-    `__proto__` key still never reaches this engine over the eval wire
-    (row 7).
+    `__proto__` key crosses the eval wire as a key (row 7), and the
+    validator assigns it as zod does.
   - a reply number above the double range (past ±1.8e308): `JSON.parse`
     reads it as `Infinity`, which zod's number check refuses (`expected
     number, received number`). The reply crosses to this engine on the eval
@@ -1539,18 +1541,18 @@ mirror replaces that plan):
     host (the HTTP double, a remote embedder) the number is already
     `null`, which reads clean on both engines. The oracle cannot express it
     (its replies are JSON text), so it is not marked there.
-  - a model reply holding a `__proto__` key or a lone surrogate (both
-    `JSON.parse` can make): the eval wire cannot carry either, so the shim
-    hands this engine the answer without its `parsedJson` (`uncarried`),
-    its cost and the rest kept. This engine reads that as one issue at the
-    reply's root ("the reply held a key or a text this engine cannot
-    read"): it asks once more with the issue named, as for any reply the
-    guide does not describe; a second such reply fails the root's call with
-    the twice-unanswered MOVENG_RUNTIME text, and a per-entity call keeps
-    its entity (`kept_previous_stage`). The TypeScript reads on: a lone
-    surrogate is a string zod accepts, and a `__proto__` key is the
-    prototype accident above. Pinned on both engines by
-    `rust_extract.unit.test.ts`.
+  - a model reply holding a lone surrogate (`JSON.parse` can make one):
+    the eval wire cannot carry it, so the shim hands this engine the answer
+    without its `parsedJson` (`uncarried`), its cost and the rest kept.
+    This engine reads that as one issue at the reply's root ("the reply
+    held a text this engine cannot read"): it asks once more with the issue
+    named, as for any reply the guide does not describe; a second such
+    reply fails the root's call with the twice-unanswered MOVENG_RUNTIME
+    text, and a per-entity call keeps its entity (`kept_previous_stage`).
+    The TypeScript reads on: a lone surrogate is a string zod accepts.
+    Pinned on both engines by `rust_extract.unit.test.ts`. (A reply's own
+    `__proto__` key crosses as a key and is read on both engines alike:
+    `rust_wire_round_trip.unit.test.ts`.)
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by
@@ -1593,7 +1595,7 @@ engine runs the segment.
 
 | the failure | why this engine stops | what closes it |
 |---|---|---|
-| a plugin's answer, or a file reader's, holding a lone surrogate or a `__proto__` key ("Errors a run can meet mid-run") | the eval wire cannot carry either, and a Rust string holds no lone surrogate: the shim hands the answer over without it (`uncarried`) and the statement fails naming the members | chunk 8: transition artefacts rows 7 and 9 (a string that holds a lone surrogate, its tagged form on the wire, `__proto__` as an own key) |
+| a plugin's answer, a file reader's, or an `AI()` reply, holding a lone surrogate ("Errors a run can meet mid-run") | a Rust string holds no lone surrogate, so the eval wire cannot carry one: the shim hands the answer over without it (`uncarried`) and the statement fails naming the members | chunk 8: transition artefacts row 9 (a string that holds a lone surrogate, its tagged form on the wire) |
 | an `AI()` prompt whose 300-unit trace cut lands inside a surrogate pair | the TypeScript traces the lone high half, which no Rust string holds | chunk 8, row 9 |
 | a records plugin's record that is a text holding an astral character | its spread makes two lone halves per character | chunk 8, row 9 |
 | an adapter answering a value the eval wire cannot carry as itself (a `Date`, a class instance, a function): `RustShimError` from the shim | a backstop: the likely case, an event field the source's schema types as a date, is declined by name before the first effect (`event_field_dated`) | row 13: a `Date` on the wire, or a ruling that adapters never answer one |

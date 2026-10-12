@@ -145,7 +145,7 @@ pub(crate) fn refuse_uncarried(answer: &Js, what: &str) -> Result<(), Failure> {
         return Ok(());
     }
     Err(Failure::unreproduced(
-        &format!("{what} holding a `__proto__` key or a lone surrogate (in {})", uncarried.join(", ")),
+        &format!("{what} holding a lone surrogate (in {})", uncarried.join(", ")),
         "the Rust engine reads only what its wire carries",
     ))
 }
@@ -397,7 +397,7 @@ struct Telemetry {
 #[derive(Clone)]
 pub(crate) struct Reply {
     /// The reply held what the eval wire cannot carry (the shim's
-    /// `uncarried`): a `__proto__` key, a lone surrogate.
+    /// `uncarried`): a lone surrogate.
     pub(crate) unreadable: bool,
     pub(crate) parsed_json: Js,
     pub(crate) raw_text: Option<String>,
@@ -1064,7 +1064,7 @@ fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<
     validate::read_reply(region, &reply.parsed_json)
 }
 
-pub(crate) const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)";
+pub(crate) const UNREADABLE_REPLY: &str = "the reply held a text this engine cannot read (a lone surrogate)";
 
 /// The members of a host's answer the shim could not carry on the eval wire.
 pub(crate) fn uncarried(answer: &Js) -> Vec<String> {

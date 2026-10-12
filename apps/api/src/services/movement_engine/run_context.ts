@@ -343,11 +343,11 @@ export function withDeclaredFiles<Answer extends TransformInvocationResult>(answ
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
     const proto: unknown = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) return value;
-    const out: Record<string, unknown> = {};
-    for (const [name, member] of Object.entries(value)) {
-      out[name] = Object.hasOwn(fields, name) ? filesAtType(fields[name], member) : member;
-    }
-    return out;
+    // Built from entries, so a host's own `__proto__` key stays a key: an
+    // assignment would make it the answer's prototype.
+    return Object.fromEntries(
+      Object.entries(value).map(([name, member]) => [name, Object.hasOwn(fields, name) ? filesAtType(fields[name], member) : member]),
+    );
   };
   switch (output.kind) {
     case 'records':

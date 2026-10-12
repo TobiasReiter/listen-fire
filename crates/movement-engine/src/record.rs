@@ -476,7 +476,9 @@ fn plain_value(value: &Js, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
     }
     match value {
         Js::Array(list) => Ok(Js::array(list.items().iter().map(|item| plain_value(item, path)).collect::<Result<_, _>>()?)),
-        Js::Object(dict) => {
+        // `isDictValue`: an object a prototype was assigned to is handed on
+        // as it is.
+        Js::Object(dict) if dict.proto.is_none() => {
             let mut out = JsObject::new();
             for (key, item) in dict.entries() {
                 out.set(key.clone(), plain_value(item, path)?);
@@ -503,9 +505,10 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
         Binding::Value(value) => return plain_value(&value.value, path),
         _ => {}
     }
+    // `plain[field] = …`: assigned, as `plainRecordOf` does.
     let mut plain = JsObject::new();
     for (field, member) in fields_of(binding)?.entries() {
-        plain.set(field.clone(), plain_value(member, path)?);
+        plain.assign(field.clone(), plain_value(member, path)?);
     }
     let mut edges: Vec<(String, Js)> = Vec::new();
     match binding {

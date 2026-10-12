@@ -368,9 +368,11 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
         }
         Js::Object(dict) => {
+            // `of[key] = …`: an own `__proto__` key sets the prototype, which
+            // the park's JSON leaves out.
             let mut of = JsObject::new();
             for (key, item) in dict.entries() {
-                of.set(key.clone(), serialize_value(run, item, park)?);
+                of.assign(key.clone(), serialize_value(run, item, park)?);
             }
             object_of(vec![("kind", Js::str("map")), ("of", Js::object(of))])
         }

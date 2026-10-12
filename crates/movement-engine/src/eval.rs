@@ -1021,11 +1021,13 @@ fn members_of(value: &Js) -> Js {
 }
 
 /// `Object.assign(object, spreadKeysOf(value))`: a map's keys, or a
-/// record's fields (`recordFields`).
+/// record's fields (`recordFields`), each assigned, so an own `__proto__`
+/// key the source holds sets the object's prototype, as the TypeScript's
+/// `Object.assign` does.
 fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
     if let Some(record) = crate::record::binding_of(value) {
         for (key, item) in crate::record::fields_of(&record)?.entries() {
-            object.set(key.clone(), item.clone());
+            object.assign(key.clone(), item.clone());
         }
         return Ok(());
     }
@@ -1033,10 +1035,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
         Js::Undefined | Js::Null => Ok(()),
         Js::Object(source) if source.proto.is_none() => {
             for (key, item) in source.entries() {
-                if key == "__proto__" {
-                    return Err(EvalError::Fallback("a `__proto__` key sets a prototype".into()));
-                }
-                object.set(key.clone(), item.clone());
+                object.assign(key.clone(), item.clone());
             }
             Ok(())
         }
@@ -1138,6 +1137,29 @@ mod tests {
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
         Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
+    }
+
+    /// `{...m}` is the TypeScript's `Object.assign`: an own `__proto__` key in
+    /// `m` sets the new object's prototype (an object) or nothing (a
+    /// primitive), and is no key of it.
+    #[test]
+    fn a_spread_assigns_an_own_proto_key_as_object_assign_does() {
+        let source = |proto: Js| {
+            let mut m = JsObject::new();
+            m.set("a".into(), Js::Number(1.0));
+            m.set("__proto__".into(), proto);
+            Js::object(m)
+        };
+        let mut x = JsObject::new();
+        x.set("x".into(), Js::Number(2.0));
+        let mut spread = JsObject::new();
+        spread_keys(&source(Js::object(x)), &mut spread).unwrap();
+        assert_eq!(spread.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
+        let spread = std::rc::Rc::new(spread);
+        assert!(matches!(crate::js::object_property(&spread, "x"), Js::Number(n) if n == 2.0));
+        let mut ignored = JsObject::new();
+        spread_keys(&source(Js::Number(5.0)), &mut ignored).unwrap();
+        assert!(ignored.proto.is_none() && ignored.get("__proto__").is_none());
     }
 
     #[test]

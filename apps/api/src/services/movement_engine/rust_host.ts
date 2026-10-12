@@ -58,6 +58,7 @@ import {
   RustShimError,
   WireOut,
   filesInParkState,
+  ownEntry,
   isCallbackParam,
   schemaFieldTypeOf,
   optionalString,
@@ -780,8 +781,9 @@ function instant(value: unknown, what: string): string {
 
 /**
  * A host's answer on the eval wire, as the engine reads it. A member the wire
- * cannot carry as itself (a reply's `__proto__` key or lone surrogate, both of
- * which `JSON.parse` can make) is left out and named under `uncarried`: the
+ * cannot carry as itself (a reply's lone surrogate, which `JSON.parse` can
+ * make; its own `__proto__` key crosses as a key) is left out and named under
+ * `uncarried`: the
  * call was made and charged, so the engine decides what an unreadable answer
  * means for the run, never the shim. The cost and every other member cross.
  */
@@ -794,7 +796,7 @@ function wired(wire: WireOut, answer: object, method: string, members: readonly 
   const uncarried: string[] = [];
   for (const [key, value] of Object.entries(answer)) {
     if (members.includes(key) && !carries(value)) uncarried.push(key);
-    else kept[key] = value;
+    else ownEntry(kept, key, value);
   }
   const value = { ...kept, uncarried };
   if (!carries(value)) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
