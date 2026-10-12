@@ -420,8 +420,10 @@ impl Run<'_> {
     /// `spreadRecordIntoGraph`: the record copied by the checker's plan, its
     /// fields and planned edges laid over what the node holds so far.
     async fn spread_record(&self, node: &Rc<RefCell<Node>>, spread: &MapSpread, plan: &Json, scope: &Scope, shape: Option<&ShapeNode>) -> Result<(), Stop> {
-        // `spreadRecord`: the record held as a value or bound as one.
-        let bound = match scope.resolve(&spread.source) {
+        // `spreadRecord`: the record held as a value or bound as one; none
+        // at all copies nothing.
+        let bound = match spread_source_binding(spread, scope) {
+            None => return Ok(()),
             Some(Binding::Value(value)) if value.value.is_nullish() => return Ok(()),
             Some(Binding::Value(value)) => crate::record::binding_of(&value.value),
             other => other,
@@ -526,7 +528,7 @@ impl Run<'_> {
 
     /// `spreadMap`: the map a `...v` spreads, `None` when it is absent.
     fn spread_map(&self, spread: &MapSpread, scope: &Scope) -> Result<Option<JsObject>, Stop> {
-        let bound = scope.resolve(&spread.source);
+        let bound = spread_source_binding(spread, scope);
         let value = match &bound {
             Some(Binding::Value(v)) => v.value.clone(),
             _ => Js::Undefined,
@@ -598,6 +600,29 @@ fn plain_hop(edge: &str) -> movement_parser::lowering::expression::EdgeStep {
         filter: None,
         expression_filter: None,
     }
+}
+
+/// `spreadSourceBinding`: the binding a spread copies from, its name's, or
+/// for `...m.k` what the map holds under each key in turn, bound as `x =
+/// m.k` binds it (a record held there as itself); none where a step is no
+/// map.
+fn spread_source_binding(spread: &MapSpread, scope: &Scope) -> Option<Binding> {
+    let Some(path) = &spread.path else { return scope.resolve(&spread.source) };
+    let mut bound = scope.resolve(&path.root);
+    for key in &path.members {
+        let Some(Binding::Value(held)) = &bound else { return None };
+        if !crate::js::is_dict(&held.value) {
+            return None;
+        }
+        let Js::Object(map) = &held.value else { return None };
+        // `held[key] ?? null`.
+        let value = match crate::js::plain_property(map, key) {
+            value if value.is_nullish() => Js::Null,
+            value => value,
+        };
+        bound = Some(crate::record::bind_value(value, held.trail.clone(), false));
+    }
+    bound
 }
 
 /// `spreadsAnywhere`: does any body of this graph literal take keys from a map?

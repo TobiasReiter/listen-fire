@@ -220,7 +220,7 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('...m.k in a write (286561483a): run whole in Rust; in a graph literal, refused by name', async () => {
+  it('...m.k in a write (286561483a) and in a graph literal (PLAN-08A group E): run whole in Rust', async () => {
     await onBoth(
       movement('  n = node { name: msg.`subject`, stage: "lead" }', '  held = { k: n }', '  write crm-[:companies]-> { ...held.k, stage: "won" }'),
       // The spread's lines read the record the map holds (chunk 7A Task 3).
@@ -229,7 +229,7 @@ describe("main's language changes on both engines", () => {
     );
     await onBoth(
       movement('  held = { k: { name: msg.`subject` } }', '  g = graph { ...held.k, stage: "new" }', '  write crm-[:companies]-> { name: g.name, stage: g.stage }'),
-      { refused: 'node_spread_path' },
+      { runsWhole: true },
       [['create', { name: 'Acme', stage: 'new' }]],
     );
   });

@@ -714,8 +714,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'delete_not_record',
-    routes: 'refused',
-    note: "`delete x` where x is not a write's handle or a hop alias (what a node's edge holds): needs a delete of what a node's edge holds",
+    routes: 'whole',
+    note: "closed for what a node's edge holds in PLAN-08A group E: a system's record deleted in its system, a run-built node failed as resolvePositionWriteTarget fails it; the event or a value stays refused",
     programs: [
       () => ({ body: '  g = graph { files: msg-[:files]-> }\n  g-[f:files]-> {\n    delete f\n  }' }),
       () => ({ file: `node Entry {\n  name: <text>\n}\n${m('  d = node { entries: <Entry> }\n  e = write d-[:entries]-> { name: "a" }\n  delete e')}` }),
@@ -750,11 +750,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'write_root_not_held',
-    routes: 'refused',
-    note: "a linked write rooted at a shape the file declares (`write Note-[:item]-> { … }`): needs the TypeScript's root resolution",
+    routes: 'whole',
+    note: "closed in PLAN-08A group E: a linked write rooted at a declared shape is the retired shape write (materializeShapeWrite), an in-memory position of the shape's type",
     programs: [
       () => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m('  persist(n: write Note-[:item]-> { title: msg.`subject` })')}`, movementName: 'm' }),
       (pick) => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m(`  persist(n: write Note-[:item]-> { title: "${pick(NAMES)}" })`)}`, movementName: 'm' }),
+      () => ({ file: `node Note {\n  title: <text>\n}\n${m('  n = write Note-[:item]-> { unique by (`title`), title: msg.`subject` }')}` }),
     ],
   },
   {
@@ -805,11 +806,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'node_spread_path',
-    routes: 'refused',
-    note: '`...m.k` in a graph literal: needs spreads of map members',
+    routes: 'whole',
+    note: "closed for a value's member in PLAN-08A group E: what the map holds under the keys (spreadSourceBinding), a map spread or a record copied by the checker's plan",
     programs: [
       () => ({ body: '  held = { k: { name: "a" } }\n  g = graph { ...held.k }' }),
       () => ({ body: '  held = { k: { name: msg.`subject` } }\n  g = graph { ...held.k, extra: 1 }' }),
+      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    g = graph { ...held.k }\n    write crm-[:notes]-> { body: g.`name` }\n  }' }),
     ],
   },
   {

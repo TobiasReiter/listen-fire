@@ -470,8 +470,7 @@ pub(crate) fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
 /// when it does: a state of version 1 whose `suspended`, when present, is
 /// `true`, and whose scopes, frames and journal hold only the binding kinds
 /// this engine rebuilds (crate::resume) — every kind serialize.ts writes
-/// but a block meta-node and a body's own node declaration, neither of
-/// which a run this engine admits holds.
+/// but a block meta-node, which no run of either engine makes.
 pub fn resume_refusal(state: &Json) -> Option<String> {
     let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
     if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {

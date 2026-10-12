@@ -2356,7 +2356,12 @@ impl Names<'_> {
             // written handles, as the TypeScript's `resolveEdgeEndpoint` says.
             Statement::Unlink(_) => Ok(()),
             Statement::Delete(statement) => {
-                if self.handles.contains(&statement.name) || self.landings.contains(&statement.name) { Ok(()) } else { refuse("delete_not_record") }
+                // What a node's edge holds is the record it is (a system's,
+                // deleted in its system), or a run-built node, which the
+                // TypeScript refuses as it refuses any binding that is no
+                // record position (`resolvePositionWriteTarget`), mirrored.
+                let held = self.handles.contains(&statement.name) || self.landings.contains(&statement.name) || self.members.contains(&statement.name);
+                if held { Ok(()) } else { refuse("delete_not_record") }
             }
             Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::Combinator(statement) => self.combinator(&statement.combinator, within),
@@ -3332,7 +3337,7 @@ impl Names<'_> {
         match &write.target {
             // One record at the convergence of its paths, each a linked
             // write's (`resolveTupleWriteTarget`).
-            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write"))?,
+            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write", false))?,
             // `write m.k { … }`: the record a map holds, bound for the write
             // alone (run.ts `bindTargetRoots`); a root that is no member
             // path fails, on either engine.
@@ -3345,7 +3350,8 @@ impl Names<'_> {
             // handle moved on to it from version 4); anything else fails as
             // the TypeScript's `executePositionWrite` fails it.
             WriteTarget::Position { root: PathRoot::Name { .. }, .. } => {}
-            WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
+            // A linked write may be a shape write (`target_path`).
+            WriteTarget::Linked { path, .. } => self.target_path(path, "write", true)?,
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
@@ -3388,7 +3394,8 @@ impl Names<'_> {
 
     /// A write's or a match's linked target: one edge off an instance, a
     /// handle, the event or a hop alias, its WHERE scoped at the candidate.
-    fn target_path(&self, path: &PathHead, verb: &str) -> Admitted {
+    /// `shape_write`: a linked write's, which a declared shape may root.
+    fn target_path(&self, path: &PathHead, verb: &str, shape_write: bool) -> Admitted {
         let bound;
         let root = match &path.root {
             Some(PathRoot::Name { name }) => name,
@@ -3403,10 +3410,11 @@ impl Names<'_> {
         };
         // Rooted at any name: the record it holds parents the write (or the
         // engine is the adapter, into a node the run built), and anything
-        // else fails as the TypeScript's `linkedPathGraph` fails it — but a
-        // declared shape's name is a shape write (an in-memory position),
-        // which this engine does not make.
-        if self.shapes.contains(root) && !self.binds_in_body(root) {
+        // else fails as the TypeScript's `linkedPathGraph` fails it. A
+        // declared shape's name is a shape write: an in-memory position of
+        // its type (`materializeShapeWrite`), its fields held to what a
+        // system's write takes; a match against one is not made.
+        if self.shapes.contains(root) && !self.binds_in_body(root) && !shape_write {
             return refuse(format!("{verb}_root_not_held"));
         }
         match edge_shape(path) {
@@ -3427,7 +3435,7 @@ impl Names<'_> {
     /// a system, keyed `unique by` clauses, field values the evaluator runs.
     fn match_(&self, m: &ast::MatchExpression) -> Admitted {
         match &m.target {
-            WriteTarget::Linked { path, .. } => self.target_path(path, "match")?,
+            WriteTarget::Linked { path, .. } => self.target_path(path, "match", false)?,
             WriteTarget::Tuple { .. } => return refuse("match_tuple"),
             WriteTarget::Position { .. } => return refuse("match_position"),
         }
@@ -3474,8 +3482,14 @@ impl Names<'_> {
         // as it is: what a node's edge holds, a walked or extracted record too.
         let copied = |name: &str| records(name) || self.members.contains(name) || self.landings.contains(name) || self.extracts.contains(name);
         for spread in literal.spreads.iter().flatten() {
-            if spread.path.is_some() {
-                return refuse("node_spread_path");
+            // `...m.k`: what the map holds under the keys, bound as `x = m.k`
+            // binds it (`spreadSourceBinding`), copied as a record by the
+            // checker's plan or spread as a map.
+            if let Some(path) = &spread.path {
+                if !self.values.contains(&path.root) {
+                    return refuse("node_spread_path");
+                }
+                continue;
             }
             if !self.values.contains(&spread.source) && !copied(&spread.source) {
                 return refuse("node_spread_source");
@@ -4667,7 +4681,7 @@ mod tests {
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
             ("  g = graph { owner: msg }", "node_event_entry"),
             ("  g = graph { ...msg }", "node_spread_source"),
-            ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
+            ("  g = graph { ...msg.k }", "node_spread_path"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
@@ -4722,11 +4736,8 @@ mod tests {
     /// and the scan rules the parser mirrors are admitted.
     #[test]
     fn refuses_mains_new_constructs_by_name_and_admits_its_scan_rules() {
-        for (body, reason) in [
-            ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
-        ] {
-            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
-        }
+        // A member of a value spread into a graph runs since PLAN-08A group E.
+        assert_eq!(refused("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }"), None);
         assert_eq!(
             file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  x = fetch_url(url: fetch_url(url: msg.`text`))\n}}")).as_deref(),
             Some("plugin_call")

@@ -23,9 +23,10 @@ const VERSIONS: LanguageVersion[] = [1, 2, 3, 4];
  *  and `plugin_call_form` 1), less `plugin_call_form`'s cell, which runs
  *  since PLAN-08A Task 2 (a plugin's call as another's argument), and
  *  `block_multi_hop`'s cells, which run since PLAN-08A group D (a head of
- *  many hops). Each task that closes one of these reasons lowers its
+ *  many hops), and `node_spread_path`'s, which run since PLAN-08A group E (a
+ *  graph spread of a value's member). Each task that closes one of these reasons lowers its
  *  ceiling; a ceiling never rises. Zero refusals is every one 0. */
-const REFUSED_CEILING: Partial<Record<LanguageVersion, number>> = { 1: 0, 2: 0, 3: 4, 4: 4 };
+const REFUSED_CEILING: Partial<Record<LanguageVersion, number>> = { 1: 0, 2: 0, 3: 0, 4: 0 };
 
 /** Every helper movement the matrix's skeleton declares, by name. */
 const HELPER = /^movement (?!run_cell\b)(\w+)\(/;

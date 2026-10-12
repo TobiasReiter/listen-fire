@@ -132,8 +132,11 @@ const path = require('node:path');
 // PLAN-08A group F (the file scope: an imported library's movements called
 // in the library's own scope, its shapes' words and types read there; a
 // shape declared in a body, and parked, 2026-10-12) lifts v2 7, v3 11: v2
-// 1267, v3 2226.
-const RAN_WHOLE_FLOOR = { v1: 1030, v2: 1267, v3: 2226 };
+// 1267, v3 2226. PLAN-08A group E (a shape-rooted write as the in-memory
+// position it makes, a graph spread of a value's member, a delete of what a
+// node's edge holds, 2026-10-12) lifts v1 1, v2 1, v3 6: v1 1031, v2 1268,
+// v3 2232.
+const RAN_WHOLE_FLOOR = { v1: 1031, v2: 1268, v3: 2232 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -198,39 +201,46 @@ const RAN_WHOLE_FLOOR = { v1: 1030, v2: 1267, v3: 2226 };
 // Lowered by group F (2026-10-12): refused v2 12 to 5, v3 23 to 12
 // (import_from_file 7 / 7, statement:shape 4 and statement:call 2 / 2
 // retired; extract_call_shape 2 to 1, the statement:shape run having held
-// both); evaluator not admitted v2 72 to 62, v3 242 to 202.
+// both); evaluator not admitted v2 72 to 62, v3 242 to 202. Lowered by
+// group E (2026-10-12): refused 5 / 5 / 12 to 3 / 3 / 5 (write_root_not_held
+// 2 / 2 / 2, node_spread_path 4 and delete_not_record 1 retired); evaluator
+// not admitted 62 / 62 / 202 to 58 / 58 / 174. mirroredFailure is 7 / 7 / 5
+// where it was 6 / 6 / 4: one corpus case per corpus (`unique by` on a shape
+// write) was refused as write_root_not_held and now ends in the TypeScript's
+// own MOVENG_UNSUPPORTED on both engines, which is that guard's ending; a
+// refusal turned into the same ending as the TypeScript's takes its first
+// measurement, as a reason a closed one hid does, and the refused-plus-
+// mirrored total still falls (11 / 11 / 16 to 10 / 10 / 10).
 const CEILINGS = {
   v1: {
-    refused: 5,
-    everyReason: { 'function:chunks': 3, write_root_not_held: 2 },
+    refused: 3,
+    everyReason: { 'function:chunks': 3 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 62,
-    mirroredFailure: 6,
+    evaluatorNotAdmitted: 58,
+    mirroredFailure: 7,
   },
   v2: {
-    refused: 5,
-    everyReason: { 'function:chunks': 3, write_root_not_held: 2 },
+    refused: 3,
+    everyReason: { 'function:chunks': 3 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 62,
-    mirroredFailure: 6,
+    evaluatorNotAdmitted: 58,
+    mirroredFailure: 7,
   },
   v3: {
-    refused: 12,
-    everyReason: {
-      node_spread_path: 4, 'function:chunks': 3, write_root_not_held: 2, extract_call_model: 1, delete_not_record: 1, extract_call_shape: 1,
-    },
+    refused: 5,
+    everyReason: { 'function:chunks': 3, extract_call_model: 1, extract_call_shape: 1 },
     declined: { expression_does_not_lower: 3 },
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 202,
-    mirroredFailure: 4,
+    evaluatorNotAdmitted: 174,
+    mirroredFailure: 5,
   },
 };
 
