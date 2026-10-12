@@ -635,6 +635,13 @@ describe('writes in the Rust engine', () => {
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
+  it('fails a delete of the event or of a value as the TypeScript engine fails it: no record position', async () => {
+    for (const body of ['  delete msg', '  x = "a"\n  delete x']) {
+      const { rust } = await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ subject: 'Acme' }) });
+      expect(String(rust.error)).toContain('needs a record position');
+    }
+  });
+
   // Henry's ruling (PLAN-08A group F′): a `Date` a host answers is its ISO
   // text on both engines, so a date-typed field runs on the Rust one too.
   it('reads a `Date` the event or an adapter answers as its ISO text on both engines: interpolated, compared, parked', async () => {

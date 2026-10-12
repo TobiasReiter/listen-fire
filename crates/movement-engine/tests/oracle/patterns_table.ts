@@ -716,9 +716,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'delete_not_record',
     routes: 'whole',
-    note: "closed for what a node's edge holds in PLAN-08A group E: a system's record deleted in its system, a run-built node failed as resolvePositionWriteTarget fails it; the event or a value stays refused",
+    note: "closed for what a node's edge holds in PLAN-08A group E: a system's record deleted in its system, a run-built node failed as resolvePositionWriteTarget fails it; the event and a value holding no record fail as it fails them since group F′ part 2; a value that may hold a record, an extraction's root, stay refused",
     programs: [
       () => ({ body: '  g = graph { files: msg-[:files]-> }\n  g-[f:files]-> {\n    delete f\n  }' }),
+      () => ({ body: '  delete msg' }),
+      (pick) => ({ body: `  x = "${pick(NAMES)}"\n  delete x` }),
       () => ({ file: `node Entry {\n  name: <text>\n}\n${m('  d = node { entries: <Entry> }\n  e = write d-[:entries]-> { name: "a" }\n  delete e')}` }),
     ],
   },

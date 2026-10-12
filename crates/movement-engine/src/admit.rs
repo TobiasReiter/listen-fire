@@ -2390,9 +2390,12 @@ impl Names<'_> {
                 // What a node's edge holds is the record it is (a system's,
                 // deleted in its system), or a run-built node, which the
                 // TypeScript refuses as it refuses any binding that is no
-                // record position (`resolvePositionWriteTarget`), mirrored.
-                let held = self.handles.contains(&statement.name) || self.landings.contains(&statement.name) || self.members.contains(&statement.name);
-                if held { Ok(()) } else { refuse("delete_not_record") }
+                // record position (`resolvePositionWriteTarget`), mirrored:
+                // so are the event and a value that holds no record.
+                let name = &statement.name;
+                let held = self.handles.contains(name) || self.landings.contains(name) || self.members.contains(name);
+                let refused_alike = self.events.contains(name) || (self.values.contains(name) && self.holder(name) == Holder::Free);
+                if held || refused_alike { Ok(()) } else { refuse("delete_not_record") }
             }
             Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::Combinator(statement) => self.combinator(&statement.combinator, within),
@@ -4948,6 +4951,10 @@ mod tests {
             "  p = write crm-[:people]-> { name: \"a\" }\n  co = write crm-[:companies]-> { name: \"b\" }\n  link p -[:company]-> co\n  unlink p -[:company]-> co\n  delete co",
             "  co = write crm-[:companies]-> { name: \"b\" }\n  fund = link co -[:portfolio]-> { unique by (`name`), name: \"F\" }",
             "  crm-[c:companies]-> {\n    write c-[:notes]-> { body: c.`name` }\n    write c { stage: \"x\" }\n    delete c\n  }",
+            // The run fails as the TypeScript's `resolvePositionWriteTarget`
+            // fails it: no record position.
+            "  delete msg",
+            "  x = \"a\"\n  delete x",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
@@ -4956,7 +4963,6 @@ mod tests {
     #[test]
     fn refuses_each_record_verb_form_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  delete msg", "delete_not_record"),
             ("  x = match crm-[:companies]-> { unique by (`name` CONTAINS \"a\"), name: \"a\" }", "unique_by_without_key"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
