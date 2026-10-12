@@ -206,8 +206,8 @@ fn did_you_mean(written: &str, known: &[&str]) -> String {
 
 /// Over UTF-16 units, as the TypeScript indexes its strings.
 fn edit_distance_at_most_one(a: &str, b: &str) -> bool {
-    let a: Vec<u16> = a.encode_utf16().collect();
-    let b: Vec<u16> = b.encode_utf16().collect();
+    let a: Vec<u16> = crate::util::form::units_vec(a);
+    let b: Vec<u16> = crate::util::form::units_vec(b);
     if a.len().abs_diff(b.len()) > 1 {
         return false;
     }

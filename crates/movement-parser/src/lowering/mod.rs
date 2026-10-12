@@ -253,7 +253,7 @@ enum Ending {
 fn ending_hop(hop: &Hop) -> Option<Ending> {
     let label = &hop.label.text;
     // `label.split(/[:\s]/, 1)[0]`.
-    let units: Vec<u16> = label.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(label);
     let cut = units.iter().position(|&u| u == u16::from(b':') || utf16::is_js_space(u)).unwrap_or(units.len());
     let base = utf16::to_string(&units[..cut]);
     if base == "#linked" || label == "#linked" {

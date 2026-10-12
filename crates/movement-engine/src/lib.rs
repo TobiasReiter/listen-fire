@@ -38,6 +38,7 @@ pub mod formula;
 pub mod host;
 pub mod js;
 pub mod js_date;
+pub mod js_string;
 pub mod js_regex;
 pub mod letter_number;
 pub mod ledger;
@@ -80,6 +81,8 @@ use host::{Family, Request};
 /// `{answers}`, each in the answer envelope it came in; `panic` panics with
 /// `message` on the first poll.
 pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
+    // Read as `JSON.parse` reads it: a lone surrogate's escape included.
+    let input_text = &js_string::read_json_text(input_text);
     let input: Json = serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("the input is not JSON: {e}")))?;
     match input.get("entry").and_then(Json::as_str) {
         #[cfg(test)]
@@ -127,7 +130,7 @@ fn echo_request(request: &Json) -> Result<Request, ProtocolError> {
 /// An answer's JSON: `{"value": …}`, `{}` for `undefined`, or
 /// `{"error": {message, …}}` for a request the host could not serve.
 pub fn read_answer(json: &str) -> Result<Answer, ProtocolError> {
-    let envelope: Json = serde_json::from_str(json).map_err(|e| ProtocolError(format!("the answer is not JSON: {e}")))?;
+    let envelope: Json = js_string::from_json_text(json).map_err(|e| ProtocolError(format!("the answer is not JSON: {e}")))?;
     let Some(object) = envelope.as_object() else {
         return Err(ProtocolError(format!("an answer is an object, not {envelope}")));
     };
@@ -152,7 +155,7 @@ fn answer_envelope(answer: &Answer) -> Json {
 
 /// `eval_expression`'s reply, or a message for input it cannot read.
 pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
-    let expr: Expression = serde_json::from_str(expr).map_err(|e| format!("the expression does not read: {e}"))?;
+    let expr: Expression = js_string::from_json_text(expr).map_err(|e| format!("the expression does not read: {e}"))?;
     let envelope = env::read_envelope(bindings)?;
     // A zone the environment does not know would read every date text as
     // UTC: the TypeScript evaluator answers instead.

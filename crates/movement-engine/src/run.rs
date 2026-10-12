@@ -204,7 +204,10 @@ fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catal
 }
 
 /// The segment entry: the run, and its `done`.
-pub async fn segment(host: Host, input: SegmentInput) -> Json {
+pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
+    // The source as the TypeScript engine's parser is handed it: its text
+    // encoded as UTF-8 (`TextEncoder`), so a lone half is U+FFFD there.
+    input.source = movement_parser::util::form::usv_text(&input.source).into_owned();
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
@@ -1237,7 +1240,7 @@ impl Run<'_> {
             Statement::Error(statement) => {
                 let message = self.evaluate_slot(&statement.message, scope).await?.value;
                 let message = match message {
-                    Js::String(text) => text,
+                    Js::String(text) => text.into_string(),
                     other if other.is_nullish() => String::new(),
                     other => other.to_js_string(),
                 };
@@ -1736,7 +1739,7 @@ impl Run<'_> {
             origin.push(("rawTextId", raw_text_id));
         }
         if let Some(handle) = crate::extract::file_handle(file) {
-            origin.push(("handle", Js::String(handle)));
+            origin.push(("handle", Js::str(handle)));
         }
         for key in ["name", "contentType"] {
             let value = event_get(file, key);
@@ -1751,16 +1754,6 @@ impl Run<'_> {
     /// `evaluateAi`: one priced `llm.client.call` at the tier's settings,
     /// its reply read out of the structured envelope (`aiAnswer`), traced.
     async fn ai(&self, prompt: &str, tier: Option<&str>) -> Result<Js, Failure> {
-        // The trace keeps the prompt's first 300 UTF-16 units: where that cut
-        // splits a pair, JavaScript keeps the lone high half, which no Rust
-        // string holds (transition artefacts, row 9) — refused, before the
-        // model is asked, rather than traced otherwise.
-        if crate::extract::emission::cut_splits_pair(prompt, AI_TRACE_PROMPT_UNITS) {
-            return Err(Failure::unreproduced(
-                "an AI() prompt whose trace cut splits a character in two",
-                "a Rust string cannot hold the lone half the TypeScript traces",
-            ));
-        }
         let settings = crate::extract::run::ai_expression_settings(tier);
         let call = host::llm::ClientCall {
             system: AI_EXPRESSION_SYSTEM,
@@ -1771,8 +1764,9 @@ impl Run<'_> {
             max_tokens: settings.max_tokens,
         };
         let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
-        crate::extract::run::refuse_uncarried(&answer, "the AI() reply")?;
         let value = ai_answer(&event_get(&answer, "parsedJson"));
+        // The prompt's first 300 UTF-16 units: a cut through a pair keeps
+        // its high half, as `slice` does.
         let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_UNITS);
         self.trace.push(TraceEntry::Ai { prompt: traced, has_value: !value.is_nullish() });
         Ok(value)
@@ -1917,7 +1911,7 @@ impl Run<'_> {
             if let Some(record_type) = &seed.record_type {
                 entries.push(("recordType", Js::str(record_type.clone())));
             }
-            entries.push(("externalId", seed.record_id.clone().map_or(Js::Null, Js::String)));
+            entries.push(("externalId", seed.record_id.clone().map_or(Js::Null, Js::str)));
         }
         entries.push(("field", Js::str(field)));
         let origin = env::object_of(entries);
@@ -2443,7 +2437,7 @@ fn is_dated(field: &FieldType, schema: &InstanceSchema, seen: &mut Vec<String>) 
 
 fn event_text(event: &Js, key: &str) -> Option<String> {
     match event_get(event, key) {
-        Js::String(text) => Some(text),
+        Js::String(text) => Some(text.into_string()),
         _ => None,
     }
 }
@@ -2499,7 +2493,7 @@ fn ai_answer(parsed: &Js) -> Js {
         return Js::Null;
     }
     let text = if matches!(answer, Js::Object(_) | Js::Array(_)) { js::json_stringify(&answer, 0) } else { answer.to_js_string() };
-    if js::trim(&text).is_empty() { Js::Null } else { Js::String(text) }
+    if js::trim(&text).is_empty() { Js::Null } else { Js::str(text) }
 }
 
 fn event_get(value: &Js, key: &str) -> Js {
@@ -2541,7 +2535,7 @@ fn event_seed_address(schema: Option<&InstanceSchema>, event: &Js, root_type_nam
         .clone();
     let payload = event_get(event, "payload");
     let pinned = |key: &str| match event_get(&payload, key) {
-        Js::String(value) if !value.is_empty() => Some(value),
+        Js::String(value) if !value.is_empty() => Some(value.into_string()),
         _ => None,
     };
     let mut narrowing = Vec::new();
@@ -2571,7 +2565,7 @@ pub fn event_address_key(address: &EventAddress) -> String {
         return address.event.clone();
     }
     pins.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
-    serde_json::to_string(&json!([address.event, pins])).expect("strings are JSON")
+    crate::js_string::to_json_text(&json!([address.event, pins]))
 }
 
 /// `seedEventPosition`.
@@ -2689,7 +2683,7 @@ mod tests {
                 let read = env::decode(&request.args["args"]).unwrap();
                 let Js::Object(read) = read else { panic!("a read") };
                 let Some(Js::String(field)) = read.get("fieldId") else { panic!("a field") };
-                match payload.get(field) {
+                match payload.get(field.as_form()) {
                     Some(value) => json!({ "value": { "result": value } }),
                     None => json!({ "value": {} }),
                 }

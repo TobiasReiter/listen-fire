@@ -192,12 +192,12 @@ struct HostImports;
 #[cfg(target_arch = "wasm32")]
 impl HostImports {
     fn ask<T: serde::de::DeserializeOwned>(&self, op: &Op<'_>) -> T {
-        let request = request_json(op).to_string();
+        let request = crate::js_string::to_json_text(&request_json(op));
         let (mut out_ptr, mut out_len) = (0usize, 0usize);
         let status = unsafe { env_call(request.as_ptr(), request.len() as u32, &mut out_ptr, &mut out_len) };
         let bytes = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();
         unsafe { movement_parser::abi::dealloc(out_ptr as *mut u8, out_len as u32) };
-        let reply: Json = serde_json::from_slice(&bytes).expect("the environment import answers JSON");
+        let reply: Json = crate::js_string::from_json_text(std::str::from_utf8(&bytes).expect("the environment import answers UTF-8")).expect("the environment import answers JSON");
         assert!(status == 0, "the environment import refused {request}: {reply}");
         serde_json::from_value(reply.get("value").cloned().unwrap_or(Json::Null))
             .unwrap_or_else(|e| panic!("the environment import answered {request} with {reply}: {e}"))

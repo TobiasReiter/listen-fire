@@ -44,7 +44,7 @@ fn shape(json: &Json) -> Json {
 fn plain(value: &Js) -> Json {
     match value {
         Js::Array(list) => json!(["l", 0, list.items().iter().map(plain).collect::<Vec<_>>()]),
-        Js::Object(object) => json!(["o", 0, object.entries().iter().map(|(k, v)| json!([k, plain(v)])).collect::<Vec<_>>()]),
+        Js::Object(object) => json!(["o", 0, object.entries().iter().map(|(k, v)| json!([encode(&Js::str(k.as_str())), plain(v)])).collect::<Vec<_>>()]),
         scalar => encode(scalar),
     }
 }
@@ -56,8 +56,8 @@ fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
     }
     let value = || args.first().cloned().unwrap_or(Js::Undefined);
     match fn_ {
-        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::String)),
-        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::String(iso))),
+        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::str)),
+        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
         "coerce.number" => Ok(stdlib::coerce_to_number(&value()).map_or(Js::Null, Js::Number)),
         flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args, around()),
         id => stdlib::apply_namespaced(id, args, around()),
@@ -87,10 +87,6 @@ fn the_standard_library_answers_as_typescript_does() {
                 continue;
             }
         };
-        if case["outcome"].get("loneSurrogate").is_some() {
-            mismatches.push(format!("{fn_}({}) = {got}, where only TypeScript can say a lone surrogate", case["args"]));
-            continue;
-        }
         let want = match &case["outcome"] {
             Json::Object(o) if o.contains_key("value") => json!({ "value": shape(&o["value"]) }),
             other => other.clone(),
@@ -113,14 +109,69 @@ fn the_standard_library_answers_as_typescript_does() {
 }
 
 /// The share of each function's oracle cases that may go back to
-/// TypeScript: what it was when recorded (2026-10-07), rounded up at the
-/// third place. Every function not listed may hand back none.
-const FALLBACK_CEILINGS: &[(&str, f64)] = &[
-    // Astral characters split into UTF-16 halves.
-    ("flat.split", 0.018),
-    // A match that splits an astral character.
-    ("text.regex_extract", 0.036),
-];
+/// TypeScript. Every function not listed may hand back none (a split of an
+/// astral character into its halves, and a match through a pair, were
+/// handed back until the engine's strings held a lone surrogate).
+const FALLBACK_CEILINGS: &[(&str, f64)] = &[];
+
+/// Strings as JavaScript holds them (tests/oracle/strings_oracle.ts): the
+/// built-ins, the comparator, cuts, JSON's quoting and the JSON text
+/// boundary over seeded texts holding lone, paired and astral code units.
+/// Nothing is handed back.
+#[test]
+fn strings_hold_what_javascript_holds() {
+    use movement_engine::js_string;
+    let cases: Vec<Json> = js_string::from_json_text(include_str!("oracle/strings.json")).unwrap();
+    assert!(cases.len() > 9_000, "the oracle holds {} cases", cases.len());
+    let lone = cases.iter().filter(|case| case.to_string().contains("\"s16\"")).count();
+    assert!(lone > 2_000, "{lone} cases hold a lone surrogate");
+    let mut mismatches = Vec::new();
+    for case in &cases {
+        let fn_ = case["fn"].as_str().unwrap();
+        let args = case["args"].as_array().unwrap();
+        let text = || match decode(&args[0]).unwrap() {
+            Js::String(text) => text,
+            other => panic!("{fn_} takes a text, not {other:?}"),
+        };
+        let got = match fn_ {
+            "slice" => json!({ "value": encode(&Js::str(js_string::slice_units(text().as_form(), 0, args[1].as_u64().unwrap() as usize))) }),
+            "json.quote" => json!({ "value": movement_engine::js::json_quote(text().as_form()) }),
+            "json.text" => {
+                // The JSON text as a host writes it (the case holds it as a
+                // text, in the engine's form).
+                let external = String::from_utf16(&js_string::units_vec(args[0].as_str().unwrap())).unwrap();
+                let read: Json = js_string::from_json_text(&external).unwrap();
+                // The writer writes back the text `JSON.stringify` wrote.
+                let written = js_string::to_json_text(&read);
+                if written != external {
+                    mismatches.push(format!("json.text {} written back as {written}", args[0]));
+                }
+                json!({ "value": shape(&plain(&movement_engine::env::js_of_json(&read))) })
+            }
+            "bound" => {
+                let (content, chars, from) = movement_engine::extract::bound_text(text().as_form(), args[1].as_f64().unwrap());
+                json!({ "value": shape(&plain(&Js::array(vec![Js::str(content), Js::Number(chars), from.map_or(Js::Null, |n| Js::Number(n as f64))]))) })
+            }
+            _ => {
+                let args: Vec<Js> = args.iter().map(|a| decode(a).unwrap()).collect();
+                match run(fn_, &args) {
+                    Ok(value) => json!({ "value": shape(&plain(&value)) }),
+                    Err(EvalError::Thrown { message, .. }) => json!({ "throws": message }),
+                    Err(other) => json!({ "handedBack": format!("{other:?}") }),
+                }
+            }
+        };
+        let want = match &case["outcome"] {
+            Json::Object(o) if o.contains_key("value") => json!({ "value": shape(&o["value"]) }),
+            Json::Object(o) if o.contains_key("throws") => json!({ "throws": o["throws"]["message"] }),
+            other => other.clone(),
+        };
+        if got != want {
+            mismatches.push(format!("{fn_}({}) = {got}, TypeScript {want}", case["args"]));
+        }
+    }
+    assert!(mismatches.is_empty(), "{} of {} mismatch:\n{}", mismatches.len(), cases.len(), mismatches.join("\n"));
+}
 
 #[test]
 fn numbers_print_as_javascript_prints_them() {

@@ -48,7 +48,7 @@ import {
   tallyVerdict,
   type DryRunRoute,
 } from './rust_stats';
-import { filesInParkState, LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
+import { filesInParkState, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
 
@@ -215,9 +215,9 @@ async function segmentInRust(
   resume: Resumption | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
-  // Read before the instance opens. An event, source or state that cannot
-  // cross the eval wire as itself (a `Date` in a payload, a lone surrogate)
-  // is refused here, before the engine has asked the host for anything.
+  // Read before the instance opens. An event or state that cannot cross the
+  // eval wire as itself (a `Date` in a payload) is refused here, before the
+  // engine has asked the host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
   const wire = new WireOut({ whole: true });
@@ -670,7 +670,7 @@ function segmentInput(
   // The event is data, whatever keys it carries: a dict shaped like a
   // binding crosses, and is read, as the dict it is.
   const event = wire.value(input.event);
-  if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
+  if (event === REFUSED) return undefined;
   // A parked state's files are made host-side, in the segment's file table:
   // the engine is handed their handles, never their descriptors.
   const state = resume !== undefined ? new WireOut({ files: wire.files }).value(filesInParkState(resume.state)) : undefined;
@@ -917,18 +917,17 @@ const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
 /**
  * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
  * host reads, no model, no traversal), every function one of its built-ins,
- * and every literal and name one JSON carries as itself into a Rust string.
+ * and every literal one the lowering carries as itself (a lone surrogate
+ * crosses JSON as its escape, which the engine reads).
  */
 export function rustCanEval(expr: Expression): boolean {
   const child = rustCanEval;
   switch (expr.type) {
     case 'static':
-      if (typeof expr.value === 'string') return !LONE_SURROGATE.test(expr.value);
       return typeof expr.value !== 'number' || (Number.isFinite(expr.value) && !Object.is(expr.value, -0));
     case 'alias_ref':
-      return !LONE_SURROGATE.test(expr.name);
     case 'property':
-      return !LONE_SURROGATE.test(expr.propertyTypeId);
+      return true;
     case 'at':
       return child(expr.expression) && child(expr.index);
     case 'list':
@@ -936,7 +935,7 @@ export function rustCanEval(expr: Expression): boolean {
     case 'object':
       return expr.entries.every(
         (member) =>
-          (isObjectSpread(member) || (member.key !== '__proto__' && !LONE_SURROGATE.test(member.key)))
+          (isObjectSpread(member) || member.key !== '__proto__')
           && child(objectMemberExpression(member)),
       );
     case 'concat':

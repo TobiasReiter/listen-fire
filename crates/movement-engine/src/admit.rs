@@ -134,7 +134,7 @@ fn names_spelled(movement: &ast::MovementDeclaration) -> Option<BTreeSet<String>
         match value {
             serde_json::Value::String(text) => {
                 names.insert(crate::js::to_lower_case(text));
-                let units: Vec<u16> = text.encode_utf16().collect();
+                let units: Vec<u16> = crate::js_string::units_vec(text);
                 let mut at = 0;
                 while at < units.len() {
                     match movement_parser::scan::scan_name(&units, at) {

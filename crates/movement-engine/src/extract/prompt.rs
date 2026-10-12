@@ -192,16 +192,16 @@ pub fn retry_user_message(user_message: &str, region: &Region<'_>, issues: &[Iss
 /// path); one inside it refuses.
 pub fn segment_for_datum(datum: &Js) -> Result<Segment, UnwritableDatum> {
     if let Js::String(text) = datum {
-        return Ok(Segment { classification: "TEXT".into(), content: text.clone() });
+        return Ok(Segment { classification: "TEXT".into(), content: text.to_string() });
     }
     if let Js::Object(object) = datum
         && let Some(Js::String(content)) = object.get("content")
     {
         let classification = match object.get("type") {
-            Some(Js::String(type_)) => type_.clone(),
+            Some(Js::String(type_)) => type_.to_string(),
             _ => "TEXT".into(),
         };
-        return Ok(Segment { classification, content: content.clone() });
+        return Ok(Segment { classification, content: content.to_string() });
     }
     let value = if matches!(datum, Js::File(_)) { datum.clone() } else { fields_value_of(datum, &mut Vec::new())? };
     // `safeStringify`: `JSON.stringify`, else (a value holding itself) its text.

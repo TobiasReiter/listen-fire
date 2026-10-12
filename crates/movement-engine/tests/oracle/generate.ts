@@ -29,6 +29,9 @@
 //   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
 //   - dates.json: V8's date parser, and the members that read dates through
 //     it, under five local zones (./dates_oracle.ts);
+//   - strings.json: strings as JavaScript holds them — the built-ins, the
+//     comparator, cuts, JSON's quoting and the JSON text boundary over seeded
+//     texts holding lone, paired and astral code units (./strings_oracle.ts);
 //   - patterns.json: the retirement proof — seeded programs for every
 //     admission pattern the README's port list names, and every one chunk 7A
 //     closed, each run on both engines through the real shim against one
@@ -66,7 +69,7 @@ import {
   stdlibFunctionById,
 } from '../../../../packages/movement-lang/expression/stdlib';
 import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
-import { fileHandle, fileValue, isFileValue } from '../../../../packages/engine-contracts/file_ref';
+import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writeExtractionOracle } from './extraction_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
@@ -76,51 +79,9 @@ import { writeRecordsOracle } from './records_oracle';
 import { writeTailOracles } from './tail_oracle';
 import { writeDatesOracle } from './dates_oracle';
 import { writePatternsOracle } from './patterns_oracle';
+import { writeStringsOracle } from './strings_oracle';
+import { outcome, wire } from './wire';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
-
-function wire(value: unknown): unknown {
-  if (value === undefined) return ['u'];
-  if (typeof value === 'number') {
-    if (Number.isNaN(value)) return ['n', 'NaN'];
-    if (value === Infinity) return ['n', 'Infinity'];
-    if (value === -Infinity) return ['n', '-Infinity'];
-    if (Object.is(value, -0)) return ['n', '-0'];
-    return value;
-  }
-  if (Array.isArray(value)) return ['l', 0, value.map(wire)];
-  // A file crosses as the eval wire carries it: an opaque handle (id, identity,
-  // what it may print), its descriptor staying host-side.
-  if (isFileValue(value)) {
-    const handle = fileHandle(value);
-    return ['F', 0, { ...(handle !== undefined ? { handle } : {}), ...(value.name !== undefined ? { name: value.name } : {}), ...(value.size !== undefined ? { size: value.size } : {}) }];
-  }
-  if (value !== null && typeof value === 'object') {
-    return ['o', 0, Object.entries(value).map(([k, v]) => [k, wire(v)])];
-  }
-  return value;
-}
-
-/** A lone surrogate, which no Rust string holds: the engine must hand such
- *  a case back to TypeScript. */
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
-function holdsLoneSurrogate(value: unknown): boolean {
-  if (typeof value === 'string') return LONE_SURROGATE.test(value);
-  if (Array.isArray(value)) return value.some(holdsLoneSurrogate);
-  if (value !== null && typeof value === 'object') return Object.entries(value).some(([k, v]) => LONE_SURROGATE.test(k) || holdsLoneSurrogate(v));
-  return false;
-}
-
-function outcome(run: () => unknown): unknown {
-  try {
-    const value = run();
-    if (holdsLoneSurrogate(value)) return { loneSurrogate: true };
-    return { value: wire(value) };
-  } catch (error) {
-    const e = error instanceof Error ? error : new Error(String(error));
-    return { throws: { name: e.name, message: e.message } };
-  }
-}
 
 const SCALARS: unknown[] = [
   undefined, null, true, false, 0, -0, 1, -1, 1.5, -2.5, 0.1, 1e21, 1e-7, 123456789.125, 999950, 1_200_000, -1250,
@@ -414,6 +375,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
+  writeStringsOracle(mulberry32(20261016), (name, text) => writeFileSync(path.join(__dirname, name), text));
   // Both engines: the movement.wasm the shim loads is the one committed.
   await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {

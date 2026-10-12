@@ -343,8 +343,8 @@ impl<'a> Evaluator<'a> {
                 // or one that is not text, is null. A record held as a value is
                 // a dict to `isDictValue`: its own keys are the binding's.
                 let value = match (&inner.value, &index.value) {
-                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key).cloned().unwrap_or(Js::Null),
-                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key)?,
+                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key.as_form()).cloned().unwrap_or(Js::Null),
+                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key.as_form())?,
                     (Js::Object(_), _) if crate::js::is_dict(&inner.value) => Js::Null,
                     (Js::Record(_), _) => Js::Null,
                     (other, _) => at_index(other, index.value.to_number()),
@@ -417,7 +417,7 @@ impl<'a> Evaluator<'a> {
                     }
                     provs.push(part.prov);
                 }
-                Ok(Evaluated { value: Js::String(text), prov: self.union(&provs.iter().collect::<Vec<_>>()) })
+                Ok(Evaluated { value: Js::str(text), prov: self.union(&provs.iter().collect::<Vec<_>>()) })
             }
             Expression::Conditional { condition, then, else_ } => {
                 let condition = self.eval(condition).await?;
@@ -484,7 +484,7 @@ impl<'a> Evaluator<'a> {
                 let instant = crate::js_date::to_iso_string(now);
                 let value = if key == "current_date" { instant[..10].to_string() } else { instant };
                 let id = reader.meta(key);
-                Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+                Ok(Evaluated { value: Js::str(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             // `AI(prompt[, tier])` (`evaluateAi`): a prompt expression
             // evaluated and made text (absent as ""), else the prompt as
@@ -701,7 +701,7 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Min => Js::Number(math_min(values.iter().map(Js::to_number))),
             AggregationFunction::Max if values.is_empty() => Js::Null,
             AggregationFunction::Max => Js::Number(math_max(values.iter().map(Js::to_number))),
-            AggregationFunction::Join => Js::String(
+            AggregationFunction::Join => Js::str(
                 values.iter().filter(|v| !v.is_nullish()).map(Js::to_text).collect::<Result<Vec<_>, _>>().map_err(thrown)?.join(separator.unwrap_or(", ")),
             ),
             AggregationFunction::Collect => Js::array(values),
@@ -896,7 +896,7 @@ impl<'a> Evaluator<'a> {
             return Err(EvalError::engine("MOVENG_RUNTIME", format!("FILE()'s artifact type must be \"pdf\" or \"text\", got {}", json_text(&kind.value))));
         }
         let text = if content.value.is_nullish() { String::new() } else { content.value.to_js_string() };
-        let value = reader.ask(Ask::RenderFile { content: text, kind: kind_text.clone() }).await?.value;
+        let value = reader.ask(Ask::RenderFile { content: text, kind: kind_text.to_string() }).await?.value;
         Ok(Evaluated { value, prov: self.union(&[&content.prov, &kind.prov]) })
     }
 
@@ -1053,11 +1053,13 @@ fn members_of(value: &Js) -> Js {
 }
 
 /// `Object.assign(object, spreadKeysOf(value))`: a map's keys, or a
-/// record's fields (`recordFields`).
+/// record's fields (`recordFields`), each assigned, so an own `__proto__`
+/// key the source holds sets the object's prototype, as the TypeScript's
+/// `Object.assign` does.
 fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
     if let Some(record) = crate::record::binding_of(value) {
         for (key, item) in crate::record::fields_of(&record)?.entries() {
-            object.set(key.clone(), item.clone());
+            object.assign(key.clone(), item.clone());
         }
         return Ok(());
     }
@@ -1065,10 +1067,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
         Js::Undefined | Js::Null => Ok(()),
         Js::Object(source) if crate::js::is_dict(value) => {
             for (key, item) in source.entries() {
-                if key == "__proto__" {
-                    return Err(EvalError::Fallback("a `__proto__` key sets a prototype".into()));
-                }
-                object.set(key.clone(), item.clone());
+                object.assign(key.clone(), item.clone());
             }
             Ok(())
         }
@@ -1185,6 +1184,37 @@ mod tests {
         let (result, _) = drive(&in_run(&reader), &expression("{ __proto__: 1, a: 2 }"));
         let Js::Object(object) = result.unwrap().value else { panic!("an object") };
         assert!(object.proto.is_none() && object.get("__proto__").is_none());
+    }
+
+    /// `{...m}` is the TypeScript's `Object.assign`: an own `__proto__` key in
+    /// `m` sets the new object's prototype (an object) or nothing (a
+    /// primitive), and is no key of it.
+    #[test]
+    fn a_spread_assigns_an_own_proto_key_as_object_assign_does() {
+        let source = |proto: Js| {
+            let mut m = JsObject::new();
+            m.set("a".into(), Js::Number(1.0));
+            m.set("__proto__".into(), proto);
+            Js::object(m)
+        };
+        let mut x = JsObject::new();
+        x.set("x".into(), Js::Number(2.0));
+        let mut spread = JsObject::new();
+        spread_keys(&source(Js::object(x)), &mut spread).unwrap();
+        assert_eq!(spread.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
+        let spread = std::rc::Rc::new(spread);
+        assert!(matches!(crate::js::object_property(&spread, "x"), Js::Number(n) if n == 2.0));
+        let mut ignored = JsObject::new();
+        spread_keys(&source(Js::Number(5.0)), &mut ignored).unwrap();
+        assert!(ignored.proto.is_none() && ignored.get("__proto__").is_none());
+        // `null`: no prototype at all, and still a dict (`isDictValue`).
+        let mut bare = JsObject::new();
+        spread_keys(&source(Js::Null), &mut bare).unwrap();
+        let bare = Js::object(bare);
+        assert!(crate::js::is_dict(&bare));
+        let mut again = JsObject::new();
+        spread_keys(&bare, &mut again).unwrap();
+        assert!(matches!(again.get("a"), Some(Js::Number(n)) if *n == 1.0));
     }
 
     #[test]

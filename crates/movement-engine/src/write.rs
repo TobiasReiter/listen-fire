@@ -190,7 +190,7 @@ impl Run<'_> {
             ("recordType", Js::str(field.record_type.clone())),
             ("fieldId", Js::str(field.field_id.clone())),
             ("functionName", Js::str(name)),
-            ("args", env::object_of(vec![("instructions", Js::String(brief)), ("data", data)])),
+            ("args", env::object_of(vec![("instructions", Js::str(brief)), ("data", data)])),
         ]);
         match self.call_adapter(instance, "invokeFieldFunction", call).await {
             Ok(value) => Ok(Ok(value)),
@@ -342,7 +342,7 @@ impl Line {
 /// written as a target's root is bound to for the write alone.
 pub(crate) fn member_path_binding_name(expr: &ast::ExprSlot) -> Option<String> {
     let raw = crate::js::trim(&expr.raw);
-    let units: Vec<u16> = raw.encode_utf16().collect();
+    let units: Vec<u16> = crate::js_string::units_vec(raw);
     let (names, end) = movement_parser::scan::scan_member_path(&units, 0)?;
     (end == units.len()).then(|| names.join("."))
 }
@@ -1977,7 +1977,7 @@ pub(crate) fn discriminated_handle_type(schema: Option<&InstanceSchema>, record_
         .or_else(|| schema.create_shapes.as_ref().and_then(|c| c.0.get(record_type)))?;
     let discriminated = shape.discriminated.as_ref()?;
     let Js::String(value) = unique::get(fields, &discriminated.discriminant) else { return None };
-    let position = discriminated.variants.0.get(&value)?.position.clone()?;
+    let position = discriminated.variants.0.get(value.as_form())?.position.clone()?;
     schema.positions.0.contains_key(&position).then_some(position)
 }
 

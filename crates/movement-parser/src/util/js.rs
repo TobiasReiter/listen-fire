@@ -67,7 +67,7 @@ pub fn slice(source: &Utf16, start: usize, end: usize) -> String {
 
 /// `s.trim()`: JavaScript's whitespace, not Rust's (U+FEFF in, U+0085 out).
 pub fn trim(s: &str) -> String {
-    let units: Vec<u16> = s.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(s);
     utf16::to_string(utf16::trim(&units))
 }
 
@@ -75,7 +75,7 @@ pub fn trim(s: &str) -> String {
 /// lowercased. Half of an astral character has no case, so that text is
 /// left as it is.
 pub fn lowercase_last_unit(s: &str) -> String {
-    let units: Vec<u16> = s.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(s);
     match units.split_last() {
         Some((&last, head)) if !(0xD800..0xE000).contains(&last) => {
             let last = char::from_u32(u32::from(last)).expect("a non-surrogate unit is a character");
@@ -89,7 +89,7 @@ pub fn lowercase_last_unit(s: &str) -> String {
 /// points; the two disagree when one side is astral and the other sits in
 /// U+E000–U+FFFF.
 pub fn cmp_utf16(a: &str, b: &str) -> Ordering {
-    a.encode_utf16().cmp(b.encode_utf16())
+    crate::util::form::units_of(a).cmp(crate::util::form::units_of(b))
 }
 
 /// `a.localeCompare(b)` as Node's ICU collation answers it for the default

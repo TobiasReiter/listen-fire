@@ -53,17 +53,10 @@ fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
                 fields.set(i.to_string(), item.clone());
             }
         }
-        // By UTF-16 unit: an astral character would spread as two lone
-        // halves, which no Rust string holds.
-        Js::String(text) if text.chars().any(|c| c.len_utf16() > 1) => {
-            return Err(Stop::Thrown(Failure::unreproduced(
-                "a records plugin's record that is a text holding an astral character",
-                "a Rust string cannot hold the lone halves its spread makes",
-            )));
-        }
+        // By UTF-16 unit: an astral character spreads as its two halves.
         Js::String(text) => {
-            for (i, c) in text.chars().enumerate() {
-                fields.set(i.to_string(), Js::String(c.to_string()));
+            for (i, unit) in crate::js_string::split_units(text.as_form()).into_iter().enumerate() {
+                fields.set(i.to_string(), Js::str(unit));
             }
         }
         _ => {}
@@ -165,9 +158,11 @@ impl Run<'_> {
                 if let Some(text) = result.text() {
                     fields.set(FETCHED_TEXT_FIELD.into(), Js::str(text));
                 }
+                // `Object.assign(fields, result.data)`: an own `__proto__`
+                // key in the data sets the fields' prototype.
                 if let Some(Js::Object(data)) = &result.data {
                     for (key, value) in data.entries() {
-                        fields.set(key.clone(), value.clone());
+                        fields.assign(key.clone(), value.clone());
                     }
                 }
                 let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
@@ -200,7 +195,7 @@ impl Run<'_> {
         let mut entry = Members::default();
         entry.set("plugin", Js::str(registered.clone()));
         if let Some(Js::String(url)) = config.get("url") {
-            entry.set("url", Js::str(crate::extract::emission::cut(url, crate::extract::run::TRACE_URL_CHARS)));
+            entry.set("url", Js::str(crate::extract::emission::cut(url.as_form(), crate::extract::run::TRACE_URL_CHARS)));
         }
         entry.set("durationMs", Js::Number(duration));
         result.trace_into(&mut entry);

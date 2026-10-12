@@ -92,7 +92,7 @@ enum ClassItem {
 
 impl Regex {
     pub fn new(pattern: &str) -> Result<Regex, RegexError> {
-        let units: Vec<u16> = pattern.encode_utf16().collect();
+        let units = crate::js_string::units_vec(pattern);
         let scan = scan_groups(&units)?;
         Parser::new(&units, scan).parse()
     }
@@ -100,7 +100,7 @@ impl Regex {
     /// `exec`: the match and its groups (`None` for a group that did not
     /// take part), or `None` when nothing matches.
     pub fn exec(&self, text: &str) -> Option<Vec<Option<Vec<u16>>>> {
-        let t: Vec<u16> = text.encode_utf16().collect();
+        let t = crate::js_string::units_vec(text);
         let mut machine = Machine::new(self);
         for start in 0..=t.len() {
             machine.reset();

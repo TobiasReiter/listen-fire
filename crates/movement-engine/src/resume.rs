@@ -1118,9 +1118,10 @@ impl Run<'_> {
                     Js::array(out)
                 }
                 Some("map") => {
+                    // `out[key] = …`, as `rehydrateValue` assigns.
                     let mut out = JsObject::new();
                     for (key, entry) in pairs(at(descriptor, "of")) {
-                        out.set(key.clone(), self.rehydrate_value(entry, park).await?);
+                        out.assign(key.clone(), self.rehydrate_value(entry, park).await?);
                     }
                     Js::object(out)
                 }
@@ -1151,7 +1152,7 @@ impl Run<'_> {
         let credential_name = text_of("credentialName");
         let construction_config: Vec<(String, String)> = pairs(at(identity, "constructionConfig"))
             .iter()
-            .map(|(k, v)| (k.clone(), match v { Js::String(s) => s.clone(), _ => String::new() }))
+            .map(|(k, v)| (k.clone(), match v { Js::String(s) => s.to_string(), _ => String::new() }))
             .collect();
         let spec = self.catalog.adapter(&adapter_slug);
         let credential_arg = spec.and_then(movement_parser::catalog::helpers::credential_arg_of).map_or_else(|| "credentials".to_string(), |a| a.name.clone());
@@ -1259,8 +1260,9 @@ fn revived_file(descriptor: Option<&Js>) -> Result<Js, Stop> {
 /// `withFileFields`: the fields a park said hold a file made whole again,
 /// each in its place.
 fn with_file_fields(mut fields: JsObject, file_fields: Option<&Js>) -> Result<JsObject, Stop> {
+    // `out[key] = …`, as `withFileFields` assigns.
     for (key, descriptor) in pairs(file_fields) {
-        fields.set(key.clone(), revived_field_value(descriptor)?);
+        fields.assign(key.clone(), revived_field_value(descriptor)?);
     }
     Ok(fields)
 }

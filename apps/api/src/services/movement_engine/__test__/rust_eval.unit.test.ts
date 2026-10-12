@@ -110,12 +110,22 @@ describe('the Rust evaluator switch', () => {
     env.declare('s', binding({ kind: 'value', value: 'x😀y' }));
     const ctx: MovementExprContext = { env, languageVersion: PIN };
     expect(rustCanEval(parseMovementExpression('@current_date'))).toBe(false);
-    expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(false);
     expect(inRust('e == null', ctx)).toBeUndefined();
     expect(inRust('when', ctx)).toBeUndefined();
     expect(inRust('missing', ctx)).toBeUndefined();
-    // Astral text split into UTF-16 halves, which no Rust string holds.
-    expect(inRust('SPLIT(s, "")', ctx)).toBeUndefined();
+    // A pattern nested past 1,000 groups, whose depth V8's stack decides.
+    expect(inRust(`TEXT.REGEX_EXTRACT(s, "${'('.repeat(1001)}a${')'.repeat(1001)}")`, ctx)).toBeUndefined();
+  });
+
+  it('runs what holds a lone surrogate: a literal, a value, and astral text split into its halves', () => {
+    const env = new Environment();
+    env.declare('s', binding({ kind: 'value', value: 'x😀y' }));
+    env.declare('lone', binding({ kind: 'value', value: 'a\uD83D' }));
+    const ctx: MovementExprContext = { env, languageVersion: PIN };
+    expect(rustCanEval({ type: 'static', value: '\uD800' })).toBe(true);
+    expect(inRust('SPLIT(s, "")', ctx)?.value).toEqual(['x', '\uD83D', '\uDE00', 'y']);
+    expect(inRust('LENGTH(lone)', ctx)?.value).toBe(2);
+    expect(inRust('"${lone}"', ctx)?.value).toBe('a\uD83D');
   });
 
   // Jest hands each suite a copy of the environment, so assigning `TZ` here
@@ -170,13 +180,13 @@ describe('the Rust evaluator switch', () => {
     resetRustEvalStats();
     const ctx = contextOf({ n: 2, s: 'x😀y' });
     inRust('n + 1', ctx);
-    inRust('SPLIT(s, "")', ctx);
+    inRust(`TEXT.REGEX_EXTRACT(s, "${'('.repeat(1001)}a${')'.repeat(1001)}")`, ctx);
     inRust('@current_date', ctx);
     expect(rustEvalStats).toEqual({
       notAdmitted: 1,
       admitted: 2,
       answered: 1,
-      fallback: { 'splitting astral characters into UTF-16 halves': 1 },
+      fallback: { 'groups nested past 1000 levels': 1 },
     });
     resetRustEvalStats();
     expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });

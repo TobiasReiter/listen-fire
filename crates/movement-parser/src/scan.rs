@@ -364,7 +364,7 @@ mod tests {
     use super::*;
 
     fn message(text: &str) -> Option<String> {
-        let units: Vec<u16> = text.encode_utf16().collect();
+        let units: Vec<u16> = crate::util::form::units_vec(text);
         call_style_if_message(&units, 0)
     }
 
@@ -388,7 +388,7 @@ mod tests {
     }
 
     fn units(text: &str) -> Vec<u16> {
-        text.encode_utf16().collect()
+        crate::util::form::units_vec(text)
     }
 
     #[test]

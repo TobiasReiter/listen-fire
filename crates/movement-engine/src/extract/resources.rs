@@ -161,20 +161,10 @@ pub fn bound_text(text: &str, ceiling: f64) -> (String, f64, Option<usize>) {
     if length as f64 <= ceiling {
         return (text.to_string(), length as f64, None);
     }
-    let head: String = utf16_prefix(text, ceiling.trunc() as usize);
+    // `slice`: a cut through a pair keeps its high half.
+    let head = crate::js_string::slice_units(text, 0, ceiling.trunc() as usize);
     let marker = js::number_to_string(ceiling);
     (format!("{head}\n[… truncated: first {marker} of {length} characters]"), ceiling, Some(length))
-}
-
-/// `text.slice(0, units)`, in UTF-16 units.
-fn utf16_prefix(text: &str, units: usize) -> String {
-    let mut taken = 0;
-    text.chars()
-        .take_while(|c| {
-            taken += c.len_utf16();
-            taken <= units
-        })
-        .collect()
 }
 
 impl Run<'_> {
@@ -231,13 +221,12 @@ impl Run<'_> {
     pub(crate) async fn resolve_file_text(&self, file: &Js) -> Result<Js, Failure> {
         let request = host::files::resolve_file_text(self.segment(), self.encode(file)?, self.ledger.budget());
         let answer = self.priced(request).await?;
-        super::run::refuse_uncarried(&answer, "a file's text")?;
         // A reason the host names outside the four a file is unreadable for
         // reaches the trace, whose entry this engine holds to them: named
         // here rather than left to the shim's check of the trace.
         let unreadable = member(&answer, "unreadable");
         if !matches!(unreadable, Js::Undefined)
-            && !matches!(&unreadable, Js::String(why) if matches!(why.as_str(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
+            && !matches!(&unreadable, Js::String(why) if matches!(why.as_form(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
         {
             return Err(Failure::unreproduced(
                 &format!("a file the host calls unreadable for {}", crate::js::json_stringify(&unreadable, 0)),
@@ -246,7 +235,7 @@ impl Run<'_> {
         }
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {
             let key = file_handle(file).or_else(|| match member(file, "name") {
-                Js::String(name) => Some(name),
+                Js::String(name) => Some(name.into_string()),
                 _ => None,
             });
             let key = key.unwrap_or_default();
@@ -302,9 +291,9 @@ impl Materializer<'_, '_> {
                 if is_file_ref(&datum) {
                     let file = self.file_segment(&datum).await?;
                     if let Js::String(id) = member(&file.resource, "id")
-                        && !seen_resource_ids.contains(&id)
+                        && !seen_resource_ids.contains(&id.to_string())
                     {
-                        seen_resource_ids.push(id);
+                        seen_resource_ids.push(id.into_string());
                         resources.push(file.resource.clone());
                         files.push(file.traced.clone());
                     }
@@ -333,7 +322,7 @@ impl Materializer<'_, '_> {
     async fn file_segment(&self, file: &Js) -> Result<FileResolution, Stop> {
         let handle = file_handle(file);
         let name = match member(file, "name") {
-            Js::String(name) => Some(name),
+            Js::String(name) => Some(name.into_string()),
             _ => None,
         };
         let key = handle.clone().or(name);
@@ -351,7 +340,7 @@ impl Materializer<'_, '_> {
         };
         let raw_text_id = member(&result, "rawTextId");
         let ceiling = self.run.input.extraction_file_chars;
-        let bounded = text.as_deref().filter(|t| !js::trim(t).is_empty()).map(|t| bound_text(t, ceiling));
+        let bounded = text.as_ref().map(crate::js::JsString::as_form).filter(|t| !js::trim(t).is_empty()).map(|t| bound_text(t, ceiling));
         if let Some((_, _, Some(of))) = &bounded {
             let mut fields = serde_json::Map::new();
             if let Js::String(name) = member(file, "name") {
@@ -390,7 +379,7 @@ impl Materializer<'_, '_> {
             traced.push(("unreadable", Js::str("no_text")));
         }
         let traced = env::object_of(traced);
-        let read = text.as_deref().map(|t| (t, &raw_text_id));
+        let read = text.as_ref().map(crate::js::JsString::as_form).map(|t| (t, &raw_text_id));
         let resource = self.run.stamp_resources(vec![file_resource(file, read)]).await.map_err(thrown)?.remove(0);
         let resolution = FileResolution { resource, text: segment, traced };
         if let Some(key) = key {

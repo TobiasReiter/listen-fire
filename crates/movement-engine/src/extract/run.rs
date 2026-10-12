@@ -136,20 +136,6 @@ pub(crate) fn ai_expression_settings(tier: Option<&str>) -> CallSettings {
 }
 const LABEL: &str = "movement_extraction";
 
-/// A plugin's or a file reader's answer that held what the eval wire cannot
-/// carry fails the statement here, where the TypeScript reads on ("Spec the
-/// tail" in the README).
-pub(crate) fn refuse_uncarried(answer: &Js, what: &str) -> Result<(), Failure> {
-    let uncarried = uncarried(answer);
-    if uncarried.is_empty() {
-        return Ok(());
-    }
-    Err(Failure::unreproduced(
-        &format!("{what} holding a `__proto__` key or a lone surrogate (in {})", uncarried.join(", ")),
-        "the Rust engine reads only what its wire carries",
-    ))
-}
-
 pub(crate) fn thrown(failure: Failure) -> Stop {
     Stop::Thrown(failure)
 }
@@ -171,7 +157,7 @@ impl PluginResult {
     fn of(answer: &Js) -> PluginResult {
         let member = |key: &str| crate::unique::get(&answer, key);
         let text = match member("text") {
-            Js::String(text) => Some(text),
+            Js::String(text) => Some(text.into_string()),
             _ => None,
         };
         let data = match member("data") {
@@ -184,7 +170,7 @@ impl PluginResult {
             _ => (Vec::new(), true),
         };
         let outcome = match member("outcome") {
-            Js::String(outcome) if !outcome.is_empty() => Some(outcome),
+            Js::String(outcome) if !outcome.is_empty() => Some(outcome.into_string()),
             _ => None,
         };
         PluginResult { text, data, records, records_not_a_list, outcome }
@@ -211,7 +197,7 @@ impl PluginResult {
         }
         let fields = self.data_keys();
         if !fields.is_empty() {
-            entry.set("fields", Js::array(fields.into_iter().map(Js::String).collect()));
+            entry.set("fields", Js::array(fields.into_iter().map(Js::str).collect()));
         }
         if let Some(outcome) = &self.outcome {
             entry.set("outcome", Js::str(outcome.clone()));
@@ -330,7 +316,7 @@ impl Firing for FiringScope<'_, '_> {
         };
         let value = self.run.evaluate_slot(slot, scope).await?.value;
         Ok(match value {
-            Js::String(text) => text,
+            Js::String(text) => text.into_string(),
             nullish if nullish.is_nullish() => String::new(),
             other => other.to_js_string(),
         })
@@ -396,9 +382,6 @@ struct Telemetry {
 /// A model call's answer (`LlmCallResult`).
 #[derive(Clone)]
 pub(crate) struct Reply {
-    /// The reply held what the eval wire cannot carry (the shim's
-    /// `uncarried`): a `__proto__` key, a lone surrogate.
-    pub(crate) unreadable: bool,
     pub(crate) parsed_json: Js,
     pub(crate) raw_text: Option<String>,
     pub(crate) effort_stepped_down: Option<Js>,
@@ -490,7 +473,6 @@ impl Run<'_> {
             self.ledger.budget(),
         );
         let answer = self.priced(request).await?;
-        refuse_uncarried(&answer, &format!("'{registered}''s answer"))?;
         // The host made the files the plugin's output declares (the shim's
         // `withDeclaredFiles`): they arrive as files, and nothing else does.
         Ok(PluginResult::of(&answer))
@@ -744,12 +726,10 @@ impl<'r, 'h> Materializer<'r, 'h> {
         };
         let answer = self.run.priced(host::llm::client_call(self.run.segment(), call, self.run.ledger.budget())).await.map_err(thrown)?;
         let member = |key: &str| crate::unique::get(&answer, key);
-        let uncarried = uncarried(&answer);
         Ok(Reply {
-            unreadable: uncarried.iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
-                Js::String(text) => Some(text),
+                Js::String(text) => Some(text.into_string()),
                 _ => None,
             },
             effort_stepped_down: Some(member("effortSteppedDown")).filter(Js::truthy),
@@ -1018,7 +998,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
             config.set(fed.name.clone(), Js::str(self.source_text.borrow().clone()));
         }
         let url = match config.get("url") {
-            Some(Js::String(url)) => Some(emission::cut(url, TRACE_URL_CHARS)),
+            Some(Js::String(url)) => Some(emission::cut(url.as_form(), TRACE_URL_CHARS)),
             _ => None,
         };
         for param in spec.and_then(|s| s.required_args.as_ref()).into_iter().flatten() {
@@ -1054,24 +1034,9 @@ impl<'r, 'h> Materializer<'r, 'h> {
     }
 }
 
-/// What the reply says unread: a reply the eval wire could not carry is one
-/// issue at its root, retried and failed as any reply the guide does not
-/// describe ("Transition artefacts to mirror" in the README).
+/// What the reply says.
 fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<Issue>> {
-    if reply.unreadable {
-        return Err(vec![Issue { path: Vec::new(), message: UNREADABLE_REPLY.into() }]);
-    }
     validate::read_reply(region, &reply.parsed_json)
-}
-
-pub(crate) const UNREADABLE_REPLY: &str = "the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)";
-
-/// The members of a host's answer the shim could not carry on the eval wire.
-pub(crate) fn uncarried(answer: &Js) -> Vec<String> {
-    match crate::unique::get(answer, "uncarried") {
-        Js::Array(list) => list.items().iter().map(Js::to_js_string).collect(),
-        _ => Vec::new(),
-    }
 }
 
 /// Every record's resources, the tree's order.
@@ -1167,7 +1132,7 @@ fn is_blank(value: Option<&Js>) -> bool {
     match value {
         None => true,
         Some(value) if value.is_nullish() => true,
-        Some(Js::String(text)) => js::trim(text).is_empty(),
+        Some(Js::String(text)) => js::trim(text.as_form()).is_empty(),
         Some(_) => false,
     }
 }
@@ -1232,7 +1197,7 @@ pub(crate) fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, 
     };
     let mut digest = vec![
         ("why", Js::array(why.iter().map(|w| Js::str(*w)).collect())),
-        ("keys", Js::array(keys.into_iter().take(TRACE_INPUT_PARTS).map(Js::String).collect())),
+        ("keys", Js::array(keys.into_iter().take(TRACE_INPUT_PARTS).map(Js::str).collect())),
         ("sample", Js::str(emission::cut(&body, TRACE_REPLY_CHARS))),
     ];
     if let Some((at, _)) = focus {

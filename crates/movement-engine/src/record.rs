@@ -214,7 +214,7 @@ pub fn is_one_record(binding: &Binding) -> bool {
 /// engine's own currency, which this engine does not hand out.
 pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
     if key == "kind" {
-        return Ok(Js::String(kind_of(binding)));
+        return Ok(Js::str(kind_of(binding)));
     }
     let internal = |what: &str| {
         Err(EvalError::engine(
@@ -240,8 +240,8 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         (Binding::Landed(landed), "position") => Ok(landed.position.clone()),
         (Binding::Landed(landed), "edgeProperties") if landed.edge_properties.is_some() => Ok(landed.edge_properties.clone().unwrap_or(Js::Null)),
         (Binding::Landed(_), "read") => internal("read"),
-        (Binding::Node(node), "landedOn") => Ok(node.borrow().landed_on.clone().map_or(Js::Null, Js::String)),
-        (Binding::Node(node), "fieldOrder") => Ok(Js::array(node.borrow().field_order.iter().cloned().map(Js::String).collect())),
+        (Binding::Node(node), "landedOn") => Ok(node.borrow().landed_on.clone().map_or(Js::Null, Js::str)),
+        (Binding::Node(node), "fieldOrder") => Ok(Js::array(node.borrow().field_order.iter().cloned().map(Js::str).collect())),
         (Binding::Node(_), what @ ("fields" | "fieldProvenance" | "edges")) => internal(what),
         (Binding::Extracted { .. }, "emission") => internal("emission"),
         (Binding::Positions(landings), "landings") => Ok(Js::array(landings.iter().cloned().map(held).collect())),
@@ -249,7 +249,7 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         (Binding::Instance(instance), "name") => Ok(Js::str(instance.name.clone())),
         (Binding::Instance(instance), "adapterSlug") => Ok(Js::str(instance.adapter_slug.clone())),
         (Binding::Instance(instance), "credentialName") if instance.credential_name.is_some() => {
-            Ok(instance.credential_name.clone().map_or(Js::Null, Js::String))
+            Ok(instance.credential_name.clone().map_or(Js::Null, Js::str))
         }
         (Binding::Instance(_), what @ ("constructionConfig" | "schema")) => internal(what),
         (Binding::Plugin(name), "plugin") => Ok(Js::str(name.clone())),
@@ -332,7 +332,7 @@ pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
         },
         Js::Array(list) if key == "length" => Ok(Js::Number(list.items().len() as f64)),
         Js::Array(list) => Ok(key.parse::<usize>().ok().and_then(|i| list.items().get(i).cloned()).unwrap_or(Js::Undefined)),
-        Js::String(text) if key == "length" => Ok(Js::Number(js::utf16_len(text) as f64)),
+        Js::String(text) if key == "length" => Ok(Js::Number(js::utf16_len(text.as_form()) as f64)),
         _ => Ok(Js::Undefined),
     }
 }
@@ -505,9 +505,10 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
         Binding::Value(value) => return plain_value(&value.value, path),
         _ => {}
     }
+    // `plain[field] = …`: assigned, as `plainRecordOf` does.
     let mut plain = JsObject::new();
     for (field, member) in fields_of(binding)?.entries() {
-        plain.set(field.clone(), plain_value(member, path)?);
+        plain.assign(field.clone(), plain_value(member, path)?);
     }
     let mut edges: Vec<(String, Js)> = Vec::new();
     match binding {

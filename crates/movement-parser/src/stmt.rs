@@ -79,7 +79,7 @@ fn in_set(c: u16, set: &str) -> bool {
 }
 
 fn utf16_len(text: &str) -> usize {
-    text.encode_utf16().count()
+    crate::util::form::utf16_len(text)
 }
 
 fn closer_of(open: u16) -> u16 {
@@ -93,7 +93,7 @@ fn closer_of(open: u16) -> u16 {
 /// A name re-spelled as source text: bare when it scans as an identifier,
 /// backtick-quoted otherwise (ast.ts `spellName`).
 fn spell_name(name: &str) -> String {
-    let units: Vec<u16> = name.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(name);
     if ident_end(&units, 0) == Some(units.len()) { name.to_string() } else { format!("`{name}`") }
 }
 
@@ -109,7 +109,7 @@ fn spell_path_root(root: &PathRoot) -> String {
 /// `memberPathBindingName`): the path's names joined, or `None` for a root
 /// that is not one member path.
 fn member_path_binding_name(expr: &ExprSlot) -> Option<String> {
-    let units: Vec<u16> = expr.raw.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(&expr.raw);
     let raw = trim(&units);
     let (names, end) = scan_member_path(raw, 0)?;
     (end == raw.len()).then(|| names.join("."))
@@ -120,7 +120,7 @@ fn member_path_binding_name(expr: &ExprSlot) -> Option<String> {
 /// regex `^-\[\s*(?:IDENT\s*)?:\s*(`[^`]+`|IDENT)\s*\]->$` over the trimmed
 /// hop, matched by hand.
 fn unpinned_hop_name(hop_raw: &str) -> Option<String> {
-    let units: Vec<u16> = hop_raw.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(hop_raw);
     let s = trim(&units);
     let at = |i: usize| s.get(i).copied();
     let skip_space = |mut i: usize| {
@@ -158,14 +158,14 @@ fn unpinned_hop_name(hop_raw: &str) -> Option<String> {
         name
     };
     i = skip_space(i);
-    (s.get(i..)? == "]->".encode_utf16().collect::<Vec<_>>().as_slice()).then_some(name)
+    (s.get(i..)? == crate::util::form::units_vec("]->").as_slice()).then_some(name)
 }
 
 /// The name of a collection op (or `MEMBERS`) written at the head of an
 /// expression slot — `/^\s*([A-Z]+)\s*\(/` — a form that is a statement,
 /// not a value.
 fn nested_collection_value(raw: &str) -> Option<String> {
-    let units: Vec<u16> = raw.encode_utf16().collect();
+    let units: Vec<u16> = crate::util::form::units_vec(raw);
     let mut i = 0;
     while units.get(i).copied().is_some_and(is_js_space) {
         i += 1;

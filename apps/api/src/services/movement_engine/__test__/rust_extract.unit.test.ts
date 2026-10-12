@@ -443,82 +443,34 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     });
   });
 
-  describe('a model reply this engine cannot read (a named divergence: the TypeScript reads on)', () => {
+  describe('a model reply holding a lone surrogate (transition artefacts row 9: read on, on both engines)', () => {
     const source = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
-    // `JSON.parse`, so the surrogate and the key are the reply's own.
+    // `JSON.parse`, so the surrogate is the reply's own. (A reply's own
+    // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"\\ud800"}}]}');
-    const proto = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"Acme"},"__proto__":{"x":1}}]}');
-    const valid = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
-    async function onEach(replies: unknown[]) {
-      const ts = await runOn('ts', { source, replies });
-      resetRustRunStats();
-      const rust = await runOn('rust', { source, replies });
-      // Never the shim's fault: the reply is the engine's to judge.
-      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0, declined: {} });
-      return { ts, rust };
-    }
-
-    it.each([
-      ['a lone surrogate', lone],
-      ['a `__proto__` key', proto],
-    ])('asks again when the reply holds %s, as for any reply the guide does not describe', async (_what, unreadable) => {
-      const { ts, rust } = await onEach([unreadable, valid]);
-      // TypeScript reads the reply as it is, in one call.
-      expect('result' in ts).toBe(true);
+    it('reads the reply as it is, in one call, as the TypeScript does', async () => {
+      const ts = await agree({ source, replies: [lone] }, { runsWhole: true });
       expect(ts.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual(['movement_extraction']);
-      expect(rust.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual(['movement_extraction', 'movement_extraction_retry']);
-      const trace = 'result' in rust && rust.result !== undefined ? rust.result.trace : [];
-      expect(trace[0]).toMatchObject({
-        kind: 'extraction',
-        retried: ['  - : the reply held a key or a text this engine cannot read (a `__proto__` key, or a lone surrogate)'],
-      });
-    });
-
-    it('fails the root call, twice unreadable, with the twice-unanswered text the TypeScript writes', async () => {
-      const { ts, rust } = await onEach([lone, lone]);
-      expect('result' in ts).toBe(true);
-      expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
-      const cause = 'error' in rust ? runFailureCause(rust.error) : undefined;
-      // The text the TypeScript fails a root answered twice with nothing it reads.
-      const twice = await runOn('ts', { source, replies: [{}, {}] });
-      const expected = 'error' in twice ? runFailureCause(twice.error) : undefined;
-      expect(String(cause)).toContain('was answered with something the guide does not describe, twice.');
-      expect(String(cause)).toBe(String(expected));
+      expect(JSON.stringify('result' in ts ? ts.result : undefined)).toContain('\\ud800');
     });
   });
 
-  describe("a plugin's or a file reader's answer this engine cannot read (a named divergence: the TypeScript reads on)", () => {
-    // `JSON.parse`, so the surrogate and the key are the answer's own.
+  describe("a plugin's or a file reader's answer holding a lone surrogate (transition artefacts row 9: read on, on both engines)", () => {
+    // `JSON.parse`, so the surrogate is the answer's own. (An answer's own
+    // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"text":"\\ud800"}');
-    // Inside a member: a stray top-level `__proto__` is no member either
-    // engine reads, so the shim's object drops it and both read on. A file
-    // reader's members are texts, so only a surrogate can reach one.
-    const proto = JSON.parse('{"text":"a page","data":{"__proto__":{"x":1}}}');
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
-    const plugin = ['import { fetch_url } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch_url(url: msg.`text`)', '}'].join('\n');
+    const plugin = ['import { fetch_url } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch_url(url: msg.`text`)', '  ERROR("${TEXT.SERIALISE(page, "JSON")}")', '}'].join('\n');
     const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
     const withDeck: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck } };
     const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
     it.each([
-      ["a plugin's answer", 'a lone surrogate', { source: plugin, invoked: lone }, "'fetch_url''s answer", 'text'],
-      ["a plugin's answer", 'a `__proto__` key', { source: plugin, invoked: proto }, "'fetch_url''s answer", 'data'],
-      ["a file reader's answer", 'a lone surrogate', { source: file, event: withDeck, fileText: lone, replies: [reply] }, "a file's text", 'text'],
-    ] as const)('fails the statement when %s holds %s, naming the member', async (_whose, _what, c, named, member) => {
-      const ts = await runOn('ts', c);
-      resetRustRunStats();
-      const rust = await runOn('rust', c);
-      // Never the shim's fault, never a refusal: the host was asked. The
-      // engine's own refusal after an effect, where the TypeScript reads on:
-      // counted unreproduced, a divergence (PLAN-08A Task 1), never mirrored.
-      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, mirroredFailure: 0, unreproduced: 1, endedAtCheck: 0, notAdmitted: {}, shimFaults: 0, declined: {} });
-      // TypeScript reads the answer as it is.
-      expect('result' in ts).toBe(true);
-      expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);
-      const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
-      expect(cause).toContain('MOVENG_UNSUPPORTED');
-      expect(cause).toContain(`${named} holding a \`__proto__\` key or a lone surrogate (in ${member})`);
+      ["a plugin's answer", { source: plugin, invoked: lone }],
+      ["a file reader's answer", { source: file, event: withDeck, fileText: lone, replies: [reply] }],
+    ] as const)('reads on when %s holds one, as the TypeScript does', async (_whose, c) => {
+      await agree(c, { runsWhole: true });
     });
   });
 

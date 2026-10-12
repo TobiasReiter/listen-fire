@@ -2,7 +2,8 @@
 // answer is checked for anything JSON cannot carry, then serialised and
 // parsed, so the far side only ever sees the copy. A value JSON would drop or
 // change — a function, a class instance, a Date, a Map, a stream, a BigInt, a
-// NaN, a -0, a lone surrogate, a hole in an array, a cycle — fails the call,
+// NaN, a -0, a hole in an array, a cycle — fails the call (a lone surrogate
+// crosses, as the escape `JSON.stringify` writes),
 // naming the method and the path to the value. The wrapping walks the host
 // object itself, so a method added to any family is wrapped without anyone
 // listing it.

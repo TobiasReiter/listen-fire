@@ -55,9 +55,8 @@ export interface Program {
    *  kit's matching rule allows, not request for request: a program that
    *  says nothing must agree exactly. */
   looser?: string;
-  /** Its input holds what JSON cannot carry (a lone surrogate), which the
-   *  recorder refuses: each engine runs it unrecorded, compared on how it
-   *  ended. */
+  /** Its input holds what JSON cannot carry (a Date), which the recorder
+   *  refuses: each engine runs it unrecorded, compared on how it ended. */
   unrecordable?: true;
   /** It runs whole, and every request the two engines make (an extraction's
    *  prompt text included) is the same, byte for byte, key order too. */
@@ -1250,10 +1249,9 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'event_does_not_cross',
     routes: 'unrecordable',
-    note: 'an event, source or parked state the eval wire cannot carry as itself (a lone surrogate): needs a lone surrogate on the wire (transition artefacts row 9)',
+    note: 'an event or parked state the eval wire cannot carry as itself (a Date): needs a Date on the wire (transition artefacts row 13; a lone surrogate crosses, row 9: rust_wire_round_trip.unit.test.ts)',
     programs: [
-      () => ({ body: '  write crm-[:notes]-> { body: COALESCE(msg.`text`, "none") }', payload: { text: 'half a pair \uD83D' }, unrecordable: true }),
-      () => ({ body: '  x = "\uDC00"\n  write crm-[:notes]-> { body: x }', unrecordable: true }),
+      () => ({ body: '  write crm-[:notes]-> { body: "seen" }', payload: { when: new Date(0) }, unrecordable: true }),
     ],
   },
   {

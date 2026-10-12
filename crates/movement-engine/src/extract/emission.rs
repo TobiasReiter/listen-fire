@@ -191,7 +191,7 @@ pub(crate) fn project<'s>(raw: &JsObject, site: &Region<'s>, site_ref: &dyn Fn(&
 pub(crate) fn absent_if_blank(value: &Js) -> Js {
     match value {
         Js::Undefined => Js::Null,
-        Js::String(text) if js::trim(text).is_empty() => Js::Null,
+        Js::String(text) if js::trim(text.as_form()).is_empty() => Js::Null,
         Js::Array(list) => {
             let kept: Vec<Js> = list.items().iter().map(absent_if_blank).filter(|v| !matches!(v, Js::Null)).collect();
             if kept.is_empty() { Js::Null } else { Js::array(kept) }
@@ -369,43 +369,21 @@ fn collect_traced(tree: &TracedTree, into: &mut Vec<(String, Vec<Js>)>, truncate
 fn traced_value(value: &Js) -> Js {
     let text = match value {
         Js::Undefined | Js::Null => return Js::Null,
-        Js::String(text) => text.clone(),
+        Js::String(text) => text.to_string(),
         Js::Array(_) | Js::Object(_) | Js::File(_) => js::json_stringify(value, 0),
         other => other.to_js_string(),
     };
     Js::str(cut(&text, TRACE_VALUE_CHARS))
 }
 
-/// Whether `text.slice(0, limit)` would end between the two halves of a
-/// surrogate pair (a text longer than `limit` whose character spanning the
-/// cut is astral).
-pub(crate) fn cut_splits_pair(text: &str, limit: usize) -> bool {
-    let mut units = 0;
-    for c in text.chars() {
-        let next = units + c.len_utf16();
-        if next > limit {
-            return units < limit;
-        }
-        units = next;
-    }
-    false
-}
-
 /// A text past `limit` UTF-16 units cut there and marked, as
-/// `${text.slice(0, limit)}…` cuts it.
+/// `${text.slice(0, limit)}…` cuts it: a cut through a pair keeps its high
+/// half.
 pub(crate) fn cut(text: &str, limit: usize) -> String {
     if js::utf16_len(text) <= limit {
         return text.to_string();
     }
-    let mut units = 0;
-    let head: String = text
-        .chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= limit
-        })
-        .collect();
-    format!("{head}…")
+    format!("{}…", crate::js_string::slice_units(text, 0, limit))
 }
 
 #[cfg(test)]
@@ -423,17 +401,10 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_that_splits_a_pair_is_named() {
-        assert!(cut_splits_pair("a😀b", 2));
-        assert!(!cut_splits_pair("a😀b", 1));
-        assert!(!cut_splits_pair("a😀b", 3));
-        assert!(!cut_splits_pair("ab", 1));
-    }
-
-    #[test]
     fn a_long_value_is_cut_at_its_utf16_length() {
         assert_eq!(cut("abc", 3), "abc");
         assert_eq!(cut("abcd", 3), "abc…");
-        assert_eq!(cut("a😀b", 2), "a…");
+        assert_eq!(cut("a😀b", 2), format!("{}…", crate::js_string::slice_units("a😀", 0, 2)));
+        assert_eq!(crate::js_string::units_vec(&cut("a😀b", 2)), [0x61, 0xD83D, 0x2026]);
     }
 }

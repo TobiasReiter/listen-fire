@@ -11,7 +11,7 @@ pub struct Utf16 {
 
 impl Utf16 {
     pub fn new(text: &str) -> Self {
-        Self { units: text.encode_utf16().collect() }
+        Self { units: crate::util::form::units_vec(text) }
     }
 
     pub fn len(&self) -> usize {
@@ -45,7 +45,7 @@ impl Utf16 {
     /// `src.startsWith(prefix, at)`.
     pub fn starts_with(&self, at: usize, prefix: &str) -> bool {
         let mut i = at;
-        for unit in prefix.encode_utf16() {
+        for unit in crate::util::form::units_of(prefix) {
             if self.at(i) != Some(unit) {
                 return false;
             }
@@ -72,7 +72,7 @@ impl Utf16 {
 }
 
 pub fn to_string(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
+    crate::util::form::text_of_units(units)
 }
 
 fn is_high_surrogate(unit: u16) -> bool {
@@ -138,7 +138,7 @@ pub fn trim_end(units: &[u16]) -> &[u16] {
 /// JavaScript `/i` regex without the `u` flag never folds a non-ASCII
 /// character onto an ASCII one.
 pub fn starts_with_ci(units: &[u16], word: &str) -> bool {
-    let word: Vec<u16> = word.encode_utf16().collect();
+    let word: Vec<u16> = crate::util::form::units_vec(word);
     units.len() >= word.len()
         && units.iter().zip(&word).all(|(&a, &b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&(b as u8)))
 }

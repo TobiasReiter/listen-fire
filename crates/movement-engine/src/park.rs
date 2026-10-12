@@ -368,9 +368,11 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
         }
         Js::Object(dict) => {
+            // `of[key] = …`: an own `__proto__` key sets the prototype, which
+            // the park's JSON leaves out.
             let mut of = JsObject::new();
             for (key, item) in dict.entries() {
-                of.set(key.clone(), serialize_value(run, item, park)?);
+                of.assign(key.clone(), serialize_value(run, item, park)?);
             }
             object_of(vec![("kind", Js::str("map")), ("of", Js::object(of))])
         }
@@ -506,7 +508,7 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
             match object.get("kind") {
                 Some(Js::String(kind)) if kind == "blockMeta" || kind == "localShape" => return Some(format!("resume_state_kind:{kind}")),
                 // Data: a value's own, a callback's params, a position.
-                Some(Js::String(kind)) if matches!(kind.as_str(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
+                Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
                     return None;
                 }
                 _ => {}
@@ -619,7 +621,7 @@ pub(crate) fn at<'v>(value: &'v Js, key: &str) -> Option<&'v Js> {
 
 pub(crate) fn text(value: Option<&Js>) -> Option<&str> {
     match value {
-        Some(Js::String(s)) => Some(s),
+        Some(Js::String(s)) => Some(s.as_form()),
         _ => None,
     }
 }

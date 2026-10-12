@@ -113,7 +113,7 @@ impl LocalEdge {
     /// The landing behind an id, whichever kind it is (`anyLandingAt`).
     pub fn any_landing_at(&self, external_id: &Js) -> Option<Binding> {
         let Js::String(id) = external_id else { return None };
-        let index = js::string_to_number(id);
+        let index = js::string_to_number(id.as_form());
         if !(index.fract() == 0.0 && index.is_finite()) || index < 0.0 {
             return None;
         }
@@ -193,7 +193,7 @@ impl LocalEdge {
         }
         node.field_order = order;
         let index = match external_id {
-            Js::String(id) => js::string_to_number(id),
+            Js::String(id) => js::string_to_number(id.as_form()),
             _ => f64::NAN,
         };
         let data = Js::object(JsObject::clone_of(&node.fields));
@@ -699,7 +699,7 @@ fn hostname_labels(normalised: &str) -> Option<Vec<String>> {
     let shape = crate::js_regex::Regex::new(HOSTNAME_SHAPE).expect("the hostname shape is a valid pattern");
     let found = shape.exec(normalised)?;
     let labels = found.get(1).cloned().flatten()?;
-    Some(String::from_utf16_lossy(&labels).split('.').map(String::from).collect())
+    Some(crate::js_string::text_of_units(&labels).split('.').map(String::from).collect())
 }
 
 /// `distinctiveTokens`: the words of a value, the kind-naming ones dropped.

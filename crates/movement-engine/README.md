@@ -206,7 +206,8 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
   no clock of its own.
 
 The wire (env.rs has the details) carries what JSON cannot: `undefined`,
-`NaN`, `±Infinity`, `-0`, key order, and identity. Identity matters because
+`NaN`, `±Infinity`, `-0`, a text holding a lone surrogate (`["s16",
+units]`, its UTF-16 code units, a key's too), key order, and identity. Identity matters because
 `===` compares objects by it: the caller's own objects come back as
 themselves (`["i", id]`). Provenance crosses as origin ids: the caller numbers
 its origins, the engine mints one id per literal it evaluates, and a name, a
@@ -229,8 +230,9 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `%` | Rust's `%` is fmod, the dividend's sign, as JavaScript's | `filter::tests::remainder_and_division_by_zero`, `tests::arithmetic_keeps_javascript_semantics` |
 | object key order | array-index keys ascending first, then insertion order; a repeated key keeps its place | `js::tests::objects_keep_javascript_key_order`, `tests::maps_keep_javascript_key_order` |
 | `trim`, `\s` | JavaScript's WhiteSpace + LineTerminator set (with U+FEFF, without U+0085); not `char::is_whitespace` | `js::tests::strings_are_utf16_where_javascript_says_so` |
+| a string | any run of UTF-16 code units, a lone surrogate included (crate::js_string): held in-band in the engine's UTF-8 text (U+FDD0, then a plane-16 private-use character naming the unit; a U+FDD0 the text holds written twice), in a canonical form, so equality is `===` and two halves written side by side are the pair; it crosses the eval wire as `["s16", units]` and the host's JSON text as the `\udXXX` escape `JSON.stringify` writes | `js_string::tests::*`, tests/stdlib_oracle.rs `strings_hold_what_javascript_holds` (strings.json, 10,572 seeded cases, seed 20261016) |
 | `.length`, `<` on text | UTF-16 code units; comparison in code-unit order | `js::tests::strings_are_utf16_where_javascript_says_so`, `stdlib::tests::flat_builtins` |
-| `split("")` | per UTF-16 unit: BMP text splits per character, astral text goes back to TypeScript | `stdlib::tests::flat_builtins`, `oracle::…` (`flat.split`) |
+| `split("")`, `slice`, a regex's `.` | per UTF-16 unit: an astral character parts into its two halves, and a cut through a pair keeps the half on its side (every cut: 80, 200, 300 and 1,000 units, and a file bounded for the prompt) | `oracle::…` (`flat.split`, `text.regex_extract`), strings.json (`slice`, `bound`) |
 | `toLowerCase`/`toUpperCase` | Node 22.20's ICU (77.1, Unicode 16), not Rust's tables (which follow the toolchain's Unicode, 17 today): each code point's mapping and the final sigma's neighbours read off Node into src/case_mapping.rs by tests/oracle/case_mapping.ts; every case mapping the engine does goes through `js::to_lower_case` / `js::to_upper_case` (`LOWER`, `UPPER`, case-insensitive name lookup, enum matching, slugs) | tests/tail_oracle.rs (case_mapping.json), `stdlib::tests::case_mapping_follows_nodes_icu` |
 | `new Date(text)`, `Date.parse` | V8's parser written out step for step (dateparser-inl.h, dateparser.cc, builtins-date.cc `ParseDateTimeString`): the ES5 form first (`[±yy]yyyy[-MM[-DD]][THH:mm[:ss[.f…]]][Z\|±hh:mm\|±hhmm]`, `t` and `z` in either case), then the legacy parser over what is left — numbers, words matched on their first three letters (months, `AM`/`PM`, `UT`/`UTC`/`GMT`/`Z`, the eight US zones, `T`), parenthesised comments, the numeric orders and the 50 pivot for two-digit years (two numbers are a month and a day of 2001), offsets `±hh[mm]`, `±hh:mm`, `GMT±h`. A date alone is UTC; a date-time with no offset is read in the run's local zone (`localZone`; absent, UTC), a reading the clock shows twice being the earlier instant and one it skips read with the offset before the change, as ICU's `getOffsetFromLocal(FORMER, FORMER)` reads it for V8 | `js_date::tests::reads_the_iso_forms_as_v8_does`, `js_date::tests::reads_the_legacy_forms_as_v8_does`, tests/dates_oracle.rs (6,000 seeded texts in five zones) |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
@@ -507,7 +509,7 @@ never resumes it wrong.
 
 | reason | the input | status, and what closing it takes |
 |---|---|---|
-| `event_does_not_cross` | an event, source or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or a class instance (a plain object whose prototype was assigned, `null` included, crosses with it, PLAN-08A Task 2 fix round 1), a shared open reference, an array hole, an own `__proto__` key, a lone surrogate) | **Open** (no corpus run meets it). Takes: a `Date`, a lone surrogate and a `__proto__` key on the wire (the transition artefacts' surrogate and prototype rows) |
+| `event_does_not_cross` | an event or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or a class instance (a plain object whose prototype was assigned, `null` included, crosses with it, PLAN-08A Task 2 fix round 1), a shared open reference, an array hole; an own `__proto__` key crosses as a key, transition artefacts row 7, and a lone surrogate as its code units, row 9) | **Open** (no corpus run meets it). Takes: a `Date` on the wire (row 13) |
 
 **After the check** (`declined`):
 
@@ -563,8 +565,8 @@ for byte and how the run ended; none differs, none is refused. Regenerated twice
 ### What admission cannot decide
 
 These depend on what a value holds, not on what the program says, and stay
-mid-run failures ("Errors a run can meet mid-run" below): a `__proto__` key
-spread in from a value, a record held in a value handed to the host. A
+mid-run failures ("Errors a run can meet mid-run" below): a record held in
+a value handed to the host. A
 name typed as a value may hold a record at run time (a member of a walk
 read as a list), so
 admission walks a collection op's function, a closure's body and a
@@ -668,7 +670,7 @@ TypeScript takes through its host is a host request here:
 | `llm.arbitrateEntities` | a search the rules cannot decide | `host.llm.arbitrateEntities`, with the run's budget (`ledger`); its cost is charged |
 | `locks.acquire`, `locks.release` | around an identity search and an update by id | `host.locks`: a token per acquire, released by token |
 | `clock.now` | a `sleep`'s wake time; a `WITHIN` the comparator measures (once per comparison in an expression, once per conjunct of a hop's WHERE and once per record of a `unique by` narrowing that reaches one, as expression.ts `decideWithClock`) | `host.clock.now`, its answer read as the TypeScript engine reads it |
-| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (a regex match that splits an astral character or a pattern nested past 1,000 groups, `WITHIN` with the clock's answer) | the TypeScript member itself |
+| `builtins.function`, `builtins.compare` | a built-in reading this engine hands back (a pattern nested past 1,000 groups, `WITHIN` with the clock's answer) | the TypeScript member itself |
 | `park.sink.commitTimerPark` | a `sleep` in a run that is not a rehearsal, on a host that serves it | `host.park.sink`; `wakeAt` is `clock.now`'s answer plus the sleep |
 | `park.sink.commitLimitPause` | the first time the run meets its cost cap (a budget refusal, charged, that the ledger says is the cap), on a host that serves it and can suspend | `host.park.sink.commitLimitPause` |
 | `park.sink.commitSuspension` | the flow suspends: at the statement that met the cap, before each statement of a paused run (`limitPaused`), at a `suspendAt` address; on a host that serves it | `host.park.sink.commitSuspension` |
@@ -1263,19 +1265,17 @@ write, a lock, a priced call, an id, a park, the trace handed over, a log
 line) is a decline instead (`unreproduced`, "After the check" above): the
 TypeScript engine runs the segment, having seen only reads.
 
-- An adapter answers a value the eval wire cannot carry as itself (a
-  `Date`, a class instance, a function): `RustShimError` from the shim.
+- An adapter, a plugin, a file reader or a model answers a value the eval
+  wire cannot carry as itself (a `Date`, a class instance, a function):
+  `RustShimError` from the shim. (A lone surrogate crosses as its code
+  units, an own `__proto__` key as a key: transition artefacts rows 7
+  and 9.)
   The likely case — an event field the source's schema types as a date or a
   datetime (read by an expression, or written by a `...msg` spread as the
   checker's stamp names its fields) — is declined before the version warning
   is traced and before the source is resolved, read off the catalog
   snapshot (a `describe` would be an adapter call, after which nothing may
   decline).
-- A plugin's answer, or a file reader's, holding a `__proto__` key or a
-  lone surrogate (the shim carries the rest and names what it left out,
-  `uncarried`): the statement fails with MOVENG_UNSUPPORTED naming the
-  members. The TypeScript reads on. (A model reply that does is a
-  validation failure instead: "Transition artefacts to mirror" below.)
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
@@ -1287,15 +1287,6 @@ TypeScript engine runs the segment, having seen only reads.
   structure is its system's types. Admission lets no such node reach an
   `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
   refused, `is_test_declared_graph`).
-- An `AI()` prompt whose 300-unit trace cut lands mid surrogate pair: the
-  TypeScript traces the lone high half, which no Rust string holds (the
-  lone-surrogate family, transition artefacts row 9), so MOVENG_UNSUPPORTED
-  before the model is asked. After an effect it fails the run, including
-  inside an `onError` handler, which does not catch it (run.rs `ai`).
-- A records plugin's record that is a text holding an astral character: its
-  spread makes two lone halves per character (the lone-surrogate family).
-  The plugin call is itself an effect, so this always fails the run, never
-  declines (plugin.rs `spread_fields`).
 - A file reader answering `unreadable` with a reason outside the four
   (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`):
   the host has broken its typed contract; the TypeScript traces the reason
@@ -1325,6 +1316,17 @@ object's own key order; `["r", id]` the same list or object again within
 one value. `["i", id]` (one of the caller's own objects) appears only in
 `eval_expression`'s answers, never on a segment's host calls: a segment
 writes each value out whole, numbering it afresh.
+
+A text holding a lone surrogate is `["s16", [units…]]`, its UTF-16 code
+units, wherever a text stands (a value, an object's key, a file's display):
+two halves of a pair, sent apart, read as the pair. Both sides write it so;
+each reads a plain string as well.
+
+**The JSON text.** Every input, answer and output is JSON text read and
+written as `JSON.parse` and `JSON.stringify` do: a string anywhere in it may
+hold a lone surrogate as its `\udXXX` escape (a parked state's, a trace's,
+an error's), which the engine reads (serde_json alone refuses it) and
+writes back the same way.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, localZone?,
@@ -1482,9 +1484,9 @@ Sizes are estimates (XS, S, M, L).
 | 4 | ORDER BY and `SORT` over mixed key kinds | mirrored (chunk 7A Task 5): V8's ArrayTimSort ported step for step (crate::order_limit: the minimum run, runs found and reversed, binary insertion, the pending-run invariants, `merge_lo`/`merge_hi` with galloping and the shared `minGallop`, the early exits an inconsistent comparator takes), so keys mixing numbers with texts land where JavaScript lands them at every length; the 64-record refusal is gone | oracle mixed_sort.json (400 seeded key lists, 1 to 2,000 keys, seed 20261014, tests/tail_oracle.rs; the stable merge it replaces got 317 of them wrong) | tests/oracle/mixed_sort.json (tests/tail_oracle.rs) | done |
 | 5 | a reply field named after an `Object.prototype` member, and a declared `__proto__` | mirrored (chunk 7A Task 5) in crate::extract::validate: a declared key read through the reply's prototype (js.rs's one `Object.prototype` name table), a key handed on written with `object[key] = value` (`__proto__` sets the prototype), a declared `__proto__` no key of the shape; the emitted entity's fields read through that prototype. A field or node DECLARED `__proto__` (inline in an extraction, or in a node declaration: every such name is program text) is the checker's `MOV_SHAPE_FIELD_PROTO` (chunk 7A Task 6, a bug fix without a version: past the read the TypeScript's entity never held it as a field, its context's prototype was set from the reply's `__proto__.value`), so the run ends at the check on either engine; the validator's reading of a declared `__proto__` stays, pinned by the oracle's spec trees, which no checked program now reaches | oracle extraction.json, every program 0 reply pinned to TypeScript's verdict unfiltered (tests/extraction_pin.rs) | tests/oracle/extraction.json (tests/extraction_pin.rs) | done |
 | 6 | a reply number above the double range | refused as zod refuses it | nothing: over a JSON host it is `null` on both engines; documented | none: the oracle's replies are JSON text, which cannot hold the number; pinned by `validate::tests` and rust_extract.unit.test.ts on both engines | 0 |
-| 7 | a model reply holding a `__proto__` key or a lone surrogate | `uncarried`: one issue at the reply's root | the wire carrying both (follows row 9), and `__proto__` as an own key in values | none yet: rust_extract.unit.test.ts pins today's reading on both engines | follows 9 |
+| 7 | a host's value (an event, an adapter's, a plugin's or a model's answer, a parked state) holding an own `__proto__` key or a lone surrogate | mirrored (chunk 8A Task 8). An own `__proto__` key: the eval wire carries it as a key both ways (rust_wire.ts writes it, and reads it back with `Object.defineProperty`, never `object[key] = …`; env.rs holds it as an own entry), a read of it reads the own value, and every copy path assigns where the TypeScript assigns (`Object.assign` in a spread and in a record plugin's data, `object[key] = …` in a park's map, its rehydration, `withFileFields`, `fileFieldsOf` and `plainRecordOf`), so a `__proto__` key there sets the prototype on both engines, and keeps it own where the TypeScript spreads or `JSON.parse`s. A lone surrogate: carried whole, row 9 (the shim's `uncarried` and this engine's refusal of it are gone) | done | apps/api's rust_wire_round_trip.unit.test.ts (an event field, an adapter's answer, a record and a records plugin's answer, an `AI()` reply, an extraction reply, a park and both resumes, the HTTP host double; both engines; the `__proto__` cases and the lone-surrogate cases) | done |
 | 8 | extraction call-site numbering | numbered as the TypeScript numbers it | already mirrored; a test with a slow host to pin it | none: the recorded runs (engine-runs.v1/v2) hold the order; the call-site allowance names the cases that depend on it | 0 to S |
-| 9 | a cut at a UTF-16 surrogate pair | the pair dropped whole, except an `AI()` prompt's trace cut, which fails ("Errors a run can meet mid-run") | a string that can hold a lone surrogate, a tagged form for it on the eval wire, an escape-aware writer at the host JSON boundary; also unblocks `event_does_not_cross` for surrogates, row 7 and `split("")` of astral text | none yet: comes with the mirror | L |
+| 9 | a string holding a lone surrogate (a host's answer `JSON.parse` made, a cut through a pair, `split("")` or a match through an astral character) | mirrored (chunk 8A Task 8b): crate::js_string holds any run of UTF-16 code units, a lone surrogate in-band (U+FDD0, then a plane-16 private-use character naming the unit), canonical so equality is `===`; the eval wire carries it as `["s16", units]` (env.rs, rust_wire.ts), the host JSON text as the `\udXXX` escape (`read_json_text`/`write_json_text` at lib.rs, abi.rs, env.rs and the environment import, since serde_json refuses the escape); every cut keeps the half on its side (80, 200, 300 units, 1,000 units, a file bounded for the prompt), `split("")`, a regex and a records plugin's text spread read code units, `Date.parse` reads them. Retired: `refuse_uncarried`, the file text's and the `AI()` reply's uncarried refusals, the extraction reply's unreadable issue, the `AI()` trace cut's refusal, the astral-text records spread's refusal, the shim's three writer refusals and `uncarried`, the `builtins.function` hand-backs for `split("")` and a match through a pair. The program source is read in the same form, and the parser (crates/movement-parser `util::form`, shared with this crate) reads its code units, so a span counts what the TypeScript parser counts: a source holding a U+FDD0 or a lone half parks and resumes alike on both engines (fix round 1; before it, a source holding a U+FDD0 parked a closure one column late). `JsString` reads its text only through unit-aware operations and `as_form()`, the named read of the form (no `Deref` to `str`). Shared with the TypeScript engine, not a divergence: a parked state holding a lone surrogate is refused by the park store's Postgres `jsonb` (the parked-run tables), which refuses the `\udXXX` escape, on either engine alike | strings.json (10,572 seeded cases, seed 20261016: the built-ins, the comparator, every cut, `JSON.stringify` and the JSON text boundary, byte-identical regenerated) and stdlib.json (the two formerly handed-back cases); rust_wire_round_trip.unit.test.ts, rust_extract.unit.test.ts | tests/oracle/strings.json (tests/stdlib_oracle.rs) | done |
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | tests/oracle/file_bound.json (tests/tail_oracle.rs) | done |
 | 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (4,482 whole programs, seed 20261010, tests/records_oracle.rs; regenerated from the fixed TypeScript engine by forward merge 2, so the payloads shaped like engine objects prove both engines read them as data) | tests/oracle/records.json (tests/records_oracle.rs) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | literals run (PLAN-08A Task 2): a folded `-0` literal is `0` on both engines, a literal's `__proto__` key assigned (the prototype on the eval wire's fourth `o` member, both ways); an own `__proto__` key in host data is row 7's | nothing more for literals | tests/oracle/patterns.json (`static_number`, `proto_key`: whole, exact); rust_values_cross.unit.test.ts (the host's input by `Object.is`, prototypes kept) | done |
@@ -1546,8 +1548,8 @@ mirror replaces that plan):
     prototype is set from the reply's `__proto__.value` (an object) or lost
     (`null`), and its provenance's likewise. The name is program text, so
     the checker refuses it (`MOV_SHAPE_FIELD_PROTO`) on either engine. A reply's own
-    `__proto__` key still never reaches this engine over the eval wire
-    (row 7).
+    `__proto__` key crosses the eval wire as a key (row 7), and the
+    validator assigns it as zod does.
   - a reply number above the double range (past ±1.8e308): `JSON.parse`
     reads it as `Infinity`, which zod's number check refuses (`expected
     number, received number`). The reply crosses to this engine on the eval
@@ -1558,18 +1560,6 @@ mirror replaces that plan):
     host (the HTTP double, a remote embedder) the number is already
     `null`, which reads clean on both engines. The oracle cannot express it
     (its replies are JSON text), so it is not marked there.
-  - a model reply holding a `__proto__` key or a lone surrogate (both
-    `JSON.parse` can make): the eval wire cannot carry either, so the shim
-    hands this engine the answer without its `parsedJson` (`uncarried`),
-    its cost and the rest kept. This engine reads that as one issue at the
-    reply's root ("the reply held a key or a text this engine cannot
-    read"): it asks once more with the issue named, as for any reply the
-    guide does not describe; a second such reply fails the root's call with
-    the twice-unanswered MOVENG_RUNTIME text, and a per-entity call keeps
-    its entity (`kept_previous_stage`). The TypeScript reads on: a lone
-    surrogate is a string zod accepts, and a `__proto__` key is the
-    prototype accident above. Pinned on both engines by
-    `rust_extract.unit.test.ts`.
   - extraction call-site numbering: the number in an extraction's prompt
     (`x:<node>#<n>`) follows the order concurrent siblings reach the site,
     so a host answering at another speed sees another prompt; numbered by
@@ -1583,13 +1573,6 @@ mirror replaces that plan):
     a later sibling's call until every earlier sibling had numbered its
     calls, which is a sequential fan: it would change the order the host is
     asked in, which the recorded runs hold.
-  - a cut at a UTF-16 surrogate pair (a text cut at 80, 200 or 1,000 UTF-16
-    units, or a file bounded for the prompt, landing mid-pair): a Rust
-    string cannot hold a lone surrogate, so this engine never splits the
-    pair and drops it whole; JavaScript's `slice` keeps the high half.
-    Specified as: a text or file cut never splits a pair. An `AI()`
-    prompt's 300-unit trace cut is the exception: it is refused or fails
-    by name ("Errors a run can meet mid-run"), not dropped whole.
   - a fractional `EXTRACTION_FILE_CHARS` (mirrored, row 10): the
     TypeScript compares the text's length with the number as written, cuts
     at `slice`'s truncation of it, and prints it in the marker ("first 2.5
@@ -1612,10 +1595,7 @@ engine runs the segment.
 
 | the failure | why this engine stops | what closes it |
 |---|---|---|
-| a plugin's answer, or a file reader's, holding a lone surrogate or a `__proto__` key ("Errors a run can meet mid-run") | the eval wire cannot carry either, and a Rust string holds no lone surrogate: the shim hands the answer over without it (`uncarried`) and the statement fails naming the members | chunk 8: transition artefacts rows 7 and 9 (a string that holds a lone surrogate, its tagged form on the wire, `__proto__` as an own key) |
-| an `AI()` prompt whose 300-unit trace cut lands inside a surrogate pair | the TypeScript traces the lone high half, which no Rust string holds | chunk 8, row 9 |
-| a records plugin's record that is a text holding an astral character | its spread makes two lone halves per character | chunk 8, row 9 |
-| an adapter answering a value the eval wire cannot carry as itself (a `Date`, a class instance, a function): `RustShimError` from the shim | a backstop: the likely case, an event field the source's schema types as a date, is declined by name before the first effect (`event_field_dated`) | row 13: a `Date` on the wire, or a ruling that adapters never answer one |
+| an adapter (or a plugin, a file reader, a model) answering a value the eval wire cannot carry as itself (a `Date`, a class instance, a function): `RustShimError` from the shim | a backstop: the likely case, an event field the source's schema types as a date, is declined by name before the first effect (`event_field_dated`) | row 13: a `Date` on the wire, or a ruling that adapters never answer one |
 | parking a value whose message or data would print a record's binding object other than the event's or a block's returned records' | a backstop: the park would write the TypeScript's internals (its read seam, its computed schema), which this engine does not hold | admission refusing each route that reaches one, by name, as each is found (none is known) |
 | a record held in a value reaching a host request admission did not foresee | a backstop: MOVENG_UNSUPPORTED before the request is made, where the TypeScript hands its host the binding object (which a real host refuses mid-run itself) | admission refusing each such route by name, as each is found (none is known) |
 | a file reader answering `unreadable` with a reason outside the four (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`) | the host has broken its typed contract; the TypeScript traces the reason as given | nothing on the engine's side: a host fault (a ruling could make the TypeScript refuse it too) |
