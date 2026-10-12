@@ -2742,6 +2742,9 @@ function armsUnion(arms: ReadonlyArray<FieldType | undefined>): FieldType | unde
 
 const FILES_ONLY: ReadonlySet<HandleKind> = new Set(['file']);
 
+/** The folds that answer one MEMBER of what they fold. */
+const PICKING_FOLDS: ReadonlySet<string> = new Set(['first', 'last', 'only']);
+
 /** A list or a tuple — what a spread splices and `MULTI` flattens. */
 export function isCollectionType(type: FieldType | undefined): boolean {
   if (type === undefined) return false;
@@ -4481,13 +4484,14 @@ export class ExpressionTyping {
       // `AT` picks one member of what it reads — and reads a value that is no
       // collection as itself (index 0 or -1): what it picks is one level down
       // in its operand, or the operand itself, whatever the operand's type says.
-      case 'at': {
-        const typed = handleWithin(this.exactTypes.get(expr), walk);
-        if (typed !== undefined) return typed;
-        const within = this.handleHeldBy(expr.expression, { ...walk, steps: [] });
-        if (within === undefined) return undefined;
-        return { ...within, steps: [...walk.steps, ...within.steps.slice(1)], may: true };
-      }
+      case 'at':
+        return handleWithin(this.exactTypes.get(expr), walk) ?? this.handlePickedFrom(expr.expression, walk);
+      // FIRST, LAST and ONLY pick one member, as AT at an index does — of a
+      // list whose own type may say nothing (a MULTI of a record and a value,
+      // a COALESCE of lists).
+      case 'aggregate':
+        if (!PICKING_FOLDS.has(expr.fn)) return handleWithin(this.exactTypes.get(expr), walk);
+        return handleWithin(this.exactTypes.get(expr), walk) ?? this.handlePickedFrom(expr.expression, walk);
       default: {
         const name = this.bareNames.get(expr);
         return (
@@ -4496,6 +4500,15 @@ export class ExpressionTyping {
         );
       }
     }
+  }
+
+  /** What a read picking ONE member of `operand` may hand back: what the
+   *  operand holds one level down, or the operand itself (a value that is no
+   *  collection reads as itself) — whichever member it turns out to be. */
+  private handlePickedFrom(operand: Expression, walk: HeldWalk): HeldHandle | undefined {
+    const within = this.handleHeldBy(operand, { ...walk, steps: [] });
+    if (within === undefined) return undefined;
+    return { ...within, steps: [...walk.steps, ...within.steps.slice(1)], may: true };
   }
 
   /** The first engine object any ARM holds — one of several values the
@@ -4546,12 +4559,10 @@ export class ExpressionTyping {
           return members !== undefined ? listOf(members, 'ordered') : undefined;
         }
         return this.exactTypes.get(expr);
-      case 'at': {
-        const exact = this.exactTypes.get(expr);
-        if (exact !== undefined) return exact;
-        const picked = this.multiMemberType(expr.expression);
-        return picked !== undefined ? armsUnion([picked, undefined]) : undefined;
-      }
+      case 'at':
+        return this.mayHoldPicked(expr, expr.expression);
+      case 'aggregate':
+        return PICKING_FOLDS.has(expr.fn) ? this.mayHoldPicked(expr, expr.expression) : this.exactTypes.get(expr);
       case 'object': {
         if (expr.entries.some(isObjectSpread)) return this.exactTypes.get(expr);
         const shape: Record<string, FieldType | null> = {};
@@ -4574,6 +4585,15 @@ export class ExpressionTyping {
         return mayHold ?? this.exactTypes.get(expr);
       }
     }
+  }
+
+  /** A read picking one member of `operand`: its own type where it has one,
+   *  else any member the operand may hold. */
+  private mayHoldPicked(expr: Expression, operand: Expression): FieldType | undefined {
+    const exact = this.exactTypes.get(expr);
+    if (exact !== undefined) return exact;
+    const picked = this.multiMemberType(operand);
+    return picked !== undefined ? armsUnion([picked, undefined]) : undefined;
   }
 
   /** One `MULTI` argument's members: a list's, or the value itself. */

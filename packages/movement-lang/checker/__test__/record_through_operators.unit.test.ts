@@ -474,3 +474,73 @@ describe.each(VERSIONS)('under language version %i, AT sees a record through an 
     refused(['  y = COALESCE(org, "x")', '  x = AT(y, "graph")'], "this may be a record — 'graph' is not a key it holds. Read a field with a dot (y.graph)");
   });
 });
+
+describe.each(VERSIONS)('under language version %i, FIRST and LAST pick a member the list\'s type does not show', version => {
+  const SYS = (inner: string[]): string[] => ['  crm-[c:companies]-> {', ...inner.map(line => `  ${line}`), '  }'];
+  const refused = (body: string[], code: string, said: string): void => {
+    const errors = errorsUnder(version, body).filter(d => d.code === code);
+    expect(errors.map(d => d.message)).toEqual([expect.stringContaining(said)]);
+  };
+
+  it.each([
+    ['FIRST(MULTI(org, "x"))'],
+    ['LAST(MULTI(org, "x"))'],
+    ['FIRST(COALESCE([org], ["x"]))'],
+  ])('%s under a key of a write field', read => {
+    refused(note(`company: { a: ${read} }`), 'MOV_WRITE_FIELD_TYPE', "and 'company.a' may be ");
+  });
+
+  it('a system record picked off a mixed MULTI, as an extraction input', () => {
+    refused(SYS(extract('FIRST(MULTI(c, "x"))')), 'MOV_EXTRACT_CONTENT', `'FIRST(MULTI(c, "x"))' may be crm.company, whose fields are read from its system one at a time`);
+  });
+
+  it('a system record picked off a mixed MULTI, handed to structured data', () => {
+    refused(SYS(['  s = summarise(data: FIRST(MULTI(c, "x")))']), 'MOV_CALL_ARG_TYPE', "and this may be crm.company");
+  });
+
+  it('a file picked off a mixed MULTI, into a text field', () => {
+    refused(['  write crm-[:notes]-> { title ?: FIRST(MULTI(f, "x")) }'], 'MOV_WRITE_FIELD_TYPE', "'title' on crm.note is text, and this may be file");
+  });
+
+  it('AT over what FIRST picked', () => {
+    refused(['  x = AT(FIRST(MULTI(org, "x")), "graph")'], 'MOV_AT_RECORD_KEY', "this may be a record — 'graph'");
+  });
+
+  it('a value picked off a list of values is written', () => {
+    expect(errorsUnder(version, note('company: { a: FIRST(MULTI("a", "b")) }'))).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, an adapter instance is no value for a field', version => {
+  const refused = (body: string[], where: string): void => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
+  };
+
+  it.each([
+    ['company: crm', "'company' on crm.note is json, and this is "],
+    ['upload: crm', "'upload' on crm.note is file, and this is "],
+  ])('%s', (field, where) => {
+    refused(note(field), where);
+  });
+
+  it('title: crm', () => {
+    refused(['  write crm-[:notes]-> { title: crm }'], "'title' on crm.note is text, and this is ");
+  });
+
+  it('a second name for it', () => {
+    refused(['  x = crm', ...note('company: x')], "'company' on crm.note is json, and this is ");
+  });
+
+  it('in a match body', () => {
+    const errors = errorsUnder(version, ['  found = match crm-[:notes]-> { unique by (`title`), title: "hello", company: crm }'])
+      .filter(d => d.code === 'MOV_WRITE_FIELD_TYPE');
+    expect(errors.map(d => d.message)).toEqual([expect.stringContaining("'company' on crm.note is json, and this is ")]);
+  });
+
+  it('into the second shape', () => {
+    refused(['  write l-[:entries]-> { Amount: 1, Meta: l }'], "'Meta' on l.entry is json, and this is ");
+  });
+});

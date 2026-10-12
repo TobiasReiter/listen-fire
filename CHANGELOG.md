@@ -62,7 +62,8 @@ These apply to every language version. Full text: the [migration guide's appendi
     - a system's record, whose fields are read one at a time, is refused: pass a dict of the fields it needs. So is a connection (`extract from [crm]`);
     - a file inside an input (under a key) is refused: pass it as an input of its own.
     - The engine refuses all of these too (`MOVENG_UNSUPPORTED`), so a file's descriptor never reaches a prompt.
-  - `MULTI(…)` of records or files now has the type of a list of them, so `FIRST(MULTI(org))` is the record `org` is, and the field rules apply to it. A `MULTI` of plain values stays untyped, as before.
+  - `MULTI(…)` of records or files now has the type of a list of them, so `FIRST(MULTI(org))` is the record `org` is, and the field rules apply to it. A `MULTI` of plain values stays untyped, as before. `FIRST`, `LAST`, `ONLY` and `AT` at an index over a list whose type says nothing (`MULTI(org, "x")`, `COALESCE([org], ["x"])`) may hand back any member, so a record or file among the members is refused where it lands.
+  - An adapter instance written straight into a field (`company: crm`, or `x = crm` then `company: x`, in a write or a match) is refused with `MOV_WRITE_FIELD_TYPE`, as `company: { a: crm }` already was. This is older than this change.
   - `AT(r, key)` on a record is refused with `MOV_AT_RECORD_KEY` for any key that is not an index (`AT(org, "graph")`, `AT(org, k)`, `AT(COALESCE(org, "x"), "graph")`). A record is not a map; read a field with a dot (`` org.`Name` ``). Before, such a lookup read nothing or the engine's internal member.
   - An affected automation shows a Validation Issue at the next release's deploy check. Its runs fail with `MOVENG_CHECK` until it is edited.
 

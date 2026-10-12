@@ -12457,10 +12457,7 @@ class Checker {
         return found.steps.length <= items && found.steps.every(step => step.kind !== 'key') ? undefined : found;
       },
     });
-    // A name on the arrow plane with no value type (an instance) is still
-    // what the input hands over.
-    const named = this.bareSlotPositionType(slot, scope);
-    const found = held ?? (named !== undefined ? this.recordAsFieldsProblem({ steps: [], handle: recordOf(named), may: false }, purpose) : undefined);
+    const found = held;
     if (found === undefined) return;
     const written = slot.raw.trim();
     if (isFileHandle(found)) {
@@ -13279,7 +13276,11 @@ class Checker {
       // sites (a plain write field) that require presence.
       const bound = this.bareNameValueType(scope, trimmed);
       const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
-      const mayHold = this.symbolMayHold(scope, trimmed);
+      // A name on the arrow plane with no value type — an adapter instance —
+      // is still the engine object it names, as it is inside an expression
+      // (`{ a: crm }`), and a second name for it (`x = crm`) carries that on.
+      const named = bound === undefined ? this.bareSlotPositionType(slot, scope) : undefined;
+      const mayHold = this.symbolMayHold(scope, trimmed) ?? (named !== undefined ? recordOf(named) : undefined);
       const walk = slotHeldWalk(options, bound ?? mayHold);
       const held = handleWithin(bound, walk) ?? handleWithin(mayHold, walk);
       return {
