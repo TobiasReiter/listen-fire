@@ -573,6 +573,12 @@ export const DiagnosticCodes = {
    *  extracted record never holds it as a field (the engine stored the
    *  model's answer for it as the record's prototype instead). */
   SHAPE_FIELD_PROTO: 'MOV_SHAPE_FIELD_PROTO',
+  /** A name the program binds spelled `__proto__` (a binding, a parameter,
+   *  an alias): the engine keeps its scope's names as an object's keys, and
+   *  JavaScript reads that key as the object's prototype, so the name is
+   *  lost (a closure's parameter reads as `{}`, a parked binding is dropped
+   *  and its resume fails). */
+  NAME_PROTO: 'MOV_NAME_PROTO',
   /** `node entry: <X>` where `X` is not a node declaration — an extraction
    *  node's shape is a declared structure, never a system's record type. */
   EXTRACT_SHAPE_NOT_DECLARED: 'MOV_EXTRACT_SHAPE_NOT_DECLARED',
@@ -3455,6 +3461,13 @@ class Checker {
     span: Span,
     options: { visibleFrom?: Loc } = {},
   ): ScopeSymbol | undefined {
+    if (symbol.name === '__proto__') {
+      this.report(
+        DiagnosticCodes.NAME_PROTO,
+        `'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name`,
+        span,
+      );
+    }
     const shadowing = scope.shadowing(symbol.name);
     if (shadowing !== undefined) {
       const where =

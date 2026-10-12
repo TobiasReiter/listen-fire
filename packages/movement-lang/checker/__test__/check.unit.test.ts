@@ -1070,6 +1070,20 @@ describe('extract field duplicates', () => {
     expect(declared.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO]);
   });
 
+  // The engine keeps a scope's names as an object's keys: a name spelled
+  // `__proto__` would be that object's prototype instead (a parameter reads
+  // as `{}`, a parked binding is dropped). Refused on every version.
+  it.each([1, 3, 4] as const)('MOV_NAME_PROTO for a binding or a parameter named __proto__ (version %d)', (languageVersion) => {
+    const named = (body: string) =>
+      checkProgram(parseProgram(inMovement(body), { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+    const binding = named('  __proto__ = 1');
+    expect(binding.map(d => d.code)).toEqual([C.NAME_PROTO]);
+    expect(binding[0].message).toContain("'__proto__'");
+    const param = named('  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })');
+    expect(param.map(d => d.code)).toEqual([C.NAME_PROTO]);
+    expectClean(inMovement('  proto = 1\n  xs = MAP([1, 2], (p) => {\n    return p\n  })'));
+  });
+
   it('a later stage may redeclare an earlier stage\'s field (transformation wins)', () => {
     expectClean(
       inMovement(

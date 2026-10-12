@@ -142,9 +142,11 @@ pub(crate) fn inherited(proto: &Js, key: &str) -> Js {
     }
 }
 
-/// `isDictValue`: a plain keyed object, its prototype `Object.prototype`.
+/// `isDictValue`: a plain keyed object, its prototype `Object.prototype` or
+/// none at all (`null`, which a `__proto__: null` a spread assigns leaves).
+/// Every check of whether an object is a dict asks here.
 pub fn is_dict(value: &Js) -> bool {
-    matches!(value, Js::Object(object) if object.proto.is_none())
+    matches!(value, Js::Object(object) if matches!(object.proto, None | Some(Js::Null)))
 }
 
 /// `object[key]` on a plain object that is not `Object.prototype` itself.
@@ -220,9 +222,10 @@ impl JsObject {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
-    /// `object[key] = value` for any key but `__proto__` (which sets the
-    /// prototype instead; callers refuse it before getting here, or call
-    /// `assign`). A key already there keeps its place.
+    /// An own entry, whatever the key, as `JSON.parse` and
+    /// `Object.defineProperty` write one: a `__proto__` key is a key here
+    /// (`assign` is `object[key] = value`, whose `__proto__` sets the
+    /// prototype). A key already there keeps its place.
     pub fn set(&mut self, key: String, value: Js) {
         insert_in_object_order(&mut self.entries, key, value);
     }

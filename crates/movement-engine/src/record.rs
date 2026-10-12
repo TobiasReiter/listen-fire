@@ -136,7 +136,7 @@ pub fn holds_records(value: &Js) -> bool {
     binding_of(value).is_some()
         || match value {
             Js::Array(list) => list.items().iter().any(holds_records),
-            Js::Object(dict) if dict.proto.is_none() => dict.entries().iter().any(|(_, item)| holds_records(item)),
+            Js::Object(dict) if js::is_dict(value) => dict.entries().iter().any(|(_, item)| holds_records(item)),
             _ => false,
         }
 }
@@ -478,7 +478,7 @@ fn plain_value(value: &Js, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
         Js::Array(list) => Ok(Js::array(list.items().iter().map(|item| plain_value(item, path)).collect::<Result<_, _>>()?)),
         // `isDictValue`: an object a prototype was assigned to is handed on
         // as it is.
-        Js::Object(dict) if dict.proto.is_none() => {
+        Js::Object(dict) if js::is_dict(value) => {
             let mut out = JsObject::new();
             for (key, item) in dict.entries() {
                 out.set(key.clone(), plain_value(item, path)?);

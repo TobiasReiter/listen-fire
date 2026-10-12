@@ -66,7 +66,7 @@ pub fn holds_file(value: &Js) -> bool {
     match value {
         Js::File(_) => true,
         Js::Array(list) => list.items().iter().any(holds_file),
-        Js::Object(dict) if dict.proto.is_none() => dict.entries().iter().any(|(_, item)| holds_file(item)),
+        Js::Object(dict) if crate::js::is_dict(value) => dict.entries().iter().any(|(_, item)| holds_file(item)),
         _ => false,
     }
 }
@@ -91,7 +91,7 @@ fn file_field_value(value: &Js) -> Js {
     match value {
         Js::File(_) => crate::env::object_of(vec![("kind", Js::str("file")), ("file", value.clone())]),
         Js::Array(list) => of("list", Js::array(list.items().iter().map(file_field_value).collect())),
-        Js::Object(dict) if dict.proto.is_none() => {
+        Js::Object(dict) if crate::js::is_dict(value) => {
             let mut members = JsObject::new();
             for (key, item) in dict.entries() {
                 members.assign(key.clone(), file_field_value(item));

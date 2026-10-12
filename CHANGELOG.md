@@ -134,6 +134,9 @@ These apply to every language version. Full text: the [migration guide's appendi
 
 - The `else` arm of a null test narrows absence. It accepts only programs that were refused before.
 - A field or child node named `__proto__`, in a node declaration or an extraction, is refused (`MOV_SHAPE_FIELD_PROTO`). It used to validate, but the extracted record never held the field: JavaScript set the record's prototype from the model's answer instead. A bug fix, not a language version: an automation declaring one now fails its check on every version; rename the field.
+- A binding, a parameter or an alias named `__proto__` is refused (`MOV_NAME_PROTO`). The engine keeps a scope's names as an object's keys, and JavaScript reads that key as the object's prototype: a closure's parameter so named read as `{}`, and a parked binding so named was dropped, failing its resume. A bug fix, not a language version: rename it.
+- A record plugin's answer whose data holds an own `__proto__` key (as JSON text makes one) keeps it as a key on both engines. Before, the TypeScript engine lost it: preparing the answer assigned each key, which made it the answer's prototype. Merging the data into the record still assigns, as JavaScript's `Object.assign` does, so the key becomes the record's prototype and a field read goes through it.
+- A prototype a record plugin's data gives its record does not survive a park, on either engine: the parked record holds its own fields only.
 - An adapter edge or collection whose name starts with `@` is left out of the catalog with a note, instead of failing the connection's `describe`.
 - An Affinity identity candidate carries the organisation's or person's fields as Affinity holds them, not the asserted values.
 

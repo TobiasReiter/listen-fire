@@ -214,6 +214,30 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     expect(extraction.asked).toEqual(['movement_extraction']);
   });
 
+  it('spreads a `__proto__: null` in as no prototype at all: still a dict, read and spread again', async () => {
+    const { ended } = await agree({
+      source: program(
+        '  v = msg.`meta`',
+        '  s = { ...v }',
+        '  t = { ...s }',
+        '  ERROR("${TEXT.SERIALISE(AT(s, "a"), "JSON")} ${TEXT.SERIALISE(AT(t, "a"), "JSON")} ${TEXT.SERIALISE(t, "JSON")} ${TEXT.SERIALISE(s.`toString`, "JSON")}")',
+      ),
+      meta: JSON.parse('{"a":1,"__proto__":null}'),
+    });
+    expect(ended).toContain('MOVENG_ERROR: 1 1 {');
+  });
+
+  it('ends at the check, on both engines, a program naming a binding or a parameter `__proto__`', async () => {
+    for (const body of [['  __proto__ = 1', '  ERROR("${__proto__}")'], ['  xs = MAP([1, 2], (__proto__) => {', '    return __proto__', '  })', '  ERROR("${COUNT(xs)}")']]) {
+      const ts = await runOn('ts', { source: program(...body) });
+      resetRustRunStats();
+      const rust = await runOn('rust', { source: program(...body) });
+      expect(rustRunStats).toMatchObject({ routed: 0, endedAtCheck: 1 });
+      expect(rust).toEqual(ts);
+      expect(ts.ended).toContain('MOV_NAME_PROTO');
+    }
+  });
+
   it('parks a value holding one as JavaScript writes it, and either park resumes to the same ending', async () => {
     const source = program('  v = msg.`meta`', '  s = { ...v }', '  await sleep(1h)', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(s, "JSON")} ${TEXT.SERIALISE(s.`x`, "JSON")}")');
     const ts = await runOn('ts', { source });
@@ -225,7 +249,8 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     const state: ParkedScopeState = JSON.parse(ts.parks)[0].state;
     const resumed = async (engine: 'ts' | 'rust') => {
       const seen = { invoked: [], asked: [] };
-      return underEngine(engine, () => ending(() => resumeMovement({ ...inputOf({ source }, makeFakeParkSink(), seen), state: JSON.parse(JSON.stringify(state)) })));
+      const input = { ...inputOf({ source }, makeFakeParkSink(), seen), state: JSON.parse(JSON.stringify(state)) };
+      return underEngine(engine, () => ending(() => resumeMovement(input)));
     };
     const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
     expect(onRust).toBe(onTs);
@@ -236,9 +261,8 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     const source = program('  v = msg.`meta`', '  s = { ...v }', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(s.`x`, "JSON")}")');
     const kept: HostRecording[] = [];
     const park = makeFakeParkSink();
-    await underEngine('ts', () =>
-      recordEntry({ entry: 'run', input: inputOf({ source }, park, { invoked: [], asked: [] }), run: runMovement, keep: (r) => kept.push(r) }).catch(() => undefined),
-    );
+    const recorded = { entry: 'run', input: inputOf({ source }, park, { invoked: [], asked: [] }), run: runMovement, keep: (r: HostRecording) => kept.push(r) } as const;
+    await underEngine('ts', () => recordEntry(recorded).catch(() => undefined));
     const recording = kept[0];
     if (recording === undefined) throw new Error('test: the run was recorded');
     expect(JSON.stringify(recording)).toContain('"__proto__"');
@@ -248,9 +272,10 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
         const conversation = new RecordedConversation(recording.requests);
         double.serve(conversation);
         resetRustRunStats();
+        const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
         const outcome = await underEngine(engine, async () => {
           try {
-            return { result: JSON.parse(JSON.stringify(await runMovement({ ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) }))) };
+            return { result: JSON.parse(JSON.stringify(await runMovement(input))) };
           } catch (error) {
             return { failure: recordedError(error) };
           }

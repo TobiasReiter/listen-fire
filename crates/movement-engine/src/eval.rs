@@ -336,9 +336,9 @@ impl<'a> Evaluator<'a> {
                 // or one that is not text, is null. A record held as a value is
                 // a dict to `isDictValue`: its own keys are the binding's.
                 let value = match (&inner.value, &index.value) {
-                    (Js::Object(object), Js::String(key)) if object.proto.is_none() => object.get(key).cloned().unwrap_or(Js::Null),
+                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key).cloned().unwrap_or(Js::Null),
                     (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key)?,
-                    (Js::Object(object), _) if object.proto.is_none() => Js::Null,
+                    (Js::Object(_), _) if crate::js::is_dict(&inner.value) => Js::Null,
                     (Js::Record(_), _) => Js::Null,
                     (other, _) => at_index(other, index.value.to_number()),
                 };
@@ -1033,7 +1033,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
     }
     match value {
         Js::Undefined | Js::Null => Ok(()),
-        Js::Object(source) if source.proto.is_none() => {
+        Js::Object(source) if crate::js::is_dict(value) => {
             for (key, item) in source.entries() {
                 object.assign(key.clone(), item.clone());
             }
@@ -1160,6 +1160,14 @@ mod tests {
         let mut ignored = JsObject::new();
         spread_keys(&source(Js::Number(5.0)), &mut ignored).unwrap();
         assert!(ignored.proto.is_none() && ignored.get("__proto__").is_none());
+        // `null`: no prototype at all, and still a dict (`isDictValue`).
+        let mut bare = JsObject::new();
+        spread_keys(&source(Js::Null), &mut bare).unwrap();
+        let bare = Js::object(bare);
+        assert!(crate::js::is_dict(&bare));
+        let mut again = JsObject::new();
+        spread_keys(&bare, &mut again).unwrap();
+        assert!(matches!(again.get("a"), Some(Js::Number(n)) if *n == 1.0));
     }
 
     #[test]

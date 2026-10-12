@@ -399,7 +399,18 @@ const PINNED: Array<{ text: string; data: Record<string, unknown> }> = [
   ].map((tail) => ({
     text: `  a = [1]\n  b = [a, a]\n  g = GROUPBY([a, b], (x) => {\n    return IF COUNT(x) == 1 THEN "__proto__" ELSE "0" END\n  })\n${tail}`,
     data: { subject: 'Acme', meta: {}, more: [] },
-  })),
+  })),  // An own `__proto__` key the host's JSON holds, spread in: a spread
+  // assigns it, so `null` leaves an object with no prototype, which is
+  // still a dict (`isDictValue`); an object becomes the prototype.
+  ...[
+    '  s = { ...v }\n  t = { ...s }\n  ERROR("${TEXT.SERIALISE(AT(s, "a"), "JSON")} ${TEXT.SERIALISE(AT(t, "a"), "JSON")} ${TEXT.SERIALISE(t, "JSON")}")',
+    '  s = { ...v }\n  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(s.`x`, "JSON")} ${TEXT.SERIALISE(s.`toString`, "JSON")}")',
+  ].flatMap((text) =>
+    ['{"a":1,"__proto__":null}', '{"a":1,"__proto__":{"x":2}}', '{"a":1,"__proto__":5}'].map((meta) => ({
+      text,
+      data: { subject: 'Acme', meta: JSON.parse(meta), more: [] },
+    })),
+  ),
 ];
 
 /** Each walk or instance a dict holds whose reading the TypeScript does not
