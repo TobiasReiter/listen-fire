@@ -418,8 +418,16 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
         expect(ts.invoked).toEqual([]);
       }
-      // The event alone is no value: both engines fail reading it.
-      await agree({ source: program('  x = echo(q: msg)') }, { runsWhole: true });
+      // The event alone is no value. In a through stage, whose arguments
+      // are untyped, it passes the check and the Rust engine refuses it by
+      // name; the TypeScript fails reading it.
+      await agree({ source: through('msg'), replies: [named] }, { refused: 'name_not_value' });
+      // As a call's argument it ends at the check: a record handed whole to
+      // structured data carries its fields, and the event's `deck` is a file
+      // (main's file rule, MOV_CALL_ARG_TYPE at 'q.deck').
+      const whole = await agree({ source: program('  x = echo(q: msg)') }, { endsAtCheck: true });
+      expect('error' in whole && String(whole.error)).toContain("'q.deck' is file");
+      expect(whole.invoked).toEqual([]);
       // Any other record inside a through stage's argument is refused by name.
       const refused = await agree({ source: through('[found]', found), replies: [companies, named] }, { refused: 'plugin_arg_record' });
       // The TypeScript hands the plugin the extraction's binding object itself.
