@@ -6,7 +6,9 @@ Entries are written for two readers: an operator running a self-hosted installat
 
 ## [Unreleased]
 
-<!-- add merged PRs here -->
+### Fixed
+
+- A file whose extracted text contains NUL characters (a PDF with glyphs its font map has no name for) no longer fails the run. The text is stored with each NUL replaced by a space, and a failure to store the extracted text as provenance is logged rather than failing the run.
 
 ## [v0.11.0] - 2026-10-12
 
