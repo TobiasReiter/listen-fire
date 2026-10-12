@@ -51,6 +51,10 @@ export interface Program {
    *  acting user, a records plugin's records, a file's unreadable reason —
    *  the malformed answers a host may give. */
   answers?: { actingUser?: unknown; records?: unknown; unreadable?: unknown };
+  /** Why this program's Rust run matches the TypeScript's only as the
+   *  kit's matching rule allows, not request for request: a program that
+   *  says nothing must agree exactly. */
+  looser?: string;
   /** Its input holds what JSON cannot carry (a lone surrogate), which the
    *  recorder refuses: each engine runs it unrecorded, compared on how it
    *  ended. */
@@ -386,6 +390,10 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }' }),
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { a: "x", deep: { list: [FIRST(rows)] } }\n  g = graph { ...held }' }),
       () => ({ body: '  held = { a: "x", deep: { b: 2 } }\n  g = graph { ...held }\n  write crm-[:notes]-> { body: g.a }' }),
+      // A record nested in a null-prototype map: found at its key as the
+      // TypeScript's holdsRecord finds it (isDictValue takes `null`).
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: { __proto__: null, inner: co } }\n  g = graph { ...held }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: [{ __proto__: null, inner: co }] }\n  g = graph { ...held }' }),
     ],
   },
 
@@ -476,7 +484,7 @@ export const PATTERNS: Pattern[] = [
     note: "closed in chunk 7A Task 6: a collection op's members run `concurrency` at a time after a first batch of `initialConcurrency` (runMembers), each in a flow of its own, their traces spliced in member order; settings this engine does not read stay refused by the op's reason",
     programs: [
       () => ({ body: '  MAP(["a", "b", "c", "d"], { concurrency: 2, initialConcurrency: 1 }, (n) => {\n    write crm-[:notes]-> { body: n }\n  })' }),
-      () => ({ body: '  MAP(["Acme", "Beta", "Acme"], { concurrency: 3, onError: "warn" }, (n) => {\n    if n == "Beta" {\n      x = ONLY(crm-[c:companies]->.`name`)\n    }\n    write crm-[:companies]-> { unique by (`name`), name: n }\n  })' }),
+      () => ({ body: '  MAP(["Acme", "Beta", "Acme"], { concurrency: 3, onError: "warn" }, (n) => {\n    if n == "Beta" {\n      x = ONLY(crm-[c:companies]->.`name`)\n    }\n    write crm-[:companies]-> { unique by (`name`), name: n }\n  })', looser: 'its members run concurrently: the kit matches the requests of each member, not one order across members' }),
       (pick) => ({ body: `  MAP(["a", "b", "c"], { concurrency: ${pick([2, 3])} }, (n) => {\n    write crm-[:notes]-> { body: n }\n  })` }),
       () => ({ body: '  MAP(["Acme", "Beta"], { concurrency: 2 }, (n) => {\n    write crm-[:companies]-> { unique by (`name`), name: n }\n  })' }),
     ],
@@ -487,7 +495,7 @@ export const PATTERNS: Pattern[] = [
     note: 'closed in chunk 7A Task 6: as statement:collection, bound (REDUCE carries what the members before each had answered when it started)',
     programs: [
       () => ({ body: '  lengths = MAP(["a", "bb", "ccc", "dddd"], { concurrency: 2 }, (n) => LENGTH(n))\n  write crm-[:notes]-> { body: "${SUM(lengths)}" }' }),
-      () => ({ body: '  slow = MAP([1, 2, 3], { concurrency: 3 }, (n) => {\n    if n == 2 {\n      await sleep(1h)\n    }\n    return n * 10\n  })' }),
+      () => ({ body: '  slow = MAP([1, 2, 3], { concurrency: 3 }, (n) => {\n    if n == 2 {\n      await sleep(1h)\n    }\n    return n * 10\n  })', looser: 'its members run concurrently: the kit matches the requests of each member, not one order across members' }),
       (pick) => ({ body: `  done = MAP(["a", "b"], { concurrency: ${pick([2, 4])} }, (n) => {\n    write crm-[:notes]-> { body: n }\n    return n\n  })\n  write crm-[:notes]-> { body: "\${COUNT(done)}" }` }),
       () => ({ body: '  kept = FILTER(["a", "bb", "ccc"], { concurrency: 3 }, (n) => LENGTH(n) > 1)\n  write crm-[:notes]-> { body: "${COUNT(kept)}" }' }),
     ],
@@ -874,8 +882,6 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: "closed in PLAN-08A Task 2: a head over an extraction's records with a WHERE fails the run as the TypeScript's headIterationsFrom fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result block heads'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }' }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co LIMIT 1]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  found-[c:co WHERE `name` == "Acme"]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co ORDER BY `name` DESC LIMIT 1]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
     ],
@@ -930,8 +936,6 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: "closed in PLAN-08A Task 2: a hop down an extraction with a WHERE fails the run as the TypeScript's walkExtractSteps fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result hops'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`' }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COUNT(found-[c:co WHERE c.`name` != ""]->)' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  x = COUNT(found-[c:co WHERE c.`name` != ""]->)', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COUNT(found-[c:co ORDER BY `name` LIMIT 1]->)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COLLECT(found<-[:co]-.`name`)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
@@ -942,8 +946,6 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: "closed in PLAN-08A Task 2: EXISTS down an extraction reads each hop's WHERE, ORDER BY and LIMIT as the TypeScript's evaluateExists reads them (per origin, over the entities' children)",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }' }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co LIMIT 1]->) {\n    x = 1\n  }' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co ORDER BY `name` DESC LIMIT 1]-> WHERE `name` == "Beta") {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co WHERE `name` == "Beta"]->) {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
     ],
@@ -1094,7 +1096,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'static_number',
     routes: 'whole',
-    note: 'closed in PLAN-08A Task 2: `-0` (the lowering folds the negation into a literal) runs, this engine lowering the program itself, so the literal never crosses as JSON; a host request writes it as JSON does (`0`) on both engines. No literal reads as Infinity (`1e400` does not parse)',
+    note: "closed in PLAN-08A Task 2: a `-0` literal (the lowering folds the negation into one) is `0` on the TypeScript engine, whose lowered tree crosses to it as JSON, and so on this one too (fix round 1); a -0 computed at run time is -0 on both. No literal reads as Infinity (`1e400` does not parse)",
     programs: [
       () => ({ body: '  x = -0\n  write crm-[:notes]-> { body: "${x}" }' }),
       () => ({ body: '  x = -0\n  y = 1 / x\n  write crm-[:notes]-> { body: "${y}", payload: { n: x, list: [x, -0.0] } }' }),
@@ -1105,7 +1107,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'proto_key',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a `__proto__` key written in an object literal is Object.prototype's setter, as `value[member.key] = …` is (an object or null sets the prototype, anything else is ignored), so the map is no dict where it has one; the eval wire carries the prototype to the host. A request holding such a map is not JSON, which the recorder refuses, so no program here writes one",
+    note: "closed in PLAN-08A Task 2: a `__proto__` key written in an object literal is Object.prototype's setter, as `value[member.key] = …` is (an object or null sets the prototype, anything else is ignored), so the map is no dict where it has one; the eval wire carries the prototype both ways. A request holding such a map is not JSON, which the recorder refuses, so no program here writes one: rust_values_cross.unit.test.ts writes one, and has it handed back, on both engines",
     programs: [
       () => ({ body: '  x = { __proto__: 1 }' }),
       () => ({ body: '  x = { a: 1, __proto__: { b: 2 } }\n  k = "b"\n  y = AT(x, k)\n  write crm-[:notes]-> { body: "${AT(x, "a")} ${x.a}", payload: { y: y } }' }),

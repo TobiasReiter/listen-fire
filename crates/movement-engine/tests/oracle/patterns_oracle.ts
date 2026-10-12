@@ -529,6 +529,14 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
         ]);
         if (verdict.kind !== 'same') problems.push(`${where}\n  the engines disagree: ${verdict.kind === 'diverged' ? verdict.divergence : verdict.reason}`);
         else agreement = same ? 'exact' : 'kit';
+        // The kit's matching rule is looser than request for request (it
+        // matches concurrent members' requests apart, and an ending it
+        // judges equal need not be the same text): a program matching only
+        // so must say why, or the looseness may hide a divergence (a -0 the
+        // recorder refused on one engine only passed so once).
+        if (agreement === 'kit' && program.looser === undefined) {
+          problems.push(`${where}\n  the engines agree only as the kit's matching rule allows, and the program does not say why (\`looser\`)`);
+        }
       } else if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) {
         problems.push(`${where}\n  refused, yet its fallback ended otherwise than the TypeScript run`);
       }

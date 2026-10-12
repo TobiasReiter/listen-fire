@@ -281,7 +281,13 @@ export class WireOut {
     if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
     const proto: unknown = Object.getPrototypeOf(value);
     const isList = Array.isArray(value) && proto === Array.prototype;
-    if (!isList && proto !== Object.prototype) return REFUSED;
+    // A plain object whose prototype was assigned (an object literal's
+    // `__proto__`, `null` included) crosses with that prototype as the
+    // fourth member, `["o", id, entries, prototype]`, which is how the engine
+    // hands one out; a class instance's prototype holds its methods, which
+    // are no entries, so it is refused below.
+    const assigned = !isList && !Array.isArray(value) && proto !== Object.prototype && (proto === null || typeof proto === 'object');
+    if (!isList && proto !== Object.prototype && !assigned) return REFUSED;
     let id = this.identity.get(value);
     if (id === undefined) {
       id = this.sent.length;
@@ -311,7 +317,9 @@ export class WireOut {
         if (item === REFUSED) return REFUSED;
         entries.push([key, item]);
       }
-      return ['o', id, entries];
+      if (!assigned) return ['o', id, entries];
+      const prototype = proto === null ? null : this.write(proto);
+      return prototype === REFUSED ? REFUSED : ['o', id, entries, prototype];
     } finally {
       this.open.delete(value);
     }

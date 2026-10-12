@@ -88,9 +88,7 @@ pub fn version_refusal(language_version: u32) -> Option<String> {
 /// throws MOVENG_NOT_FOUND after the check, on either engine.
 pub fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
     match wanted.filter(|w| !w.is_empty()) {
-        Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
-            (language_version >= 3).then(|| movements.iter().find(|m| crate::js::to_lower_case(&m.name) == crate::js::to_lower_case(wanted))).flatten()
-        }),
+        Some(wanted) => spelled(movements, |m| &m.name, wanted, language_version >= 3),
         None if movements.len() == 1 => movements.first(),
         None => None,
     }
@@ -215,9 +213,7 @@ pub fn refusals(
         program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m.name.clone()) } else { None }).collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
     // `resolveCallee`: as written, or from version 3 in any letter case.
-    let movement_named = |callee: &str| {
-        movement_names.contains(callee) || (language_version >= 3 && movement_names.iter().any(|m| crate::js::to_lower_case(m) == crate::js::to_lower_case(callee)))
-    };
+    let movement_named = |callee: &str| spelled(&movement_names, String::as_str, callee, language_version >= 3).is_some();
     // File-level values, in source order: each may read the ones before it.
     // One already refused binds its name and is not walked again.
     let mut file_values: Vec<(&str, Option<&RValue>)> = Vec::new();
@@ -757,21 +753,12 @@ impl<'p> Callees<'p> {
     /// The name of the closure a call names from version 3 (`resolveCallee`):
     /// one bound to the name as written, or, where the calling scope binds
     /// nothing under it exactly (`bound_exactly`), to it in another letter
-    /// case (`resolveFunction`) — one name alone, as the program binds it.
+    /// case (`resolveFunction`), as the program binds it.
     fn closure_name(&self, written: &str, bound_exactly: bool) -> Option<&str> {
         if self.language_version < 3 || self.movement(written).is_some() {
             return None;
         }
-        if let Some((name, _)) = self.closures.get_key_value(written) {
-            return Some(name);
-        }
-        if bound_exactly {
-            return None;
-        }
-        let folded = crate::js::to_lower_case(written);
-        let mut spelled = self.closures.keys().filter(|name| crate::js::to_lower_case(name) == folded);
-        let name = spelled.next()?;
-        spelled.next().is_none().then_some(name.as_str())
+        spelled(self.closures.keys(), String::as_str, written, !bound_exactly).map(String::as_str)
     }
 
     /// The movement declared as `name`, exactly.
@@ -784,10 +771,8 @@ impl<'p> Callees<'p> {
     /// bound exactly to something else (`bound_in_body`: the calling body
     /// binds it).
     fn callee(&self, written: &str, bound_in_body: bool) -> Option<&'p ast::MovementDeclaration> {
-        self.movement(written).or_else(|| {
-            let bound = bound_in_body || self.file_scope.contains(written);
-            (self.language_version >= 3 && !bound).then(|| self.movements.iter().copied().find(|m| crate::js::to_lower_case(&m.name) == crate::js::to_lower_case(written))).flatten()
-        })
+        let bound = bound_in_body || self.file_scope.contains(written);
+        spelled(&self.movements, |m| &m.name, written, self.language_version >= 3 && !bound).copied()
     }
 
     /// `isValueParam`. The checker holds every argument to a value
@@ -2182,8 +2167,7 @@ impl Names<'_> {
                 }
             };
             let returns_free = |held: Holder| match held {
-                Holder::Free => Ok(()),
-                Holder::Record if takes_position && self.record_nodes.is_empty() => Ok(()),
+                held if self.hands_over_clean(held) && (held == Holder::Free || takes_position) => Ok(()),
                 _ if takes_value => refuse("call_arg_record"),
                 _ if takes_position => refuse("position_arg_record"),
                 _ => Ok(()),
@@ -2237,6 +2221,18 @@ impl Names<'_> {
     /// Whether a call names a closure bound to that name (`Callees::closure`).
     fn calls_closure(&self, written: &str) -> bool {
         self.callee(written).is_none() && self.callees.closure(written, self.binds(written)).is_some()
+    }
+
+    /// Whether a call's value, handed on, holds no record a way this
+    /// engine does not follow: free of records, or one record whose fields
+    /// hold none (where no node of this body holds one).
+    fn hands_over_clean(&self, held: Holder) -> bool {
+        held == Holder::Free || (held == Holder::Record && self.record_nodes.is_empty())
+    }
+
+    /// A function's value handed to a plugin (`recordFields` of a record).
+    fn plugin_value(&self, held: Holder) -> Admitted {
+        if self.hands_over_clean(held) { Ok(()) } else { refuse("plugin_call_form") }
     }
 
     /// What a call of the closure `written` names hands back (`closure_holders`
@@ -2652,7 +2648,7 @@ impl Names<'_> {
         }
         let declared = self.binds(&call.callee)
             || self.language_version < 3
-            || self.movements.iter().any(|m| crate::js::to_lower_case(m) == crate::js::to_lower_case(&call.callee));
+            || spelled(self.movements, String::as_str, &call.callee, true).is_some();
         if declared {
             return Err("function_call".into());
         }
@@ -2702,11 +2698,11 @@ impl Names<'_> {
                 // as its fields (`recordFields`), as a node argument is.
                 CallArg::Call { call: inner, .. } if self.callee(&inner.callee).is_some() => {
                     self.call(inner)?;
-                    plain_or_record(self.call_holders.iter().rev().find(|(at, _)| *at == inner.span).map_or(Holder::Other, |(_, held)| *held))?;
+                    self.plugin_value(self.call_holders.iter().rev().find(|(at, _)| *at == inner.span).map_or(Holder::Other, |(_, held)| *held))?;
                 }
                 CallArg::Call { call: inner, .. } if self.calls_closure(&inner.callee) => {
                     self.closure_call(inner)?;
-                    plain_or_record(self.closure_holder(&inner.callee))?;
+                    self.plugin_value(self.closure_holder(&inner.callee))?;
                 }
                 // A plugin's call runs first (`executePluginCall`): its text,
                 // or its record's fields.
@@ -3018,7 +3014,9 @@ impl Names<'_> {
             // TypeScript's `singleWriteEdge` fails it (crate::write
             // `single_edge`, the same `unsupported`), after what came before.
             EdgeShape::MultiHop => Ok(()),
-            EdgeShape::Invalid(_) => refuse("block_head_does_not_lower"),
+            // A path the lowering cannot read: the checker refuses it, so no
+            // checked program reaches this.
+            EdgeShape::Invalid(_) => refuse(format!("{verb}_multi_hop")),
         }
     }
 
@@ -3381,12 +3379,7 @@ impl Names<'_> {
             // `KG_VALUE` / `KG_EXISTS`, which the checker passes): the run
             // fails as it fails it, before any part is read (`unsupported`,
             // crate::eval).
-            Expression::KgValue { .. }
-            | Expression::KgExists { .. }
-            | Expression::ParentResult { .. }
-            | Expression::ActionResult { .. }
-            | Expression::LinkedObject { .. }
-            | Expression::ExtractValue { .. } => Ok(()),
+            other if crate::eval::has_no_typescript_case(other) => Ok(()),
             // A walk read for a field, many-valued.
             // A walk read for a field, or as the records it lands on.
             Expression::Traverse { alias_root: Some(root), steps, expression } if !steps.is_empty() => match expression.as_ref() {
@@ -4004,27 +3997,28 @@ fn selection(expr: &Expression) -> Option<(&str, &[TraversalStep])> {
 /// Whether `callee` resolves to an imported plugin (`resolveCallee`): as
 /// written, or from version 3 in any letter case, as a function does.
 fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32) -> bool {
-    plugins.contains(callee) || (language_version >= 3 && plugins.iter().any(|p| crate::js::to_lower_case(p) == crate::js::to_lower_case(callee)))
+    spelled(plugins, String::as_str, callee, language_version >= 3).is_some()
 }
 
-/// A function's value handed to a plugin: a value, or one record whose
-/// fields hold none (the plugin is handed its fields).
-fn plain_or_record(held: Holder) -> Admitted {
-    if matches!(held, Holder::Free | Holder::Record) { Ok(()) } else { refuse("plugin_call_form") }
+/// `resolveCallee`'s lookup, the one every name a call resolves goes
+/// through: the item named as written, else, where names read in any letter
+/// case (`any_case`: from version 3, and where the calling scope binds
+/// nothing under the name as written), the first named so in another case.
+fn spelled<'a, T: ?Sized + 'a, I>(items: I, name_of: impl Fn(&T) -> &str, written: &str, any_case: bool) -> Option<&'a T>
+where
+    I: IntoIterator<Item = &'a T> + Clone,
+{
+    items.clone().into_iter().find(|item| name_of(item) == written).or_else(|| {
+        let folded = crate::js::to_lower_case(written);
+        any_case.then(|| items.into_iter().find(|item| crate::js::to_lower_case(name_of(item)) == folded)).flatten()
+    })
 }
 
 /// What a call of the plugin `callee` resolves to binds (`resolveCallee`):
 /// the plugin imported as written, or from version 3 the one imported in
 /// another letter case.
 fn plugin_bind(binds: &BTreeMap<String, PluginBinds>, callee: &str, language_version: u32) -> Option<PluginBinds> {
-    if let Some(bind) = binds.get(callee) {
-        return Some(*bind);
-    }
-    if language_version < 3 {
-        return None;
-    }
-    let folded = crate::js::to_lower_case(callee);
-    binds.iter().find(|(name, _)| crate::js::to_lower_case(name) == folded).map(|(_, bind)| *bind)
+    spelled(binds.keys(), String::as_str, callee, language_version >= 3).and_then(|name| binds.get(name)).copied()
 }
 
 /// An expression slot, lowered.

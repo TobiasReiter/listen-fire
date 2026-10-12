@@ -136,7 +136,7 @@ pub fn holds_records(value: &Js) -> bool {
     binding_of(value).is_some()
         || match value {
             Js::Array(list) => list.items().iter().any(holds_records),
-            Js::Object(dict) if dict.proto.is_none() => dict.entries().iter().any(|(_, item)| holds_records(item)),
+            Js::Object(dict) if js::is_dict(value) => dict.entries().iter().any(|(_, item)| holds_records(item)),
             _ => false,
         }
 }

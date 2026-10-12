@@ -211,6 +211,14 @@ impl Decoder<'_> {
                             };
                             object.set(key.to_string(), self.value(value)?);
                         }
+                        // `["o", id, entries, prototype]`: a prototype the
+                        // host's object was assigned (`null` included).
+                        if let Some(proto) = tagged.get(3) {
+                            object.proto = Some(match self.value(proto)? {
+                                proto @ (Js::Object(_) | Js::Null) => proto,
+                                other => return Err(format!("a wire prototype is an object or null, not {}", other.type_of())),
+                            });
+                        }
                         object.origin = Some(id as u32);
                         let value = Js::object(object);
                         let value = self.again(id, &value).unwrap_or(value);

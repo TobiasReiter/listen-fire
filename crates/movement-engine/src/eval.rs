@@ -100,9 +100,13 @@ pub struct Evaluated {
     pub prov: Prov,
 }
 
+/// A literal as the TypeScript engine holds it: its lowered tree crosses
+/// to it as JSON, which writes a `-0` literal as `0`, so a literal is never
+/// `-0` there (a `-0` computed at run time is).
 pub fn static_value(value: &StaticValue) -> Js {
     match value {
         StaticValue::String(s) => Js::str(s.clone()),
+        StaticValue::Number(n) if n.0 == 0.0 => Js::Number(0.0),
         StaticValue::Number(n) => Js::Number(n.0),
         StaticValue::Bool(b) => Js::Bool(*b),
         StaticValue::Null => Js::Null,
@@ -526,15 +530,7 @@ impl<'a> Evaluator<'a> {
             // else the TypeScript's evaluator refuses it.
             Expression::Exists { .. } if self.scoped => self.ask_run(Ask::ScopedExists { expr: expr.clone() }).await,
             Expression::Exists { .. } => Err(rootless_exists()),
-            // Kinds the TypeScript's evaluator has no case for (the retired
-            // KG_VALUE / KG_EXISTS, which the checker passes, and the TG
-            // engine's reads): it fails on the kind before it reads a part.
-            Expression::KgValue { .. }
-            | Expression::KgExists { .. }
-            | Expression::ParentResult { .. }
-            | Expression::ActionResult { .. }
-            | Expression::LinkedObject { .. }
-            | Expression::ExtractValue { .. } => Err(EvalError::unsupported_bare(&format!("the expression kind '{}'", kind_of(expr)))),
+            other if has_no_typescript_case(other) => Err(EvalError::unsupported_bare(&format!("the expression kind '{}'", kind_of(expr)))),
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }
     }
@@ -967,6 +963,21 @@ impl<'a> Evaluator<'a> {
 pub(crate) fn is_records_walk(expr: &Expression) -> bool {
     matches!(expr, Expression::Traverse { alias_root: Some(_), steps, expression }
         if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
+}
+
+/// A kind the TypeScript's evaluator has no case for (the retired KG_VALUE
+/// and KG_EXISTS, which the checker passes, and the TG engine's reads): it
+/// fails on the kind, before it reads any part (expression.ts's default).
+pub(crate) fn has_no_typescript_case(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::KgValue { .. }
+            | Expression::KgExists { .. }
+            | Expression::ParentResult { .. }
+            | Expression::ActionResult { .. }
+            | Expression::LinkedObject { .. }
+            | Expression::ExtractValue { .. }
+    )
 }
 
 /// `unsupported('rootless EXISTS()', …)`: no position scope to walk from.
