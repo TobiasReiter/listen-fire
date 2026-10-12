@@ -287,9 +287,10 @@ routed). That check answers this engine's own `check.program` request.
    the catalog loads, before `check.program`, before any request: a refused
    run costs one parse and one walk, and no host call
    (`rustRunStats.hostCalls` stays `{}`).
-3. **The stamp declines** (`Run::stamp_decline`), after the check and
-   before anything the host can see (the version warning's trace entry
-   included): what only the checker's stamps say. A refusal of this
+3. **The declines**, after the check and before anything the host can see
+   (the version warning's trace entry included): a slot this engine's
+   lowering misses and the checker passes. (The one stamp decline,
+   `event_field_dated`, retired with PLAN-08A group F′.) A refusal of this
    engine's own met mid-run before the run's first effect declines too
    (`unreproduced`, below).
 
@@ -522,13 +523,13 @@ never resumes it wrong.
 
 | reason | the input | status, and what closing it takes |
 |---|---|---|
-| `event_does_not_cross` | an event or parked state the eval wire cannot carry as itself (a function, a bigint, a `Date` or a class instance (a plain object whose prototype was assigned, `null` included, crosses with it, PLAN-08A Task 2 fix round 1), a shared open reference, an array hole; an own `__proto__` key crosses as a key, transition artefacts row 7, and a lone surrogate as its code units, row 9) | **Open** (no corpus run meets it). Takes: a `Date` on the wire (row 13) |
+| `event_does_not_cross` | an event or parked state the eval wire cannot carry as itself (a function, a bigint, a class instance (a plain object whose prototype was assigned, `null` included, crosses with it, PLAN-08A Task 2 fix round 1), a shared open reference, an array hole; a `Date` is its ISO text on both engines, transition artefacts row 13; an own `__proto__` key crosses as a key, row 7, and a lone surrogate as its code units, row 9) | **Open** (no corpus run meets it). Takes: nothing a host sends (the event is data a webhook's or a poll's JSON made) |
 
 **After the check** (`declined`):
 
 | reason | what the stamps say | status, and what closing it takes |
 |---|---|---|
-| `event_field_dated` | the program reads an event field (by name, or as a `...msg` spread's stamp names it) that the source's schema types as a date: an adapter may answer it as a `Date` | **Open** (no corpus run meets it). Takes: a `Date` value on the wire (or a ruling that adapters never answer one) |
+| `event_field_dated` | the program read an event field the source's schema types as a date: an adapter might have answered it as a `Date` | **Closed** (PLAN-08A group F′, Henry's ruling): a `Date` the event or an adapter holds is its ISO text on both engines (transition artefacts row 13); the decline is gone |
 | `catalog_does_not_load`, `event_does_not_read`, `instant_does_not_read`, `local_zone_does_not_read`, `check_answer_malformed` | the run's input or the check's answer does not read (a `localZone` the environment's zone database does not know) | **Open** (no corpus run meets it). Takes: to become errors: shim faults in all but name |
 | `source_does_not_parse` | a source this engine's parser refuses and the checker passes | **Open** (no corpus run meets it). Takes: the grammar this engine lacks (none is known) |
 | `condition_does_not_lower`, `expression_does_not_lower`, `block_head_does_not_lower` | a slot (or a block head's probe) this engine's lowering misses, and the checker passes; alone, it is not refused at admission: a slot the checker refuses (`CURRENCY.PARSE(…)`) ends the run at the check on either engine, as the TypeScript's does (chunk 7A Task 6). With another reason it is refused with it, and the admission dry run (`dryAdmission`, never answered) names it among the refusals. A field read off a call's answer (`FIRST(held.entries).name`) runs since PLAN-08A group F′: the TypeScript does not lower it either, it binds the call to a name first whatever the call is (`hoistingMemberReads`), and so does this engine's staging now (crate::nested `staged_calls`), from version 3 | **Open** (met in the corpora, every reason: none). Takes: the lowering's coverage of whatever else a checked slot holds, in crates/movement-parser (shared with the browser's parser artifact, so a change there weighs its size) |
@@ -639,7 +640,7 @@ mutation — the TypeScript engine throws the same.
   names each statement's first reason since chunk 7A's walk, so `all` counts the
   same reasons `rustRunStats.allReasons` does for a routed run) and `byVersion` (the same, by the run's
   pinned language version). It misses what admission cannot see: declines
-  after the check (`event_field_dated`) and mid-run hand-backs.
+  after the check (a lowering miss) and mid-run hand-backs.
   A rehearsal is not asked about. `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks
   about one firing in N (default 1, every firing; 0 turns it off; every
   entry that runs movements refuses anything but a whole number at boot).
@@ -729,8 +730,6 @@ a `return` binds any right-hand side (`return n`, `return node { … }`,
 running is not called again (`recursive movement calls (…)`); from it the
 depth is bounded by the deployment's `MOVEMENT_MAX_CALL_DEPTH`, which the
 shim reads into the input (`maxCallDepth`), failing as `CallDepthExceeded`.
-The stamp the check declines on (`event_field_dated`) is read in every
-called movement too, an event parameter by the names a call gives it.
 
 ### Writes
 
@@ -1278,17 +1277,12 @@ write, a lock, a priced call, an id, a park, the trace handed over, a log
 line) is a decline instead (`unreproduced`, "After the check" above): the
 TypeScript engine runs the segment, having seen only reads.
 
-- An adapter, a plugin, a file reader or a model answers a value the eval
-  wire cannot carry as itself (a `Date`, a class instance, a function):
-  `RustShimError` from the shim. (A lone surrogate crosses as its code
-  units, an own `__proto__` key as a key: transition artefacts rows 7
-  and 9.)
-  The likely case — an event field the source's schema types as a date or a
-  datetime (read by an expression, or written by a `...msg` spread as the
-  checker's stamp names its fields) — is declined before the version warning
-  is traced and before the source is resolved, read off the catalog
-  snapshot (a `describe` would be an adapter call, after which nothing may
-  decline).
+- A plugin, a file reader or a model answers a value the eval wire cannot
+  carry as itself (a `Date`, a class instance, a function), or an adapter
+  answers a class instance or a function: `RustShimError` from the shim.
+  (A `Date` an adapter or the event holds is its ISO text on both engines,
+  transition artefacts row 13; a lone surrogate crosses as its code units,
+  an own `__proto__` key as a key: rows 7 and 9.)
 - A record held in a value reaching a host request admission did not
   foresee: MOVENG_UNSUPPORTED before the request is made (a backstop;
   admission refuses each route it knows, by name).
@@ -1503,7 +1497,7 @@ Sizes are estimates (XS, S, M, L).
 | 10 | a fractional `EXTRACTION_FILE_CHARS` | mirrored (chunk 7A Task 5): the shim passes the deployment's number as written; the text is cut where `slice` truncates it and the marker and the trace's `chars` print the number itself (`first 2.5 of …`) | oracle file_bound.json (seed 20261012, tests/tail_oracle.rs) | tests/oracle/file_bound.json (tests/tail_oracle.rs) | done |
 | 11 | records held in values, `Object.prototype` field reads, identity comparison of records, a dict made text (V8's ToPrimitive) | mirrored (chunk 7A Task 3): `Js::Record` the only record, one `Object.prototype` name table (js.rs), V8's TypeError messages; residuals in "Errors a run can meet mid-run". The structural binding emulation (a dict whose `kind` names a binding's read as that binding, `Binding::Shaped`) is deleted (chunk 7A Task 4b): data is never an engine object | oracle records.json (4,482 whole programs, seed 20261010, tests/records_oracle.rs; regenerated from the fixed TypeScript engine by forward merge 2, so the payloads shaped like engine objects prove both engines read them as data) | tests/oracle/records.json (tests/records_oracle.rs) | done |
 | 12 | `__proto__` keys in values and literals; `-0` and `Infinity` literals | literals run (PLAN-08A Task 2): a folded `-0` literal is `0` on both engines, a literal's `__proto__` key assigned (the prototype on the eval wire's fourth `o` member, both ways); an own `__proto__` key in host data is row 7's | nothing more for literals | tests/oracle/patterns.json (`static_number`, `proto_key`: whole, exact); rust_values_cross.unit.test.ts (the host's input by `Object.is`, prototypes kept) | done |
-| 13 | a `Date` an adapter answers | `event_field_dated` declined; MOVENG_UNSUPPORTED mid-run | a `Date` on the wire, or a ruling that adapters never answer one | none: declined (`event_field_dated`) until the wire carries one | — |
+| 13 | a `Date` an adapter answers | closed (PLAN-08A group F′, Henry's ruling): a `Date` the event or an adapter's answer holds is its ISO text (`null` when invalid, as a park's JSON makes it) on BOTH engines, made at the engine's side of the host boundary (apps/api host_adapter.ts `isoDates`: the TypeScript's adapter stand-in and every run entry's event; the shim's `adapters.call`), so no `Date` is on the wire and `event_field_dated` is retired. No version: no in-process adapter answers a `Date` today (every date-typed field arrives as text: the HTTP clients' JSON, Slack's `ts` and the system adapter's stored events made ISO, Telegram's `linked_at` made ISO; Airtable's and Sheets' `Date` handling is on writes), so no saved program's text, comparison or park changes | nothing more | rust_write.unit.test.ts (a `Date` in the event and in an adapter's record: interpolated, compared against the ISO text, parked, on both engines) | done |
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | none: refused at admission | — |
 | 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again UNCHANGED, under the id it was first sent under, decodes as the one object already held; an object the host MUTATES between two answers decodes fresh the second time, where the TypeScript holds the one object (see "Known divergences") | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | none: rust_engine.unit.test.ts pins the identity the wire keeps, and rust_write.unit.test.ts an answer mutated between re-sends | — |
 | 16 | two names for one write handle across a park | both engines alike: a park writes each name's handle on its own (serialize.ts keeps shared identity for nodes, `nodeRef`, not for handles), so after a resume `x = write org { … }` leaves `x` and `org` two handles, and a later in-place `write org { … }` (version 4) is not seen through `x` | a ruling for Henry: a handle reference in the park state (as `nodeRef` is for nodes), a park-state change both engines would make | none: a ruling first | S |
@@ -1614,7 +1608,7 @@ engine runs the segment.
 
 | the failure | why this engine stops | what closes it |
 |---|---|---|
-| an adapter (or a plugin, a file reader, a model) answering a value the eval wire cannot carry as itself (a `Date`, a class instance, a function): `RustShimError` from the shim | a backstop: the likely case, an event field the source's schema types as a date, is declined by name before the first effect (`event_field_dated`) | row 13: a `Date` on the wire, or a ruling that adapters never answer one |
+| a plugin, a file reader or a model answering a value the eval wire cannot carry as itself (a `Date`, a class instance, a function), or an adapter answering a class instance or a function: `RustShimError` from the shim | a backstop: none is known to answer one (a `Date` an adapter or the event holds is its ISO text on both engines, row 13) | the host's typed contract (a ruling could make the TypeScript refuse it too) |
 | parking a value whose message or data would print a record's binding object other than the event's or a block's returned records' | a backstop: the park would write the TypeScript's internals (its read seam, its computed schema), which this engine does not hold | admission refusing each route that reaches one, by name, as each is found (none is known) |
 | a record held in a value reaching a host request admission did not foresee | a backstop: MOVENG_UNSUPPORTED before the request is made, where the TypeScript hands its host the binding object (which a real host refuses mid-run itself) | admission refusing each such route by name, as each is found (none is known) |
 | a file reader answering `unreadable` with a reason outside the four (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`) | the host has broken its typed contract; the TypeScript traces the reason as given | nothing on the engine's side: a host fault (a ruling could make the TypeScript refuse it too) |

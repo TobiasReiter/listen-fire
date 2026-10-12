@@ -791,7 +791,6 @@ mod tests {
             firing_callback: std::cell::Cell::new(false),
             deferred_race_frames: RefCell::default(),
             call_stack: RefCell::default(),
-            called: Vec::new(),
             wire: crate::env::Wire::default(),
             effected: std::cell::Cell::new(false),
         };

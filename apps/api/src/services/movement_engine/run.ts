@@ -208,7 +208,7 @@ import type {
 import { fileHandle, updateRecordSucceeded } from '../translation_graph/adapter';
 import { foldedShape } from './declared_shape';
 import type { AdapterResolution, BindingEndpoint, CallbackSink, EngineHost } from './host';
-import { hostAdapter, isAdapterCallCeilingReached } from './host_adapter';
+import { hostAdapter, isAdapterCallCeilingReached, isoDates } from './host_adapter';
 import { applicableRequiredFields } from '../translation_graph/required_fields';
 import type { MutationContext } from '../translation_graph/mutation_context';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
@@ -615,7 +615,8 @@ function resolutionKey(resolution: AdapterResolution): string {
   ]);
 }
 
-export async function runMovement(input: RunMovementInput): Promise<MovementRunResult> {
+export async function runMovement(given: RunMovementInput): Promise<MovementRunResult> {
+  const input = withIsoEvent(given);
   // Error severity only: info diagnostics (MOV_LISTEN_MISSING — a
   // dispatchable movement with no listen) never block a run; the engine is
   // routinely handed library movements to execute directly. With the
@@ -647,6 +648,13 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
     recordTypeScriptRun(input, dryAdmitRun({ input, context }));
     return new Interpreter(input, { ...prepared, context }).run(program);
   });
+}
+
+/** The run's input with its event read as either engine reads a host's
+ *  data: a `Date` in it is its ISO text (`isoDates`). */
+function withIsoEvent<I extends RunInput>(input: I): I {
+  const event = isoDates(input.event);
+  return event === input.event ? input : { ...input, event };
 }
 
 /** Whether `MOVEMENT_ENGINE` routes runs to the Rust engine; a run it does
@@ -738,7 +746,8 @@ export interface ResumeMovementInput extends ResumeInput {
  * run parked against (P11), so the re-parsed AST — and every lexical address —
  * is byte-identical. Single-ask linear body only (chunk 5).
  */
-export async function resumeMovement(input: ResumeMovementInput): Promise<MovementRunResult> {
+export async function resumeMovement(given: ResumeMovementInput): Promise<MovementRunResult> {
+  const input = withIsoEvent(given);
   refuseUnsupportedParkStateVersion(input.state.version);
   // A parked state the Rust engine resumes (its own or the TypeScript
   // engine's: the state is one shape) is the Rust engine's to admit, with
@@ -794,8 +803,9 @@ function resumeInterpreter(
  * race's parent — the settlement re-enters at the race statement, not the leaf).
  */
 export async function settleRaceFrame(
-  input: SettleRaceInput & { host: EngineHost },
+  given: SettleRaceInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
+  const input = withIsoEvent(given);
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
     const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
@@ -831,8 +841,9 @@ export async function settleRaceFrame(
  * address resolves to the same expression it was minted from.
  */
 export async function fireCallbackBody(
-  input: CallbackBodyInput & { host: EngineHost },
+  given: CallbackBodyInput & { host: EngineHost },
 ): Promise<MovementRunResult> {
+  const input = withIsoEvent(given);
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
     const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));

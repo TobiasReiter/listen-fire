@@ -13,8 +13,7 @@
 //! spread in, a record compared by identity, a
 //! field that is `Object.prototype`'s) cannot be known from the text, and
 //! stays a documented mid-run failure (the README's "Errors a run can meet
-//! mid-run"). What needs the checker's stamps is refused after the check
-//! and before any effect (`run::Run::stamp_decline`).
+//! mid-run").
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,7 +27,6 @@ use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 
-use crate::program::DeclaringFile;
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
@@ -201,14 +199,13 @@ pub fn refusals(
     libraries: &Libraries,
 ) -> Admission {
     let reasons = Reasons::default();
-    let mut called = Vec::new();
     let mut seeds: Vec<Seed> = Vec::new();
-    let walking = Walking { language_version, catalog, libraries, reasons: &reasons, record_called: entry.is_some() };
+    let walking = Walking { language_version, catalog, libraries, reasons: &reasons };
     let start: Vec<Walk> = match entry {
         Some(entry) => vec![Walk { movement: entry, signature: vec![Kind::Event; entry.params.len()], called: false }],
         None => movements.iter().map(|m| Walk { movement: m, signature: vec![Kind::Event; m.params.len()], called: false }).collect(),
     };
-    admit_file(&walking, program, &DeclaringFile::Root, movements, start, entry.is_some(), &mut called, &mut seeds);
+    admit_file(&walking, program, movements, start, entry.is_some(), &mut seeds);
     // Each library a file imports from, its declarations and values walked
     // (the run binds them when its importer's import is bound, or when a
     // shape's words first read them); then each library movement a walked
@@ -225,7 +222,7 @@ pub fn refusals(
         let library = libraries.0.get(&seed.path);
         if seed.name.is_empty() {
             match library {
-                Some(library) => admit_file(&walking, library, &DeclaringFile::Library(seed.path.clone()), &[], Vec::new(), false, &mut called, &mut seeds),
+                Some(library) => admit_file(&walking, library, &[], Vec::new(), false, &mut seeds),
                 None => reasons.note("import_from_file"),
             }
             continue;
@@ -242,9 +239,9 @@ pub fn refusals(
         };
         let reached = reachable_from(library, vec![movement]);
         let start = vec![Walk { movement, signature: seed.signature.clone(), called: seed.called }];
-        admit_file(&walking, library, &DeclaringFile::Library(seed.path.clone()), &reached, start, false, &mut called, &mut seeds);
+        admit_file(&walking, library, &reached, start, false, &mut seeds);
     }
-    Admission { reasons: reasons.0.into_inner(), called }
+    Admission { reasons: reasons.0.into_inner() }
 }
 
 /// What every file's walk shares.
@@ -253,8 +250,6 @@ struct Walking<'a> {
     catalog: &'a Plugins<'a>,
     libraries: &'a Libraries,
     reasons: &'a Reasons,
-    /// A run of the entry: each called movement's event parameters are noted.
-    record_called: bool,
 }
 
 /// A library movement to walk: by its library and its declared name, under
@@ -281,18 +276,15 @@ pub struct Libraries(pub BTreeMap<String, ast::Program>);
 /// stops before any body where a file statement or the entry fails every
 /// run (`stops_at_entry`); a library's file statements fail at the moment
 /// its importer binds it, which the run mirrors.
-#[allow(clippy::too_many_arguments)]
 fn admit_file<'p>(
     walking: &Walking<'p>,
     program: &'p ast::Program,
-    file: &DeclaringFile,
     movements: &[&'p ast::MovementDeclaration],
     start: Vec<Walk<'p>>,
     has_entry: bool,
-    called: &mut Vec<(DeclaringFile, String, Vec<String>)>,
     seeds: &mut Vec<Seed>,
 ) {
-    let Walking { language_version, catalog, libraries, reasons, record_called } = *walking;
+    let Walking { language_version, catalog, libraries, reasons } = *walking;
     let entry = if has_entry { start.first().map(|w| w.movement) } else { None };
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
@@ -499,19 +491,6 @@ fn admit_file<'p>(
     }
     for walk in walked {
         let movement = walk.movement;
-        if walk.called && record_called {
-            let params = movement.params.iter().zip(&walk.signature).filter(|(_, k)| **k == Kind::Event).map(|(p, _)| p.name.clone());
-            match called.iter_mut().find(|(f, m, _)| f == file && *m == movement.name) {
-                Some((_, _, known)) => {
-                    for param in params {
-                        if !known.contains(&param) {
-                            known.push(param);
-                        }
-                    }
-                }
-                None => called.push((file.clone(), movement.name.clone(), params.collect())),
-            }
-        }
         // A movement no call reaches takes its parameters as the event. One
         // taking a value fails the run before its body when fired itself
         // (above); as a combinator's arm the checker refuses it
@@ -610,12 +589,9 @@ fn shape_aliases_in(body: &[Statement], shapes: &BTreeSet<String>) -> BTreeSet<S
 }
 
 /// What admission found: why this engine does not run the program (empty
-/// when it does), and the movements a run of the entry calls, each with the
-/// parameters a call may bind to the event (`Run::stamp_decline` reads the
-/// event's dated fields through them).
+/// when it does).
 pub struct Admission {
     pub reasons: Vec<String>,
-    pub called: Vec<(DeclaringFile, String, Vec<String>)>,
 }
 
 /// One movement as admission walks it: its parameters bound as a call

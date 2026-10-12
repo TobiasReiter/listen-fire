@@ -217,8 +217,9 @@ async function segmentInRust(
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens. An event or state that cannot cross the
-  // eval wire as itself (a `Date` in a payload) is refused here, before the
-  // engine has asked the host for anything.
+  // eval wire as itself (a class instance in a payload; a `Date` is its ISO
+  // text by now, `withIsoEvent`) is refused here, before the engine has
+  // asked the host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
   const wire = new WireOut({ whole: true });

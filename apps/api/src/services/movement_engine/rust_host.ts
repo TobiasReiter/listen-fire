@@ -47,7 +47,7 @@ import { EFFORTS, type Effort, type TierModel } from './ai_tiers';
 import { applyMovementFunction } from './builtins';
 import { MovementEngineError } from './errors';
 import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
-import { hostCallFailure } from './host_adapter';
+import { hostCallFailure, isoDates } from './host_adapter';
 import { checkAnswer, checkPinned, type CheckedProgram } from './program_check';
 import type { MovementRunResult } from './run';
 import { publishTrace, runLogFields, withDeclaredFiles, type RunContext } from './run_context';
@@ -217,7 +217,9 @@ const ROUTES: Record<string, Route> = {
     // A `_resources` reference's records are resources, whose `fileRef` slot
     // is the envelope that declares a file (`withResourceFile`).
     if (request.filesIn !== undefined && request.filesIn !== 'resources') throw new RustShimError(`adapters.call ${method} filesIn is "resources" or absent`);
-    const answered = request.filesIn === 'resources' ? relatedResourcesWithFiles(answer.result) : answer.result;
+    // A `Date` in it reads as its ISO text, as the TypeScript's stand-in reads it.
+    const read = isoDates(answer.result);
+    const answered = request.filesIn === 'resources' ? relatedResourcesWithFiles(read) : read;
     const result = wire.value(filesAt !== undefined ? filesAtType(filesAt, answered) : answered);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });

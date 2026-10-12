@@ -635,25 +635,30 @@ describe('writes in the Rust engine', () => {
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
-  it('declines, after its check and before it resolves the source, what the check\'s stamps say it does not run', async () => {
-    for (const [body, reason] of [
-      // A date-typed event field (read by name here; by a spread's stamp in
-      // the crate's own tests).
-      ['  write crm-[:companies]-> { name: msg.`when` }', 'event_field_dated'],
-      // Read under a second name for the event, spelled backticked.
-      ['  m2 = `msg`\n  m3 = m2\n  write crm-[:companies]-> { name: m3.`when` }', 'event_field_dated'],
-      // A graph copy whose plan walks edges is stamped only on a graph with a
-      // shape, which admission refuses: the crate's own tests decline one.
-    ] as const) {
-      resetRustRunStats();
-      const run = await runOn('rust', { source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ when: '2026-01-01' }) });
-      expect([body, rustRunStats.declined]).toEqual([body, { [reason]: 1 }]);
-      expect(rustRunStats.notAdmitted).toEqual({});
-      // Nothing but the check was asked of the host...
-      expect(rustRunStats.hostCalls).toEqual({ 'check.program': 1 });
-      // ...and the TypeScript engine ran it instead: the source resolved once.
-      expect(run.resolved.filter(isSourceResolve)).toHaveLength(1);
+  // Henry's ruling (PLAN-08A group F′): a `Date` a host answers is its ISO
+  // text on both engines, so a date-typed field runs on the Rust one too.
+  it('reads a `Date` the event or an adapter answers as its ISO text on both engines: interpolated, compared, parked', async () => {
+    const at = new Date('2026-01-01T09:00:00.000Z');
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  when = msg.`when`',
+      '  crm-[c:companies]-> {',
+      '    write crm-[:notes]-> { body: "${c.`name`} updated ${c.`updated`}" }',
+      '  }',
+      '  if "${when}" == "2026-01-01T09:00:00.000Z" {',
+      '    write crm-[:companies]-> { name: "at ${when}" }',
+      '  }',
+      '  await sleep(1h)',
+      '}',
+    ].join('\n');
+    const { ts, rust } = await agree({ source, event: webhook({ when: at }), attio: { landings: { 'co-1': { name: 'Acme', updated: at } } } });
+    for (const run of [ts, rust]) {
+      const written = JSON.stringify(run.attio.filter(([method]) => method === 'createRecord'));
+      expect(written).toContain('Acme updated 2026-01-01T09:00:00.000Z');
+      expect(written).toContain('at 2026-01-01T09:00:00.000Z');
+      expect(holdsDate(run.parks)).toBe(false);
     }
+    expect(JSON.stringify(rust.parks.map((p) => p.state))).toBe(JSON.stringify(ts.parks.map((p) => p.state)));
   });
 });
 
@@ -1414,7 +1419,9 @@ describe('the cost cap in the Rust engine', () => {
 });
 
 /** An `adapters.resolve` request for the event's source. */
-function isSourceResolve(request: unknown): request is { role: 'source' } {
-  return typeof request === 'object' && request !== null && Reflect.get(request, 'role') === 'source';
+function holdsDate(value: unknown): boolean {
+  if (value instanceof Date) return true;
+  if (typeof value !== 'object' || value === null) return false;
+  return Object.values(value).some(holdsDate);
 }
 

@@ -67,7 +67,7 @@ use crate::eval::{Ask, ErrorClass, EvalError, Evaluated, Evaluating, Evaluator, 
 use crate::executor::{Host, HostError};
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js, JsObject};
-use crate::program::{self, Checked, DeclaredShape, DeclaringFile, Stamp};
+use crate::program::{self, Checked, DeclaredShape, DeclaringFile};
 use crate::stdlib::Surroundings;
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
@@ -491,9 +491,6 @@ pub(crate) struct Run<'a> {
     pub(crate) resolutions: RefCell<Vec<(String, Resolution)>>,
     /// The movements running, the dispatched one first (`callStack`).
     pub(crate) call_stack: RefCell<Vec<String>>,
-    /// The movements the dispatched one calls, each with the parameters a
-    /// call may bind to the event (crate::admit `Admission`).
-    pub(crate) called: Vec<(DeclaringFile, String, Vec<String>)>,
     /// The segment's wire with its host: what the host sent, by id.
     pub(crate) wire: env::Wire,
     /// The run has asked its host for something other than a read: from
@@ -520,7 +517,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let declared: Vec<&MovementDeclaration> =
         root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
-    let crate::admit::Admission { mut reasons, called } =
+    let crate::admit::Admission { mut reasons } =
         crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins), input.chat_models.as_deref().or_else(|| plugins.as_ref().and_then(|c| c.models.as_deref()))), &libraries);
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
@@ -599,18 +596,11 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         firing_callback: std::cell::Cell::new(false),
         deferred_race_frames: RefCell::default(),
         call_stack: RefCell::default(),
-        called,
         wire,
         effected: std::cell::Cell::new(false),
     };
     if let Some(reason) = lowering_misses.into_iter().next() {
         return Err(Stop::Declined(reason));
-    }
-    // What the check's stamps say this engine does not run is declined
-    // before every host-visible effect, the version warning's trace entry
-    // among them.
-    if let Some(reason) = run.stamp_decline() {
-        return Err(Stop::Declined(reason.into()));
     }
     // A deprecated pin runs, and says so on the run's own record (the check
     // answer's version warning; an unsupported pin never got an answer).
@@ -1001,81 +991,6 @@ impl Run<'_> {
             DeclaringFile::Root => self.file_scope.borrow().clone(),
             DeclaringFile::Library(path) => self.library_scopes.borrow().iter().find(|(p, _)| p == path).map(|(_, scope)| scope.clone()),
         }
-    }
-
-    /// What the checker's stamps on the dispatched movement, and on each
-    /// movement it calls, say this engine does not run, found with no effect:
-    ///
-    /// - `event_field_dated`: a field the program reads off the event — by
-    ///   name, or as a `...msg` spread's stamp names it — that the source's
-    ///   schema types as a date. The adapter may answer it as a `Date`, which
-    ///   no value of this engine is. `prepareMovement`'s picks (the
-    ///   movement, its event parameter, the source instance) are made here
-    ///   with no effect; anything `prepare` would fail on is left for it.
-    fn stamp_decline(&self) -> Option<&'static str> {
-        let statements = &self.checked.root.program.statements;
-        let movements: Vec<&MovementDeclaration> = statements
-            .iter()
-            .filter_map(|s| match s {
-                Statement::Movement(m) => Some(m),
-                _ => None,
-            })
-            .collect();
-        let movement: &MovementDeclaration = self.select_movement(&movements).ok()?;
-        let index_of = |m: &MovementDeclaration| statements.iter().position(|s| matches!(s, Statement::Movement(d) if std::ptr::eq(d, m)));
-        // The dispatched movement, and each it calls with the parameters a
-        // call may bind to the event: what each body reads of the event, by
-        // its own names for it.
-        let mut bodies: Vec<(String, &MovementDeclaration, Vec<String>)> = Vec::new();
-        let dispatched = movement.params.first().map(|p| vec![p.name.clone()]).unwrap_or_default();
-        bodies.push((format!("/statements/{}/", index_of(movement)?), movement, dispatched));
-        for (file, name, params) in &self.called {
-            let Some(written) = self.checked.file(file) else { continue };
-            let Some((at, callee)) = written.program.statements.iter().enumerate().find_map(|(i, s)| match s {
-                Statement::Movement(m) if m.name == *name => Some((i, m)),
-                _ => None,
-            }) else {
-                continue;
-            };
-            bodies.push((program::in_file(file, &format!("/statements/{at}/")), callee, params.clone()));
-        }
-        let [param] = movement.params.as_slice() else { return None };
-        let Some(ParamTypeRef::Name(type_ref)) = &param.type_ else { return None };
-        let file = Scope::root();
-        for statement in statements.iter().filter(|s| !matches!(s, Statement::Movement(_))) {
-            self.file_statement(statement, &file, &DeclaringFile::Root);
-        }
-        self.import_originals.borrow_mut().clear();
-        let Some(Binding::Instance(instance)) = file.resolve(&type_ref.graph) else { return None };
-        let schema = instance.schema.as_ref()?;
-        let dated = |field: &str| {
-            schema.positions.0.iter().any(|(name, position)| {
-                (type_ref.position.as_deref().is_none_or(|p| p == name))
-                    && position.properties.0.get(field).is_some_and(|t| is_dated(t, schema, &mut Vec::new()))
-            })
-        };
-        let mut read = Vec::new();
-        for (prefix, body, params) in &bodies {
-            let text = serde_json::to_string(&body.body).unwrap_or_default();
-            // The event under each name a body has for it, and every second
-            // name for it (`m2 = msg`).
-            let names: Vec<String> = params.iter().flat_map(|p| event_names(&body.body, p)).collect();
-            for name in &names {
-                event_fields_read(&text, name, &mut |field| read.push(field.to_string()));
-            }
-            // `...msg` in a write: the lines the checker's stamp says it writes.
-            let (file, _) = program::file_of_path(prefix);
-            let Some(written) = self.checked.file(&file) else { continue };
-            for (path, stamp) in &written.stamps {
-                if let Stamp::SpreadFields(fields) = stamp
-                    && program::in_file(&file, path).starts_with(prefix.as_str())
-                    && written.tree.pointer(path).and_then(|n| n.get("source")).and_then(Json::as_str).is_some_and(|source| names.iter().any(|n| n == source))
-                {
-                    read.extend(fields.iter().cloned());
-                }
-            }
-        }
-        read.iter().any(|field| dated(field)).then_some("event_field_dated")
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
@@ -2433,101 +2348,6 @@ pub(crate) fn lowered<T, E: std::fmt::Debug>(
     lower(&tree).map_err(|e| invalid(format!("{e:?}")))
 }
 
-/// The name a slot reads bare, as the lowering spells it (`bareName`): a
-/// backticked name included.
-fn bare_name(slot: &ExprSlot) -> Option<String> {
-    let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
-    match movement_parser::lowering::lower_expression(&tree, &slot.raw).ok()? {
-        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => Some(name),
-        _ => None,
-    }
-}
-
-/// `param` and every name a body binds to it again (`x = param`, `y = x`),
-/// at any depth.
-fn event_names(body: &[Statement], param: &str) -> Vec<String> {
-    fn collect(statements: &[Statement], names: &mut Vec<String>) -> bool {
-        let mut grew = false;
-        for statement in statements {
-            match statement {
-                Statement::Assign(assign) => {
-                    if let RValue::Expr { expr } = &assign.value
-                        && bare_name(expr).is_some_and(|name| names.contains(&name))
-                        && !names.contains(&assign.name)
-                    {
-                        names.push(assign.name.clone());
-                        grew = true;
-                    }
-                    if let RValue::Block { block } = &assign.value {
-                        grew |= collect(&block.body, names);
-                    }
-                }
-                Statement::If(statement) => {
-                    for arm in &statement.arms {
-                        grew |= collect(&arm.body, names);
-                    }
-                    if let Some(arm) = &statement.else_arm {
-                        grew |= collect(&arm.body, names);
-                    }
-                }
-                Statement::Block(statement) => grew |= collect(&statement.block.body, names),
-                _ => {}
-            }
-        }
-        grew
-    }
-    let mut names = vec![param.to_string()];
-    while collect(body, &mut names) {}
-    names
-}
-
-/// Every field `param.field` an expression in `body_json` (a body's AST as
-/// JSON) reads with no hops.
-pub fn event_fields_read(body_json: &str, param: &str, found: &mut dyn FnMut(&str)) {
-    let Ok(tree) = serde_json::from_str::<Json>(body_json) else { return };
-    let mut raws = Vec::new();
-    collect_raws(&tree, &mut raws);
-    for raw in raws {
-        let Ok(parsed) = movement_parser::expr::parse_expression(&raw) else { continue };
-        let lowered = movement_parser::lowering::lower_expression(&parsed, &raw)
-            .ok()
-            .and_then(|e| serde_json::to_value(e).ok())
-            .or_else(|| movement_parser::lowering::lower_condition(&parsed, &raw).ok().and_then(|c| serde_json::to_value(c).ok()));
-        if let Some(expr) = lowered {
-            reads_of(&expr, param, found);
-        }
-    }
-}
-
-fn collect_raws(tree: &Json, into: &mut Vec<String>) {
-    match tree {
-        Json::Object(map) => {
-            if let (Some(Json::String(raw)), Some(_)) = (map.get("raw"), map.get("span")) {
-                into.push(raw.clone());
-            }
-            map.values().for_each(|v| collect_raws(v, into));
-        }
-        Json::Array(items) => items.iter().for_each(|v| collect_raws(v, into)),
-        _ => {}
-    }
-}
-
-fn reads_of(expr: &Json, param: &str, found: &mut dyn FnMut(&str)) {
-    match expr {
-        Json::Object(map) => {
-            if map.get("type").and_then(Json::as_str) == Some("traverse")
-                && map.get("aliasRoot").and_then(Json::as_str) == Some(param)
-                && let Some(field) = map.get("expression").filter(|e| e.get("type").and_then(Json::as_str) == Some("property")).and_then(|e| e.get("propertyTypeId")).and_then(Json::as_str)
-            {
-                found(field);
-            }
-            map.values().for_each(|v| reads_of(v, param, found));
-        }
-        Json::Array(items) => items.iter().for_each(|v| reads_of(v, param, found)),
-        _ => {}
-    }
-}
-
 /// The interpreter's `mutationContext`: where the run's writes came from.
 fn mutation_context(event: &Js, now_ms: f64) -> Js {
     let mut source = JsObject::new();
@@ -2563,31 +2383,6 @@ pub(crate) fn summarise(origin: &Js) -> Js {
             Js::Object(object) => Js::object(JsObject::clone_of(object)),
             other => other.clone(),
         },
-    }
-}
-
-/// A field type a value of which an adapter may answer as a `Date`. A
-/// record is dated when the position it names has a dated property; one this
-/// engine cannot name is taken as possibly dated.
-fn is_dated(field: &FieldType, schema: &InstanceSchema, seen: &mut Vec<String>) -> bool {
-    match field {
-        FieldType::Scalar(scalar) => matches!(scalar, movement_parser::catalog::types::Scalar::Date | movement_parser::catalog::types::Scalar::Datetime),
-        FieldType::Composite(Composite::List { of, .. } | Composite::MaybeAbsent { of } | Composite::Dict { of, .. }) => is_dated(of, schema, seen),
-        FieldType::Composite(Composite::Union { of }) => of.iter().any(|t| is_dated(t, schema, seen)),
-        FieldType::Composite(Composite::Tuple { of, .. }) => of.iter().flatten().any(|t| is_dated(t, schema, seen)),
-        FieldType::Composite(Composite::Record { position }) => {
-            let name = position.as_ref().and_then(|p| p.as_str().or_else(|| p.get("position").and_then(Json::as_str)));
-            let Some(name) = name else { return true };
-            if seen.iter().any(|s| s == name) {
-                return false;
-            }
-            seen.push(name.to_string());
-            match schema.positions.0.get(name) {
-                Some(position) => position.properties.0.values().any(|t| is_dated(t, schema, seen)),
-                None => true,
-            }
-        }
-        FieldType::Composite(Composite::Enum { .. }) => false,
     }
 }
 
@@ -3370,14 +3165,6 @@ mod tests {
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
     }
 
-    #[test]
-    fn the_event_fields_a_body_reads_are_found() {
-        let body = json!([{ "kind": "write", "write": { "fields": [{ "value": { "raw": "COALESCE(msg.`when`, x.`y`)", "span": {} } }] } }]).to_string();
-        let mut seen = Vec::new();
-        event_fields_read(&body, "msg", &mut |f| seen.push(f.to_string()));
-        assert_eq!(seen, ["when"]);
-    }
-
     /// A segment whose check answers `check`, with a dated event field;
     /// the requests it made, and its `done`.
     fn dated_run(source: &str, check: Json) -> (Json, Vec<String>) {
@@ -3419,28 +3206,22 @@ mod tests {
         }
     }
 
+    /// A date-typed event field runs (Henry's ruling, PLAN-08A group F′):
+    /// the host hands the engine its ISO text, never a `Date`, so nothing
+    /// is declined after the check, and the version warning is traced.
     #[test]
-    fn a_dated_read_declines_before_the_version_warning_is_traced() {
+    fn a_dated_read_runs_past_the_check() {
         let deprecated = json!({
             "diagnostics": [{ "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" }],
             "stamps": [],
             "versionWarning": { "code": "MOV_LANGUAGE_VERSION_DEPRECATED", "message": "old" },
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { name: msg.`when` }\n}";
-        let (done, seen) = dated_run(source, deprecated);
-        assert_eq!(done, json!({ "declined": "event_field_dated" }));
-        assert_eq!(seen, ["check.program"]);
-    }
-
-    #[test]
-    fn a_spread_of_the_event_declines_on_the_dated_fields_its_stamp_names() {
+        let (_, seen) = dated_run(source, deprecated);
+        assert_eq!(seen[1], "adapters.resolve");
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  write crm-[:companies]-> { ...msg }\n}";
-        let stamp = |fields: Json| json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/0/write/spreads/0", "spreadFields": fields }] });
-        let (done, seen) = dated_run(source, stamp(json!(["subject", "when"])));
-        assert_eq!(done, json!({ "declined": "event_field_dated" }));
-        assert_eq!(seen, ["check.program"]);
-        // Undated fields only: the run goes on to its source.
-        let (_, seen) = dated_run(source, stamp(json!(["subject"])));
+        let stamp = json!({ "diagnostics": [], "stamps": [{ "path": "/statements/3/body/0/write/spreads/0", "spreadFields": ["subject", "when"] }] });
+        let (_, seen) = dated_run(source, stamp);
         assert_eq!(seen[1], "adapters.resolve");
     }
 
@@ -3454,32 +3235,6 @@ mod tests {
             let (_, seen) = dated_run(source, copy(edges));
             assert_eq!(seen[1], "adapters.resolve");
         }
-    }
-
-    #[test]
-    fn a_record_is_dated_through_the_positions_it_names() {
-        let schema: InstanceSchema = serde_json::from_value(json!({
-            "positions": {
-                "message": { "properties": { "subject": "text", "sender": { "kind": "record", "position": "person" } }, "edges": {} },
-                "person": { "properties": { "name": "text", "met": { "kind": "list", "of": { "kind": "record", "position": "meeting" } } }, "edges": {} },
-                "meeting": { "properties": { "at": "datetime" }, "edges": {} },
-                "loop": { "properties": { "next": { "kind": "record", "position": "loop" }, "name": "text" }, "edges": {} },
-            },
-            "collections": {}, "writableRoots": {},
-        }))
-        .unwrap();
-        let field = |json: Json| -> FieldType { serde_json::from_value(json).unwrap() };
-        let dated = |json: Json| is_dated(&field(json), &schema, &mut Vec::new());
-        assert!(dated(json!("date")) && dated(json!("datetime")) && !dated(json!("text")));
-        // A record two positions deep, through a list, reaches a datetime.
-        assert!(dated(json!({ "kind": "record", "position": "message" })));
-        assert!(dated(json!({ "kind": "maybeAbsent", "of": { "kind": "record", "position": "person" } })));
-        // A cycle with nothing dated in it ends, undated.
-        assert!(!dated(json!({ "kind": "record", "position": "loop" })));
-        // A record this engine cannot name, or one naming no position, may be dated.
-        assert!(dated(json!({ "kind": "record" })));
-        assert!(dated(json!({ "kind": "record", "position": "nowhere" })));
-        assert!(!dated(json!({ "kind": "enum", "options": ["a"] })));
     }
 
     #[test]

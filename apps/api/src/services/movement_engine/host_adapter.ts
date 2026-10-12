@@ -65,6 +65,48 @@ export function hostCallFailure(error: AdapterCallError): Error {
   }
 }
 
+/**
+ * A host's data as either engine reads it: every `Date` in it made the ISO
+ * text it stands for (`null` for an invalid one), as a park's JSON already
+ * makes it. A value the engine reads from outside — an adapter's answer, the
+ * event — is read through this on both engines, so a `Date` never reaches a
+ * program: its text, its comparisons and its park are the ISO string's on
+ * both. No adapter answers one today (every date-typed field arrives as
+ * text), so no saved program's behaviour changes and no version is needed.
+ *
+ * Copied only along a path that holds a `Date`: anything else is handed on
+ * as the very object it was, its prototype and own keys (`__proto__`
+ * included) kept, so the identity of a host's object is unchanged. Only
+ * arrays and plain objects are walked; anything else is left as it is.
+ */
+export function isoDates<T>(value: T): T {
+  // Why the assertion: the walk changes only `Date`s, which no declared
+  // answer type of an adapter or the event holds.
+  return isoDatesIn(value, new Map()) as T;
+}
+
+function isoDatesIn(value: unknown, seen: Map<object, unknown>): unknown {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  if (typeof value !== 'object' || value === null) return value;
+  const walked = seen.get(value);
+  if (walked !== undefined) return walked;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
+  // Itself until a `Date` is found below it: a cycle back to it reads it.
+  seen.set(value, value);
+  const changed: Array<[string, unknown]> = [];
+  for (const key of Object.keys(value)) {
+    const inner: unknown = Reflect.get(value, key);
+    const made = isoDatesIn(inner, seen);
+    if (made !== inner) changed.push([key, made]);
+  }
+  if (changed.length === 0) return value;
+  const copy: object = Array.isArray(value) ? value.slice() : Object.create(Object.getPrototypeOf(value), Object.getOwnPropertyDescriptors(value));
+  for (const [key, made] of changed) Object.defineProperty(copy, key, { value: made, writable: true, enumerable: true, configurable: true });
+  seen.set(value, copy);
+  return copy;
+}
+
 /** The host instance a stand-in calls, or undefined for an adapter the engine
  *  implements itself (a local edge store). A wrapper that forwards unknown
  *  properties (the natural-name read wrapper) forwards this too. */
@@ -107,7 +149,7 @@ export function hostAdapter(input: { host: EngineHost; segmentId: string; resolv
   ): Promise<AdapterCallMap[M]['result']> => {
     const answer = await host.adapters.call({ ...target, method, args });
     if ('error' in answer) throw hostCallFailure(answer.error);
-    return answer.result;
+    return isoDates(answer.result);
   };
   const optional = <M extends AdapterMethod, F>(method: M, fn: F): F | undefined => (has.has(method) ? fn : undefined);
   const capabilities = resolved.capabilities;

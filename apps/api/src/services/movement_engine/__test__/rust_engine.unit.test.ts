@@ -622,7 +622,7 @@ describe('the segment input', () => {
     const crossing = (input: { source: string; event: unknown }) =>
       ({ ...input, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host }) as unknown as RunMovementInput;
     resetRustRunStats();
-    for (const input of [crossing({ source: '', event: { payload: { occurredAt: new Date(0) } } })]) {
+    for (const input of [crossing({ source: '', event: { payload: { occurredAt: new Map([['at', 0]]) } } })]) {
       const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
       await expect(runSegmentInRust({ input, context: served.context }, engine)).resolves.toEqual({ declined: EVENT_DOES_NOT_CROSS });
       expect(started).toEqual([]);

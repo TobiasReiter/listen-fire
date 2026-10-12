@@ -1292,15 +1292,15 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'event_does_not_cross',
     routes: 'unrecordable',
-    note: 'an event or parked state the eval wire cannot carry as itself (a Date): needs a Date on the wire (transition artefacts row 13; a lone surrogate crosses, row 9: rust_wire_round_trip.unit.test.ts)',
+    note: 'an event or parked state the eval wire cannot carry as itself (a class instance: a Map): no host sends one (a Date is its ISO text on both engines since PLAN-08A group F′, transition artefacts row 13; a lone surrogate crosses, row 9: rust_wire_round_trip.unit.test.ts)',
     programs: [
-      () => ({ body: '  write crm-[:notes]-> { body: "seen" }', payload: { when: new Date(0) }, unrecordable: true }),
+      () => ({ body: '  write crm-[:notes]-> { body: "seen" }', payload: { when: new Map([['at', 0]]) }, unrecordable: true }),
     ],
   },
   {
     reason: 'event_field_dated',
-    routes: 'declined',
-    note: "the program reads an event field the source's schema types as a date: an adapter may answer it as a Date, which no value of this engine is; needs a Date on the wire (or a ruling that adapters never answer one)",
+    routes: 'whole',
+    note: "closed in PLAN-08A group F′: a Date the event or an adapter answers is its ISO text on both engines (Henry's ruling; transition artefacts row 13), so a date-typed event field runs",
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: "${msg.`sent`}" }', payload: { sent: '2026-01-01T09:00:00.000Z' } }),
       () => ({ body: '  if msg.`sent` != null {\n    write crm-[:notes]-> { body: "dated" }\n  }', payload: { sent: '2026-01-01T09:00:00.000Z' } }),
