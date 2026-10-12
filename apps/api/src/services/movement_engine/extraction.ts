@@ -3139,6 +3139,9 @@ function segmentForDatum(datum: unknown): Segment {
       };
     }
   }
+  // A file with no reader in the path (no engine resolves it) keeps the
+  // legacy rendering; one inside a value never reaches the prompt.
+  if (isFileRef(datum)) return { classification: 'FRAGMENT', content: safeStringify(datum) };
   return { classification: 'FRAGMENT', content: safeStringify(fieldsValueOf(datum)) };
 }
 

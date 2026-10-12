@@ -289,7 +289,7 @@ describe.each(VERSIONS)('under language version %i, an extraction input is text,
   it('a record whose fields hold a file', () => {
     refused(
       ['  doc = write crm-[:docs]-> { label: "deck", scan: f }', ...extract('doc')],
-      "and 'doc.scan' is a file inside it — a file, not a value. Hand it over as its own input (`from [doc.scan]`), or put its text in its place ('scan: READ(f)')",
+      "and 'doc.scan' is a file — a file, not a value. Hand it over as its own input (`from [doc.scan]`), or put its text in its place ('scan: READ(f)')",
     );
   });
 
@@ -302,7 +302,7 @@ describe.each(VERSIONS)('under language version %i, an extraction input is text,
       '  }',
     ]).filter(d => d.code === 'MOV_EXTRACT_CONTENT');
     expect(errors.map(d => d.message)).toEqual([
-      "An extraction reads a record as its fields, and 'c' is crm.company, whose fields are read from its system one at a time. Pass the fields it needs (`from [{ name: c.name, … }]`), or one field as text (`from [c.`Name`]`)",
+      "An extraction reads a record as its fields, and 'c' is crm.company, whose fields are read from its system one at a time. Pass a dict of the fields it needs in its place ('{ name: r.name, … }')",
     ]);
   });
 });
@@ -315,7 +315,7 @@ describe.each(VERSIONS)('under language version %i, AT over a record takes an in
   };
 
   it('a literal key naming an engine member', () => {
-    refused(['  x = AT(org, "handle")'], "AT looks up a list's slot or a map's key, and this is a record — 'handle' is not a key it holds. Read a field with a dot (r.handle)");
+    refused(['  x = AT(org, "handle")'], "AT looks up a list's slot or a map's key, and this is a record — 'handle' is not a key it holds. Read a field with a dot (org.handle)");
   });
 
   it.each(['provenance', 'kind', 'graph', 'fields', 'edges'])('the member %s', member => {
@@ -323,7 +323,7 @@ describe.each(VERSIONS)('under language version %i, AT over a record takes an in
   });
 
   it('a literal field name: a field is read with a dot', () => {
-    refused(['  x = AT(org, "name")'], "'name' is not a key it holds. Read a field with a dot (r.name)");
+    refused(['  x = AT(org, "name")'], "'name' is not a key it holds. Read a field with a dot (org.name)");
   });
 
   it('a key that is not written down', () => {
@@ -353,5 +353,124 @@ describe.each(VERSIONS)('PINNED: under language version %i, AND and OR answer a 
     ['OR', 'company: org OR 1 > 0'],
   ])('%s with a record operand, into a json field: accepted', (_label, field) => {
     expect(errorsUnder(version, note(field))).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, the walk never passes over a record handed over as its fields', version => {
+  // An extraction input and a plugin argument taking structured data render
+  // a record as its fields. Every record the walk meets — at any depth, in any
+  // arm — is held to that: its fields in hand, none of them a file.
+  const SYS = (inner: string[]): string[] => ['  crm-[c:companies]-> {', ...inner.map(line => `  ${line}`), '  }'];
+  const DOC = '  doc = write crm-[:docs]-> { label: "deck", scan: f }';
+  const codesOf = (body: string[], code: string): string[] =>
+    errorsUnder(version, body).filter(d => d.code === code).map(d => d.message);
+
+  it.each([
+    ['{ a: c }', "'{ a: c }' holds crm.company at '.a'"],
+    ['{ a: [c] }', "'{ a: [c] }' holds crm.company at '.a[0]'"],
+    ['[c]', "'[c]' holds crm.company at '[0]'"],
+    ['COALESCE(c, "x")', `'COALESCE(c, "x")' may be crm.company`],
+    ['MULTI(c)', "'MULTI(c)' holds crm.company at '[…]'"],
+  ])('a system record in the input %s', (input, said) => {
+    expect(codesOf(SYS(extract(input)), 'MOV_EXTRACT_CONTENT')).toEqual([
+      `An extraction reads a record as its fields, and ${said}, whose fields are read from its system one at a time. Pass a dict of the fields it needs in its place ('{ name: r.name, … }')`,
+    ]);
+  });
+
+  it('a system record under a key of a bound map', () => {
+    expect(codesOf(SYS(['  y = { a: c }', ...extract('y')]), 'MOV_EXTRACT_CONTENT')).toEqual([
+      expect.stringContaining(`and '${version === 1 ? 'y[…]' : 'y.a'}' is crm.company, whose fields are read from its system one at a time`),
+    ]);
+  });
+
+  it.each([
+    ['crm', "'crm' is 'crm' (the instance itself) — a connection, not a record"],
+    ['{ a: crm }', "'{ a: crm }' holds 'crm' (the instance itself) at '.a' — a connection, not a record"],
+  ])('an instance in the input %s', (input, said) => {
+    expect(codesOf(extract(input), 'MOV_EXTRACT_CONTENT')).toEqual([expect.stringContaining(said)]);
+  });
+
+  it.each([
+    ['{ a: doc }', "'{ a: doc }' holds a file at '.a.scan'"],
+    ['[{ a: doc }]', "'[{ a: doc }]' holds a file at '[0].a.scan'"],
+    ['COALESCE(doc, "x")', `'COALESCE(doc, "x")' may hold a file at '.scan'`],
+    ['MULTI(doc)', "'MULTI(doc)' holds a file at '[…].scan'"],
+  ])('a record whose fields hold a file, in the input %s', (input, said) => {
+    expect(codesOf([DOC, ...extract(input)], 'MOV_EXTRACT_CONTENT')).toEqual([
+      expect.stringContaining(`An extraction reads a file only as an input of its own, and ${said} — a file, not a value.`),
+    ]);
+  });
+
+  it('a field of a system record, and a record the run wrote, are inputs', () => {
+    expect(errorsUnder(version, SYS(extract('{ a: c.name }')))).toEqual([]);
+    expect(errorsUnder(version, extract('{ a: [org], b: COALESCE(org, "x") }'))).toEqual([]);
+  });
+
+  it.each([
+    ['summarise(data: COALESCE(c, "x"))', "'summarise' takes every field of the record it is given as 'data', and this may be crm.company"],
+    ['relay(data: c)', "'relay' takes every field of the record it is given as 'data', and this is crm.company"],
+    ['relay(data: IF 1 > 0 THEN c ELSE "x" END)', "'relay' takes every field of the record it is given as 'data', and this may be crm.company"],
+  ])('a system record handed whole to %s, plain and in a stage', (call, said) => {
+    const plain = codesOf(SYS([`  s = ${call}`]), 'MOV_CALL_ARG_TYPE');
+    const staged = codesOf(SYS(extract('"a document"', ` through [${call}]`)), 'MOV_CALL_ARG_TYPE');
+    for (const messages of [plain, staged]) {
+      expect(messages).toEqual([expect.stringContaining(`${said}, whose fields are read from its system one at a time`)]);
+    }
+  });
+
+  it('a record whose fields hold a file, handed whole through an arm', () => {
+    expect(codesOf([DOC, '  s = summarise(data: COALESCE(doc, "x"))'], 'MOV_CALL_ARG_TYPE')).toEqual([
+      expect.stringContaining("and 'data.scan' may be file — a file, not a value"),
+    ]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, MULTI\'s list is one of its members\' kind', version => {
+  const refused = (body: string[], code: string, said: string): void => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual([code]);
+    expect(errors[0]!.message).toContain(said);
+  };
+
+  it('a member picked off it, under a key', () => {
+    refused(note('company: { a: FIRST(MULTI(org)) }'), 'MOV_WRITE_FIELD_TYPE', "and 'company.a' is ");
+    refused(note('company: { a: AT(MULTI(org), 0) }'), 'MOV_WRITE_FIELD_TYPE', "and 'company.a' is ");
+  });
+
+  it('a member picked off it, as the field: refused, as the same read off a list is', () => {
+    for (const field of ['company', 'upload']) {
+      const fromMulti = errorsUnder(version, note(`${field}: FIRST(MULTI(org))`));
+      const fromList = errorsUnder(version, note(`${field}: FIRST([org])`));
+      expect(fromMulti.map(d => d.code)).toEqual(fromList.map(d => d.code));
+      expect(fromMulti.map(d => d.code)).toContain('MOV_ABSENT_REQUIRED');
+    }
+  });
+
+  it('AT over an operator that may be a record, at an index, picks the record', () => {
+    refused(note('company: { a: AT(COALESCE(org, "x"), 0) }'), 'MOV_WRITE_FIELD_TYPE', "and 'company.a' may be ");
+  });
+
+  it('a list of values is still a list of values', () => {
+    expect(errorsUnder(version, note('company: { a: MULTI("a", ["b"]) }'))).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, AT sees a record through an operator', version => {
+  const refused = (body: string[], said: string): void => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual(['MOV_AT_RECORD_KEY']);
+    expect(errors[0]!.message).toContain(said);
+  };
+
+  it.each([
+    ['AT(COALESCE(org, "x"), "graph")', "this may be a record — 'graph' is not a key it holds. Read a field with a dot (r.graph)"],
+    ['AT(IF 1 > 0 THEN org ELSE org END, "graph")', "this may be a record — 'graph'"],
+    ['AT(AT(MULTI(org), 0), "handle")', "this is a record — 'handle'"],
+  ])('%s', (read, said) => {
+    refused([`  x = ${read}`], said);
+  });
+
+  it('a name bound to an operator, by its own name', () => {
+    refused(['  y = COALESCE(org, "x")', '  x = AT(y, "graph")'], "this may be a record — 'graph' is not a key it holds. Read a field with a dot (y.graph)");
   });
 });

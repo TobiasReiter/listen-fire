@@ -143,6 +143,39 @@ describe('an extraction prompt renders a record as its fields', () => {
   });
 });
 
+describe('a file inside an extraction input never reaches the prompt', () => {
+  // The checker refuses these at validate; the engine refuses them too, so a
+  // file's descriptor (its durable source handle) is never printed.
+  const fileRef = {
+    __brand: 'FileRef' as const,
+    name: 'deck.pdf',
+    contentType: 'application/pdf',
+    source: { ownerAdapterType: 'attio', handle: 'S3CRET' },
+  };
+  const docWithScan: Binding = binding({
+    kind: 'nodePosition',
+    fields: { label: 'deck', scan: fileRef },
+    fieldOrder: ['label', 'scan'],
+    fieldProvenance: {},
+    edges: {},
+  });
+
+  it.each([
+    ['a record whose fields hold a file, under a key', { a: docWithScan }],
+    ['in a list', [{ a: docWithScan }]],
+    ['the record itself', docWithScan],
+    ['a file under a key', { a: fileRef }],
+  ])('%s: refused, and no model is asked', async (_label, input) => {
+    await expect(promptFor(input)).rejects.toThrow(/a file inside an extraction input/);
+  });
+
+  it('a value that contains itself is refused, not walked forever', async () => {
+    const loop: Record<string, unknown> = { name: 'x' };
+    loop.self = loop;
+    await expect(promptFor(loop)).rejects.toThrow(/contains itself/);
+  });
+});
+
 describe('a through stage hands a record argument its fields, as a plain call does', () => {
   const staged: ExtractExpression = {
     ...extract,

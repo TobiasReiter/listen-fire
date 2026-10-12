@@ -289,6 +289,7 @@ import {
   spellHeldSteps,
   type HandleKind,
   type HeldHandle,
+  type HeldWalk,
   fieldTypeEquals,
   LocalEdge,
   InstanceRef,
@@ -1798,12 +1799,42 @@ function escapedFromBlock(scope: Scope, member: string, blockName: string): bool
 const RECORDS_ONLY: ReadonlySet<HandleKind> = new Set(['record']);
 
 function fileInExtractInputMessage(written: string, held: HeldHandle): string {
+  const own = BARE_IDENT.test(written) ? ` (\`from [${written}${spellHeldSteps(held.steps)}]\`)` : '';
+  return `An extraction reads a file only as an input of its own, and ${placeInInput(written, held, 'a file')} — a file, not a value. Hand it over as its own input${own}, or put its text in its place (${repairAt(held, 'READ(f)')})`;
+}
+
+/** The walk a slot's options ask for, its inspection told the whole value's type. */
+function slotHeldWalk(options: SlotOptions | undefined, shape: FieldType | undefined): HeldWalk {
+  const inspect = options?.inspectHeld;
+  return heldWalk(options?.heldTakes, inspect !== undefined ? held => inspect(held, shape) : undefined);
+}
+
+/** What an extraction input takes: a record (as its fields) and a file (as
+ *  an input of its own), each on its terms. */
+const RECORDS_AND_FILES: ReadonlySet<HandleKind> = new Set(['record', 'file']);
+
+/** The record a held object is, with the position its fields are read off. */
+function heldRecordPosition(held: HeldHandle): PositionTypeRef | undefined {
+  const variant = variantOf(stripAbsent(held.handle));
+  return variant.kind === 'record' ? variant.position : undefined;
+}
+
+/** Where a held object sits in an input as written: the input itself, or a
+ *  path under a name, or a path inside a written value. */
+function placeInInput(written: string, held: HeldHandle, kind: string): string {
   const steps = spellHeldSteps(held.steps);
-  const where = BARE_IDENT.test(written)
-    ? `'${written}${steps}' ${held.may ? 'may be' : 'is'} a file inside it`
-    : `'${written}' ${held.may ? 'may hold' : 'holds'} a file at '${steps}'`;
-  const own = BARE_IDENT.test(written) ? ` (\`from [${written}${steps}]\`)` : '';
-  return `An extraction reads a file only as an input of its own, and ${where} — a file, not a value. Hand it over as its own input${own}, or put its text in its place (${repairAt(held, 'READ(f)')})`;
+  const verb = held.may ? 'may be' : 'is';
+  if (steps === '') return `'${written}' ${verb} ${kind}`;
+  return BARE_IDENT.test(written)
+    ? `'${written}${steps}' ${verb} ${kind}`
+    : `'${written}' ${held.may ? 'may hold' : 'holds'} ${kind} at '${steps}'`;
+}
+
+function recordInExtractInputMessage(written: string, held: HeldHandle, position: PositionTypeRef): string {
+  if (position.kind === 'meta') {
+    return `An extraction reads text, files and records, and ${placeInInput(written, held, `${describePosition(position)}`)} — a connection, not a record. Pass a record read through it, or the fields you want ('{ name: r.name, … }')`;
+  }
+  return `An extraction reads a record as its fields, and ${placeInInput(written, held, describePosition(position))}, whose fields are read from its system one at a time. Pass a dict of the fields it needs in its place ('{ name: r.name, … }')`;
 }
 
 /** Does `wider` hold a kind of engine object `type` does not show? */
@@ -2116,6 +2147,9 @@ interface SlotOptions {
    *  for one held inside the value passes over these, and reports the first
    *  it does not take. Absent: it takes none. */
   heldTakes?: ReadonlySet<HandleKind>;
+  /** Asked of every object of a kind `heldTakes` names, wherever the walk
+   *  meets it, with the type of the whole value (`HeldWalk.inspect`). */
+  inspectHeld?: (held: HeldHandle, shape: FieldType | undefined) => HeldHandle | undefined;
 }
 
 interface HeadInfo {
@@ -12412,34 +12446,49 @@ class Checker {
    * fields — would reach the prompt as the engine's own descriptor of it.
    */
   private checkExtractInput(slot: ExprSlot, scope: Scope): void {
-    const { valueType, held, mayHold } = this.checkExprSlot(slot, scope, { heldTakes: RECORDS_ONLY });
+    const purpose = `hands it to an extraction as an input, which reads every field (line ${slot.span.start.line})`;
+    const { held } = this.checkExprSlot(slot, scope, {
+      heldTakes: RECORDS_AND_FILES,
+      inspectHeld: (found, shape) => {
+        if (!isFileHandle(found)) return this.recordAsFieldsProblem(found, purpose);
+        // A file is an input of its own: the value itself, or a member of the
+        // list it is (a list's members are inputs).
+        const items = isCollectionType(shape) ? 1 : 0;
+        return found.steps.length <= items && found.steps.every(step => step.kind !== 'key') ? undefined : found;
+      },
+    });
+    // A name on the arrow plane with no value type (an instance) is still
+    // what the input hands over.
+    const named = this.bareSlotPositionType(slot, scope);
+    const found = held ?? (named !== undefined ? this.recordAsFieldsProblem({ steps: [], handle: recordOf(named), may: false }, purpose) : undefined);
+    if (found === undefined) return;
     const written = slot.raw.trim();
-    const shape = valueType ?? mayHold;
-    const items = isCollectionType(shape) ? 1 : 0;
-    const asItem = held !== undefined && held.steps.length <= items && held.steps.every(step => step.kind !== 'key');
-    const fileBelow = held !== undefined && !asItem ? held : undefined;
-    if (fileBelow !== undefined) {
-      this.report(DiagnosticCodes.EXTRACT_CONTENT, fileInExtractInputMessage(written, fileBelow), slot.span);
+    if (isFileHandle(found)) {
+      this.report(DiagnosticCodes.EXTRACT_CONTENT, fileInExtractInputMessage(written, found), slot.span);
       return;
     }
-    // A record handed whole is rendered as its fields: they have to be in
-    // hand, and none of them may be a file.
-    const record = recordIn(valueType)?.position ?? this.bareSlotPositionType(slot, scope);
-    if (record === undefined) return;
-    const fileField = handleSpreadOf(recordOf(record), heldWalk(RECORDS_ONLY));
-    if (fileField !== undefined) {
-      this.report(DiagnosticCodes.EXTRACT_CONTENT, fileInExtractInputMessage(written, fileField), slot.span);
-      return;
+    const position = heldRecordPosition(found);
+    if (position === undefined) return;
+    this.report(DiagnosticCodes.EXTRACT_CONTENT, recordInExtractInputMessage(written, found, position), slot.span);
+  }
+
+  /**
+   * A record handed over as its FIELDS — to an extraction prompt, or to a
+   * plugin argument that takes structured data — found at `held`: none of
+   * its fields may be a file, and they have to be in hand. The problem, as the
+   * object to report: the file among its fields, or the record itself. A
+   * record nobody can describe says nothing.
+   */
+  private recordAsFieldsProblem(held: HeldHandle, purpose: string): HeldHandle | undefined {
+    const position = heldRecordPosition(held);
+    if (position === undefined) return undefined;
+    const fileField = handleSpreadOf(held.handle, { steps: held.steps, accepts: RECORDS_ONLY });
+    if (fileField !== undefined) return { ...fileField, may: fileField.may || held.may };
+    if (holdsFieldsInHand(position, token => this.declaredShapeTokens.has(token))) {
+      noteFieldsNeeded(position, purpose);
+      return undefined;
     }
-    if (holdsFieldsInHand(record, token => this.declaredShapeTokens.has(token))) {
-      noteFieldsNeeded(record, `hands it to an extraction as an input, which reads every field (line ${slot.span.start.line})`);
-      return;
-    }
-    this.report(
-      DiagnosticCodes.EXTRACT_CONTENT,
-      `An extraction reads a record as its fields, and '${written}' is ${describePosition(record)}, whose fields are read from its system one at a time. Pass the fields it needs (\`from [{ name: ${written}.name, … }]\`), or one field as text (\`from [${written}.\`Name\`]\`)`,
-      slot.span,
-    );
+    return held;
   }
 
   /**
@@ -13073,29 +13122,33 @@ class Checker {
     // the plugin as the engine's own description of it; so does a file
     // anywhere in it, the whole argument included.
     if (declared === 'json' || declared === undefined) {
-      const nested = held !== undefined && (held.steps.length > 0 || isFileHandle(held)) ? held : handleSpreadOf(valueType, heldWalk());
-      if (nested !== undefined) {
-        this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInPluginArgMessage({ callee, name, held: nested }), span);
+      if (held !== undefined && (held.steps.length > 0 || isFileHandle(held))) {
+        this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInPluginArgMessage({ callee, name, held }), span);
         return;
       }
-    }
-    if (declared === 'json') {
-      // Handed its fields, all at once: a record whose fields are read from
-      // its system one at a time has none to hand, and a function's parameter
-      // passed here needs them in hand, whatever the plugin then reads of them.
-      if (record === undefined) return;
-      if (holdsFieldsInHand(record, token => this.declaredShapeTokens.has(token))) {
-        noteFieldsNeeded(record, `hands it to '${callee}' as '${name}', which takes every field (line ${span.start.line})`);
+      // The whole argument a record — written so, or one arm of an operator —
+      // is handed its fields, all at once: none may be a file, and a record
+      // whose fields are read from its system one at a time has none to hand
+      // (a function's parameter passed here needs them in hand, whatever the
+      // plugin then reads of them).
+      const whole = held ?? (record !== undefined ? { steps: [], handle: recordOf(record), may: false } : undefined);
+      const problem = whole !== undefined
+        ? this.recordAsFieldsProblem(whole, `hands it to '${callee}' as '${name}', which takes every field (line ${span.start.line})`)
+        : undefined;
+      if (problem === undefined) return;
+      if (isFileHandle(problem)) {
+        this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInPluginArgMessage({ callee, name, held: problem }), span);
         return;
       }
+      const position = heldRecordPosition(problem);
+      if (position === undefined) return;
       this.report(
         DiagnosticCodes.CALL_ARG_TYPE,
-        `'${callee}' takes every field of the record it is given as '${name}', and this is ${describePosition(record)}, whose fields are read from its system one at a time. Pass a dict of the fields it needs ('${name}: { name: r.name, … }')`,
+        `'${callee}' takes every field of the record it is given as '${name}', and this ${problem.may ? 'may be' : 'is'} ${describePosition(position)}, whose fields are read from its system one at a time. Pass a dict of the fields it needs ('${name}: { name: r.name, … }')`,
         span,
       );
       return;
     }
-    if (declared === undefined) return;
     if (record === undefined && (valueType === undefined || !holdsRecords(stripAbsent(valueType)))) return;
     this.report(
       DiagnosticCodes.CALL_ARG_TYPE,
@@ -13227,7 +13280,8 @@ class Checker {
       const bound = this.bareNameValueType(scope, trimmed);
       const valueType = options?.holdsValue === true ? bound : this.readHeldValue(bound, slot.span);
       const mayHold = this.symbolMayHold(scope, trimmed);
-      const held = handleWithin(bound, heldWalk(options?.heldTakes)) ?? handleWithin(mayHold, heldWalk(options?.heldTakes));
+      const walk = slotHeldWalk(options, bound ?? mayHold);
+      const held = handleWithin(bound, walk) ?? handleWithin(mayHold, walk);
       return {
         ...(valueType !== undefined ? { valueType } : {}),
         ...(held !== undefined ? { held } : {}),
@@ -13255,9 +13309,9 @@ class Checker {
     const valueType = options?.holdsValue === true
       ? typing.inferExact(parsed, options.writeTarget)
       : typing.infer(parsed, options?.writeTarget);
-    const walk = heldWalk(options?.heldTakes);
-    const held = typing.handleHeldBy(parsed, walk) ?? handleWithin(valueType, walk);
     const mayHold = typing.mayHoldType(parsed);
+    const walk = slotHeldWalk(options, valueType ?? mayHold);
+    const held = typing.handleHeldBy(parsed, walk) ?? handleWithin(valueType, walk);
     return {
       parsed,
       ...(valueType !== undefined ? { valueType } : {}),

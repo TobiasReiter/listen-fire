@@ -1436,6 +1436,40 @@ function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined
   return shared !== undefined ? maybeAbsent(shared) : valued.find(isMaybeAbsent);
 }
 
+/**
+ * `MULTI(a, b, …)` — the present arguments as one list, a list argument's
+ * members spliced in: a list of what its members share, where they share a
+ * record or a file — so `FIRST(MULTI(co))` is the record it is, and no engine
+ * object hides behind an untyped list. A list of plain values stays untyped,
+ * as it always was: typing it would hold valid programs to rules (an ordered
+ * fold over a collected list of them) they were never held to, which is a
+ * language change, not this fix. Undefined where an argument is untyped or the
+ * members share nothing.
+ */
+function multiType(args: Array<FieldType | undefined>): FieldType | undefined {
+  const members: Array<FieldType | undefined> = [];
+  for (const arg of args) {
+    if (arg === undefined) return undefined;
+    const present = stripAbsent(arg);
+    if (present === 'absent') continue;
+    const variant = variantOf(present);
+    switch (variant.kind) {
+      case 'list':
+        members.push(stripAbsent(variant.of));
+        break;
+      case 'tuple':
+        for (const slot of variant.of) members.push(slot === null ? undefined : stripAbsent(slot));
+        if (variant.rest?.of != null) members.push(stripAbsent(variant.rest.of));
+        break;
+      default:
+        members.push(present);
+    }
+  }
+  const shared = unifyValueTypes(members);
+  if (shared === undefined || handleWithin(shared) === undefined) return undefined;
+  return listOf(shared, 'ordered');
+}
+
 function unwrapList(type: FieldType): FieldType {
   const t = stripAbsent(type);
   const variant = variantOf(t);
@@ -1976,13 +2010,16 @@ function literalIndex(expr: Expression): number | undefined {
   return Number.isInteger(expr.value) ? expr.value : undefined;
 }
 
-/** The text a dict key expression is FIXED at, when it is written down. */
-function atRecordKeyMessage(key: string | undefined): string {
-  const read = key !== undefined ? `r.${quoteName(key)}` : 'r.`Name`';
+/** `AT(r, key)` over a record: the key's place, and the read that is meant,
+ *  off the name the record was reached by where it has one. */
+function atRecordKeyMessage(at: { key: string | undefined; name: string; may: boolean }): string {
+  const { key, name, may } = at;
+  const read = `${quoteName(name)}.${key !== undefined ? quoteName(key) : '`Name`'}`;
   const said = key !== undefined ? `'${key}' is not a key it holds` : 'its fields are not keys to look up';
-  return `AT looks up a list's slot or a map's key, and this is a record — ${said}. Read a field with a dot (${read}), or build a map of the fields you need ({ name: r.\`Name\`, … }) and look the key up in that`;
+  return `AT looks up a list's slot or a map's key, and this ${may ? 'may be' : 'is'} a record — ${said}. Read a field with a dot (${read}), or build a map of the fields you need ({ name: ${quoteName(name)}.\`Name\`, … }) and look the key up in that`;
 }
 
+/** The text a dict key expression is FIXED at, when it is written down. */
 function literalKey(expr: Expression): string | undefined {
   return expr.type === 'static' && typeof expr.value === 'string' ? expr.value : undefined;
 }
@@ -2703,6 +2740,8 @@ function armsUnion(arms: ReadonlyArray<FieldType | undefined>): FieldType | unde
   return arms.length === 1 ? known[0] : { kind: 'union', of: known };
 }
 
+const FILES_ONLY: ReadonlySet<HandleKind> = new Set(['file']);
+
 /** A list or a tuple — what a spread splices and `MULTI` flattens. */
 export function isCollectionType(type: FieldType | undefined): boolean {
   if (type === undefined) return false;
@@ -2726,13 +2765,26 @@ export function handleKind(held: HeldHandle): HandleKind {
 export interface HeldWalk {
   steps: HeldStep[];
   accepts: ReadonlySet<HandleKind>;
+  /** For a target that takes an object only on terms (an extraction prompt
+   *  renders a record as its fields, which must be in hand): asked of EVERY
+   *  object of an accepted kind the walk meets, at any depth and in any arm,
+   *  instead of passing over it. What it answers is what the walk found. */
+  inspect?: (held: HeldHandle) => HeldHandle | undefined;
 }
 
 const NOTHING_ACCEPTED: ReadonlySet<HandleKind> = new Set();
 
 /** A walk from the value itself, for a target that takes these kinds. */
-export function heldWalk(accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED): HeldWalk {
-  return { steps: [], accepts };
+export function heldWalk(
+  accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED,
+  inspect?: (held: HeldHandle) => HeldHandle | undefined,
+): HeldWalk {
+  return { steps: [], accepts, ...(inspect !== undefined ? { inspect } : {}) };
+}
+
+/** An accepted object, handed to the walk's inspection if it has one. */
+function acceptedHandle(walk: HeldWalk, handle: FieldType): HeldHandle | undefined {
+  return walk.inspect?.({ steps: walk.steps, handle, may: false });
 }
 
 function into(walk: HeldWalk, step: HeldStep): HeldWalk {
@@ -2788,9 +2840,9 @@ export function handleWithin(type: FieldType | undefined, walk: HeldWalk = heldW
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'record':
-      return walk.accepts.has('record') ? undefined : { steps: walk.steps, handle: variant, may: false };
+      return walk.accepts.has('record') ? acceptedHandle(walk, variant) : { steps: walk.steps, handle: variant, may: false };
     case 'file':
-      return walk.accepts.has('file') ? undefined : { steps: walk.steps, handle: 'file', may: false };
+      return walk.accepts.has('file') ? acceptedHandle(walk, 'file') : { steps: walk.steps, handle: 'file', may: false };
     case 'list':
     case 'tuple':
       return handleAmongMembers(variant, walk, index => ({ kind: 'slot', index }));
@@ -4426,6 +4478,16 @@ export class ExpressionTyping {
           return undefined;
         }
         return handleWithin(this.exactTypes.get(expr), walk);
+      // `AT` picks one member of what it reads — and reads a value that is no
+      // collection as itself (index 0 or -1): what it picks is one level down
+      // in its operand, or the operand itself, whatever the operand's type says.
+      case 'at': {
+        const typed = handleWithin(this.exactTypes.get(expr), walk);
+        if (typed !== undefined) return typed;
+        const within = this.handleHeldBy(expr.expression, { ...walk, steps: [] });
+        if (within === undefined) return undefined;
+        return { ...within, steps: [...walk.steps, ...within.steps.slice(1)], may: true };
+      }
       default: {
         const name = this.bareNames.get(expr);
         return (
@@ -4484,6 +4546,12 @@ export class ExpressionTyping {
           return members !== undefined ? listOf(members, 'ordered') : undefined;
         }
         return this.exactTypes.get(expr);
+      case 'at': {
+        const exact = this.exactTypes.get(expr);
+        if (exact !== undefined) return exact;
+        const picked = this.multiMemberType(expr.expression);
+        return picked !== undefined ? armsUnion([picked, undefined]) : undefined;
+      }
       case 'object': {
         if (expr.entries.some(isObjectSpread)) return this.exactTypes.get(expr);
         const shape: Record<string, FieldType | null> = {};
@@ -4650,6 +4718,16 @@ export class ExpressionTyping {
         const inner = this.inferExactAt(expr.expression, position);
         const indexType = this.inferAt(expr.index, position);
         const innerShape = inner === undefined ? undefined : stripAbsent(inner);
+        // A RECORD is no map: the key it is looked up by would reach the
+        // engine's own object, never a field (that is `r.\`Name\``). Only an
+        // index reads it — as a one-member list, as any single value is. Asked
+        // of the walk, so a record in any arm of an operator is one.
+        const record = this.handleHeldBy(expr.expression, heldWalk(FILES_ONLY));
+        if (record !== undefined && record.steps.length === 0 && stripAbsent(indexType ?? 'absent') !== 'number') {
+          const name = this.bareNames.get(expr.expression) ?? 'r';
+          this.report(TypedDiagnosticCodes.AT_RECORD_KEY, atRecordKeyMessage({ key: literalKey(expr.index), name, may: record.may }));
+          return undefined;
+        }
         // A DICT is looked up, not indexed: there is no order to demand, and
         // the second argument is a KEY, checked as one. What comes back is
         // `T | absent` under the ordinary absence discipline — a key that is
@@ -4667,13 +4745,6 @@ export class ExpressionTyping {
           }
           const slot = innerShape.shape[key] ?? undefined;
           return isMaybeAbsent(inner) ? maybeAbsent(slot) : slot;
-        }
-        // A RECORD is no map: the key it is looked up by would reach the
-        // engine's own object, never a field (that is `r.\`Name\``). Only an
-        // index reads it — as a one-member list, as any single value is.
-        if (innerShape !== undefined && isRecordType(innerShape) && stripAbsent(indexType ?? 'absent') !== 'number') {
-          this.report(TypedDiagnosticCodes.AT_RECORD_KEY, atRecordKeyMessage(literalKey(expr.index)));
-          return undefined;
         }
         this.checkFoldOrder('at', expr.expression, position);
         if (inner === undefined) return undefined;
@@ -4824,6 +4895,7 @@ export class ExpressionTyping {
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
         if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
+        if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {
           // Before version 3 a flat built-in's call is untyped; from 3 it is
