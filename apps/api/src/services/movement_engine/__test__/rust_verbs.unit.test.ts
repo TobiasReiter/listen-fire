@@ -262,13 +262,6 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
-/** A run's writes as the contract records them: what `-[:@old]->` lands on
- *  is the engine's own (`old`, a binding), held beside the write record. */
-function contractual<T extends { writes: Array<{ old?: unknown }> } | undefined>(result: T): T {
-  if (result === undefined) return result;
-  return { ...result, writes: result.writes.map(({ old: _old, ...record }) => record) };
-}
-
 /** The case on both engines, and the Rust run the Rust engine's alone.
  *  Unpinned, under version 3 and then under the current version, whose run
  *  is handed back: version 4 changed what a match's miss, a write handle's
@@ -292,11 +285,11 @@ async function agreeUnder(c: Case) {
     expect(String(rust.error)).toBe(String(ts.error));
     expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
     if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
-      expect(sameIds(contractual(rust.error.partial))).toEqual(sameIds(contractual(ts.error.partial)));
+      expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
     }
   } else {
     expect(rust.failed).toBe(false);
-    expect(sameIds(contractual(rust.result))).toEqual(sameIds(contractual(ts.result)));
+    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
   }
   return { ts, rust };
 }

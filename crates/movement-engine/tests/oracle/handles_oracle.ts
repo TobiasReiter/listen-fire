@@ -25,8 +25,8 @@
 // the CRM received, as its fake records them (a rehearsed instance's creates
 // and updates are captured by the host's rehearsal, so the CRM never sees
 // them), the run's writes as the result hands them back (each with its
-// record as found, without the engine's own `old`), the trace, the parked
-// state, and how the run ended.
+// record as found; the contract's write record, which carries no `old`), the
+// trace, the parked state, and how the run ended.
 
 import { checkAnswer, checkPinned } from '../../../../apps/api/src/services/movement_engine/program_check';
 import { mockCatalogSnapshot, type InstanceSchema } from '../../../../packages/movement-lang';
@@ -383,7 +383,7 @@ export async function writeHandlesOracle(rand: Rand, write: (name: string, text:
         }),
       });
       outcome = { completed: true, parked: result.parked === true };
-      writes = json(result.writes.map(({ old: _old, ...record }) => record));
+      writes = json(result.writes);
     } catch (error) {
       outcome = { error: ending(error) };
     }

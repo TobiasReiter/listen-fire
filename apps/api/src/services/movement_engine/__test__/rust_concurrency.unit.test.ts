@@ -305,12 +305,6 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   }
 }
 
-/** A run's writes as the contract records them: what `-[:@old]->` lands on
- *  is the engine's own (`old`, a binding), held beside the write record. */
-function contractual(writes: Array<{ old?: unknown }> | undefined): unknown {
-  return writes?.map(({ old: _old, ...record }) => record);
-}
-
 /** The case on both engines: they agree, and the Rust run was the Rust
  *  engine's alone, routed whole. Unpinned, under version 3 and then under
  *  the current version, whose run is handed back: version 4 changed what a
@@ -333,7 +327,7 @@ async function agreeUnder(c: Case) {
     ranWhole: 1,
   });
   expect(rust.error).toBe(ts.error);
-  expect(JSON.stringify(contractual(rust.result?.writes))).toBe(JSON.stringify(contractual(ts.result?.writes)));
+  expect(JSON.stringify(rust.result?.writes)).toBe(JSON.stringify(ts.result?.writes));
   expect(rust.result?.parkedAddress).toBe(ts.result?.parkedAddress);
   expect(rust.result?.parked).toBe(ts.result?.parked);
   expect(rust.result?.deferredRaceFrames).toEqual(ts.result?.deferredRaceFrames);

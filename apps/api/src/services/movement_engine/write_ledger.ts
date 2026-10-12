@@ -15,7 +15,7 @@
 
 import type { SummarisedOrigin } from 'engine-contracts';
 
-import type { MovementWriteRecord } from './run';
+import type { WriteRecord } from './expression';
 
 /** Where a flow's next write falls in program order. */
 export interface WriteOrder {
@@ -45,7 +45,7 @@ type WriteCitation =
   | Extract<SummarisedOrigin, { kind: 'write' }>;
 
 export class WriteLedger {
-  private entries: Array<{ record: MovementWriteRecord; key: readonly number[] }> = [];
+  private entries: Array<{ record: WriteRecord; key: readonly number[] }> = [];
   private readonly citations = new Set<WriteCitation>();
 
   /** The number the next write takes. */
@@ -55,7 +55,7 @@ export class WriteLedger {
 
   /** Append `record`, which `order`'s flow made. Its own origin, when it
    *  names it, is renumbered with it. */
-  append(record: MovementWriteRecord, order: WriteOrder): void {
+  append(record: WriteRecord, order: WriteOrder): void {
     this.entries.push({ record, key: [...order.prefix, order.next++] });
     if (record.origin !== undefined) this.citations.add(record.origin);
   }
@@ -67,7 +67,7 @@ export class WriteLedger {
   }
 
   /** The writes in program order, every citation renumbered to match. */
-  ordered(): MovementWriteRecord[] {
+  ordered(): WriteRecord[] {
     const sorted = this.entries
       .map((entry, index) => ({ ...entry, index }))
       .sort((a, b) => compareKeys(a.key, b.key));

@@ -1172,11 +1172,12 @@ describe('unique by — entity resolution through the shared arbitration split',
     expect(attio.creates).toHaveLength(1);
 
     const second = await run('second message');
-    // What `-[:@old]->` lands on is the engine's own, held beside the
-    // contract's write record (packages/engine-contracts/write_record.ts has
-    // no `old`); old_edge.unit.test.ts reads it through programs on both
-    // engines.
-    expect(second.writes.map(({ old: _old, ...record }) => record)).toEqual([
+    // The contract's write record (packages/engine-contracts
+    // write_record.ts): what `-[:@old]->` lands on is the engine's own, and
+    // never leaves the run; old_edge.unit.test.ts reads it through programs
+    // on both engines.
+    expect(second.writes.map((record) => Object.hasOwn(record, 'old'))).toEqual([false]);
+    expect(second.writes).toEqual([
       {
         bindingName: 'co',
         adapterType: 'attio',
@@ -1194,21 +1195,6 @@ describe('unique by — entity resolution through the shared arbitration split',
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },
       },
     ]);
-    // The TypeScript engine holds it on its own write record: a snapshot of
-    // the record as found. (The Rust engine holds it on the handle.)
-    if (process.env.MOVEMENT_ENGINE !== 'rust') {
-      expect(second.writes[0]?.old).toEqual(
-        expect.objectContaining({
-          kind: 'handle',
-          handle: expect.objectContaining({
-            externalId: 'ext-attio-1',
-            snapshot: true,
-            writtenValues: {},
-            resultData: { name: 'U123', summary: 'first message' },
-          }),
-        }),
-      );
-    }
     // No duplicate — the second run updated the first run's record.
     expect(attio.creates).toHaveLength(1);
     expect(attio.updates).toEqual([

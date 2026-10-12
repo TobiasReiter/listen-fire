@@ -9,6 +9,7 @@
 import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
+import { hostRecordingSchema, type HostRecording } from 'engine-contracts/conformance';
 
 import { RunCostCapExceeded } from '../../../lib/run_cost';
 import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
@@ -34,6 +35,7 @@ import {
 import { MovementEngineError, isCheckFailure } from '../errors';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
+import { recordEntry } from '../conformance/recorder';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b2');
 
@@ -196,6 +198,8 @@ interface Case {
   endsAtCheckFrom?: LanguageVersion;
   /** Which of the sink's suspension methods it has: both by default. */
   suspends?: 'both' | 'suspension_only' | 'neither';
+  /** Run through the conformance kit's recorder, handed each recording. */
+  keep?: (recording: HostRecording) => void;
 }
 
 /** One run on one engine: what it returned or threw, and everything the
@@ -301,7 +305,9 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     const result =
       c.resume !== undefined
         ? await resumeMovement({ ...input, state: c.resume, ...(c.reenter === true ? { reenter: true } : {}) } satisfies ResumeMovementInput)
-        : await runMovement(input);
+        : c.keep !== undefined
+          ? await recordEntry({ entry: 'run', input, run: runMovement, keep: c.keep })
+          : await runMovement(input);
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
@@ -323,13 +329,6 @@ function sameIds<T>(value: T): T {
     return ids.get(id)!;
   });
   return JSON.parse(normal) as T;
-}
-
-/** A run's writes as the contract records them: what `-[:@old]->` lands on
- *  is the engine's own (`old`, a binding), held beside the write record. */
-function contractual<T extends { writes: Array<{ old?: unknown }> } | undefined>(result: T): T {
-  if (result === undefined) return result;
-  return { ...result, writes: result.writes.map(({ old: _old, ...record }) => record) };
 }
 
 /** The case on both engines: they agree, and the Rust run was the Rust
@@ -363,11 +362,11 @@ async function agreeUnder(c: Case) {
     expect(String(rustError)).toBe(String(tsError));
     expect(runFailureCause(rustError)?.constructor).toBe((runFailureCause(tsError) as object).constructor);
     if (tsError instanceof MovementRunFailed && rustError instanceof MovementRunFailed) {
-      expect(sameIds(contractual(rustError.partial))).toEqual(sameIds(contractual(tsError.partial)));
+      expect(sameIds(rustError.partial)).toEqual(sameIds(tsError.partial));
     }
   } else {
     expect(rust.failed).toBe(false);
-    expect(sameIds(contractual(rust.result))).toEqual(sameIds(contractual(ts.result)));
+    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
   }
   return { ts, rust };
 }
@@ -469,6 +468,28 @@ describe('writes in the Rust engine', () => {
       });
       expect(rust.result?.writes.map((w) => w.outcome)).toEqual([outcome, 'update']);
     }
+  });
+
+  it('hands back the contract\'s write record: a handle\'s old never leaves the run, and the kit records the run', async () => {
+    const source = [
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  co = write crm-[:companies]-> { unique by (`name`), name: msg.`subject`, stage: "lead" }',
+      '  write co { stage: IF EXISTS(co-[:@old]->) THEN "matched" ELSE "created" END }',
+      '}',
+    ].join('\n');
+    const kept: HostRecording[] = [];
+    const { ts, rust } = await agree({
+      source,
+      languageVersion: 4,
+      event: webhook({ subject: 'Acme' }),
+      attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-7', data: { name: 'Acme' } }], current: { 'co-7': { name: 'Acme', stage: null } } },
+      keep: (recording) => kept.push(recording),
+    });
+    for (const run of [ts, rust]) {
+      expect(run.result?.writes.map((w) => [w.outcome, Object.hasOwn(w, 'old')])).toEqual([['update', false], ['update', false]]);
+    }
+    expect(rust.result?.writes[1]?.writtenValues).toEqual({ stage: 'matched' });
+    expect(kept.map((recording) => hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success)).toEqual([true, true]);
   });
 
   it('sends nothing for a record already as written (noop), and only the parent for an attach', async () => {
@@ -1158,7 +1179,7 @@ describe('parks in the Rust engine', () => {
         for (const state of [fromTs, fromRust]) {
           const resumed = await agree({ source, event, attio, resume: state, ...(languageVersion !== undefined ? { languageVersion } : {}) });
           expect(resumed.rust.result?.parked).toBeUndefined();
-          expect(JSON.stringify(contractual(resumed.rust.result))).toBe(JSON.stringify(contractual(resumed.ts.result)));
+          expect(JSON.stringify(resumed.rust.result)).toBe(JSON.stringify(resumed.ts.result));
         }
       });
     }
@@ -1181,7 +1202,7 @@ describe('parks in the Rust engine', () => {
     const { ts, rust } = await agree({ source, event, resume: state });
     // `toEqual` ignores key order: the strings are the point.
     expect(JSON.stringify(rust.attio)).toBe(JSON.stringify(ts.attio));
-    expect(JSON.stringify(contractual(rust.result))).toBe(JSON.stringify(contractual(ts.result)));
+    expect(JSON.stringify(rust.result)).toBe(JSON.stringify(ts.result));
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
   });
 

@@ -543,9 +543,10 @@ writes through a traversal landing and per MAP member, linked writes off a
 handle, and reads of every handle into notes (its fields, `-[:@old]->`
 picked, tested, filtered, counted, compared with the handle, walked twice,
 a block over it), now and then a sleep. Each case compares every call the
-CRM received, the writes as the result hands them back, the trace, the
-parked state byte for byte and how the run ended; none differs, none is
-refused. Regenerated twice from the TypeScript engine, byte-identical.
+CRM received, the writes exactly as the result hands them back (the
+contract's write record: the handle's `old`, which only `-[:@old]->` reads,
+never leaves the run, on either engine), the trace, the parked state byte
+for byte and how the run ended; none differs, none is refused. Regenerated twice from the TypeScript engine, byte-identical.
 
 ### What admission cannot decide
 
@@ -1602,6 +1603,15 @@ each is a corpus case pinning a failure both engines end the run with (an
 unadvertised `DOMAIN_OF`, a file-level extraction, a callback with no sink;
 in v1 and v2, a recursive movement call and a value handed to a position
 parameter).
+
+**Contract note: a write record carries no `old`.** Under version 4 a write
+that found its record holds the record as it stood (`-[:@old]->` reads it).
+The TypeScript keeps it on the handle as `old`, the engine's own handle
+object (its instance, adapter, credential name and schema). The run's result
+hands back the contract's write record (packages/engine-contracts
+write_record.ts), which has no `old`: the TypeScript strips it where the
+result is assembled, and this engine never puts it there. Neither engine's
+result differs for it, and the conformance recorder records such a run.
 
 **Held back by decision:**
 

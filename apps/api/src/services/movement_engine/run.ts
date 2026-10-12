@@ -344,6 +344,7 @@ import {
   refuseUnsupportedParkStateVersion,
   type CallbackCall,
   type CallbackParamSpec,
+  type WriteRecord as RecordedWrite,
 } from 'engine-contracts';
 import { checkPinned, type CheckInput, type CheckedProgram } from './program_check';
 import {
@@ -528,13 +529,12 @@ export { RunCancelledSignal };
 
 /**
  * One applied (or dry-run-captured) write, in program order — the
- * firing-record entry. This IS the `WriteRecord` a write handle binds to
- * (see `expression.ts`): producing the adapter write and recording it
- * onto the firing log are one act, so the binding value and the firing
- * entry are the same object. The alias preserves the firing-log name at
- * the call sites that recorded the run's writes.
+ * firing-record entry: the contract's write record. The engine holds it as
+ * the `WriteRecord` a write handle binds to (see `expression.ts`), so the
+ * binding value and the firing entry are one object while the run lasts;
+ * the result hands back the contract's record, without the handle's `old`.
  */
-export type MovementWriteRecord = WriteRecord;
+export type MovementWriteRecord = RecordedWrite;
 
 export interface MovementRunResult {
   movementName: string;
@@ -3728,7 +3728,10 @@ class Interpreter {
   private assembleResult(movementName: string): MovementRunResult {
     return {
       movementName,
-      writes: this.writeLedger.ordered(),
+      // The result's record is the contract's: `old` is the engine's own
+      // handle (its instance, adapter, credential name and schema), which
+      // only `-[:@old]->` reads while the run lasts.
+      writes: this.writeLedger.ordered().map(({ old: _old, ...record }) => record),
       extractionSites: this.summariser.sites,
       trace: this.runTrace,
       ...(this.parked ? { parked: true } : {}),

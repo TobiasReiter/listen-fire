@@ -257,7 +257,7 @@ async function run(
       resetRustRunStats();
       const crm = crmOf();
       const result = await runOn(body, crm.adapter, options);
-      runs.push({ crm, writes: JSON.parse(JSON.stringify(result.writes.map(({ old: _old, ...record }) => record))) });
+      runs.push({ crm, writes: JSON.parse(JSON.stringify(result.writes)) });
       if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
     }
   } finally {
