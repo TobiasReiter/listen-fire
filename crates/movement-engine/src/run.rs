@@ -210,8 +210,8 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
         Ok(result) => json!({ "result": result }),
         Err(Stop::Refused(reasons)) => return json!({ "refused": reasons[0], "reasons": reasons }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
-        Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
-        Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
+        Err(Stop::Thrown(failure)) => failure.marked(json!({ "thrown": failure.to_json() })),
+        Err(Stop::Failed(failure, result)) => failure.marked(json!({ "failed": { "error": failure.to_json(), "result": result } })),
         Err(Stop::Cancelled | Stop::Parked(_) | Stop::EndedQuietly) => {
             unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
         }
@@ -299,6 +299,19 @@ impl Failure {
             EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
             EvalError::Fallback(reason) => Failure::unreproduced(&format!("this reading ({reason})"), unreproduced),
         }
+    }
+
+    /// A `done` that ended in this failure, marked `unreproduced` where it
+    /// is this engine's own refusal of what the TypeScript engine runs on
+    /// through (met after an effect, or it would have declined): the wire
+    /// codes it MOVENG_UNSUPPORTED, as it codes the TypeScript's own
+    /// failure this engine mirrors, so the marker is what tells a
+    /// divergence from a mirrored ending.
+    fn marked(&self, mut done: Json) -> Json {
+        if self.is_unreproduced() {
+            done["unreproduced"] = json!(true);
+        }
+        done
     }
 
     fn to_json(&self) -> Json {
@@ -2666,6 +2679,21 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// A run that ends in this engine's own refusal (met after an effect)
+    /// says so on its `done`, apart from the TypeScript's own
+    /// MOVENG_UNSUPPORTED, which this engine mirrors and the wire codes the
+    /// same.
+    #[test]
+    fn an_unreproduced_ending_is_marked_apart_from_a_mirrored_one() {
+        let own = Failure::unreproduced("a bound write", "the Rust engine runs identity writes");
+        let mirrored = Failure::unsupported("DOMAIN_OF", "");
+        assert_eq!(own.to_json()["code"], mirrored.to_json()["code"]);
+        assert_eq!(own.marked(json!({ "thrown": own.to_json() }))["unreproduced"], json!(true));
+        let failed = own.marked(json!({ "failed": { "error": own.to_json(), "result": {} } }));
+        assert_eq!(failed["unreproduced"], json!(true));
+        assert_eq!(mirrored.marked(json!({ "thrown": mirrored.to_json() })).get("unreproduced"), None);
     }
 
     /// The run's zone is checked before anything else of the run, and the

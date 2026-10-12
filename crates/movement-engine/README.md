@@ -574,9 +574,13 @@ mutation — the TypeScript engine throws the same.
 - **One log line per run**, at the decision point:
   `movement engine: engine=rust|ts run=<id> reason=<reason|admitted>`
   (`admitted` for a run this engine ran, to its end or its own failure;
-  `shim_fault` for one the shim faulted; `failed_by_name` for one this
-  engine admitted that ended mid-run naming a construct it does not run
-  (`MOVENG_UNSUPPORTED`); `ended_at_check` for a Rust-routed run that failed
+  `shim_fault` for one the shim faulted; `mirrored_failure` for one this
+  engine admitted that ended mid-run in the TypeScript's own
+  `MOVENG_UNSUPPORTED`, which both engines end it with;
+  `unreproduced_mid_run` for one that ended mid-run, after an effect, in
+  this engine's own refusal of what the TypeScript runs on through (the
+  `done`'s `unreproduced` marker, a divergence); `ended_at_check` for a
+  Rust-routed run that failed
   its check, which no engine ran (`isCheckFailure`: MOVENG_LANGUAGE_VERSION,
   MOVENG_PARSE, MOVENG_CHECK; anything else the check throws is a
   `shim_fault`); `movement_engine_ts` when
@@ -588,11 +592,12 @@ mutation — the TypeScript engine throws the same.
   `routed`, the segments this engine started, its admission's refusals
   among them; `admitted`, those its admission let by (`routed` less the
   refusals); `ranWhole`, the runs it ran to their end (a run's own
-  failure included); `failedByName`, the admitted runs that ended mid-run
-  with `MOVENG_UNSUPPORTED` instead (what admission should have refused: a
-  divergence unless the TypeScript ends the run the same way; not counted
-  in `ranWhole`, so the routing floors count only runs that ended as a run
-  ends); `shimFaults`; `hostCalls` by `family.method`. The admission dry run
+  failure included); `mirroredFailure`, the admitted runs that ended
+  mid-run in the TypeScript's own `MOVENG_UNSUPPORTED`, mirrored, and
+  `unreproduced`, those that ended mid-run in this engine's own refusal
+  after an effect (what admission should have refused: a divergence),
+  neither counted in `ranWhole`, so the routing floors count only runs that
+  ended as a run ends; `shimFaults`; `hostCalls` by `family.method`. The admission dry run
   runs nothing, so it has no such ending.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
   `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
@@ -1424,7 +1429,13 @@ conjuncts' fields in order, a false one ending the reads.)
   happened; run the program another way.
 
 Beside any of the first three, `cost: [{source, microdollars}]` is what the
-segment's priced calls spent, by source, for the run's account.
+segment's priced calls spent, by source, for the run's account. Beside
+`failed` or `thrown`, `unreproduced: true` says the error is this engine's
+own refusal of what the TypeScript engine runs on through, met after an
+effect (before one, the segment declines `unreproduced` instead): its
+`error` is coded MOVENG_UNSUPPORTED, as the TypeScript's own failure this
+engine mirrors is, so the marker is what tells a divergence from a mirrored
+ending (PLAN-08A Task 1).
 
 `error` is `{class: "MovementEngineError", code, message}` (`message` without
 the `CODE: ` the TypeScript constructor adds), `{class: "Error" |
@@ -1585,7 +1596,7 @@ one: the TypeScript engine runs that program, or answers that reading. A
 mid-run failure where the TypeScript engine carries on is one, and every
 such failure still reachable is listed here with its reason and what
 closes it. Each fails the run naming what it met (MOVENG_UNSUPPORTED,
-counted `failedByName`, unless the table says otherwise); met before the
+marked and counted `unreproduced`, unless the table says otherwise); met before the
 run's first effect it declines instead (`unreproduced`), and the TypeScript
 engine runs the segment.
 
@@ -1605,7 +1616,8 @@ engine runs the segment.
 name, but admission lets no such node reach an `IS`
 (`is_test_declared_graph`), so no checked program meets it.
 
-The corpora's `failedByName` runs (v1 6, v2 6, v3 4) are none of these:
+The corpora's `mirroredFailure` runs (v1 6, v2 6, v3 4; their
+`unreproduced` is 0) are none of these:
 each is a corpus case pinning a failure both engines end the run with (an
 unadvertised `DOMAIN_OF`, a file-level extraction, a callback with no sink;
 in v1 and v2, a recursive movement call and a value handed to a position
@@ -1753,21 +1765,23 @@ MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # pe
 
 The teardown prints `Rust evaluator: {…}` (expressions not admitted,
 admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
-runsAdmitted, ranWhole, failedByName, shimFaults, endedAtCheck, declined,
-hostCalls}` (routed counts the segments admission refused too; admitted does
-not), every count with its denominator (`Rust runs, ran whole N of M runs
-attempted (K refused at admission by name, J failed by name, D declined, C
-failed their check before a segment opened, S shim faults)`: each run the
-Rust route was entered for ends under exactly one of these), `Rust runs not
-admitted: {reason: count}` (by first reason, largest first) and `Rust runs
-not admitted, every reason: {reason: count}` (each run counted under each
-statement's first reason). The endings:
+runsAdmitted, ranWhole, mirroredFailure, unreproduced, shimFaults,
+endedAtCheck, declined, hostCalls}` (routed counts the segments admission
+refused too; admitted does not), every count with its denominator (`Rust
+runs, ran whole N of M runs attempted (…)`: each run the Rust route was
+entered for ends under exactly one of these), `Rust runs not admitted:
+{reason: count}` (by first reason, largest first), `Rust runs not
+admitted, every reason: {reason: count}` (each run counted under each
+statement's first reason) and a `Rust ceiling (<corpus>):` line per
+ceilinged class, its count beside its ceiling. The endings:
 
 - `ranWhole`: the engine ran it to its end, its own failure included;
-- `failedByName`: admitted, then ended mid-run naming a construct this
-  engine does not run (`MOVENG_UNSUPPORTED`, "Errors a run can meet
-  mid-run"): a divergence unless the TypeScript engine ends the run with the
-  same failure, which every corpus case that ends so pins;
+- `mirroredFailure`: admitted, then ended mid-run in the TypeScript's own
+  `MOVENG_UNSUPPORTED`, which this engine mirrors: both engines end the
+  run so, and every corpus case that ends so pins it;
+- `unreproduced`: admitted, then ended mid-run, after an effect, in this
+  engine's own refusal of what the TypeScript runs on through ("Errors a
+  run can meet mid-run"; the `done`'s `unreproduced` marker): a divergence;
 - refused at admission by name (`notAdmitted`, the shim's input checks
   among them) and `declined`: the TypeScript engine ran it;
 - `endedAtCheck`: it failed its check, which the Rust route makes before
@@ -1776,7 +1790,36 @@ statement's first reason). The endings:
 - `shimFaults`: a fault of the shim's own.
 
 It fails a run in which Rust answered nothing, admitted runs none of which
-ran whole, any decline or shim fault, or a whole-corpus run whose
-`ranWhole` is under its routing floor (v1 1021, v2 1249, v3 2150). Any
-filter (a path or name pattern, related or changed files, a shard,
-positional paths) makes a run partial, and the floor does not apply to it.
+ran whole, any decline outside the lowering's misses or any shim fault, a
+whole-corpus run whose `ranWhole` is under its routing floor (v1 1021, v2
+1249, v3 2150), or any run with a class over its ceiling. Any filter (a
+path or name pattern, related or changed files, a shard, positional paths)
+makes a run partial, and the floor does not apply to it; a ceiling is an
+upper bound, so it applies to every run.
+
+**The ceilings** (PLAN-08A Task 1): the most runs each corpus may end in
+each class that is not a run this engine ran. Each starts at its count when
+set (2026-10-12) and only falls: a task that closes a reason lowers its
+ceiling, and a reason a closed one hid inside the same statement gets its
+own ceiling at its first measurement. Zero refusals is every ceiling at 0.
+
+| class | what it counts | v1 | v2 | v3 |
+|---|---|---|---|---|
+| `refused` | runs refused at admission by name, under each run's first reason | 12 | 21 | 86 |
+| `everyReason` | the same runs under each statement's first reason, by reason (a reason not named: 0) | 12 | 23 | 95 |
+| `declined` | runs declined after the check before any effect, by reason (a reason not named: 0) | 0 | 0 | 3 |
+| `unreproduced` | runs that ended mid-run in this engine's own refusal: a divergence | 0 | 0 | 0 |
+| `shimFaults` | runs that ended in a fault of the shim's own | 0 | 0 | 0 |
+| `handBacks` | what a run still asks the TypeScript to compute: `builtins.function` and `builtins.compare` calls, and the evaluator's `fallback`s | 0, 0, 0 | 0, 5, 0 | 0, 5, 0 |
+
+Zero refusals is not zero TypeScript until the hand-backs are 0 too. The
+other gates for zero sit beside their own tests: the binding × consumer
+matrix's refused cells per version (rust_admission_matrix.unit.test.ts:
+3 / 3 / 8 / 8), the recordings the Rust replay target skips
+(engine_runs_replay.ts: v1 13, v2 23, `{}` at 0, where every recording
+that encoded a fixed bug is then met exactly once: v2's one is among the
+skips today), and the patterns oracle, whose
+`by_contract` (both engines refuse by the park-state contract) and
+`unrecordable` (the eval wire cannot carry the input) are not ports left
+to make, and which fails a program refused or declined for a reason the
+port list has retired.

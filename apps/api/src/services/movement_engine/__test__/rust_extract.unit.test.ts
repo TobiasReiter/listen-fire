@@ -501,8 +501,10 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       const ts = await runOn('ts', c);
       resetRustRunStats();
       const rust = await runOn('rust', c);
-      // Never the shim's fault, never a refusal: the host was asked.
-      expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, shimFaults: 0, declined: {} });
+      // Never the shim's fault, never a refusal: the host was asked. The
+      // engine's own refusal after an effect, where the TypeScript reads on:
+      // counted unreproduced, a divergence (PLAN-08A Task 1), never mirrored.
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, mirroredFailure: 0, unreproduced: 1, endedAtCheck: 0, notAdmitted: {}, shimFaults: 0, declined: {} });
       // TypeScript reads the answer as it is.
       expect('result' in ts).toBe(true);
       expect('error' in rust && rust.error).toBeInstanceOf(MovementRunFailed);

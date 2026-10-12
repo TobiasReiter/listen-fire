@@ -11,10 +11,23 @@
 // pattern the checker itself decides (`checks: false`).
 
 /** Where a pattern's programs end on the Rust engine: run whole, refused at
- *  admission (by every reason met), declined after the check, or a pattern
- *  no program reaches through the real shim (each program shows the
- *  nearest thing, and ends identically on both engines). */
-export type Routes = 'whole' | 'refused' | 'declined' | 'unreached';
+ *  admission (by every reason met) for a construct this engine does not run
+ *  yet, declined after the check, refused by the contract on both engines
+ *  (`by_contract`, the reasons `BY_CONTRACT` names), refused by the shim for
+ *  an input the eval wire cannot carry (`unrecordable`, the reasons
+ *  `UNRECORDABLE` names), or a pattern no program reaches through the real
+ *  shim (each program shows the nearest thing, and ends identically on both
+ *  engines). Zero refusals is no program `refused` or `declined`: neither
+ *  of the two contract categories is a port left to make. */
+export type Routes = 'whole' | 'refused' | 'declined' | 'by_contract' | 'unrecordable' | 'unreached';
+
+/** Refusals both engines make by the park-state contract: a parked state
+ *  neither reads. The README's port list marks each Closed. */
+export const BY_CONTRACT: readonly string[] = ['resume_state_does_not_read', 'resume_state_suspended'];
+
+/** Refusals of the shim's, before a segment opens, of an input the eval wire
+ *  cannot carry as itself; such a program cannot be recorded either. */
+export const UNRECORDABLE: readonly string[] = ['event_does_not_cross'];
 
 export interface Program {
   body?: string;
@@ -1120,7 +1133,7 @@ export const PATTERNS: Pattern[] = [
   // ── A parked state ───────────────────────────────────────────────────────
   {
     reason: 'resume_state_does_not_read',
-    routes: 'refused',
+    routes: 'by_contract',
     note: "a parked state neither engine reads: one off the wire that does not decode, or whose scopes, frames or journals are not lists (the TypeScript fails reading it); a state an engine parked resumes on Rust",
     programs: [
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, journal: 'nonsense' }) }),
@@ -1140,7 +1153,7 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'resume_state_suspended',
-    routes: 'refused',
+    routes: 'by_contract',
     note: 'a parked state whose `suspended` is not true: refused on resume',
     programs: [
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, suspended: false }) }),
@@ -1169,7 +1182,7 @@ export const PATTERNS: Pattern[] = [
   // ── The shim's input checks, and after the check ─────────────────────────
   {
     reason: 'event_does_not_cross',
-    routes: 'refused',
+    routes: 'unrecordable',
     note: 'an event, source or parked state the eval wire cannot carry as itself (a lone surrogate): needs a lone surrogate on the wire (transition artefacts row 9)',
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: COALESCE(msg.`text`, "none") }', payload: { text: 'half a pair \uD83D' }, unrecordable: true }),

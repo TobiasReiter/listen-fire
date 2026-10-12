@@ -227,6 +227,7 @@ async function segmentInRust(
   if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
+  let unreproduced = false;
   try {
     const done = await driveEngine(engine ?? openWasmEngine(), start, {
       host: input.host,
@@ -236,6 +237,7 @@ async function segmentInRust(
       wire,
       ...(checked !== undefined ? { prechecked: { source: input.source, languageVersion: context.languageVersion, checked } } : {}),
     });
+    unreproduced = endedUnreproduced(done);
     outcome = readRunResult(done, { context, hostErrors, wire });
   } catch (error) {
     // A driver that did not check before the segment opened (run.ts does):
@@ -253,11 +255,16 @@ async function segmentInRust(
     if (error instanceof RustShimError) {
       rustRunStats.shimFaults += 1;
       noteEngine(input, 'rust', SHIM_FAULT);
+    } else if (unreproduced) {
+      // This engine's own refusal, met mid-run after an effect, of what the
+      // TypeScript engine runs on through: a divergence.
+      rustRunStats.unreproduced += 1;
+      noteEngine(input, 'rust', UNREPRODUCED_MID_RUN);
     } else if (endedByName(error)) {
-      // A construct this engine names and does not run, met mid-run: not a
-      // run's own ending, so not counted as one that ran whole.
-      rustRunStats.failedByName += 1;
-      noteEngine(input, 'rust', 'failed_by_name');
+      // The TypeScript engine's own MOVENG_UNSUPPORTED, mirrored: both
+      // engines end the run so. Not counted as one that ran whole.
+      rustRunStats.mirroredFailure += 1;
+      noteEngine(input, 'rust', MIRRORED_FAILURE);
     } else {
       rustRunStats.ranWhole += 1;
       noteEngine(input, 'rust', ADMITTED);
@@ -277,7 +284,20 @@ async function segmentInRust(
   return outcome;
 }
 
-/** Whether a run ended by this engine naming a construct it does not run
+/** Whether a `done` is marked as ending in this engine's own refusal of
+ *  what the TypeScript engine runs on through (crates/movement-engine/src/
+ *  run.rs `marked`): only a run's failure carries the marker, and only as
+ *  `true`. */
+export function endedUnreproduced(done: unknown): boolean {
+  const outcome = record(done, 'the Rust engine result');
+  if (outcome.unreproduced === undefined) return false;
+  if (outcome.unreproduced !== true || !('thrown' in outcome || 'failed' in outcome)) {
+    throw new RustShimError('the Rust engine marks only a failed run unreproduced, and as true');
+  }
+  return true;
+}
+
+/** Whether a run ended by naming a construct neither engine runs
  *  (`MOVENG_UNSUPPORTED`), mid-run. */
 function endedByName(error: unknown): boolean {
   const cause = error instanceof MovementRunFailed ? error.cause : error;
@@ -313,6 +333,14 @@ export const LOCAL_ZONE_UNVERIFIED = 'local_zone_unverified';
 
 /** The reason a run the Rust engine ran is logged with. */
 const ADMITTED = 'admitted';
+
+/** The reason a run that ended in the TypeScript engine's own
+ *  MOVENG_UNSUPPORTED, mirrored, is logged with. */
+const MIRRORED_FAILURE = 'mirrored_failure';
+
+/** The reason a run that ended mid-run in this engine's own refusal, after
+ *  an effect, is logged with: a divergence. */
+const UNREPRODUCED_MID_RUN = 'unreproduced_mid_run';
 
 /** The reason a run the shim faulted in is logged with. */
 const SHIM_FAULT = 'shim_fault';

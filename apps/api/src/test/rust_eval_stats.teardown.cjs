@@ -111,6 +111,72 @@ const path = require('node:path');
 // before; the floors stay those less a margin of 2.
 const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
 
+// Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
+// each corpus may end in each class that is not a run the Rust engine ran.
+// Zero refusals is every ceiling at 0. Each starts at the count measured
+// when it was set, and each later task LOWERS it as it closes a reason; a
+// ceiling never rises. A reason a closed one used to hide inside the same
+// statement (`allReasons` counts each statement's first) gets its own
+// ceiling at its first measurement, then is lowered like the rest. A
+// ceiling is an upper bound, so it holds for a run narrowed to part of the
+// corpus too. The classes:
+//
+//   - `refused`: runs refused at admission by name, under each run's first
+//     reason (`notAdmitted`, the shim's input checks among them), summed;
+//   - `everyReason`: the same runs under each statement's first reason
+//     (`allReasons`), by reason; a reason not named here has a ceiling of 0;
+//   - `declined`: runs admitted and then declined before any effect, by
+//     reason; a reason not named here has a ceiling of 0;
+//   - `unreproduced`: runs that ended mid-run, after an effect, in this
+//     engine's own refusal of what the TypeScript engine runs on through
+//     (the `done`'s marker): a divergence, so 0 always;
+//   - `shimFaults`: runs that ended in a fault of the shim's own: 0 always;
+//   - `handBacks`: what a whole run still asks the TypeScript to compute,
+//     by kind: `builtins.function` and `builtins.compare` host calls, and
+//     `fallback`, expressions the evaluator switch handed back. Zero
+//     refusals is not zero TypeScript until these are 0 too.
+//
+// Reported and allowed: `mirroredFailure` (the TypeScript engine's own
+// MOVENG_UNSUPPORTED, which both engines end the run with) and
+// `endedAtCheck` (the run failed its check before a segment opened).
+//
+// Measured at 47109a3733 (2026-10-12): refused v1 12, v2 21, v3 86 (every
+// reason 12 / 23 / 95); declined v3 3 (`expression_does_not_lower`);
+// unreproduced 0 (the 6 / 6 / 4 runs once counted `failedByName` are all
+// mirrored); shim faults 0; hand-backs `builtins.compare` 0 / 5 / 5 (WITHIN's),
+// `builtins.function` 0, evaluator fallbacks 0.
+const CEILINGS = {
+  v1: {
+    refused: 12,
+    everyReason: { block_multi_hop: 4, 'function:chunks': 3, write_root_not_held: 2, block_head_resources: 1, plugin_call_form: 1, block_head_value_root: 1 },
+    declined: {},
+    unreproduced: 0,
+    shimFaults: 0,
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
+  },
+  v2: {
+    refused: 21,
+    everyReason: { import_from_file: 7, block_multi_hop: 4, block_head_resources: 3, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2, block_head_value_root: 1, plugin_call_form: 1 },
+    declined: {},
+    unreproduced: 0,
+    shimFaults: 0,
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+  },
+  v3: {
+    refused: 86,
+    everyReason: {
+      builtin_call_form: 16, nested_movement_call: 15, expression_closure: 14, block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4,
+      node_spread_path: 4, write_field_record: 4, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
+      'statement:call': 2, 'rvalue:block': 2, plugin_call_form: 2, movement_call: 2, extract_call_model: 1, block_head_value_root: 1,
+      'aggregate:only': 1, delete_not_record: 1, 'function:inc': 1,
+    },
+    declined: { expression_does_not_lower: 3 },
+    unreproduced: 0,
+    shimFaults: 0,
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+  },
+};
+
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
  * jest's other ways of running a part of it (related or changed files, a
@@ -149,7 +215,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-  const runs = { routed: 0, admitted: 0, ranWhole: 0, failedByName: 0, shimFaults: 0, endedAtCheck: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
+  const runs = { routed: 0, admitted: 0, ranWhole: 0, mirroredFailure: 0, unreproduced: 0, shimFaults: 0, endedAtCheck: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
   // The admission dry run asks only about runs MOVEMENT_ENGINE kept from
   // Rust: under rust, it must have asked about none.
   const dryRun = { firings: 0, sampled: 0 };
@@ -169,7 +235,8 @@ async function globalTeardown(globalConfig, projectConfig) {
       runs.admitted += stats.runs?.admitted ?? 0;
       runs.ranWhole += stats.runs?.ranWhole ?? 0;
       runs.shimFaults += stats.runs?.shimFaults ?? 0;
-      runs.failedByName += stats.runs?.failedByName ?? 0;
+      runs.mirroredFailure += stats.runs?.mirroredFailure ?? 0;
+      runs.unreproduced += stats.runs?.unreproduced ?? 0;
       runs.endedAtCheck += stats.runs?.endedAtCheck ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
       add(runs.notAdmitted, stats.runs?.notAdmitted);
@@ -185,7 +252,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   console.log(`\nRust evaluator: ${JSON.stringify(total)}`);
   // Routed: segments the Rust engine started, its own admission's refusals
   // among them. Admitted: those its admission let by.
-  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, failedByName: runs.failedByName, shimFaults: runs.shimFaults, endedAtCheck: runs.endedAtCheck, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, mirroredFailure: runs.mirroredFailure, unreproduced: runs.unreproduced, shimFaults: runs.shimFaults, endedAtCheck: runs.endedAtCheck, declined: runs.declined, hostCalls: runs.hostCalls })}`);
   // Every count with its denominator: each run the Rust route was entered
   // for ends in exactly one of these.
   console.log(`Rust runs, ${ranWholeOf(runs)}`);
@@ -218,17 +285,57 @@ async function globalTeardown(globalConfig, projectConfig) {
     failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
   }
   console.log(`Rust routing floor (${corpus}): ${ranWholeOf(runs)}; floor ${RAN_WHOLE_FLOOR[corpus]}`);
+  const { lines, over } = againstCeilings(measured(total, runs), CEILINGS[corpus]);
+  for (const line of lines) console.log(`Rust ceiling (${corpus}): ${line}`);
+  if (over.length > 0) failures.push(`over a ceiling, which never rises: ${over.join('; ')}`);
   if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
 }
+
+const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
 
 /** `ran whole N of M runs attempted (…)`: M is every run the Rust route was
  *  entered for, each under exactly one ending. */
 function ranWholeOf(runs) {
-  const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
   const refused = sum(runs.notAdmitted);
   const declined = sum(runs.declined);
-  const attempted = runs.ranWhole + refused + runs.failedByName + declined + runs.endedAtCheck + runs.shimFaults;
-  return `ran whole ${runs.ranWhole} of ${attempted} runs attempted (${refused} refused at admission by name, ${runs.failedByName} failed by name, ${declined} declined, ${runs.endedAtCheck} failed their check before a segment opened, ${runs.shimFaults} shim faults)`;
+  const attempted = runs.ranWhole + refused + runs.mirroredFailure + runs.unreproduced + declined + runs.endedAtCheck + runs.shimFaults;
+  return `ran whole ${runs.ranWhole} of ${attempted} runs attempted (${refused} refused at admission by name, ${runs.mirroredFailure} ended in the TypeScript's own failure by name, mirrored, ${runs.unreproduced} unreproduced mid-run, ${declined} declined, ${runs.endedAtCheck} failed their check before a segment opened, ${runs.shimFaults} shim faults)`;
+}
+
+/** What the run's counts say of each ceilinged class (`CEILINGS`). */
+function measured(total, runs) {
+  return {
+    refused: sum(runs.notAdmitted),
+    everyReason: runs.allReasons,
+    declined: runs.declined,
+    unreproduced: runs.unreproduced,
+    shimFaults: runs.shimFaults,
+    handBacks: {
+      'builtins.function': runs.hostCalls['builtins.function'] ?? 0,
+      'builtins.compare': runs.hostCalls['builtins.compare'] ?? 0,
+      fallback: sum(total.fallback),
+    },
+  };
+}
+
+/** Each class measured against its ceiling, a line apiece, and every count
+ *  over one. A key a by-key ceiling does not name has a ceiling of 0. */
+function againstCeilings(counts, ceilings) {
+  const lines = [];
+  const over = [];
+  for (const [kind, ceiling] of Object.entries(ceilings)) {
+    const count = counts[kind];
+    if (typeof ceiling === 'number') {
+      lines.push(`${kind} ${count} (ceiling ${ceiling})`);
+      if (count > ceiling) over.push(`${kind} ${count} > ${ceiling}`);
+      continue;
+    }
+    lines.push(`${kind} ${JSON.stringify(sorted(count))} (ceilings ${JSON.stringify(ceiling)})`);
+    for (const [key, n] of Object.entries(count)) {
+      if (n > (ceiling[key] ?? 0)) over.push(`${kind} ${key} ${n} > ${ceiling[key] ?? 0}`);
+    }
+  }
+  return { lines, over };
 }
 
 /** The declines a passing check leaves for a slot the lowering misses. */
@@ -237,3 +344,4 @@ const LOWERING_MISSES = ['condition_does_not_lower', 'expression_does_not_lower'
 module.exports = globalTeardown;
 module.exports.isWholeCorpus = isWholeCorpus;
 module.exports.ranWholeOf = ranWholeOf;
+module.exports.CEILINGS = CEILINGS;

@@ -94,7 +94,8 @@ export const rustTarget: ReplayTarget = {
   async replay(recording) {
     const before = {
       ranWhole: rustRunStats.ranWhole,
-      failedByName: rustRunStats.failedByName,
+      mirroredFailure: rustRunStats.mirroredFailure,
+      unreproduced: rustRunStats.unreproduced,
       shimFaults: rustRunStats.shimFaults,
       endedAtCheck: rustRunStats.endedAtCheck,
       notAdmitted: { ...rustRunStats.notAdmitted },
@@ -103,14 +104,16 @@ export const rustTarget: ReplayTarget = {
     const verdict = await underEngine('rust', () =>
       replayThrough(recording, (conversation) => inProcess(conversation, recording.methods)),
     );
-    // Judged by its verdict: a run the Rust engine ran to an ending (whole, a
-    // construct it names and does not run met mid-run, a fault of its shim's),
+    // Judged by its verdict: a run the Rust engine ran to an ending (whole,
+    // the TypeScript's own MOVENG_UNSUPPORTED mirrored, this engine's own
+    // refusal met mid-run, which then diverges, a fault of its shim's),
     // and a run that failed the check the Rust route makes before its segment
     // opens. Each passes only where it ended as the TypeScript's recorded run
     // ended, after the same requests.
     if (
       rustRunStats.ranWhole > before.ranWhole ||
-      rustRunStats.failedByName > before.failedByName ||
+      rustRunStats.mirroredFailure > before.mirroredFailure ||
+      rustRunStats.unreproduced > before.unreproduced ||
       rustRunStats.shimFaults > before.shimFaults ||
       rustRunStats.endedAtCheck > before.endedAtCheck
     ) {

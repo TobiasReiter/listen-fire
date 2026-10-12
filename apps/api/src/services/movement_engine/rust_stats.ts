@@ -43,11 +43,15 @@ export function resetRustEvalStats(): void {
  * - `admitted`: routed segments its admission let by (`routed` less its
  *   refusals);
  * - `ranWhole`: routed runs it ran to their end (a run's own failure
- *   included, but not `failedByName`'s);
- * - `failedByName`: routed runs it admitted that then ended mid-run naming
- *   a construct it does not run (`MOVENG_UNSUPPORTED`): what admission
- *   should have refused, so a divergence unless the TypeScript engine ends
- *   the run with the same failure;
+ *   included, but not `mirroredFailure`'s or `unreproduced`'s);
+ * - `mirroredFailure`: routed runs it admitted that then ended mid-run in
+ *   the TypeScript engine's own `MOVENG_UNSUPPORTED`, which this engine
+ *   mirrors: both engines end the run so;
+ * - `unreproduced`: routed runs it admitted that then ended mid-run, after
+ *   an effect, in this engine's own refusal of what the TypeScript engine
+ *   runs on through (the `done`'s `unreproduced` marker; the wire codes it
+ *   `MOVENG_UNSUPPORTED` too): what admission should have refused, a
+ *   divergence;
  * - `declined`: routed runs it admitted and then declined, after the check
  *   and before anything the host can see, by reason;
  * - `endedAtCheck`: runs that failed their check (`MOVENG_PARSE`,
@@ -70,7 +74,8 @@ export const rustRunStats: {
   routed: number;
   admitted: number;
   ranWhole: number;
-  failedByName: number;
+  mirroredFailure: number;
+  unreproduced: number;
   shimFaults: number;
   endedAtCheck: number;
   notAdmitted: Record<string, number>;
@@ -82,7 +87,8 @@ export const rustRunStats: {
   routed: 0,
   admitted: 0,
   ranWhole: 0,
-  failedByName: 0,
+  mirroredFailure: 0,
+  unreproduced: 0,
   shimFaults: 0,
   endedAtCheck: 0,
   notAdmitted: {},
@@ -96,7 +102,8 @@ export function resetRustRunStats(): void {
   rustRunStats.routed = 0;
   rustRunStats.admitted = 0;
   rustRunStats.ranWhole = 0;
-  rustRunStats.failedByName = 0;
+  rustRunStats.mirroredFailure = 0;
+  rustRunStats.unreproduced = 0;
   rustRunStats.shimFaults = 0;
   rustRunStats.endedAtCheck = 0;
   rustRunStats.notAdmitted = {};

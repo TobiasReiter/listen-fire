@@ -17,6 +17,13 @@ import { catalog, programFor } from './binding_consumer_matrix.program';
 
 const VERSIONS: LanguageVersion[] = [1, 2, 3, 4];
 
+/** The most cells admission may refuse, by version (PLAN-08A Task 1,
+ *  2026-10-12): the count measured then (v1 and v2 `block_multi_hop` 2 and
+ *  `plugin_call_form` 1; v3 and v4 `node_spread_path` 4, `block_multi_hop` 3
+ *  and `plugin_call_form` 1). Each task that closes one of these reasons
+ *  lowers its ceiling; a ceiling never rises. Zero refusals is every one 0. */
+const REFUSED_CEILING: Partial<Record<LanguageVersion, number>> = { 1: 3, 2: 3, 3: 8, 4: 8 };
+
 /** Every helper movement the matrix's skeleton declares, by name. */
 const HELPER = /^movement (?!run_cell\b)(\w+)\(/;
 
@@ -109,5 +116,7 @@ describe.each(VERSIONS)('the binding × consumer matrix under language version %
     // Every reason a cell is refused for first is reported for it too, and
     // a reason is reported at least as often as it comes first.
     for (const [reason, n] of Object.entries(first)) expect(every[reason]).toBeGreaterThanOrEqual(n);
+    // A version no ceiling names may refuse nothing.
+    expect(refused).toBeLessThanOrEqual(REFUSED_CEILING[version] ?? 0);
   });
 });

@@ -10,23 +10,28 @@
 //
 // A pattern is `whole` when every program the generator holds for it runs
 // whole on Rust and agrees with the TypeScript engine; `refused` or
-// `declined` when one still does not (by the reason named); `unreached` when
-// no program reaches it through the real shim (the checker or the parser
-// refuses every one, or it is an input fault the shim never sends).
+// `declined` when one still does not (by the reason named); `by_contract`
+// when both engines refuse it by the park-state contract; `unrecordable`
+// when the shim refuses an input the eval wire cannot carry; `unreached`
+// when no program reaches it through the real shim (the checker or the
+// parser refuses every one, or it is an input fault the shim never sends).
+// Zero refusals is 0 `refused` and 0 `declined`.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+type Routes = 'whole' | 'refused' | 'declined' | 'by_contract' | 'unrecordable' | 'unreached';
+
 interface PatternRow {
   reason: string;
-  routes: 'whole' | 'refused' | 'declined' | 'unreached';
+  routes: Routes;
   note: string;
   programs: number;
 }
 
 interface CaseRow {
   pattern: string;
-  routes: 'whole' | 'refused' | 'declined' | 'unreached';
+  routes: Routes;
   reasons: string[];
   agreement?: 'exact' | 'kit' | 'check';
 }
@@ -58,7 +63,7 @@ if (args.includes('--json')) {
 } else {
   const by = (status: string) => rows.filter((r) => r.status === status).length;
   console.log(
-    `${rows.length} patterns, ${oracle.cases.length} programs (seed ${oracle.seed}): ${by('whole')} whole, ${by('refused')} refused, ${by('declined')} declined, ${by('unreached')} unreached through the real shim\n`,
+    `${rows.length} patterns, ${oracle.cases.length} programs (seed ${oracle.seed}): ${by('whole')} whole, ${by('refused')} refused, ${by('declined')} declined, ${by('by_contract')} refused by contract on both engines, ${by('unrecordable')} unrecordable, ${by('unreached')} unreached through the real shim\n`,
   );
   console.log('| pattern | status | programs | whole on Rust (exactly) | refused / declined for | note |');
   console.log('|---|---|---|---|---|---|');

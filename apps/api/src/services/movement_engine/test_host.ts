@@ -290,13 +290,14 @@ export function makeFakeParkSink(): {
 /**
  * What the Rust run's counts (`rustRunStats`) say of how a run that threw
  * `error` (none for a run that returned) ended: run to its end, its own
- * failure included; counted apart, ended mid-run naming a construct the
- * engine does not run (`MOVENG_UNSUPPORTED`); or ended at its check
+ * failure included; counted apart, ended mid-run in the TypeScript engine's
+ * own `MOVENG_UNSUPPORTED`, mirrored (never in this engine's own refusal,
+ * `unreproduced`, which is a divergence); or ended at its check
  * (`isCheckFailure`), never routed, on every route.
  */
-export function endedInRust(error: unknown): { routed: number; ranWhole: number; failedByName: number; endedAtCheck: number } {
-  if (isCheckFailure(error)) return { routed: 0, ranWhole: 0, failedByName: 0, endedAtCheck: 1 };
+export function endedInRust(error: unknown): { routed: number; ranWhole: number; mirroredFailure: number; unreproduced: 0; endedAtCheck: number } {
+  if (isCheckFailure(error)) return { routed: 0, ranWhole: 0, mirroredFailure: 0, unreproduced: 0, endedAtCheck: 1 };
   const cause = runFailureCause(error);
-  if (cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED') return { routed: 1, ranWhole: 0, failedByName: 1, endedAtCheck: 0 };
-  return { routed: 1, ranWhole: 1, failedByName: 0, endedAtCheck: 0 };
+  if (cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED') return { routed: 1, ranWhole: 0, mirroredFailure: 1, unreproduced: 0, endedAtCheck: 0 };
+  return { routed: 1, ranWhole: 1, mirroredFailure: 0, unreproduced: 0, endedAtCheck: 0 };
 }

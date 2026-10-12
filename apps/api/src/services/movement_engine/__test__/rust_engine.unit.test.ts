@@ -21,6 +21,7 @@ import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_
 import {
   assertEngineChoiceConfigured,
   driveEngine,
+  endedUnreproduced,
   engineChoice,
   readRunResult,
   runSegmentInRust,
@@ -578,6 +579,16 @@ describe('the Rust engine shim', () => {
     expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(() => readRunResult({ parked: true }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
   });
+
+  it("reads a failure's unreproduced marker: this engine's own refusal, apart from a mirrored MOVENG_UNSUPPORTED", () => {
+    const error = { class: 'MovementEngineError', code: 'MOVENG_UNSUPPORTED', message: 'a bound write is not supported by the movement engine yet' };
+    expect(endedUnreproduced({ thrown: error })).toBe(false);
+    expect(endedUnreproduced({ thrown: error, unreproduced: true })).toBe(true);
+    expect(endedUnreproduced({ failed: { error, result: { movementName: 'm' } }, unreproduced: true })).toBe(true);
+    // Only a failure carries it, and only as true.
+    expect(() => endedUnreproduced({ result: { movementName: 'm' }, unreproduced: true })).toThrow(RustShimError);
+    expect(() => endedUnreproduced({ thrown: error, unreproduced: 1 })).toThrow(RustShimError);
+  });
 });
 
 describe('the check host call', () => {
@@ -635,6 +646,22 @@ describe('the segment input', () => {
     expect(JSON.stringify(started)).toContain('["meta",["o",2,[["kind","event"]]]]');
     expect(JSON.stringify(started)).toContain('"kind","toString"');
     expect(JSON.stringify(started)).not.toContain('["x"');
+  });
+});
+
+describe('a run that ends naming a construct (MOVENG_UNSUPPORTED)', () => {
+  const error = { class: 'MovementEngineError', code: 'MOVENG_UNSUPPORTED', message: 'a bound write is not supported by the movement engine yet' };
+
+  it.each([
+    ['mirrored: the TypeScript engine ends it so too', { thrown: error }, { mirroredFailure: 1, unreproduced: 0 }],
+    ["unreproduced: this engine's own refusal, a divergence", { thrown: error, unreproduced: true }, { mirroredFailure: 0, unreproduced: 1 }],
+  ])('is counted %s', async (_how, done, counted) => {
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const input = { source: '', event: { payload: {} }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
+    const { engine } = scriptedEngine(() => ({ done }));
+    resetRustRunStats();
+    await expect(runSegmentInRust({ input, context: served.context }, engine)).rejects.toThrow('MOVENG_UNSUPPORTED');
+    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, shimFaults: 0, ...counted });
   });
 });
 

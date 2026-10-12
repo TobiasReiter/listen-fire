@@ -19,8 +19,13 @@
 //
 // A pattern says which it is (`routes`): `whole` for a pattern that now runs
 // on Rust, `refused` for one still refused by name, `declined` for one only
-// the check's answer reveals. A program that ends somewhere its pattern does
-// not say fails the generator, so the committed file is the inventory: the
+// the check's answer reveals, `by_contract` for one both engines refuse by
+// the park-state contract, `unrecordable` for an input the shim refuses
+// because the eval wire cannot carry it (PLAN-08A Task 1: so "0 refused, 0
+// declined" means no port is left). A program that ends somewhere its
+// pattern does not say fails the generator, and so does a program refused
+// or declined for a reason the README's port list has retired (marked
+// Closed, or no longer named): the committed file is the inventory, and the
 // one-command report (patterns_report.ts, `pnpm engine:patterns`) reads it.
 //
 // Written by generate.ts (seed 20261015); deterministic: the scripted host
@@ -41,7 +46,7 @@ import { makeStablePosition, makeUnstablePosition, positionData } from '../../..
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { PATTERNS, type Pick, type Program, type Routes } from './patterns_table';
+import { BY_CONTRACT, PATTERNS, UNRECORDABLE, type Pick, type Program, type Routes } from './patterns_table';
 
 type Rand = () => number;
 
@@ -395,14 +400,23 @@ async function recorded(engine: 'ts' | 'rust', program: Program, state?: unknown
 
 /** What the Rust engine's admission did with the run it was just handed. */
 function routing(): { routes: Routes; reasons: string[] } {
-  if (Object.keys(rustRunStats.notAdmitted).length > 0) return { routes: 'refused', reasons: Object.keys(rustRunStats.allReasons) };
+  const [first] = Object.keys(rustRunStats.notAdmitted);
+  if (first !== undefined) {
+    const reasons = Object.keys(rustRunStats.allReasons);
+    if (BY_CONTRACT.includes(first)) return { routes: 'by_contract', reasons };
+    if (UNRECORDABLE.includes(first)) return { routes: 'unrecordable', reasons };
+    return { routes: 'refused', reasons };
+  }
   if (Object.keys(rustRunStats.declined).length > 0) return { routes: 'declined', reasons: Object.keys(rustRunStats.declined) };
   // Never handed to the Rust engine (both entries refuse it first).
   if (rustRunStats.routed === 0) return { routes: 'unreached', reasons: [] };
-  // A run that ended mid-run naming a construct (MOVENG_UNSUPPORTED) ran in
-  // Rust, counted apart: whole only where it ends as the TypeScript's does,
-  // which the comparison below holds it to, and it says so.
-  if (rustRunStats.failedByName > 0) return { routes: 'whole', reasons: ['failed_by_name'] };
+  // This engine's own refusal met mid-run after an effect: a divergence,
+  // which no pattern may say it routes.
+  if (rustRunStats.unreproduced > 0) return { routes: 'declined', reasons: ['unreproduced_mid_run'] };
+  // A run that ended mid-run in the TypeScript's own MOVENG_UNSUPPORTED,
+  // mirrored, ran in Rust, counted apart: whole only where it ends as the
+  // TypeScript's does, which the comparison below holds it to, and it says so.
+  if (rustRunStats.mirroredFailure > 0) return { routes: 'whole', reasons: ['mirrored_failure'] };
   // Whole means the shim saw it run whole, not only that nothing refused.
   if (rustRunStats.ranWhole === 0) return { routes: 'declined', reasons: ['did_not_run_whole'] };
   return { routes: 'whole', reasons: [] };
@@ -454,21 +468,60 @@ interface CaseRecord {
 /** Every reason the README's port list names (its tables' first column),
  *  from "The port list" to its version-4 section. */
 export function portListReasons(readme: string): string[] {
+  return [...portListStatus(readme).keys()];
+}
+
+/** Each reason the README's port list names, by the status its row starts
+ *  its last column with: `Closed` (retired: nothing left to port) or `Open`. */
+export function portListStatus(readme: string): Map<string, 'Closed' | 'Open'> {
   const from = readme.indexOf('### The port list');
   const to = readme.indexOf('### Language version 4: the port list');
   if (from === -1 || to === -1) throw new Error("patterns oracle: the README no longer spells the port list as this reads it");
-  const reasons: string[] = [];
+  const status = new Map<string, 'Closed' | 'Open'>();
   for (const line of readme.slice(from, to).split('\n')) {
     const cell = /^\| ([^|]*)\|/.exec(line)?.[1];
     if (cell === undefined || cell.trim() === 'reason' || /^-+$/.test(cell.trim())) continue;
-    for (const [, name] of cell.matchAll(/`([^`]+)`/g)) reasons.push(name!);
+    const marked = /\*\*(Closed|Open)\*\*/.exec(line.slice(line.lastIndexOf('|', line.length - 2)))?.[1];
+    if (marked !== 'Closed' && marked !== 'Open') throw new Error(`patterns oracle: the port list row for ${cell.trim()} says neither Closed nor Open`);
+    for (const [, name] of cell.matchAll(/`([^`]+)`/g)) status.set(name!, marked);
   }
-  return reasons;
+  return status;
+}
+
+/** Why a program the Rust engine refused or declined is wrong to be: a
+ *  reason the port list has retired (marked Closed, or no longer named), or
+ *  a contract category reached by a reason outside it. Nothing for a
+ *  program that ends otherwise. */
+export function retiredReasons(routes: Routes, reasons: readonly string[], status: ReadonlyMap<string, 'Closed' | 'Open'>): string[] {
+  const listed = [...status.keys()];
+  const statusOf = (reason: string) => {
+    const pattern = patternOf(reason, listed);
+    return pattern === undefined ? 'unlisted' : status.get(pattern)!;
+  };
+  switch (routes) {
+    case 'refused':
+    case 'declined':
+      return reasons.filter((reason) => statusOf(reason) !== 'Open').map((reason) => `${routes} for ${reason}, which the port list ${statusOf(reason) === 'Closed' ? 'marks Closed' : 'no longer names'}`);
+    case 'by_contract':
+      return reasons.filter((reason) => !BY_CONTRACT.includes(reason) || statusOf(reason) !== 'Closed').map((reason) => `by_contract for ${reason}, which is not a Closed contract refusal`);
+    case 'unrecordable':
+      return reasons.filter((reason) => !UNRECORDABLE.includes(reason)).map((reason) => `unrecordable for ${reason}, which is not the shim's wire refusal`);
+    case 'whole':
+    case 'unreached':
+      return [];
+    default:
+      return neverRoutes(routes);
+  }
+}
+
+function neverRoutes(routes: never): never {
+  throw new Error(`patterns oracle: no such routes ${String(routes)}`);
 }
 
 export async function writePatternsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
   const readme = readFileSync(path.join(__dirname, '../../README.md'), 'utf8');
-  const uncovered = portListReasons(readme).filter((reason) => !PATTERNS.some((p) => p.reason === reason));
+  const status = portListStatus(readme);
+  const uncovered = [...status.keys()].filter((reason) => !PATTERNS.some((p) => p.reason === reason));
   if (uncovered.length > 0) throw new Error(`patterns oracle: the port list names reasons no pattern exercises: ${uncovered.join(', ')}`);
   const pick: Pick = (items) => items[Math.floor(rand() * items.length)]!;
   const cases: CaseRecord[] = [];
@@ -512,6 +565,7 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
         // A program whose own routes say otherwise than its pattern's (a
         // form that declines for another reason) need not name it.
         if (routes !== 'whole' && !names && program.routes === undefined) problems.push(`${where}\n  ${routes} for ${reasons.join(', ')}, not for ${pattern.reason}`);
+        for (const retired of retiredReasons(routes, reasons, status)) problems.push(`${where}\n  ${retired}`);
       }
       let agreement: CaseRecord['agreement'];
       if (expected === 'unreached') {

@@ -47,6 +47,15 @@ const FLOORS = {
   v2: { recordings: 542, rust: 517 },
 } as const;
 
+/** The most recordings the Rust target may skip (one its engine refused or
+ *  declined, so the TypeScript ran it), by corpus (PLAN-08A Task 1,
+ *  2026-10-12): the skips measured then, v1 13 of 443 and v2 23 of 542.
+ *  Each task that closes a refusal lowers them; a ceiling never rises. At 0
+ *  the Rust target skips nothing (`skipped` is `{}`), and every recording
+ *  that encoded a fixed bug is met exactly as on the other targets (v2's
+ *  one, PLAN-07A Task 4d's, is among the skips today). */
+const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, number> = { v1: 13, v2: 23 };
+
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
 
 function linesOf(corpus: keyof typeof FLOORS): string[] {
@@ -240,7 +249,10 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
   );
   // Exactly the named ones where the target runs every recording: a new
   // divergence, or one fewer, fails until this says why. A target that skips
-  // some (the Rust engine) may meet fewer of them, never more.
+  // some (the Rust engine, under its skip ceiling) may meet fewer of them,
+  // never more: v2's Task 4d recording is one the Rust engine still refuses
+  // (2026-10-12). At a skip ceiling of 0 it skips none, and the exact match
+  // applies to it too.
   const within = Object.entries(Object.fromEntries(fixed)).every(([reason, count]) => count <= (expected[reason] ?? 0));
   if (skipped.size > 0 ? !within : JSON.stringify(Object.fromEntries(fixed)) !== JSON.stringify(expected)) {
     diverged.push(`the recordings that encoded a fixed bug were ${JSON.stringify(Object.fromEntries(fixed))}, not ${JSON.stringify(expected)}`);
@@ -300,5 +312,6 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
     console.log(`${corpus}: recordings the Rust engine refused, by every reason each holds: ${JSON.stringify(Object.fromEntries(everyReason))}`);
     expect(diverged).toEqual([]);
     expect(same).toBeGreaterThanOrEqual(FLOORS[corpus].rust);
+    expect(Object.values(skipped).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(RUST_SKIP_CEILING[corpus]);
   });
 }
