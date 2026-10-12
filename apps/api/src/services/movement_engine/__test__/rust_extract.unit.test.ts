@@ -387,28 +387,31 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect('error' in ts && String(runFailureCause(ts.error))).toContain('WHERE filters on extract-result block heads is not supported');
     });
 
-    it("writes the event into the prompt as the JSON of its binding object, and refuses any other record there by name", async () => {
+    it("ends the event inside an input at the check (its deck is a file), and refuses any other record there by name", async () => {
+      // Main's record walk (group G): every record in an extraction input is
+      // checked at any depth, and one whose fields include a file is refused
+      // (MOV_EXTRACT_CONTENT) — the event's `deck` is one — on both engines,
+      // before either is asked.
       const source = ['movement m(msg: <inbox-[:message]->>) {', '  held = [msg]', '  found = extract from [held, msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
-      const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { runsWhole: true });
-      expect(JSON.stringify(ts.asked)).toContain('## FRAGMENT\\n{\\"kind\\":\\"event\\"}');
+      const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { endsAtCheck: true });
+      expect('error' in ts && String(ts.error)).toContain('MOV_EXTRACT_CONTENT');
+      expect(ts.asked).toEqual([]);
       const again = ['movement m(msg: <inbox-[:message]->>) {', ...found, '  more = extract from [found] {', '    name: "the company"', '  }', '}'].join('\n');
       await agree({ source: again, replies: [companies, { 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { refused: 'extract_from_record' });
     });
 
-    it("hands a plugin the event's binding object as the data it is, and refuses any other record inside a list by name", async () => {
+    it("ends the event, and any other record, inside a plugin's argument at the check, a through stage's included", async () => {
       const program = (body: string) => ['import { echo } from plugins', 'movement m(msg: <inbox-[:message]->>) {', body, '}'].join('\n');
       const through = (arg: string, before: readonly string[] = []) =>
         program([...before, `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`, '    name: "the company"', '  }'].join('\n'));
       const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
-      // A through stage's plugin arguments are untyped (main's nested-record
-      // rule leaves them so): there the event inside a value still reaches
-      // the plugin, as the data its binding object is.
-      for (const [arg, q] of [
-        ['[msg]', [{ kind: 'event' }]],
-        ['{ k: msg }', { k: { kind: 'event' } }],
-      ] as const) {
-        const ts = await agree({ source: through(arg), replies: [named] }, { runsWhole: true });
-        expect(ts.invoked).toEqual([expect.objectContaining({ plugin: 'echo', config: { q } })]);
+      // A through stage's argument is held to what the plugin takes, as a
+      // plain call's is (main's record walk, group G): the event inside a
+      // value ends at the check on both engines, before either is asked.
+      for (const arg of ['[msg]', '{ k: msg }']) {
+        const ts = await agree({ source: through(arg), replies: [named] }, { endsAtCheck: true });
+        expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
+        expect(ts.invoked).toEqual([]);
       }
       // A call's argument is typed: the checker refuses a record inside it
       // (the event's included, MOV_CALL_ARG_TYPE) on both engines, before
@@ -418,20 +421,23 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
         expect(ts.invoked).toEqual([]);
       }
-      // The event alone is no value. In a through stage, whose arguments
-      // are untyped, it passes the check and the Rust engine refuses it by
-      // name; the TypeScript fails reading it.
-      await agree({ source: through('msg'), replies: [named] }, { refused: 'name_not_value' });
+      // The event alone, in a through stage: its argument is now held as a
+      // plain call's is, so it ends at the check as the call below does (the
+      // event's `deck` is a file).
+      const staged = await agree({ source: through('msg'), replies: [named] }, { endsAtCheck: true });
+      expect('error' in staged && String(staged.error)).toContain("'q.deck' is file");
       // As a call's argument it ends at the check: a record handed whole to
       // structured data carries its fields, and the event's `deck` is a file
       // (main's file rule, MOV_CALL_ARG_TYPE at 'q.deck').
       const whole = await agree({ source: program('  x = echo(q: msg)') }, { endsAtCheck: true });
       expect('error' in whole && String(whole.error)).toContain("'q.deck' is file");
       expect(whole.invoked).toEqual([]);
-      // Any other record inside a through stage's argument is refused by name.
-      const refused = await agree({ source: through('[found]', found), replies: [companies, named] }, { refused: 'plugin_arg_record' });
-      // The TypeScript hands the plugin the extraction's binding object itself.
-      expect(refused.invoked).toHaveLength(1);
+      // Any other record inside a through stage's argument ends at the check
+      // too: before main's record walk it reached the Rust engine, which
+      // refused it by name (plugin_arg_record).
+      const held = await agree({ source: through('[found]', found), replies: [companies, named] }, { endsAtCheck: true });
+      expect('error' in held && String(held.error)).toContain('MOV_CALL_ARG_TYPE');
+      expect(held.invoked).toEqual([]);
     });
   });
 

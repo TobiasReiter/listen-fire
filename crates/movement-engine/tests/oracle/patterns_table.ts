@@ -285,21 +285,21 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'name_not_value',
     routes: 'refused',
-    note: "a through stage's plugin argument naming bare a record (the event, a handle): needs what the TypeScript hands a plugin for a binding there (the binding object). Main's nested-record rule (forward merge 3) leaves a through stage's plugin arguments untyped, so both programs still check",
+    note: "a through stage's plugin argument naming bare a record (the event, a handle): needs what the TypeScript hands a plugin for a binding there (the binding object). Since main's record walk (group G, 2026-10-12) a through stage's argument is held to what the plugin takes, as a plain call's is: the event, whose `deck` is a file, ends at the check (MOV_CALL_ARG_TYPE at 'q.deck', the first program); a written record handed whole still checks and reaches it",
     programs: [
-      () => ({ file: `import { echo } from plugins\n${m('  d = extract from [msg.`text`] through [echo(q: msg)] {\n    name: "a name"\n  }')}` }),
+      () => ({ file: `import { echo } from plugins\n${m('  d = extract from [msg.`text`] through [echo(q: msg)] {\n    name: "a name"\n  }')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}` }),
     ],
   },
   {
     reason: 'plugin_arg_record',
-    routes: 'refused',
-    note: "a record inside a list or map reaching a plugin's argument: needs the binding objects themselves on the eval wire. The checker refuses a record it can see inside a plugin's argument (forward merge 3: main's nested-record rule, the first two programs); a helper movement's json parameter under a key runs whole since chunk 7A Task 6b (admission reads a value parameter as the checker types it, holding each call's argument to it); a record through COALESCE, which the checker does not see, is still refused",
+    routes: 'unreached',
+    note: "a record inside a list or map reaching a plugin's argument: needs the binding objects themselves on the eval wire. The checker refuses a record it can see inside a plugin's argument (forward merge 3: main's nested-record rule, the first two programs); a helper movement's json parameter under a key runs whole since chunk 7A Task 6b (admission reads a value parameter as the checker types it, holding each call's argument to it); a record through COALESCE ends at the check since main's record walk (group G, 2026-10-12) (MOV_CALL_ARG_TYPE), so no checked program reaches it",
     programs: [
       () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: [co])\n  write crm-[:notes]-> { body: said }')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { summarise } from plugins\n${m('  rows = crm-[c:companies]->\n  said = summarise(data: { all: rows })\n  write crm-[:notes]-> { body: said }')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { summarise } from plugins\nmovement put(x: <json>) {\n  said = summarise(data: { k: x })\n  write crm-[:notes]-> { body: said }\n}\n${m('  put(x: "Acme")')}`, movementName: 'm', routes: 'whole' }),
-      () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: { k: COALESCE(co, "x") })\n  write crm-[:notes]-> { body: said }')}` }),
+      () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: { k: COALESCE(co, "x") })\n  write crm-[:notes]-> { body: said }')}`, checks: false }),
     ],
   },
   {
@@ -314,13 +314,13 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'write_field_record',
     routes: 'refused',
-    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE, which the checker does not see, is still refused",
+    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE straight into a field ends at the check since main's record walk (group G, 2026-10-12) (MOV_WRITE_FIELD_TYPE, the last program); one handed back by a closure called in the field still checks and is refused",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { company: co } }', checks: false, routes: 'unreached' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { a: co, b: "x" } }', checks: false, routes: 'unreached' }),
       () => ({ file: `node Co {\n  name: <text>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)')}`, routes: 'whole' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  write crm-[:notes]-> { body: f() }' }),
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }', checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -346,19 +346,19 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'extract_from_record',
     routes: 'refused',
-    note: "a record in an extraction's from datum, written into the prompt as JSON.stringify writes the binding object: needs the binding object. Main's nested-record rule (forward merge 3) leaves `extract from [ … ]` inputs untyped (a record is legitimate content there), so both programs still check",
+    note: "a record in an extraction's from datum. Since main's record walk (group G, 2026-10-12) the TypeScript writes a record the run wrote into the prompt as its fields, and the checker refuses a system's record there, whose fields are read one at a time (MOV_EXTRACT_CONTENT, the first program); a record the run wrote still checks and is refused here. Takes: the prompt's record-as-its-fields rendering (fieldsValueOf) on this engine",
     programs: [
-      () => ({ body: '  rows = crm-[c:companies]->\n  d = extract from [rows] {\n    name: "a name"\n  }' }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  d = extract from [rows] {\n    name: "a name"\n  }', checks: false, routes: 'unreached' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }' }),
     ],
   },
   {
     reason: 'at_record_key',
-    routes: 'refused',
-    note: "AT over a record with a key that is not a text literal, or names the binding object's internals: needs those internals as values. Main's nested-record rule (forward merge 3) does not touch AT, so both programs still check; each AT is over a genuine record, so chunk 7A Task 6b's reading of the checker's types leaves both refused",
+    routes: 'unreached',
+    note: "AT over a record with a key that is not a text literal, or names the binding object's internals. Since main's record walk (group G, 2026-10-12) the checker refuses AT on a record for any key that is not an index (MOV_AT_RECORD_KEY), so no checked program reaches it",
     programs: [
-      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  top = FIRST(rows)\n  key = "name"\n  a = AT(top, key)' }),
-      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  a = AT(FIRST(rows), "provenance")' }),
+      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  top = FIRST(rows)\n  key = "name"\n  a = AT(top, key)', checks: false }),
+      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  a = AT(FIRST(rows), "provenance")', checks: false }),
     ],
   },
   {

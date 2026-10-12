@@ -108,8 +108,13 @@ const path = require('node:path');
 // forward merge of main's file rule (a file nested in a field's value is
 // refused at the check, 2026-10-12) moves no corpus run: v1 1023 of 1193,
 // v2 1251 of 1514, v3 2152 of 2662, check endings 152 / 236 / 417 as
-// before; the floors stay those less a margin of 2.
-const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
+// before; the floors stay those less a margin of 2. The merge of main's
+// record walk (group G: the checker sees a record through COALESCE, IF,
+// MULTI, a through stage and a map lookup, 2026-10-12) moves no corpus run
+// either: v1 1023 of 1193, v2 1251 of 1514, v3 2152 of 2662, check endings
+// 152 / 236 / 417 as before (no frozen program is newly refused by the
+// checker); the floors are set to exactly those counts, with no margin.
+const RAN_WHOLE_FLOOR = { v1: 1023, v2: 1251, v3: 2152 };
 
 /**
  * Whether this run is the whole corpus: no file or case filter, and none of
