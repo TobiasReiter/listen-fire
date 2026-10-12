@@ -15,6 +15,8 @@ interface Ceilings {
   unreproduced: number;
   shimFaults: number;
   handBacks: { 'builtins.function': number; 'builtins.compare': number; fallback: number };
+  evaluatorNotAdmitted: number;
+  mirroredFailure: number;
 }
 
 interface Teardown {
@@ -62,6 +64,7 @@ describe('the teardown', () => {
   function tearDownWith(
     runs: { routed: number; admitted: number; ranWhole: number; mirroredFailure?: number; unreproduced?: number; endedAtCheck?: number },
     reasons: {
+      evaluatorNotAdmitted?: number;
       notAdmitted?: Record<string, number>;
       allReasons?: Record<string, number>;
       declined?: Record<string, number>;
@@ -71,8 +74,8 @@ describe('the teardown', () => {
   ) {
     const dir = mkdtempSync(path.join(tmpdir(), 'rust-stats-'));
     made.push(dir);
-    const { fallback = {}, ...counts } = reasons;
-    const stats = { notAdmitted: 0, admitted: 1, answered: 1, fallback, runs: { ...runs, shimFaults: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {}, ...counts }, file: 'x.unit.test.ts' };
+    const { fallback = {}, evaluatorNotAdmitted = 0, ...counts } = reasons;
+    const stats = { notAdmitted: evaluatorNotAdmitted, admitted: 1, answered: 1, fallback, runs: { ...runs, shimFaults: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {}, ...counts }, file: 'x.unit.test.ts' };
     writeFileSync(path.join(dir, '1.jsonl'), `${JSON.stringify(stats)}\n`);
     process.env.MOVEMENT_ENGINE = 'rust';
     process.env.MOVEMENT_RUST_EVAL_STATS_DIR = dir;
@@ -118,6 +121,7 @@ describe('the teardown', () => {
   describe('the ceilings', () => {
     const { v2 } = teardown.CEILINGS;
     const atCeiling = {
+      evaluatorNotAdmitted: v2.evaluatorNotAdmitted,
       notAdmitted: { statement_call: v2.refused },
       allReasons: v2.everyReason,
       declined: v2.declined,
@@ -139,6 +143,7 @@ describe('the teardown', () => {
       ['a decline no ceiling names', { declined: { condition_does_not_lower: 1 } }, 'declined condition_does_not_lower 1 > 0'],
       ['one more builtins.function hand-back', { hostCalls: { 'builtins.function': v2.handBacks['builtins.function'] + 1 } }, 'handBacks builtins.function'],
       ['one more evaluator fallback', { fallback: { a_reason: v2.handBacks.fallback + 1 } }, 'handBacks fallback'],
+      ['one more expression the evaluator kept for the TypeScript', { evaluatorNotAdmitted: v2.evaluatorNotAdmitted + 1 }, `evaluatorNotAdmitted ${v2.evaluatorNotAdmitted + 1} > ${v2.evaluatorNotAdmitted}`],
     ])('fails %s', async (_why, past, named) => {
       await expect(tearDownWith({ routed: 2, admitted: 1, ranWhole: 1 }, { ...atCeiling, ...past })).rejects.toThrow(named);
     });
@@ -147,8 +152,11 @@ describe('the teardown', () => {
       await expect(tearDownWith({ routed: 2, admitted: 2, ranWhole: 1, unreproduced: 1 })).rejects.toThrow('unreproduced 1 > 0');
     });
 
-    it('allows a mirrored failure and a check ending', async () => {
-      await expect(tearDownWith({ routed: 3, admitted: 3, ranWhole: 1, mirroredFailure: 2, endedAtCheck: 4 })).resolves.toBeUndefined();
+    it('allows mirrored failures up to their ceiling, and any check ending', async () => {
+      await expect(tearDownWith({ routed: 7, admitted: 7, ranWhole: 1, mirroredFailure: v2.mirroredFailure, endedAtCheck: 4 })).resolves.toBeUndefined();
+      await expect(tearDownWith({ routed: 8, admitted: 8, ranWhole: 1, mirroredFailure: v2.mirroredFailure + 1 })).rejects.toThrow(
+        `mirroredFailure ${v2.mirroredFailure + 1} > ${v2.mirroredFailure}`,
+      );
     });
   });
 });

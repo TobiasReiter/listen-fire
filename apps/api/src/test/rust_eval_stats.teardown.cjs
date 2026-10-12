@@ -109,7 +109,13 @@ const path = require('node:path');
 // refused at the check, 2026-10-12) moves no corpus run: v1 1023 of 1193,
 // v2 1251 of 1514, v3 2152 of 2662, check endings 152 / 236 / 417 as
 // before; the floors stay those less a margin of 2.
-const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
+// PLAN-08A Task 1 fix round 1 (2026-10-12) drops the margin: floors and
+// ceilings move together with the measurement; never a margin. With the
+// ceilings at today's counts a margin would let two runs per corpus slip
+// back to the TypeScript engine unseen, so the floors are the measured v1
+// 1023, v2 1251, v3 2152, and a task that lifts runs raises them to its new
+// measurement in the same commit.
+const RAN_WHOLE_FLOOR = { v1: 1023, v2: 1251, v3: 2152 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -134,17 +140,24 @@ const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
 //   - `handBacks`: what a whole run still asks the TypeScript to compute,
 //     by kind: `builtins.function` and `builtins.compare` host calls, and
 //     `fallback`, expressions the evaluator switch handed back. Zero
-//     refusals is not zero TypeScript until these are 0 too.
+//     refusals is not zero TypeScript until these are 0 too;
+//   - `evaluatorNotAdmitted`: expressions the evaluator switch kept for the
+//     TypeScript evaluator, never sent to Rust. They come mostly from the
+//     runs the TypeScript engine runs, so this falls as refused runs fall;
+//   - `mirroredFailure`: runs that ended mid-run in the TypeScript engine's
+//     own MOVENG_UNSUPPORTED, which both engines end the run with: the same
+//     ending, but each is a corpus case a port may change, so it is held
+//     where it was measured.
 //
-// Reported and allowed: `mirroredFailure` (the TypeScript engine's own
-// MOVENG_UNSUPPORTED, which both engines end the run with) and
-// `endedAtCheck` (the run failed its check before a segment opened).
+// Reported and allowed: `endedAtCheck` (the run failed its check before a
+// segment opened).
 //
 // Measured at 47109a3733 (2026-10-12): refused v1 12, v2 21, v3 86 (every
 // reason 12 / 23 / 95); declined v3 3 (`expression_does_not_lower`);
 // unreproduced 0 (the 6 / 6 / 4 runs once counted `failedByName` are all
 // mirrored); shim faults 0; hand-backs `builtins.compare` 0 / 5 / 5 (WITHIN's),
-// `builtins.function` 0, evaluator fallbacks 0.
+// `builtins.function` 0, evaluator fallbacks 0; evaluator not admitted 84 /
+// 102 / 591; mirrored failures 6 / 6 / 4.
 const CEILINGS = {
   v1: {
     refused: 12,
@@ -153,6 +166,8 @@ const CEILINGS = {
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
+    evaluatorNotAdmitted: 84,
+    mirroredFailure: 6,
   },
   v2: {
     refused: 21,
@@ -161,6 +176,8 @@ const CEILINGS = {
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    evaluatorNotAdmitted: 102,
+    mirroredFailure: 6,
   },
   v3: {
     refused: 86,
@@ -174,6 +191,8 @@ const CEILINGS = {
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    evaluatorNotAdmitted: 591,
+    mirroredFailure: 4,
   },
 };
 
@@ -315,6 +334,8 @@ function measured(total, runs) {
       'builtins.compare': runs.hostCalls['builtins.compare'] ?? 0,
       fallback: sum(total.fallback),
     },
+    evaluatorNotAdmitted: total.notAdmitted,
+    mirroredFailure: runs.mirroredFailure,
   };
 }
 

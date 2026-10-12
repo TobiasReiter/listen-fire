@@ -1791,8 +1791,9 @@ ceilinged class, its count beside its ceiling. The endings:
 
 It fails a run in which Rust answered nothing, admitted runs none of which
 ran whole, any decline outside the lowering's misses or any shim fault, a
-whole-corpus run whose `ranWhole` is under its routing floor (v1 1021, v2
-1249, v3 2150), or any run with a class over its ceiling. Any filter (a
+whole-corpus run whose `ranWhole` is under its routing floor (v1 1023, v2
+1251, v3 2152: the measurement, with no margin), or any run with a class
+over its ceiling. Any filter (a
 path or name pattern, related or changed files, a shard, positional paths)
 makes a run partial, and the floor does not apply to it; a ceiling is an
 upper bound, so it applies to every run.
@@ -1801,7 +1802,10 @@ upper bound, so it applies to every run.
 each class that is not a run this engine ran. Each starts at its count when
 set (2026-10-12) and only falls: a task that closes a reason lowers its
 ceiling, and a reason a closed one hid inside the same statement gets its
-own ceiling at its first measurement. Zero refusals is every ceiling at 0.
+own ceiling at its first measurement. Floors and ceilings move together
+with the measurement, never with a margin: a task that lifts runs raises
+the floors to its new measurement in the same commit. Zero refusals is
+every ceiling at 0.
 
 | class | what it counts | v1 | v2 | v3 |
 |---|---|---|---|---|
@@ -1811,14 +1815,17 @@ own ceiling at its first measurement. Zero refusals is every ceiling at 0.
 | `unreproduced` | runs that ended mid-run in this engine's own refusal: a divergence | 0 | 0 | 0 |
 | `shimFaults` | runs that ended in a fault of the shim's own | 0 | 0 | 0 |
 | `handBacks` | what a run still asks the TypeScript to compute: `builtins.function` and `builtins.compare` calls, and the evaluator's `fallback`s | 0, 0, 0 | 0, 5, 0 | 0, 5, 0 |
+| `evaluatorNotAdmitted` | expressions the evaluator switch kept for the TypeScript evaluator, never sent to Rust: mostly the TypeScript engine's runs asking it, so it falls as refused runs fall | 84 | 102 | 591 |
+| `mirroredFailure` | runs that ended mid-run in the TypeScript's own `MOVENG_UNSUPPORTED`, both engines alike: held where measured, as a port may change one | 6 | 6 | 4 |
 
 Zero refusals is not zero TypeScript until the hand-backs are 0 too. The
 other gates for zero sit beside their own tests: the binding × consumer
 matrix's refused cells per version (rust_admission_matrix.unit.test.ts:
-3 / 3 / 8 / 8), the recordings the Rust replay target skips
-(engine_runs_replay.ts: v1 13, v2 23, `{}` at 0, where every recording
-that encoded a fixed bug is then met exactly once: v2's one is among the
-skips today), and the patterns oracle, whose
+3 / 3 / 8 / 8), the recordings the Rust replay target skips, by the skip's reason
+(engine_runs_replay.ts: v1 13, v2 23 in all, `{}` at 0; its floors 430 and
+519, the measurement), where every recording that encoded a fixed bug is
+accounted for as itself, run and diverging where the bug says or skipped
+(v2's one is among the skips today), and the patterns oracle, whose
 `by_contract` (both engines refuse by the park-state contract) and
 `unrecordable` (the eval wire cannot carry the input) are not ports left
 to make, and which fails a program refused or declined for a reason the

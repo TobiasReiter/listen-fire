@@ -40,21 +40,40 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  the Rust target judging every run it ran to an ending by its verdict (a
  *  mid-run named failure included, once skipped unlabelled) and the runs
  *  that fail their check before a segment opens (once skipped as "not
- *  routed by the shim"): 430 and 519 on Rust, less a margin of 2.
- *  Raise them deliberately; never lower one to pass. */
+ *  routed by the shim"): 430 and 519 on Rust, less a margin of 2. PLAN-08A
+ *  Task 1 fix round 1 (2026-10-12) drops the margin: floors and ceilings
+ *  move together with the measurement; never a margin. The floors are the
+ *  measured 430 and 519, raised to the new measurement by the commit that
+ *  lifts runs. Never lower one to pass. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 428 },
-  v2: { recordings: 542, rust: 517 },
+  v1: { recordings: 443, rust: 430 },
+  v2: { recordings: 542, rust: 519 },
 } as const;
 
 /** The most recordings the Rust target may skip (one its engine refused or
- *  declined, so the TypeScript ran it), by corpus (PLAN-08A Task 1,
- *  2026-10-12): the skips measured then, v1 13 of 443 and v2 23 of 542.
- *  Each task that closes a refusal lowers them; a ceiling never rises. At 0
- *  the Rust target skips nothing (`skipped` is `{}`), and every recording
- *  that encoded a fixed bug is met exactly as on the other targets (v2's
- *  one, PLAN-07A Task 4d's, is among the skips today). */
-const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, number> = { v1: 13, v2: 23 };
+ *  declined, so the TypeScript ran it), by corpus and by the skip's reason,
+ *  as the teardown's every-reason ceilings are, so one reason cannot swap
+ *  for another unseen (PLAN-08A Task 1, 2026-10-12): the skips measured
+ *  then, v1 13 of 443 and v2 23 of 542. A reason not named here may skip
+ *  nothing. Each task that closes a refusal lowers them; a ceiling never
+ *  rises. At none the Rust target skips nothing (`skipped` is `{}`). */
+const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
+  v1: {
+    'the Rust engine refused it: block_head_resources': 5,
+    'the Rust engine refused it: function:chunks': 3,
+    'the Rust engine refused it: write_root_not_held': 2,
+    'the Rust engine refused it: block_multi_hop': 2,
+    'the Rust engine refused it: block_head_value_root': 1,
+  },
+  v2: {
+    'the Rust engine refused it: block_head_resources': 8,
+    'the Rust engine refused it: import_from_file': 7,
+    'the Rust engine refused it: function:chunks': 3,
+    'the Rust engine refused it: write_root_not_held': 2,
+    'the Rust engine refused it: block_multi_hop': 2,
+    'the Rust engine refused it: block_head_value_root': 1,
+  },
+};
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
 
@@ -167,6 +186,10 @@ async function checkHarvest(corpus: keyof typeof FLOORS): Promise<void> {
  */
 const ENCODED_A_FIXED_BUG: Array<{
   reason: string;
+  /** The recording is this one (its program and catalog say so), whether or
+   *  not the target ran it: a target that skips it still accounts for it. */
+  is: (recording: HostRecording) => boolean;
+  /** The replay diverged exactly where the fixed bug says. */
   matches: (recording: HostRecording, divergence: string) => boolean;
   count: Record<keyof typeof FLOORS, number>;
 }> = [
@@ -177,11 +200,13 @@ const ENCODED_A_FIXED_BUG: Array<{
     // is data now, and the FILE resource the recorded write carried from
     // that key (its `data.file`) is not made. Matched on exactly that.
     reason: "a plugin's undeclared `file` key was taken for a file (PLAN-07A Task 4d)",
+    is: (recording) =>
+      undeclaredThroughPlugins(recording).length > 0 &&
+      recording.requests.some((request) => fileResources(request.args).length > 0),
     matches: (recording, divergence) => {
       const at = /differs at args\.args\.resources\.(\d+)/.exec(divergence);
       if (at === null) return false;
-      const undeclared = throughPlugins(recording).filter((name) => recording.input.catalog?.plugins?.[name]?.output === undefined);
-      return undeclared.length > 0 && recording.requests.some((request) => fileResourceAt(request.args, Number(at[1])));
+      return undeclaredThroughPlugins(recording).length > 0 && recording.requests.some((request) => fileResources(request.args).includes(Number(at[1])));
     },
     count: { v1: 0, v2: 1 },
   },
@@ -209,12 +234,20 @@ function throughPlugins(recording: HostRecording): string[] {
   return names;
 }
 
-/** Whether a recorded `adapters.call` carries, at resource `index`, a FILE
- *  resource made from a record's `file` key (its `data.file`). */
-function fileResourceAt(args: unknown, index: number): boolean {
+/** The plugins the recording's `through` stages name that its catalog gives
+ *  no output. */
+function undeclaredThroughPlugins(recording: HostRecording): string[] {
+  return throughPlugins(recording).filter((name) => recording.input.catalog?.plugins?.[name]?.output === undefined);
+}
+
+/** Where a recorded `adapters.call` carries a FILE resource made from a
+ *  record's `file` key (its `data.file`): the resources' indices. */
+function fileResources(args: unknown): number[] {
   const call = isObject(args) && isObject(args.args) ? args.args : undefined;
-  const resource = call !== undefined && Array.isArray(call.resources) ? call.resources[index] : undefined;
-  return isObject(resource) && resource.type === 'FILE' && isObject(resource.data) && isObject(resource.data.file);
+  const resources: unknown[] = call !== undefined && Array.isArray(call.resources) ? call.resources : [];
+  return resources.flatMap((resource, index) =>
+    isObject(resource) && resource.type === 'FILE' && isObject(resource.data) && isObject(resource.data.file) ? [index] : [],
+  );
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -226,6 +259,7 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
   const diverged: string[] = [];
   const skipped = new Map<string, number>();
   const fixed = new Map<string, number>();
+  const skippedFixed = new Map<string, number>();
   let same = 0;
   for (const [i, recording] of recordings.entries()) {
     const verdict = await target.replay(recording);
@@ -233,9 +267,14 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
       case 'same':
         same += 1;
         break;
-      case 'skipped':
+      case 'skipped': {
         skipped.set(verdict.reason, (skipped.get(verdict.reason) ?? 0) + 1);
+        // A recording that encoded a fixed bug, skipped: accounted for as
+        // itself, never by another recording's skip.
+        const known = ENCODED_A_FIXED_BUG.find((entry) => entry.is(recording));
+        if (known !== undefined) skippedFixed.set(known.reason, (skippedFixed.get(known.reason) ?? 0) + 1);
         break;
+      }
       case 'diverged': {
         const known = ENCODED_A_FIXED_BUG.find((entry) => entry.matches(recording, verdict.divergence));
         if (known !== undefined) fixed.set(known.reason, (fixed.get(known.reason) ?? 0) + 1);
@@ -247,18 +286,21 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
   const expected = Object.fromEntries(
     ENCODED_A_FIXED_BUG.filter((entry) => entry.count[corpus] > 0).map((entry) => [entry.reason, entry.count[corpus]]),
   );
-  // Exactly the named ones where the target runs every recording: a new
-  // divergence, or one fewer, fails until this says why. A target that skips
-  // some (the Rust engine, under its skip ceiling) may meet fewer of them,
-  // never more: v2's Task 4d recording is one the Rust engine still refuses
-  // (2026-10-12). At a skip ceiling of 0 it skips none, and the exact match
-  // applies to it too.
-  const within = Object.entries(Object.fromEntries(fixed)).every(([reason, count]) => count <= (expected[reason] ?? 0));
-  if (skipped.size > 0 ? !within : JSON.stringify(Object.fromEntries(fixed)) !== JSON.stringify(expected)) {
-    diverged.push(`the recordings that encoded a fixed bug were ${JSON.stringify(Object.fromEntries(fixed))}, not ${JSON.stringify(expected)}`);
+  // Exactly the named ones, on every target: each recording that encoded a
+  // fixed bug either diverged where the bug says or was skipped as itself
+  // (the Rust engine refuses v2's Task 4d one, 2026-10-12). Run, it must
+  // diverge so: one that reproduces the old bug, or a new divergence, fails
+  // until this says why.
+  const accounted = Object.fromEntries(
+    [...new Set([...fixed.keys(), ...skippedFixed.keys()])].map((reason) => [reason, (fixed.get(reason) ?? 0) + (skippedFixed.get(reason) ?? 0)]),
+  );
+  if (JSON.stringify(sortedKeys(accounted)) !== JSON.stringify(sortedKeys(expected))) {
+    diverged.push(`the recordings that encoded a fixed bug were ${JSON.stringify(Object.fromEntries(fixed))} (skipped: ${JSON.stringify(Object.fromEntries(skippedFixed))}), not ${JSON.stringify(expected)}`);
   }
   return { same, skipped: Object.fromEntries(skipped), diverged };
 }
+
+const sortedKeys = (counts: Record<string, number>) => Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
 const HARVEST_CHECK_TIMEOUT_MS = 1_800_000;
 
@@ -312,6 +354,7 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
     console.log(`${corpus}: recordings the Rust engine refused, by every reason each holds: ${JSON.stringify(Object.fromEntries(everyReason))}`);
     expect(diverged).toEqual([]);
     expect(same).toBeGreaterThanOrEqual(FLOORS[corpus].rust);
-    expect(Object.values(skipped).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(RUST_SKIP_CEILING[corpus]);
+    const ceiling = RUST_SKIP_CEILING[corpus];
+    expect(Object.entries(skipped).filter(([reason, count]) => count > (ceiling[reason] ?? 0))).toEqual([]);
   });
 }

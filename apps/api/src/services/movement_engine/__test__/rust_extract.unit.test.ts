@@ -519,7 +519,11 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const source = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '}'].join('\n');
     resetRustRunStats();
     const rust = await runOn('rust', { source, event: { ...EVENT, payload: { subject: 'Acme', deck } }, fileText: { unreadable: 'garbled' } as never });
-    expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
+    // A host-contract fault (the host broke its typed contract), which this
+    // engine refuses where the TypeScript traces the reason as given: this
+    // engine's own refusal after an effect, so counted unreproduced (a
+    // divergence, README "Known divergences"), never mirrored.
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, mirroredFailure: 0, unreproduced: 1, shimFaults: 0 });
     const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
     expect(cause).toContain('MOVENG_UNSUPPORTED');
     expect(cause).toContain('a file the host calls unreadable for "garbled"');
