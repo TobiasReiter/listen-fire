@@ -312,6 +312,7 @@ pub fn refusals(
                 record_nodes: &none,
                 closure_holders: &no_closures,
                 call_holders: &[],
+                nested_holders: &[],
             };
             reasons.noted(names.rvalue(value));
         }
@@ -352,6 +353,7 @@ pub fn refusals(
         record_nodes: &none,
         closure_holders: &no_closures,
         call_holders: &[],
+        nested_holders: &[],
     };
     for statement in &program.statements {
         if let Statement::Shape(shape) = statement {
@@ -418,6 +420,7 @@ pub fn refusals(
             record_nodes: &bound.record_nodes,
             closure_holders: &closure_holders,
             call_holders: &bound.call_holders,
+            nested_holders: &bound.nested_holders,
         };
         names.body(&movement.body, Within::Body);
     }
@@ -795,7 +798,12 @@ impl<'p> Callees<'p> {
     /// through `COALESCE` or `MULTI`, so every argument bound to one is held
     /// to it as well (`call_arg_record`).
     fn takes_value(&self, param: &ast::MovementParam) -> bool {
-        match &param.type_ {
+        self.is_value_type(param.type_.as_ref())
+    }
+
+    /// Whether a declared type is a value's (no record, no walk).
+    fn is_value_type(&self, type_: Option<&ParamTypeRef>) -> bool {
+        match type_ {
             None => false,
             Some(ParamTypeRef::Value(_)) => true,
             Some(ParamTypeRef::Name(type_)) if type_.hops_raw.is_some() => false,
@@ -838,6 +846,11 @@ impl<'p> Callees<'p> {
     fn returns(&'p self, movement: &ast::MovementDeclaration, signature: &[Kind], stack: &[(String, Signature)]) -> (Option<Kind>, Holder) {
         let key = (movement.name.clone(), signature.to_vec());
         if stack.contains(&key) {
+            // A recursion: what it hands back is what it declares, when it
+            // declares a value (the checker holds every return to it).
+            if self.is_value_type(movement.return_type.as_ref()) {
+                return (Some(Kind::Value), Holder::Free);
+            }
             return (None, Holder::Other);
         }
         if let Some((_, known, held)) = self.returns.borrow().iter().find(|(k, _, _)| *k == key) {
@@ -938,6 +951,9 @@ struct Bound<'c> {
     /// What each call of a movement hands back, as far as a record goes, by
     /// where the call is written.
     call_holders: Vec<(ast::Span, Holder)>,
+    /// What each movement call nested in an expression hands back, by the
+    /// call's text (several places writing the same text joined).
+    nested_holders: Vec<(String, Holder)>,
     /// Each binding of a name, in order, as arms a MAP builds at run time
     /// (`built_arms_holder`): what a combinator over them receipts, `None`
     /// for a binding that is not such arms.
@@ -1111,6 +1127,7 @@ impl<'c> Bound<'c> {
     fn collect(&mut self, statements: &[Statement], scope: &[usize]) {
         for statement in statements {
             self.closures_of(statement, scope);
+            self.nested_movement_calls(statement);
             if let Some(op) = match statement {
                 Statement::Collection(statement) => Some(statement.collection.clone()),
                 Statement::Call(call) => self.call_collection(call),
@@ -1241,6 +1258,41 @@ impl<'c> Bound<'c> {
                 }
                 Statement::Block(statement) => self.block(&statement.block, scope),
                 _ => {}
+            }
+        }
+    }
+
+    /// The movement calls nested in a statement's own expressions (crate::nested,
+    /// version 3 on): each noted for the walk under what it passes, as a
+    /// statement's call is. A call whose value is not known to be a value
+    /// (a record, a node, or a kind decided at run time) is noted unknown,
+    /// so `Names::nested_value` refuses it: a nested call's value is read as
+    /// a value.
+    fn nested_movement_calls(&mut self, statement: &Statement) {
+        let Some(callees) = self.callees else { return };
+        if callees.language_version < 3 {
+            return;
+        }
+        for slot in direct_slots(statement) {
+            let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { continue };
+            let runs = |call: &movement_parser::tree::MExpr| match call {
+                movement_parser::tree::MExpr::Call { callee, .. } => matches!(callee.as_ref(), movement_parser::tree::MExpr::Name { name, .. } if self.callee(&name.text).is_some()),
+                _ => false,
+            };
+            for at in crate::nested::staged_calls(&tree, &runs) {
+                let Ok(RValue::Call { call }) = crate::nested::nested_call(&slot, at, callees.language_version) else { continue };
+                if self.callee(&call.callee).is_none() {
+                    continue;
+                }
+                if self.known_call_kind(&call) != Some(Kind::Value) {
+                    self.unknown_calls.push(call.span);
+                }
+                let text = movement_parser::util::utf16::Utf16::new(&slot.raw).text(at.start, at.end);
+                let held = self.call_holder(call.span);
+                match self.nested_holders.iter_mut().find(|(t, _)| *t == text) {
+                    Some((_, seen)) => *seen = returned_join(*seen, held),
+                    None => self.nested_holders.push((text, held)),
+                }
             }
         }
     }
@@ -1752,7 +1804,9 @@ impl<'c> Bound<'c> {
         let call_holder = |callee: &str, text: &str| {
             if self.calls_closure(callee) {
                 self.closure_call_holder(callee)
-            } else if self.callee(callee).is_some() || self.plugin_kind(callee).is_some() || !staged_as_value(callee) {
+            } else if self.callee(callee).is_some() {
+                nested_movement_holder(&self.nested_holders, text)
+            } else if self.plugin_kind(callee).is_some() || !staged_as_value(callee) {
                 nested_call_holder(callee, self.plugin_bind(callee))
             } else {
                 self.holds(text)
@@ -1909,6 +1963,8 @@ struct Names<'n> {
     /// What each movement call hands back, by where it is written
     /// (`Bound::call_holders`).
     call_holders: &'n [(ast::Span, Holder)],
+    /// (`Bound::nested_holders`).
+    nested_holders: &'n [(String, Holder)],
 }
 
 impl Names<'_> {
@@ -3227,6 +3283,7 @@ impl Names<'_> {
             &|callee| !self.binds_any_case(callee) && crate::js::to_upper_case(callee) == "COALESCE",
             &|callee, text| match self.callees.closure_name(callee, self.binds(callee)).and_then(|name| self.closure_holders.get(name)) {
                 Some(held) if self.calls_closure(callee) => *held,
+                _ if self.callee(callee).is_some() => nested_movement_holder(self.nested_holders, text),
                 _ if self.nested_function(callee) || self.binds_any_case(callee) || !staged_as_value(callee) => nested_call_holder(callee, plugin_bind(self.plugin_binds, callee, self.language_version)),
                 _ => self.text_holder(text),
             },
@@ -3267,7 +3324,10 @@ impl Names<'_> {
             return refuse("nested_call_form");
         }
         if self.callee(&call.callee).is_some() {
-            return refuse("nested_movement_call");
+            if self.unknown_calls.contains(&call.span) {
+                return refuse("nested_movement_call");
+            }
+            return self.call(call);
         }
         if self.calls_closure(&call.callee) {
             return self.closure_call(call);
@@ -3940,8 +4000,46 @@ fn plan_nested(
 /// Whether a staged call of `callee` is a built-in whose value a member
 /// access reads (crate::nested `member_read_calls`), bound as the
 /// expression it reads as: no extraction call and no collection op.
+/// The expression slots a statement holds itself, not those of a body it
+/// holds (a block's, an arm's, a closure's: walked where they are entered).
+fn direct_slots(statement: &Statement) -> Vec<ExprSlot> {
+    fn loc(json: &serde_json::Value) -> Option<ast::Loc> {
+        Some(ast::Loc { line: json.get("line")?.as_u64()? as usize, col: json.get("col")?.as_u64()? as usize })
+    }
+    fn walk(json: &serde_json::Value, into: &mut Vec<ExprSlot>) {
+        match json {
+            serde_json::Value::Object(object) => {
+                if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
+                    && let (Some(start), Some(end)) = (span.get("start").and_then(loc), span.get("end").and_then(loc))
+                {
+                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false });
+                    return;
+                }
+                for (key, value) in object {
+                    if key != "body" && key != "closure" {
+                        walk(value, into);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, into)),
+            _ => {}
+        }
+    }
+    let mut slots = Vec::new();
+    if let Ok(json) = serde_json::to_value(statement) {
+        walk(&json, &mut slots);
+    }
+    slots
+}
+
 fn staged_as_value(callee: &str) -> bool {
     !matches!(crate::js::to_upper_case(callee).as_str(), "EXTRACT" | "EXTRACTONE") && !crate::nested::is_call_form(callee)
+}
+
+/// What a nested movement call written as `text` hands back
+/// (`Bound::nested_holders`); anything where it was not followed.
+fn nested_movement_holder(holders: &[(String, Holder)], text: &str) -> Holder {
+    holders.iter().find(|(t, _)| t == text).map_or(Holder::Other, |(_, held)| *held)
 }
 
 fn nested_call_holder(callee: &str, plugin: Option<PluginBinds>) -> Holder {
@@ -4715,7 +4813,9 @@ mod tests {
             assert_eq!(shaped(body), None, "{body}");
         }
         let helped = |helper: &str, body: &str| file(&format!("{PRELUDE}{helper}\nmovement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
-        assert_eq!(helped("function trail(n: <number>): <text> {\n  if n <= 0 {\n    return \"end\"\n  }\n  rest = trail(n - 1)\n  return CONCAT(\"${n}\", rest)\n}", "  write crm-[:notes]-> { body: trail(2) }"), Some("nested_movement_call".into()));
+        assert_eq!(helped("function trail(n: <number>): <text> {\n  if n <= 0 {\n    return \"end\"\n  }\n  rest = trail(n - 1)\n  return CONCAT(\"${n}\", rest)\n}", "  write crm-[:notes]-> { body: trail(2) }"), None);
+        // A nested call whose value is a record is not read as a value.
+        assert_eq!(helped("function made(t: <text>) {\n  co = write crm-[:companies]-> { name: t }\n  return co\n}", "  write crm-[:notes]-> { body: CONCAT(made(\"a\").name, \"!\") }"), Some("nested_movement_call".into()));
         assert_eq!(helped("function trail(n: <number>): <text> {\n  if n <= 0 {\n    return \"end\"\n  }\n  rest = trail(n - 1)\n  return CONCAT(\"${n}\", rest)\n}", "  x = trail(2)\n  write crm-[:notes]-> { body: x }"), None);
         for (body, reason) in [
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  write crm-[:notes]-> { body: COALESCE(co, \"x\") }", "write_field_record"),

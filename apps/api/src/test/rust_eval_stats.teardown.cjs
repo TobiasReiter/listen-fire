@@ -121,7 +121,11 @@ const path = require('node:path');
 // record): v1 1025, v2 1253, v3 2159. The merge of main's record walk
 // (group G: the checker sees a record through COALESCE, IF, MULTI, a through
 // stage and a map lookup, 2026-10-12) moved no corpus run on cloud-native.
-const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2159 };
+// PLAN-08A group C, first part (a movement call nested in an expression runs
+// as the binding it means, its callee walked under what it passes; a
+// recursion hands back the value it declares, 2026-10-12) lifts v3 13: v3
+// 2172.
+const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2172 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -169,7 +173,13 @@ const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2159 };
 // function:inc retired, write_field_record 4 to 2, the two left Task 3's
 // nested movement calls); evaluator not admitted 79 / 97 / 580. Group A
 // (TypeScript's own failures mirrored) moved no corpus run: v2's and v3's
-// statement:call runs call a function an import binds.
+// statement:call runs call a function an import binds. Lowered by PLAN-08A
+// group C's first part (2026-10-12): v3 refused 79 to 66 (nested_movement_call
+// 15, movement_call 2 and write_field_record 2 retired). expression_closure
+// is 15 where it was 14: one statement (`if double(2) == 4 AND
+// COUNT(MAP([1], (v) => v)) == 1`) held both, and was counted under the
+// nested movement call it met first; its collection op is the reason the
+// closed one hid, so it carries that ceiling's first measurement.
 const CEILINGS = {
   v1: {
     refused: 10,
@@ -192,11 +202,11 @@ const CEILINGS = {
     mirroredFailure: 6,
   },
   v3: {
-    refused: 79,
+    refused: 66,
     everyReason: {
-      builtin_call_form: 16, nested_movement_call: 15, expression_closure: 14, block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4,
-      node_spread_path: 4, write_field_record: 2, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
-      'statement:call': 2, 'rvalue:block': 2, movement_call: 2, extract_call_model: 1, delete_not_record: 1,
+      builtin_call_form: 16, expression_closure: 15, block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4,
+      node_spread_path: 4, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
+      'statement:call': 2, 'rvalue:block': 2, extract_call_model: 1, delete_not_record: 1,
     },
     declined: { expression_does_not_lower: 3 },
     unreproduced: 0,

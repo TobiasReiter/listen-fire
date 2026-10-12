@@ -434,8 +434,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'movement_call',
-    routes: 'refused',
-    note: "a call of a movement whose value is not one kind on every path, or left open by a recursion: needs the call's value kind decided at run time",
+    routes: 'whole',
+    note: 'closed for a recursion that declares the value it returns by PLAN-08A group C (that value is the call\'s); still refused by name for a call whose value is not one kind on every path, which needs the kind decided at run time',
     programs: [
       () => ({ file: `function is_even(n: <number>): <boolean> {\n  if n == 0 {\n    return true\n  }\n  return is_odd(n - 1)\n}\nfunction is_odd(n: <number>): <boolean> {\n  if n == 0 {\n    return false\n  }\n  return is_even(n - 1)\n}\n${m('  a = is_even(4)\n  write crm-[:notes]-> { body: "${a}" }')}`, movementName: 'm' }),
       (pick) => ({ file: `function down(n: <number>): <number> {\n  if n <= 0 {\n    return 0\n  }\n  return down(n - 1)\n}\n${m(`  a = down(${pick([2, 3])})\n  write crm-[:notes]-> { body: "\${a}" }`)}`, movementName: 'm' }),
@@ -1091,8 +1091,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'nested_movement_call',
-    routes: 'refused',
-    note: "a movement called inside an expression: admission walks a callee's body under the calls statements make, and a nested call is none of them; needs the nested calls collected with the statements' (the closure's, the plugin's and the extraction's run)",
+    routes: 'whole',
+    note: 'closed by PLAN-08A group C: a movement called inside an expression is collected with the statement\'s calls, its callee walked under what it passes, and staged as the binding it means; still refused by name where its value is not known to be a value',
     programs: [
       () => ({ file: `function double(n: <number>): <number> {\n  return n * 2\n}\n${m('  write crm-[:notes]-> { body: "${double(3) + 1}" }')}`, movementName: 'm' }),
       (pick) => ({ file: `function inc(n: <number>): <number> {\n  return n + 1\n}\n${m(`  x = inc(${pick([1, 2])}) * 2\n  write crm-[:notes]-> { body: "\${x}" }`)}`, movementName: 'm' }),
