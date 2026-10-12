@@ -256,7 +256,7 @@ fn extractions_ask_and_read_as_typescript_asks_and_reads() {
                 assert_eq!(json!({ "classification": segment.classification, "content": segment.content }), case["segment"], "{}", case["datum"]);
                 if let Some(expected) = case.get("asPlugin") {
                     let segments = match &datum {
-                        Js::String(text) => prompt::plugin_segments(Some(text), None),
+                        Js::String(text) => prompt::plugin_segments(Some(text.as_form()), None),
                         object => prompt::plugin_segments(None, Some(object)),
                     };
                     let got: Vec<Json> = segments.iter().map(|s| json!({ "classification": s.classification, "content": s.content })).collect();

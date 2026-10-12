@@ -16,6 +16,7 @@ use std::sync::{Mutex, Once};
 use serde_json::json;
 
 use crate::lowering::{self, Mode};
+use crate::util::form;
 use crate::{NestedCall, Parsed, to_sorted_json};
 
 const OK: u32 = 0;
@@ -61,7 +62,7 @@ pub unsafe extern "C" fn parse_program(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program(&form::form_of_text(src), version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -78,7 +79,7 @@ pub unsafe extern "C" fn parse_program_eager(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program_eager(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_program_eager(&form::form_of_text(src), version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -93,7 +94,7 @@ pub unsafe extern "C" fn parse_expression(
     out_len_ptr: *mut usize,
 ) -> u32 {
     install_panic_hook();
-    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_expression(src, version));
+    let parsed = unsafe { utf8(src_ptr, src_len, "source") }.and_then(|src| crate::parse_expression(&form::form_of_text(src), version));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -114,7 +115,7 @@ pub unsafe extern "C" fn parse_nested_call(
 ) -> u32 {
     install_panic_hook();
     let call = NestedCall { at_start, at_end, origin_line, origin_col, version };
-    let parsed = unsafe { utf8(raw_ptr, raw_len, "source") }.and_then(|raw| crate::parse_nested_call(raw, &call));
+    let parsed = unsafe { utf8(raw_ptr, raw_len, "source") }.and_then(|raw| crate::parse_nested_call(&form::form_of_text(raw), &call));
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
@@ -163,7 +164,7 @@ unsafe fn lower(
     install_panic_hook();
     let inputs = unsafe { utf8(tree.0, tree.1, "the tree") }.and_then(|tree| Ok((tree, unsafe { utf8(src.0, src.1, "source") }?)));
     let (status, bytes) = match inputs {
-        Ok((tree, source)) => match lowering::lower_json_bytes(tree, source, mode) {
+        Ok((tree, source)) => match lowering::lower_json_bytes(&form::read_json_text(tree), &form::form_of_text(source), mode) {
             Ok(bytes) => (OK, bytes),
             Err(bytes) => (ERROR, bytes),
         },
@@ -174,7 +175,8 @@ unsafe fn lower(
             (ERROR, to_sorted_json(&json!({ "error": error })))
         }
     };
-    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    // Out as `JSON.stringify` writes: the engine's text form undone.
+    unsafe { write_out(form::external_bytes(bytes), out_ptr_ptr, out_len_ptr) };
     status
 }
 
@@ -198,13 +200,14 @@ pub unsafe extern "C" fn catalog_query(
     let inputs = unsafe { utf8(snapshot_ptr, snapshot_len, "the snapshot") }
         .and_then(|snapshot| Ok((snapshot, unsafe { utf8(query_ptr, query_len, "the query") }?)));
     let (status, bytes) = match inputs {
-        Ok((snapshot, query)) => match crate::catalog::query::query_json(snapshot, query) {
+        Ok((snapshot, query)) => match crate::catalog::query::query_json(&form::read_json_text(snapshot), &form::read_json_text(query)) {
             Ok(bytes) => (OK, bytes),
             Err(bytes) => (ERROR, bytes),
         },
         Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
     };
-    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    // Out as `JSON.stringify` writes: the engine's text form undone.
+    unsafe { write_out(form::external_bytes(bytes), out_ptr_ptr, out_len_ptr) };
     status
 }
 
@@ -252,7 +255,8 @@ pub fn install_panic_hook() {
 fn record_panic(info: &PanicHookInfo<'_>) {
     let mut message = LAST_PANIC.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     message.len = 0;
-    let _ = write!(message, "{info}");
+    // A message quoting a text the engine holds leaves without its form.
+    let _ = write!(message, "{}", crate::util::form::external_text(&info.to_string()));
 }
 
 /// Points the out slots at the last panic's message (empty if none). The
@@ -285,7 +289,8 @@ unsafe fn emit(parsed: Parsed, out_ptr_ptr: *mut usize, out_len_ptr: *mut usize)
         Ok(tree) => (OK, to_sorted_json(&tree)),
         Err(error) => (ERROR, to_sorted_json(&json!({ "error": error }))),
     };
-    unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
+    // Out as `JSON.stringify` writes: the engine's text form undone.
+    unsafe { write_out(form::external_bytes(bytes), out_ptr_ptr, out_len_ptr) };
     status
 }
 

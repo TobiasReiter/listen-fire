@@ -343,9 +343,8 @@ function runInput(program: Program, catalog: typeof PATTERNS_CATALOG) {
   };
 }
 
-/** One engine's run of a program the shim refuses before the engine opens
- *  (a source holding a lone surrogate), run unrecorded: how it ended, and
- *  no requests. */
+/** One engine's run of a program whose input JSON cannot carry (a Date),
+ *  so the recorder refuses it: how it ended, and no requests. */
 async function direct(engine: 'ts' | 'rust', program: Program): Promise<HostRecording> {
   const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
   const outcome = await underEngine(engine, () =>

@@ -508,7 +508,7 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
             match object.get("kind") {
                 Some(Js::String(kind)) if kind == "blockMeta" || kind == "localShape" => return Some(format!("resume_state_kind:{kind}")),
                 // Data: a value's own, a callback's params, a position.
-                Some(Js::String(kind)) if matches!(kind.as_str(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
+                Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
                     return None;
                 }
                 _ => {}
@@ -621,7 +621,7 @@ pub(crate) fn at<'v>(value: &'v Js, key: &str) -> Option<&'v Js> {
 
 pub(crate) fn text(value: Option<&Js>) -> Option<&str> {
     match value {
-        Some(Js::String(s)) => Some(s),
+        Some(Js::String(s)) => Some(s.as_form()),
         _ => None,
     }
 }

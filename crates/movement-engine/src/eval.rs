@@ -336,8 +336,8 @@ impl<'a> Evaluator<'a> {
                 // or one that is not text, is null. A record held as a value is
                 // a dict to `isDictValue`: its own keys are the binding's.
                 let value = match (&inner.value, &index.value) {
-                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key).cloned().unwrap_or(Js::Null),
-                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key)?,
+                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key.as_form()).cloned().unwrap_or(Js::Null),
+                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key.as_form())?,
                     (Js::Object(_), _) if crate::js::is_dict(&inner.value) => Js::Null,
                     (Js::Record(_), _) => Js::Null,
                     (other, _) => at_index(other, index.value.to_number()),

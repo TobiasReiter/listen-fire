@@ -605,23 +605,27 @@ describe('the check host call', () => {
 });
 
 describe('the segment input', () => {
-  it('is read before the engine starts: an event or source that cannot cross is not admitted, and starts nothing', async () => {
+  it('is read before the engine starts: an event that cannot cross is not admitted, and starts nothing (a source holding a lone half crosses)', async () => {
     const asked: unknown[] = [];
     const served = await hostWith({ adapters: { resolve: (r) => (asked.push(r), fakeAdapter()) } });
     const crossing = (input: { source: string; event: unknown }) =>
       ({ ...input, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host }) as unknown as RunMovementInput;
     resetRustRunStats();
-    for (const input of [
-      crossing({ source: '', event: { payload: { occurredAt: new Date(0) } } }),
-      crossing({ source: 'x = "\ud800"', event: { payload: {} } }),
-    ]) {
+    for (const input of [crossing({ source: '', event: { payload: { occurredAt: new Date(0) } } })]) {
       const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
       await expect(runSegmentInRust({ input, context: served.context }, engine)).resolves.toEqual({ declined: EVENT_DOES_NOT_CROSS });
       expect(started).toEqual([]);
       expect(finished()).toBe(false);
     }
-    expect(rustRunStats).toMatchObject({ routed: 0, ranWhole: 0, notAdmitted: { [EVENT_DOES_NOT_CROSS]: 2 }, declined: {}, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({ routed: 0, ranWhole: 0, notAdmitted: { [EVENT_DOES_NOT_CROSS]: 1 }, declined: {}, hostCalls: {} });
     expect(asked).toEqual([]);
+    // The source crosses: its lone half is read as the TypeScript's parser is
+    // handed it (rust_wire_round_trip.unit.test.ts runs it on both engines).
+    const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
+    resetRustRunStats();
+    await runSegmentInRust({ input: crossing({ source: 'x = "\ud800"', event: { payload: {} } }), context: served.context }, engine).catch(() => undefined);
+    expect(rustRunStats.notAdmitted).toEqual({});
+    expect(started).toHaveLength(1);
   });
 
   it('carries a dict in the event shaped like a binding as the data it is, never as a record', async () => {

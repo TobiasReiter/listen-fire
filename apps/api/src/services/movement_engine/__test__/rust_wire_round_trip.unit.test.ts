@@ -382,6 +382,31 @@ describe('lone surrogates on the wire, on both engines', () => {
     expect(onTs).toContain('"\\udc00key": "\\ud800"');
   });
 
+  it.each([
+    ['a U+FDD0', '\uFDD0'],
+    ['a lone half', '\uDC00'],
+  ])('parses a source holding %s with the TypeScript spans: either park resumes on either engine', async (_what, odd) => {
+    // The character sits before a closure on its line, so every span after
+    // it on that line is one the two parsers must count alike.
+    const source = program(`  ready = () => { return msg.\`subject\` != "${odd}" }`, '  await sleep(1h)', '  ERROR("done ${ready()} ${LENGTH("' + odd + '")}")');
+    const ts = await runOn('ts', { source });
+    resetRustRunStats();
+    const rust = await runOn('rust', { source });
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0 });
+    // The parked state, closure spans and all, byte for byte.
+    expect(rust.parks).toBe(ts.parks);
+    for (const parkedOn of [ts, rust]) {
+      const state: ParkedScopeState = JSON.parse(parkedOn.parks)[0].state;
+      const resumed = async (engine: 'ts' | 'rust') => {
+        const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), state: JSON.parse(JSON.stringify(state)) };
+        return underEngine(engine, () => ending(() => resumeMovement(input)));
+      };
+      const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
+      expect(onRust).toBe(onTs);
+      expect(onTs).toContain('MOVENG_ERROR: done true 1');
+    }
+  });
+
   it('crosses a host that is itself a wire (the HTTP host double), its JSON text holding the escapes', async () => {
     const source = program('  v = msg.`meta`', '  x = AI("${v.`hi`}")', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(x, "JSON")}")');
     const kept: HostRecording[] = [];

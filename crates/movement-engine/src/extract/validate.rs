@@ -253,8 +253,8 @@ fn normalise_call_field(raw: &Js) -> Js {
         Some(Js::String(quote)) => crate::env::object_of(vec![("quote", Js::str(quote.clone()))]),
         Some(Js::Object(evidence)) => {
             let item = match evidence.get("item") {
-                Some(Js::String(text)) if !js::trim(text).is_empty() && js::trim(text).bytes().all(|b| b.is_ascii_digit()) => {
-                    Js::Number(js::string_to_number(js::trim(text)))
+                Some(Js::String(text)) if !js::trim(text.as_form()).is_empty() && js::trim(text.as_form()).bytes().all(|b| b.is_ascii_digit()) => {
+                    Js::Number(js::string_to_number(js::trim(text.as_form())))
                 }
                 Some(other) => other.clone(),
                 None => Js::Undefined,
@@ -664,7 +664,7 @@ impl Parse {
                 self.nullable(value, "string", |v| matches!(v, Js::String(_)))
             }
             FieldType::Composite(Composite::Enum { options, open }) => {
-                if matches!(value, Js::String(s) if js::trim(s).is_empty()) {
+                if matches!(value, Js::String(s) if js::trim(s.as_form()).is_empty()) {
                     return Js::Null;
                 }
                 if let Some(matched) = match_option(value, options) {
@@ -711,7 +711,7 @@ impl Parse {
         };
         let mut kept = Vec::new();
         for item in list.items().iter() {
-            if matches!(item, Js::String(s) if js::trim(s).is_empty()) {
+            if matches!(item, Js::String(s) if js::trim(s.as_form()).is_empty()) {
                 continue;
             }
             if let Some(matched) = match_option(item, options) {
@@ -747,7 +747,7 @@ impl Parse {
 /// ignoring case.
 fn match_option(candidate: &Js, options: &[String]) -> Option<String> {
     let Js::String(candidate) = candidate else { return None };
-    let trimmed = js::trim(candidate);
+    let trimmed = js::trim(candidate.as_form());
     if let Some(exact) = options.iter().find(|o| *o == trimmed) {
         return Some(exact.clone());
     }
@@ -764,7 +764,7 @@ fn salvaged_quote(evidence: &Js) -> Option<String> {
     if let Js::Object(object) = evidence {
         for key in ["quote", "text", "evidence"] {
             if let Some(Js::String(named)) = object.get(key)
-                && !js::trim(named).is_empty()
+                && !js::trim(named.as_form()).is_empty()
             {
                 return Some(named.to_string());
             }
@@ -783,7 +783,7 @@ fn string_leaves(value: &Js, depth: usize, into: &mut Vec<String>) {
     }
     match value {
         Js::String(s) => {
-            if !js::trim(s).is_empty() {
+            if !js::trim(s.as_form()).is_empty() {
                 into.push(s.to_string());
             }
         }

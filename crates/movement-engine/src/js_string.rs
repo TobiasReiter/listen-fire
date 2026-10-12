@@ -24,21 +24,27 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::ops::Deref;
 
-/// U+FDD0: what begins a lone surrogate's escape, or a U+FDD0 written twice.
-pub const ESCAPE: char = '\u{FDD0}';
-const PLANE_16: u32 = 0x10_0000;
-const ESCAPE_UTF8: &[u8] = "\u{FDD0}".as_bytes();
+pub use movement_parser::util::form::{read_json_text, ESCAPE, Piece, is_well_formed, pieces, text_of_units, units_of, units_vec, utf16_len};
 
 /// A JavaScript string, in the engine's form (see the module's note).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JsString(String);
 
 impl JsString {
-    /// The text as the engine holds it.
-    pub fn as_str(&self) -> &str {
+    /// The text in the engine's in-band form (the module's note): for a
+    /// function of this crate that reads the form (`utf16_len`, `trim`,
+    /// `to_lower_case`, `string_to_number`, a comparison with known text, a
+    /// key), and for the JSON writer. Never read it with a `str` method that
+    /// counts, cuts or searches: there a lone surrogate is two characters
+    /// where JavaScript sees one unit.
+    pub fn as_form(&self) -> &str {
         &self.0
+    }
+
+    /// `text === ""`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn into_string(self) -> String {
@@ -61,13 +67,6 @@ impl JsString {
     }
 }
 
-impl Deref for JsString {
-    type Target = str;
-
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
 
 impl fmt::Display for JsString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -180,93 +179,6 @@ impl PartialEq<JsString> for String {
 
 // ── The form ──────────────────────────────────────────────────────────────────
 
-/// One piece of a text: a character, or a lone surrogate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Piece {
-    Char(char),
-    Lone(u16),
-}
-
-impl Piece {
-    pub fn len_utf16(self) -> usize {
-        match self {
-            Piece::Char(c) => c.len_utf16(),
-            Piece::Lone(_) => 1,
-        }
-    }
-
-    /// Appended to a text in the engine's form.
-    pub fn push_onto(self, out: &mut String) {
-        match self {
-            Piece::Char(ESCAPE) => {
-                out.push(ESCAPE);
-                out.push(ESCAPE);
-            }
-            Piece::Char(c) => out.push(c),
-            Piece::Lone(unit) => {
-                out.push(ESCAPE);
-                out.push(char::from_u32(PLANE_16 + u32::from(unit - 0xD800)).expect("a plane-16 scalar"));
-            }
-        }
-    }
-}
-
-/// A text's pieces, in order. A U+FDD0 not followed by its escape's second
-/// character (a text that never passed the JSON reader) is itself.
-pub fn pieces(text: &str) -> impl Iterator<Item = Piece> + '_ {
-    let mut chars = text.chars().peekable();
-    std::iter::from_fn(move || {
-        let c = chars.next()?;
-        if c != ESCAPE {
-            return Some(Piece::Char(c));
-        }
-        match chars.peek().copied() {
-            Some(ESCAPE) => {
-                chars.next();
-                Some(Piece::Char(ESCAPE))
-            }
-            Some(next) if (PLANE_16..PLANE_16 + 0x800).contains(&(next as u32)) => {
-                chars.next();
-                Some(Piece::Lone((next as u32 - PLANE_16) as u16 + 0xD800))
-            }
-            _ => Some(Piece::Char(ESCAPE)),
-        }
-    })
-}
-
-/// A text's UTF-16 code units.
-pub fn units_of(text: &str) -> impl Iterator<Item = u16> + '_ {
-    pieces(text).flat_map(|piece| {
-        let mut buffer = [0u16; 2];
-        let units: Vec<u16> = match piece {
-            Piece::Char(c) => c.encode_utf16(&mut buffer).to_vec(),
-            Piece::Lone(unit) => vec![unit],
-        };
-        units
-    })
-}
-
-/// A text's code units, collected.
-pub fn units_vec(text: &str) -> Vec<u16> {
-    if !text.contains(ESCAPE) {
-        return text.encode_utf16().collect();
-    }
-    units_of(text).collect()
-}
-
-/// The text these code units make, in the engine's form.
-pub fn text_of_units(units: &[u16]) -> String {
-    let mut out = String::with_capacity(units.len());
-    for decoded in char::decode_utf16(units.iter().copied()) {
-        let piece = match decoded {
-            Ok(c) => Piece::Char(c),
-            Err(lone) => Piece::Lone(lone.unpaired_surrogate()),
-        };
-        piece.push_onto(&mut out);
-    }
-    out
-}
-
 /// `text` in the canonical form: a lone high half met by a lone low half
 /// made the pair, a bare U+FDD0 written twice.
 fn canonical(text: String) -> String {
@@ -274,19 +186,6 @@ fn canonical(text: String) -> String {
         return text;
     }
     text_of_units(&units_vec(&text))
-}
-
-/// `.length`: UTF-16 code units.
-pub fn utf16_len(text: &str) -> usize {
-    if !text.contains(ESCAPE) {
-        return text.encode_utf16().count();
-    }
-    pieces(text).map(Piece::len_utf16).sum()
-}
-
-/// Whether the text holds no lone surrogate.
-pub fn is_well_formed(text: &str) -> bool {
-    !text.contains(ESCAPE) || pieces(text).all(|piece| matches!(piece, Piece::Char(_)))
 }
 
 /// `text.slice(from, to)` by code unit (`from <= to`, both within the
@@ -366,77 +265,15 @@ pub fn json_quote(text: &str) -> String {
 
 // ── The JSON text boundary ────────────────────────────────────────────────────
 
-/// A JSON text as `JSON.parse` reads it, ready for serde_json: each lone
-/// `\udXXX` escape (serde_json refuses one) and each U+FDD0, raw or escaped,
-/// rewritten in the engine's form. Everything else is left as written, a
-/// pair's two escapes included. A text with neither is itself.
-pub fn read_json_text(text: &str) -> Cow<'_, str> {
-    if !text.contains(ESCAPE) && !text.contains("\\u") {
-        return Cow::Borrowed(text);
-    }
-    let bytes = text.as_bytes();
-    let hex_at = |at: usize| -> Option<u16> {
-        let digits = text.get(at..at + 4)?;
-        digits.bytes().all(|b| b.is_ascii_hexdigit()).then(|| u16::from_str_radix(digits, 16).ok()).flatten()
-    };
-    let escape_at = |at: usize| -> Option<u16> { (bytes.get(at) == Some(&b'\\') && bytes.get(at + 1) == Some(&b'u')).then(|| hex_at(at + 2)).flatten() };
-    let mut out = String::with_capacity(text.len());
-    let mut in_string = false;
-    let mut copied = 0;
-    let mut at = 0;
-    let mut changed = false;
-    while at < bytes.len() {
-        match bytes[at] {
-            b'"' => {
-                in_string = !in_string;
-                at += 1;
-            }
-            b'\\' if in_string => match escape_at(at) {
-                Some(0xD800..=0xDBFF) if matches!(escape_at(at + 6), Some(0xDC00..=0xDFFF)) => at += 12,
-                Some(unit @ (0xD800..=0xDFFF | 0xFDD0)) => {
-                    out.push_str(&text[copied..at]);
-                    let piece = if unit == 0xFDD0 { Piece::Char(ESCAPE) } else { Piece::Lone(unit) };
-                    piece.push_onto(&mut out);
-                    at += 6;
-                    copied = at;
-                    changed = true;
-                }
-                // Any other escape, a backslash's included, is two bytes on.
-                _ => at += 2,
-            },
-            _ if in_string && bytes[at..].starts_with(ESCAPE_UTF8) => {
-                out.push_str(&text[copied..at]);
-                Piece::Char(ESCAPE).push_onto(&mut out);
-                at += ESCAPE.len_utf8();
-                copied = at;
-                changed = true;
-            }
-            _ => at += 1,
-        }
-    }
-    if !changed {
-        return Cow::Borrowed(text);
-    }
-    out.push_str(&text[copied..]);
-    Cow::Owned(out)
-}
-
 /// A JSON text serde_json wrote, as `JSON.stringify` writes it: each lone
 /// surrogate the engine's form holds written `\udXXX`, each U+FDD0 written
 /// once. The escape only ever sits inside a JSON string, which is where
 /// serde_json puts text.
 pub fn write_json_text(text: String) -> String {
-    if !text.contains(ESCAPE) {
-        return text;
+    match movement_parser::util::form::external_text(&text) {
+        Cow::Borrowed(_) => text,
+        Cow::Owned(out) => out,
     }
-    let mut out = String::with_capacity(text.len());
-    for piece in pieces(&text) {
-        match piece {
-            Piece::Lone(unit) => out.push_str(&format!("\\u{unit:04x}")),
-            Piece::Char(c) => out.push(c),
-        }
-    }
-    out
 }
 
 /// `serde_json::from_str`, through the JSON text reader.
@@ -462,7 +299,7 @@ mod tests {
         let high = JsString::from_units(&[0xD83D]);
         assert_eq!(high.len_utf16(), 1);
         assert!(!high.is_well_formed());
-        assert_eq!(units_vec(&high), [0xD83D]);
+        assert_eq!(units_vec(high.as_form()), [0xD83D]);
         assert!(JsString::from("😀").is_well_formed());
         assert_eq!(JsString::from(format!("a{high}")).len_utf16(), 2);
     }
@@ -478,11 +315,11 @@ mod tests {
     #[test]
     fn a_text_holding_the_escape_character_keeps_it() {
         let text = JsString::from_units(&[0x61, 0xFDD0, 0xD800]);
-        assert_eq!(units_vec(&text), [0x61, 0xFDD0, 0xD800]);
+        assert_eq!(units_vec(text.as_form()), [0x61, 0xFDD0, 0xD800]);
         assert_eq!(text.len_utf16(), 3);
         // A bare one (never read through the JSON reader) is itself.
         assert_eq!(JsString::from("a\u{FDD0}b").len_utf16(), 3);
-        assert_eq!(units_vec(&JsString::from("a\u{FDD0}b")), [0x61, 0xFDD0, 0x62]);
+        assert_eq!(units_vec(JsString::from("a\u{FDD0}b").as_form()), [0x61, 0xFDD0, 0x62]);
     }
 
     #[test]

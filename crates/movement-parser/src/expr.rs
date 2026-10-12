@@ -1418,7 +1418,7 @@ fn is_bare_type(s: &[u16]) -> bool {
     }
     let mut i = end;
     let expect = |text: &str, i: &mut usize| {
-        let units: Vec<u16> = text.encode_utf16().collect();
+        let units: Vec<u16> = crate::util::form::units_vec(text);
         let ok = s.get(*i..*i + units.len()) == Some(&units[..]);
         if ok {
             *i += units.len();

@@ -134,8 +134,8 @@ fn strings_hold_what_javascript_holds() {
             other => panic!("{fn_} takes a text, not {other:?}"),
         };
         let got = match fn_ {
-            "slice" => json!({ "value": encode(&Js::str(js_string::slice_units(&text(), 0, args[1].as_u64().unwrap() as usize))) }),
-            "json.quote" => json!({ "value": movement_engine::js::json_quote(&text()) }),
+            "slice" => json!({ "value": encode(&Js::str(js_string::slice_units(text().as_form(), 0, args[1].as_u64().unwrap() as usize))) }),
+            "json.quote" => json!({ "value": movement_engine::js::json_quote(text().as_form()) }),
             "json.text" => {
                 // The JSON text as a host writes it (the case holds it as a
                 // text, in the engine's form).
@@ -149,7 +149,7 @@ fn strings_hold_what_javascript_holds() {
                 json!({ "value": shape(&plain(&movement_engine::env::js_of_json(&read))) })
             }
             "bound" => {
-                let (content, chars, from) = movement_engine::extract::bound_text(&text(), args[1].as_f64().unwrap());
+                let (content, chars, from) = movement_engine::extract::bound_text(text().as_form(), args[1].as_f64().unwrap());
                 json!({ "value": shape(&plain(&Js::array(vec![Js::str(content), Js::Number(chars), from.map_or(Js::Null, |n| Js::Number(n as f64))]))) })
             }
             _ => {

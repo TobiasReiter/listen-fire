@@ -48,7 +48,7 @@ import {
   tallyVerdict,
   type DryRunRoute,
 } from './rust_stats';
-import { filesInParkState, LONE_SURROGATE, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
+import { filesInParkState, REFUSED, RustShimError, WireOut, plainJson, record, string } from './rust_wire';
 
 export { RustShimError, plainJson } from './rust_wire';
 
@@ -216,9 +216,7 @@ async function segmentInRust(
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
   // Read before the instance opens. An event or state that cannot cross the
-  // eval wire as itself (a `Date` in a payload), or a source holding a lone
-  // surrogate (program text: the checker's spans count it as one unit, the
-  // engine's parser as its in-band escape), is refused here, before the
+  // eval wire as itself (a `Date` in a payload) is refused here, before the
   // engine has asked the host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
@@ -644,7 +642,7 @@ function segmentInput(
   // The event is data, whatever keys it carries: a dict shaped like a
   // binding crosses, and is read, as the dict it is.
   const event = wire.value(input.event);
-  if (event === REFUSED || LONE_SURROGATE.test(input.source)) return undefined;
+  if (event === REFUSED) return undefined;
   // A parked state's files are made host-side, in the segment's file table:
   // the engine is handed their handles, never their descriptors.
   const state = resume !== undefined ? new WireOut({ files: wire.files }).value(filesInParkState(resume.state)) : undefined;

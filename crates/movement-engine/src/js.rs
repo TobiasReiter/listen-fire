@@ -362,7 +362,7 @@ impl Js {
             Js::Null => 0.0,
             Js::Bool(b) => f64::from(u8::from(*b)),
             Js::Number(n) => *n,
-            Js::String(s) => string_to_number(s),
+            Js::String(s) => string_to_number(s.as_form()),
             Js::Array(_) => string_to_number(&self.to_js_string()),
             Js::Object(_) | Js::Record(_) | Js::File(_) | Js::Function(_) => f64::NAN,
         }
@@ -823,7 +823,7 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
         Js::File(file) => write_json(&crate::file::display(file), indent, depth, out, held),
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
-        Js::String(s) => out.push_str(&json_quote(s)),
+        Js::String(s) => out.push_str(&json_quote(s.as_form())),
         Js::Array(array) => {
             if array.items().is_empty() {
                 out.push_str("[]");

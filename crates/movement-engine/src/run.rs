@@ -204,7 +204,10 @@ fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catal
 }
 
 /// The segment entry: the run, and its `done`.
-pub async fn segment(host: Host, input: SegmentInput) -> Json {
+pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
+    // The source as the TypeScript engine's parser is handed it: its text
+    // encoded as UTF-8 (`TextEncoder`), so a lone half is U+FFFD there.
+    input.source = movement_parser::util::form::usv_text(&input.source).into_owned();
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
@@ -2650,7 +2653,7 @@ mod tests {
                 let read = env::decode(&request.args["args"]).unwrap();
                 let Js::Object(read) = read else { panic!("a read") };
                 let Some(Js::String(field)) = read.get("fieldId") else { panic!("a field") };
-                match payload.get(field.as_str()) {
+                match payload.get(field.as_form()) {
                     Some(value) => json!({ "value": { "result": value } }),
                     None => json!({ "value": {} }),
                 }

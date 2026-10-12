@@ -11,7 +11,8 @@
 //     `applyStdlib`): TRIM, LOWER, UPPER, LENGTH, TOSTRING, TONUMBER, SPLIT
 //     (`""` and lone-half separators among them), TEXT.REGEX_EXTRACT (a
 //     pattern's `.` is one code unit), TEXT.SLUG, TEXT.PAIRS,
-//     TEXT.SERIALISE (keys too), and a date read through V8's parser;
+//     TEXT.SERIALISE (keys too), URL.HOST (WHATWG's `new URL`), and a date
+//     read through V8's parser;
 //   - the comparator (filter.ts `compareValues`): `==`, `<`, `CONTAINS`;
 //   - cuts: `slice(0, n)` at every unit, and a file bounded for the prompt
 //     (extraction.ts `boundFileText`), which keep the half on their side;
@@ -72,6 +73,9 @@ export function writeStringsOracle(rand: Rand, write: Write): void {
     stdlib('text.slug', [t]);
     stdlib('text.serialise', [{ [t]: t, k: [t] }, 'JSON']);
     stdlib('text.pairs', [{ [t]: t }]);
+    // `new URL` reads a USVString: a lone half is U+FFFD to it.
+    stdlib('url.host', [`https://a${t}.example/x`]);
+    stdlib('url.host', [`${t}.example`]);
     cases.push({ fn: 'coerce.datetime', args: [wire(`Mar${t} 12 2026`)], outcome: outcome(() => coerceToDatetime(`Mar${t} 12 2026`)) });
     const other = pick(rand, texts);
     for (const op of ['eq', 'lt', 'contains'] as const) {

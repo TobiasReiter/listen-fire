@@ -416,7 +416,7 @@ impl Encoder<'_> {
             Js::Number(n) if n.is_infinite() => json!(["n", if *n > 0.0 { "Infinity" } else { "-Infinity" }]),
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
-            Js::String(s) => wire_text(s),
+            Js::String(s) => wire_text(s.as_form()),
             // The built-in itself, which the host names back (`Object`, or
             // `Object.prototype[name]`).
             Js::Function(function) => json!(["f", function.0]),
@@ -751,7 +751,7 @@ mod tests {
         let Js::Object(object) = wire.decode(&sent).unwrap() else { panic!("an object") };
         let (key, value) = &object.entries()[0];
         assert_eq!(crate::js_string::units_vec(key), [0xD83D]);
-        assert!(matches!(value, Js::String(text) if crate::js_string::units_vec(text) == [0x61, 0xDE00]));
+        assert!(matches!(value, Js::String(text) if crate::js_string::units_vec(text.as_form()) == [0x61, 0xDE00]));
         assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [[["s16", [0xD83D]], ["s16", [0x61, 0xDE00]]], ["k", "😀"]]]));
         // Two halves on the wire, one after the other, are the pair.
         assert!(matches!(decode(&json!(["s16", [0xD83D, 0xDE00]])).unwrap(), Js::String(text) if text == "😀"));

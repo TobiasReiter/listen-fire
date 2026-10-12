@@ -998,7 +998,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
             config.set(fed.name.clone(), Js::str(self.source_text.borrow().clone()));
         }
         let url = match config.get("url") {
-            Some(Js::String(url)) => Some(emission::cut(url, TRACE_URL_CHARS)),
+            Some(Js::String(url)) => Some(emission::cut(url.as_form(), TRACE_URL_CHARS)),
             _ => None,
         };
         for param in spec.and_then(|s| s.required_args.as_ref()).into_iter().flatten() {
@@ -1132,7 +1132,7 @@ fn is_blank(value: Option<&Js>) -> bool {
     match value {
         None => true,
         Some(value) if value.is_nullish() => true,
-        Some(Js::String(text)) => js::trim(text).is_empty(),
+        Some(Js::String(text)) => js::trim(text.as_form()).is_empty(),
         Some(_) => false,
     }
 }

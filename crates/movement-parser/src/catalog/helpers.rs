@@ -58,7 +58,7 @@ fn unquote_construction_arg(raw: &str) -> String {
 /// `unwrapCredentialArg(raw)`: the name a credential argument's text names —
 /// a bare identifier or one backtick-quoted name spanning all of it.
 pub fn unwrap_credential_arg(raw: &str) -> Option<String> {
-    let trimmed: Vec<u16> = js::trim(raw).encode_utf16().collect();
+    let trimmed: Vec<u16> = crate::util::form::units_vec(&js::trim(raw));
     if trimmed.first() == Some(&u16::from(b'`')) {
         let (name, close) = scan_backtick_name(&trimmed, 0)?;
         return (close == trimmed.len() - 1).then_some(name);

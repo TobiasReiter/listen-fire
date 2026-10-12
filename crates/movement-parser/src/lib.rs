@@ -134,7 +134,7 @@ mod tests {
         // by the origin's; the closure's statement is on a later line, so
         // its columns are its own.
         let raw = "1 + f(x, () => {\n  y = 🌍x\n}) + 2";
-        let end = raw.encode_utf16().count() - 4;
+        let end = crate::util::form::utf16_len(raw) - 4;
         let call = NestedCall { at_start: 4, at_end: end as u32, origin_line: 3, origin_col: 5, version: 3 };
         let value = parse_nested_call(raw, &call).unwrap();
         assert_eq!(value.pointer("/call/callee"), Some(&json!("f")));

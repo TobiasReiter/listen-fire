@@ -665,7 +665,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
         _ => return Js::Null,
     };
     let separator = match separator {
-        Js::String(s) => s.as_str(),
+        Js::String(s) => s.as_form(),
         _ => " | ",
     };
     let parts: Vec<String> = record

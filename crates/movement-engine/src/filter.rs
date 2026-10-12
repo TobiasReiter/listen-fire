@@ -45,7 +45,7 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZon
             _ => false,
         },
         FilterOperator::Contains => match (left, right) {
-            (Js::String(l), Js::String(r)) => crate::js_string::includes(l, r),
+            (Js::String(l), Js::String(r)) => crate::js_string::includes(l.as_form(), r.as_form()),
             (Js::Array(list), _) => list.items().iter().any(|item| js::same_value_zero(item, right)),
             _ => false,
         },
@@ -77,7 +77,7 @@ fn set_equals(a: &[Js], b: &[Js]) -> bool {
 fn to_finite_number(value: &Js) -> Option<f64> {
     match value {
         Js::Number(n) => n.is_finite().then_some(*n),
-        Js::String(s) if !js::trim(s).is_empty() => Some(js::string_to_number(s)).filter(|n| n.is_finite()),
+        Js::String(s) if !js::trim(s.as_form()).is_empty() => Some(js::string_to_number(s.as_form())).filter(|n| n.is_finite()),
         _ => None,
     }
 }
@@ -106,7 +106,7 @@ fn relational_order(left: &Js, right: &Js, local: LocalZone<'_>) -> Option<f64> 
         return Some(js::math_sign(l - r));
     }
     match (left, right) {
-        (Js::String(l), Js::String(r)) => Some(match js::utf16_cmp(l, r) {
+        (Js::String(l), Js::String(r)) => Some(match js::utf16_cmp(l.as_form(), r.as_form()) {
             std::cmp::Ordering::Less => -1.0,
             std::cmp::Ordering::Equal => 0.0,
             std::cmp::Ordering::Greater => 1.0,

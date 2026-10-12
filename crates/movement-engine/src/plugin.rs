@@ -55,7 +55,7 @@ fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
         }
         // By UTF-16 unit: an astral character spreads as its two halves.
         Js::String(text) => {
-            for (i, unit) in crate::js_string::split_units(text).into_iter().enumerate() {
+            for (i, unit) in crate::js_string::split_units(text.as_form()).into_iter().enumerate() {
                 fields.set(i.to_string(), Js::str(unit));
             }
         }
@@ -195,7 +195,7 @@ impl Run<'_> {
         let mut entry = Members::default();
         entry.set("plugin", Js::str(registered.clone()));
         if let Some(Js::String(url)) = config.get("url") {
-            entry.set("url", Js::str(crate::extract::emission::cut(url, crate::extract::run::TRACE_URL_CHARS)));
+            entry.set("url", Js::str(crate::extract::emission::cut(url.as_form(), crate::extract::run::TRACE_URL_CHARS)));
         }
         entry.set("durationMs", Js::Number(duration));
         result.trace_into(&mut entry);

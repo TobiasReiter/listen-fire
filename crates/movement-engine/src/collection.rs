@@ -272,7 +272,7 @@ pub(crate) fn reading(call: &CallStatement, binds: bool, language_version: u32) 
         CallArg::Closure { closure, span, .. } => ArmExpression::Closure { closure: closure.clone(), span: *span },
         CallArg::Expr { expr, .. } => {
             let raw = crate::js::trim(&expr.raw);
-            let units: Vec<u16> = raw.encode_utf16().collect();
+            let units: Vec<u16> = crate::js_string::units_vec(raw);
             match movement_parser::scan::scan_name(&units, 0) {
                 Some((name, end)) if end == units.len() => ArmExpression::Ref { name, span: expr.span },
                 _ => return Err(format!("The function for '{}' is a function's name, or a closure — not the expression '{raw}'", call.callee)),
@@ -706,7 +706,7 @@ impl Run<'_> {
                         continue;
                     }
                     if op == CollectionOp::Keyby {
-                        if filed.get(key).is_some() {
+                        if filed.get(key.as_form()).is_some() {
                             return Err(Stop::Thrown(Failure::engine(
                                 "MOVENG_RUNTIME",
                                 format!("KEYBY says each key names one member, and '{key}' names more than one. Use GROUPBY if a key can have several."),
@@ -715,7 +715,7 @@ impl Run<'_> {
                         filed.set(key.to_string(), member.clone());
                         continue;
                     }
-                    let group = match filed.get(key) {
+                    let group = match filed.get(key.as_form()) {
                         Some(Js::Array(group)) => {
                             let mut items = group.items().clone();
                             items.push(member.clone());
@@ -724,7 +724,7 @@ impl Run<'_> {
                         Some(_) => vec![member.clone()],
                         // A key the answer does not own reads through its
                         // prototype: a list found there is pushed to in place.
-                        None => match filed.proto.as_ref().map(|proto| crate::js::inherited(proto, key)) {
+                        None => match filed.proto.as_ref().map(|proto| crate::js::inherited(proto, key.as_form())) {
                             Some(Js::Array(list)) => {
                                 list.push(member.clone());
                                 continue;
