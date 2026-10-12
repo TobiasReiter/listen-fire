@@ -997,6 +997,12 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  big = (n: <number>) => n > 2\n  small = (n: <number>) => n < 10\n  if big(4) AND small(4) {\n    write crm-[:notes]-> { body: "between" }\n  }\n  if big(1) AND small(9) {\n    write crm-[:notes]-> { body: "never" }\n  }' }),
       () => ({ file: `${COMPANY_DECL}\n${m('  n = COUNT(extract([msg.`text`], Company))\n  first = ONLY(extract([msg.`subject`], Company)).name\n  write crm-[:notes]-> { body: "${n} ${first}" }')}`, replies: [{ records: [{ name: said('Acme') }, { name: said('Beta') }] }, { records: [{ name: said('Gamma') }] }] }),
       () => ({ file: `import { echo } from plugins\n${m('  said = { page: echo(q: msg.`subject`) }\n  write crm-[:notes]-> { body: COALESCE(said.page, "none") }')}` }),
+      // A nested call's value read whole by a write's field, a plugin's
+      // argument and an extraction's source keeps the trail of what fed it.
+      () => ({ body: '  loud = (t: <text>) => UPPER(t)\n  write crm-[:notes]-> { body: loud(msg.`subject`) }' }),
+      () => ({ file: `import { echo } from plugins\n${m('  write crm-[:notes]-> { body: COALESCE(echo(q: READ(msg.`deck`)), "none") }')}` }),
+      () => ({ file: `import { echo } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  said = echo(q: COALESCE(loud(msg.`subject`), "n"))\n  write crm-[:notes]-> { body: said }')}` }),
+      () => ({ file: m('  loud = (t: <text>) => UPPER(t)\n  d = extract from [loud(msg.`text`)] {\n    name: "the company\'s name"\n  }\n  write crm-[:notes]-> { body: COALESCE(d.`name`, "none") }'), replies: [{ name: { value: 'Acme', evidence: { item: '0', quote: 'ACME' } } }] }),
       () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    return UPPER(t)\n  }\n  write crm-[:notes]-> { body: CONCAT(later(msg.`subject`), "!") }', checks: false, routes: 'unreached' }),
     ],
   },

@@ -759,7 +759,8 @@ impl Run<'_> {
                     };
                     let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
                     let span = env::js_of_json(&serde_json::to_value(line.slot.span).expect("a span is JSON"));
-                    self.evaluate_with(&expr, at, Some(span), None, Some(functions)).await?
+                    let evaluated = self.evaluate_with(&expr, at, Some(span), None, Some(functions)).await?;
+                    out_of(evaluated, at)
                 }
                 None => self.evaluate_slot(&line.slot, scope).await?,
             };
@@ -827,7 +828,8 @@ impl Run<'_> {
     /// citing the slot's span.
     pub(crate) async fn evaluate_slot(&self, slot: &ast::ExprSlot, scope: &Rc<Scope>) -> Result<Evaluated, Stop> {
         if let Some((staged, scratch)) = self.staged(slot, scope).await? {
-            return Box::pin(self.evaluate_slot(&staged, &scratch)).await;
+            let evaluated = Box::pin(self.evaluate_slot(&staged, &scratch)).await?;
+            return Ok(out_of(evaluated, &scratch));
         }
         let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
         self.evaluate(&expr, scope, slot).await
@@ -2163,6 +2165,19 @@ pub(crate) fn unquote_construction_arg(raw: &str) -> String {
     t.to_string()
 }
 
+/// A value evaluated in the scratch scope its slot's nested calls were
+/// bound in, its trail read there: the caller resolves a trail in its own
+/// scope, where no `#nested` name exists. A name bound with no trail is the
+/// caller's own (every nested binding carries one), so it stays a name.
+fn out_of(evaluated: Evaluated, scratch: &Scope) -> Evaluated {
+    match &evaluated.prov {
+        Prov::Binding(name) => match crate::eval::Names::value(scratch, name).and_then(|b| b.trail) {
+            Some(trail) => Evaluated { prov: Prov::Built(trail), ..evaluated },
+            None => evaluated,
+        },
+        Prov::Built(_) => evaluated,
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -10,9 +10,10 @@
 //     fresh copy of the same scripted host, and the shim's counts say what
 //     its admission did: ran whole, refused (with every reason), declined;
 //   - a program Rust runs whole must make the TypeScript's requests with the
-//     TypeScript's answers and end as it ended (its writes and trace are its
-//     result) — exactly, or else as the kit's matching rule allows, the
-//     TypeScript recording replayed through the Rust target;
+//     TypeScript's answers and end as it ended (its writes, their provenance
+//     and its trace are its result): the TypeScript recording replayed
+//     through the Rust target must pass the kit's verdict, and the two
+//     recordings agree exactly or as the kit's matching rule allows;
 //   - a program Rust refuses must name the pattern among its reasons, and
 //     the TypeScript engine runs it (the fallback): the two outcomes agree.
 //
@@ -442,8 +443,9 @@ interface CaseRecord {
   program: Program;
   routes: Routes;
   reasons: string[];
-  /** For a whole run: whether the Rust run made the TypeScript's requests
-   *  exactly (`exact`), or as the kit's matching rule allows (`kit`). */
+  /** For a whole run, which always passes the kit's verdict: whether the
+   *  Rust run also made the TypeScript's requests and result exactly
+   *  (`exact`), or only as the kit's matching rule allows (`kit`). */
   agreement?: 'exact' | 'kit' | 'check';
   requests: string[];
   ending: unknown;
@@ -523,15 +525,17 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
           console.error('  TS ENDING', JSON.stringify(ending(ts)).slice(0, 600));
           console.error('  RUST ENDING', JSON.stringify(ending(rust)).slice(0, 600));
         }
-        if (same) agreement = 'exact';
-        else {
-          const verdict = await Promise.race([
-            rustTarget.replay(ts),
-            new Promise<{ kind: 'skipped'; reason: string }>((resolve) => setTimeout(() => resolve({ kind: 'skipped', reason: 'the replay never ended' }), 20_000)),
-          ]);
-          if (verdict.kind === 'same') agreement = 'kit';
-          else problems.push(`${where}\n  the engines disagree: ${verdict.kind === 'diverged' ? verdict.divergence : verdict.reason}`);
-        }
+        // The kit's verdict on every whole run, not only where the two
+        // recordings differ: the TypeScript recording replayed through the
+        // Rust target must end with the same result (each write's
+        // provenance, each extraction site's dataSources), not only after
+        // the same requests.
+        const verdict = await Promise.race([
+          rustTarget.replay(ts),
+          new Promise<{ kind: 'skipped'; reason: string }>((resolve) => setTimeout(() => resolve({ kind: 'skipped', reason: 'the replay never ended' }), 20_000)),
+        ]);
+        if (verdict.kind !== 'same') problems.push(`${where}\n  the engines disagree: ${verdict.kind === 'diverged' ? verdict.divergence : verdict.reason}`);
+        else agreement = same ? 'exact' : 'kit';
       } else if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) {
         problems.push(`${where}\n  refused, yet its fallback ended otherwise than the TypeScript run`);
       }
