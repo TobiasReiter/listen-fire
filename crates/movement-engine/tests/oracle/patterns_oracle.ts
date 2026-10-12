@@ -540,6 +540,9 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
       } else if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) {
         problems.push(`${where}\n  refused, yet its fallback ended otherwise than the TypeScript run`);
       }
+      if (program.exact === true && agreement !== 'exact') {
+        problems.push(`${where}\n  says its requests match byte for byte, yet they are ${agreement ?? 'not compared'}`);
+      }
       cases.push({
         pattern: pattern.reason,
         program,

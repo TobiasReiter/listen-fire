@@ -85,8 +85,11 @@ import type { FileRef, Resource } from '../translation_graph/adapter';
 import { fileHandle, isFileValue } from '../translation_graph/adapter';
 import { stampResourceIds } from '../translation_graph/engine/files/resources';
 import {
+  bindingOf,
+  fieldsValueOf,
   isFileUnreadable,
   MovementEngineError,
+  recordFields,
   type ExtractionTraceFile,
   type FileTextResolution,
   type FileTextResult,
@@ -1774,7 +1777,12 @@ class Materializer {
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) && raw in context) {
         config[arg.name] = context[raw];
       } else {
-        config[arg.name] = (await this.runtime.evalSlot(arg.value)).value;
+        // A record reaches only an argument taking structured data (the
+        // checker refuses it anywhere else), and what that takes is the
+        // record's fields — as a plain call's argument is handed them.
+        const { value } = await this.runtime.evalSlot(arg.value);
+        const record = bindingOf(value);
+        config[arg.name] = record !== undefined ? recordFields(record) : value;
       }
     }
     // Engine-injected `auto` params (e.g. vc_url_retrieval's `text`): fed
@@ -2782,9 +2790,15 @@ export function transformResultSegments(plugin: string, result: TransformInvocat
   return segments;
 }
 
+/**
+ * One `from [ … ]` datum as prompt text. Text is itself; a resource carries
+ * its content; anything else is JSON of its VALUE — a record, at any depth, as
+ * its fields (`fieldsValueOf`), never the engine's object (its kind, handle,
+ * graph, provenance). A file is read before it gets here (`fileSegment`).
+ */
 export function segmentForDatum(datum: unknown): Segment {
   if (typeof datum === 'string') return { classification: 'TEXT', content: datum };
-  if (typeof datum === 'object' && datum !== null) {
+  if (typeof datum === 'object' && datum !== null && bindingOf(datum) === undefined) {
     const r = datum as { content?: unknown; type?: unknown };
     if (typeof r.content === 'string') {
       return {
@@ -2793,7 +2807,10 @@ export function segmentForDatum(datum: unknown): Segment {
       };
     }
   }
-  return { classification: 'FRAGMENT', content: safeStringify(datum) };
+  // A file with no reader in the path (no engine resolves it) keeps the
+  // legacy rendering; one inside a value never reaches the prompt.
+  if (isFileValue(datum)) return { classification: 'FRAGMENT', content: safeStringify(datum) };
+  return { classification: 'FRAGMENT', content: safeStringify(fieldsValueOf(datum)) };
 }
 
 /** A datum as the prompt reads it: a file as its opaque view. */

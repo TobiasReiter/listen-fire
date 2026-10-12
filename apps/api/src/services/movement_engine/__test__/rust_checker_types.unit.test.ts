@@ -198,6 +198,21 @@ async function refusedOnBoth(source: string, reason: string) {
   }
 }
 
+/** `source` fails its check with `code` under every compared version, on
+ *  both engines alike: the Rust engine is never asked. */
+async function endsAtCheckOnBoth(source: string, code: string) {
+  for (const languageVersion of COMPARED_VERSIONS) {
+    const ts = await runOn('ts', source, languageVersion);
+    expect(ts.error ?? '').toContain('MOVENG_CHECK');
+    expect(ts.error ?? '').toContain(code);
+    resetRustEvalStats();
+    resetRustRunStats();
+    const rust = await runOn('rust', source, languageVersion);
+    expect(rustRunStats).toMatchObject({ ranWhole: 0, endedAtCheck: 1, notAdmitted: {}, declined: {}, hostCalls: {} });
+    expect(seen(rust)).toEqual(seen(ts));
+  }
+}
+
 const movement = (...body: string[]) => [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 const withHelpers = (helpers: string[], ...body: string[]) => [PRELUDE, ...helpers, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 
@@ -347,20 +362,22 @@ describe("admission reads the checker's types, on both engines", () => {
     });
   });
 
-  describe('where the checker is silent, admission still refuses by name', () => {
-    it("MULTI of a record handed to a json parameter: the TypeScript's write coerces the list to its text", async () => {
-      const source = movement('  co = write crm-[:companies]-> { name: "a" }', '  note = (t: <json>) => {', '    write crm-[:notes]-> { body: "n", payload: t }', '  }', '  note(MULTI(co))');
-      await refusedOnBoth(source, 'call_arg_record');
-      expect((await runOn('ts', source, 3)).writes).toEqual([
-        ['create', { name: 'a' }],
-        ['create', { body: 'n', payload: '[object Object]' }],
-      ]);
+  describe("where main's record walk lets the checker see the record, the run ends at the check on both engines", () => {
+    // Before group G the checker was silent here and the Rust engine refused
+    // each by name (call_arg_record, write_field_record).
+    it('MULTI of a record handed to a json parameter', async () => {
+      await endsAtCheckOnBoth(
+        movement('  co = write crm-[:companies]-> { name: "a" }', '  note = (t: <json>) => {', '    write crm-[:notes]-> { body: "n", payload: t }', '  }', '  note(MULTI(co))'),
+        'MOV_CALL_ARG_TYPE',
+      );
     });
 
     it('a record through COALESCE into a field', async () => {
-      await refusedOnBoth(movement('  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: COALESCE(co, "x") }'), 'write_field_record');
+      await endsAtCheckOnBoth(movement('  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: COALESCE(co, "x") }'), 'MOV_WRITE_FIELD_TYPE');
     });
+  });
 
+  describe('where the checker is silent, admission still refuses by name', () => {
     it('a record through COALESCE handed back by a closure', async () => {
       await refusedOnBoth(movement('  co = write crm-[:companies]-> { name: "a" }', '  f = () => COALESCE(co, "x")', '  write crm-[:notes]-> { body: f() }'), 'write_field_record');
     });

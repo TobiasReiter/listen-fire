@@ -333,7 +333,7 @@ impl Failure {
 }
 
 /// `unsupported`'s message (expression.ts): an empty detail is none.
-fn unsupported_message(construct: &str, detail: &str) -> String {
+pub(crate) fn unsupported_message(construct: &str, detail: &str) -> String {
     let detail = if detail.is_empty() { String::new() } else { format!(" ({detail})") };
     format!("{construct} is not supported by the movement engine yet{detail}")
 }

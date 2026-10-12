@@ -95,16 +95,16 @@ fn file_resource(file: &Js, read: Option<(&str, &Js)>) -> Js {
     env::object_of(entries)
 }
 
-/// `textResourceForDatum`: a datum with text as a TEXT resource.
-fn text_resource(datum: &Js) -> Option<Js> {
-    let segment = prompt::segment_for_datum(datum);
+/// `textResourceForDatum`: a datum's segment, when it has text, as a TEXT
+/// resource.
+fn text_resource(segment: &Segment) -> Option<Js> {
     if js::trim(&segment.content).is_empty() {
         return None;
     }
     Some(env::object_of(vec![
         ("type", Js::str("TEXT")),
         ("content", Js::str(segment.content.clone())),
-        ("data", env::object_of(vec![("content", Js::str(segment.content)), ("type", Js::str("TEXT"))])),
+        ("data", env::object_of(vec![("content", Js::str(segment.content.clone())), ("type", Js::str("TEXT"))])),
     ]))
 }
 
@@ -316,10 +316,11 @@ impl Materializer<'_, '_> {
                     }
                     continue;
                 }
-                segments.push(prompt::segment_for_datum(&datum));
-                if let Some(resource) = text_resource(&datum) {
+                let segment = prompt::segment_for_datum(&datum).map_err(|unwritable| thrown(unwritable.failure()))?;
+                if let Some(resource) = text_resource(&segment) {
                     resources.push(resource);
                 }
+                segments.push(segment);
             }
         }
         let resources = self.run.stamp_resources(resources).await.map_err(thrown)?;

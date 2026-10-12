@@ -3987,6 +3987,49 @@ function plainValueOf(value: unknown, path: Set<Binding>): unknown {
   return value;
 }
 
+/**
+ * A value as an extraction's prompt reads it: a record — the value itself, a
+ * list's member, a map's entry — as its FIELDS (its dot plane, `recordFields`),
+ * never the engine's object; lists and maps walked; everything else as it is.
+ * A record whose fields are not in hand refuses, as a whole-record read does,
+ * and so does a file anywhere in the value — its descriptor is the engine's
+ * own (a file is read only as an input of its own, before this). A value
+ * that contains itself has no finite text, and refuses as `plainValueOf` does.
+ */
+export function fieldsValueOf(value: unknown, path: Set<object> = new Set()): unknown {
+  if (isFileValue(value)) {
+    throw unsupported(
+      'a file inside an extraction input',
+      'hand the file over as an input of its own, or put its text in its place with READ(f) (the checker should have caught this)',
+    );
+  }
+  if (typeof value !== 'object' || value === null) return value;
+  if (path.has(value)) throw unsupported('an extraction input that contains itself');
+  path.add(value);
+  try {
+    const binding = bindingOf(value);
+    if (binding !== undefined) {
+      switch (binding.kind) {
+        case 'positions':
+          return binding.landings.map((landing) => fieldsValueOf(landing, path));
+        case 'tuple':
+          return binding.slots.map((slot) => fieldsValueOf(slot, path));
+        case 'value':
+          return fieldsValueOf(binding.value, path);
+        default:
+          return fieldsValueOf(recordFields(binding), path);
+      }
+    }
+    if (Array.isArray(value)) return value.map((member) => fieldsValueOf(member, path));
+    if (isDictValue(value)) {
+      return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, fieldsValueOf(member, path)]));
+    }
+    return value;
+  } finally {
+    path.delete(value);
+  }
+}
+
 function plainRecordOf(binding: Binding, path: Set<Binding>): unknown {
   if (path.has(binding)) {
     throw unsupported('writing out a record that contains itself through its edges');

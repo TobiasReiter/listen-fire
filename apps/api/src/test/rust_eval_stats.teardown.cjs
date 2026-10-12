@@ -118,7 +118,9 @@ const path = require('node:path');
 // knows, 2026-10-12) lifts v1 2, v2 2, v3 7 (a plugin argument's function
 // call held to its returns, a head off a kept walk, the arms a MAP builds,
 // a closure called in another letter case, a graph entry picking a walk's
-// record): v1 1025, v2 1253, v3 2159.
+// record): v1 1025, v2 1253, v3 2159. The merge of main's record walk
+// (group G: the checker sees a record through COALESCE, IF, MULTI, a through
+// stage and a map lookup, 2026-10-12) moved no corpus run on cloud-native.
 const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2159 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
