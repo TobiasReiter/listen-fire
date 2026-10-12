@@ -398,27 +398,50 @@ impl Run<'_> {
     fn op_in_statement(&self, statement: &Statement, path: &str, op_json: &Js, scope: &Rc<Scope>) -> Result<Option<(movement_parser::ast::CollectionOpExpression, OpOrigin)>, Stop> {
         let span = crate::record::get(op_json, "span").ok().and_then(|s| crate::code::span_json(&s)).map(|(span, _)| span);
         let (value, value_path) = match statement {
-            Statement::Collection(statement) => {
-                return Ok((Some(statement.collection.span) == span).then(|| (statement.collection.clone(), OpOrigin::Written(format!("{path}/collection")))));
+            Statement::Collection(collection) if Some(collection.collection.span) == span => {
+                return Ok(Some((collection.collection.clone(), OpOrigin::Written(format!("{path}/collection")))));
             }
             Statement::Call(call) => {
-                return Ok(match self.op_of_call(call, scope)? {
-                    Some(op) if Some(op.span) == span => Some((op, OpOrigin::Call { call: call.clone(), path: path.to_string() })),
-                    _ => None,
-                });
+                return match self.op_of_call(call, scope)? {
+                    Some(op) if Some(op.span) == span => Ok(Some((op, OpOrigin::Call { call: call.clone(), path: path.to_string() }))),
+                    _ => self.nested_op_in_statement(statement, span, scope),
+                };
             }
             Statement::Assign(assign) => (&assign.value, format!("{path}/value")),
             Statement::Return(ret) => (&ret.value, format!("{path}/value")),
-            _ => return Ok(None),
+            _ => return self.nested_op_in_statement(statement, span, scope),
         };
         Ok(match value {
             RValue::Collection { collection } if Some(collection.span) == span => Some((collection.clone(), OpOrigin::Written(format!("{value_path}/collection")))),
             RValue::Call { call } => match self.op_of_call(call, scope)? {
                 Some(op) if Some(op.span) == span => Some((op, OpOrigin::Call { call: call.clone(), path: format!("{value_path}/call") })),
-                _ => None,
+                _ => self.nested_op_in_statement(statement, span, scope)?,
             },
-            _ => None,
+            _ => self.nested_op_in_statement(statement, span, scope)?,
         })
+    }
+
+    /// A collection op called inside one of the statement's expressions
+    /// (crate::nested), by its span: read again from its slot, at its place.
+    fn nested_op_in_statement(&self, statement: &Statement, span: Option<movement_parser::ast::Span>, scope: &Rc<Scope>) -> Result<Option<(movement_parser::ast::CollectionOpExpression, OpOrigin)>, Stop> {
+        if self.version() < 3 || span.is_none() {
+            return Ok(None);
+        }
+        for slot in crate::admit::direct_slots(statement) {
+            let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { continue };
+            let calls = crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope));
+            for at in calls {
+                let Ok(value) = crate::nested::nested_call(&slot, at, self.version()) else { continue };
+                let RValue::Call { call } = &value else { continue };
+                if let Some(op) = self.op_of_call(call, scope)?
+                    && Some(op.span) == span
+                {
+                    let path = self.nested_path(&slot, at, &value);
+                    return Ok(Some((op, OpOrigin::Call { call: call.clone(), path: format!("{path}/value/call") })));
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn op_of_call(&self, call: &CallStatement, scope: &Rc<Scope>) -> Result<Option<movement_parser::ast::CollectionOpExpression>, Stop> {

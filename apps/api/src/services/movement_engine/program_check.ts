@@ -21,6 +21,15 @@
 // The pointer is stable because the pinned source re-parses to the same
 // tree (the Rust parser emits the TypeScript AST field for field), and the
 // stamped keys are ones the parser never writes.
+//
+// A call nested in an expression (`FIRST(MAP(xs, (x) => …))`, language
+// version 3) is read once per place by `parseNestedCall`, and the checker
+// stamps that read. Its place continues the pointer through the slot it is
+// written in: `<slot>/nested/<start>-<end>/value` is the right-hand side the
+// call reads as, `start` and `end` its extent in the slot's text (UTF-16
+// offsets, as the expression grammar gives them), so a stamp inside it is
+// `…/value/expr/nested/0-31/value/call/args/1/closure/body/0/value/node/spreads/0`.
+// The Rust engine re-reads the call from the slot to resolve one.
 
 import {
   DiagnosticCodes,
@@ -30,6 +39,7 @@ import {
   resolveFileFromSnapshot,
   CURRENT_LANGUAGE_VERSION,
   languageVersionDiagnostic,
+  nestedCallsReadIn,
   diagnosticSeverity,
   parseProgram,
 } from 'movement-lang';
@@ -38,6 +48,7 @@ import type {
   Catalog,
   CatalogSnapshot,
   Diagnostic,
+  ExprSlot,
   LanguageVersion,
   LinkedExport,
   Program,
@@ -215,8 +226,9 @@ function importsData(imports: ReadonlyMap<string, LinkedExport>): LinkedImportDa
 }
 
 /** The checker's stamps on `program`: a `fields` on a write's spread, a
- *  `copy` on a graph's, a `reference` on a graph entry. No key the parser
- *  writes. */
+ *  `copy` on a graph's, a `reference` on a graph entry — in the program and
+ *  in each call nested in its expressions, as read for the check. No key the
+ *  parser writes. */
 function stampsIn(program: Program, file?: string): Stamp[] {
   const stamps: Stamp[] = [];
   const at = (path: string) => (file !== undefined ? { file, path } : { path });
@@ -238,9 +250,17 @@ function stampsIn(program: Program, file?: string): Stamp[] {
       if (key === 'copy' || (inSpreads && key === 'fields') || (reference && key === 'reference')) continue;
       visit(child, `${path}/${pointerToken(key)}`, key === 'spreads');
     }
+    if (isSlot(node)) {
+      for (const read of nestedCallsReadIn(node)) visit(read.value, `${path}/nested/${read.at.start}-${read.at.end}/value`, false);
+    }
   };
   visit(program, '', false);
   return stamps;
+}
+
+/** An expression's slot as the parser writes one. */
+function isSlot(node: object): node is ExprSlot {
+  return typeof Reflect.get(node, 'raw') === 'string' && typeof Reflect.get(node, 'span') === 'object';
 }
 
 /** RFC 6901's escaping of one reference token. */

@@ -485,11 +485,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'expression_closure',
-    routes: 'refused',
-    note: 'a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`), which the TypeScript runs as a call bound first (from version 3): needs the op found again on resume (a member frame names it by its span inside the expression); the other nested calls run since chunk 7A Task 6',
+    routes: 'whole',
+    note: 'closed by PLAN-08A group C: a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`) runs, staged at its place in its slot; a closure where nothing stages one (a `unique by` condition) the checker refuses',
     programs: [
-      () => ({ body: '  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }\n  write crm-[:notes]-> { body: COALESCE(AT(names.all, 1), "none") }' }),
-      () => ({ body: '  if COUNT(FILTER([msg.`subject`], (s) => s != "")) > 0 {\n    write crm-[:notes]-> { body: "some" }\n  }' }),
+      () => ({ body: '  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }\n  write crm-[:notes]-> { body: COALESCE(AT(names.all, 1), "none") }', routes: 'whole' }),
+      () => ({ body: '  if COUNT(FILTER([msg.`subject`], (s) => s != "")) > 0 {\n    write crm-[:notes]-> { body: "some" }\n  }', routes: 'whole' }),
+      () => ({ body: '  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: "a" }', checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -581,11 +582,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'rvalue:<kind>',
     routes: 'refused',
-    note: 'a right-hand side this engine does not bind there: a `return` of a block (its iterations returning), of an inline block; needs a returned block value (a `return` of a write runs since chunk 7A Task 3)',
+    note: 'a right-hand side this engine does not bind there (a returned record binding); a `return` of a write runs since chunk 7A Task 3, of a block (its iterations returning, a park inside joined by its fan-out) since PLAN-08A group C',
     programs: [
       () => ({ body: '  return write crm-[:notes]-> { body: msg.`subject` }', routes: 'whole' }),
-      () => ({ body: '  return crm-[c:companies]-> {\n    await sleep(1h)\n    return c.`name`\n  }' }),
-      () => ({ body: '  return crm-[c:companies]-> {\n    return c.`name`\n  }' }),
+      () => ({ body: '  return crm-[c:companies]-> {\n    await sleep(1h)\n    return c.`name`\n  }', routes: 'whole' }),
+      () => ({ body: '  return crm-[c:companies]-> {\n    return c.`name`\n  }', routes: 'whole' }),
     ],
   },
   {
@@ -631,8 +632,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'builtin_call_form',
-    routes: 'refused',
-    note: "a built-in's call with a named argument, an argument that is not a value (a call, a closure, a write), or no expression to read: needs the built-ins' call forms",
+    routes: 'whole',
+    note: "closed by PLAN-08A group C: a call among a built-in's arguments reads as `readCall` reads it at an argument's place (a function's staged whatever its arguments, a collection op its expression); what `readCall` refuses the checker refuses",
     programs: [
       () => ({ file: `movement mark(t: <text>) {\n  write crm-[:notes]-> { body: t }\n  return t\n}\n${m('  x = CONCAT(mark(t: "a"), mark(t: "b"))\n  write crm-[:notes]-> { body: x }')}`, movementName: 'm' }),
       () => ({ file: `movement mark(t: <text>) {\n  return UPPER(t)\n}\n${m('  x = LOWER(mark(t: msg.`subject`))\n  write crm-[:notes]-> { body: x }')}`, movementName: 'm' }),
@@ -1082,8 +1083,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'nested_call_form',
-    routes: 'refused',
-    note: "a nested call handed a write, a node, a function or a type, which carry the checker's stamps by their place in the program, and a nested call has none: needs stamps for a nested call's arguments",
+    routes: 'whole',
+    note: "closed by PLAN-08A group C: a nested call handed a write, a node, a function or a type runs, the checker's stamps on it carried at its place in its slot (`<slot>/nested/<start>-<end>/value`); one that does not read as a call the checker refuses",
     programs: [
       () => ({ file: `${COMPANY_DECL}\n${m('  name_of = (c: <Company>) => c.name\n  write crm-[:notes]-> { body: "${name_of(node { name: "A" })}" }')}` }),
       (pick) => ({ file: `${COMPANY_DECL}\n${m(`  name_of = (c: <Company>) => c.name\n  x = "\${name_of(node { name: "${pick(NAMES)}" })}!"`)}` }),

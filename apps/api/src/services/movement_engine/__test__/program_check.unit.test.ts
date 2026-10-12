@@ -2,7 +2,7 @@
 // diagnostics, the import link with declarations as AST paths, and the
 // checker's stamps keyed by AST path (program_check.ts says the scheme).
 
-import { mockCatalogSnapshot, parseProgram, type InstanceSchema, type Program } from 'movement-lang';
+import { mockCatalogSnapshot, parseNestedCall, parseProgram, type InstanceSchema, type Program } from 'movement-lang';
 
 import { MovementEngineError } from '../errors';
 import { checkAnswer, checkPinned, type Stamp } from '../program_check';
@@ -146,6 +146,30 @@ describe('the program check', () => {
     // The stamps of the first program too, where the spread is the root's.
     const spreading = checkPinned({ source: SPREADING, catalog: { ...catalog, files: { deals: { source: LIBRARY } } }, languageVersion: 3 });
     expect(stamped(parseProgram(SPREADING, { languageVersion: 3 }), checkAnswer(spreading).stamps)).toEqual(json(spreading.program));
+  });
+
+  it("carries the stamps on a call nested in an expression, at the call's place in its slot", () => {
+    const source = [
+      ...PRELUDE,
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  x = ONLY(MAP(msg-[:Attachments]->, (a) => {',
+      '    g = graph { ...a }',
+      '    return g',
+      '  }))',
+      '}',
+    ].join('\n');
+    const checked = checkPinned({ source, catalog, languageVersion: 3 });
+    const movement = checked.program.statements[4];
+    const assign = movement?.kind === 'movement' ? movement.body[0] : undefined;
+    const slot = assign?.kind === 'assign' && assign.value.kind === 'call' ? assign.value.call.expression : undefined;
+    if (slot === undefined) throw new Error('the program is not the one this test wrote');
+    const extent = { start: 5, end: slot.raw.length - 1 };
+    const nested = `/statements/4/body/0/value/call/expression/nested/${extent.start}-${extent.end}/value`;
+    const { stamps } = checkAnswer(checked);
+    expect(stamps.map((s) => [s.path, 'copy' in s])).toEqual([[`${nested}/call/args/1/closure/body/0/value/node/spreads/0`, true]]);
+    // The call as the checker read it is the one stamped.
+    const read = parseNestedCall(slot, extent, 3);
+    expect(at({ value: read }, '/value/call/args/1/closure/body/0/value/node/spreads/0')).toHaveProperty('copy');
   });
 
   it('throws MOVENG_CHECK for an error diagnostic, as every run does', () => {

@@ -28,8 +28,8 @@ use serde_json::{Value as Json, json};
 /// sorted) with the checker's stamps on it after (`stampsIn` writes keys no
 /// parser writes, so the TypeScript appends them).
 pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
-    let node = file.tree.pointer(path)?;
-    let mut code = crate::env::js_of_json(node);
+    let node = node_at(file, path)?;
+    let mut code = crate::env::js_of_json(&node);
     for (at, stamp) in &file.stamps {
         let Some(rest) = at.strip_prefix(path) else { continue };
         if !(rest.is_empty() || rest.starts_with('/')) {
@@ -44,6 +44,56 @@ pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
         code = stamped(&code, &steps, key, value);
     }
     Some(code)
+}
+
+/// The node at `path` in `file`'s tree. A call nested in an expression
+/// (language version 3) has a place of its own, through the slot it is
+/// written in: `<slot>/nested/<start>-<end>` is `{ value: <the right-hand
+/// side the call reads as> }`, `start` and `end` its extent in the slot's
+/// text (program_check.ts), re-read from the slot as the TypeScript read it
+/// for the check (`parseNestedCall`).
+pub fn node_at(file: &File, path: &str) -> Option<Json> {
+    if path.is_empty() {
+        return Some(file.tree.clone());
+    }
+    let mut tokens = path.strip_prefix('/')?.split('/');
+    let mut node = std::borrow::Cow::Borrowed(&file.tree);
+    while let Some(token) = tokens.next() {
+        let step = token.replace("~1", "/").replace("~0", "~");
+        if step == "nested" && let Some(slot) = slot_of(&node) {
+            let (start, end) = tokens.next()?.split_once('-')?;
+            let at = movement_parser::tree::At { start: start.parse().ok()?, end: end.parse().ok()? };
+            let value = crate::nested::nested_call(&slot, at, file.version).ok()?;
+            node = std::borrow::Cow::Owned(json!({ "value": serde_json::to_value(&value).expect("an AST is always JSON") }));
+            continue;
+        }
+        node = match node {
+            std::borrow::Cow::Borrowed(of) => std::borrow::Cow::Borrowed(step_into(of, &step)?),
+            std::borrow::Cow::Owned(of) => std::borrow::Cow::Owned(step_into(&of, &step)?.clone()),
+        };
+    }
+    Some(node.into_owned())
+}
+
+/// One pointer step into `node`.
+fn step_into<'j>(node: &'j Json, step: &str) -> Option<&'j Json> {
+    match node {
+        Json::Object(object) => object.get(step),
+        Json::Array(list) => list.get(step.parse::<usize>().ok()?),
+        _ => None,
+    }
+}
+
+/// The expression slot a node of the tree is, when it is one.
+pub(crate) fn slot_of(node: &Json) -> Option<ast::ExprSlot> {
+    let raw = node.get("raw")?.as_str()?;
+    let span = node.get("span")?;
+    let loc = |at: &Json| -> Option<ast::Loc> { Some(ast::Loc { line: at.get("line")?.as_u64()? as usize, col: at.get("col")?.as_u64()? as usize }) };
+    Some(ast::ExprSlot {
+        raw: raw.to_string(),
+        span: ast::Span { start: loc(span.get("start")?)?, end: loc(span.get("end")?)? },
+        eager: node.get("__slot").and_then(Json::as_bool).unwrap_or(false),
+    })
 }
 
 /// `node` with `key: value` set on the object `steps` lead to.
@@ -92,6 +142,9 @@ pub struct File {
     pub program: ast::Program,
     pub tree: Json,
     pub stamps: BTreeMap<String, Stamp>,
+    /// The language version it was parsed under: what its nested calls are
+    /// re-read under (`node_at`).
+    pub version: u32,
 }
 
 /// A name the program (or a library) imports from a file, its declaration
@@ -240,7 +293,7 @@ fn declaration_at<'p>(program: &'p ast::Program, path: &str) -> Option<&'p ast::
 pub fn parse(source: &str, language_version: u32) -> Result<File, Json> {
     let program = movement_parser::stmt::parse_program(source, language_version, false).map_err(|e| json!(e))?;
     let tree = serde_json::to_value(&program).expect("an AST is always JSON");
-    Ok(File { program, tree, stamps: BTreeMap::new() })
+    Ok(File { program, tree, stamps: BTreeMap::new(), version: language_version })
 }
 
 /// The program joined with the check's answer: its link's files parsed under
@@ -273,7 +326,8 @@ pub fn join_check(root: File, answer: &Json, language_version: u32) -> Result<Ch
             }
             Some(other) => return Err(format!("a stamp's file is a path, not {other}")),
         };
-        let node = file.tree.pointer(&path).ok_or_else(|| format!("no node at {path}"))?;
+        let node = node_at(file, &path).ok_or_else(|| format!("no node at {path}"))?;
+        let node = &node;
         let stamped = match (stamp.get("spreadFields"), stamp.get("copy"), stamp.get("reference")) {
             (Some(fields), None, None) if is_write_spread(&path, node) => Stamp::SpreadFields(
                 serde_json::from_value(fields.clone()).map_err(|e| format!("the fields stamped at {path}: {e}"))?,
@@ -334,6 +388,26 @@ mod tests {
     use super::*;
 
     const SOURCE: &str = "import { attio } from adapters\ncrm = attio()\nfunction f(d: <Deal>) {\n  write crm-[:companies]-> { ...d }\n}\nmovement m(e: <crm>) {\n  x = 1\n}";
+
+    #[test]
+    fn a_call_nested_in_an_expression_has_a_place_of_its_own() {
+        let source = "movement m() {\n  x = FIRST(MAP([1], (v) => {\n    g = graph { ...v }\n    return g\n  }))\n}";
+        let root = parse(source, 3).unwrap();
+        let slot = "/statements/0/body/0/value/call/expression";
+        let raw = root.tree.pointer(&format!("{slot}/raw")).and_then(Json::as_str).unwrap().to_string();
+        let nested = format!("{slot}/nested/6-{}", raw.encode_utf16().count() - 1);
+        assert_eq!(node_at(&root, &format!("{nested}/value/call/callee")), Some(json!("MAP")));
+        let spread = format!("{nested}/value/call/args/1/closure/body/0/value/node/spreads/0");
+        assert_eq!(node_at(&root, &format!("{spread}/source")), Some(json!("v")));
+        // The checker's stamp on it lands there, and on what a park writes.
+        let answer = json!({ "diagnostics": [], "stamps": [{ "path": spread, "copy": { "kind": "map" } }] });
+        let checked = join_check(root, &answer, 3).unwrap();
+        assert_eq!(checked.root.stamps.get(&spread), Some(&Stamp::Copy(json!({ "kind": "map" }))));
+        let code = code_at(&checked.root, &format!("{nested}/value/call/args/1/closure")).unwrap();
+        assert!(format!("{code:?}").contains("copy"));
+        // An extent that is no call there is no node.
+        assert_eq!(node_at(&checked.root, &format!("{slot}/nested/0-3/value")), None);
+    }
 
     #[test]
     fn stamps_land_on_the_nodes_their_paths_name() {

@@ -367,6 +367,32 @@ describe('the cap met inside a MAP member running three at a time', () => {
   });
 });
 
+describe('the cap met inside a MAP called inside an expression', () => {
+  // The op is found again on resume by its span among the calls the
+  // statement's expression nests, at its place in the slot.
+  const source = [
+    'movement intake(m: <inbox-[:message]->>) {',
+    '  summary = JOIN(MAP(["a", "b", "c", "d", "e"], { concurrency: 3 }, (u) => {',
+    '    page = fetch_url(url: u)',
+    '    write crm-[:companies]-> { name: COALESCE(page, "none") }',
+    '    return COALESCE(page, "none")',
+    '  }), ",")',
+    '  write crm-[:companies]-> { name: "done", summary: summary }',
+    '}',
+  ].join('\n');
+
+  it('suspends its members, and resuming the run finishes the expression once', async () => {
+    const h = harness(source, { holdUntil: { a: 'paused', c: 'paused' } });
+    expect((await h.start()).parked).toBe(true);
+    expect([...h.parks.parks.values()].map((p) => p.kind)).toEqual(['suspension', 'suspension', 'suspension']);
+    const results = await h.resumeRun();
+    expect(results.at(-1)?.parked).toBeUndefined();
+    expect([...h.plugin.charged].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(names(h.attio.creates).sort()).toEqual(['done', 'got-a', 'got-b', 'got-c', 'got-d', 'got-e']);
+    expect(h.attio.creates.find((c) => c.name === 'done')?.summary).toBe('got-a,got-b,got-c,got-d,got-e');
+  });
+});
+
 describe('a branch waiting on something ordinary while the run is paused', () => {
   const source = [
     'movement intake(m: <inbox-[:message]->>) {',

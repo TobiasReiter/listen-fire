@@ -432,6 +432,9 @@ pub(crate) struct Run<'a> {
     /// The statements the running flow is inside, at every depth, innermost
     /// last (`statementSites`): each the site of the calls it makes.
     pub(crate) call_sites: RefCell<Vec<Rc<crate::flow::Site>>>,
+    /// Where each expression slot is written, by its span (crate::nested
+    /// `slot_path`): the program's, and a nested call's once it is read.
+    pub(crate) slot_paths: RefCell<Option<crate::nested::SlotPaths>>,
     /// The body boundaries the running flow is inside (`boundaries`).
     pub(crate) boundaries: RefCell<Vec<crate::flow::Boundary>>,
     /// Where the running flow's next write falls in program order.
@@ -551,6 +554,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         log_lines: RefCell::default(),
         file_scope: RefCell::default(),
         call_sites: RefCell::default(),
+        slot_paths: RefCell::default(),
         boundaries: RefCell::default(),
         write_order: RefCell::default(),
         held_locks: RefCell::default(),

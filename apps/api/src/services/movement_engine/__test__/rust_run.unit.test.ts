@@ -247,6 +247,8 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
     expect(await admission(program('  x = crm.`name`'))).toBe('admitted');
     expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('admitted');
+    // A collection op inside an expression, since PLAN-08A group C.
+    expect(await admission(program('  x = { all: MAP([1], (v) => v) }'))).toBe('admitted');
   });
 
   it('reads the event, binds, interpolates and branches as the TypeScript engine does', async () => {
@@ -597,7 +599,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       [movement('  held = { k: { name: "a" } }\n  g = graph { ...held.k }'), 'node_spread_path'],
-      [movement('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }'), 'expression_closure'],
       // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],

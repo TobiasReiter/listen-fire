@@ -54,15 +54,29 @@ export function parseNestedCall(
     nestedCallReads.set(origin, read);
   }
   const key = `${languageVersion}@${at.start}-${at.end}`;
-  let value = read.get(key);
-  if (value === undefined) {
-    value = refusedAsError(rustParseNestedCall(slot, at, languageVersion));
-    read.set(key, value);
+  let nested = read.get(key);
+  if (nested === undefined) {
+    nested = { at: { start: at.start, end: at.end }, value: refusedAsError(rustParseNestedCall(slot, at, languageVersion)) };
+    read.set(key, nested);
   }
-  return value;
+  return nested.value;
 }
 
-const nestedCallReads = new WeakMap<ExprSlot, Map<string, RValue>>();
+/** A nested call as `parseNestedCall` read it: its extent in the slot's text
+ *  and the right-hand side it is. */
+export interface NestedCallRead {
+  at: { start: number; end: number };
+  value: RValue;
+}
+
+const nestedCallReads = new WeakMap<ExprSlot, Map<string, NestedCallRead>>();
+
+/** Every nested call read in `slot` so far, in the order first read: what the
+ *  checker settled on each is on the value, which a re-parse of the source
+ *  does not carry (the check answer's stamps, apps/api program_check). */
+export function nestedCallsReadIn(slot: ExprSlot): NestedCallRead[] {
+  return [...(nestedCallReads.get(slot)?.values() ?? [])];
+}
 
 function refusedAsError<T>(parse: StatementParse<T>): T {
   if (parse.ok) return parse.value;

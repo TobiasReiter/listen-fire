@@ -52,10 +52,12 @@ const program = (...body: string[]) =>
 
 /** Admitted by the Rust engine. */
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
-/** Refused by its admission: a closure in an expression. */
-const REFUSED = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  return msg.`subject`');
+/** Refused by its admission: an IS test of a graph against a declared
+ *  shape (which may stay refused by name: no corpus run reaches it). */
+const IS_DECLARED = ['  g = graph { name: "a" }', '  if g IS <Lead> {', '    x = 1', '  }'];
+const REFUSED = `node Lead { name: <text> }\n${program(...IS_DECLARED, '  return msg.`subject`')}`;
 /** Refused for two reasons: the closure, and a retired knowledge-graph read. */
-const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = CHUNKS("q", { size: 4 })', '  return msg.`subject`');
+const REFUSED_TWICE = `node Lead { name: <text> }\n${program(...IS_DECLARED, '  y = CHUNKS("q", { size: 4 })', '  return msg.`subject`')}`;
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -174,10 +176,10 @@ describe('the admission dry run, through the real artifact', () => {
 
     expect(refused.asked).toEqual([]);
     expect(admitted.asked).toEqual([]);
-    const tally = { sampled: 2, admitted: 1, first: { expression_closure: 1 }, all: { expression_closure: 1 } };
+    const tally = { sampled: 2, admitted: 1, first: { is_test_declared_graph: 1 }, all: { is_test_declared_graph: 1 } };
     expect(rustRunStats.dryRun).toEqual({ firings: 2, faults: 0, ...tally, byVersion: { '3': tally }, byRoute: { run: tally, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
     expect(admissionVerdicts).toEqual([
-      { runId: 'run-refused', languageVersion: 3, reasons: ['expression_closure'] },
+      { runId: 'run-refused', languageVersion: 3, reasons: ['is_test_declared_graph'] },
       { runId: 'run-admitted', languageVersion: 3, reasons: [] },
     ]);
     // Only the dry run's own counters move: no segment was routed, nothing ran in Rust.
@@ -188,8 +190,8 @@ describe('the admission dry run, through the real artifact', () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'function:chunks': 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'function:chunks'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({ first: { is_test_declared_graph: 1 }, all: { is_test_declared_graph: 1, 'function:chunks': 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['is_test_declared_graph', 'function:chunks'] }]);
   });
 
   // A real run leaves a slot this engine's lowering misses to its check
@@ -265,7 +267,7 @@ describe('a run the TypeScript engine runs', () => {
     delete process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY;
     const withDryRun = await run(REFUSED);
     expect(withDryRun).toEqual(withoutDryRun);
-    expect(rustRunStats.dryRun).toMatchObject({ firings: 2, sampled: 1, admitted: 0, faults: 0, first: { expression_closure: 1 } });
+    expect(rustRunStats.dryRun).toMatchObject({ firings: 2, sampled: 1, admitted: 0, faults: 0, first: { is_test_declared_graph: 1 } });
   });
 
   it('is never asked about under MOVEMENT_ENGINE=rust: an admitted run moves no dry run counter', async () => {

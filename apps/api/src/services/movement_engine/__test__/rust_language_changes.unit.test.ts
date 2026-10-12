@@ -256,10 +256,10 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('a collection op inside an expression (71527fa792): refused by name', async () => {
+  it('a collection op inside an expression (71527fa792): runs whole, staged at its place (PLAN-08A group C)', async () => {
     await onBoth(
       movement('  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }', '  write crm-[:companies]-> { name: COALESCE(AT(names.all, 1), "none") }'),
-      { refused: 'expression_closure' },
+      { runsWhole: true },
       [['create', { name: 'BETA' }]],
     );
   });

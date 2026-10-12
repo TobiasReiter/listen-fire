@@ -215,8 +215,49 @@ pub(crate) fn nested_call(slot: &ExprSlot, at: At, version: u32) -> Result<RValu
     movement_parser::stmt::Parser::new(&head, version, slot.span.start, true).parse_nested_call_value(at.start).map_err(|e| e.message)
 }
 
+/// Where each expression slot is written in the program (crate::program
+/// `node_at`'s paths), by its span. A span the program writes twice keeps
+/// its first place, in the tree's order; a nested call's slots, once it is
+/// read, are where they are in it: the checker read its arguments there
+/// (a built-in's call holds the same text as its own arguments too).
+pub(crate) type SlotPaths = std::collections::BTreeMap<(usize, usize, usize, usize), String>;
+
+fn span_key(span: &movement_parser::ast::Span) -> (usize, usize, usize, usize) {
+    (span.start.line, span.start.col, span.end.line, span.end.col)
+}
+
+/// Every slot in `node` (at `path`), by its span, over any noted before
+/// when `over`.
+fn register_slots(node: &serde_json::Value, path: &str, over: bool, into: &mut SlotPaths) {
+    if let Some(slot) = crate::program::slot_of(node) {
+        let key = span_key(&slot.span);
+        if over || !into.contains_key(&key) {
+            into.insert(key, path.to_string());
+        }
+        return;
+    }
+    match node {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                register_slots(child, &format!("{path}/{}", key.replace('~', "~0").replace('/', "~1")), over, into);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                register_slots(child, &format!("{path}/{index}"), over, into);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// One slot's staging (`NestedCallStaging`).
 struct Staging<'s> {
+    /// The slot as the statement holds it: where the calls' extents are
+    /// (`originalSlot`).
+    origin: &'s ExprSlot,
+    /// Where the staged text starts in the origin's (UTF-16 units).
+    offset: usize,
     slot: &'s ExprSlot,
     units: Utf16,
     /// The bindings' scope, over the slot's.
@@ -251,6 +292,11 @@ impl Run<'_> {
     /// that reads the names they were bound to, and the scope those names
     /// are in; `None` when the slot holds none.
     pub(crate) async fn staged(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Option<(ExprSlot, Rc<Scope>)>, Stop> {
+        self.staged_part(slot, slot, 0, scope).await
+    }
+
+    /// `staged` of `slot`, a part of `origin` starting `offset` units in.
+    async fn staged_part(&self, origin: &ExprSlot, slot: &ExprSlot, offset: usize, scope: &Rc<Scope>) -> Result<Option<(ExprSlot, Rc<Scope>)>, Stop> {
         if self.version() < 3 {
             return Ok(None);
         }
@@ -259,7 +305,7 @@ impl Run<'_> {
         if calls.is_empty() {
             return Ok(None);
         }
-        let staging = Staging { slot, units: Utf16::new(&slot.raw), scratch: scope.child(), calls, scope, bound: Cell::new(0) };
+        let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.child(), calls, scope, bound: Cell::new(0) };
         let text = self.stage_tree(&tree, &staging).await?;
         Ok(Some((ExprSlot { raw: text, span: slot.span, eager: false }, staging.scratch)))
     }
@@ -294,12 +340,30 @@ impl Run<'_> {
     /// `settleNestedCall`: one nested call, run as the right-hand side of a
     /// binding, under the running statement's step.
     async fn settle_nested_call(&self, call: &MExpr, staging: &Staging<'_>) -> Result<String, Stop> {
-        let value = nested_call(staging.slot, call.at(), self.version())
+        let extent = At { start: call.at().start + staging.offset, end: call.at().end + staging.offset };
+        let value = nested_call(staging.origin, extent, self.version())
             .map_err(|message| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid nested call (the checker should have caught this): {message}"))))?;
         let at = self.call_sites.borrow().last().map(|site| site.address.clone()).unwrap_or_else(Address::default);
         let name = self.nested_name(staging);
-        self.assign(&name, &value, &staging.scratch, &at, "#nested").await?;
+        let path = self.nested_path(staging.origin, extent, &value);
+        self.assign(&name, &value, &staging.scratch, &at, &path).await?;
         Ok(spelled(&name))
+    }
+
+    /// The place of the call at `extent` in `slot` (crate::program
+    /// `node_at`), its own slots noted where they are; `#nested` when the
+    /// slot is in no file this run reads paths in (a library's).
+    pub(crate) fn nested_path(&self, slot: &ExprSlot, extent: At, value: &RValue) -> String {
+        let mut paths = self.slot_paths.borrow_mut();
+        let paths = paths.get_or_insert_with(|| {
+            let mut paths = SlotPaths::new();
+            register_slots(&self.checked.root.tree, "", false, &mut paths);
+            paths
+        });
+        let Some(slot_path) = paths.get(&span_key(&slot.span)) else { return "#nested".to_string() };
+        let path = format!("{slot_path}/nested/{}-{}", extent.start, extent.end);
+        register_slots(&serde_json::to_value(value).expect("an AST is always JSON"), &format!("{path}/value"), true, paths);
+        path
     }
 
     /// `settleShortCircuit`: `AND` / `OR` / `IF` / `COALESCE`, reaching only
@@ -379,7 +443,7 @@ impl Run<'_> {
         let units = Utf16::new(&slot.raw);
         for conjunct in conjuncts_of(&tree) {
             let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false };
-            let held = match self.staged(&part, scope).await? {
+            let held = match self.staged_part(slot, &part, conjunct.at().start, scope).await? {
                 Some((staged, scratch)) => Box::pin(self.condition(&staged, &scratch)).await?,
                 None => Box::pin(self.condition(&part, scope)).await?,
             };

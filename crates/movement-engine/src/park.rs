@@ -777,6 +777,7 @@ mod tests {
             log_lines: RefCell::default(),
             file_scope: RefCell::default(),
             call_sites: RefCell::default(),
+            slot_paths: RefCell::default(),
             boundaries: RefCell::default(),
             write_order: RefCell::default(),
             held_locks: RefCell::default(),

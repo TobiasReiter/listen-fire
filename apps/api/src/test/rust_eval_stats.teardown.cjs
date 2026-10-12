@@ -124,8 +124,10 @@ const path = require('node:path');
 // PLAN-08A group C, first part (a movement call nested in an expression runs
 // as the binding it means, its callee walked under what it passes; a
 // recursion hands back the value it declares, 2026-10-12) lifts v3 13: v3
-// 2172.
-const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2172 };
+// 2172. Its second part (a collection op and a built-in's call forms inside
+// an expression, at the call's own place in its slot, stamped by the check;
+// a returned block, 2026-10-12) lifts v3 32: v3 2204.
+const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2204 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -179,7 +181,11 @@ const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2172 };
 // is 15 where it was 14: one statement (`if double(2) == 4 AND
 // COUNT(MAP([1], (v) => v)) == 1`) held both, and was counted under the
 // nested movement call it met first; its collection op is the reason the
-// closed one hid, so it carries that ceiling's first measurement.
+// closed one hid, so it carries that ceiling's first measurement. Lowered by
+// group C's second part (2026-10-12): v3 refused 66 to 34 (builtin_call_form
+// 16, expression_closure 15 and rvalue:block 2 retired; the
+// write_field_record its MAP over a named closure exposed is retired with
+// them); evaluator not admitted v3 580 to 276.
 const CEILINGS = {
   v1: {
     refused: 10,
@@ -202,17 +208,17 @@ const CEILINGS = {
     mirroredFailure: 6,
   },
   v3: {
-    refused: 66,
+    refused: 34,
     everyReason: {
-      builtin_call_form: 16, expression_closure: 15, block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4,
-      node_spread_path: 4, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
-      'statement:call': 2, 'rvalue:block': 2, extract_call_model: 1, delete_not_record: 1,
+      block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4, node_spread_path: 4, block_head_resources: 3,
+      'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2, 'statement:call': 2, extract_call_model: 1,
+      delete_not_record: 1,
     },
     declined: { expression_does_not_lower: 3 },
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 580,
+    evaluatorNotAdmitted: 276,
     mirroredFailure: 4,
   },
 };
