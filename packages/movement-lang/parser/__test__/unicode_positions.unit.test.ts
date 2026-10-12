@@ -10,6 +10,8 @@
 
 import { MovementParseError, parseProgram } from '../parse';
 import type { Span, Statement } from '../ast';
+import { checkProgram } from '../../checker/check';
+import { mockCatalog } from '../../checker/catalog';
 
 const span = (start: [number, number], end: [number, number]): Span => ({
   start: { line: start[0], col: start[1] },
@@ -156,5 +158,26 @@ describe('positions in non-ASCII source', () => {
     const notText = errorOf('type Mood = <"😀" | 5>');
     expect(notText.message).toMatch(/^'Mood' is a refinement of text/);
     expect(notText.loc).toEqual({ line: 1, col: 21 });
+  });
+
+  // A U+FDD0 is the engine's in-band escape and a lone half is not valid UTF-8,
+  // so both cross the parser in an altered form; each must still be one column,
+  // the same as the one code unit the line holds in TypeScript.
+  describe.each([
+    ['a U+FDD0', '\uFDD0'],
+    ['a lone low half', '\uDC00'],
+    ['a lone high half', '\uD800'],
+  ])('the checker spans a line holding %s as one holding a plain letter', (_name, odd) => {
+    const spans = (marker: string) =>
+      checkProgram(parseProgram(`y = "${marker}" + nope\nz = "${marker}" + also_nope`), mockCatalog({})).map((d) => ({
+        code: d.code,
+        span: d.span,
+      }));
+
+    it('reports the same code and span', () => {
+      const withOdd = spans(odd);
+      expect(withOdd.length).toBeGreaterThan(0);
+      expect(withOdd).toEqual(spans('x'));
+    });
   });
 });

@@ -60,7 +60,7 @@ keeps serving the old parser until it is restarted.
 ## Size budget
 
 Current (2026-10-10, gzip -9): the parser's artifact is 1,187,381 bytes raw,
-323,236 gzipped; the engine's (this crate included) about 2.8 MB raw, 830 KB
+325,400 gzipped; the engine's (this crate included) about 2.8 MB raw, 830 KB
 gzipped (the engine's warning line moved from 800 KB to 1 MB with records
 held as values, CHANGELOG). CI measures each committed `.wasm` gzipped (`movement-wasm.yml`,
 "Size budgets"), printing raw and gzipped sizes either way:
