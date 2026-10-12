@@ -23,6 +23,7 @@ import type { FileTextResolution } from '../expression';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
+import { isCheckFailure } from '../errors';
 import { runFailureCause, resumeMovement, runMovement, type RunMovementInput } from '../run';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { installMemoryDocumentStore } from '../../translation_graph/engine/files/__test__/memory_document_store';
@@ -211,13 +212,14 @@ async function runOn(engine: 'ts' | 'rust', source: string): Promise<Ran> {
   });
 }
 
-/** The program on both engines, the Rust one whole (or both ended at the
- *  check, before a segment opens): they agree on what was written, read and
- *  asked. */
-async function both(source: string): Promise<Ran> {
+/** The program on both engines, the Rust one whole — or, where the case
+ *  says so (`endsAtCheck`), both ended at the check before either engine was
+ *  asked: they agree on what was written, read and asked. */
+async function both(source: string, { endsAtCheck = false }: { endsAtCheck?: boolean } = {}): Promise<Ran> {
   const ts = await runOn('ts', source);
   resetRustRunStats();
   const rust = await runOn('rust', source);
+  expect(isCheckFailure(rust.error)).toBe(endsAtCheck);
   expect(rustRunStats).toMatchObject({ ...endedInRust(rust.error), notAdmitted: {}, declined: {}, shimFaults: 0 });
   expect(rust.titles).toEqual(ts.titles);
   expect(rust.read).toEqual(ts.read);
@@ -244,7 +246,7 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   });
 
   it('there, READ of it is refused as no file (by the checker), and nothing is read', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: COALESCE(READ(r.`meta`), "unread") }']));
+    const ran = await both(program(source, ['write crm-[:notes]-> { title: COALESCE(READ(r.`meta`), "unread") }']), { endsAtCheck: true });
     expect(ran.read).toEqual([]);
     expect(ran.titles).toEqual([]);
     expect(String(ran.error)).toContain('MOV_READ_NOT_FILE');

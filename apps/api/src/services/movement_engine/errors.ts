@@ -110,3 +110,14 @@ export class MovementRunFailed extends Error {
 export function runFailureCause(error: unknown): unknown {
   return error instanceof MovementRunFailed ? error.cause : error;
 }
+
+/** The codes a program's check fails with: its pin, its parse, the checker.
+ *  The one definition of "a check failure": every route that counts or logs
+ *  a run that ended at its check reads it here. */
+export const CHECK_FAILURE_CODES: ReadonlySet<MovementEngineErrorCode> = new Set<MovementEngineErrorCode>(['MOVENG_LANGUAGE_VERSION', 'MOVENG_PARSE', 'MOVENG_CHECK']);
+
+/** Whether `error` (looked through a run's carrier) is a check failure. */
+export function isCheckFailure(error: unknown): boolean {
+  const cause = runFailureCause(error);
+  return cause instanceof MovementEngineError && CHECK_FAILURE_CODES.has(cause.code);
+}

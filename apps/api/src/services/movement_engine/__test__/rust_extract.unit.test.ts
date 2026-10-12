@@ -23,7 +23,7 @@ import { staticCatalogFromManifests } from '../../translation_graph/movement/cat
 import { makeUnstablePosition, positionData } from '../../translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
 import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { MovementEngineError } from '../errors';
+import { MovementEngineError, isCheckFailure } from '../errors';
 import type { ParkedScopeState } from '../serialize';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 
@@ -170,13 +170,19 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
 }
 
 /** The case on both engines: they agree. `onRust` says what the Rust engine
- *  did with it: ran it whole, or refused it (for the TypeScript engine). */
-async function agree(c: Case, onRust: { runsWhole: true } | { refused: string }) {
+ *  did with it: ran it whole, refused it (for the TypeScript engine), or
+ *  was never asked, the checker having ended the run on either engine. */
+async function agree(c: Case, onRust: { runsWhole: true } | { refused: string } | { endsAtCheck: true }) {
   const ts = await runOn('ts', c);
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  if ('runsWhole' in onRust) expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, declined: {}, shimFaults: 0 });
-  else expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, hostCalls: {} });
+  const rustError = 'error' in rust ? rust.error : undefined;
+  if ('refused' in onRust) {
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { [onRust.refused]: 1 }, hostCalls: {} });
+  } else {
+    expect(isCheckFailure(rustError) ? String(rustError) : 'reached the engine').toEqual('endsAtCheck' in onRust ? expect.stringContaining('MOVENG_CHECK') : 'reached the engine');
+    expect(rustRunStats).toMatchObject({ ...endedInRust(rustError), notAdmitted: {}, declined: {}, shimFaults: 0 });
+  }
   expect(rust.asked).toEqual(ts.asked);
   expect(rust.invoked).toEqual(ts.invoked);
   expect(rust.parked).toEqual(ts.parked);
@@ -320,7 +326,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const reply = { 'x:extract_result#1': [{ __proto__: wrap(3), name: wrap('Acme') }] };
     const sources = [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`].map((body) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
     for (const source of [...sources, declared]) {
-      const ts = await agree({ source, replies: [reply, reply, reply] }, { runsWhole: true });
+      const ts = await agree({ source, replies: [reply, reply, reply] }, { endsAtCheck: true });
       expect('error' in ts && runFailureCause(ts.error)).toMatchObject({ code: 'MOVENG_CHECK', message: expect.stringContaining('MOV_SHAPE_FIELD_PROTO') });
       expect(ts.asked).toEqual([]);
     }
@@ -405,9 +411,10 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         expect(ts.invoked).toEqual([expect.objectContaining({ plugin: 'echo', config: { q } })]);
       }
       // A call's argument is typed: the checker refuses a record inside it
-      // (the event's included) on both engines, before any plugin is asked.
+      // (the event's included, MOV_CALL_ARG_TYPE) on both engines, before
+      // either engine is asked.
       for (const arg of ['[msg]', '{ k: msg }']) {
-        const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { runsWhole: true });
+        const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { endsAtCheck: true });
         expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
         expect(ts.invoked).toEqual([]);
       }

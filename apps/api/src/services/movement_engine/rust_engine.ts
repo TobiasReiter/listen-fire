@@ -26,7 +26,7 @@ import { RunCostCapExceeded } from '../../lib/run_cost';
 import { extractionTierAssignments } from './ai_tiers';
 import { CallDepthExceeded, maxCallDepth } from './call_depth';
 import { logger } from '../logger';
-import { MovementEngineError, MovementRunFailed, type MovementEngineErrorCode } from './errors';
+import { MovementEngineError, MovementRunFailed, isCheckFailure, type MovementEngineErrorCode } from './errors';
 import { servedHostMethods } from './host';
 import type { Binding, MovementEvalResult, MovementExprContext } from './expression';
 import { bindingOf, pinnedNow } from './expression';
@@ -36,7 +36,7 @@ import type { CheckedProgram } from './program_check';
 import type { MovementRunResult, ResumeMovementInput, RunMovementInput } from './run';
 import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
-import { serve, type RouteContext } from './rust_host';
+import { checkedKey, serve, type RouteContext } from './rust_host';
 import {
   currentDryRunClock,
   emptyAdmissionTally,
@@ -225,7 +225,6 @@ async function segmentInRust(
   if (localZone === undefined) return notAdmitted(input, LOCAL_ZONE_UNVERIFIED);
   const start = segmentInput(input, context, { resume, localZone }, wire);
   if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
-  rustRunStats.routed += 1;
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
   try {
@@ -239,18 +238,21 @@ async function segmentInRust(
     });
     outcome = readRunResult(done, { context, hostErrors, wire });
   } catch (error) {
-    // Anything but a refusal ends in a `done` past admission.
+    // A driver that did not check before the segment opened (run.ts does):
+    // the engine's own `check.program` ended it, counted as the run host's
+    // check ending is, never as a run the engine ran.
+    if (isCheckFailure(error)) {
+      endedAtItsCheck(input);
+      throw error;
+    }
+    // Anything else ends in a `done` past admission.
+    rustRunStats.routed += 1;
     rustRunStats.admitted += 1;
     // The run's own failure, which the Rust engine ran to as the TypeScript
     // engine would have; a shim fault is not one.
     if (error instanceof RustShimError) {
       rustRunStats.shimFaults += 1;
-      noteEngine(input, 'rust', 'shim_fault');
-    } else if (failedItsCheck(error)) {
-      // A driver that did not check before the segment opened (run.ts
-      // does): the engine's own `check.program` ended it, not a run.
-      rustRunStats.endedAtCheck += 1;
-      noteEngine(input, 'rust', ADMITTED);
+      noteEngine(input, 'rust', SHIM_FAULT);
     } else if (endedByName(error)) {
       // A construct this engine names and does not run, met mid-run: not a
       // run's own ending, so not counted as one that ran whole.
@@ -262,6 +264,7 @@ async function segmentInRust(
     }
     throw error;
   }
+  rustRunStats.routed += 1;
   if ('refused' in outcome) return notAdmitted(input, outcome.refused, outcome.reasons);
   rustRunStats.admitted += 1;
   if ('declined' in outcome) {
@@ -279,11 +282,6 @@ async function segmentInRust(
 function endedByName(error: unknown): boolean {
   const cause = error instanceof MovementRunFailed ? error.cause : error;
   return cause instanceof MovementEngineError && cause.code === 'MOVENG_UNSUPPORTED';
-}
-
-/** Whether a run ended at its check: its pin, its parse, the checker. */
-function failedItsCheck(error: unknown): boolean {
-  return error instanceof MovementEngineError && (error.code === 'MOVENG_LANGUAGE_VERSION' || error.code === 'MOVENG_PARSE' || error.code === 'MOVENG_CHECK');
 }
 
 /** A `done`'s cost lines, summed by source. */
@@ -315,6 +313,40 @@ export const LOCAL_ZONE_UNVERIFIED = 'local_zone_unverified';
 
 /** The reason a run the Rust engine ran is logged with. */
 const ADMITTED = 'admitted';
+
+/** The reason a run the shim faulted in is logged with. */
+const SHIM_FAULT = 'shim_fault';
+
+/** The reason a Rust-routed run that failed its check is logged with: it
+ *  ended there, on either engine, and no engine ran it. */
+export const ENDED_AT_CHECK = 'ended_at_check';
+
+/**
+ * The Rust route's check (`check`: run.ts's own, `checkPinned`), made where
+ * the TypeScript route makes it: before the segment opens, so a program that
+ * fails it makes no host request on either engine. A check failure
+ * (`isCheckFailure`) is counted and logged as that ending; anything else the
+ * check throws is a fault of the shim's check, counted as one.
+ */
+export function checkBeforeRustSegment(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, check: () => CheckedProgram): CheckedProgram {
+  try {
+    return check();
+  } catch (error) {
+    if (isCheckFailure(error)) endedAtItsCheck(input);
+    else {
+      rustRunStats.shimFaults += 1;
+      noteEngine(input, 'rust', SHIM_FAULT);
+    }
+    throw error;
+  }
+}
+
+/** A Rust-routed run that ended at its check: counted apart, never routed,
+ *  and logged with that reason. */
+function endedAtItsCheck(input: Pick<RunMovementInput, 'runId' | 'dryRun'>): void {
+  rustRunStats.endedAtCheck += 1;
+  noteEngine(input, 'rust', ENDED_AT_CHECK);
+}
 
 /** A run that never ran in Rust: counted by its first reason and under each
  *  of its reasons, and logged by its first. */
@@ -494,7 +526,13 @@ export async function driveEngine(
     hostErrors: input.hostErrors ?? [],
     positions: new Map(),
     wire: input.wire ?? new WireOut({ whole: true }),
-    checked: new Map(),
+    // The run's own check, made before the segment opened, is the program
+    // `check.compatible` asks about too.
+    checked: new Map(
+      input.prechecked !== undefined
+        ? [[checkedKey(input.prechecked.source, input.prechecked.languageVersion), input.prechecked.checked.program]]
+        : [],
+    ),
   };
   // A settle queue: each request in flight, as it settles, joins the queue
   // and wakes the one waiter. An answer costs O(1) however many requests are

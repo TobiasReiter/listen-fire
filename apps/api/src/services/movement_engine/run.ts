@@ -348,6 +348,7 @@ import {
 import { checkPinned, type CheckInput, type CheckedProgram } from './program_check';
 import {
   ENGINE_CHOICE_TS,
+  checkBeforeRustSegment,
   dryAdmitFire,
   dryAdmitResume,
   dryAdmitRun,
@@ -361,7 +362,6 @@ import {
   runSegmentInRust,
   settleSegmentInRust,
 } from './rust_engine';
-import { rustRunStats } from './rust_stats';
 import { WriteLedger, forkWriteOrder, rootWriteOrder, type WriteOrder } from './write_ledger';
 import {
   closeRunContext,
@@ -630,7 +630,7 @@ export async function runMovement(input: RunMovementInput): Promise<MovementRunR
   // It runs inside the same segment the interpreter would: its host calls
   // are the run's.
   if (routesToRust(input)) {
-    const checked = checkBeforeRustSegment(input);
+    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
     return inRunContext(input, async (context) => {
       const outcome = await runSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
@@ -727,18 +727,6 @@ function preparedOf({ program, catalog, link }: CheckedProgram): { program: Prog
   return { program, prepared: { catalog, ...(link !== undefined ? { link } : {}) } };
 }
 
-/** The Rust route's check, made where the TypeScript route makes it: before
- *  the segment opens. A run that fails it ends there, counted apart
- *  (`rustRunStats.endedAtCheck`): it never reached the Rust engine. */
-function checkBeforeRustSegment(input: RunMovementInput): CheckedProgram {
-  try {
-    return checkPinned(checkInputOf(input));
-  } catch (error) {
-    rustRunStats.endedAtCheck += 1;
-    throw error;
-  }
-}
-
 /** A resume's input: the contract's (`engine-contracts`), and the host. */
 export interface ResumeMovementInput extends ResumeInput {
   host: EngineHost;
@@ -756,7 +744,7 @@ export async function resumeMovement(input: ResumeMovementInput): Promise<Moveme
   // engine's: the state is one shape) is the Rust engine's to admit, with
   // its program, as `runMovement` routes a run.
   if (routesToRust(input)) {
-    const checked = checkBeforeRustSegment(input);
+    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
     return inRunContext(input, async (context) => {
       const outcome = await resumeSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
@@ -810,7 +798,7 @@ export async function settleRaceFrame(
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
-    const checked = checkBeforeRustSegment(input);
+    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
     return inRunContext(input, async (context) => {
       const outcome = await settleSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;
@@ -847,7 +835,7 @@ export async function fireCallbackBody(
 ): Promise<MovementRunResult> {
   refuseUnsupportedParkStateVersion(input.state.version);
   if (routesToRust(input)) {
-    const checked = checkBeforeRustSegment(input);
+    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
     return inRunContext(input, async (context) => {
       const outcome = await fireSegmentInRust({ input, context, checked });
       if ('ran' in outcome) return outcome.ran;

@@ -641,10 +641,15 @@ export function shimRoutePaths(): string[] {
 
 /** The segment a forwarded request names (`serve` has held it to the one
  *  the run host opened). */
+/** A program's key in `RouteContext.checked`: its source under its pin. */
+export function checkedKey(source: string, languageVersion: number): string {
+  return JSON.stringify([source, languageVersion]);
+}
+
 /** The program `check.compatible` asks about, checked once per segment
  *  against the segment's own catalog (`RouteContext.checked`). */
 export function checkedProgram(context: Pick<RouteContext, 'catalog' | 'checked'>, source: string, languageVersion: number): Program {
-  const key = JSON.stringify([source, languageVersion]);
+  const key = checkedKey(source, languageVersion);
   let program = context.checked.get(key);
   if (program === undefined) {
     program = checkPinned({ source, catalog: context.catalog, languageVersion }).program;

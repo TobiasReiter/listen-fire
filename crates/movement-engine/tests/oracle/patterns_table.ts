@@ -196,8 +196,8 @@ export const PATTERNS: Pattern[] = [
   // ── The file ─────────────────────────────────────────────────────────────
   {
     reason: 'language_version_unsupported',
-    routes: 'refused',
-    note: 'a pin this release does not support: refused on either engine (the TypeScript with its own message); nothing to port',
+    routes: 'unreached',
+    note: "a pin this release does not support: the run's check ends it before either engine is asked (MOVENG_LANGUAGE_VERSION, MOV_LANGUAGE_VERSION_UNSUPPORTED); the Rust engine's own refusal by this name is what the dry run and an embedder that does not check first see; nothing to port",
     programs: [
       () => ({ body: '  x = msg.`subject`', version: 99, checks: false }),
       () => ({ body: '  write crm-[:notes]-> { body: "x" }', version: 0, checks: false }),
@@ -296,8 +296,8 @@ export const PATTERNS: Pattern[] = [
     routes: 'refused',
     note: "a record inside a list or map reaching a plugin's argument: needs the binding objects themselves on the eval wire. The checker refuses a record it can see inside a plugin's argument (forward merge 3: main's nested-record rule, the first two programs); a helper movement's json parameter under a key runs whole since chunk 7A Task 6b (admission reads a value parameter as the checker types it, holding each call's argument to it); a record through COALESCE, which the checker does not see, is still refused",
     programs: [
-      () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: [co])\n  write crm-[:notes]-> { body: said }')}`, checks: false }),
-      () => ({ file: `import { summarise } from plugins\n${m('  rows = crm-[c:companies]->\n  said = summarise(data: { all: rows })\n  write crm-[:notes]-> { body: said }')}`, checks: false }),
+      () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: [co])\n  write crm-[:notes]-> { body: said }')}`, checks: false, routes: 'unreached' }),
+      () => ({ file: `import { summarise } from plugins\n${m('  rows = crm-[c:companies]->\n  said = summarise(data: { all: rows })\n  write crm-[:notes]-> { body: said }')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { summarise } from plugins\nmovement put(x: <json>) {\n  said = summarise(data: { k: x })\n  write crm-[:notes]-> { body: said }\n}\n${m('  put(x: "Acme")')}`, movementName: 'm', routes: 'whole' }),
       () => ({ file: `import { summarise } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = summarise(data: { k: COALESCE(co, "x") })\n  write crm-[:notes]-> { body: said }')}` }),
     ],
@@ -316,8 +316,8 @@ export const PATTERNS: Pattern[] = [
     routes: 'refused',
     note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE, which the checker does not see, is still refused",
     programs: [
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { company: co } }', checks: false }),
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { a: co, b: "x" } }', checks: false }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { company: co } }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { a: co, b: "x" } }', checks: false, routes: 'unreached' }),
       () => ({ file: `node Co {\n  name: <text>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)')}`, routes: 'whole' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  write crm-[:notes]-> { body: f() }' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }' }),
@@ -404,7 +404,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  base = 5\n  f = (n: <number>) => n + base\n  y = f(n: 3)\n  write crm-[:notes]-> { body: "${y}" }' }),
       () => ({ body: '  name_of = (r: <crm-[:company]->>) => {\n    return r.`name`\n  }\n  co = write crm-[:companies]-> { name: "a" }\n  n = name_of(r: co)\n  write crm-[:notes]-> { body: UPPER(n) }' }),
       (pick) => ({ body: `  f = (n: <number>) => n * 2\n  g = (k: <number>) => k + 1\n  y = g(k: f(n: ${pick([1, 4])}))\n  write crm-[:notes]-> { body: "\${y}" }` }),
-      () => ({ body: '  f = (n: <number>) => {\n    return n\n  }\n  y = f(1, 2)\n  write crm-[:notes]-> { body: "${y}" }', checks: false, routes: 'whole' }),
+      () => ({ body: '  f = (n: <number>) => {\n    return n\n  }\n  y = f(1, 2)\n  write crm-[:notes]-> { body: "${y}" }', checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -515,8 +515,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_call_settings',
-    routes: 'refused',
-    note: "an extraction call's settings that do not read clean (a setting it does not have, a worked-out value): the checker refuses them, and the run ends at the check on either engine",
+    routes: 'unreached',
+    note: "an extraction call's settings that do not read clean (a setting it does not have, a worked-out value): the checker refuses them (MOV_EXTRACT_CONFIG), so the run ends at its check on either engine and no checked program reaches it",
     programs: [
       () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { speed: 'fast' })")}`, checks: false }),
       () => ({ file: `${COMPANY_DECL}\n${m('  found = extract([msg.`text`], Company, { tier: msg.`subject` })')}`, checks: false }),
@@ -571,9 +571,9 @@ export const PATTERNS: Pattern[] = [
       () => ({ file: `import { fetch_url } from plugins\nmovement shout(t: <text>) {\n  return UPPER(t)\n}\n${m('  page = fetch_url(url: shout(t: msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, movementName: 'm' }),
       () => ({ file: `import { fetch_url } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
       () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(url: UPPER(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, routes: 'whole' }),
-      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(LOWER(msg.`text`))')}`, checks: false, routes: 'whole' }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(LOWER(msg.`text`))')}`, checks: false, routes: 'unreached' }),
       (pick) => ({ file: `import { summarise } from plugins\n${m(`  said = summarise(data: node { name: "${pick(NAMES)}", tag: "c" })\n  write crm-[:notes]-> { body: said }`)}`, routes: 'whole' }),
-      () => ({ file: `import { summarise } from plugins\n${m('  said = summarise(data: write crm-[:notes]-> { body: "x" })')}`, checks: false, routes: 'whole' }),
+      () => ({ file: `import { summarise } from plugins\n${m('  said = summarise(data: write crm-[:notes]-> { body: "x" })')}`, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -997,7 +997,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  big = (n: <number>) => n > 2\n  small = (n: <number>) => n < 10\n  if big(4) AND small(4) {\n    write crm-[:notes]-> { body: "between" }\n  }\n  if big(1) AND small(9) {\n    write crm-[:notes]-> { body: "never" }\n  }' }),
       () => ({ file: `${COMPANY_DECL}\n${m('  n = COUNT(extract([msg.`text`], Company))\n  first = ONLY(extract([msg.`subject`], Company)).name\n  write crm-[:notes]-> { body: "${n} ${first}" }')}`, replies: [{ records: [{ name: said('Acme') }, { name: said('Beta') }] }, { records: [{ name: said('Gamma') }] }] }),
       () => ({ file: `import { echo } from plugins\n${m('  said = { page: echo(q: msg.`subject`) }\n  write crm-[:notes]-> { body: COALESCE(said.page, "none") }')}` }),
-      () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    return UPPER(t)\n  }\n  write crm-[:notes]-> { body: CONCAT(later(msg.`subject`), "!") }', checks: false }),
+      () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    return UPPER(t)\n  }\n  write crm-[:notes]-> { body: CONCAT(later(msg.`subject`), "!") }', checks: false, routes: 'unreached' }),
     ],
   },
   {

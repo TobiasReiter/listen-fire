@@ -6,7 +6,7 @@
 // writes, the park sink's rows. A park written by either engine resumes on
 // the other.
 
-import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 
@@ -31,7 +31,7 @@ import {
   type RunLimitPause,
   type RunMovementInput,
 } from '../run';
-import { MovementEngineError } from '../errors';
+import { MovementEngineError, isCheckFailure } from '../errors';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import type { ParkedScopeState } from '../serialize';
 
@@ -190,6 +190,10 @@ interface Case {
   languageVersion?: LanguageVersion;
   /** The movement fired, when the program holds more than one. */
   movementName?: string;
+  /** The first language version whose checker refuses the program, so the
+   *  run ends at its check on either engine and never reaches the Rust
+   *  one (absent: no version's does). A case says so, or fails. */
+  endsAtCheckFrom?: LanguageVersion;
   /** Which of the sink's suspension methods it has: both by default. */
   suspends?: 'both' | 'suspension_only' | 'neither';
 }
@@ -343,6 +347,11 @@ async function agreeUnder(c: Case) {
   resetRustEvalStats();
   resetRustRunStats();
   const rust = await runOn('rust', c);
+  const atCheck = c.endsAtCheckFrom !== undefined && (c.languageVersion ?? CURRENT_LANGUAGE_VERSION) >= c.endsAtCheckFrom;
+  expect([c.languageVersion ?? CURRENT_LANGUAGE_VERSION, isCheckFailure(rust.error) ? String(rust.error) : 'reached the engine']).toEqual([
+    c.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    atCheck ? expect.stringContaining('MOVENG_CHECK') : 'reached the engine',
+  ]);
   expect(rustRunStats).toMatchObject({ ...endedInRust(rust.error), notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
@@ -703,8 +712,14 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       '}',
       intake('  find(name: msg.`subject`)', '  write crm-[:companies]-> { name: "after" }'),
     ].join('\n');
-    await agree({ source, event, movementName: 'intake' });
-    await agree({ source, event, movementName: 'intake', attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
+    // Version 4's checker refuses the unguarded read of a match that may
+    // miss (MOV_ABSENT_REQUIRED): the run ends at its check there, and the
+    // guarded form below is what version 4 runs.
+    await agree({ source, event, movementName: 'intake', endsAtCheckFrom: 4 });
+    await agree({ source, event, movementName: 'intake', endsAtCheckFrom: 4, attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
+    const guarded = source.replace('  write co-[:notes]-> { body: "found" }', '  if co != null {\n    write co-[:notes]-> { body: "found" }\n  }');
+    await agree({ source: guarded, event, movementName: 'intake' });
+    await agree({ source: guarded, event, movementName: 'intake', attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
   });
 
   it('fails as the TypeScript engine fails: recursion before version 3, the depth limit from it, a value passed to a position', async () => {
@@ -719,8 +734,10 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       if (previous === undefined) delete process.env.MOVEMENT_MAX_CALL_DEPTH;
       else process.env.MOVEMENT_MAX_CALL_DEPTH = previous;
     }
+    // A value passed to a position parameter: the checker refuses it
+    // (MOV_CALL_ARG_TYPE), so the run ends at its check on either engine.
     const position = ['movement persist(c: <crm-[:company]->>) {', '  write c-[:notes]-> { body: "x" }', '}', intake('  v = msg.`subject`', '  persist(c: v)')].join('\n');
-    await agree({ source: position, event, movementName: 'intake' });
+    await agree({ source: position, event, movementName: 'intake', endsAtCheckFrom: 1 });
   });
 });
 
@@ -811,7 +828,14 @@ describe('the graphs a run builds, in the Rust engine', () => {
         `  found = match deduped-[:companies]-> { unique by (\`name\`), name: "${wanted}" }`,
         '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
       ]);
-      await agree({ source, event: webhook({ subject: 'Acme' }) });
+      // Version 4's checker refuses the unguarded read of a match that may
+      // miss (MOV_ABSENT_REQUIRED); the guarded form is what version 4 runs.
+      await agree({ source, event: webhook({ subject: 'Acme' }), endsAtCheckFrom: 4 });
+      const guarded = source.replace(
+        '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
+        '  if found != null {\n    write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }\n  }',
+      );
+      await agree({ source: guarded, event: webhook({ subject: 'Acme' }) });
     }
   });
 
@@ -900,15 +924,17 @@ describe('the graphs a run builds, in the Rust engine', () => {
     await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
   });
 
-  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks, a bare name in a hop WHERE over landings', async () => {
-    for (const lines of [
-      ['  d = node { companies: <Company> }', '  write d-[c:companies WHERE c.`name` == "x"]-> { name: "a" }'],
-      ['  d = node { companies: <Company> }', '  write d-[:nope]-> { name: "a" }'],
-      ['  d = node { companies: <Company> }', '  x = match d-[:nope]-> { unique by (`name`), name: "a" }'],
-      ['  n = node { a: 1 }', '  link n -[:kids]-> n'],
-      ['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }'],
-    ]) {
-      const { rust } = await agree({ source: program(lines), event: webhook({ subject: 'Acme' }) });
+  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks (the checker, before either engine), a bare name in a hop WHERE over landings (in the engine)', async () => {
+    // The checker refuses the first four (MOV_TARGET_WHERE_LOCAL,
+    // MOV_NODE_EDGE_UNDECLARED): each ends at its check on either engine.
+    for (const [lines, endsAtCheckFrom] of [
+      [['  d = node { companies: <Company> }', '  write d-[c:companies WHERE c.`name` == "x"]-> { name: "a" }'], 1],
+      [['  d = node { companies: <Company> }', '  write d-[:nope]-> { name: "a" }'], 1],
+      [['  d = node { companies: <Company> }', '  x = match d-[:nope]-> { unique by (`name`), name: "a" }'], 1],
+      [['  n = node { a: 1 }', '  link n -[:kids]-> n'], 1],
+      [['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }'], undefined],
+    ] as const) {
+      const { rust } = await agree({ source: program([...lines]), event: webhook({ subject: 'Acme' }), ...(endsAtCheckFrom !== undefined ? { endsAtCheckFrom } : {}) });
       expect([lines, rust.failed]).toEqual([lines, true]);
     }
   });

@@ -494,18 +494,16 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
         problems.push(`${where}\n  ${checkFailed(ts) ? `does not check: ${'failure' in ts ? (ts.failure?.message ?? '') : ''}` : 'checks, yet says the checker refuses it'}`);
       }
       const names = reasons.some((r) => patternOf(r, [pattern.reason]) !== undefined);
-      const expected = program.routes ?? pattern.routes;
       // A program the checker refuses ends at the check the Rust route makes
-      // before its segment opens, as the TypeScript route does: never
-      // handed to the Rust engine, whatever its pattern's other programs do.
-      const atCheck = routes === 'unreached' && checkFailed(ts);
-      if (atCheck && expected !== 'unreached') {
-        if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) problems.push(`${where}\n  the check ended the engines differently`);
-      } else if (expected === 'unreached') {
+      // before its segment opens, as the TypeScript route does: it is
+      // `unreached`, and says so (its own `routes`, or its pattern's); one
+      // that ends where it does not say fails the generator.
+      const expected = program.routes ?? pattern.routes;
+      if (expected === 'unreached') {
         // The checker refuses every program holding it (the Rust engine's
         // admission may name it first, and both engines end at the check),
         // or both entries refuse it before it is routed at all.
-        if (program.checks !== false && routes !== 'unreached') problems.push(`${where}\n  an unreached pattern's program is one the checker refuses, or one never routed`);
+        if (routes !== 'unreached') problems.push(`${where}\n  routes ${routes} (${reasons.join(', ')}), yet says it is unreached: one the checker refuses, or one never routed`);
         if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) problems.push(`${where}\n  the check ended the engines differently`);
       } else {
         if (routes !== expected) problems.push(`${where}\n  routes ${routes} (${reasons.join(', ')}), the pattern says ${expected}`);
@@ -514,7 +512,7 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
         if (routes !== 'whole' && !names && program.routes === undefined) problems.push(`${where}\n  ${routes} for ${reasons.join(', ')}, not for ${pattern.reason}`);
       }
       let agreement: CaseRecord['agreement'];
-      if (expected === 'unreached' || atCheck) {
+      if (expected === 'unreached') {
         agreement = 'check';
       } else if (routes === 'whole') {
         const same = requestsOf(ts) === requestsOf(rust) && JSON.stringify(canonical(ending(ts))) === JSON.stringify(canonical(ending(rust)));
@@ -550,6 +548,14 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
   }
   if (only !== undefined) {
     console.log(JSON.stringify(cases.map((c) => ({ pattern: c.pattern, routes: c.routes, reasons: c.reasons, ending: c.ending })), null, 1).slice(0, 20000));
+  }
+  // A pattern that says it reaches the engine proves it with at least one
+  // program that does.
+  for (const pattern of PATTERNS) {
+    if (pattern.routes === 'unreached' || (only !== undefined && !only.test(pattern.reason))) continue;
+    if (!cases.some((c) => c.pattern === pattern.reason && c.routes !== 'unreached')) {
+      problems.push(`${pattern.reason}\n  says it routes ${pattern.routes}, yet none of its programs reaches the engine`);
+    }
   }
   if (problems.length > 0) throw new Error(`patterns oracle: ${problems.length} problem(s)\n${problems.join('\n')}`);
   const patterns = PATTERNS.map(({ reason, routes, note }) => ({ reason, routes, note, programs: cases.filter((c) => c.pattern === reason).length }));

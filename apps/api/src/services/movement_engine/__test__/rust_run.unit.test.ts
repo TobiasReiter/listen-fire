@@ -22,9 +22,10 @@ import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, endedInRust, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
 import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { MovementEngineError } from '../errors';
-import { LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from '../rust_engine';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
+import { MovementEngineError, isCheckFailure } from '../errors';
+import { ENDED_AT_CHECK, LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from '../rust_engine';
+import { checkPinned } from '../program_check';
+import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000a1');
 
@@ -48,12 +49,12 @@ const emailSchema: InstanceSchema = {
 
 const attioSchema: InstanceSchema = {
   positions: {
-    company: { properties: { name: 'text', stage: 'text' }, edges: {} },
+    company: { properties: { name: 'text', stage: 'text' }, edges: { deals: { target: 'bag' } } },
     // Open: the checker lets a `#`-prefixed hop through, as it does over an undescribed position.
     bag: { properties: {}, edges: {}, openProperties: true },
   },
   collections: { companies: { target: 'company' }, bags: { target: 'bag' } },
-  writableRoots: {},
+  writableRoots: { company: { fields: { name: 'text', stage: 'text' }, resultShape: { externalId: 'text', name: 'text', stage: 'text' } } },
 };
 
 const catalog = mockCatalogSnapshot({
@@ -132,6 +133,9 @@ interface Case {
   email?: Parameters<typeof fakeEmail>[0];
   /** Per run: each engine gets fakes of its own. */
   host?: () => TestHostOverrides;
+  /** The checker refuses it: the run ends at its check on either engine,
+   *  and the Rust one is never asked. A case says so, or fails. */
+  endsAtCheck?: true;
 }
 
 /** One run on one engine: what it returned or threw, what the adapters
@@ -184,6 +188,7 @@ async function agree(c: Case) {
   const rust = await runOn('rust', c);
   // A run that fails its check ends there on either engine, before its
   // segment opens: the Rust route checks where the TypeScript route does.
+  expect(isCheckFailure('error' in rust ? rust.error : undefined)).toBe(c.endsAtCheck === true);
   expect(rustRunStats).toMatchObject({ ...endedInRust('error' in rust ? rust.error : undefined), notAdmitted: {}, declined: {} });
   expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
   expect(rust.calls).toEqual(ts.calls);
@@ -506,10 +511,10 @@ describe('a whole run in the Rust engine', () => {
     const cause = 'error' in rust ? runFailureCause(rust.error) : undefined;
     expect(cause).toBeInstanceOf(AdapterCallFailed);
     expect(cause).toMatchObject({ name: 'FakeAdapterError', message: 'no text today' });
-    await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}) });
+    await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}), endsAtCheck: true });
     // A source neither parser reads: the check's own parse error, before a
     // segment opens on either engine, never refused.
-    const { rust: unparsed } = await agree({ source: 'movement m(msg: <inbox-[:message]->>) {\n  g = graph { ?...msg }\n}', event: webhook({}) });
+    const { rust: unparsed } = await agree({ source: 'movement m(msg: <inbox-[:message]->>) {\n  g = graph { ?...msg }\n}', event: webhook({}), endsAtCheck: true });
     expect(String('error' in unparsed ? unparsed.error : '')).toContain('MOVENG_PARSE');
   });
 
@@ -664,21 +669,79 @@ describe('the file scope, as interpretFileStatement reads it', () => {
   it('fails, binds nothing or runs nothing on both engines alike, whole on Rust', async () => {
     // Where the run ends: in the engine (`segment`), or at the check, before
     // a segment opens, on either engine (`check`: the snapshot describes no
-    // `fetch_url`, and its `companies` are read-only).
+    // `fetch_url`).
     for (const [source, ends] of [
       [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'segment'],
       [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'check'],
-      [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'check'],
-      [`write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`, 'check'],
+      [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'segment'],
+      [`write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`, 'segment'],
       [`n = node { title: "t" }\n${movement('  x = n.\`title\`')}`, 'segment'],
     ] as const) {
-      await agree({ source, event: webhook({ subject: 'Acme' }) });
+      await agree({ source, event: webhook({ subject: 'Acme' }), ...(ends === 'check' ? { endsAtCheck: true as const } : {}) });
       expect(rustRunStats).toMatchObject({
         ...(ends === 'segment' ? { routed: 1, admitted: 1 } : { routed: 0, endedAtCheck: 1 }),
         notAdmitted: {},
         declined: {},
       });
     }
+  });
+});
+
+describe('a program that fails its check', () => {
+  // Fails its check: the snapshot describes no `fetch_url`.
+  const failing = `import { fetch_url } from plugins\npage = fetch_url(url: "x")\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`;
+  /** A host that notes every segment it opens and every adapter resolved. */
+  const noting = (seen: string[]) =>
+    makeTestHost({
+      segment: { open: async () => (seen.push('segment.open'), { segmentId: `s${seen.length}` }) },
+      adapters: { resolve: () => (seen.push('adapters.resolve'), fakeEmail().adapter) },
+    });
+
+  afterEach(() => {
+    setRunEngineRecorder(undefined);
+    delete process.env.MOVEMENT_ENGINE;
+  });
+
+  it.each(['ts', 'rust'] as const)('makes no host request on the %s engine, segment.open included, and logs why on Rust', async (engine) => {
+    process.env.MOVEMENT_ENGINE = engine;
+    resetRustRunStats();
+    const seen: string[] = [];
+    const recorded: RunEngineRecord[] = [];
+    setRunEngineRecorder((record) => recorded.push(record));
+    const logged = jest.spyOn(logger, 'info');
+    const error: unknown = await runMovement({
+      source: PRELUDE + failing,
+      event: webhook({}),
+      teamId: TEAM_ID,
+      runId: 'run-check',
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+      host: noting(seen),
+    }).catch((e: unknown) => e);
+    expect(isCheckFailure(error)).toBe(true);
+    expect(seen).toEqual([]);
+    if (engine === 'rust') {
+      expect(rustRunStats).toMatchObject({ routed: 0, admitted: 0, ranWhole: 0, endedAtCheck: 1, notAdmitted: {}, declined: {} });
+      expect(recorded).toEqual([{ runId: 'run-check', engine: 'rust', reason: ENDED_AT_CHECK }]);
+      expect(logged).toHaveBeenCalledWith(`movement engine: engine=rust run=run-check reason=${ENDED_AT_CHECK}`);
+    }
+    logged.mockRestore();
+  });
+
+  it('driven into the shim with no check first, ends at the engine’s own check, counted and logged as that ending, never routed', async () => {
+    resetRustRunStats();
+    const seen: string[] = [];
+    const recorded: RunEngineRecord[] = [];
+    setRunEngineRecorder((record) => recorded.push(record));
+    const host = noting(seen);
+    // The caller opened the segment itself: the order run.ts no longer takes.
+    const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+    const input = { source: PRELUDE + failing, event: webhook({}), teamId: TEAM_ID, runId: 'run-direct', catalog, host };
+    const error: unknown = await runSegmentInRust({ input, context }).catch((e: unknown) => e);
+    expect(isCheckFailure(error)).toBe(true);
+    expect(seen).toEqual(['segment.open']);
+    expect(rustRunStats).toMatchObject({ routed: 0, admitted: 0, ranWhole: 0, endedAtCheck: 1 });
+    expect(recorded).toEqual([{ runId: 'run-direct', engine: 'rust', reason: ENDED_AT_CHECK }]);
   });
 });
 
@@ -771,16 +834,21 @@ async function segmentOfMovement(source: string, movementName: string) {
 }
 
 /** Whether the Rust engine admits `source`: `admitted`, or its refusal's
- *  reason. */
+ *  reason, or `ENDED_AT_CHECK` for a program the checker refuses, checked
+ *  first as run.ts checks it, so the engine is never asked. */
 async function admission(source: string): Promise<string> {
   resetRustRunStats();
+  try {
+    checkPinned({ source: PRELUDE + source, catalog, languageVersion: 3 });
+  } catch (error) {
+    if (!isCheckFailure(error)) throw error;
+    return ENDED_AT_CHECK;
+  }
   const { outcome } = await segmentOf(source);
   const [reason] = Object.keys(rustRunStats.notAdmitted);
   if (reason !== undefined) return reason;
-  // Admitted: it ran in Rust, to its end or its own failure, or to the
-  // engine's own check (this drives the segment directly, with no check
-  // before it), routed either way.
-  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ...endedInRust('error' in outcome ? outcome.error : undefined), routed: 1 });
+  // Admitted: it ran in Rust, to its end or its own failure.
+  expect(rustRunStats).toMatchObject({ notAdmitted: {}, admitted: 1, ...endedInRust('error' in outcome ? outcome.error : undefined) });
   return 'admitted';
 }
 
