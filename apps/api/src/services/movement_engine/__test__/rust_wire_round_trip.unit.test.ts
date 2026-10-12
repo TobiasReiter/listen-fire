@@ -161,7 +161,7 @@ async function agree(c: Case) {
   const ts = await runOn('ts', c);
   resetRustRunStats();
   const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, notAdmitted: {}, declined: {}, shimFaults: 0, failedByName: 0 });
+  expect(rustRunStats).toMatchObject({ routed: 1, notAdmitted: {}, declined: {}, shimFaults: 0, unreproduced: 0, mirroredFailure: 0 });
   expect(rust).toEqual(ts);
   return ts;
 }
