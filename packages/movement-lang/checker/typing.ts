@@ -359,6 +359,11 @@ export const TypedDiagnosticCodes = {
    *  collection would rank by whatever its text happens to be. Fold the key
    *  down to one value (`MIN`, `MAX`, `FIRST`) or name a single-valued one. */
   ORDER_KEY_MULTI: 'MOV_ORDER_KEY_MULTI',
+  /** `AT(r, key)` over a RECORD with a key that is not an index. A record is
+   *  not a map: its fields are read with a dot, and what an engine finds
+   *  under a key of it is its own object — a member nothing in the program
+   *  wrote (`handle`, `graph`, `provenance`), or nothing. */
+  AT_RECORD_KEY: 'MOV_AT_RECORD_KEY',
   /** An ordering key that asks a model (`AI(…)`) or extracts a value. A key is
    *  read once per element and its answers are compared with each other, which
    *  needs a function of the element and nothing else. */
@@ -1296,6 +1301,9 @@ function describeParamType(param: BuiltinParamType): string {
  *  name, so this is the id that reaches the checker. */
 const COALESCE_FUNCTION_ID = 'coalesce';
 
+/** The flat built-in `MULTI(a, b, …)`, lowercased as `COALESCE`'s is. */
+const MULTI_FUNCTION_ID = 'multi';
+
 /** `extractOne(…)`, as the grammar's lowercasing hands it over. */
 const EXTRACT_ONE_FUNCTION_ID = 'extractone';
 
@@ -1426,6 +1434,40 @@ function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined
   const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
   return shared !== undefined ? maybeAbsent(shared) : valued.find(isMaybeAbsent);
+}
+
+/**
+ * `MULTI(a, b, …)` — the present arguments as one list, a list argument's
+ * members spliced in: a list of what its members share, where they share a
+ * record or a file — so `FIRST(MULTI(co))` is the record it is, and no engine
+ * object hides behind an untyped list. A list of plain values stays untyped,
+ * as it always was: typing it would hold valid programs to rules (an ordered
+ * fold over a collected list of them) they were never held to, which is a
+ * language change, not this fix. Undefined where an argument is untyped or the
+ * members share nothing.
+ */
+function multiType(args: Array<FieldType | undefined>): FieldType | undefined {
+  const members: Array<FieldType | undefined> = [];
+  for (const arg of args) {
+    if (arg === undefined) return undefined;
+    const present = stripAbsent(arg);
+    if (present === 'absent') continue;
+    const variant = variantOf(present);
+    switch (variant.kind) {
+      case 'list':
+        members.push(stripAbsent(variant.of));
+        break;
+      case 'tuple':
+        for (const slot of variant.of) members.push(slot === null ? undefined : stripAbsent(slot));
+        if (variant.rest?.of != null) members.push(stripAbsent(variant.rest.of));
+        break;
+      default:
+        members.push(present);
+    }
+  }
+  const shared = unifyValueTypes(members);
+  if (shared === undefined || handleWithin(shared) === undefined) return undefined;
+  return listOf(shared, 'ordered');
 }
 
 function unwrapList(type: FieldType): FieldType {
@@ -1966,6 +2008,15 @@ function tupleSlotType(
 function literalIndex(expr: Expression): number | undefined {
   if (expr.type !== 'static' || typeof expr.value !== 'number') return undefined;
   return Number.isInteger(expr.value) ? expr.value : undefined;
+}
+
+/** `AT(r, key)` over a record: the key's place, and the read that is meant,
+ *  off the name the record was reached by where it has one. */
+function atRecordKeyMessage(at: { key: string | undefined; name: string; may: boolean }): string {
+  const { key, name, may } = at;
+  const read = `${quoteName(name)}.${key !== undefined ? quoteName(key) : '`Name`'}`;
+  const said = key !== undefined ? `'${key}' is not a key it holds` : 'its fields are not keys to look up';
+  return `AT looks up a list's slot or a map's key, and this ${may ? 'may be' : 'is'} a record — ${said}. Read a field with a dot (${read}), or build a map of the fields you need ({ name: ${quoteName(name)}.\`Name\`, … }) and look the key up in that`;
 }
 
 /** The text a dict key expression is FIXED at, when it is written down. */
@@ -2678,6 +2729,29 @@ export interface HeldHandle {
 
 const MEMBER: HeldStep = { kind: 'member' };
 
+/**
+ * The value one of these arms turns out to be, for the walk alone
+ * (`mayHoldType`): a union that may mix records and values, and stays one even
+ * with a single known arm, so what it finds is what the value MAY hold.
+ */
+function armsUnion(arms: ReadonlyArray<FieldType | undefined>): FieldType | undefined {
+  const known = arms.filter((arm): arm is FieldType => arm !== undefined);
+  if (known.length === 0) return undefined;
+  return arms.length === 1 ? known[0] : { kind: 'union', of: known };
+}
+
+const FILES_ONLY: ReadonlySet<HandleKind> = new Set(['file']);
+
+/** The folds that answer one MEMBER of what they fold. */
+const PICKING_FOLDS: ReadonlySet<string> = new Set(['first', 'last', 'only']);
+
+/** A list or a tuple — what a spread splices and `MULTI` flattens. */
+export function isCollectionType(type: FieldType | undefined): boolean {
+  if (type === undefined) return false;
+  const kind = variantOf(stripAbsent(type)).kind;
+  return kind === 'list' || kind === 'tuple';
+}
+
 /** Which engine object a held one is. */
 export type HandleKind = 'record' | 'file';
 
@@ -2694,13 +2768,26 @@ export function handleKind(held: HeldHandle): HandleKind {
 export interface HeldWalk {
   steps: HeldStep[];
   accepts: ReadonlySet<HandleKind>;
+  /** For a target that takes an object only on terms (an extraction prompt
+   *  renders a record as its fields, which must be in hand): asked of EVERY
+   *  object of an accepted kind the walk meets, at any depth and in any arm,
+   *  instead of passing over it. What it answers is what the walk found. */
+  inspect?: (held: HeldHandle) => HeldHandle | undefined;
 }
 
 const NOTHING_ACCEPTED: ReadonlySet<HandleKind> = new Set();
 
 /** A walk from the value itself, for a target that takes these kinds. */
-export function heldWalk(accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED): HeldWalk {
-  return { steps: [], accepts };
+export function heldWalk(
+  accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED,
+  inspect?: (held: HeldHandle) => HeldHandle | undefined,
+): HeldWalk {
+  return { steps: [], accepts, ...(inspect !== undefined ? { inspect } : {}) };
+}
+
+/** An accepted object, handed to the walk's inspection if it has one. */
+function acceptedHandle(walk: HeldWalk, handle: FieldType): HeldHandle | undefined {
+  return walk.inspect?.({ steps: walk.steps, handle, may: false });
 }
 
 function into(walk: HeldWalk, step: HeldStep): HeldWalk {
@@ -2756,9 +2843,9 @@ export function handleWithin(type: FieldType | undefined, walk: HeldWalk = heldW
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'record':
-      return walk.accepts.has('record') ? undefined : { steps: walk.steps, handle: variant, may: false };
+      return walk.accepts.has('record') ? acceptedHandle(walk, variant) : { steps: walk.steps, handle: variant, may: false };
     case 'file':
-      return walk.accepts.has('file') ? undefined : { steps: walk.steps, handle: 'file', may: false };
+      return walk.accepts.has('file') ? acceptedHandle(walk, 'file') : { steps: walk.steps, handle: 'file', may: false };
     case 'list':
     case 'tuple':
       return handleAmongMembers(variant, walk, index => ({ kind: 'slot', index }));
@@ -3855,6 +3942,10 @@ export class ExpressionTyping {
    *  what `handleHeldBy` reads the parts of a written value by. */
   private readonly exactTypes = new WeakMap<Expression, FieldType | undefined>();
 
+  /** The sub-expressions that were a bare NAME, by that name — so the walk for
+   *  an engine object can ask what the name may hold beyond its type. */
+  private readonly bareNames = new WeakMap<Expression, string>();
+
   constructor(
     private readonly options: {
       /** The compile context's language version — what this walker's
@@ -3869,6 +3960,10 @@ export class ExpressionTyping {
        *  type it carries (`domain = FIRST(co.Domains)` reads `text | absent`).
        *  Without it a binding's absence dies at the `=`. */
       resolveScalar?: (name: string) => FieldType | undefined;
+      /** What a name bound to a conditional, a `COALESCE` or a `MULTI` may
+       *  hold where its type cannot say — the arms, as a walk input
+       *  (`ScopeSymbol.mayHold`). Only the walk for an engine object reads it. */
+      resolveMayHold?: (name: string) => FieldType | undefined;
       /** Is this name BOUND in statement scope at all — whatever plane it sits
        *  on, and whether or not a type came with it? `resolveScalar` and
        *  `resolveRoot` both answer `undefined` for a name that IS declared but
@@ -4370,12 +4465,149 @@ export class ExpressionTyping {
         }
         return undefined;
       }
-      case 'conditional': {
-        const held = this.handleHeldBy(expr.then, walk) ?? this.handleHeldBy(expr.else, walk);
-        return held !== undefined ? { ...held, may: true } : undefined;
-      }
-      default:
+      case 'conditional':
+        return this.handleInArms([expr.then, expr.else], walk);
+      // `COALESCE` hands back one of its arguments as it is, and `MULTI` each
+      // present one as a member of the list it builds (a list argument's
+      // members spliced in) — so what they hold is what their operands hold,
+      // whatever their own type says.
+      case 'function':
+        if (expr.fn === COALESCE_FUNCTION_ID) return this.handleInArms(expr.args, walk);
+        if (expr.fn === MULTI_FUNCTION_ID) {
+          for (const arg of expr.args) {
+            const held = this.handleAmongMultiMembers(arg, walk);
+            if (held !== undefined) return held;
+          }
+          return undefined;
+        }
         return handleWithin(this.exactTypes.get(expr), walk);
+      // `AT` picks one member of what it reads — and reads a value that is no
+      // collection as itself (index 0 or -1): what it picks is one level down
+      // in its operand, or the operand itself, whatever the operand's type says.
+      case 'at':
+        return handleWithin(this.exactTypes.get(expr), walk) ?? this.handlePickedFrom(expr.expression, walk);
+      // FIRST, LAST and ONLY pick one member, as AT at an index does — of a
+      // list whose own type may say nothing (a MULTI of a record and a value,
+      // a COALESCE of lists).
+      case 'aggregate':
+        if (!PICKING_FOLDS.has(expr.fn)) return handleWithin(this.exactTypes.get(expr), walk);
+        return handleWithin(this.exactTypes.get(expr), walk) ?? this.handlePickedFrom(expr.expression, walk);
+      default: {
+        const name = this.bareNames.get(expr);
+        return (
+          handleWithin(this.exactTypes.get(expr), walk) ??
+          (name !== undefined ? handleWithin(this.options.resolveMayHold?.(name), walk) : undefined)
+        );
+      }
+    }
+  }
+
+  /** What a read picking ONE member of `operand` may hand back: what the
+   *  operand holds one level down, or the operand itself (a value that is no
+   *  collection reads as itself) — whichever member it turns out to be. */
+  private handlePickedFrom(operand: Expression, walk: HeldWalk): HeldHandle | undefined {
+    const within = this.handleHeldBy(operand, { ...walk, steps: [] });
+    if (within === undefined) return undefined;
+    return { ...within, steps: [...walk.steps, ...within.steps.slice(1)], may: true };
+  }
+
+  /** The first engine object any ARM holds — one of several values the
+   *  expression may turn out to be, so the value only MAY hold it. */
+  private handleInArms(arms: readonly Expression[], walk: HeldWalk): HeldHandle | undefined {
+    for (const arm of arms) {
+      const held = this.handleHeldBy(arm, walk);
+      if (held !== undefined) return { ...held, may: true };
+    }
+    return undefined;
+  }
+
+  /** What one argument of `MULTI` adds to the list it builds: a list's
+   *  members, spliced in, or the value itself as one member. */
+  private handleAmongMultiMembers(arg: Expression, walk: HeldWalk): HeldHandle | undefined {
+    if (arg.type !== 'list' && isCollectionType(this.exactTypes.get(arg))) {
+      return handleAmongMembers(this.exactTypes.get(arg), walk, () => MEMBER);
+    }
+    if (arg.type === 'list') {
+      for (const element of arg.elements) {
+        const held = element.type === 'spread'
+          ? handleAmongMembers(this.exactTypes.get(element.expression), walk, () => MEMBER)
+          : this.handleHeldBy(element, into(walk, MEMBER));
+        if (held !== undefined) return held;
+      }
+      return undefined;
+    }
+    return this.handleHeldBy(arg, into(walk, MEMBER));
+  }
+
+  /**
+   * What a value may hold, for a NAME bound to it — the arms of a conditional
+   * or a `COALESCE`, the members of a `MULTI`, the parts of a literal built of
+   * them — as a walk input. Where the arms disagree the value has no type
+   * (TypeScript's `c ? f : org` is `File | Org`; here a union may not mix a
+   * record with a value), so the name would otherwise carry nothing for
+   * `handleWithin` to find. A union here may mix them: it is never a type
+   * anything but that walk reads. Asked after `infer` walked the expression.
+   */
+  mayHoldType(expr: Expression): FieldType | undefined {
+    switch (expr.type) {
+      case 'conditional':
+        return armsUnion([expr.then, expr.else].map(arm => this.mayHoldType(arm)));
+      case 'function':
+        if (expr.fn === COALESCE_FUNCTION_ID) return armsUnion(expr.args.map(arg => this.mayHoldType(arg)));
+        if (expr.fn === MULTI_FUNCTION_ID) {
+          const members = armsUnion(expr.args.map(arg => this.multiMemberType(arg)));
+          return members !== undefined ? listOf(members, 'ordered') : undefined;
+        }
+        return this.exactTypes.get(expr);
+      case 'at':
+        return this.mayHoldPicked(expr, expr.expression);
+      case 'aggregate':
+        return PICKING_FOLDS.has(expr.fn) ? this.mayHoldPicked(expr, expr.expression) : this.exactTypes.get(expr);
+      case 'object': {
+        if (expr.entries.some(isObjectSpread)) return this.exactTypes.get(expr);
+        const shape: Record<string, FieldType | null> = {};
+        for (const member of expr.entries) {
+          if (!isObjectSpread(member)) shape[member.key] = this.mayHoldType(member.value) ?? null;
+        }
+        return { kind: 'dict', of: 'json', shape };
+      }
+      case 'list': {
+        const slots: Array<FieldType | null> = [];
+        for (const element of expr.elements) {
+          if (element.type === 'spread') return this.exactTypes.get(expr);
+          slots.push(this.mayHoldType(element) ?? null);
+        }
+        return { kind: 'tuple', of: slots };
+      }
+      default: {
+        const name = this.bareNames.get(expr);
+        const mayHold = name !== undefined ? this.options.resolveMayHold?.(name) : undefined;
+        return mayHold ?? this.exactTypes.get(expr);
+      }
+    }
+  }
+
+  /** A read picking one member of `operand`: its own type where it has one,
+   *  else any member the operand may hold. */
+  private mayHoldPicked(expr: Expression, operand: Expression): FieldType | undefined {
+    const exact = this.exactTypes.get(expr);
+    if (exact !== undefined) return exact;
+    const picked = this.multiMemberType(operand);
+    return picked !== undefined ? armsUnion([picked, undefined]) : undefined;
+  }
+
+  /** One `MULTI` argument's members: a list's, or the value itself. */
+  private multiMemberType(arg: Expression): FieldType | undefined {
+    const type = this.mayHoldType(arg);
+    if (type === undefined) return undefined;
+    const variant = variantOf(stripAbsent(type));
+    switch (variant.kind) {
+      case 'list':
+        return variant.of;
+      case 'tuple':
+        return armsUnion([...variant.of.map(slot => slot ?? undefined), variant.rest?.of ?? undefined]);
+      default:
+        return type;
     }
   }
 
@@ -4403,7 +4635,10 @@ export class ExpressionTyping {
         // the bridge's property resolver is total, so `domain` and `co.Name`
         // arrive in the same shape and only the ambient position tells them
         // apart. The engine resolves it the same way (`scopedBinding`).
-        if (position === undefined) return this.bareNameType(expr.propertyTypeId);
+        if (position === undefined) {
+          this.bareNames.set(expr, expr.propertyTypeId);
+          return this.bareNameType(expr.propertyTypeId);
+        }
         return this.readProperty(position, expr.propertyTypeId);
       case 'traverse': {
         const keyRead = this.dictMemberRead(expr);
@@ -4503,6 +4738,16 @@ export class ExpressionTyping {
         const inner = this.inferExactAt(expr.expression, position);
         const indexType = this.inferAt(expr.index, position);
         const innerShape = inner === undefined ? undefined : stripAbsent(inner);
+        // A RECORD is no map: the key it is looked up by would reach the
+        // engine's own object, never a field (that is `r.\`Name\``). Only an
+        // index reads it — as a one-member list, as any single value is. Asked
+        // of the walk, so a record in any arm of an operator is one.
+        const record = this.handleHeldBy(expr.expression, heldWalk(FILES_ONLY));
+        if (record !== undefined && record.steps.length === 0 && stripAbsent(indexType ?? 'absent') !== 'number') {
+          const name = this.bareNames.get(expr.expression) ?? 'r';
+          this.report(TypedDiagnosticCodes.AT_RECORD_KEY, atRecordKeyMessage({ key: literalKey(expr.index), name, may: record.may }));
+          return undefined;
+        }
         // A DICT is looked up, not indexed: there is no order to demand, and
         // the second argument is a KEY, checked as one. What comes back is
         // `T | absent` under the ordinary absence discipline — a key that is
@@ -4670,6 +4915,7 @@ export class ExpressionTyping {
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
         if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
+        if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {
           // Before version 3 a flat built-in's call is untyped; from 3 it is
@@ -4733,6 +4979,7 @@ export class ExpressionTyping {
       case 'alias_ref':
         // The bridge only emits this where its property resolver is partial;
         // either way a bare name is a scope lookup, same as the `property` case.
+        this.bareNames.set(expr, expr.name);
         return this.bareNameType(expr.name);
       case 'parent_result':
       case 'action_result':
