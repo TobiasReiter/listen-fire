@@ -334,6 +334,9 @@ export const PATTERNS: Pattern[] = [
       () => ({ file: `node Co {\n  name: <text>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  named = (r: <Co>) => {\n    write crm-[:notes]-> { body: r.name }\n  }\n  named(r: x)')}`, routes: 'whole' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  write crm-[:notes]-> { body: f() }' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }' }),
+      // Arms a MAP builds: admission follows each arm's returns (PLAN-08A Task 2).
+      (pick) => ({ body: `  arms = MAP([1, 2], (n) => {\n    return () => {\n      write crm-[:notes]-> { body: "arm \${n}" }\n      return n * ${pick([5, 7])}\n    }\n  })\n  r = await parallel(arms)\n  write crm-[:notes]-> { body: "x", payload: { r: r } }`, routes: 'whole' }),
+      () => ({ body: '  arms = MAP([1, 2], (n) => {\n    return () => {\n      co = write crm-[:companies]-> { name: "arm ${n}" }\n      return co\n    }\n  })\n  r = await parallel(arms)\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', routes: 'whole' }),
     ],
   },
   {
@@ -376,11 +379,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'node_spread_record',
-    routes: 'refused',
-    note: "a map holding a record spread into a graph, which asMapList files as a child of the binding object's keys: needs those keys. Main's nested-record rule (forward merge 3) types write and match fields and plugin arguments, not a graph's spread, so both programs still check (the TypeScript refuses them mid-run); each map genuinely holds a record, so chunk 7A Task 6b's reading of the checker's types leaves both refused",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a map holding a record spread into a graph fails the run as the TypeScript's spreadIntoGraph fails it (MOVENG_RUNTIME \"'k' holds a record…\", holdsRecord, before the key is filed). Main's nested-record rule (forward merge 3) types write and match fields and plugin arguments, not a graph's spread, so these still check",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }' }),
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }' }),
+      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { a: "x", deep: { list: [FIRST(rows)] } }\n  g = graph { ...held }' }),
+      () => ({ body: '  held = { a: "x", deep: { b: 2 } }\n  g = graph { ...held }\n  write crm-[:notes]-> { body: g.a }' }),
     ],
   },
 
@@ -397,6 +402,12 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    write crm-[:notes]-> { body: t }\n  }\n  later(msg.`subject`)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => state }),
       () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    write crm-[:notes]-> { body: t }\n  }\n  later(msg.`subject`)' }),
       (pick) => ({ body: `  down = (n: <number>) => {\n    if n > 0 {\n      write crm-[:notes]-> { body: "\${n}" }\n      down(n - 1)\n    }\n  }\n  down(${pick([2, 3])})` }),
+      // A built-in called on its own line: the checker refuses it under
+      // every version (MOV_BUILTIN_UNUSED from version 3, MOV_NAME_UNRESOLVED
+      // before), so the corpus's statement:call runs are calls of an
+      // imported function (import_from_file's).
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  UPPER(msg.\`subject\`)`, checks: false, routes: 'unreached' }),
+      () => ({ body: '  UPPER(text: msg.`subject`)', version: 2, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -432,12 +443,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'rvalue:lazy',
-    routes: 'refused',
-    note: 'a lazy walk where this engine does not bind one (a `return` of one): needs the lazy-walk binding kind as a returned value (a lazy walk bound, counted or walked runs since chunk 7A Task 3)',
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a movement's body returning a lazy walk hands the walk back as the call's value (a lazy walk bound, counted or walked runs since chunk 7A Task 3); one returned from a closure, an arm, an op's function or a block's iteration stays refused by name",
     programs: [
       () => ({ body: '  people = lazy crm-[p:people]->\n  x = COUNT(people)', routes: 'whole' }),
       () => ({ body: '  cos = lazy crm-[c:companies]->\n  n = COUNT(cos)\n  write crm-[:notes]-> { body: "${n}" }', routes: 'whole' }),
       () => ({ body: '  return lazy crm-[c:companies]->' }),
+      () => ({ file: `movement cos(e: <inbox-[:message]->>) {\n  return lazy crm-[c:companies ORDER BY \`name\`]->\n}\n${m('  x = cos(e: msg)\n  x-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }')}`, movementName: 'm' }),
     ],
   },
   {
@@ -556,12 +568,15 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'plugin_call',
-    routes: 'refused',
-    note: "a plugin's call spelled in another letter case than imported (from version 3): needs any-case resolution of a plugin's name; one inside an expression runs since chunk 7A Task 6 (nested_call)",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a plugin's call spelled in another letter case than imported (from version 3) is the plugin's call (resolveCallee); one inside an expression runs since chunk 7A Task 6 (nested_call)",
     programs: [
       () => ({ file: `import { fetch_url } from plugins\n${m('  page = Fetch_Url(url: msg.`text`)\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
       () => ({ file: `import { echo } from plugins\n${m('  said = ECHO(q: msg.`subject`)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}` }),
       () => ({ file: `import { fetch_url } from plugins\n${m('  x = { page: fetch_url(url: msg.`text`) }')}`, routes: 'whole' }),
+      () => ({ file: `import { echo } from plugins\n${m('  Echo(q: msg.`subject`)\n  write crm-[:notes]-> { body: "after" }')}` }),
+      () => ({ file: `import { fetch_url } from plugins\n${m('  d = extract from [msg.`text`] through [Fetch_Url(url: msg.`text`)] {\n    a: "a"\n  }')}`, checks: false, routes: 'unreached' }),
+      () => ({ file: `import { echo } from plugins\n${m('  said = ECHO(q: msg.`subject`)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, version: 2, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -578,8 +593,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'plugin_call_form',
-    routes: 'refused',
-    note: "a plugin's argument that calls a function the program declares, whose value may be records handed over as binding objects: needs the call's value held to what it may hold; every other argument form runs since chunk 7A Task 6 (a built-in's call, a node as its fields, a write or a function as the TypeScript's unsupported, a positional first argument as the run's failure)",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a plugin's argument that calls a function the program declares (a movement, a closure, a plugin) runs, its value held to what the callee's returns hold (a value, or one record handed over as its fields); every other argument form runs since chunk 7A Task 6 (a built-in's call, a node as its fields, a write or a function as the TypeScript's unsupported, a positional first argument as the run's failure). A value only COALESCE hides a record in stays refused (group G)",
     programs: [
       () => ({ file: `import { fetch_url } from plugins\nmovement shout(t: <text>) {\n  return UPPER(t)\n}\n${m('  page = fetch_url(url: shout(t: msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, movementName: 'm' }),
       () => ({ file: `import { fetch_url } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
@@ -587,6 +602,9 @@ export const PATTERNS: Pattern[] = [
       () => ({ file: `import { fetch_url } from plugins\n${m('  page = fetch_url(LOWER(msg.`text`))')}`, checks: false, routes: 'unreached' }),
       (pick) => ({ file: `import { summarise } from plugins\n${m(`  said = summarise(data: node { name: "${pick(NAMES)}", tag: "c" })\n  write crm-[:notes]-> { body: said }`)}`, routes: 'whole' }),
       () => ({ file: `import { summarise } from plugins\n${m('  said = summarise(data: write crm-[:notes]-> { body: "x" })')}`, checks: false, routes: 'unreached' }),
+      () => ({ file: `import { fetch_url, echo } from plugins\n${m('  page = fetch_url(url: echo(q: msg.`subject`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
+      (pick) => ({ file: `import { summarise } from plugins\nmovement pick(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return co\n}\n${m(`  said = summarise(data: pick(n: "${pick(NAMES)}"))\n  write crm-[:notes]-> { body: said }`)}`, movementName: 'm' }),
+      () => ({ file: `import { summarise } from plugins\nmovement hide(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return COALESCE(co, n)\n}\n${m('  said = summarise(data: hide(n: "Acme"))\n  write crm-[:notes]-> { body: said }')}`, movementName: 'm', routes: 'refused' }),
     ],
   },
   {
@@ -692,20 +710,21 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'write_multi_hop',
-    routes: 'refused',
-    note: "a linked write walking more than one edge: needs the TypeScript's multi-hop semantics",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a linked write walking more than one edge fails the run where the TypeScript's singleWriteEdge fails it (MOVENG_UNSUPPORTED 'multi-hop linked writes'), after the writes before it, on both engines",
     programs: [
       () => ({ body: '  write crm-[:companies]->-[:notes]-> { body: "x" }' }),
       () => ({ body: '  write crm-[:companies]->-[:notes]-> { body: msg.`subject`, title: "t" }' }),
+      () => ({ body: '  MAP([1, 2], { onError: "ignore" }, (n) => {\n    write crm-[:companies]->-[:notes]-> { body: "${n}" }\n  })\n  write crm-[:notes]-> { body: "after" }' }),
     ],
   },
   {
     reason: 'match_multi_hop',
-    routes: 'refused',
-    note: 'a linked match walking more than one edge: as write_multi_hop',
+    routes: 'whole',
+    note: 'closed in PLAN-08A Task 2: a linked match walking more than one edge fails the run as write_multi_hop does, on both engines',
     programs: [
       () => ({ body: '  found = match crm-[:companies]->-[:notes]-> { unique by (`body`), body: "x" }' }),
-      () => ({ body: '  found = match crm-[:companies]->-[:notes]-> { unique by (`body`), body: msg.`subject` }' }),
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  found = match crm-[:companies]->-[:notes]-> { unique by (\`body\`), body: msg.\`subject\` }` }),
     ],
   },
   {
@@ -832,11 +851,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'block_head_value_root',
-    routes: 'refused',
-    note: 'a block head rooted at a kept (lazy) walk: needs heads rooted at every binding kind (one off a value holding records runs since chunk 7A Task 3)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A Task 2: a block head rooted at a kept (lazy) walk continues the walk past its head (resolveHeadIterations with the head as extra steps); one off a value holding records runs since chunk 7A Task 3',
     programs: [
       () => ({ body: '  people = lazy crm-[p:people]->\n  people-[c:company]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }' }),
       () => ({ body: '  rows = crm-[c:companies]->\n  rows-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }', routes: 'whole' }),
+      () => ({ body: '  cos = lazy crm-[c:companies ORDER BY `name`]->\n  cos-[d:deals WHERE `title` != ""]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }' }),
+      () => ({ body: '  cos = lazy crm-[c:companies]-> node { label: c.`name`, notes: c-[n:notes]-> }\n  cos-[k:notes]-> {\n    write crm-[:notes]-> { body: "x" }\n  }' }),
     ],
   },
   {
@@ -850,11 +871,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'block_head_extract_hop',
-    routes: 'refused',
-    note: "a head over an extraction's records with a WHERE (the TypeScript refuses it), an ORDER BY or a LIMIT: needs the TypeScript's refusal and readings there",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a head over an extraction's records with a WHERE fails the run as the TypeScript's headIterationsFrom fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result block heads'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
     programs: [
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co LIMIT 1]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }' }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  found-[c:co WHERE `name` == "Acme"]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co ORDER BY `name` DESC LIMIT 1]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
     ],
   },
   {
@@ -904,20 +927,25 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'walk_extract_hop',
-    routes: 'refused',
-    note: "a hop down an extraction with a WHERE: needs the TypeScript's refusal there",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a hop down an extraction with a WHERE fails the run as the TypeScript's walkExtractSteps fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result hops'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
     programs: [
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COUNT(found-[c:co WHERE c.`name` != ""]->)' }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  x = COUNT(found-[c:co WHERE c.`name` != ""]->)', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COUNT(found-[c:co ORDER BY `name` LIMIT 1]->)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COLLECT(found<-[:co]-.`name`)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
     ],
   },
   {
     reason: 'exists_extract_hop',
-    routes: 'refused',
-    note: "EXISTS down an extraction with an ORDER BY or a LIMIT: needs EXISTS's readings there",
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: EXISTS down an extraction reads each hop's WHERE, ORDER BY and LIMIT as the TypeScript's evaluateExists reads them (per origin, over the entities' children)",
     programs: [
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co LIMIT 1]->) {\n    x = 1\n  }' }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co ORDER BY `name` DESC LIMIT 1]-> WHERE `name` == "Beta") {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co WHERE `name` == "Beta"]->) {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
     ],
   },
 
@@ -941,6 +969,12 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  x = ONLY(crm-[c:companies WHERE `stage` != "x" AND `employees` > 3 ORDER BY `name` DESC LIMIT 5]->.`name`)' }),
       () => ({ body: '  x = ONLY([1, "a b", null, 2.5, msg.`subject`])' }),
       () => ({ body: '  x = ONLY(crm-[c:companies]->.`name`)\n  write crm-[:notes]-> { body: COALESCE(x, "none") }' }),
+      // A pick of the record a walk lands on as a graph's entry (PLAN-08A Task 2).
+      () => ({ body: '  g = graph { owner: ONLY(msg-[:files]->) }\n  g-[o:owner]-> {\n    write crm-[:notes]-> { body: o.filename }\n  }' }),
+      () => ({ body: '  g = graph { owner: FIRST(msg-[:files]->), top: LAST(crm-[c:companies ORDER BY `name`]->) }\n  g-[o:owner]-> {\n    write crm-[:notes]-> { body: o.filename }\n  }\n  g-[t:top]-> {\n    write crm-[:notes]-> { body: t.`name` }\n  }' }),
+      () => ({ body: '  g = graph { owner: ONLY(crm-[c:companies WHERE `name` == "Acme"]->) }\n  g-[o:owner]-> {\n    write crm-[:notes]-> { body: o.`name` }\n  }' }),
+      () => ({ body: '  n = node { owner: ONLY(msg-[:files]->) }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  x = ONLY(msg-[:_resources]->.`name`)', checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -964,22 +998,29 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'expression:<type>',
-    routes: 'refused',
-    note: 'an expression kind that needs the host: the retired KG_VALUE / KG_EXISTS (the checker passes them; the TypeScript fails the run), needs mirroring that failure; a `_resources` read in an expression the checker refuses (MOV_RESOURCE_WALK_UNREAD)',
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: the retired KG_VALUE / KG_EXISTS (the checker passes them) fail the run as the TypeScript's evaluator fails them (MOVENG_UNSUPPORTED \"the expression kind 'kg_value'\"), before an argument is read; a `_resources` read in an expression the checker refuses (MOV_RESOURCE_WALK_UNREAD)",
     programs: [
       () => ({ body: '  x = COLLECT(msg-[:_resources]->.`name`)', checks: false, routes: 'unreached' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = COLLECT(found-[:_resources]->.`name`)', checks: false, routes: 'unreached' }),
       () => ({ body: '  x = KG_VALUE("MATCH (n) RETURN n")' }),
       () => ({ body: '  if KG_EXISTS("MATCH (n) RETURN n") {\n    x = 1\n  }' }),
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  write crm-[:notes]-> { body: "\${KG_VALUE("MATCH (n) RETURN n", msg.\`subject\`)}" }` }),
+      () => ({ body: '  xs = MAP([1, 2], { onError: "ignore" }, (n) => {\n    return KG_VALUE("MATCH (n) RETURN n")\n  })\n  write crm-[:notes]-> { body: "${COUNT(xs)}" }' }),
+      () => ({ body: '  x = @resource.name', checks: false, routes: 'unreached' }),
+      () => ({ body: '  x = @parent.name', checks: false, routes: 'unreached' }),
     ],
   },
   {
     reason: 'expression:exists',
-    routes: 'refused',
-    note: 'a rootless `EXISTS(-[…]->)` outside a WHERE: the TypeScript fails it (MOVENG_UNSUPPORTED, rootless EXISTS()); closing it is mirroring that error',
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a rootless `EXISTS(-[…]->)` outside a WHERE fails the run as the TypeScript's evaluator fails it (MOVENG_UNSUPPORTED 'rootless EXISTS()'); inside a hop's WHERE it walks off the landed record (through the run's source, as evaluateExists does) or the extracted entity",
     programs: [
       () => ({ body: '  x = EXISTS(-[:notes]->)' }),
       () => ({ body: '  if EXISTS(-[:deals]->) {\n    x = 1\n  }' }),
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  y = EXISTS(-[:notes]-> WHERE \`body\` == "x")` }),
+      () => ({ body: '  crm-[c:companies WHERE EXISTS(-[:deals]->)]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }' }),
+      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n      node round: "r" {\n        stage: "s"\n      }\n    }\n  }\n  if EXISTS(found-[c:co]-> WHERE EXISTS(-[:round]->)) {\n    write crm-[:notes]-> { body: "rounds" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp'), round: [{ stage: said('Seed', 'seed') }] }, { name: said('Beta', 'Beta Ltd'), round: [] }] }] }] }),
     ],
   },
   {
@@ -997,6 +1038,10 @@ export const PATTERNS: Pattern[] = [
     note: "CHUNKS, or a namespaced member this engine lacks: needs CHUNKS's cut and density estimate ported (their patterns need \\p{Lu} and case-insensitive matching the engine's regex lacks); a closure's, a plugin's or an extraction's call inside an expression runs since chunk 7A Task 6 (nested_call)",
     programs: [
       (pick) => ({ body: `  pieces = CHUNKS("aaaa bbbb cccc dddd eeee ffff", { size: ${pick([8, 12])} })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+      // A closure called in another letter case (from version 3) is its
+      // call, nested too (PLAN-08A Task 2, `function:inc`).
+      (pick) => ({ body: `  inc = (v: <number>) => v + ${pick([1, 2])}\n  c = INC(inc(1)) * 10\n  write crm-[:notes]-> { body: "\${c}" }`, routes: 'whole' }),
+      () => ({ file: `movement double(n: <number>) {\n  return n * 2\n}\n${m('  inc = (v: <number>) => v + 1\n  c = double(INC(inc(1)))\n  write crm-[:notes]-> { body: "${c}" }')}`, movementName: 'm', routes: 'whole' }),
     ],
   },
   {
@@ -1048,20 +1093,24 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'static_number',
-    routes: 'refused',
-    note: 'a numeric literal JSON cannot carry: `-0` (the lowering folds the negation into a literal); needs the wire carrying it (transition artefacts row 12); no literal reads as Infinity (`1e400` does not parse)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A Task 2: `-0` (the lowering folds the negation into a literal) runs, this engine lowering the program itself, so the literal never crosses as JSON; a host request writes it as JSON does (`0`) on both engines. No literal reads as Infinity (`1e400` does not parse)',
     programs: [
-      () => ({ body: '  x = -0\n  write crm-[:notes]-> { body: "${x}" }', routes: 'refused' }),
+      () => ({ body: '  x = -0\n  write crm-[:notes]-> { body: "${x}" }' }),
+      () => ({ body: '  x = -0\n  y = 1 / x\n  write crm-[:notes]-> { body: "${y}", payload: { n: x, list: [x, -0.0] } }' }),
+      () => ({ body: '  x = -0\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${1 / x}" }', resume: (state) => state }),
       () => ({ body: '  x = 1e400', checks: false, routes: 'unreached' }),
     ],
   },
   {
     reason: 'proto_key',
-    routes: 'refused',
-    note: 'a `__proto__` key written in an object literal: needs the wire carrying it (transition artefacts row 12)',
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a `__proto__` key written in an object literal is Object.prototype's setter, as `value[member.key] = …` is (an object or null sets the prototype, anything else is ignored), so the map is no dict where it has one; the eval wire carries the prototype to the host. A request holding such a map is not JSON, which the recorder refuses, so no program here writes one",
     programs: [
       () => ({ body: '  x = { __proto__: 1 }' }),
-      () => ({ body: '  x = { a: 1, __proto__: { b: 2 } }\n  write crm-[:notes]-> { body: "x", payload: x }' }),
+      () => ({ body: '  x = { a: 1, __proto__: { b: 2 } }\n  k = "b"\n  y = AT(x, k)\n  write crm-[:notes]-> { body: "${AT(x, "a")} ${x.a}", payload: { y: y } }' }),
+      () => ({ body: '  x = { __proto__: 1, a: 2 }\n  write crm-[:notes]-> { body: "x", payload: x }' }),
+      () => ({ body: '  x = { __proto__: null, a: 2 }\n  write crm-[:notes]-> { body: "${x.a}" }' }),
     ],
   },
 
@@ -1077,11 +1126,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'block_head_rootless',
-    routes: 'refused',
-    note: 'a block head with no root (the checker passes it): needs the TypeScript’s reading of a rootless head',
+    routes: 'whole',
+    note: "closed in PLAN-08A Task 2: a block head with no root (the checker passes it) fails the run as the TypeScript's resolveHeadIterations fails it (MOVENG_UNSUPPORTED 'rootless block heads (relative traversal)'), after the writes before it",
     programs: [
       () => ({ body: '  -[c:companies]-> {\n    x = 1\n  }' }),
       () => ({ body: '  -[n:notes]-> {\n    y = 1\n  }' }),
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  -[c:companies]-> {\n    write crm-[:notes]-> { body: c.\`name\` }\n  }` }),
     ],
   },
   {

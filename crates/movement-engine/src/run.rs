@@ -1263,7 +1263,7 @@ impl Run<'_> {
                 Ok(Flow::FellThrough)
             }
             // A plugin called for what it does: its value goes nowhere.
-            Statement::Call(call) if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+            Statement::Call(call) if self.calls_plugin(&call.callee, scope) => {
                 self.plugin_call(&call.callee, &call.args, scope, at, path).await?;
                 Ok(Flow::FellThrough)
             }
@@ -1339,12 +1339,12 @@ impl Run<'_> {
             },
             // A plugin's name in a construction's spelling is its call
             // (`constructionAsCall`).
-            RValue::Construct { construct } if matches!(scope.resolve(&construct.callee), Some(Binding::Plugin(_))) => {
+            RValue::Construct { construct } if self.calls_plugin(&construct.callee, scope) => {
                 let args: Vec<ast::CallArg> = construct.args.iter().map(|a| ast::CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect();
                 let bound = self.plugin_call(&construct.callee, &args, scope, at, &format!("{path}/value/construct")).await?;
                 scope.declare(name, bound);
             }
-            RValue::Call { call } if matches!(scope.resolve(&call.callee), Some(Binding::Plugin(_))) => {
+            RValue::Call { call } if self.calls_plugin(&call.callee, scope) => {
                 let bound = self.plugin_call(&call.callee, &call.args, scope, at, &format!("{path}/value/call")).await?;
                 scope.declare(name, bound);
             }
@@ -1662,6 +1662,23 @@ impl Run<'_> {
                 self.read_from(&expr, &name, held, scope, &span).await.map(Ok)
             }
             Ask::ScopedAt { expr, subject } => self.scoped_at_record(&expr, &subject, scope, span.cloned()).await.map(Ok),
+            // `case 'exists'` scoped: the landed record as a source position
+            // with no read of its own (so walked through the run's source,
+            // `cursor.read ?? ctx.source`), or the extracted entity.
+            Ask::ScopedExists { expr } => {
+                let Expression::Exists { steps, where_ } = &expr else { unreachable!("the evaluator asks for EXISTS only") };
+                let subject = match subject.expect("a scoped read is asked only of a scoped evaluation") {
+                    Scoped::Landed(landed) => {
+                        let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
+                        Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position.clone(), None, source.read.clone())))
+                    }
+                    Scoped::Emission(emission) => Binding::Extracted { emission: emission.clone(), root: false, id: crate::bindings::Identity::new() },
+                    Scoped::Binding(_) => return Ok(Err(crate::eval::rootless_exists())),
+                };
+                let span = span.cloned().unwrap_or(Js::Undefined);
+                let found = self.exists(steps, where_.as_deref(), vec![subject], scope, &span).await?;
+                Ok(Ok(Evaluated { value: Js::Bool(found), prov: Prov::Built(Trail::default()) }))
+            }
             Ask::Function { id, args } => {
                 let args = args.iter().map(|arg| self.encode(arg)).collect::<Result<_, _>>()?;
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
@@ -2872,10 +2889,10 @@ mod tests {
         };
         let prelude = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\n";
         let helper = "movement helper(e: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}\n";
-        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = KG_VALUE(\"why\")\n  helper(e: msg)\n}}\n{helper}");
+        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = @trigger\n  helper(e: msg)\n}}\n{helper}");
         match first_step(&refused) {
             Step::Done(done) => {
-                assert_eq!(done, json!({ "refused": "expression:kg_value", "reasons": ["expression:kg_value", "plugin_call"] }))
+                assert_eq!(done, json!({ "refused": "meta:trigger", "reasons": ["meta:trigger", "plugin_call"] }))
             }
             Step::Pending(pending) => panic!("asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
         }

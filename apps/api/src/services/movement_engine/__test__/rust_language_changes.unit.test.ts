@@ -301,10 +301,10 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('a call in place as a plugin argument (f623a80f70): refused, the inner call run by the TypeScript engine', async () => {
+  it('a call in place as a plugin argument (f623a80f70): the inner call runs first, whole on the Rust engine (PLAN-08A Task 2)', async () => {
     await onBoth(
       ['import { fetch_url } from plugins', movement('  page = fetch_url(url: fetch_url(url: msg.`text`))', '  write crm-[:companies]-> { name: COALESCE(page, "none") }')].join('\n'),
-      { refused: 'plugin_call_form' },
+      { runsWhole: true },
       [['create', { name: 'page of page of acme.dev' }]],
     );
   });

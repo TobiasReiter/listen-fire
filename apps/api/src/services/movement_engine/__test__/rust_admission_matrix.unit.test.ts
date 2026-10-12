@@ -20,9 +20,11 @@ const VERSIONS: LanguageVersion[] = [1, 2, 3, 4];
 /** The most cells admission may refuse, by version (PLAN-08A Task 1,
  *  2026-10-12): the count measured then (v1 and v2 `block_multi_hop` 2 and
  *  `plugin_call_form` 1; v3 and v4 `node_spread_path` 4, `block_multi_hop` 3
- *  and `plugin_call_form` 1). Each task that closes one of these reasons
- *  lowers its ceiling; a ceiling never rises. Zero refusals is every one 0. */
-const REFUSED_CEILING: Partial<Record<LanguageVersion, number>> = { 1: 3, 2: 3, 3: 8, 4: 8 };
+ *  and `plugin_call_form` 1), less `plugin_call_form`'s cell, which runs
+ *  since PLAN-08A Task 2 (a plugin's call as another's argument). Each task
+ *  that closes one of these reasons lowers its ceiling; a ceiling never
+ *  rises. Zero refusals is every one 0. */
+const REFUSED_CEILING: Partial<Record<LanguageVersion, number>> = { 1: 2, 2: 2, 3: 7, 4: 7 };
 
 /** Every helper movement the matrix's skeleton declares, by name. */
 const HELPER = /^movement (?!run_cell\b)(\w+)\(/;

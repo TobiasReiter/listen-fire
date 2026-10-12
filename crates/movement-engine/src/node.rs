@@ -251,7 +251,8 @@ impl Run<'_> {
                     NodeEntry::Value { name, value, .. } => {
                         let at = format!("{path}/entries/{index}");
                         if matches!(self.checked.root.stamps.get(&at), Some(Stamp::Reference)) {
-                            let landings = self.referenced_records(name, &value.raw, scope)?;
+                            let bound = self.bind_slot_binding(value, scope).await?;
+                            let landings = self.referenced(name, bound)?;
                             node.borrow_mut().set_edge(name, landings, child);
                             continue;
                         }
@@ -365,12 +366,6 @@ impl Run<'_> {
     /// `referencedRecords`: the records a reference entry holds, themselves —
     /// a value's each as itself, a block's returned records, the event as its
     /// position.
-    fn referenced_records(&self, name: &str, raw: &str, scope: &Scope) -> Result<Vec<Binding>, Stop> {
-        let bare = crate::js::trim(raw);
-        let bound = scope.resolve(bare).ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{bare}' is not in scope — the checker should have caught this"))))?;
-        self.referenced(name, bound)
-    }
-
     fn referenced(&self, name: &str, bound: Binding) -> Result<Vec<Binding>, Stop> {
         match bound {
             Binding::Value(value) => {
@@ -641,6 +636,14 @@ fn graph_value_misfit(binding: &Binding, shape: &ShapeNode, path: &str, presence
 /// everywhere without one); anything else a field, an absent one deleted.
 fn spread_into_graph(node: &mut Node, map: &JsObject, shape: Option<&ShapeNode>) -> Result<(), Stop> {
     for (key, value) in map.entries() {
+        // A graph built from a map holds values and nested maps; a record
+        // under a key is neither (`holdsRecord`).
+        if crate::record::holds_records(value) {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{key}' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record (the checker should have caught this)"),
+            )));
+        }
         let child = shape.and_then(|s| s.children.iter().find(|c| c.name == *key));
         let maps = as_map_list(value);
         let as_child = if shape.is_some() { child.is_some() } else { maps.is_some() };

@@ -24,7 +24,6 @@ use movement_parser::ast::{
     PathHead, PathRoot, RValue, Statement, TraversalBlock, WriteExpression, WriteTarget, UntilCondition, CombinatorArms, CallbackSubject,
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
-use movement_parser::lowering::expression::EdgeDirection;
 use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
@@ -748,13 +747,31 @@ impl<'p> Callees<'p> {
     }
 
     /// The parameters of the closure a call names from version 3 (a
-    /// closure bound to that name exactly, no movement of it): `Some(None)`
-    /// where the program's closures of that name differ.
-    fn closure(&self, written: &str) -> Option<Option<&Vec<ast::MovementParam>>> {
+    /// closure bound to that name, `closure_name`, no movement of it):
+    /// `Some(None)` where the program's closures of that name differ.
+    fn closure(&self, written: &str, bound_exactly: bool) -> Option<Option<&Vec<ast::MovementParam>>> {
+        let name = self.closure_name(written, bound_exactly)?;
+        self.closures.get(name).map(Option::as_ref)
+    }
+
+    /// The name of the closure a call names from version 3 (`resolveCallee`):
+    /// one bound to the name as written, or, where the calling scope binds
+    /// nothing under it exactly (`bound_exactly`), to it in another letter
+    /// case (`resolveFunction`) — one name alone, as the program binds it.
+    fn closure_name(&self, written: &str, bound_exactly: bool) -> Option<&str> {
         if self.language_version < 3 || self.movement(written).is_some() {
             return None;
         }
-        self.closures.get(written).map(Option::as_ref)
+        if let Some((name, _)) = self.closures.get_key_value(written) {
+            return Some(name);
+        }
+        if bound_exactly {
+            return None;
+        }
+        let folded = crate::js::to_lower_case(written);
+        let mut spelled = self.closures.keys().filter(|name| crate::js::to_lower_case(name) == folded);
+        let name = spelled.next()?;
+        spelled.next().is_none().then_some(name.as_str())
     }
 
     /// The movement declared as `name`, exactly.
@@ -922,6 +939,10 @@ struct Bound<'c> {
     /// What each call of a movement hands back, as far as a record goes, by
     /// where the call is written.
     call_holders: Vec<(ast::Span, Holder)>,
+    /// Each binding of a name, in order, as arms a MAP builds at run time
+    /// (`built_arms_holder`): what a combinator over them receipts, `None`
+    /// for a binding that is not such arms.
+    built_arms: BTreeMap<String, Vec<Option<Holder>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -976,8 +997,12 @@ impl<'c> Bound<'c> {
     /// What a plain plugin call binds, by its output (anything but a record
     /// is read as a value, and what it does not bind is refused where the
     /// call stands).
+    fn plugin_bind(&self, callee: &str) -> Option<PluginBinds> {
+        plugin_bind(&self.plugin_binds, callee, self.callees.map_or(0, |c| c.language_version))
+    }
+
     fn plugin_kind(&self, callee: &str) -> Option<Kind> {
-        match self.plugin_binds.get(callee)? {
+        match self.plugin_bind(callee)? {
             PluginBinds::Record => Some(Kind::Node),
             _ => Some(Kind::Value),
         }
@@ -1113,6 +1138,10 @@ impl<'c> Bound<'c> {
                         }
                         RValue::Construct { construct } => self.plugin_kind(&construct.callee).unwrap_or(Kind::Instance),
                         RValue::Call { call } if self.callee(&call.callee).is_some() => self.call_kind(call),
+                        RValue::Call { call } if self.plugin_kind(&call.callee).is_some() => {
+                            self.closure_call_args(&call.args);
+                            self.plugin_kind(&call.callee).unwrap_or(Kind::Value)
+                        }
                         RValue::Call { call } => match (self.plugin_kind(&call.callee), &call.expression) {
                             (Some(kind), _) => kind,
                             // A built-in's call is the expression it reads as.
@@ -1147,6 +1176,8 @@ impl<'c> Bound<'c> {
                         let joined = self.value_holders.get(&assign.name).map_or(holder, |h| h.join(holder));
                         self.value_holders.insert(assign.name.clone(), joined);
                     }
+                    let arms = self.rvalue_collection(&assign.value).and_then(|op| self.built_arms_holder(&op));
+                    self.built_arms.entry(assign.name.clone()).or_default().push(arms);
                     self.bind(&assign.name, kind, scope);
                     if let RValue::Write { write } = &assign.value
                         && self.local_write_holds_record(write)
@@ -1190,6 +1221,9 @@ impl<'c> Bound<'c> {
                     self.call_kind(call);
                 }
                 Statement::Call(call) if self.calls_closure(&call.callee) => self.closure_call_args(&call.args),
+                // A plugin's arguments that call a movement: what each hands
+                // back (`Names::plugin_call`).
+                Statement::Call(call) if self.plugin_kind(&call.callee).is_some() => self.closure_call_args(&call.args),
                 // A `return` of the body, not of a block's iteration: what
                 // a call of the movement hands back.
                 Statement::Return(ret) if self.blocks == 0 => {
@@ -1212,8 +1246,9 @@ impl<'c> Bound<'c> {
         }
     }
 
-    /// A closure call's arguments that call a movement: what each hands
-    /// back, for the parameter it binds (`Names::call_args`).
+    /// A closure's or a plugin's call's arguments that call a movement: what
+    /// each hands back, for the parameter it binds (`Names::call_args`,
+    /// `Names::plugin_call`).
     fn closure_call_args(&mut self, args: &[CallArg]) {
         for arg in args {
             if let CallArg::Call { call, .. } = arg
@@ -1242,7 +1277,7 @@ impl<'c> Bound<'c> {
             RValue::Call { call } if self.plugin_kind(&call.callee).is_none() => call.expression.as_ref().map_or(Holder::Other, |e| self.holds(&e.raw)),
             // A plugin's records output: a list of records whose
             // fields are the data it found.
-            RValue::Call { call } if self.plugin_binds.get(&call.callee) == Some(&PluginBinds::Records) => Holder::List,
+            RValue::Call { call } if self.plugin_bind(&call.callee) == Some(PluginBinds::Records) => Holder::List,
             // A plugin's value output is its text; a type's members
             // are its words.
             RValue::Call { .. } | RValue::Construct { .. } | RValue::Members { .. } => Holder::Free,
@@ -1279,6 +1314,7 @@ impl<'c> Bound<'c> {
     /// collected each one's body (its names are this walk's); anything
     /// else, or a recursion's cycle, may be anything.
     fn closure_call_holder(&self, name: &str) -> Holder {
+        let Some(name) = self.callees.and_then(|c| c.closure_name(name, self.binds_in_body(name))) else { return Holder::Other };
         let Some(bodies) = self.callees.and_then(|c| c.closure_bodies.get(name)) else { return Holder::Other };
         if bodies.iter().any(|closure| !self.closures_walked.contains(&closure.span)) || self.closures_returning.borrow().iter().any(|n| n == name) {
             return Holder::Other;
@@ -1366,7 +1402,7 @@ impl<'c> Bound<'c> {
 
     /// Whether a call names a closure bound to that name (`Callees::closure`).
     fn calls_closure(&self, written: &str) -> bool {
-        self.callee(written).is_none() && self.callees.is_some_and(|c| c.closure(written).is_some())
+        self.callee(written).is_none() && self.callees.is_some_and(|c| c.closure(written, self.binds_in_body(written)).is_some())
     }
 
     /// What a right-hand side binds, for what a `return` of it hands back.
@@ -1388,6 +1424,7 @@ impl<'c> Bound<'c> {
             RValue::Match { r#match } if self.into_node(&r#match.target) => Kind::Member,
             RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
             RValue::Extract { .. } => Kind::Extracted,
+            RValue::Lazy { .. } => Kind::Lazy,
             _ => Kind::Value,
         })
     }
@@ -1589,9 +1626,19 @@ impl<'c> Bound<'c> {
 
     /// A combinator's receipt read as a value (`readBareName`): each slot's
     /// value, a record's slot null — so it holds a record only where an arm
-    /// returned a value that may.
+    /// returned a value that may. Arms a value holds are the closures a MAP
+    /// built them as (`built_arms`), where every binding of the name is one.
     fn receipt_holder(&self, combinator: &ast::CombinatorExpression) -> Holder {
-        let CombinatorArms::Literal { arms, .. } = &combinator.arms else { return Holder::Other };
+        let arms = match &combinator.arms {
+            CombinatorArms::Literal { arms, .. } => arms,
+            CombinatorArms::Dynamic { expr, .. } => {
+                let Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = lowered(&expr.raw) else { return Holder::Other };
+                return match self.built_arms.get(&name) {
+                    Some(bindings) => bindings.iter().try_fold(Holder::Free, |held, arms| arms.map(|arms| held.join(arms))).unwrap_or(Holder::Other),
+                    None => Holder::Other,
+                };
+            }
+        };
         let mut held = Holder::Free;
         for arm in arms {
             let ArmExpression::Closure { closure, .. } = arm else { return Holder::Other };
@@ -1600,6 +1647,30 @@ impl<'c> Bound<'c> {
             }
         }
         held
+    }
+
+    /// What a combinator over the arms a MAP builds receipts (`arms =
+    /// MAP(xs, (n) => { return () => { … } })`, each arm a closure its
+    /// function returns): a slot holds a record only where an arm's
+    /// `return` may hand one back. `None` where the op builds anything else.
+    fn built_arms_holder(&self, op: &CollectionOpExpression) -> Option<Holder> {
+        if op.op != CollectionOp::Map {
+            return None;
+        }
+        let ArmExpression::Closure { closure, .. } = &op.r#fn else { return None };
+        let mut returns = Vec::new();
+        returns_of(&closure.body, &mut returns);
+        if returns.is_empty() {
+            return None;
+        }
+        let mut held = Holder::Free;
+        for value in returns {
+            let RValue::Closure { closure: arm } = value else { return None };
+            if !matches!(self.returns_holder(&arm.body), Holder::Free | Holder::Record) {
+                held = Holder::Other;
+            }
+        }
+        Some(held)
     }
 
     /// What a collection op hands back, as far as a record goes: a MAP the
@@ -1683,7 +1754,7 @@ impl<'c> Bound<'c> {
             if self.calls_closure(callee) {
                 self.closure_call_holder(callee)
             } else if self.callee(callee).is_some() || self.plugin_kind(callee).is_some() || !staged_as_value(callee) {
-                nested_call_holder(callee, self.plugin_binds.get(callee).copied())
+                nested_call_holder(callee, self.plugin_bind(callee))
             } else {
                 self.holds(text)
             }
@@ -1905,6 +1976,10 @@ impl Names<'_> {
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
+                // A kept walk handed back by a movement's body: the call's
+                // value is the walk (`return` binds the right-hand side as
+                // `x = lazy …` binds it), read at each read as a block head is.
+                RValue::Lazy { lazy } if within == Within::Body => self.traversal_entry(&lazy.head, lazy.mapping.as_ref(), false),
                 RValue::Expr { expr } => self.assigned(expr),
                 RValue::Call { call } => self.assigned(self.builtin_value(call)?),
                 RValue::Await { r#await } => sleep(&r#await.source),
@@ -2078,7 +2153,7 @@ impl Names<'_> {
     /// its parameters take; its body was walked where it is written, its
     /// parameters holding whatever a call hands them.
     fn closure_call(&self, call: &CallStatement) -> Admitted {
-        let Some(Some(params)) = self.callees.closure(&call.callee) else { return refuse("function_call") };
+        let Some(Some(params)) = self.callees.closure(&call.callee, self.binds(&call.callee)) else { return refuse("function_call") };
         self.call_args(params, &call.args)
     }
 
@@ -2140,7 +2215,7 @@ impl Names<'_> {
                 }
                 CallArg::Call { call, .. } if self.calls_closure(&call.callee) => {
                     self.closure_call(call)?;
-                    returns_free(self.closure_holders.get(&call.callee).copied().unwrap_or(Holder::Other))?;
+                    returns_free(self.closure_holder(&call.callee))?;
                 }
                 CallArg::Call { call, .. } if takes_value => {
                     let value = self.builtin_value(call)?;
@@ -2161,7 +2236,13 @@ impl Names<'_> {
 
     /// Whether a call names a closure bound to that name (`Callees::closure`).
     fn calls_closure(&self, written: &str) -> bool {
-        self.callee(written).is_none() && self.callees.closure(written).is_some()
+        self.callee(written).is_none() && self.callees.closure(written, self.binds(written)).is_some()
+    }
+
+    /// What a call of the closure `written` names hands back (`closure_holders`
+    /// under the name it is bound to); anything where none is named.
+    fn closure_holder(&self, written: &str) -> Holder {
+        self.callees.closure_name(written, self.binds(written)).and_then(|name| self.closure_holders.get(name)).copied().unwrap_or(Holder::Other)
     }
 
     /// Whether what a slot hands a position parameter is a record known to
@@ -2224,7 +2305,9 @@ impl Names<'_> {
 
     fn head(&self, head: &PathHead) -> Admitted {
         let root = match &head.root {
-            None => return refuse("block_head_rootless"),
+            // The run fails where the TypeScript's `resolveHeadIterations`
+            // fails it (`unsupported`, crate::traverse `head_iterations_past`).
+            None => return Ok(()),
             // `AT(rows, 0)-[c:company]->`: the root bound as `x = <it>` binds.
             Some(PathRoot::Expression { expr }) => {
                 self.assigned(expr)?;
@@ -2232,9 +2315,12 @@ impl Names<'_> {
             }
             Some(PathRoot::Name { name }) => name,
         };
-        // A hop off a kept walk continues the walk itself, past its head.
+        // A hop off a kept walk continues the walk itself, past its head
+        // (crate::node `run_deferred_past`): its landings are a system's
+        // records or the nodes its mapping builds, so the hop is held to
+        // what every kind reads, as a value's is.
         if self.lazies.contains(root) {
-            return refuse("block_head_value_root");
+            return self.value_head(head);
         }
         if self.extracts.contains(root) {
             return self.extract_head(root, head);
@@ -2304,8 +2390,10 @@ impl Names<'_> {
     }
 
     /// A head over what an extraction yielded: one hop down one of its
-    /// edges, as the TypeScript walks it (no WHERE, which it refuses, and no
-    /// ORDER BY, LIMIT or direction, which it does not read).
+    /// edges, as the TypeScript walks it: a WHERE fails the run as its
+    /// `headIterationsFrom` fails it (crate::traverse `extract_paths`, the
+    /// same `unsupported`), and an ORDER BY, a LIMIT or a direction is not
+    /// read, by either engine.
     fn extract_head(&self, root: &str, head: &PathHead) -> Admitted {
         let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
         let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
@@ -2318,10 +2406,7 @@ impl Names<'_> {
             _ => return refuse("block_head_does_not_lower"),
         };
         let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
-        let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
-        if step.expression_filter.is_some() || step.cardinality.is_some() || step.direction != EdgeDirection::Outgoing {
-            return refuse("block_head_extract_hop");
-        }
+        let TraversalStep::Edge(_) = step else { return refuse("block_head_step") };
         Ok(())
     }
 
@@ -2397,11 +2482,12 @@ impl Names<'_> {
         if self.lazies.contains(root) {
             return refuse("traversal_root");
         }
+        // Down an extraction, plain hops (`walkExtractSteps`): a WHERE or a
+        // hop that is no edge fails the run as the TypeScript's fails it
+        // (crate::traverse `walk_extract`, the same `unsupported`, before the
+        // WHERE is read); an ORDER BY, a LIMIT or a direction is not read.
         if self.extracts.contains(root) {
-            return steps.iter().try_for_each(|step| match step {
-                TraversalStep::Edge(step) if step.expression_filter.is_none() => Ok(()),
-                _ => refuse("walk_extract_hop"),
-            });
+            return Ok(());
         }
         steps.iter().try_for_each(|step| match step {
             TraversalStep::Edge(step) => self.hop(step),
@@ -2410,22 +2496,15 @@ impl Names<'_> {
     }
 
     /// `EXISTS(root…)`: over a value, whether it holds one (or, with hops,
-    /// a walk off the records it holds); over an extraction, plain hops
-    /// down it; over anything else, edges; each hop's WHERE and ORDER BY,
-    /// and the final WHERE, scoped at the record reached.
-    fn exists(&self, root: &str, steps: &[TraversalStep], where_: Option<&Expression>) -> Admitted {
-        if self.extracts.contains(root) {
-            for step in steps {
-                match step {
-                    TraversalStep::Edge(step) if step.expression_filter.is_none() && step.cardinality.is_none() => {}
-                    _ => return refuse("exists_extract_hop"),
-                }
-            }
-        } else {
-            for step in steps {
-                let TraversalStep::Edge(step) = step else { return refuse("exists_step") };
-                self.hop(step)?;
-            }
+    /// a walk off the records it holds); over anything else, edges — down
+    /// an extraction its entities' children, each hop's WHERE, ORDER BY and
+    /// LIMIT read there as the TypeScript's `evaluateExists` reads them
+    /// (crate::reading `exists`); each hop's WHERE and ORDER BY, and the
+    /// final WHERE, scoped at the record reached.
+    fn exists(&self, steps: &[TraversalStep], where_: Option<&Expression>) -> Admitted {
+        for step in steps {
+            let TraversalStep::Edge(step) = step else { return refuse("exists_step") };
+            self.hop(step)?;
         }
         match where_ {
             Some(where_) => self.scoped(where_),
@@ -2511,7 +2590,14 @@ impl Names<'_> {
             ArmExpression::Ref { name, .. } => {
                 let params: Vec<&ast::MovementParam> = match self.callees.movement(name) {
                     Some(movement) => movement.params.iter().collect(),
-                    None => self.callees.closure_bodies.get(name).into_iter().flatten().flat_map(|closure| closure.params.iter()).collect(),
+                    None => self
+                        .callees
+                        .closure_name(name, self.binds(name))
+                        .and_then(|name| self.callees.closure_bodies.get(name))
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|closure| closure.params.iter())
+                        .collect(),
                 };
                 let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
                 // A member handed to a position parameter: a record known to
@@ -2529,7 +2615,7 @@ impl Names<'_> {
                         self.callees.returns(movement, &vec![Kind::Value; movement.params.len()], &[]).1 == Holder::Free
                     }
                     Some(_) => false,
-                    None => self.closure_holders.get(name) == Some(&Holder::Free),
+                    None => self.closure_holder(name) == Holder::Free,
                 };
                 let accumulator_free = op.op != CollectionOp::Reduce || (op.init.as_ref().is_none_or(|init| !self.may_hold_record_slot(init)) && returns_free);
                 if member != Holder::Free || !accumulator_free { refuse("call_arg_record") } else { Ok(()) }
@@ -2591,7 +2677,7 @@ impl Names<'_> {
     /// in another letter case is the TypeScript's), named value arguments,
     /// an output the slice binds.
     fn plugin_call(&self, call: &CallStatement) -> Admitted {
-        match self.plugin_binds.get(&call.callee) {
+        match plugin_bind(self.plugin_binds, &call.callee, self.language_version) {
             None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
             Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Records | PluginBinds::Nothing) => {}
         }
@@ -2610,12 +2696,28 @@ impl Names<'_> {
                 // The run fails there, on either engine (`unsupported`);
                 // nothing after it is read.
                 CallArg::Write { .. } | CallArg::Closure { .. } | CallArg::Type { .. } => return Ok(()),
-                // A built-in's call is the value it computes; any other's
-                // value may be records handed over as binding objects.
-                CallArg::Call { call: inner, .. } => {
-                    if self.callee(&inner.callee).is_some() || self.calls_closure(&inner.callee) || self.plugin(&inner.callee) {
-                        return refuse("plugin_call_form");
+                // A built-in's call is the value it computes; a function's,
+                // what it hands back (`evaluateCallArg`): a value, or one
+                // record whose fields hold none, which the plugin is handed
+                // as its fields (`recordFields`), as a node argument is.
+                CallArg::Call { call: inner, .. } if self.callee(&inner.callee).is_some() => {
+                    self.call(inner)?;
+                    plain_or_record(self.call_holders.iter().rev().find(|(at, _)| *at == inner.span).map_or(Holder::Other, |(_, held)| *held))?;
+                }
+                CallArg::Call { call: inner, .. } if self.calls_closure(&inner.callee) => {
+                    self.closure_call(inner)?;
+                    plain_or_record(self.closure_holder(&inner.callee))?;
+                }
+                // A plugin's call runs first (`executePluginCall`): its text,
+                // or its record's fields.
+                CallArg::Call { call: inner, .. } if self.plugin(&inner.callee) => {
+                    self.plugin_call(inner)?;
+                    match plugin_bind(self.plugin_binds, &inner.callee, self.language_version) {
+                        Some(PluginBinds::Value | PluginBinds::Nothing | PluginBinds::Record) => {}
+                        _ => return refuse("plugin_call_form"),
                     }
+                }
+                CallArg::Call { call: inner, .. } => {
                     let expr = self.builtin_value(inner)?;
                     self.slot(expr)?;
                     self.plugin_arg(expr)?;
@@ -2635,7 +2737,7 @@ impl Names<'_> {
     }
 
     fn plugin_invocation<'a>(&self, callee: &str, args: impl Iterator<Item = Option<&'a ExprSlot>>) -> Admitted {
-        match self.plugin_binds.get(callee) {
+        match plugin_bind(self.plugin_binds, callee, self.language_version) {
             None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
             Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Records | PluginBinds::Nothing) => {}
         }
@@ -2912,7 +3014,11 @@ impl Names<'_> {
             EdgeShape::One { edge, .. } if is_meta_edge(&edge) => refuse("traversal_meta_edge"),
             EdgeShape::One { where_: Some(where_), .. } => self.scoped(&where_.filter),
             EdgeShape::One { where_: None, .. } => Ok(()),
-            EdgeShape::MultiHop | EdgeShape::Invalid(_) => refuse(format!("{verb}_multi_hop")),
+            // More (or less) than one edge: the run fails where the
+            // TypeScript's `singleWriteEdge` fails it (crate::write
+            // `single_edge`, the same `unsupported`), after what came before.
+            EdgeShape::MultiHop => Ok(()),
+            EdgeShape::Invalid(_) => refuse("block_head_does_not_lower"),
         }
     }
 
@@ -2973,13 +3079,9 @@ impl Names<'_> {
             if !self.values.contains(&spread.source) && !copied(&spread.source) {
                 return refuse("node_spread_source");
             }
-            // A map spread into a graph files a nested map (or a list of
-            // them) as a child (`asMapList`), and the TypeScript takes a
-            // record's binding object for a map too: its internals would
-            // become the child's fields.
-            if self.values.contains(&spread.source) && matches!(self.holder(&spread.source), Holder::Map { .. } | Holder::List | Holder::Rows { .. } | Holder::Other) {
-                return refuse("node_spread_record");
-            }
+            // A map holding a record anywhere fails the run as the
+            // TypeScript's `spreadIntoGraph` fails it (`holdsRecord`, before
+            // the record's key is filed): crate::node `spread_into_graph`.
         }
         for entry in &literal.entries {
             match entry {
@@ -2990,6 +3092,13 @@ impl Names<'_> {
                     }
                     if self.events.contains(bare) {
                         return refuse("node_event_entry");
+                    }
+                    // `owner: ONLY(msg-[:files]->)` in a graph: the record the
+                    // pick lands on, held on the edge as a binding of it is
+                    // (`referencedRecords` over `bindSlotValue`).
+                    if graph && lowered(&value.raw).is_ok_and(|expr| selection(&expr).is_some()) {
+                        self.assigned(value)?;
+                        continue;
                     }
                     self.slot(value)?;
                 }
@@ -3106,9 +3215,9 @@ impl Names<'_> {
             units,
             plan,
             &|callee| !self.binds_any_case(callee) && crate::js::to_upper_case(callee) == "COALESCE",
-            &|callee, text| match self.closure_holders.get(callee) {
+            &|callee, text| match self.callees.closure_name(callee, self.binds(callee)).and_then(|name| self.closure_holders.get(name)) {
                 Some(held) if self.calls_closure(callee) => *held,
-                _ if self.nested_function(callee) || self.binds_any_case(callee) || !staged_as_value(callee) => nested_call_holder(callee, self.plugin_binds.get(callee).copied()),
+                _ if self.nested_function(callee) || self.binds_any_case(callee) || !staged_as_value(callee) => nested_call_holder(callee, plugin_bind(self.plugin_binds, callee, self.language_version)),
                 _ => self.text_holder(text),
             },
             &|name| self.holder(name),
@@ -3257,11 +3366,27 @@ impl Names<'_> {
             // anything else refused as the TypeScript refuses it.
             Expression::AliasRef { .. } | Expression::Property { .. } => Ok(()),
             // `EXISTS(x-[:e]->)` lowers as a walk ending in the quantifier.
-            Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) => {
+            Expression::Traverse { alias_root: Some(_), steps, expression } if steps.is_empty() && matches!(expression.as_ref(), Expression::Exists { .. }) => {
                 let Expression::Exists { steps, where_ } = expression.as_ref() else { unreachable!("matched above") };
-                self.exists(root, steps, where_.as_deref())
+                self.exists(steps, where_.as_deref())
             }
-            Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => refuse("expression:exists"),
+            // A rootless `EXISTS(-[…]->)`: inside a hop's WHERE, a walk off
+            // the landed record (an extraction's entity, or a system's
+            // record walked through the run's source, `evaluateExists`);
+            // anywhere else the run fails as the TypeScript's evaluator
+            // fails it (`unsupported`, crate::eval).
+            Expression::Exists { steps, where_ } if scoped => self.exists(steps, where_.as_deref()),
+            Expression::Exists { .. } => Ok(()),
+            // A kind the TypeScript's evaluator has no case for (the retired
+            // `KG_VALUE` / `KG_EXISTS`, which the checker passes): the run
+            // fails as it fails it, before any part is read (`unsupported`,
+            // crate::eval).
+            Expression::KgValue { .. }
+            | Expression::KgExists { .. }
+            | Expression::ParentResult { .. }
+            | Expression::ActionResult { .. }
+            | Expression::LinkedObject { .. }
+            | Expression::ExtractValue { .. } => Ok(()),
             // A walk read for a field, many-valued.
             // A walk read for a field, or as the records it lands on.
             Expression::Traverse { alias_root: Some(root), steps, expression } if !steps.is_empty() => match expression.as_ref() {
@@ -3304,8 +3429,12 @@ impl Names<'_> {
                 _ => refuse("traversal_terminal"),
             },
             Expression::Traverse { alias_root: None, .. } => refuse("traversal_root"),
+            // `-0` runs: this engine lowers the program itself, so the
+            // literal is never JSON (a host request carries it as JSON
+            // writes it, `0`, as the TypeScript's does). No literal reads as
+            // a non-finite number (`1e400` does not parse).
             Expression::Static { value: StaticValue::Number(n) } => {
-                if n.0.is_finite() && !(n.0 == 0.0 && n.0.is_sign_negative()) { Ok(()) } else { refuse("static_number") }
+                if n.0.is_finite() { Ok(()) } else { refuse("static_number") }
             }
             Expression::Static { .. } => Ok(()),
             Expression::At { expression, index } => {
@@ -3328,7 +3457,6 @@ impl Names<'_> {
                 ListElement::Spread(spread) => self.walk(&spread.expression, scoped),
             }),
             Expression::Object { entries } => entries.iter().try_for_each(|member| match member {
-                ObjectMember::Entry { key, .. } if key == "__proto__" => refuse("proto_key"),
                 ObjectMember::Entry { value, .. } => self.walk(value, scoped),
                 ObjectMember::Spread(spread) => self.walk(&spread.expression, scoped),
             }),
@@ -3879,6 +4007,26 @@ fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32)
     plugins.contains(callee) || (language_version >= 3 && plugins.iter().any(|p| crate::js::to_lower_case(p) == crate::js::to_lower_case(callee)))
 }
 
+/// A function's value handed to a plugin: a value, or one record whose
+/// fields hold none (the plugin is handed its fields).
+fn plain_or_record(held: Holder) -> Admitted {
+    if matches!(held, Holder::Free | Holder::Record) { Ok(()) } else { refuse("plugin_call_form") }
+}
+
+/// What a call of the plugin `callee` resolves to binds (`resolveCallee`):
+/// the plugin imported as written, or from version 3 the one imported in
+/// another letter case.
+fn plugin_bind(binds: &BTreeMap<String, PluginBinds>, callee: &str, language_version: u32) -> Option<PluginBinds> {
+    if let Some(bind) = binds.get(callee) {
+        return Some(*bind);
+    }
+    if language_version < 3 {
+        return None;
+    }
+    let folded = crate::js::to_lower_case(callee);
+    binds.iter().find(|(name, _)| crate::js::to_lower_case(name) == folded).map(|(_, bind)| *bind)
+}
+
 /// An expression slot, lowered.
 fn lowered(raw: &str) -> Result<Expression, String> {
     let Ok(tree) = movement_parser::expr::parse_expression(raw) else { return Err("expression_does_not_lower".into()) };
@@ -3962,30 +4110,30 @@ mod tests {
     /// letter case, bare or backtick-quoted.
     #[test]
     fn walks_the_entry_and_what_it_reaches_and_nothing_else() {
-        let helper = "movement helper(e: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}\n";
+        let helper = "movement helper(e: <inbox-[:message]->>) {\n  x = @trigger\n}\n";
         // The helper after the entry: movements are walked in source order.
         let entry = |body: &str| format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}\n{helper}");
         assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "m", 3), Vec::<String>::new(), "an unreached helper");
-        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "helper", 3), ["expression:kg_value"], "the helper as the entry");
+        assert_eq!(reasons_of(&entry("  s = msg.`subject`"), "helper", 3), ["meta:trigger"], "the helper as the entry");
         for (body, first) in [
             // A call is walked into: what the callee holds is the reason.
-            ("  helper(e: msg)", "expression:kg_value"),
-            ("  r = helper(e: msg)", "expression:kg_value"),
-            ("  r = HELPER(msg)", "expression:kg_value"),
-            ("  r = await parallel([helper])", "expression:kg_value"),
+            ("  helper(e: msg)", "meta:trigger"),
+            ("  r = helper(e: msg)", "meta:trigger"),
+            ("  r = HELPER(msg)", "meta:trigger"),
+            ("  r = await parallel([helper])", "meta:trigger"),
             // A movement handed to a collection op by name is called once per
             // member; a name read whole (here refused at run time, as the
             // TypeScript refuses it) reaches it too.
-            ("  r = MAP([msg], helper)", "expression:kg_value"),
-            ("  x = \"${`helper`}\"", "expression:kg_value"),
+            ("  r = MAP([msg], helper)", "meta:trigger"),
+            ("  x = \"${`helper`}\"", "meta:trigger"),
         ] {
             let reasons = reasons_of(&entry(body), "m", 3);
             assert_eq!(reasons.first().map(String::as_str), Some(first), "{body}: {reasons:?}");
-            assert!(reasons.iter().any(|r| r == "expression:kg_value"), "{body} reaches the helper: {reasons:?}");
+            assert!(reasons.iter().any(|r| r == "meta:trigger"), "{body} reaches the helper: {reasons:?}");
         }
         // Transitively: the entry names `middle`, which names `helper`.
         let chain = format!("{PRELUDE}{helper}movement middle(e: <inbox-[:message]->>) {{\n  helper(e: e)\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  middle(e: msg)\n}}");
-        assert_eq!(reasons_of(&chain, "m", 3), ["expression:kg_value"]);
+        assert_eq!(reasons_of(&chain, "m", 3), ["meta:trigger"]);
         // A movement taking a value is refused only where it can run.
         let valued = format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
         assert_eq!(reasons_of(&valued, "m", 3), Vec::<String>::new());
@@ -4002,8 +4150,8 @@ mod tests {
         let v2 = movement_parser::stmt::parse_program(&entry("  x = 1"), 2, false).unwrap();
         assert_eq!(reachable(&v2, Some("M"), 2).len(), 2);
         // The file's values and declarations are walked whatever the entry.
-        let valued_file = format!("{PRELUDE}y = KG_VALUE(\"why\")\n{helper}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
-        assert_eq!(reasons_of(&valued_file, "m", 3), ["expression:kg_value"]);
+        let valued_file = format!("{PRELUDE}y = @trigger\n{helper}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}");
+        assert_eq!(reasons_of(&valued_file, "m", 3), ["meta:trigger"]);
     }
 
     /// The walk goes on past a statement's reason, into the next statement,
@@ -4012,16 +4160,16 @@ mod tests {
     /// that stopped there gives.
     #[test]
     fn notes_every_reason_in_the_order_met() {
-        let body = "  x = KG_VALUE(\"why\")\n  y = KG_VALUE(\"again\")\n  if x WITHIN \"7d\" {\n    write msg { a: 1 }\n  }\n  v = 1\n  v-[c:companies]-> {\n    z = TEXT.CHUNKS(c.`name`)\n    await sleep(1h)\n  }\n  helper(e: msg)";
+        let body = "  x = @trigger\n  y = @trigger\n  if x WITHIN \"7d\" {\n    write msg { a: 1 }\n  }\n  v = 1\n  v-[c:companies]-> {\n    z = TEXT.CHUNKS(c.`name`)\n    await sleep(1h)\n  }\n  helper(e: msg)";
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["expression:kg_value", "within_compare", "expression_does_not_lower", "statement:call"]
+            ["meta:trigger", "within_compare", "expression_does_not_lower", "statement:call"]
         );
-        assert_eq!(refused(body).as_deref(), Some("expression:kg_value"));
+        assert_eq!(refused(body).as_deref(), Some("meta:trigger"));
         // The file's reasons come first, then each movement's, in source order.
-        let file_first = format!("import {{ x }} from \"./lib.mov\"\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  inbox = 1\n  y = KG_VALUE(\"why\")\n}}");
-        assert_eq!(reasons_of(&file_first, "m", 3), ["import_from_file", "name_shadowed", "expression:kg_value"]);
+        let file_first = format!("import {{ x }} from \"./lib.mov\"\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  inbox = 1\n  y = @trigger\n}}");
+        assert_eq!(reasons_of(&file_first, "m", 3), ["import_from_file", "name_shadowed", "meta:trigger"]);
     }
 
     #[test]
@@ -4041,14 +4189,13 @@ mod tests {
     #[test]
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
-            ("  x = KG_VALUE(\"why?\")", "expression:kg_value"),
+            ("  x = @trigger", "meta:trigger"),
             ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
             ("  x = FIRST(crm-[:#foo]->)", "traversal_meta_edge"),
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
             ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
             ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
-            ("  x = { __proto__: 1 }", "proto_key"),
             ("  x = 1\n  x = write crm-[:companies]-> { name: \"a\" }", "name_rebound"),
             ("  inbox = 1", "name_shadowed"),
             ("  msg = 1", "name_shadowed"),
@@ -4175,14 +4322,16 @@ mod tests {
     }
 
     /// `ONLY` of an expression its failure spells back (crate::formula), a
-    /// walk read for a field among them, is admitted; one it does not spell
-    /// (a resource walk) is refused.
+    /// walk read for a field among them, is admitted, and so is one picking
+    /// the record a walk lands on for a graph's entry (`bindSlotValue`); one
+    /// it does not spell (a resource walk) is refused.
     #[test]
     fn admits_an_only_its_failure_can_spell() {
         assert_eq!(refused("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }"), None);
         assert_eq!(refused("  x = ONLY([1, 2])"), None);
         assert_eq!(refused("  x = ONLY(msg-[:_resources]->.`name`)").as_deref(), Some("aggregate:only"));
-        assert_eq!(refused("  g = graph { file: ONLY(msg-[:files]->) }").as_deref(), Some("aggregate:only"));
+        assert_eq!(refused("  g = graph { file: ONLY(msg-[:files]->) }"), None);
+        assert_eq!(refused("  g = node { file: ONLY(msg-[:files]->) }").as_deref(), Some("aggregate:only"));
     }
 
     /// A closure bound to a name called as a function (`executeClosureCall`):
@@ -4321,7 +4470,7 @@ mod tests {
         let heads = "movement heads(n: <Note>) {\n  n-[k:kids]-> {\n    x = k.`first`\n  }\n}\n";
         assert_eq!(reasons(heads, "  one = FIRST([msg])\n  heads(n: one)"), Vec::<String>::new());
         let keeps = "movement keeps(n: <Note>) {\n  n-[k:kids]-> {\n    x = k.`first`\n  }\n}\nmovement kept(e: <inbox-[:message]->>) {\n  files = lazy e-[a:attachments]->\n}\n";
-        assert_eq!(reasons(keeps, "  one = FIRST([msg])\n  keeps(n: one)\n  kept(e: msg)"), ["block_head_value_root"], "where the program keeps a walk, a value may hold one");
+        assert_eq!(reasons(keeps, "  one = FIRST([msg])\n  keeps(n: one)\n  kept(e: msg)"), Vec::<String>::new(), "where the program keeps a walk, a value may hold one, and a head walks on past it");
         // A park inside a callee, at any depth: it resumes through its
         // call frames.
         let wait = "movement wait(e: <inbox-[:message]->>) {\n  if e.`subject` == \"a\" {\n    await sleep(1h)\n  }\n}\n";
@@ -4360,11 +4509,12 @@ mod tests {
             "  doc = node { files: lazy msg-[a:attachments]-> node { name: a.`name` } }\n  doc-[f:files]-> {\n    write crm-[:notes]-> { body: f.`name` }\n  }",
             "  files = lazy msg-[a:attachments]->\n  write crm-[:notes]-> { body: JOIN(files.`name`, \", \") }\n  if EXISTS(files) {\n    x = 1\n  }",
             "  g = graph<Company> { name: msg.`subject`, files: msg-[a:attachments]->, founder: { first: \"Ann\" } }\n  write g-[:founder]-> { first: \"Bob\" }",
+            // A head off a kept walk walks on past its head.
+            "  files = lazy msg-[a:attachments]->\n  files-[f:x]-> {\n    y = 1\n  }",
         ] {
             assert_eq!(file(&declared(body)), None, "{body}");
         }
         for (body, reason) in [
-            ("  files = lazy msg-[a:attachments]->\n  files-[f:x]-> {\n    y = 1\n  }", "block_head_value_root"),
             ("  files = lazy msg-[a:attachments]->\n  x = files-[:x]->.`name`", "traversal_root"),
             ("  d = node { companies: <Company> }\n  d-[c:companies]->-[f:founder]-> {\n    x = f.`first`\n  }", "block_multi_hop"),
         ] {
@@ -4394,10 +4544,10 @@ mod tests {
         assert_eq!(file(&format!("import {{ x }} from \"./lib.mov\"\n{movement}")).as_deref(), Some("import_from_file"));
         // A file-level extraction, write or call fails every run as the
         // TypeScript's does, before any body: nothing after it is walked.
-        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}";
+        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = @trigger\n}";
         assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{refused_body}")), None);
         assert_eq!(file(&format!("{PRELUDE}w = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")), None);
-        assert_eq!(file(&format!("{PRELUDE}y = KG_VALUE(\"q\")\nw = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")).as_deref(), Some("expression:kg_value"));
+        assert_eq!(file(&format!("{PRELUDE}y = @trigger\nw = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")).as_deref(), Some("meta:trigger"));
         // A statement at file scope runs nothing.
         assert_eq!(file(&format!("{PRELUDE}write crm-[:companies]-> {{ name: \"a\" }}\n{movement}")), None);
         assert_eq!(file(&format!("{PRELUDE}movement v(n: <number[]>) {{\n  x = n\n}}\n{movement}")), None);
@@ -4439,12 +4589,12 @@ mod tests {
         }
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         // A file-level value reads only the file-level values before it.
-        for (value, reason) in [("y = KG_VALUE(\"why\")", "expression:kg_value")] {
+        for (value, reason) in [("y = @trigger", "meta:trigger")] {
             assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
         }
         // A plugin or a movement called at file level, in either call form:
         // `fileLevelCall` fails the run before any body, on either engine.
-        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE(\"why\")\n}";
+        let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = @trigger\n}";
         for value in ["page = fetch_url()", "page = fetch_url(url: \"x\")", "page = FETCH_URL(url: \"x\")", "r = m(msg: 1)", "r = M(1)"] {
             assert_eq!(file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}{value}\n{refused_body}")), None, "{value}");
         }
@@ -4464,13 +4614,16 @@ mod tests {
             "\n  write crm-[:notes]-> { body: deals.`digest` }",
             "\n  deals-[c:co]-> {\n    write crm-[:companies]-> { unique by (`name`) name: c.`name`, summary: c.summary }\n    c-[p:people]-> {\n      x = p.`name`\n    }\n  }",
             "\n  if deals.`digest` != \"\" {\n    y = deals.digest\n  }",
+            // A WHERE down an extraction fails the run as the TypeScript's
+            // does; an ORDER BY or a LIMIT is not read.
+            "\n  x = deals-[c:co WHERE c.`name` == \"a\"]->.`name`",
+            "\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }",
+            "\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }",
+            "\n  if EXISTS(deals-[c:co ORDER BY `name` LIMIT 1]->) {\n    x = 1\n  }",
         ] {
             assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
         }
         for (after, reason) in [
-            ("\n  x = deals-[c:co WHERE c.`name` == \"a\"]->.`name`", "walk_extract_hop"),
-            ("\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }", "block_head_extract_hop"),
-            ("\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }", "block_head_extract_hop"),
             ("\n  deals-[c:co]->-[p:people]-> {\n    x = 1\n  }", "block_multi_hop"),
             ("\n  msg-[f:_resources]-> {\n    x = 1\n  }", "block_head_resources"),
             ("\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    x = 1\n  }", "block_head_resources"),
@@ -4479,7 +4632,7 @@ mod tests {
             assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");
         }
         for (body, reason) in [
-            ("  d = extract from [msg.`text`] {\n    a: \"${KG_VALUE(\"why\")}\"\n  }", "expression:kg_value"),
+            ("  d = extract from [msg.`text`] {\n    a: \"${@trigger}\"\n  }", "meta:trigger"),
             ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
             ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
@@ -4493,7 +4646,7 @@ mod tests {
         // A declared shape's words are walked in the file's scope.
         let shaped = |words: &str| file(&format!("{PRELUDE}node Lead {{\n  name: <text> \"{words}\"\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"));
         assert_eq!(shaped("its name"), None);
-        assert_eq!(shaped("its ${KG_VALUE(\"why\")} name").as_deref(), Some("expression:kg_value"));
+        assert_eq!(shaped("its ${@trigger} name").as_deref(), Some("meta:trigger"));
     }
 
     /// A plugin's plain call binds what the catalog snapshot declares it
@@ -4525,11 +4678,8 @@ mod tests {
         ] {
             assert_eq!(with(body), None, "{body}");
         }
-        for (body, reason) in [
-            ("  page = FETCH_URL(url: msg.`text`)", "plugin_call"),
-        ] {
-            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
-        }
+        // From version 3 a plugin's name in any letter case is its call.
+        assert_eq!(with("  page = FETCH_URL(url: msg.`text`)"), None);
         // A snapshot that does not say what the plugin hands back refuses
         // its call.
         let unknown = movement_parser::stmt::parse_program(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  page = fetch_url(url: \"x\")\n}}"), 3, false).unwrap();
@@ -4641,13 +4791,14 @@ mod tests {
         for body in [
             "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  a = AT(top, \"kind\")\n  b = AT(rows, 0)\n  held = { k: \"v\" }\n  c = AT(held, \"k\")",
             "  held = { k: \"v\" }\n  g = graph { ...held }",
+            // The run fails as the TypeScript's `spreadIntoGraph` fails it.
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  g = graph { ...held }",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
         for (body, reason) in [
             ("  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  a = AT(top, \"read\")", "at_record_key"),
             ("  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = \"kind\"\n  a = AT(top, key)", "at_record_key"),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  g = graph { ...held }", "node_spread_record"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
         }

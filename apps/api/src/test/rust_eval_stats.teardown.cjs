@@ -114,8 +114,12 @@ const path = require('node:path');
 // ceilings at today's counts a margin would let two runs per corpus slip
 // back to the TypeScript engine unseen, so the floors are the measured v1
 // 1023, v2 1251, v3 2152, and a task that lifts runs raises them to its new
-// measurement in the same commit.
-const RAN_WHOLE_FLOOR = { v1: 1023, v2: 1251, v3: 2152 };
+// measurement in the same commit. PLAN-08A Task 2 (admission reads what it
+// knows, 2026-10-12) lifts v1 2, v2 2, v3 7 (a plugin argument's function
+// call held to its returns, a head off a kept walk, the arms a MAP builds,
+// a closure called in another letter case, a graph entry picking a walk's
+// record): v1 1025, v2 1253, v3 2159.
+const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2159 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -157,41 +161,46 @@ const RAN_WHOLE_FLOOR = { v1: 1023, v2: 1251, v3: 2152 };
 // unreproduced 0 (the 6 / 6 / 4 runs once counted `failedByName` are all
 // mirrored); shim faults 0; hand-backs `builtins.compare` 0 / 5 / 5 (WITHIN's),
 // `builtins.function` 0, evaluator fallbacks 0; evaluator not admitted 84 /
-// 102 / 591; mirrored failures 6 / 6 / 4.
+// 102 / 591; mirrored failures 6 / 6 / 4. Lowered by PLAN-08A Task 2
+// (2026-10-12) to its measurement: refused 10 / 19 / 79 (every reason 10 /
+// 21 / 88: plugin_call_form, block_head_value_root, aggregate:only and
+// function:inc retired, write_field_record 4 to 2, the two left Task 3's
+// nested movement calls); evaluator not admitted 79 / 97 / 580. Group A
+// (TypeScript's own failures mirrored) moved no corpus run: v2's and v3's
+// statement:call runs call a function an import binds.
 const CEILINGS = {
   v1: {
-    refused: 12,
-    everyReason: { block_multi_hop: 4, 'function:chunks': 3, write_root_not_held: 2, block_head_resources: 1, plugin_call_form: 1, block_head_value_root: 1 },
+    refused: 10,
+    everyReason: { block_multi_hop: 4, 'function:chunks': 3, write_root_not_held: 2, block_head_resources: 1 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 84,
+    evaluatorNotAdmitted: 79,
     mirroredFailure: 6,
   },
   v2: {
-    refused: 21,
-    everyReason: { import_from_file: 7, block_multi_hop: 4, block_head_resources: 3, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2, block_head_value_root: 1, plugin_call_form: 1 },
+    refused: 19,
+    everyReason: { import_from_file: 7, block_multi_hop: 4, block_head_resources: 3, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 102,
+    evaluatorNotAdmitted: 97,
     mirroredFailure: 6,
   },
   v3: {
-    refused: 86,
+    refused: 79,
     everyReason: {
       builtin_call_form: 16, nested_movement_call: 15, expression_closure: 14, block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4,
-      node_spread_path: 4, write_field_record: 4, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
-      'statement:call': 2, 'rvalue:block': 2, plugin_call_form: 2, movement_call: 2, extract_call_model: 1, block_head_value_root: 1,
-      'aggregate:only': 1, delete_not_record: 1, 'function:inc': 1,
+      node_spread_path: 4, write_field_record: 2, block_head_resources: 3, 'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2,
+      'statement:call': 2, 'rvalue:block': 2, movement_call: 2, extract_call_model: 1, delete_not_record: 1,
     },
     declined: { expression_does_not_lower: 3 },
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 591,
+    evaluatorNotAdmitted: 580,
     mirroredFailure: 4,
   },
 };

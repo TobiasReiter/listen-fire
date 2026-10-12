@@ -476,7 +476,9 @@ fn plain_value(value: &Js, path: &mut Vec<Binding>) -> Result<Js, EvalError> {
     }
     match value {
         Js::Array(list) => Ok(Js::array(list.items().iter().map(|item| plain_value(item, path)).collect::<Result<_, _>>()?)),
-        Js::Object(dict) => {
+        // `isDictValue`: an object a prototype was assigned to is handed on
+        // as it is.
+        Js::Object(dict) if js::is_dict(value) => {
             let mut out = JsObject::new();
             for (key, item) in dict.entries() {
                 out.set(key.clone(), plain_value(item, path)?);

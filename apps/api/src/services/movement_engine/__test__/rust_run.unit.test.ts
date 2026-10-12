@@ -241,7 +241,9 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  x = [co]'))).toBe('admitted');
     expect(await admission(program('  x = msg'))).toBe('admitted');
     expect(await admission(program('  x = AI("why?")'))).toBe('admitted');
-    expect(await admission(program('  x = KG_VALUE("why?")'))).toBe('expression:kg_value');
+    expect(await admission(program('  x = CHUNKS("why?", { size: 4 })'))).toBe('function:chunks');
+    // The retired KG_VALUE fails the run as the TypeScript's evaluator fails it.
+    expect(await admission(program('  x = KG_VALUE("why?")'))).toBe('admitted');
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
     expect(await admission(program('  x = crm.`name`'))).toBe('admitted');
     expect(await admission(program('  x = MAP([1], { concurrency: 4 }, (v) => { return v })'))).toBe('admitted');
@@ -588,13 +590,10 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
       [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
-      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  x = found-[c:co WHERE c.`name` == "x"]->.`name`'), 'walk_extract_hop'],
-      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  if EXISTS(found-[c:co ORDER BY `name`]->) {\n    x = 1\n  }'), 'exists_extract_hop'],
       // A head over a run-built node walks one hop.
       [`node Co { name: <text>\n  node founder { first: <text> } }\n${movement('  d = node { cos: <Co> }\n  d-[c:cos]->-[f:founder]-> {\n    x = 1\n  }')}`, 'block_multi_hop'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
-      [movement('  x = { __proto__: 1 }'), 'proto_key'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       [movement('  held = { k: { name: "a" } }\n  g = graph { ...held.k }'), 'node_spread_path'],
@@ -605,14 +604,12 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
       // An extraction this engine does not run (chunk 6A Task 3b runs the rest).
-      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[c:co WHERE `name` == "x"]-> {\n    x = c.`name`\n  }'), 'block_head_extract_hop'],
       [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
       // A record the TypeScript would hand its host as the binding object,
       // or whose internals a reading would hand out.
       [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = TEXT.REGEX_EXTRACT(top, "x")'), 'builtin_arg_record'],
       [movement('  co = write crm-[:companies]-> { name: "a" }\n  write crm-[:companies]-> { name: co }'), 'write_field_record'],
       [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = "kind"\n  a = AT(top, key)'), 'at_record_key'],
-      [movement('  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }'), 'node_spread_record'],
     ] as const) {
       resetRustRunStats();
       const { outcome, resolved } = await segmentOf(source);
@@ -629,13 +626,13 @@ describe('a whole run in the Rust engine', () => {
     // A refused run counts once under its first reason, and once under
     // each reason it holds: the walk goes on past the first.
     resetRustRunStats();
-    const many = movement('  x = KG_VALUE("why?")\n  y = FIRST(crm-[:#foo]->)\n  z = KG_VALUE("again")\n  if msg.`subject` WITHIN "7d" {\n    w = 1\n  }');
+    const many = movement('  x = CHUNKS("why?", { size: 4 })\n  y = FIRST(crm-[:#foo]->)\n  z = CHUNKS("again", { size: 4 })\n  if msg.`subject` WITHIN "7d" {\n    w = 1\n  }');
     const { outcome, resolved } = await segmentOf(many);
-    expect(outcome).toEqual({ declined: 'expression:kg_value' });
+    expect(outcome).toEqual({ declined: 'function:chunks' });
     expect(resolved).toEqual([]);
     expect(rustRunStats).toMatchObject({
-      notAdmitted: { 'expression:kg_value': 1 },
-      allReasons: { 'expression:kg_value': 1, traversal_meta_edge: 1, within_compare: 1 },
+      notAdmitted: { 'function:chunks': 1 },
+      allReasons: { 'function:chunks': 1, traversal_meta_edge: 1, within_compare: 1 },
       declined: {},
       hostCalls: {},
     });
@@ -749,9 +746,9 @@ describe('the run counts', () => {
   it('count a refusal only for a run the Rust engine did not run, and a whole run under no reason', async () => {
     resetRustRunStats();
     const runs = [
-      'movement m(msg: <inbox-[:message]->>) {\n  x = KG_VALUE("why?")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  x = CHUNKS("why?", { size: 4 })\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  z = KG_VALUE("again")\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  z = CHUNKS("again", { size: 4 })\n}',
       // Fails its check (`crm` has no `#foo`), so never reaches the engine.
       'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
@@ -763,8 +760,8 @@ describe('the run counts', () => {
     expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, endedAtCheck: 1, declined: {} });
     const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
     expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
-    expect(rustRunStats.notAdmitted).toEqual({ 'expression:kg_value': 1, within_compare: 1 });
-    expect(rustRunStats.allReasons).toEqual({ 'expression:kg_value': 2, within_compare: 1 });
+    expect(rustRunStats.notAdmitted).toEqual({ 'function:chunks': 1, within_compare: 1 });
+    expect(rustRunStats.allReasons).toEqual({ 'function:chunks': 2, within_compare: 1 });
   });
 });
 
@@ -788,9 +785,9 @@ describe('admission walks what the entry reaches', () => {
     resetRustRunStats();
     // The call itself is admitted (chunk 7A Task 2): the callee's own
     // reason refuses, and the walk goes on past it.
-    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = FIRST(crm-[:#foo]->)')}${helper('  x = KG_VALUE("why?")')}`, 'm');
+    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = FIRST(crm-[:#foo]->)')}${helper('  x = CHUNKS("why?", { size: 4 })')}`, 'm');
     expect(outcome).toEqual({ declined: 'traversal_meta_edge' });
-    expect(rustRunStats).toMatchObject({ notAdmitted: { traversal_meta_edge: 1 }, allReasons: { traversal_meta_edge: 1, 'expression:kg_value': 1 }, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({ notAdmitted: { traversal_meta_edge: 1 }, allReasons: { traversal_meta_edge: 1, 'function:chunks': 1 }, hostCalls: {} });
   });
 
   it('runs a reached helper the entry calls, as the TypeScript engine does', async () => {

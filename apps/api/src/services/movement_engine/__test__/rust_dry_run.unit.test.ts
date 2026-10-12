@@ -55,7 +55,7 @@ const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)')
 /** Refused by its admission: a closure in an expression. */
 const REFUSED = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  return msg.`subject`');
 /** Refused for two reasons: the closure, and a retired knowledge-graph read. */
-const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = KG_VALUE("q")', '  return msg.`subject`');
+const REFUSED_TWICE = program('  x = { all: MAP([msg.`subject`], (s) => UPPER(s)) }', '  y = CHUNKS("q", { size: 4 })', '  return msg.`subject`');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -188,8 +188,8 @@ describe('the admission dry run, through the real artifact', () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'expression:kg_value': 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'expression:kg_value'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({ first: { expression_closure: 1 }, all: { expression_closure: 1, 'function:chunks': 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['expression_closure', 'function:chunks'] }]);
   });
 
   // A real run leaves a slot this engine's lowering misses to its check

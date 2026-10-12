@@ -88,7 +88,7 @@ impl Run<'_> {
 
     /// `executePluginCall`: `args` are the call's named arguments, in the
     /// order written.
-    async fn invoke_plugin(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
+    pub(crate) async fn invoke_plugin(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
         let registered = self.registered_plugin(written, scope);
         let declared = self.plugin_spec(&registered).and_then(|spec| output_under(spec, self.version())).cloned();
         let Some(declared) = declared else {

@@ -170,6 +170,9 @@ pub enum Ask {
     /// `expr` scoped at the record `subject` holds (`memberScope`): a SORT
     /// key over a list of records.
     ScopedAt { expr: Expression, subject: Js },
+    /// A rootless `EXISTS(-[…]->)` inside a hop's WHERE, walked off the
+    /// record the evaluation is scoped at (`evaluateExists`).
+    ScopedExists { expr: Expression },
     /// `@user_*` and `@actor_*` (`resolveMovementMetaKey`): the acting user
     /// the host looks up, the actor the source adapter parses.
     Meta { key: String },
@@ -384,12 +387,11 @@ impl<'a> Evaluator<'a> {
                 let mut provs = Vec::new();
                 for member in entries {
                     match member {
+                        // `value[member.key] = result.value`: a `__proto__`
+                        // key is `Object.prototype`'s setter.
                         ObjectMember::Entry { key, value } => {
                             let result = self.member(value).await?;
-                            if key == "__proto__" {
-                                return Err(EvalError::Fallback("a `__proto__` key sets a prototype".into()));
-                            }
-                            object.set(key.clone(), result.value);
+                            object.assign(key.clone(), result.value);
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
@@ -519,6 +521,20 @@ impl<'a> Evaluator<'a> {
             Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
                 self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
             }
+            // A rootless `EXISTS(-[…]->)`: the landed record a hop's WHERE
+            // is scoped at is its subject (the run walks off it); anywhere
+            // else the TypeScript's evaluator refuses it.
+            Expression::Exists { .. } if self.scoped => self.ask_run(Ask::ScopedExists { expr: expr.clone() }).await,
+            Expression::Exists { .. } => Err(rootless_exists()),
+            // Kinds the TypeScript's evaluator has no case for (the retired
+            // KG_VALUE / KG_EXISTS, which the checker passes, and the TG
+            // engine's reads): it fails on the kind before it reads a part.
+            Expression::KgValue { .. }
+            | Expression::KgExists { .. }
+            | Expression::ParentResult { .. }
+            | Expression::ActionResult { .. }
+            | Expression::LinkedObject { .. }
+            | Expression::ExtractValue { .. } => Err(EvalError::unsupported_bare(&format!("the expression kind '{}'", kind_of(expr)))),
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }
     }
@@ -953,6 +969,11 @@ pub(crate) fn is_records_walk(expr: &Expression) -> bool {
         if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
 }
 
+/// `unsupported('rootless EXISTS()', …)`: no position scope to walk from.
+pub(crate) fn rootless_exists() -> EvalError {
+    EvalError::unsupported("rootless EXISTS()", "root the traversal at a named binding — EXISTS(x-[:edge]->)")
+}
+
 /// What a JavaScript built-in threw, as the evaluator throws it.
 fn thrown(error: crate::js::Thrown) -> EvalError {
     let class = if error.class == "RangeError" { ErrorClass::RangeError } else { ErrorClass::TypeError };
@@ -1138,6 +1159,21 @@ mod tests {
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
         Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
+    }
+
+    /// `value[member.key] = …`: an object literal's `__proto__` key is
+    /// `Object.prototype`'s setter — an object or `null` the prototype,
+    /// anything else ignored — and is no key of the object.
+    #[test]
+    fn an_object_literal_assigns_its_proto_key() {
+        let reader = Counting::default();
+        let (result, _) = drive(&in_run(&reader), &expression("{ a: 1, __proto__: { b: 2 } }"));
+        let Js::Object(object) = result.unwrap().value else { panic!("an object") };
+        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert!(matches!(&object.proto, Some(Js::Object(proto)) if matches!(proto.get("b"), Some(Js::Number(n)) if *n == 2.0)));
+        let (result, _) = drive(&in_run(&reader), &expression("{ __proto__: 1, a: 2 }"));
+        let Js::Object(object) = result.unwrap().value else { panic!("an object") };
+        assert!(object.proto.is_none() && object.get("__proto__").is_none());
     }
 
     #[test]

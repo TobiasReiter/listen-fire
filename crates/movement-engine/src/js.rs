@@ -142,9 +142,11 @@ pub(crate) fn inherited(proto: &Js, key: &str) -> Js {
     }
 }
 
-/// `isDictValue`: a plain keyed object, its prototype `Object.prototype`.
+/// `isDictValue`: a plain keyed object, its prototype `Object.prototype` or
+/// none at all (`null`, which a `__proto__: null` a spread assigns leaves).
+/// Every check of whether an object is a dict asks here.
 pub fn is_dict(value: &Js) -> bool {
-    matches!(value, Js::Object(object) if object.proto.is_none())
+    matches!(value, Js::Object(object) if matches!(object.proto, None | Some(Js::Null)))
 }
 
 /// `object[key]` on a plain object that is not `Object.prototype` itself.

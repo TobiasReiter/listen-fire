@@ -464,7 +464,7 @@ impl Run<'_> {
     /// The registered name of the plugin a program calls `written`: the
     /// one its import names (`import { fetch_url as fetch }`).
     pub(crate) fn registered_plugin(&self, written: &str, scope: &Scope) -> String {
-        match scope.resolve(written) {
+        match scope.resolve(&self.callee_name(written, scope)) {
             Some(Binding::Plugin(registered)) => registered,
             _ => written.to_string(),
         }

@@ -304,16 +304,11 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     expect(Object.keys(rustRunStats.hostCalls).filter((call) => call !== 'check.program')).toEqual([]);
   });
 
-  it('refuses, before it asks its host anything, the extraction and plugin forms it does not run', async () => {
-    const movement = (body: string) => `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
-    for (const [c, reason] of [
-      [{ source: movement('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))') }, 'plugin_call_form'],
-    ] as const) {
-      resetRustRunStats();
-      await runOn('rust', c);
-      expect([reason, rustRunStats.notAdmitted]).toEqual([reason, { [reason]: 1 }]);
-      expect(rustRunStats.hostCalls).toEqual({});
-    }
+  it('runs a plugin argument that calls a closure whole, its value what the closure returns (PLAN-08A Task 2)', async () => {
+    const source = `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.\`text\`))\n}`;
+    resetRustRunStats();
+    await runOn('rust', { source });
+    expect(rustRunStats).toMatchObject({ ranWhole: 1, notAdmitted: {}, declined: {} });
   });
 
   // The checker's MOV_SHAPE_FIELD_PROTO: the run ends at the check on both

@@ -52,6 +52,12 @@ impl Run<'_> {
         scope.resolve_function(written).unwrap_or_else(|| written.to_string())
     }
 
+    /// Whether `written` names a plugin (`runCall`'s `callee.kind ===
+    /// 'plugin'`): as imported, or from version 3 in another letter case.
+    pub(crate) fn calls_plugin(&self, written: &str, scope: &Scope) -> bool {
+        matches!(scope.resolve(&self.callee_name(written, scope)), Some(Binding::Plugin(_)))
+    }
+
     /// Whether `written` names a function this run calls: a movement, or
     /// from version 3 a closure bound to a name.
     pub(crate) fn calls_function(&self, written: &str, scope: &Scope) -> bool {
@@ -85,6 +91,9 @@ impl Run<'_> {
                 Some(Binding::Movement(declared)) => self.declaration(&declared)?,
                 // A closure bound to a name is a function too (language version 3).
                 Some(Binding::Closure(closure)) if self.version() >= 3 => return self.closure_call(call, &closure, scope, at, path, event).await,
+                // One function sort: a plugin's call, its value what the
+                // plugin declared it hands back (`executePluginCall`).
+                Some(Binding::Plugin(_)) => return Ok(Some(self.invoke_plugin(&call.callee, &call.args, scope, at, path).await?)),
                 Some(Binding::Opaque) => {
                     return Err(Stop::Thrown(Failure::unsupported(
                         &format!("calling the import '{}'", call.callee),

@@ -44,17 +44,19 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  Task 1 fix round 1 (2026-10-12) drops the margin: floors and ceilings
  *  move together with the measurement; never a margin. The floors are the
  *  measured 430 and 519, raised to the new measurement by the commit that
- *  lifts runs. Never lower one to pass. */
+ *  lifts runs. Never lower one to pass. PLAN-08A Task 2 (a head off a kept
+ *  walk runs, 2026-10-12): 431 and 520. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 430 },
-  v2: { recordings: 542, rust: 519 },
+  v1: { recordings: 443, rust: 431 },
+  v2: { recordings: 542, rust: 520 },
 } as const;
 
 /** The most recordings the Rust target may skip (one its engine refused or
  *  declined, so the TypeScript ran it), by corpus and by the skip's reason,
  *  as the teardown's every-reason ceilings are, so one reason cannot swap
  *  for another unseen (PLAN-08A Task 1, 2026-10-12): the skips measured
- *  then, v1 13 of 443 and v2 23 of 542. A reason not named here may skip
+ *  then, v1 13 of 443 and v2 23 of 542; v1 12 and v2 22 since PLAN-08A Task
+ *  2 (`block_head_value_root` retired). A reason not named here may skip
  *  nothing. Each task that closes a refusal lowers them; a ceiling never
  *  rises. At none the Rust target skips nothing (`skipped` is `{}`). */
 const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
@@ -63,7 +65,6 @@ const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
     'the Rust engine refused it: function:chunks': 3,
     'the Rust engine refused it: write_root_not_held': 2,
     'the Rust engine refused it: block_multi_hop': 2,
-    'the Rust engine refused it: block_head_value_root': 1,
   },
   v2: {
     'the Rust engine refused it: block_head_resources': 8,
@@ -71,7 +72,6 @@ const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
     'the Rust engine refused it: function:chunks': 3,
     'the Rust engine refused it: write_root_not_held': 2,
     'the Rust engine refused it: block_multi_hop': 2,
-    'the Rust engine refused it: block_head_value_root': 1,
   },
 };
 
