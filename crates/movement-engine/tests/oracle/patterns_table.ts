@@ -221,7 +221,7 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: CURRENCY.PARSE(msg.`text`) }', checks: false }),
       () => ({ body: '  x = TEXT.NOPE(msg.`text`)', checks: false }),
-      () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }', routes: 'declined' }),
+      () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }', routes: 'whole' }),
     ],
   },
   {
@@ -589,11 +589,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_call_shape',
-    routes: 'refused',
-    note: "an extraction call whose shape is written in place with words worked out (read in the body's scope, which the spec builder does not), or names a shape the body rebinds: needs a shape's words read in the body's scope",
+    routes: 'whole',
+    note: "closed in PLAN-08A group F′: a shape written in place reads its words in the body's scope; a name bound to a shape is the shape",
     programs: [
       () => ({ body: '  found = extract([msg.`text`], node Lead: "a lead about ${msg.`subject`}" { who: <text> "the person" })\n  write crm-[:notes]-> { body: "${COUNT(found)}" }' }),
       (pick) => ({ body: `  found = extract([msg.\`text\`], node Lead: "a lead" { who: <text> "who wrote \${msg.\`subject\`}" })\n  write crm-[:notes]-> { body: "${pick(WORDS)}" }` }),
+      () => ({ file: `${COMPANY_DECL}\n${m('  C = Company\n  found = extract([msg.`text`], C)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}`, replies: [{ records: [] }] }),
     ],
   },
   {
@@ -608,9 +609,9 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'extract_call_model',
     routes: 'refused',
-    note: "an extraction call naming a model the catalog does not list: the TypeScript holds it to the model registry, which this engine does not hold; needs the registry's chat models as run input",
+    note: "an extraction call naming a model the registry does not hold as a chat model (the TypeScript's parseChatModelName throws a plain error); a registry chat model runs since PLAN-08A group F′ (`chatModels`, a run input)",
     programs: [
-      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }] }),
+      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }], routes: 'whole' }),
       (pick) => ({ file: `${COMPANY_DECL}\n${m(`  one = extractOne([msg.\`subject\`], Company, { model: 'claude-sonnet-4-6', effort: '${pick(['low', 'medium'])}' })`)}` }),
     ],
   },
@@ -1089,10 +1090,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'function:<id>',
-    routes: 'refused',
-    note: "CHUNKS, or a namespaced member this engine lacks: needs CHUNKS's cut and density estimate ported (their patterns need \\p{Lu} and case-insensitive matching the engine's regex lacks); a closure's, a plugin's or an extraction's call inside an expression runs since chunk 7A Task 6 (nested_call)",
+    routes: 'whole',
+    note: "CHUNKS runs since PLAN-08A group F′ (its cut, and the entities estimate on the engine's own letter tables); a closure called in another letter case runs where the program spells it one way; several case-variant spellings stay refused by name",
     programs: [
       (pick) => ({ body: `  pieces = CHUNKS("aaaa bbbb cccc dddd eeee ffff", { size: ${pick([8, 12])} })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+      (pick) => ({ body: `  pieces = CHUNKS("Acme Corp met Example Ventures\\n- one\\n- two\\nsee acme.com", { entities: ${pick([1, 2])}, overlap: 3 })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+      () => ({ body: '  pieces = CHUNKS(msg.`missing`, { size: 10 })\n  write crm-[:notes]-> { body: "${COUNT(pieces)}" }' }),
+      () => ({ body: '  pieces = CHUNKS(msg.`subject`, { size: 0 })\n  write crm-[:notes]-> { body: "x" }' }),
       // A closure called in another letter case (from version 3) is its
       // call, nested too (PLAN-08A Task 2, `function:inc`).
       (pick) => ({ body: `  inc = (v: <number>) => v + ${pick([1, 2])}\n  c = INC(inc(1)) * 10\n  write crm-[:notes]-> { body: "\${c}" }`, routes: 'whole' }),
@@ -1324,8 +1328,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'condition_does_not_lower',
-    routes: 'declined',
-    note: "a condition this engine's lowering misses and the checker passes (a field read off a fold's answer): declined after the check; needs the lowering's coverage",
+    routes: 'whole',
+    note: "a field read off a call's answer in a condition runs since PLAN-08A group F′: the call bound to a name first, as the TypeScript stages it (hoistingMemberReads); no other condition the checker passes is known to miss the lowering",
     programs: [
       () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  if FIRST(held.entries).name == "Acme" {\n    write crm-[:notes]-> { body: "acme" }\n  }' }),
       () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  if LAST(held.entries).name != "" {\n    x = 1\n  }' }),

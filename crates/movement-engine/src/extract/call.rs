@@ -419,12 +419,13 @@ impl Run<'_> {
                 thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid 'extract' settings (the checker should have caught this): {}", problems.join("; "))))
             })?,
         };
+        let known = self.input.chat_models.as_ref().or(self.catalog.models.as_ref());
         if let Some(model) = &model
-            && !self.catalog.models.as_ref().is_some_and(|models| models.contains(model))
+            && !known.is_some_and(|models| models.contains(model))
         {
             return Err(thrown(Failure::unreproduced(
                 &format!("'extract''s model '{model}' with no model list holding it"),
-                "the Rust engine holds a model to the catalog's list",
+                "the Rust engine holds a model to the registry's chat models (`chatModels`), else the catalog's list",
             )));
         }
         let density = if count_shape_nodes(spec) >= ENTITY_DENSITY_OPUS_THRESHOLD { "opus" } else { "sonnet" };

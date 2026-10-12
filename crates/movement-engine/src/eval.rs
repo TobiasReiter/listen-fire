@@ -241,6 +241,8 @@ pub trait Reader {
     fn field_function(&self, _id: &str) -> bool {
         false
     }
+    /// An entry onto the running flow's trace (`ctx.trace.push`).
+    fn trace(&self, _entry: crate::trace::TraceEntry) {}
 }
 
 pub struct Evaluator<'a> {
@@ -835,6 +837,11 @@ impl<'a> Evaluator<'a> {
                 .await?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
+        if id == "chunks"
+            && let Some(reader) = self.reader()
+        {
+            return self.chunks(reader, args).await;
+        }
         if (id == "file" || id == "read")
             && let Some(reader) = self.reader()
         {
@@ -946,6 +953,54 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value: text, prov: Prov::Built(Trail { origins, direct: origin.direct }) })
             }
         }
+    }
+
+    /// `evaluateChunksFunction`: the text cut (crate::chunks), the cut on
+    /// the trace; an absent text is no pieces.
+    async fn chunks(&self, reader: &dyn Reader, args: &[Expression]) -> Eval {
+        let [text_arg, options_arg, ..] = args else {
+            return Err(EvalError::engine(
+                "MOVENG_RUNTIME",
+                "CHUNKS(text, { size | entities, overlap }) expects a text and an options map — the checker should have caught this".into(),
+            ));
+        };
+        let text = self.eval(text_arg).await?;
+        let options = self.eval(options_arg).await?;
+        let prov = self.union(&[&text.prov, &options.prov]);
+        let asked = |key: &str| match &options.value {
+            Js::Object(object) => crate::js::plain_property(object, key),
+            _ => Js::Undefined,
+        };
+        if !matches!(options.value, Js::Object(_) | Js::Record(_)) {
+            return Err(EvalError::engine("MOVENG_RUNTIME", "CHUNKS() takes its options as a map — the checker should have caught this".into()));
+        }
+        let spec = crate::chunks::read_spec(&asked("size"), &asked("entities"), &asked("overlap")).map_err(|message| EvalError::engine("MOVENG_RUNTIME", message))?;
+        let traced = |pieces: f64, sizes: Vec<Js>, estimates: Option<Vec<Js>>| {
+            let mut members = crate::trace::Members::default();
+            members.set("pieces", Js::Number(pieces));
+            members.set("sizes", Js::array(sizes));
+            members.set("unit", Js::str("chars"));
+            members.set("mode", Js::str(spec.mode()));
+            if let Some(estimates) = estimates {
+                members.set("expectedEntities", Js::array(estimates));
+            }
+            reader.trace(crate::trace::TraceEntry::Chunks(members));
+        };
+        let units = match &text.value {
+            value if value.is_nullish() => {
+                traced(0.0, Vec::new(), None);
+                return Ok(Evaluated { value: Js::array(Vec::new()), prov });
+            }
+            Js::String(text) => crate::js_string::units_vec(text.as_form()),
+            other => {
+                return Err(EvalError::engine("MOVENG_RUNTIME", format!("CHUNKS() cuts a text, and this is {} — the checker should have caught this", other.type_of())));
+            }
+        };
+        let pieces: Vec<&[u16]> = crate::chunks::chunk(&units, spec).into_iter().map(|range| &units[range]).collect();
+        let estimates = matches!(spec, crate::chunks::Spec::Entities { .. })
+            .then(|| pieces.iter().map(|piece| Js::Number(crate::chunks::entities(piece) as f64)).collect());
+        traced(pieces.len() as f64, pieces.iter().map(|piece| Js::Number(piece.len() as f64)).collect(), estimates);
+        Ok(Evaluated { value: Js::array(pieces.iter().map(|piece| Js::String(crate::js_string::JsString::from_units(piece))).collect()), prov })
     }
 
     /// The origins a value's trail holds (`provenance.origins`).

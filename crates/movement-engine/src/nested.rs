@@ -138,15 +138,15 @@ fn member_read_calls(tree: &MExpr, into: &mut Vec<At>) {
     }
 }
 
-/// The calls of `tree` that are staged, given the calls that run as calls
-/// (`runs`): none unless one does; then those and the member-read ones.
+/// The calls of `tree` that are staged (`nestedCalls` over
+/// `hoistingMemberReads`): the calls that run as calls (`runs`), and every
+/// call whose value a member access reads (`ONLY(xs).name`), whatever it
+/// calls — the shared expression tree reads a field only off a name.
 pub(crate) fn staged_calls(tree: &MExpr, runs: &dyn Fn(&MExpr) -> bool) -> Vec<At> {
+    let mut read = Vec::new();
+    member_read_calls(tree, &mut read);
     let mut calls = Vec::new();
-    reachable_calls(tree, runs, &mut calls);
-    if calls.is_empty() {
-        return calls;
-    }
-    member_read_calls(tree, &mut calls);
+    reachable_calls(tree, &|call| read.contains(&call.at()) || runs(call), &mut calls);
     calls
 }
 

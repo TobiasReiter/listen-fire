@@ -33,8 +33,8 @@ use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
 /// (crate::stdlib): an expression calling any other is refused.
-const FUNCTIONS: [&str; 34] = [
-    "file", "read", "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
+const FUNCTIONS: [&str; 35] = [
+    "chunks", "file", "read", "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
     "date", "datetime", "number", "currency.get_number_from_figure", "currency.get_code_from_figure", "currency.format_figure", "date.parse",
     "date.add_days", "date.format", "date.format_iso", "date.today", "datetime.at", "text.regex_extract", "text.slug", "text.pairs",
     "text.serialise", "url.host", "number.format",
@@ -427,6 +427,7 @@ fn admit_file<'p>(
                 extracts: &none,
                 graphs: &none,
                 shapes: &shapes,
+                shape_aliases: &none,
                 callees: &callees,
                 unknown_calls: &[],
                 language_version,
@@ -468,6 +469,7 @@ fn admit_file<'p>(
         extracts: &none,
         graphs: &none,
         shapes: &shapes,
+        shape_aliases: &none,
         callees: &callees,
         unknown_calls: &[],
         language_version,
@@ -532,6 +534,7 @@ fn admit_file<'p>(
         // A shape declared in the body is hoisted for it, as the file's are
         // for the file.
         let body_shapes: BTreeSet<String> = shapes.iter().cloned().chain(crate::code::shapes_declared_in(&movement.body)).collect();
+        let shape_aliases = if language_version >= 3 { shape_aliases_in(&movement.body, &body_shapes) } else { BTreeSet::new() };
         let names = Names {
             reasons: &reasons,
             events: &events,
@@ -550,6 +553,7 @@ fn admit_file<'p>(
             extracts: &bound.extracts,
             graphs: &bound.graphs,
             shapes: &body_shapes,
+            shape_aliases: &shape_aliases,
             callees: &callees,
             unknown_calls: &bound.unknown_calls,
             language_version,
@@ -560,6 +564,48 @@ fn admit_file<'p>(
             nested_holders: &bound.nested_holders,
         };
         names.body(&movement.body, Within::Body);
+    }
+}
+
+/// The names a body binds, once and only once anywhere in it, to the bare
+/// name of a shape (or of another such name): from version 3 each is the
+/// shape itself (`aliasedNodeBinding`). A name bound more than once is no
+/// alias here (`name_rebound` refuses it anyway).
+fn shape_aliases_in(body: &[Statement], shapes: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut assigned: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    fn collect(body: &[Statement], assigned: &mut BTreeMap<String, Vec<String>>) {
+        for statement in body {
+            match statement {
+                Statement::Assign(assign) => {
+                    let raw = match &assign.value {
+                        RValue::Expr { expr } => crate::js::trim(&expr.raw).to_string(),
+                        _ => String::new(),
+                    };
+                    assigned.entry(assign.name.clone()).or_default().push(raw);
+                }
+                Statement::If(statement) => {
+                    statement.arms.iter().for_each(|arm| collect(&arm.body, assigned));
+                    if let Some(arm) = &statement.else_arm {
+                        collect(&arm.body, assigned);
+                    }
+                }
+                Statement::Block(statement) => collect(&statement.block.body, assigned),
+                _ => {}
+            }
+        }
+    }
+    collect(body, &mut assigned);
+    let mut aliases = BTreeSet::new();
+    loop {
+        let found: Vec<String> = assigned
+            .iter()
+            .filter(|(name, values)| !aliases.contains(*name) && values.len() == 1 && (shapes.contains(&values[0]) || aliases.contains(&values[0])))
+            .map(|(name, _)| name.clone())
+            .collect();
+        if found.is_empty() {
+            return aliases;
+        }
+        aliases.extend(found);
     }
 }
 
@@ -2252,6 +2298,9 @@ struct Names<'n> {
     graphs: &'n BTreeSet<String>,
     /// The node declarations the file makes.
     shapes: &'n BTreeSet<String>,
+    /// Names a body binds to a shape's name (`D = Detail`, from version 3 a
+    /// second name for the shape itself, `aliasedNodeBinding`).
+    shape_aliases: &'n BTreeSet<String>,
     /// The movements as callees: what a call's arguments bind.
     callees: &'n Callees<'n>,
     /// The calls whose arguments or value are of a kind not known.
@@ -3161,24 +3210,22 @@ impl Names<'_> {
     /// too — a bare name there reads the entity's field of that name first,
     /// else a value the body binds.
     /// The extraction call (crate::extract::call): its content walked as an
-    /// expression; its shape a declaration of the file, or one written in
-    /// place whose words are written down and whose base is the file's
-    /// (the words of a shape written in place read the body's scope, which
-    /// the spec builder does not); its settings read clean.
+    /// expression; its shape a declaration in scope (or a name bound to one,
+    /// from version 3), or one written in place, whose words read the body's
+    /// scope and whose base is one in scope; its settings read clean.
     fn extract_call(&self, call: &ast::ExtractCallExpression) -> Admitted {
         match &call.shape {
+            ast::ExtractCallShape::Named { name, .. } if self.shape_aliases.contains(name) => {}
             ast::ExtractCallShape::Named { name, .. } if !self.shapes.contains(name) || self.binds_in_body(name) => return refuse("extract_call_shape"),
+            // Written in place: a declaration of the calling body's, its words
+            // read in the body's scope (walked here as the body's slots), its
+            // base one the body sees.
             ast::ExtractCallShape::Inline { declaration, .. } => {
-                fn written_down(node: &ast::ShapeNode) -> bool {
-                    let literal = |slot: &Option<ExprSlot>| {
-                        slot.as_ref().is_none_or(|slot| matches!(lowered(&slot.raw), Ok(Expression::Static { .. })))
-                    };
-                    literal(&node.description) && node.fields.iter().all(|f| literal(&f.description)) && node.children.iter().all(written_down)
-                }
                 let based = declaration.extends.as_ref().is_none_or(|base| self.shapes.contains(&base.name) && !self.binds_in_body(&base.name));
-                if !written_down(&declaration.root) || !based {
+                if !based {
                     return refuse("extract_call_shape");
                 }
+                self.shape_words(&declaration.root)?;
             }
             _ => {}
         }

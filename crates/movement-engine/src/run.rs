@@ -159,6 +159,11 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
+    /// The chat models the deployment's model registry knows (registry.ts
+    /// `chatModelNames`): an extraction call's `model` is held to it, as
+    /// `parseChatModelName` holds it. Absent: the catalog snapshot's `models`.
+    #[serde(default)]
+    pub chat_models: Option<Vec<String>>,
     /// The admission dry run's start (rust_engine.ts `dryAdmit`): never
     /// answered past its first step, so a slot this engine's lowering misses,
     /// which a real run leaves to the check, is named among the refusals.
@@ -515,7 +520,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
     let crate::admit::Admission { mut reasons, called } =
-        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins), plugins.as_ref().and_then(|c| c.models.as_deref())), &libraries);
+        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins), input.chat_models.as_deref().or_else(|| plugins.as_ref().and_then(|c| c.models.as_deref()))), &libraries);
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }
@@ -2376,6 +2381,10 @@ impl Reader for Reading<'_, '_> {
 
     fn field_function(&self, id: &str) -> bool {
         self.field.is_some_and(|field| field.has(id))
+    }
+
+    fn trace(&self, entry: TraceEntry) {
+        self.run.trace.push(entry);
     }
 
     fn resource_field(&self, field: &str) -> Option<Evaluated> {
