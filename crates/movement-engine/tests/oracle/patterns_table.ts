@@ -87,6 +87,27 @@ const LIBRARY = [
   '}',
 ].join('\n');
 
+/** A library with its own instance, value, `type` and shape, and a function
+ *  that writes through them, nests a call, and hands back a value. */
+const NOTES_LIBRARY = [
+  'import { attio } from adapters',
+  'import { crm_cred } from credentials',
+  'crm = attio(credentials: crm_cred)',
+  'prefix = "lib"',
+  'type Mood = <"calm" | "loud">',
+  'export node Note {',
+  '  body: <text>',
+  '}',
+  'export function note(n: <Note>, tag: <text>) {',
+  '  copy = FIRST(MAP([n], (v) => {',
+  '    g = graph { ...v }',
+  '    return g',
+  '  }))',
+  '  write crm-[:notes]-> { body: "${prefix}:${tag}:${copy.body}" }',
+  '  return UPPER(copy.body)',
+  '}',
+].join('\n');
+
 const COMPANY_DECL = [
   'node Company: "each company named in this message" {',
   '  name: <text> "the company\'s name"',
@@ -224,8 +245,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'import_from_file',
-    routes: 'refused',
-    note: "a library file's imports: needs the file scope from the check's link (imported movements and shapes, libraryShape/shapeChain) and calls into library movements",
+    routes: 'whole',
+    note: "closed in PLAN-08A group F: a library's movements run as callees in the library's own scope, its shapes' words, types and bases read in the file that wrote them; a file the snapshot does not carry the link refuses at the check",
     programs: [
       () => ({
         file: `import { Deal } from "lib/deals"\n${m('  d = extract from [msg.`text`] {\n    node deal: <Deal>\n  }\n  d-[x:deal]-> {\n    write crm-[:notes]-> { body: x.`name` }\n  }')}`,
@@ -236,6 +257,15 @@ export const PATTERNS: Pattern[] = [
         file: `import { Deal } from "lib/deals"\n${m(`  d = extract from [msg.\`subject\`] {\n    node deal: <Deal> "the deal ${pick(WORDS)}"\n  }`)}`,
         files: { 'lib/deals': { source: LIBRARY } },
       }),
+      (pick) => ({
+        file: `import { note as jot } from "lib/notes"\n${m(`  jot(n: node { body: msg.\`subject\` }, tag: "${pick(WORDS)}")`)}`,
+        files: { 'lib/notes': { source: NOTES_LIBRARY } },
+      }),
+      () => ({
+        file: `import { note } from "lib/notes"\n${m('  r = note(n: node { body: msg.`text` }, tag: "x")\n  write crm-[:notes]-> { body: r }')}`,
+        files: { 'lib/notes': { source: NOTES_LIBRARY } },
+      }),
+      () => ({ file: `import { Deal } from "lib/missing"\n${m('  x = 1')}`, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -526,11 +556,16 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'statement:<kind>',
-    routes: 'refused',
-    note: 'any other statement, by its kind: a shape declared in a body (`statement:shape`); needs body-local shape declarations, and their park (`resume_state_kind:localShape`)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A group F: a shape declared in a body (`statement:shape`) is hoisted for the body, its words and base read there; any other statement kind in a body the parser or the checker refuses',
     programs: [
       () => ({ body: '  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: msg.`subject` }' }),
       () => ({ body: '  node Lead {\n    who: <text>\n  }\n  write crm-[:notes]-> { body: "lead" }' }),
+      (pick) => ({ body: `  t = graph<Tag> { label: "${pick(WORDS)}" }\n  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: t.label }` }),
+      (pick) => ({
+        body: `  word = "${pick(WORDS)}"\n  node Tag: "a tag, \${word}" {\n    label: <text> "its label"\n  }\n  d = extract from [msg.\`subject\`] {\n    node tag: <Tag>\n  }\n  d-[x:tag]-> {\n    write crm-[:notes]-> { body: x.label }\n  }`,
+        replies: [{ 'x:extract_result#1': [{ tag: [{ label: said('Infra') }] }] }],
+      }),
     ],
   },
   {
@@ -1230,8 +1265,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'resume_state_kind:localShape',
-    routes: 'refused',
-    note: 'a parked state holding a shape declared in a body: needs its rehydration (serialize.ts rehydrate)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A group F: a shape declared in a body, held across a park, is rebuilt from its declaration where the program writes it',
     programs: [
       () => ({ body: '  node Note {\n    title: <text>\n  }\n  await sleep(1h)\n  d = extract from [msg.`text`] {\n    node note: <Note>\n  }' }),
       () => ({ body: '  node Tag {\n    label: <text>\n  }\n  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }' }),
@@ -1240,7 +1275,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'resume_state_kind:blockMeta',
     routes: 'refused',
-    note: "a parked state holding a block's meta edges bound as a name: needs its rehydration (serialize.ts rehydrate); no program parks holding one, so the state is made",
+    note: "a parked state holding a block's meta edges bound as a name: the TypeScript builds no such binding (its builders are called nowhere), so the state is made; kept refused by name under Henry's ruling (needs a block-meta binding kind and its reads)",
     programs: [
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => withBinding(state, 'meta', { kind: 'blockMeta', edges: [] }) }),
       () => ({ body: '  await sleep(1h)\n  x = 1', resume: (state) => withBinding(state, 'm2', { kind: 'blockMeta', edges: [] }) }),

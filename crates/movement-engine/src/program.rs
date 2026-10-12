@@ -174,6 +174,61 @@ pub struct Checked {
     pub declarations: Declarations,
 }
 
+impl Checked {
+    /// A file of the run, by who wrote it: the root, or a linked library.
+    pub fn file(&self, file: &DeclaringFile) -> Option<&File> {
+        match file {
+            DeclaringFile::Root => Some(&self.root),
+            DeclaringFile::Library(path) => self.files.get(path).map(|(file, _)| file),
+        }
+    }
+
+    /// A file's own file imports.
+    pub fn imports_of(&self, file: &DeclaringFile) -> &[Import] {
+        match file {
+            DeclaringFile::Root => &self.imports,
+            DeclaringFile::Library(path) => self.files.get(path).map_or(&[], |(_, imports)| imports.as_slice()),
+        }
+    }
+
+    /// The file an engine AST path is in, and the path within it
+    /// (`in_file`).
+    pub fn at_path<'p>(&self, path: &'p str) -> Option<(&File, &'p str)> {
+        let (file, rest) = file_of_path(path);
+        Some((self.file(&file)?, rest))
+    }
+
+    /// The stamp at an engine AST path.
+    pub fn stamp(&self, path: &str) -> Option<&Stamp> {
+        let (file, rest) = self.at_path(path)?;
+        file.stamps.get(rest)
+    }
+
+    /// `code_at` at an engine AST path.
+    pub fn code_at(&self, path: &str) -> Option<crate::js::Js> {
+        let (file, rest) = self.at_path(path)?;
+        code_at(file, rest)
+    }
+}
+
+/// An AST path as the engine carries it: the root file's paths as the
+/// checker writes them (`/statements/2/body`), a library's after its path,
+/// pointer-escaped, behind an `@` (`@lib~1deals/statements/1/body`), so a
+/// path names its file wherever it travels.
+pub fn in_file(file: &DeclaringFile, path: &str) -> String {
+    match file {
+        DeclaringFile::Root => path.to_string(),
+        DeclaringFile::Library(name) => format!("@{}{path}", name.replace('~', "~0").replace('/', "~1")),
+    }
+}
+
+/// The file an engine AST path names (`in_file`), and the path within it.
+pub fn file_of_path(path: &str) -> (DeclaringFile, &str) {
+    let Some(rest) = path.strip_prefix('@') else { return (DeclaringFile::Root, path) };
+    let end = rest.find('/').unwrap_or(rest.len());
+    (DeclaringFile::Library(rest[..end].replace("~1", "/").replace("~0", "~")), &rest[end..])
+}
+
 /// The file that wrote a declaration: the scope its words are evaluated in,
 /// the `type`s its fields read and the names its `extends` resolves against
 /// (run.ts keeps a shape binding's `fileEnv` or `library` for the same).

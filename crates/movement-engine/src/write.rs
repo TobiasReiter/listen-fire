@@ -466,7 +466,7 @@ impl Run<'_> {
         let mut expanded: Vec<Line> = Vec::new();
         for (index, spread) in spreads.iter().enumerate().rev() {
             let at = format!("{path}/spreads/{index}");
-            let Some(Stamp::SpreadFields(fields)) = self.checked.root.stamps.get(&at) else {
+            let Some(Stamp::SpreadFields(fields)) = self.checked.stamp(&at) else {
                 return Err(thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!(

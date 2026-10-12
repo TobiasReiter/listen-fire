@@ -345,19 +345,21 @@ impl Run<'_> {
             .map_err(|message| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid nested call (the checker should have caught this): {message}"))))?;
         let at = self.call_sites.borrow().last().map(|site| site.address.clone()).unwrap_or_else(Address::default);
         let name = self.nested_name(staging);
-        let path = self.nested_path(staging.origin, extent, &value);
+        let path = self.nested_path(staging.origin, extent, &value, &staging.scope.written_in());
         self.assign(&name, &value, &staging.scratch, &at, &path).await?;
         Ok(spelled(&name))
     }
 
-    /// The place of the call at `extent` in `slot` (crate::program
-    /// `node_at`), its own slots noted where they are; `#nested` when the
-    /// slot is in no file this run reads paths in (a library's).
-    pub(crate) fn nested_path(&self, slot: &ExprSlot, extent: At, value: &RValue) -> String {
-        let mut paths = self.slot_paths.borrow_mut();
-        let paths = paths.get_or_insert_with(|| {
+    /// The place of the call at `extent` in `slot`, a slot of code written
+    /// in `file` (crate::program `node_at`), its own slots noted where they
+    /// are.
+    pub(crate) fn nested_path(&self, slot: &ExprSlot, extent: At, value: &RValue, file: &crate::program::DeclaringFile) -> String {
+        let mut by_file = self.slot_paths.borrow_mut();
+        let paths = by_file.entry(file.clone()).or_insert_with(|| {
             let mut paths = SlotPaths::new();
-            register_slots(&self.checked.root.tree, "", false, &mut paths);
+            if let Some(written) = self.checked.file(file) {
+                register_slots(&written.tree, &crate::program::in_file(file, ""), false, &mut paths);
+            }
             paths
         });
         let Some(slot_path) = paths.get(&span_key(&slot.span)) else { return "#nested".to_string() };

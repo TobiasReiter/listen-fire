@@ -20,6 +20,38 @@ pub(crate) enum Found<'p> {
     Walk(&'p PathHead, Option<&'p NodeLiteral>),
     /// A closure bound to a name (`f = (…) => { … }`).
     Bound(&'p str, &'p ClosureExpression),
+    /// A node declaration written in a body.
+    Shape(&'p movement_parser::ast::ShapeDeclaration),
+}
+
+/// The names of the node declarations a body writes, at any depth.
+pub(crate) fn shapes_declared_in(body: &[Statement]) -> Vec<String> {
+    let mut found = Vec::new();
+    visit(body, &mut |node| {
+        if let Found::Shape(shape) = node {
+            found.push(shape.name.clone());
+        }
+    });
+    found
+}
+
+/// The node declaration a body writes at `span`, named `name`.
+pub(crate) fn body_shape_at(program: &Program, name: &str, span: &Span) -> Option<movement_parser::ast::ShapeDeclaration> {
+    let mut found = None;
+    for statement in &program.statements {
+        if let Statement::Movement(movement) = statement {
+            visit(&movement.body, &mut |node| {
+                if found.is_none()
+                    && let Found::Shape(shape) = node
+                    && shape.name == name
+                    && shape.span == *span
+                {
+                    found = Some(shape.clone());
+                }
+            });
+        }
+    }
+    found
 }
 
 /// Every closure the program binds to a name, anywhere, by that name.
@@ -134,6 +166,7 @@ fn visit<'p>(statements: &'p [Statement], f: &mut dyn FnMut(Found<'p>)) {
             Statement::Await(statement) => source(&statement.r#await.source, f),
             Statement::Combinator(statement) => combinator(&statement.combinator, f),
             Statement::Collection(statement) => arm(&statement.collection.r#fn, f),
+            Statement::Shape(shape) => f(Found::Shape(shape)),
             _ => {}
         }
     }

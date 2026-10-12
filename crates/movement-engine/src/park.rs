@@ -254,8 +254,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Event => object_of(vec![kind("event")]),
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
         Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
-        Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.clone()))]),
-        Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.clone()))]),
+        Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.name.clone()))]),
+        // One declared in a body has no name to re-resolve by: its
+        // declaration rides across (serialize.ts `localShape`).
+        Binding::Shape(shape) if shape.local => object_of(vec![kind("localShape"), ("declaration", crate::env::js_of_json(&serde_json::to_value(&shape.declared.declaration).expect("an AST is always JSON")))]),
+        Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.declared.declaration.name.clone()))]),
         // A plugin travels as the import it is, re-resolved by its slot name.
         Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
         Binding::Handle(handle) => {
@@ -506,7 +509,7 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
         Js::Array(list) => list.items().iter().find_map(descriptors_refusal),
         Js::Object(object) => {
             match object.get("kind") {
-                Some(Js::String(kind)) if kind == "blockMeta" || kind == "localShape" => return Some(format!("resume_state_kind:{kind}")),
+                Some(Js::String(kind)) if kind == "blockMeta" => return Some(format!("resume_state_kind:{kind}")),
                 // Data: a value's own, a callback's params, a position.
                 Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
                     return None;
@@ -776,6 +779,7 @@ mod tests {
             unfetched_files: RefCell::default(),
             log_lines: RefCell::default(),
             file_scope: RefCell::default(),
+            library_scopes: RefCell::default(),
             call_sites: RefCell::default(),
             slot_paths: RefCell::default(),
             boundaries: RefCell::default(),

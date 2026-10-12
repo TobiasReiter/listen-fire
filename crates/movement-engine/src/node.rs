@@ -12,7 +12,7 @@ use std::rc::Rc;
 use movement_parser::ast::{MapSpread, NodeEntry, NodeLiteral, ShapeNode};
 use serde_json::Value as Json;
 
-use crate::bindings::{Binding, DeferredWalk, Edge, LandingShape, Node, Scope};
+use crate::bindings::{Binding, DeferredWalk, Edge, LandingShape, Node, Scope, ShapeBinding};
 use crate::env::Trail;
 use crate::eval::{EvalError, Evaluated, Prov};
 use crate::js::{Js, JsObject};
@@ -152,7 +152,7 @@ impl Run<'_> {
 
     /// `declaredLandingShape` of the declaration as the whole tree it stands
     /// for (`resolvedShape`).
-    pub(crate) fn landing_shape_of_declared(&self, shape: &str) -> Result<LandingShape, Failure> {
+    pub(crate) fn landing_shape_of_declared(&self, shape: &ShapeBinding) -> Result<LandingShape, Failure> {
         Ok(declared_landing_shape(&self.resolved_shape(shape)?))
     }
 
@@ -221,10 +221,10 @@ impl Run<'_> {
     /// and from version 3 always for presence.
     async fn build_graph(&self, literal: &NodeLiteral, shape_name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Result<Rc<RefCell<Node>>, Stop> {
         let Some(name) = shape_name else { return self.build_graph_body(literal, scope, path, None).await };
-        if !matches!(scope.resolve(name), Some(Binding::Shape(_))) {
+        let Some(Binding::Shape(declared)) = scope.resolve(name) else {
             return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'graph<{name}>' names no node declaration in scope"))));
-        }
-        let shape = self.resolved_shape(name).map_err(Stop::Thrown)?;
+        };
+        let shape = self.resolved_shape(&declared).map_err(Stop::Thrown)?;
         let built = self.build_graph_body(literal, scope, path, Some(&shape)).await?;
         let spreads = spreads_anywhere(literal);
         if (spreads || self.version() >= 3)
@@ -250,7 +250,7 @@ impl Run<'_> {
                 match entry {
                     NodeEntry::Value { name, value, .. } => {
                         let at = format!("{path}/entries/{index}");
-                        if matches!(self.checked.root.stamps.get(&at), Some(Stamp::Reference)) {
+                        if matches!(self.checked.stamp(&at), Some(Stamp::Reference)) {
                             let bound = self.bind_slot_binding(value, scope).await?;
                             let landings = self.referenced(name, bound)?;
                             node.borrow_mut().set_edge(name, landings, child);
@@ -322,7 +322,7 @@ impl Run<'_> {
 
     async fn apply_spreads(&self, node: &Rc<RefCell<Node>>, spreads: &[(usize, &MapSpread)], at: usize, scope: &Rc<Scope>, path: &str, shape: Option<&ShapeNode>) -> Result<(), Stop> {
         for (j, spread) in spreads.iter().filter(|(_, s)| s.after == at) {
-            match self.checked.root.stamps.get(&format!("{path}/spreads/{j}")) {
+            match self.checked.stamp(&format!("{path}/spreads/{j}")) {
                 Some(Stamp::Copy(plan)) => self.spread_record(node, spread, plan, scope, shape).await?,
                 _ => {
                     if let Some(map) = self.spread_map(spread, scope)? {
@@ -334,27 +334,46 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// run.ts `shapeChain`: the declaration and each base its `extends`
+    /// names, `shape` first, each base found where the one naming it was
+    /// declared — a library's in its library, one declared in a body in that
+    /// body's scope, any other in its file.
+    pub(crate) fn shape_chain(&self, shape: &ShapeBinding) -> Result<Vec<movement_parser::ast::ShapeDeclaration>, Failure> {
+        let mut chain: Vec<(movement_parser::ast::ShapeDeclaration, crate::program::DeclaringFile)> = Vec::new();
+        let mut at = (shape.declared.clone(), shape.body_scope());
+        loop {
+            let (declared, body) = at;
+            if chain.iter().any(|(c, file)| c.name == declared.declaration.name && *file == declared.file) {
+                return Err(Failure::engine("MOVENG_RUNTIME", format!("'{}' extends itself — the checker should have caught this", shape.declared.declaration.name)));
+            }
+            let base = declared.declaration.extends.clone();
+            chain.push((declared.declaration.clone(), declared.file.clone()));
+            let Some(base) = base else { break };
+            let next = match &body {
+                Some(scope) => match scope.resolve(&base.name) {
+                    Some(Binding::Shape(found)) => Some((found.declared.clone(), found.body_scope())),
+                    _ => None,
+                },
+                None => self.checked.declarations.of_file(&declared.file).and_then(|d| d.shapes.get(&base.name)).map(|found| (found.clone(), None)),
+            };
+            at = next.ok_or_else(|| {
+                Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'{}' extends '{}', which is not a node declaration in scope — the checker should have caught this", declared.declaration.name, base.name),
+                )
+            })?;
+        }
+        Ok(chain.into_iter().map(|(declaration, _)| declaration).collect())
+    }
+
     /// The declaration as the whole tree it stands for (`resolvedShape` →
     /// `inheritDeclaration`): each base's fields and nodes ahead of its own.
-    pub(crate) fn resolved_shape(&self, shape: &str) -> Result<ShapeNode, Failure> {
-        let shapes = &self.checked.declarations.root.shapes;
-        let mut chain: Vec<&movement_parser::ast::ShapeDeclaration> = Vec::new();
-        let mut name = shape.to_string();
-        loop {
-            let declared = shapes.get(&name).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not a node declaration in scope")))?;
-            if chain.iter().any(|c| c.name == declared.declaration.name) {
-                return Err(Failure::engine("MOVENG_RUNTIME", format!("'{shape}' extends itself — the checker should have caught this")));
-            }
-            chain.push(&declared.declaration);
-            match &declared.declaration.extends {
-                Some(base) => name = base.name.clone(),
-                None => break,
-            }
-        }
+    pub(crate) fn resolved_shape(&self, shape: &ShapeBinding) -> Result<ShapeNode, Failure> {
+        let chain = self.shape_chain(shape)?;
         let mut links = chain.into_iter().rev();
-        let mut resolved = links.next().expect("a chain holds its declaration").root.clone();
+        let mut resolved = links.next().expect("a chain holds its declaration").root;
         for link in links {
-            let mut root = link.root.clone();
+            let mut root = link.root;
             root.description = root.description.or(resolved.description);
             root.fields = resolved.fields.into_iter().chain(root.fields).collect();
             root.children = resolved.children.into_iter().chain(root.children).collect();

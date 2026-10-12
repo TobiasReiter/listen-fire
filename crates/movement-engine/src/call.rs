@@ -25,7 +25,8 @@ use std::rc::Rc;
 
 use movement_parser::ast::{CallArg, CallStatement, MovementDeclaration, ParamTypeRef, Statement};
 
-use crate::bindings::{Binding, Scope};
+use crate::bindings::{Binding, MovementRef, Scope};
+use crate::program;
 use crate::flow::Boundary;
 use crate::run::{Address, Failure, Flow, Run, Stop};
 
@@ -87,8 +88,12 @@ impl Run<'_> {
     fn run_call<'s>(&'s self, call: &'s CallStatement, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, event: &'s CallEvent) -> Called<'s> {
         Box::pin(async move {
             let name = self.callee_name(&call.callee, scope);
+            let declared_file;
             let declaration = match scope.resolve(&name) {
-                Some(Binding::Movement(declared)) => self.declaration(&declared)?,
+                Some(Binding::Movement(declared)) => {
+                    declared_file = declared.file.clone();
+                    self.declaration(&declared)?
+                }
                 // A closure bound to a name is a function too (language version 3).
                 Some(Binding::Closure(closure)) if self.version() >= 3 => return self.closure_call(call, &closure, scope, at, path, event).await,
                 // One function sort: a plugin's call, its value what the
@@ -108,7 +113,7 @@ impl Run<'_> {
                     )));
                 }
             };
-            let (declaration, declared_at) = declaration;
+            let (declaration, body_path) = declaration;
             self.enter_call(&declaration.name)?;
             if call.args.len() != declaration.params.len() {
                 return Err(Stop::Thrown(Failure::engine(
@@ -121,7 +126,7 @@ impl Run<'_> {
                     ),
                 )));
             }
-            let file = self.file_scope.borrow().clone().ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", "no file scope for a movement call".into())))?;
+            let file = self.scope_of_file(&declared_file).ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", "no file scope for a movement call".into())))?;
             let callee = file.child();
             // `argumentBindings`: a named argument the parameter it names, a
             // positional one the parameter declared at its index; evaluated
@@ -137,7 +142,8 @@ impl Run<'_> {
                         format!("'{}' has no parameter {which} — the checker should have caught this", declaration.name),
                     )));
                 };
-                let takes_value = self.takes_value(declared.type_.as_ref());
+                // A parameter typed by a refinement names one the callee's file declares.
+                let takes_value = self.takes_value(declared.type_.as_ref(), &declared_file);
                 let bound = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
                 match evaluated.iter_mut().find(|(p, _)| *p == declared.name) {
                     Some(slot) => slot.1 = bound,
@@ -154,7 +160,6 @@ impl Run<'_> {
                 callee.declare(param.name.clone(), binding.clone());
             }
             self.call_stack.borrow_mut().push(declaration.name.clone());
-            let body_path = format!("/statements/{declared_at}/body");
             let address = self.call_address(event, at);
             let ran = self.within_call(event, &name, self.body(&declaration.body, &callee, &address, &body_path, 0)).await;
             self.call_stack.borrow_mut().pop();
@@ -199,7 +204,7 @@ impl Run<'_> {
                         format!("'{}' has no parameter {which} — the checker should have caught this", call.callee),
                     )));
                 };
-                let takes_value = self.takes_value(declared.type_.as_ref());
+                let takes_value = self.takes_value(declared.type_.as_ref(), &scope.file_env());
                 let binding = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
                 match bound.iter_mut().find(|(p, _)| *p == declared.name) {
                     Some(slot) => slot.1 = binding,
@@ -307,34 +312,31 @@ impl Run<'_> {
         Err(Stop::Thrown(Failure::CallDepth { limit, chain: chain() }))
     }
 
-    /// The declaration a movement binding names, and its index among the
-    /// program's statements (its body's AST path).
-    pub(crate) fn declaration(&self, name: &str) -> Result<(MovementDeclaration, usize), Stop> {
+    /// The declaration a movement binding names, and its body's AST path.
+    pub(crate) fn declaration(&self, movement: &MovementRef) -> Result<(MovementDeclaration, String), Stop> {
         self.checked
-            .root
-            .program
-            .statements
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| match s {
-                Statement::Movement(m) if m.name == name => Some((m.clone(), i)),
-                _ => None,
+            .file(&movement.file)
+            .and_then(|file| {
+                file.program.statements.iter().enumerate().find_map(|(i, s)| match s {
+                    Statement::Movement(m) if m.name == movement.name => Some((m.clone(), program::in_file(&movement.file, &format!("/statements/{i}/body")))),
+                    _ => None,
+                })
             })
             // A parked state can name a movement a later edit removed.
-            .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not a movement this program declares"))))
+            .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{}' is not a movement this program declares", movement.name))))
     }
 
     /// `isValueParam`: a parameter typed by a value (`<number[]>`), a field
     /// type (`<text>`) or a `type` the file declares takes what its argument
     /// evaluates to; any other takes a position.
-    fn takes_value(&self, type_: Option<&ParamTypeRef>) -> bool {
+    fn takes_value(&self, type_: Option<&ParamTypeRef>, file: &program::DeclaringFile) -> bool {
         match type_ {
             None => false,
             Some(ParamTypeRef::Value(_)) => true,
             Some(ParamTypeRef::Name(type_)) if type_.hops_raw.is_some() => false,
             Some(ParamTypeRef::Name(type_)) => {
                 movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some()
-                    || self.checked.declarations.root.types.contains_key(&type_.graph)
+                    || self.checked.declarations.of_file(file).is_some_and(|d| d.types.contains_key(&type_.graph))
             }
         }
     }

@@ -638,12 +638,12 @@ impl Run<'_> {
                     closure: Some(closure),
                 }),
                 Some(Binding::Movement(declared)) => {
-                    let (declaration, declared_at) = self.declaration(&declared)?;
+                    let (declaration, path) = self.declaration(&declared)?;
                     Ok(Function {
                         params: declaration.params,
                         body: declaration.body,
-                        captured: scope.capture(),
-                        path: format!("/statements/{declared_at}/body"),
+                        captured: scope.capture_written_in(declared.file.clone()),
+                        path,
                         named: Some(name.clone()),
                         closure: None,
                         self_name: None,
@@ -766,7 +766,7 @@ impl Run<'_> {
                 _ => None,
             },
             Some(_) => None,
-            None => self.checked.declarations.root.types.get(&expr.type_).cloned(),
+            None => self.checked.declarations.of_file(&scope.file_env()).and_then(|d| d.types.get(&expr.type_)).cloned(),
         };
         let Some(options) = options else {
             return Err(Stop::Thrown(Failure::engine(

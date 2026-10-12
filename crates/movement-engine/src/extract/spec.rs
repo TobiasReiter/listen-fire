@@ -81,11 +81,29 @@ impl NodeSpec {
 }
 
 /// Where a description is evaluated: the firing environment (the
-/// extraction's own words), or the file that declared the words.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// extraction's own words), the file that declared the words, or the body
+/// that declared them (a shape declared in a body, or written in place).
+#[derive(Debug, Clone)]
 pub enum WordsScope {
     Firing,
     File(DeclaringFile),
+    Body(std::rc::Rc<crate::bindings::Scope>),
+}
+
+/// A node declaration as a use site resolves it: the declaration, the file
+/// whose `type`s it reads, and the scope its words read.
+#[derive(Debug, Clone)]
+pub struct ShapeLink {
+    pub declaration: ast::ShapeDeclaration,
+    pub file: DeclaringFile,
+    pub words: WordsScope,
+}
+
+impl ShapeLink {
+    /// A declaration a file makes or imports: its words read its file.
+    pub fn declared(shape: &DeclaredShape) -> ShapeLink {
+        ShapeLink { declaration: shape.declaration.clone(), file: shape.file.clone(), words: WordsScope::File(shape.file.clone()) }
+    }
 }
 
 /// What only the firing knows: the live schemas a borrowed type resolves
@@ -100,6 +118,22 @@ pub trait Firing {
     /// A description that is not a plain literal, as text (run.ts
     /// `describeIn`: a value that is not a string is `String(value ?? '')`).
     fn describe(&self, slot: &ExprSlot, scope: &WordsScope) -> impl Future<Output = Result<String, Self::Error>>;
+
+    /// The file the firing runs in: the `type`s its own words read.
+    fn file(&self) -> DeclaringFile {
+        DeclaringFile::Root
+    }
+
+    /// The node declaration `name` names where the extraction runs.
+    fn shape(&self, name: &str, declarations: &Declarations) -> Option<ShapeLink> {
+        declarations.of_file(&self.file())?.shapes.get(name).map(ShapeLink::declared)
+    }
+
+    /// The base `name` an `extends` in `of` names (run.ts `shapeChain`):
+    /// found where `of` was declared.
+    fn base(&self, of: &ShapeLink, name: &str, declarations: &Declarations) -> Option<ShapeLink> {
+        declarations.of_file(&of.file)?.shapes.get(name).map(ShapeLink::declared)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,12 +158,12 @@ pub async fn build_extract_spec<F: Firing>(
 /// spelling builds, under the name `name` (the extraction call's form).
 pub async fn build_declaration_spec<F: Firing>(
     name: &str,
-    shape: &DeclaredShape,
+    shape: &ShapeLink,
     declarations: &Declarations,
     firing: &F,
 ) -> Result<NodeSpec, SpecError<F::Error>> {
     let builder = Builder { declarations, firing };
-    let chain = builder.chain(shape)?;
+    let chain = builder.chain(shape.clone())?;
     Ok(builder.declaration(name, &chain).await?.into_spec())
 }
 
@@ -163,7 +197,7 @@ struct Builder<'a, F: Firing> {
 
 impl<'a, F: Firing> Builder<'a, F> {
     fn firing_reading(&self) -> Reading<'a> {
-        Reading { words: WordsScope::Firing, types: &self.declarations.root }
+        Reading { words: WordsScope::Firing, types: self.declarations.of_file(&self.firing.file()).unwrap_or(&self.declarations.root) }
     }
 
     /// `buildNodeSpec`: an inline node, its words already resolved. Its
@@ -236,7 +270,7 @@ impl<'a, F: Firing> Builder<'a, F> {
     /// following, and the use site's words over the declaration's.
     fn declared_node(&'a self, node: &'a ast::DeclaredExtractNode) -> Built<'a, F::Error> {
         Box::pin(async move {
-            let Some(shape) = self.declarations.root.shapes.get(&node.declared.type_) else {
+            let Some(shape) = self.firing.shape(&node.declared.type_, self.declarations) else {
                 return Err(SpecError::Runtime(format!(
                     "'{}' is not a node declaration in scope, so '{}' has no shape to extract (the checker should have caught this)",
                     node.declared.type_, node.name
@@ -264,22 +298,25 @@ impl<'a, F: Firing> Builder<'a, F> {
     /// run.ts `shapeChain`: the `extends` chain from `shape` to the
     /// declaration that stands on its own, `shape` first — each base found
     /// in the file that names it.
-    fn chain(&self, shape: &'a DeclaredShape) -> Result<Vec<&'a DeclaredShape>, SpecError<F::Error>> {
-        let mut chain: Vec<&'a DeclaredShape> = Vec::new();
+    fn chain(&self, shape: ShapeLink) -> Result<Vec<ShapeLink>, SpecError<F::Error>> {
+        let mut chain: Vec<ShapeLink> = Vec::new();
         let mut at = shape;
         loop {
             if chain.iter().any(|c| c.file == at.file && c.declaration.name == at.declaration.name) {
-                return Err(SpecError::Runtime(format!("'{}' extends itself — the checker should have caught this", shape.declaration.name)));
+                return Err(SpecError::Runtime(format!("'{}' extends itself — the checker should have caught this", chain[0].declaration.name)));
             }
-            chain.push(at);
-            let Some(base) = &at.declaration.extends else { return Ok(chain) };
-            let found = self.declarations.of_file(&at.file).and_then(|file| file.shapes.get(&base.name));
-            at = found.ok_or_else(|| {
+            let Some(base) = at.declaration.extends.clone() else {
+                chain.push(at);
+                return Ok(chain);
+            };
+            let found = self.firing.base(&at, &base.name, self.declarations);
+            let next = found.ok_or_else(|| {
                 SpecError::Runtime(format!(
                     "'{}' extends '{}', which is not a node declaration in scope — the checker should have caught this",
                     at.declaration.name, base.name
                 ))
             })?;
+            chain.push(std::mem::replace(&mut at, next));
         }
     }
 
@@ -287,9 +324,12 @@ impl<'a, F: Firing> Builder<'a, F> {
     /// each next one its base): the base's members first, then its own,
     /// and its words or else the base's — each part read in the file that
     /// wrote it.
-    fn declaration(&'a self, name: &'a str, chain: &'a [&'a DeclaredShape]) -> Built<'a, F::Error, DeclaredNode> {
+    fn declaration<'b>(&'b self, name: &'b str, chain: &'b [ShapeLink]) -> Built<'b, F::Error, DeclaredNode>
+    where
+        'a: 'b,
+    {
         Box::pin(async move {
-            let link = chain[0];
+            let link = &chain[0];
             let types = self.declarations.of_file(&link.file).ok_or_else(|| {
                 let path = match &link.file {
                     DeclaringFile::Root => "the root file",
@@ -297,7 +337,7 @@ impl<'a, F: Firing> Builder<'a, F> {
                 };
                 SpecError::Runtime(format!("the file \"{path}\" that declares '{}' is not linked", link.declaration.name))
             })?;
-            let reading = Reading { words: WordsScope::File(link.file.clone()), types };
+            let reading = Reading { words: link.words.clone(), types };
             let own = self.shape_node(name.to_string(), &link.declaration.root, reading).await?;
             let Some(rest) = chain.get(1..).filter(|rest| !rest.is_empty()) else { return Ok(own) };
             let base = self.declaration(name, rest).await?;
@@ -314,7 +354,10 @@ impl<'a, F: Firing> Builder<'a, F> {
 
     /// `buildShapeNodeSpec`: one node of a declaration — its own words
     /// first, then its fields' together, then its children together.
-    fn shape_node(&'a self, name: String, shape: &'a ast::ShapeNode, reading: Reading<'a>) -> Built<'a, F::Error, DeclaredNode> {
+    fn shape_node<'b>(&'b self, name: String, shape: &'b ast::ShapeNode, reading: Reading<'b>) -> Built<'b, F::Error, DeclaredNode>
+    where
+        'a: 'b,
+    {
         Box::pin(async move {
             let description = self.describe_optional(shape.description.as_ref(), &reading).await?;
             let fields = join_all(

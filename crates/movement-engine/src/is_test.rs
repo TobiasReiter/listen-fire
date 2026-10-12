@@ -19,9 +19,8 @@ use std::rc::Rc;
 use movement_parser::lowering::condition::IsType;
 use movement_parser::lowering::expression::{Expression, FilterOperator, LogicalOp, StaticValue, TraversalStep};
 
-use crate::bindings::{Binding, Node, Scope};
+use crate::bindings::{Binding, Node, Scope, ShapeBinding};
 use crate::extract::emission::Emission;
-use crate::program::DeclaredShape;
 use crate::run::{EventAddress, Failure, Run, event_address_key};
 
 impl Run<'_> {
@@ -92,7 +91,8 @@ impl Run<'_> {
     /// `evaluateDeclaredNodeTest`: does the subject carry everything the
     /// declaration declares? A subject that is no record is an ordinary
     /// false.
-    async fn declared_node_test(&self, name: &str, subject: &Binding, shape: &str, scope: &Scope) -> Result<bool, Failure> {
+    async fn declared_node_test(&self, name: &str, subject: &Binding, declared: &ShapeBinding, scope: &Scope) -> Result<bool, Failure> {
+        let shape = declared.declared.declaration.name.as_str();
         let supplied = match subject {
             Binding::Node(node) => Surface::Node(node.clone()),
             Binding::Extracted { emission, .. } => Surface::Emission(emission.clone()),
@@ -116,7 +116,7 @@ impl Run<'_> {
             }
             _ => return Ok(false),
         };
-        let required = self.required_shape(shape)?;
+        let required = self.required_shape(declared)?;
         Ok(!misfits(&supplied, &required)?)
     }
 
@@ -137,26 +137,11 @@ impl Run<'_> {
     /// The declaration as the whole tree it stands for (`resolvedShape`):
     /// each `extends` folded in, the base's fields and nodes first, a node
     /// of its own replacing the base's of that name.
-    fn required_shape(&self, shape: &str) -> Result<Required, Failure> {
-        let root = &self.checked.declarations.root;
-        let mut chain: Vec<&DeclaredShape> = Vec::new();
-        let mut at = root.shapes.get(shape).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("'{shape}' is not a node declaration in scope")))?;
-        loop {
-            if chain.iter().any(|c| c.declaration.name == at.declaration.name) {
-                return Err(Failure::engine("MOVENG_RUNTIME", format!("'{shape}' extends itself — the checker should have caught this")));
-            }
-            chain.push(at);
-            let Some(base) = &at.declaration.extends else { break };
-            at = root.shapes.get(&base.name).ok_or_else(|| {
-                Failure::engine(
-                    "MOVENG_RUNTIME",
-                    format!("'{}' extends '{}', which is not a node declaration in scope — the checker should have caught this", at.declaration.name, base.name),
-                )
-            })?;
-        }
+    fn required_shape(&self, shape: &ShapeBinding) -> Result<Required, Failure> {
+        let chain = self.shape_chain(shape)?;
         let mut folded: Option<Required> = None;
         for link in chain.iter().rev() {
-            let own = Required::of(&link.declaration.root);
+            let own = Required::of(&link.root);
             folded = Some(match folded {
                 None => own,
                 Some(base) => base.extended_by(own),

@@ -21,11 +21,11 @@ pub enum Binding {
     Instance(Rc<InstanceBinding>),
     /// An import that is not an instance until constructed (`kind: 'opaque'`).
     Opaque,
-    /// A movement declared in the file (`kind: 'movement'`).
-    Movement(String),
-    /// A shape the file declares, by its name (`kind: 'shape'`): its
-    /// declaration is the program's (crate::program `Declarations`).
-    Shape(String),
+    /// A movement a file declares (`kind: 'movement'`): the root's, or one
+    /// a library exports, which runs in its library's own scope.
+    Movement(Rc<MovementRef>),
+    /// A node declaration bound to a name (`kind: 'shape'`).
+    Shape(Rc<ShapeBinding>),
     /// A plugin the file imports, by its name as registered (`kind:
     /// 'plugin'`).
     Plugin(String),
@@ -67,6 +67,37 @@ pub enum Binding {
     /// A file an extraction read (`kind: 'resource'`), its descriptor as a
     /// park holds it.
     Resource(Rc<Js>),
+}
+
+/// A movement as a binding names it: its declared name, in the file that
+/// declares it (run.ts keeps the declaration and its `fileEnv`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovementRef {
+    pub name: String,
+    pub file: crate::program::DeclaringFile,
+}
+
+/// `{kind: 'shape', declaration, fileEnv | library, local?}`: the
+/// declaration and the file whose `type`s and names it reads; one declared
+/// in a body (`local`) reads its words and its base in that body's scope,
+/// none once a park has rebuilt it (the running file's then, as
+/// serialize.ts's `localShape` rehydrates).
+#[derive(Debug)]
+pub struct ShapeBinding {
+    pub declared: crate::program::DeclaredShape,
+    pub local: bool,
+    pub declared_in: Option<std::rc::Weak<Scope>>,
+}
+
+impl ShapeBinding {
+    pub fn of(declared: crate::program::DeclaredShape) -> Rc<ShapeBinding> {
+        Rc::new(ShapeBinding { declared, local: false, declared_in: None })
+    }
+
+    /// The body scope a local declaration reads, while it stands.
+    pub fn body_scope(&self) -> Option<Rc<Scope>> {
+        self.declared_in.as_ref().and_then(std::rc::Weak::upgrade)
+    }
 }
 
 /// `{kind: 'callback', callbackId, url, params}`.
@@ -327,6 +358,16 @@ pub struct Scope {
     /// In the order declared, as a `Map` keeps them (a park writes them so).
     bindings: RefCell<Vec<(String, Binding)>>,
     parent: Option<Rc<Scope>>,
+    /// A file's own scope (run.ts's `fileTypes` registry keys on it): the
+    /// `type`s, shapes and words of the code that runs under it are that
+    /// file's. A scope rooted anywhere else (a closure's capture, a scope a
+    /// park rebuilt) reads the running file's, as `typesIn` falls back.
+    file_env: Option<crate::program::DeclaringFile>,
+    /// The file the code running in this scope is written in, nearest
+    /// first: a file's scope, and a closure's call over its capture (the
+    /// closure's code says where it is written). What its slots' AST paths
+    /// are read in.
+    written_in: Option<crate::program::DeclaringFile>,
 }
 
 impl Scope {
@@ -334,8 +375,41 @@ impl Scope {
         Rc::new(Scope::default())
     }
 
+    /// A scope of its own for code written in `file` (a capture rebuilt).
+    pub fn root_written_in(file: crate::program::DeclaringFile) -> Rc<Scope> {
+        Rc::new(Scope { written_in: Some(file), ..Scope::default() })
+    }
+
+    /// A file's own scope.
+    pub fn of_file(file: crate::program::DeclaringFile) -> Rc<Scope> {
+        Rc::new(Scope { file_env: Some(file.clone()), written_in: Some(file), ..Scope::default() })
+    }
+
     pub fn child(self: &Rc<Self>) -> Rc<Scope> {
-        Rc::new(Scope { bindings: RefCell::default(), parent: Some(self.clone()) })
+        Rc::new(Scope { parent: Some(self.clone()), ..Scope::default() })
+    }
+
+    /// A child for code written in `file` (a closure's body over its capture).
+    pub fn child_written_in(self: &Rc<Self>, file: crate::program::DeclaringFile) -> Rc<Scope> {
+        Rc::new(Scope { parent: Some(self.clone()), written_in: Some(file), ..Scope::default() })
+    }
+
+    /// `typesIn`: the file this scope's chain is rooted in, or the running
+    /// (root) file's where the chain is rooted in no file's scope.
+    pub fn file_env(&self) -> crate::program::DeclaringFile {
+        match &self.parent {
+            Some(parent) => parent.file_env(),
+            None => self.file_env.clone().unwrap_or(crate::program::DeclaringFile::Root),
+        }
+    }
+
+    /// The file the code running here is written in (`written_in`).
+    pub fn written_in(&self) -> crate::program::DeclaringFile {
+        match (&self.written_in, &self.parent) {
+            (Some(file), _) => file.clone(),
+            (None, Some(parent)) => parent.written_in(),
+            (None, None) => crate::program::DeclaringFile::Root,
+        }
     }
 
     /// `Map.set`: a name already declared here keeps its place.
@@ -381,13 +455,20 @@ impl Scope {
     /// its own — an inner binding over an outer one of its name, in the
     /// outer's place.
     pub fn capture(self: &Rc<Self>) -> Rc<Scope> {
-        let captured = Scope::root();
+        let captured = Rc::new(Scope { written_in: Some(self.written_in()), ..Scope::default() });
         for scope in self.chain_from_root() {
             for (name, binding) in scope.own_bindings() {
                 captured.declare(name, binding);
             }
         }
         captured
+    }
+
+    /// `capture`, for code written in `file` (a movement handed where a
+    /// closure goes runs over its caller's scope).
+    pub fn capture_written_in(self: &Rc<Self>, file: crate::program::DeclaringFile) -> Rc<Scope> {
+        let captured = self.capture();
+        Rc::new(Scope { bindings: RefCell::new(captured.own_bindings()), parent: None, file_env: None, written_in: Some(file) })
     }
 
     /// The lexical chain, root first, this scope last (`chainFromRoot`).

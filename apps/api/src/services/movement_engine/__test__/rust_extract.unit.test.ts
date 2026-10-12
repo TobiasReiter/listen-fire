@@ -251,7 +251,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     expect(trace[0]).toMatchObject({ kind: 'extraction', retried: ['  - x:extract_result#1.0.amount.value: Invalid input: expected number, received number'] });
   });
 
-  it("reads a library declaration's words, its base's included, through the declaration lookup (the TypeScript engine's, while file imports are refused)", async () => {
+  it("reads a library declaration's words, its base's included, in the library's own file", async () => {
     const library = ['export node Base: "a company" {', '  name: <text> "its name"', '}', 'export node Deal extends Base {', '  stage: <text> "its stage"', '}'].join(
       '\n',
     );
@@ -265,9 +265,136 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     ].join('\n');
     const ts = await agree(
       { source, files: { 'lib/deals': { source: library } }, replies: [{ 'x:extract_result#1': [{ deal: [{ name: wrap('Acme'), stage: wrap('Seed') }] }] }] },
-      { refused: 'import_from_file' },
+      { runsWhole: true },
     );
     expect(ts.asked).toHaveLength(1);
+  });
+
+  // PLAN-08A group F: a library's function runs in its library's own scope
+  // (its file values, `type`s and shapes), and a call nested in an expression
+  // there has a place of its own in the library's file, where the check's
+  // stamps on it are.
+  const TRIAGE = [
+    'lens = "by the library\'s lens"',
+    'type Verdict = <"Keep" | "Drop">',
+    'node Local: "each company, ${lens}" {',
+    '  verdict: <Verdict> "keep or drop"',
+    '}',
+    'export node Note {',
+    '  body: <text>',
+    '}',
+    'export function triage(n: <Note>) {',
+    '  found = extract from [n.body] {',
+    '    overall: <Verdict> "the batch"',
+    '    node entry: <Local>',
+    '  }',
+    '  copy = FIRST(MAP([n], (v) => {',
+    '    g = graph { ...v }',
+    '    return g',
+    '  }))',
+    '  return CONCAT(copy.body, "/", COALESCE(found.overall, "none"))',
+    '}',
+  ].join('\n');
+
+  it("runs a library's function in the library's own scope, a call nested in it stamped where the library writes it", async () => {
+    const source = [
+      'import { triage as route } from "lib/triage"',
+      'lens = "the importer\'s lens"',
+      'type Verdict = <"Yes" | "No">',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  r = route(n: node { body: msg.`text` })',
+      '  return r',
+      '}',
+    ].join('\n');
+    const ts = await agree(
+      { source, files: { 'lib/triage': { source: TRIAGE } }, replies: [{ 'x:extract_result#1': [{ overall: wrap('Keep'), entry: [{ verdict: wrap('Drop') }] }] }] },
+      { runsWhole: true },
+    );
+    expect('error' in ts ? String(ts.error) : 'ran').toBe('ran');
+    expect(ts.asked).toHaveLength(1);
+  });
+
+  it("parks inside a library's function, and a shape declared in a body, as the TypeScript does; either engine's park resumes alike", async () => {
+    const library = [
+      'import { attio } from adapters',
+      'import { acme_main } from credentials',
+      'crm = attio(credentials: acme_main)',
+      'export node Note {',
+      '  body: <text>',
+      '}',
+      'export function keep(n: <Note>) {',
+      '  node Tag: "a tag" {',
+      '    label: <text> "its label"',
+      '  }',
+      '  await sleep(1h)',
+      '  t = graph<Tag> { label: n.body }',
+      '  write crm-[:companies]-> { name: t.label }',
+      '  found = extract from [n.body] {',
+      '    node tag: <Tag>',
+      '  }',
+      '  found-[g:tag]-> {',
+      '    write crm-[:companies]-> { name: g.label }',
+      '  }',
+      '}',
+    ].join('\n');
+    const source = ['import { keep } from "lib/keep"', 'movement m(msg: <inbox-[:message]->>) {', '  keep(n: node { body: msg.`text` })', '}'].join('\n');
+    const files = { 'lib/keep': { source: library } };
+    const reply = { 'x:extract_result#1': [{ tag: [{ label: wrap('Infra') }] }] };
+    function hostWith(park: ReturnType<typeof makeFakeParkSink>, creates: unknown[]) {
+      const crm: Adapter = {
+        ...emailAdapter(),
+        adapterType: 'attio',
+        async createRecord(input) {
+          creates.push({ fields: input.fields });
+          return { adapterType: 'attio', externalId: `co-${creates.length}`, data: {} };
+        },
+      };
+      return makeTestHost({
+        adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
+        llm: { client: { call: async (request) => ({ parsedJson: request.userMessage === undefined ? {} : reply }) } },
+        park: { sink: park.sink },
+      });
+    }
+    const input = { ...baseInput(source), catalog: { ...catalog, files } };
+    async function on<T>(engine: 'ts' | 'rust', run: () => Promise<T>): Promise<T> {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = engine;
+      try {
+        return await run();
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    const parkOn = (engine: 'ts' | 'rust') =>
+      on(engine, async () => {
+        const park = makeFakeParkSink();
+        await runMovement({ ...input, host: hostWith(park, []) });
+        expect(park.timerParks).toHaveLength(1);
+        return JSON.stringify(park.timerParks[0]?.state);
+      });
+    const resumedOn = (engine: 'ts' | 'rust', state: string) =>
+      on(engine, async () => {
+        const creates: unknown[] = [];
+        resetRustRunStats();
+        const result = await resumeMovement({ ...input, state: JSON.parse(state) as ParkedScopeState, host: hostWith(makeFakeParkSink(), creates) });
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {}, shimFaults: 0 });
+        return { creates, writes: result.writes, trace: result.trace };
+      });
+    const ts = await parkOn('ts');
+    resetRustRunStats();
+    const rust = await parkOn('rust');
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rust).toBe(ts);
+    expect(ts).toContain('"kind":"localShape"');
+    const resumed = await resumedOn('ts', ts);
+    expect(resumed.creates).toEqual([{ fields: { name: 'Acme raised 3 million.' } }, { fields: { name: 'Infra' } }]);
+    for (const [engine, state] of [['ts', rust], ['rust', ts], ['rust', rust]] as const) {
+      const other = await resumedOn(engine, state);
+      expect(JSON.stringify(other.creates)).toBe(JSON.stringify(resumed.creates));
+      expect(other.writes).toEqual(resumed.writes);
+      expect(other.trace).toEqual(resumed.trace);
+    }
   });
 
   // The tier is a run input on Rust (`extractionTiers`), the deployment's

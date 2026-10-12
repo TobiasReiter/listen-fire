@@ -31,7 +31,6 @@ use crate::extract::spec::{self, NodeSpec, SpecError};
 use crate::extract::validate::{self, Issue};
 use crate::host;
 use crate::js::{self, Js, JsObject};
-use crate::program::{DeclaredShape, DeclaringFile};
 use crate::run::{Failure, Run, Stop};
 use crate::trace::{Members, TraceEntry};
 
@@ -377,11 +376,14 @@ impl Run<'_> {
                     expr.raw
                 )));
             }
-            // Bound for this call only, as the checker scoped it.
-            ExtractCallShape::Inline { declaration, .. } => DeclaredShape { declaration: declaration.clone(), file: DeclaringFile::Root },
+            // Bound for this call only, as the checker scoped it: a local
+            // declaration of the calling body's.
+            ExtractCallShape::Inline { declaration, .. } => {
+                spec::ShapeLink { declaration: declaration.clone(), file: scope.file_env(), words: spec::WordsScope::Body(scope.clone()) }
+            }
             ExtractCallShape::Named { name, .. } => {
                 let declared = match scope.resolve(name) {
-                    Some(Binding::Shape(declared)) => self.checked.declarations.root.shapes.get(&declared).cloned(),
+                    Some(Binding::Shape(declared)) => Some(self.shape_link(&declared)),
                     _ => None,
                 };
                 declared.ok_or_else(|| runtime(format!("'{name}' is not a node declaration in scope, so 'extract' has no shape to fill (the checker should have caught this)")))?
