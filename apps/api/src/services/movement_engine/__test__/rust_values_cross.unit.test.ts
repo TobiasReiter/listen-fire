@@ -226,6 +226,6 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
     const rust = await runOn('rust', source, version, []);
     expect(isDeepStrictEqual(rust, ts)).toBe(true);
     expect(rustRunStats).toMatchObject({ ranWhole: 0, unreproduced: 0, shimFaults: 0 });
-    expect(Object.keys(rustRunStats.notAdmitted)).toHaveLength(1);
+    expect(Object.keys(rustRunStats.notAdmitted)).toEqual(['function:get']);
   });
 });
