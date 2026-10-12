@@ -423,7 +423,12 @@ export function schemaFieldTypeOf(value: unknown): SchemaFieldType | undefined {
   }
 }
 
-/** Members of a park descriptor that hold data, which no walk reads into. */
+/** Members of a park descriptor that hold data, which no walk reads into.
+ *  A name list, not a walk typed per descriptor kind: a future descriptor
+ *  whose new member holds data, left off this list, is walked into, and a
+ *  `{ kind: 'file', file }`-shaped object in that data would be made a file
+ *  (a file revived from data). Each new descriptor member is added here, or
+ *  the walk is typed per kind (the README's chunk 8 list). */
 const PARKED_DATA_MEMBERS: ReadonlySet<string> = new Set([
   'fields', 'fieldProvenance', 'provenance', 'position', 'handle', 'op', 'body', 'closure', 'head', 'mapping', 'params', 'edgeProperties', 'origin',
 ]);

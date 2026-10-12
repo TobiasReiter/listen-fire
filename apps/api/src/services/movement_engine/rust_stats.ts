@@ -34,9 +34,10 @@ export function resetRustEvalStats(): void {
  *   admission on its own parse before it asked its host for anything
  *   (crates/movement-engine's README lists every reason). One count per
  *   run, under the first reason;
- * - `allReasons`: the same runs, each counted under every reason it holds
- *   (the engine's admission walks on past the first; a shim input check
- *   names one), so a reason a first one hides is still counted;
+ * - `allReasons`: the same runs, each counted under each statement's first
+ *   reason (the engine's admission walks on to the next statement past a
+ *   refusal, not past one within a statement; a shim input check names
+ *   one), so a reason an earlier statement's hides is still counted;
  * - `routed`: segments the Rust engine started, its admission refusals
  *   among them;
  * - `admitted`: routed segments its admission let by (`routed` less its

@@ -334,13 +334,19 @@ Either way the shim runs the program on the TypeScript engine.
   enter is walked under every binding a call gives its parameters, and a
   combinator's arm or a closure still refuses where it stands.
 
-The walk does not stop at a reason. Each statement is walked whatever the
-one before it needed, an `if`'s arms past its condition, a block's body past
-its head. A refused `done` carries every reason met, in the order met, each
-once (`{refused: <first>, reasons: [<first>, …]}`). The input's and the
-parked state's reasons follow the program's. The first is the one a walk
-that stopped there would give; `rustRunStats.notAdmitted` counts each run
-under it, and `rustRunStats.allReasons` under each reason the run holds.
+The walk does not stop at a statement's reason. Each statement is walked
+whatever the one before it needed, an `if`'s arms past its condition, a
+block's body past its head. Within one statement it does stop: the first
+reason a statement meets ends that statement's walk (a call's later
+arguments, a write's later fields are not read), so a statement contributes
+one reason. A refused `done` carries each statement's first reason, in the
+order met, each once (`{refused: <first>, reasons: [<first>, …]}`). The
+input's and the parked state's reasons follow the program's. The first is
+the one a walk that stopped there would give; `rustRunStats.notAdmitted`
+counts each run under it, and `rustRunStats.allReasons` under each reason
+the run's statements first met (not every reason inside a statement: that
+would mean walking past a refusal in every builder, which nothing needs
+yet).
 
 
 ### The port list
@@ -357,7 +363,7 @@ constructs this engine already runs are "The run" below.
 Each row's last column starts with its status: **Closed** (nothing is left
 to port: the reason is refused on either engine, or no checked program
 reaches it), or **Open**, with how many runs of the conformance corpora
-still meet it (counted under every reason each holds, `allReasons`, at
+still meet it (counted under each statement's first reason, `allReasons`, at
 chunk 7A Task 7; "no corpus run meets it" is not "unreachable": the row
 names a construct a checked program can still write), then what closing it
 takes. A row narrowed by an earlier task names the exact construct still
@@ -577,8 +583,8 @@ mutation — the TypeScript engine throws the same.
   `MOVEMENT_ENGINE` did not choose this engine). At info under
   `MOVEMENT_ENGINE=rust`; at debug under `ts`.
 - **`rustRunStats`** (rust_stats.ts): `notAdmitted` by first reason,
-  `allReasons` by every reason a run not admitted holds (one count per run
-  per reason), and `declined` by reason;
+  `allReasons` by each statement's first reason in a run not admitted (one
+  count per run per reason; "What admission walks"), and `declined` by reason;
   `routed`, the segments this engine started, its admission's refusals
   among them; `admitted`, those its admission let by (`routed` less the
   refusals); `ranWhole`, the runs it ran to their end (a run's own
@@ -604,7 +610,7 @@ mutation — the TypeScript engine throws the same.
   could ask about), `sampled` (runs it asked about), `admitted`, `first` (refused
   runs by the reason named first, the one a real run is counted by), `all`
   (refused runs by every reason named, once each: the engine's admission
-  names every reason it meets since chunk 7A's walk, so `all` counts the
+  names each statement's first reason since chunk 7A's walk, so `all` counts the
   same reasons `rustRunStats.allReasons` does for a routed run) and `byVersion` (the same, by the run's
   pinned language version). It misses what admission cannot see: declines
   after the check (`event_field_dated`) and mid-run hand-backs.
@@ -1412,8 +1418,8 @@ conjuncts' fields in order, a false one ending the reads.)
 - `{thrown: error}`: it failed before the body ran;
 - `{refused: reason, reasons}`: admission refused the program, its input
   or its parked state on this engine's own parse; nothing was asked of the
-  host. `reasons` is every reason met, `reason` first ("What admission
-  walks");
+  host. `reasons` is each statement's first reason, in the order met,
+  `reason` first ("What admission walks");
 - `{declined: reason}`: past the check, nothing the host can see has
   happened; run the program another way.
 
@@ -1467,6 +1473,7 @@ Sizes are estimates (XS, S, M, L).
 | 14 | a `#` edge's restamp (kg.ts) | `traversal_meta_edge` refused | the read wrapper's pass-through without restamping | none: refused at admission | — |
 | 15 | identity of host objects across host calls | in process only: the segment's wire hands an object the host sent back as that object (`["i", id]`), and an object the host sends again UNCHANGED, under the id it was first sent under, decodes as the one object already held; an object the host MUTATES between two answers decodes fresh the second time, where the TypeScript holds the one object (see "Known divergences") | nothing for a remote host: it serves JSON shapes, so identity across calls is not part of the contract | none: rust_engine.unit.test.ts pins the identity the wire keeps, and rust_write.unit.test.ts an answer mutated between re-sends | — |
 | 16 | two names for one write handle across a park | both engines alike: a park writes each name's handle on its own (serialize.ts keeps shared identity for nodes, `nodeRef`, not for handles), so after a resume `x = write org { … }` leaves `x` and `org` two handles, and a later in-place `write org { … }` (version 4) is not seen through `x` | a ruling for Henry: a handle reference in the park state (as `nodeRef` is for nodes), a park-state change both engines would make | none: a ruling first | S |
+| 17 | which members of a parked state the shim's file walk reads into (rust_wire.ts `filesInParkState`) | a name list (`PARKED_DATA_MEMBERS`) of descriptor members that hold data: a future descriptor whose new data member is left off the list is walked into, and a file-shaped object in that data would be made a file (a file revived from data) | a walk typed per descriptor kind, reading only the members park-state.md says hold a file | the park-state round trips (rust_write.unit.test.ts) with a descriptor of every kind holding a file-shaped object in its data | S |
 
 #### The rows in detail
 
@@ -1753,8 +1760,8 @@ attempted (K refused at admission by name, J failed by name, D declined, C
 failed their check before a segment opened, S shim faults)`: each run the
 Rust route was entered for ends under exactly one of these), `Rust runs not
 admitted: {reason: count}` (by first reason, largest first) and `Rust runs
-not admitted, every reason: {reason: count}` (each run counted under every
-reason it holds). The endings:
+not admitted, every reason: {reason: count}` (each run counted under each
+statement's first reason). The endings:
 
 - `ranWhole`: the engine ran it to its end, its own failure included;
 - `failedByName`: admitted, then ended mid-run naming a construct this
