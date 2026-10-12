@@ -1348,9 +1348,9 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'name_not_value@plugin',
     routes: 'whole',
-    note: "closed in chunk 7A Task 3: a plugin's plain call handed the event or a handle (the record read as its fields)",
+    note: "closed in chunk 7A Task 3: a plugin's plain call handed the event or a handle (the record read as its fields); the event's own form ends at the check since main's file rule (its `deck` field is a file, MOV_CALL_ARG_TYPE)",
     programs: [
-      () => ({ file: `import { echo } from plugins\n${m('  said = echo(q: msg)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}` }),
+      () => ({ file: `import { echo } from plugins\n${m('  said = echo(q: msg)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = echo(q: co)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}` }),
     ],
   },

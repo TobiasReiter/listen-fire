@@ -104,7 +104,11 @@ const path = require('node:path');
 // endedAtCheck is v1 1175, v2 1487, v3 2569, the old count plus the few
 // check failures admission used to refuse first. No run the Rust engine
 // ran is lost; the floor is re-based to what it measures (a run the engine
-// ran), not lowered to pass: the floors are those less a margin of 2.
+// ran), not lowered to pass: the floors are those less a margin of 2. The
+// forward merge of main's file rule (a file nested in a field's value is
+// refused at the check, 2026-10-12) moves no corpus run: v1 1023 of 1193,
+// v2 1251 of 1514, v3 2152 of 2662, check endings 152 / 236 / 417 as
+// before; the floors stay those less a margin of 2.
 const RAN_WHOLE_FLOOR = { v1: 1021, v2: 1249, v3: 2150 };
 
 /**
