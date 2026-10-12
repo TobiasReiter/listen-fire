@@ -139,8 +139,10 @@ const path = require('node:path');
 // another name, its in-place words read in the body; the registry's chat
 // models as a run input; a call whose value a member access reads staged as
 // the TypeScript stages it, 2026-10-12) lifts v1 3, v2 3, v3 7: v1 1034, v2
-// 1271, v3 2239.
-const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2239 };
+// 1271, v3 2239. PLAN-08A group F′ part 2 (a GROUPBY over records read as a
+// map of lists of them, so `AT` over it reads a key, 2026-10-12) lifts v3 1:
+// v3 2240.
+const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -222,7 +224,12 @@ const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2239 };
 // hid (`AT(keyed, FIRST(x.entries).name)`, a KEYBY over what an extraction
 // call answered inside a MAP's member, which admission's holders read as
 // anything): it carries its first measurement, and the refused-plus-declined
-// total falls 5 to 1.
+// total falls 5 to 1. Lowered by group F′ part 2 (2026-10-12): refused v3 1
+// to 0, at_record_key retired (the run's reason was the GROUPBY beside the
+// KEYBY: `AT(grouped, …)` over a GROUPBY of records, which admission read as
+// anything; it now reads a map of lists of records); evaluator not admitted
+// v3 128 to 67 (that run's expressions, asked of the evaluator while the
+// TypeScript ran it).
 const CEILINGS = {
   v1: {
     refused: 0,
@@ -245,13 +252,13 @@ const CEILINGS = {
     mirroredFailure: 7,
   },
   v3: {
-    refused: 1,
-    everyReason: { at_record_key: 1 },
+    refused: 0,
+    everyReason: {},
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 128,
+    evaluatorNotAdmitted: 67,
     mirroredFailure: 5,
   },
 };

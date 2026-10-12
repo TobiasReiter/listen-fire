@@ -2072,6 +2072,12 @@ impl<'c> Bound<'c> {
                 Holder::Record => Holder::Map { depth: 1, lists: false },
                 _ => Holder::Other,
             },
+            // The list of the members under each key its function returned.
+            CollectionOp::Groupby => match source {
+                Holder::Free => Holder::Free,
+                Holder::Record => Holder::Map { depth: 1, lists: true },
+                _ => Holder::Other,
+            },
             _ if source == Holder::Free && returned == Holder::Free => Holder::Free,
             _ => Holder::Other,
         }
@@ -5233,6 +5239,10 @@ mod tests {
             "  write crm-[:companies]-> { name: COALESCE(FIRST(extract([msg.`text`], Co)).name, \"none\") }",
             "  found = extract([msg.`text`], Co)\n  merged = MAP(found, (c) => {\n    return { ...c, tag: UPPER(c.name) }\n  })\n  MAP(merged, (d) => {\n    write crm-[:companies]-> { name: d.tag }\n  })",
             "  rows = MAP([\"p\"], (p) => {\n    return { piece: p, entries: extract([msg.`text`], Co) }\n  })\n  MAP(rows, (row) => {\n    x = FIRST(row.entries)\n    write crm-[:notes]-> { body: x.name }\n  })",
+            // A GROUPBY's map of lists of an extraction call's records, and a
+            // KEYBY's map of them, read off a member's map field: `AT` reads a
+            // key of the map, never a record's.
+            "  rows = MAP([\"p\"], (p) => {\n    return { piece: p, entries: extract([p], Co) }\n  })\n  MAP(rows, (x) => {\n    grouped = GROUPBY(x.entries, (e) => e.name)\n    keyed = KEYBY(x.entries, (e) => e.name)\n    write crm-[:companies]-> { name: \"${COUNT(AT(grouped, FIRST(x.entries).name))}|${AT(keyed, FIRST(x.entries).name).name}\" }\n  })",
         ] {
             assert_eq!(shaped(body), None, "{body}");
         }
