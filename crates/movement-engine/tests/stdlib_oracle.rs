@@ -44,7 +44,7 @@ fn shape(json: &Json) -> Json {
 fn plain(value: &Js) -> Json {
     match value {
         Js::Array(list) => json!(["l", 0, list.items().iter().map(plain).collect::<Vec<_>>()]),
-        Js::Object(object) => json!(["o", 0, object.entries().iter().map(|(k, v)| json!([k, plain(v)])).collect::<Vec<_>>()]),
+        Js::Object(object) => json!(["o", 0, object.entries().iter().map(|(k, v)| json!([encode(&Js::str(k.as_str())), plain(v)])).collect::<Vec<_>>()]),
         scalar => encode(scalar),
     }
 }
@@ -87,10 +87,6 @@ fn the_standard_library_answers_as_typescript_does() {
                 continue;
             }
         };
-        if case["outcome"].get("loneSurrogate").is_some() {
-            mismatches.push(format!("{fn_}({}) = {got}, where only TypeScript can say a lone surrogate", case["args"]));
-            continue;
-        }
         let want = match &case["outcome"] {
             Json::Object(o) if o.contains_key("value") => json!({ "value": shape(&o["value"]) }),
             other => other.clone(),
@@ -113,14 +109,10 @@ fn the_standard_library_answers_as_typescript_does() {
 }
 
 /// The share of each function's oracle cases that may go back to
-/// TypeScript: what it was when recorded (2026-10-07), rounded up at the
-/// third place. Every function not listed may hand back none.
-const FALLBACK_CEILINGS: &[(&str, f64)] = &[
-    // Astral characters split into UTF-16 halves.
-    ("flat.split", 0.018),
-    // A match that splits an astral character.
-    ("text.regex_extract", 0.036),
-];
+/// TypeScript. Every function not listed may hand back none (a split of an
+/// astral character into its halves, and a match through a pair, were
+/// handed back until the engine's strings held a lone surrogate).
+const FALLBACK_CEILINGS: &[(&str, f64)] = &[];
 
 #[test]
 fn numbers_print_as_javascript_prints_them() {

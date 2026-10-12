@@ -26,7 +26,7 @@ use crate::bindings::{Binding, Edge, LandingShape, Node, Scope};
 use crate::env::{self, Trail};
 use crate::extract::emission::{self, TracedTree};
 use crate::extract::resources::{bound_text, file_handle, is_file_ref};
-use crate::extract::run::{CallSettings, FiringScope, Reply, TRACE_INPUT_PARTS, TRACE_ISSUE_LINES, TRACE_REPLY_DIGESTS, reply_digest, thrown, uncarried};
+use crate::extract::run::{CallSettings, FiringScope, Reply, TRACE_INPUT_PARTS, TRACE_ISSUE_LINES, TRACE_REPLY_DIGESTS, reply_digest, thrown};
 use crate::extract::spec::{self, NodeSpec, SpecError};
 use crate::extract::validate::{self, Issue};
 use crate::host;
@@ -732,7 +732,6 @@ impl Run<'_> {
             usage.push(used);
         }
         Ok(Reply {
-            unreadable: uncarried(&answer).iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
                 Js::String(text) => Some(text.into_string()),
@@ -867,12 +866,8 @@ impl Run<'_> {
     }
 }
 
-/// The reply read by the call's schema; one this engine's wire could not
-/// carry is refused as unreadable.
+/// The reply read by the call's schema.
 fn read_reply(spec: &NodeSpec, one: bool, reply: &Reply) -> Result<validate::Read, Vec<Issue>> {
-    if reply.unreadable {
-        return Err(vec![Issue { path: Vec::new(), message: crate::extract::run::UNREADABLE_REPLY.into() }]);
-    }
     validate::read_call_reply(spec, one, &reply.parsed_json)
 }
 

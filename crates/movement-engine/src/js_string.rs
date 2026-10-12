@@ -356,7 +356,8 @@ pub fn json_quote(text: &str) -> String {
             Piece::Char('\r') => out.push_str("\\r"),
             Piece::Char('\t') => out.push_str("\\t"),
             Piece::Char(c) if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            Piece::Char(c) => out.push(c),
+            // In the engine's form, as every text is (a U+FDD0 twice).
+            other => other.push_onto(&mut out),
         }
     }
     out.push('"');

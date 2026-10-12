@@ -131,9 +131,6 @@ pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js,
             let separator = arg(args, 1);
             let separator = if separator.is_nullish() { ",".to_string() } else { separator.to_js_string() };
             let text = a.to_js_string();
-            if separator.is_empty() && !text.chars().all(|c| (c as u32) < 0x10000) {
-                return Err(EvalError::Fallback("splitting astral characters into UTF-16 halves".into()));
-            }
             // By code unit, as `split` reads: `split("")` parts an astral
             // character into its two halves.
             let parts: Vec<String> = if separator.is_empty() {
@@ -630,9 +627,8 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     }
     match &groups[index as usize] {
         None => Ok(Js::Null),
-        Some(units) => String::from_utf16(units)
-            .map(Js::str)
-            .map_err(|_| EvalError::Fallback("a match that splits an astral character".into())),
+        // A match through a pair holds its half, as JavaScript's does.
+        Some(units) => Ok(Js::String(crate::js::JsString::from_units(units))),
     }
 }
 

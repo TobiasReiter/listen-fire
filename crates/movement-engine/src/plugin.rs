@@ -53,17 +53,10 @@ fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
                 fields.set(i.to_string(), item.clone());
             }
         }
-        // By UTF-16 unit: an astral character would spread as two lone
-        // halves, which no Rust string holds.
-        Js::String(text) if text.chars().any(|c| c.len_utf16() > 1) => {
-            return Err(Stop::Thrown(Failure::unreproduced(
-                "a records plugin's record that is a text holding an astral character",
-                "a Rust string cannot hold the lone halves its spread makes",
-            )));
-        }
+        // By UTF-16 unit: an astral character spreads as its two halves.
         Js::String(text) => {
-            for (i, c) in text.chars().enumerate() {
-                fields.set(i.to_string(), Js::str(c.to_string()));
+            for (i, unit) in crate::js_string::split_units(text).into_iter().enumerate() {
+                fields.set(i.to_string(), Js::str(unit));
             }
         }
         _ => {}

@@ -2,8 +2,10 @@
 // seam guard's round trip (__test__/round_trip_host.ts) and the conformance
 // recorder (./recorder.ts) both make of every request and answer. A value
 // JSON would drop or change — a function, a class instance, a Date, a Map, a
-// stream, a BigInt, a NaN, a -0, a lone surrogate, a hole in an array, a
-// cycle — is named by its path. An engine file crosses as its descriptor.
+// stream, a BigInt, a NaN, a -0, a hole in an array, a cycle — is named by
+// its path. An engine file crosses as its descriptor. A string crosses
+// whatever it holds: a lone surrogate as the `\udXXX` escape `JSON.stringify`
+// writes, which `JSON.parse` and the Rust engine's JSON reader read back.
 
 import { isFileValue } from 'engine-contracts';
 
@@ -30,9 +32,8 @@ function notJsonWithin(
 ): { path: string; what: string } | undefined {
   switch (typeof value) {
     case 'boolean':
-      return undefined;
     case 'string':
-      return value.isWellFormed() ? undefined : { path, what: 'a string with a lone surrogate' };
+      return undefined;
     case 'number':
       if (!Number.isFinite(value)) return { path, what: String(value) };
       return Object.is(value, -0) ? { path, what: '-0' } : undefined;

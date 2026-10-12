@@ -45,7 +45,7 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZon
             _ => false,
         },
         FilterOperator::Contains => match (left, right) {
-            (Js::String(l), Js::String(r)) => l.contains(r.as_str()),
+            (Js::String(l), Js::String(r)) => crate::js_string::includes(l, r),
             (Js::Array(list), _) => list.items().iter().any(|item| js::same_value_zero(item, right)),
             _ => false,
         },

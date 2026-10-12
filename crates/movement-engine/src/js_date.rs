@@ -185,7 +185,7 @@ const MAX_TIME_BEFORE_UTC: f64 = 8.64e15 + 30.0 * MS_PER_DAY;
 /// `Date.parse(text)` (and `new Date(text).getTime()`), `None` for NaN:
 /// `ParseDateTimeString`.
 pub fn parse(text: &str, local: LocalZone<'_>) -> Option<f64> {
-    let units: Vec<u16> = text.encode_utf16().collect();
+    let units = crate::js_string::units_vec(text);
     let fields = parse_fields(&units)?;
     let day = make_day(fields.year, fields.month, fields.day)?;
     let time = f64::from(fields.hour) * 3_600_000.0

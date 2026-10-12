@@ -376,36 +376,14 @@ fn traced_value(value: &Js) -> Js {
     Js::str(cut(&text, TRACE_VALUE_CHARS))
 }
 
-/// Whether `text.slice(0, limit)` would end between the two halves of a
-/// surrogate pair (a text longer than `limit` whose character spanning the
-/// cut is astral).
-pub(crate) fn cut_splits_pair(text: &str, limit: usize) -> bool {
-    let mut units = 0;
-    for c in text.chars() {
-        let next = units + c.len_utf16();
-        if next > limit {
-            return units < limit;
-        }
-        units = next;
-    }
-    false
-}
-
 /// A text past `limit` UTF-16 units cut there and marked, as
-/// `${text.slice(0, limit)}…` cuts it.
+/// `${text.slice(0, limit)}…` cuts it: a cut through a pair keeps its high
+/// half.
 pub(crate) fn cut(text: &str, limit: usize) -> String {
     if js::utf16_len(text) <= limit {
         return text.to_string();
     }
-    let mut units = 0;
-    let head: String = text
-        .chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= limit
-        })
-        .collect();
-    format!("{head}…")
+    format!("{}…", crate::js_string::slice_units(text, 0, limit))
 }
 
 #[cfg(test)]
@@ -423,17 +401,10 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_that_splits_a_pair_is_named() {
-        assert!(cut_splits_pair("a😀b", 2));
-        assert!(!cut_splits_pair("a😀b", 1));
-        assert!(!cut_splits_pair("a😀b", 3));
-        assert!(!cut_splits_pair("ab", 1));
-    }
-
-    #[test]
     fn a_long_value_is_cut_at_its_utf16_length() {
         assert_eq!(cut("abc", 3), "abc");
         assert_eq!(cut("abcd", 3), "abc…");
-        assert_eq!(cut("a😀b", 2), "a…");
+        assert_eq!(cut("a😀b", 2), format!("{}…", crate::js_string::slice_units("a😀", 0, 2)));
+        assert_eq!(crate::js_string::units_vec(&cut("a😀b", 2)), [0x61, 0xD83D, 0x2026]);
     }
 }

@@ -796,19 +796,7 @@ fn string_leaves(value: &Js, depth: usize, into: &mut Vec<String>) {
 
 /// `pushCoercion`: past 80 UTF-16 units a rendering is cut and marked.
 fn push(into: &mut Vec<(String, Vec<String>)>, key: &str, rendered: String) {
-    let rendered = if js::utf16_len(&rendered) > 80 {
-        let mut units = 0;
-        let cut: String = rendered
-            .chars()
-            .take_while(|c| {
-                units += c.len_utf16();
-                units <= 80
-            })
-            .collect();
-        format!("{cut}…")
-    } else {
-        rendered
-    };
+    let rendered = if js::utf16_len(&rendered) > 80 { crate::extract::emission::cut(&rendered, 80) } else { rendered };
     match into.iter_mut().find(|(k, _)| k == key) {
         Some((_, list)) => list.push(rendered),
         None => into.push((key.to_string(), vec![rendered])),

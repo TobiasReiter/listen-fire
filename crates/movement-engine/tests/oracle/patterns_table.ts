@@ -38,8 +38,8 @@ export interface Program {
    *  acting user, a records plugin's records, a file's unreadable reason —
    *  the malformed answers a host may give. */
   answers?: { actingUser?: unknown; records?: unknown; unreadable?: unknown };
-  /** Its input holds what JSON cannot carry (a lone surrogate), which the
-   *  recorder refuses: each engine runs it unrecorded, compared on how it
+  /** Its source holds a lone surrogate, which the shim refuses before the
+   *  engine opens: each engine runs it unrecorded, compared on how it
    *  ended. */
   unrecordable?: true;
 }
@@ -1170,9 +1170,8 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'event_does_not_cross',
     routes: 'refused',
-    note: 'an event, source or parked state the eval wire cannot carry as itself (a lone surrogate): needs a lone surrogate on the wire (transition artefacts row 9)',
+    note: "an event or parked state the eval wire cannot carry as itself (a Date), or a source holding a lone surrogate: program text, whose spans the checker counts in code units and the engine's parser in its in-band escape (an event's lone surrogate crosses, transition artefacts row 9: rust_wire_round_trip.unit.test.ts)",
     programs: [
-      () => ({ body: '  write crm-[:notes]-> { body: COALESCE(msg.`text`, "none") }', payload: { text: 'half a pair \uD83D' }, unrecordable: true }),
       () => ({ body: '  x = "\uDC00"\n  write crm-[:notes]-> { body: x }', unrecordable: true }),
     ],
   },

@@ -136,20 +136,6 @@ pub(crate) fn ai_expression_settings(tier: Option<&str>) -> CallSettings {
 }
 const LABEL: &str = "movement_extraction";
 
-/// A plugin's or a file reader's answer that held what the eval wire cannot
-/// carry fails the statement here, where the TypeScript reads on ("Spec the
-/// tail" in the README).
-pub(crate) fn refuse_uncarried(answer: &Js, what: &str) -> Result<(), Failure> {
-    let uncarried = uncarried(answer);
-    if uncarried.is_empty() {
-        return Ok(());
-    }
-    Err(Failure::unreproduced(
-        &format!("{what} holding a lone surrogate (in {})", uncarried.join(", ")),
-        "the Rust engine reads only what its wire carries",
-    ))
-}
-
 pub(crate) fn thrown(failure: Failure) -> Stop {
     Stop::Thrown(failure)
 }
@@ -396,9 +382,6 @@ struct Telemetry {
 /// A model call's answer (`LlmCallResult`).
 #[derive(Clone)]
 pub(crate) struct Reply {
-    /// The reply held what the eval wire cannot carry (the shim's
-    /// `uncarried`): a lone surrogate.
-    pub(crate) unreadable: bool,
     pub(crate) parsed_json: Js,
     pub(crate) raw_text: Option<String>,
     pub(crate) effort_stepped_down: Option<Js>,
@@ -490,7 +473,6 @@ impl Run<'_> {
             self.ledger.budget(),
         );
         let answer = self.priced(request).await?;
-        refuse_uncarried(&answer, &format!("'{registered}''s answer"))?;
         // The host made the files the plugin's output declares (the shim's
         // `withDeclaredFiles`): they arrive as files, and nothing else does.
         Ok(PluginResult::of(&answer))
@@ -744,9 +726,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
         };
         let answer = self.run.priced(host::llm::client_call(self.run.segment(), call, self.run.ledger.budget())).await.map_err(thrown)?;
         let member = |key: &str| crate::unique::get(&answer, key);
-        let uncarried = uncarried(&answer);
         Ok(Reply {
-            unreadable: uncarried.iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
                 Js::String(text) => Some(text.into_string()),
@@ -1054,24 +1034,9 @@ impl<'r, 'h> Materializer<'r, 'h> {
     }
 }
 
-/// What the reply says unread: a reply the eval wire could not carry is one
-/// issue at its root, retried and failed as any reply the guide does not
-/// describe ("Transition artefacts to mirror" in the README).
+/// What the reply says.
 fn read_reply(region: &Region<'_>, reply: &Reply) -> Result<validate::Read, Vec<Issue>> {
-    if reply.unreadable {
-        return Err(vec![Issue { path: Vec::new(), message: UNREADABLE_REPLY.into() }]);
-    }
     validate::read_reply(region, &reply.parsed_json)
-}
-
-pub(crate) const UNREADABLE_REPLY: &str = "the reply held a text this engine cannot read (a lone surrogate)";
-
-/// The members of a host's answer the shim could not carry on the eval wire.
-pub(crate) fn uncarried(answer: &Js) -> Vec<String> {
-    match crate::unique::get(answer, "uncarried") {
-        Js::Array(list) => list.items().iter().map(Js::to_js_string).collect(),
-        _ => Vec::new(),
-    }
 }
 
 /// Every record's resources, the tree's order.

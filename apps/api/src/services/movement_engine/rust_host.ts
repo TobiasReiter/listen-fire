@@ -58,7 +58,6 @@ import {
   RustShimError,
   WireOut,
   filesInParkState,
-  ownEntry,
   isCallbackParam,
   schemaFieldTypeOf,
   optionalString,
@@ -271,7 +270,7 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(wire, answer, 'llm.client.call', ['parsedJson', 'rawText']));
+    return new Plain(wired(wire, answer, 'llm.client.call'));
   },
   /** The extraction call's model call (`extract(content, Shape)`), a priced
    *  call: its prompt as blocks with cache breakpoints, the reply back on the
@@ -301,7 +300,7 @@ const ROUTES: Record<string, Route> = {
       budget: budgetOf(request.budget),
     });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(wire, answer, 'llm.extractCall.call', ['parsedJson', 'rawText']));
+    return new Plain(wired(wire, answer, 'llm.extractCall.call'));
   },
   /** A plugin's invocation (`through` or a plain call), a priced call: its
    *  arguments and the entity's fields so far arrive on the eval wire, and
@@ -321,7 +320,7 @@ const ROUTES: Record<string, Route> = {
     const spec = pluginSpecNamed(catalog.plugins, string(request.plugin, 'llm.transforms.invoke plugin'));
     const output = spec !== undefined ? pluginOutputUnder(spec, context.languageVersion) : undefined;
     const typed = 'error' in answer ? answer : withDeclaredFiles(answer, output);
-    return new Plain(wired(wire, typed, 'llm.transforms.invoke', ['text', 'data', 'records', 'outcome']));
+    return new Plain(wired(wire, typed, 'llm.transforms.invoke'));
   },
   /** A source file's text, a priced call: the descriptor on the eval wire. */
   async 'files.resolveFileText'(request, { host, context, wire }) {
@@ -332,7 +331,7 @@ const ROUTES: Record<string, Route> = {
     if (!isFileValue(file)) throw new RustShimError('files.resolveFileText file is a file the engine holds');
     const answer = await host.files.resolveFileText({ file: { ...file }, segmentId: segmentOf(request), budget: budgetOf(request.budget) });
     context.ledger.charge(answer.cost);
-    return new Plain(wired(wire, answer, 'files.resolveFileText', ['text', 'rawTextId', 'detail']));
+    return new Plain(wired(wire, answer, 'files.resolveFileText'));
   },
   /** The principal the event acts as (`@user_*`), the event on the eval
    *  wire, and the answer back on it. A host that throws answers an error,
@@ -780,27 +779,16 @@ function instant(value: unknown, what: string): string {
 }
 
 /**
- * A host's answer on the eval wire, as the engine reads it. A member the wire
- * cannot carry as itself (a reply's lone surrogate, which `JSON.parse` can
- * make; its own `__proto__` key crosses as a key) is left out and named under
- * `uncarried`: the
- * call was made and charged, so the engine decides what an unreadable answer
- * means for the run, never the shim. The cost and every other member cross.
+ * A host's answer on the eval wire, as the engine reads it: whole (a lone
+ * surrogate crosses as its code units, an own `__proto__` key as a key).
+ * One holding what the wire cannot carry as itself (a `Date`, a class
+ * instance, a function) is the shim's fault, as an adapter's is.
  */
-function wired(wire: WireOut, answer: object, method: string, members: readonly string[]): unknown {
+function wired(wire: WireOut, answer: object, method: string): unknown {
   // Tried apart first: what goes out on the segment's wire is what the
   // engine reads, every id it names included.
-  const carries = (value: unknown) => new WireOut().value(value) !== REFUSED;
-  if (carries(answer)) return wire.value(answer);
-  const kept: Record<string, unknown> = {};
-  const uncarried: string[] = [];
-  for (const [key, value] of Object.entries(answer)) {
-    if (members.includes(key) && !carries(value)) uncarried.push(key);
-    else ownEntry(kept, key, value);
-  }
-  const value = { ...kept, uncarried };
-  if (!carries(value)) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
-  return wire.value(value);
+  if (new WireOut().value(answer) === REFUSED) throw new RustShimError(`${method} answered a value the eval wire cannot carry as itself`);
+  return wire.value(answer);
 }
 
 function isEffort(value: string): value is Effort {

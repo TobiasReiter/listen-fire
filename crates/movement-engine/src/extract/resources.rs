@@ -161,20 +161,10 @@ pub fn bound_text(text: &str, ceiling: f64) -> (String, f64, Option<usize>) {
     if length as f64 <= ceiling {
         return (text.to_string(), length as f64, None);
     }
-    let head: String = utf16_prefix(text, ceiling.trunc() as usize);
+    // `slice`: a cut through a pair keeps its high half.
+    let head = crate::js_string::slice_units(text, 0, ceiling.trunc() as usize);
     let marker = js::number_to_string(ceiling);
     (format!("{head}\n[… truncated: first {marker} of {length} characters]"), ceiling, Some(length))
-}
-
-/// `text.slice(0, units)`, in UTF-16 units.
-fn utf16_prefix(text: &str, units: usize) -> String {
-    let mut taken = 0;
-    text.chars()
-        .take_while(|c| {
-            taken += c.len_utf16();
-            taken <= units
-        })
-        .collect()
 }
 
 impl Run<'_> {
@@ -231,7 +221,6 @@ impl Run<'_> {
     pub(crate) async fn resolve_file_text(&self, file: &Js) -> Result<Js, Failure> {
         let request = host::files::resolve_file_text(self.segment(), self.encode(file)?, self.ledger.budget());
         let answer = self.priced(request).await?;
-        super::run::refuse_uncarried(&answer, "a file's text")?;
         // A reason the host names outside the four a file is unreadable for
         // reaches the trace, whose entry this engine holds to them: named
         // here rather than left to the shim's check of the trace.

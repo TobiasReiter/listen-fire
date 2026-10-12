@@ -1721,16 +1721,6 @@ impl Run<'_> {
     /// `evaluateAi`: one priced `llm.client.call` at the tier's settings,
     /// its reply read out of the structured envelope (`aiAnswer`), traced.
     async fn ai(&self, prompt: &str, tier: Option<&str>) -> Result<Js, Failure> {
-        // The trace keeps the prompt's first 300 UTF-16 units: where that cut
-        // splits a pair, JavaScript keeps the lone high half, which no Rust
-        // string holds (transition artefacts, row 9) — refused, before the
-        // model is asked, rather than traced otherwise.
-        if crate::extract::emission::cut_splits_pair(prompt, AI_TRACE_PROMPT_UNITS) {
-            return Err(Failure::unreproduced(
-                "an AI() prompt whose trace cut splits a character in two",
-                "a Rust string cannot hold the lone half the TypeScript traces",
-            ));
-        }
         let settings = crate::extract::run::ai_expression_settings(tier);
         let call = host::llm::ClientCall {
             system: AI_EXPRESSION_SYSTEM,
@@ -1741,8 +1731,9 @@ impl Run<'_> {
             max_tokens: settings.max_tokens,
         };
         let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
-        crate::extract::run::refuse_uncarried(&answer, "the AI() reply")?;
         let value = ai_answer(&event_get(&answer, "parsedJson"));
+        // The prompt's first 300 UTF-16 units: a cut through a pair keeps
+        // its high half, as `slice` does.
         let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_UNITS);
         self.trace.push(TraceEntry::Ai { prompt: traced, has_value: !value.is_nullish() });
         Ok(value)

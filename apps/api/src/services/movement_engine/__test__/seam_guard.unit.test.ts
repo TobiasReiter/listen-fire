@@ -1277,7 +1277,6 @@ describe('the round trip', () => {
       [Number.NaN, 'NaN'],
       [Number.POSITIVE_INFINITY, 'Infinity'],
       [-0, '-0'],
-      ['half a pair \uD83D', 'a string with a lone surrogate'],
     ];
     for (const [value, what] of refused) {
       const host = roundTripHost(
@@ -1321,6 +1320,9 @@ describe('the round trip', () => {
     const shared = { x: 1 };
     expect(notJsonAt({ a: shared, b: shared }, 'answer')).toBeUndefined();
     expect(notJsonAt('a whole pair \uD83D\uDE00', 'answer')).toBeUndefined();
+    // A lone half crosses as the escape `JSON.stringify` writes, and reads back.
+    expect(notJsonAt('half a pair \uD83D', 'answer')).toBeUndefined();
+    expect(JSON.parse(JSON.stringify('half a pair \uD83D'))).toBe('half a pair \uD83D');
   });
 
   it('only a void method may answer nothing', async () => {
