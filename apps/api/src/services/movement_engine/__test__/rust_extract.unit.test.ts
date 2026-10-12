@@ -387,7 +387,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect('error' in ts && String(runFailureCause(ts.error))).toContain('WHERE filters on extract-result block heads is not supported');
     });
 
-    it("ends the event inside an input at the check (its deck is a file), and refuses any other record there by name", async () => {
+    it("ends the event inside an input at the check (its deck is a file), and writes any other record there as its fields", async () => {
       // Main's record walk (group G): every record in an extraction input is
       // checked at any depth, and one whose fields include a file is refused
       // (MOV_EXTRACT_CONTENT) — the event's `deck` is one — on both engines,
@@ -397,7 +397,14 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       expect('error' in ts && String(ts.error)).toContain('MOV_EXTRACT_CONTENT');
       expect(ts.asked).toEqual([]);
       const again = ['movement m(msg: <inbox-[:message]->>) {', ...found, '  more = extract from [found] {', '    name: "the company"', '  }', '}'].join('\n');
-      await agree({ source: again, replies: [companies, { 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { refused: 'extract_from_record' });
+      // An earlier extraction's result runs on Rust too, written into the
+      // prompt as its fields, byte for byte as the TypeScript's: the root's
+      // own fields are none (its companies are an edge, not a field).
+      const whole = await agree({ source: again, replies: [companies, { 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { runsWhole: true });
+      expect(whole.asked).toEqual([
+        expect.objectContaining({ userMessage: '## TEXT\nAcme raised 3 million.' }),
+        expect.objectContaining({ userMessage: '## FRAGMENT\n{}' }),
+      ]);
     });
 
     it("ends the event, and any other record, inside a plugin's argument at the check, a through stage's included", async () => {

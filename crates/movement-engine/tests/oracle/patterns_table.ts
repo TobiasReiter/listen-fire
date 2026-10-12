@@ -42,6 +42,9 @@ export interface Program {
    *  recorder refuses: each engine runs it unrecorded, compared on how it
    *  ended. */
   unrecordable?: true;
+  /** It runs whole, and every request the two engines make (an extraction's
+   *  prompt text included) is the same, byte for byte, key order too. */
+  exact?: true;
 }
 
 export interface Pattern {
@@ -345,11 +348,23 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_from_record',
-    routes: 'refused',
-    note: "a record in an extraction's from datum. Since main's record walk (group G, 2026-10-12) the TypeScript writes a record the run wrote into the prompt as its fields, and the checker refuses a system's record there, whose fields are read one at a time (MOV_EXTRACT_CONTENT, the first program); a record the run wrote still checks and is refused here. Takes: the prompt's record-as-its-fields rendering (fieldsValueOf) on this engine",
+    routes: 'whole',
+    note: "closed in fix round 1 of the group G merge (2026-10-12): a record in an extraction's from datum is written into the prompt as its fields at any depth (fieldsValueOf, extract/prompt.rs), as main's TypeScript writes it; each program's prompt is compared byte for byte (`exact`). The checker refuses a system's record there, whose fields are read one at a time, and a file inside an input (MOV_EXTRACT_CONTENT): those programs end at the check on both engines",
     programs: [
       () => ({ body: '  rows = crm-[c:companies]->\n  d = extract from [rows] {\n    name: "a name"\n  }', checks: false, routes: 'unreached' }),
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }' }),
+      // A record the run wrote: its written fields, then what the system handed back.
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', version: 2, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      // A node the run built, one declared field left absent (it reads null).
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text | null>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  d = extract from [x] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      // An earlier extraction's result.
+      () => ({ body: '  e = extract from [msg.`text`] {\n    name: "a name"\n    stage: "a stage"\n  }\n  d = extract from [e] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme'), stage: said('Seed') }] }, { 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      // A record under a key, beside a value.
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [{ lead: co, note: "met at the fair" }] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      // Records nested in maps and lists, a written one and a built one.
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text>\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: "Beta", stage: "Seed" }\n  d = extract from [{ a: { both: [co, x] } }, [x]] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      // A file inside an input: refused at the check on both engines.
+      () => ({ body: '  f = FIRST(msg-[:files]->)\n  d = extract from [{ doc: f }] {\n    name: "a name"\n  }', checks: false, routes: 'unreached' }),
     ],
   },
   {
