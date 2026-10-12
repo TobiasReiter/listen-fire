@@ -2688,13 +2688,11 @@ impl Names<'_> {
     }
 
     fn extract(&self, extract: &ast::ExtractExpression) -> Admitted {
+        // A `from` datum is written into the prompt as its value, a record at
+        // any depth as its fields (`fieldsValueOf`, extract/prompt.rs), and
+        // a record whose fields are not in hand fails the run as the
+        // TypeScript's does: every record a `from` datum may hold runs here.
         extract.from.iter().try_for_each(|slot| self.slot(slot))?;
-        // A `from` datum is written into the prompt as `JSON.stringify` writes
-        // it: the event's binding object is `{"kind":"event"}`, and every
-        // other record's holds what only the TypeScript engine has.
-        if extract.from.iter().any(|slot| self.may_hold_record_slot(slot)) {
-            return refuse("extract_from_record");
-        }
         self.extract_stages(&extract.stages)
     }
 
@@ -4615,6 +4613,9 @@ mod tests {
             "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = echo(q: top)\n  names = MAP(rows, (r) => {\n    return r.`name`\n  })\n  y = echo(q: names)",
             "  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  write crm-[:notes]-> { body: held.k.`name` }",
             "  x = DATE.FORMAT(msg.`sent`, \"YYYY\")\n  found = extract from [msg, msg.`text`] {\n    name: \"the company\"\n  }",
+            // A record in an extraction's input is written as its fields.
+            "  rows = crm-[c:companies]->\n  found = extract from [rows] {\n    name: \"the company\"\n  }",
+            "  co = write crm-[:companies]-> { name: \"a\" }\n  found = extract from [co, { k: co }] {\n    name: \"the company\"\n  }",
         ] {
             assert_eq!(with(body), None, "{body}");
         }
@@ -4625,8 +4626,6 @@ mod tests {
             ("  rows = crm-[c:companies]->\n  x = TEXT.REGEX_EXTRACT(FIRST(rows), \"x\")", "builtin_arg_record"),
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  write crm-[:notes]-> { body: co }", "write_field_record"),
             ("  rows = crm-[c:companies]->\n  write crm-[:notes]-> { body: rows }", "write_field_record"),
-            ("  rows = crm-[c:companies]->\n  found = extract from [rows] {\n    name: \"the company\"\n  }", "extract_from_record"),
-            ("  co = write crm-[:companies]-> { name: \"a\" }\n  found = extract from [co] {\n    name: \"the company\"\n  }", "extract_from_record"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
         }

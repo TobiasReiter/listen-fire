@@ -815,7 +815,7 @@ export async function writeExtractionOracle(rand: Rand): Promise<void> {
     try {
       read = { segment: segmentForDatum(datum) };
     } catch (error) {
-      read = { refused: (error as Error).message };
+      read = { refused: error instanceof Error ? error.message : String(error) };
     }
     const wired = new WireOut().value(datum);
     if (wired === REFUSED) throw new Error('extraction.json: a wired datum did not cross the wire');

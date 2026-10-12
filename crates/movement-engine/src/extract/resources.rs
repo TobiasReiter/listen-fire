@@ -98,14 +98,13 @@ fn file_resource(file: &Js, read: Option<(&str, &Js)>) -> Js {
 /// `textResourceForDatum`: a datum's segment, when it has text, as a TEXT
 /// resource.
 fn text_resource(segment: &Segment) -> Option<Js> {
-    let segment = segment.clone();
     if js::trim(&segment.content).is_empty() {
         return None;
     }
     Some(env::object_of(vec![
         ("type", Js::str("TEXT")),
         ("content", Js::str(segment.content.clone())),
-        ("data", env::object_of(vec![("content", Js::str(segment.content)), ("type", Js::str("TEXT"))])),
+        ("data", env::object_of(vec![("content", Js::str(segment.content.clone())), ("type", Js::str("TEXT"))])),
     ]))
 }
 
@@ -317,10 +316,7 @@ impl Materializer<'_, '_> {
                     }
                     continue;
                 }
-                let segment = prompt::segment_for_datum(&datum).map_err(|unwritable| {
-                    let (construct, detail) = unwritable.words();
-                    thrown(Failure::unsupported(construct, detail))
-                })?;
+                let segment = prompt::segment_for_datum(&datum).map_err(|unwritable| thrown(unwritable.failure()))?;
                 if let Some(resource) = text_resource(&segment) {
                     resources.push(resource);
                 }
