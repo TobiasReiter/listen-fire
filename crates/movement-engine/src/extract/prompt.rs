@@ -183,16 +183,16 @@ pub fn retry_user_message(user_message: &str, region: &Region<'_>, issues: &[Iss
 /// type?}` record, or anything else as its JSON.
 pub fn segment_for_datum(datum: &Js) -> Segment {
     if let Js::String(text) = datum {
-        return Segment { classification: "TEXT".into(), content: text.clone() };
+        return Segment { classification: "TEXT".into(), content: text.to_string() };
     }
     if let Js::Object(object) = datum
         && let Some(Js::String(content)) = object.get("content")
     {
         let classification = match object.get("type") {
-            Some(Js::String(type_)) => type_.clone(),
+            Some(Js::String(type_)) => type_.to_string(),
             _ => "TEXT".into(),
         };
-        return Segment { classification, content: content.clone() };
+        return Segment { classification, content: content.to_string() };
     }
     // `safeStringify`: `JSON.stringify`, else (a value holding itself) its text.
     Segment { classification: "FRAGMENT".into(), content: js::json_stringify(datum, 0) }

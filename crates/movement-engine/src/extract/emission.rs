@@ -369,7 +369,7 @@ fn collect_traced(tree: &TracedTree, into: &mut Vec<(String, Vec<Js>)>, truncate
 fn traced_value(value: &Js) -> Js {
     let text = match value {
         Js::Undefined | Js::Null => return Js::Null,
-        Js::String(text) => text.clone(),
+        Js::String(text) => text.to_string(),
         Js::Array(_) | Js::Object(_) | Js::File(_) => js::json_stringify(value, 0),
         other => other.to_js_string(),
     };

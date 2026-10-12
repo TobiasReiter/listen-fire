@@ -458,7 +458,7 @@ impl Position {
         identity.set("data".into(), self.data.clone());
         let mut position = JsObject::new();
         position.set("adapterType".into(), Js::str(self.adapter_type.clone()));
-        position.set("recordType".into(), self.record_type.clone().map_or(Js::Null, Js::String));
+        position.set("recordType".into(), self.record_type.clone().map_or(Js::Null, Js::str));
         position.set("identity".into(), Js::object(identity));
         Js::object(position)
     }

@@ -712,7 +712,7 @@ impl Run<'_> {
                                 format!("KEYBY says each key names one member, and '{key}' names more than one. Use GROUPBY if a key can have several."),
                             )));
                         }
-                        filed.set(key.clone(), member.clone());
+                        filed.set(key.to_string(), member.clone());
                         continue;
                     }
                     let group = match filed.get(key) {
@@ -732,7 +732,7 @@ impl Run<'_> {
                             _ => vec![member.clone()],
                         },
                     };
-                    filed.set(key.clone(), Js::array(group));
+                    filed.set(key.to_string(), Js::array(group));
                 }
                 value(Js::object(filed), transformed)
             }
@@ -775,7 +775,7 @@ impl Run<'_> {
             )));
         };
         if let Some(name) = binding_name {
-            let value = Js::array(options.into_iter().map(Js::String).collect());
+            let value = Js::array(options.into_iter().map(Js::str).collect());
             scope.declare(name, Binding::Value(ValueBinding { value, trail: Some(Trail::default()), many: false }));
         }
         Ok(())

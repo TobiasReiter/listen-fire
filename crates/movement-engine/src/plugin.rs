@@ -63,7 +63,7 @@ fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
         }
         Js::String(text) => {
             for (i, c) in text.chars().enumerate() {
-                fields.set(i.to_string(), Js::String(c.to_string()));
+                fields.set(i.to_string(), Js::str(c.to_string()));
             }
         }
         _ => {}

@@ -187,7 +187,7 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
                     text.push_str(&v.to_js_string());
                 }
             }
-            Js::String(text)
+            Js::str(text)
         }
         Expression::Conditional { condition, then, else_ } => {
             if eval(condition).await?.truthy() { eval(then).await? } else { eval(else_).await? }

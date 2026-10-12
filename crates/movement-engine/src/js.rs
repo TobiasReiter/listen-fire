@@ -13,13 +13,16 @@
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+pub use crate::js_string::JsString;
+
 #[derive(Debug, Clone)]
 pub enum Js {
     Undefined,
     Null,
     Bool(bool),
     Number(f64),
-    String(String),
+    /// A string, lone surrogates and all (crate::js_string).
+    String(JsString),
     Array(Rc<JsArray>),
     Object(Rc<JsObject>),
     /// A record held as a value: the binding object the TypeScript engine
@@ -276,7 +279,7 @@ fn array_index(key: &str) -> Option<u32> {
 }
 
 impl Js {
-    pub fn str(text: impl Into<String>) -> Js {
+    pub fn str(text: impl Into<JsString>) -> Js {
         Js::String(text.into())
     }
 
@@ -322,7 +325,7 @@ impl Js {
             Js::Null => "null".into(),
             Js::Bool(b) => b.to_string(),
             Js::Number(n) => number_to_string(*n),
-            Js::String(s) => s.clone(),
+            Js::String(s) => s.to_string(),
             // Array.prototype.join: a null or undefined member is empty, and a
             // list already being joined (a cycle) is empty too.
             Js::Array(array) => joining(Rc::as_ptr(array).cast(), String::new, || {
@@ -386,7 +389,7 @@ fn object_to_primitive(object: &Rc<JsObject>, depth: usize) -> Result<Js, Thrown
     // A list up the prototype chain answers `toString` with
     // `Array.prototype.toString`: a join over `this`.
     if array_up_chain(object) {
-        return join_of(object).map(Js::String);
+        return join_of(object).map(Js::str);
     }
     for name in ["toString", "valueOf"] {
         let Js::Function(method) = object_property(object, name) else { continue };
@@ -513,19 +516,13 @@ pub fn trim(s: &str) -> &str {
 
 /// `.length`: UTF-16 code units, not bytes or chars.
 pub fn utf16_len(s: &str) -> usize {
-    s.encode_utf16().count()
+    crate::js_string::utf16_len(s)
 }
 
 /// `a < b` on strings: UTF-16 code-unit order, which differs from Rust's
 /// code-point order where an astral character meets one above U+E000.
 pub fn utf16_cmp(a: &str, b: &str) -> Ordering {
-    a.encode_utf16().cmp(b.encode_utf16())
-}
-
-/// Whether every character is in the Basic Multilingual Plane — where a
-/// UTF-16 code unit and a character are the same thing.
-pub fn is_bmp(s: &str) -> bool {
-    s.chars().all(|c| (c as u32) < 0x10000)
+    crate::js_string::units_of(a).cmp(crate::js_string::units_of(b))
 }
 
 // ── Case ──────────────────────────────────────────────────────────────────────
@@ -749,26 +746,10 @@ pub fn to_fixed(x: f64, digits: usize) -> String {
 
 // ── JSON.stringify ────────────────────────────────────────────────────────────
 
-/// `JSON.stringify(text)`: the quoting JSON.stringify does (`\u00xx` in
-/// lower case for the controls it has no short escape for).
+/// `JSON.stringify(text)` (crate::js_string, a lone surrogate written
+/// `\udXXX`).
 pub fn json_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0C}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    crate::js_string::json_quote(s)
 }
 
 /// `JSON.stringify(value, null, indent)` over a value that is already JSON

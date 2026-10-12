@@ -434,7 +434,7 @@ impl Run<'_> {
     async fn content_file(&self, file: &Js) -> Result<ContentFile, Failure> {
         let handle = file_handle(file);
         let name = match crate::unique::get(file, "name") {
-            Js::String(name) => Some(name),
+            Js::String(name) => Some(name.into_string()),
             _ => None,
         };
         let Some(key) = handle.clone().or(name) else { return self.read_content_file(file, None).await };
@@ -504,7 +504,7 @@ impl Run<'_> {
             origin.push(("rawTextId", raw_text_id));
         }
         if let Some(handle) = handle {
-            origin.push(("handle", Js::String(handle)));
+            origin.push(("handle", Js::str(handle)));
         }
         origin.extend(named.iter().cloned());
         let origin = self.mint_origin(env::object_of(origin));
@@ -735,7 +735,7 @@ impl Run<'_> {
             unreadable: uncarried(&answer).iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
-                Js::String(text) => Some(text),
+                Js::String(text) => Some(text.into_string()),
                 _ => None,
             },
             effort_stepped_down: None,

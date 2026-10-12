@@ -632,7 +632,7 @@ impl Parse {
             None => Js::Null,
             Some(evidence) => {
                 push(&mut self.coercions.evidence, ctx, js::json_stringify(evidence, 0));
-                salvaged_quote(evidence).map_or(Js::Null, Js::String)
+                salvaged_quote(evidence).map_or(Js::Null, Js::str)
             }
         };
         let mut copy = JsObject::clone_of(object);
@@ -759,14 +759,14 @@ fn match_option(candidate: &Js, options: &[String]) -> Option<String> {
 /// `quote`, `text` or `evidence`, or the one string anywhere in it.
 fn salvaged_quote(evidence: &Js) -> Option<String> {
     if let Js::String(s) = evidence {
-        return Some(s.clone());
+        return Some(s.to_string());
     }
     if let Js::Object(object) = evidence {
         for key in ["quote", "text", "evidence"] {
             if let Some(Js::String(named)) = object.get(key)
                 && !js::trim(named).is_empty()
             {
-                return Some(named.clone());
+                return Some(named.to_string());
             }
         }
     }
@@ -784,7 +784,7 @@ fn string_leaves(value: &Js, depth: usize, into: &mut Vec<String>) {
     match value {
         Js::String(s) => {
             if !js::trim(s).is_empty() {
-                into.push(s.clone());
+                into.push(s.to_string());
             }
         }
         _ if depth == 0 => {}

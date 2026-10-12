@@ -56,8 +56,8 @@ fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
     }
     let value = || args.first().cloned().unwrap_or(Js::Undefined);
     match fn_ {
-        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::String)),
-        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::String(iso))),
+        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::str)),
+        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
         "coerce.number" => Ok(stdlib::coerce_to_number(&value()).map_or(Js::Null, Js::Number)),
         flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args, around()),
         id => stdlib::apply_namespaced(id, args, around()),

@@ -114,7 +114,7 @@ impl Read {
 
 pub(crate) fn record_type(position: &Js) -> Option<String> {
     match get(position, "recordType") {
-        Js::String(text) => Some(text),
+        Js::String(text) => Some(text.into_string()),
         _ => None,
     }
 }

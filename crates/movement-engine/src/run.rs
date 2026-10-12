@@ -1224,7 +1224,7 @@ impl Run<'_> {
             Statement::Error(statement) => {
                 let message = self.evaluate_slot(&statement.message, scope).await?.value;
                 let message = match message {
-                    Js::String(text) => text,
+                    Js::String(text) => text.into_string(),
                     other if other.is_nullish() => String::new(),
                     other => other.to_js_string(),
                 };
@@ -1706,7 +1706,7 @@ impl Run<'_> {
             origin.push(("rawTextId", raw_text_id));
         }
         if let Some(handle) = crate::extract::file_handle(file) {
-            origin.push(("handle", Js::String(handle)));
+            origin.push(("handle", Js::str(handle)));
         }
         for key in ["name", "contentType"] {
             let value = event_get(file, key);
@@ -1887,7 +1887,7 @@ impl Run<'_> {
             if let Some(record_type) = &seed.record_type {
                 entries.push(("recordType", Js::str(record_type.clone())));
             }
-            entries.push(("externalId", seed.record_id.clone().map_or(Js::Null, Js::String)));
+            entries.push(("externalId", seed.record_id.clone().map_or(Js::Null, Js::str)));
         }
         entries.push(("field", Js::str(field)));
         let origin = env::object_of(entries);
@@ -2413,7 +2413,7 @@ fn is_dated(field: &FieldType, schema: &InstanceSchema, seen: &mut Vec<String>) 
 
 fn event_text(event: &Js, key: &str) -> Option<String> {
     match event_get(event, key) {
-        Js::String(text) => Some(text),
+        Js::String(text) => Some(text.into_string()),
         _ => None,
     }
 }
@@ -2469,7 +2469,7 @@ fn ai_answer(parsed: &Js) -> Js {
         return Js::Null;
     }
     let text = if matches!(answer, Js::Object(_) | Js::Array(_)) { js::json_stringify(&answer, 0) } else { answer.to_js_string() };
-    if js::trim(&text).is_empty() { Js::Null } else { Js::String(text) }
+    if js::trim(&text).is_empty() { Js::Null } else { Js::str(text) }
 }
 
 fn event_get(value: &Js, key: &str) -> Js {
@@ -2511,7 +2511,7 @@ fn event_seed_address(schema: Option<&InstanceSchema>, event: &Js, root_type_nam
         .clone();
     let payload = event_get(event, "payload");
     let pinned = |key: &str| match event_get(&payload, key) {
-        Js::String(value) if !value.is_empty() => Some(value),
+        Js::String(value) if !value.is_empty() => Some(value.into_string()),
         _ => None,
     };
     let mut narrowing = Vec::new();
@@ -2541,7 +2541,7 @@ pub fn event_address_key(address: &EventAddress) -> String {
         return address.event.clone();
     }
     pins.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
-    serde_json::to_string(&json!([address.event, pins])).expect("strings are JSON")
+    crate::js_string::to_json_text(&json!([address.event, pins]))
 }
 
 /// `seedEventPosition`.
@@ -2659,7 +2659,7 @@ mod tests {
                 let read = env::decode(&request.args["args"]).unwrap();
                 let Js::Object(read) = read else { panic!("a read") };
                 let Some(Js::String(field)) = read.get("fieldId") else { panic!("a field") };
-                match payload.get(field) {
+                match payload.get(field.as_str()) {
                     Some(value) => json!({ "value": { "result": value } }),
                     None => json!({ "value": {} }),
                 }

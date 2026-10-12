@@ -1152,7 +1152,7 @@ impl Run<'_> {
         let credential_name = text_of("credentialName");
         let construction_config: Vec<(String, String)> = pairs(at(identity, "constructionConfig"))
             .iter()
-            .map(|(k, v)| (k.clone(), match v { Js::String(s) => s.clone(), _ => String::new() }))
+            .map(|(k, v)| (k.clone(), match v { Js::String(s) => s.to_string(), _ => String::new() }))
             .collect();
         let spec = self.catalog.adapter(&adapter_slug);
         let credential_arg = spec.and_then(movement_parser::catalog::helpers::credential_arg_of).map_or_else(|| "credentials".to_string(), |a| a.name.clone());

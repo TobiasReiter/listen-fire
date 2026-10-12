@@ -88,7 +88,7 @@ fn arg(args: &[Js], i: usize) -> Js {
 /// `applyMovementFunction`.
 pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js, EvalError> {
     let a = arg(args, 0);
-    let text_or_null = |f: fn(&str) -> String| if a.is_nullish() { Js::Null } else { Js::String(f(&a.to_js_string())) };
+    let text_or_null = |f: fn(&str) -> String| if a.is_nullish() { Js::Null } else { Js::str(f(&a.to_js_string())) };
     Ok(match id {
         "isnull" => Js::Bool(a.is_nullish()),
         "trim" => text_or_null(|s| js::trim(s).to_string()),
@@ -105,13 +105,13 @@ pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js,
         "round" => Js::Number(js::math_round(a.to_number())),
         "floor" => Js::Number(a.to_number().floor()),
         "ceil" => Js::Number(a.to_number().ceil()),
-        "tostring" => if a.is_nullish() { Js::Null } else { Js::String(a.to_js_string()) },
+        "tostring" => if a.is_nullish() { Js::Null } else { Js::str(a.to_js_string()) },
         "tonumber" => {
             let n = a.to_number();
             if n.is_nan() { Js::Null } else { Js::Number(n) }
         }
-        "date" => coerce_to_date(&a, around.local()).map_or(Js::Null, Js::String),
-        "datetime" => coerce_to_datetime(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::String(iso)),
+        "date" => coerce_to_date(&a, around.local()).map_or(Js::Null, Js::str),
+        "datetime" => coerce_to_datetime(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::str(iso)),
         "number" => coerce_to_number(&a).map_or(Js::Null, Js::Number),
         "multi" => {
             let mut flat = Vec::new();
@@ -131,13 +131,15 @@ pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js,
             let separator = arg(args, 1);
             let separator = if separator.is_nullish() { ",".to_string() } else { separator.to_js_string() };
             let text = a.to_js_string();
-            if separator.is_empty() && !js::is_bmp(&text) {
+            if separator.is_empty() && !text.chars().all(|c| (c as u32) < 0x10000) {
                 return Err(EvalError::Fallback("splitting astral characters into UTF-16 halves".into()));
             }
+            // By code unit, as `split` reads: `split("")` parts an astral
+            // character into its two halves.
             let parts: Vec<String> = if separator.is_empty() {
-                text.chars().map(String::from).collect()
+                crate::js_string::split_units(&text)
             } else {
-                text.split(separator.as_str()).map(String::from).collect()
+                crate::js_string::split(&text, &separator)
             };
             Js::array(parts.iter().map(|p| js::trim(p)).filter(|p| !p.is_empty()).map(Js::str).collect())
         }
@@ -153,10 +155,10 @@ pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Resu
         "currency.get_number_from_figure" => Ok(figure_number(&a)),
         "currency.get_code_from_figure" => Ok(figure_code(&a)),
         "currency.format_figure" => Ok(format_figure(&a, &b)),
-        "date.parse" => Ok(read_date_parts(&a).map_or(Js::Null, |p| Js::String(iso_date(p)))),
+        "date.parse" => Ok(read_date_parts(&a).map_or(Js::Null, |p| Js::str(iso_date(p)))),
         "date.add_days" => date_add_days(&a, &b),
         "date.format" => Ok(date_format(&a, &b, around.local())),
-        "date.format_iso" => Ok(date_format_iso(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::String(iso))),
+        "date.format_iso" => Ok(date_format_iso(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
         "date.today" => date_today(&a, around),
         "datetime.at" => datetime_at(args, around.services),
         "text.regex_extract" => text_regex_extract(args),
@@ -248,7 +250,7 @@ fn figure_code(figure: &Js) -> Js {
         if chars[i..i + 3].iter().all(char::is_ascii_alphabetic) {
             let word: String = chars[i..i + 3].iter().collect::<String>().to_ascii_uppercase();
             if CURRENCY_CODES.contains(&word.as_str()) {
-                return Js::String(word);
+                return Js::str(word);
             }
             i += 3;
         } else {
@@ -316,8 +318,8 @@ fn number_format(value: &Js, style: &Js) -> Js {
     let Some(n) = coerce_to_number(value) else { return Js::Null };
     let sign = if n < 0.0 { "-" } else { "" };
     match style {
-        Js::String(s) if s == "compact" => Js::String(format!("{sign}{}", compact_magnitude(n.abs()))),
-        Js::String(s) if s == "grouped" => Js::String(format!("{sign}{}", grouped_magnitude(n.abs()))),
+        Js::String(s) if s == "compact" => Js::str(format!("{sign}{}", compact_magnitude(n.abs()))),
+        Js::String(s) if s == "grouped" => Js::str(format!("{sign}{}", grouped_magnitude(n.abs()))),
         _ => Js::Null,
     }
 }
@@ -328,15 +330,15 @@ fn format_figure(value: &Js, code: &Js) -> Js {
     let amount = compact_magnitude(n.abs());
     let code = if code.is_nullish() { String::new() } else { js::to_upper_case(js::trim(&code.to_js_string())) };
     if code.is_empty() {
-        return Js::String(format!("{sign}{amount}"));
+        return Js::str(format!("{sign}{amount}"));
     }
     if let Some((symbol, _)) = CURRENCY_SYMBOLS.iter().find(|(_, c)| *c == code) {
-        return Js::String(format!("{sign}{symbol}{amount}"));
+        return Js::str(format!("{sign}{symbol}{amount}"));
     }
     if CURRENCY_CODES.contains(&code.as_str()) {
-        return Js::String(format!("{sign}{amount} {code}"));
+        return Js::str(format!("{sign}{amount} {code}"));
     }
-    Js::String(format!("{sign}{amount}"))
+    Js::str(format!("{sign}{amount}"))
 }
 
 // ── DATE ─────────────────────────────────────────────────────────────────────
@@ -606,7 +608,7 @@ fn date_format(value: &Js, pattern: &Js, local: LocalZone<'_>) -> Js {
             }),
         }
     }
-    Js::String(out)
+    Js::str(out)
 }
 
 // ── TEXT ─────────────────────────────────────────────────────────────────────
@@ -629,7 +631,7 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     match &groups[index as usize] {
         None => Ok(Js::Null),
         Some(units) => String::from_utf16(units)
-            .map(Js::String)
+            .map(Js::str)
             .map_err(|_| EvalError::Fallback("a match that splits an astral character".into())),
     }
 }
@@ -657,7 +659,7 @@ fn text_slug(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
             gap = true;
         }
     }
-    Ok(Js::String(slug))
+    Ok(Js::str(slug))
 }
 
 fn text_pairs(record: &Js, separator: &Js) -> Js {
@@ -677,7 +679,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
         .filter(|(_, v)| !matches!(v, Js::Array(_) | Js::Object(_) | Js::Record(_) | Js::File(_)))
         .map(|(k, v)| format!("{k}={}", if v.is_nullish() { String::new() } else { v.to_js_string() }))
         .collect();
-    Js::String(parts.join(separator))
+    Js::str(parts.join(separator))
 }
 
 /// `toStableJson`: keys sorted by UTF-16 code unit (and then laid out as an
@@ -719,7 +721,7 @@ fn text_serialise(value: &Js, format: &Js) -> Result<Js, EvalError> {
         Js::String(f) if f == "JSON" && js::holds_itself(value) => {
             Err(EvalError::Thrown { class: crate::eval::ErrorClass::RangeError, message: js::stack_overflow().message })
         }
-        Js::String(f) if f == "JSON" => Ok(Js::String(js::json_stringify(&to_stable_json(value), 2))),
+        Js::String(f) if f == "JSON" => Ok(Js::str(js::json_stringify(&to_stable_json(value), 2))),
         // `JSON.stringify(format)`, which is `undefined` for `undefined`.
         Js::Undefined => Err(EvalError::error("TEXT.SERIALISE: unknown format undefined".to_string())),
         other => Err(EvalError::error(format!("TEXT.SERIALISE: unknown format {}", js::json_stringify(other, 0)))),
@@ -750,7 +752,7 @@ fn url_host(value: &Js, services: &dyn EnvServices) -> Result<Js, EvalError> {
     };
     // No host (`file:///x`), or userinfo: `joe@acme.com` is an email.
     Ok(match services.url_parse(&attempt) {
-        Some(url) if !url.hostname.is_empty() && url.username.is_empty() => Js::String(url.hostname),
+        Some(url) if !url.hostname.is_empty() && url.username.is_empty() => Js::str(url.hostname),
         _ => Js::Null,
     })
 }
@@ -802,7 +804,7 @@ fn date_today(zone: &Js, around: Surroundings<'_>) -> Result<Js, EvalError> {
     }
     let now = around.now.ok_or_else(|| EvalError::error("DATE.TODAY(zone) was evaluated with no pinned instant".into()))?;
     let f = around.services.tz_convert(&js_date::to_iso_string(now), &zone).expect("a zone just accepted");
-    Ok(Js::String(format!("{}-{:02}-{:02}", f.year, f.month, f.day)))
+    Ok(Js::str(format!("{}-{:02}-{:02}", f.year, f.month, f.day)))
 }
 
 /// `DATETIME.AT(date, time, zone)`: `instantAtZonedWallTime`, answered
@@ -850,7 +852,7 @@ fn datetime_at(args: &[Js], services: &dyn EnvServices) -> Result<Js, EvalError>
         }
     };
     js_date::time_clip(instant)
-        .map(|ms| Js::String(js_date::to_iso_string(ms)))
+        .map(|ms| Js::str(js_date::to_iso_string(ms)))
         .ok_or_else(|| EvalError::Thrown { class: crate::eval::ErrorClass::RangeError, message: "Invalid time value".into() })
 }
 
@@ -894,7 +896,7 @@ mod tests {
 
     fn text(value: Js) -> String {
         match value {
-            Js::String(s) => s,
+            Js::String(s) => s.into_string(),
             Js::Null => "<null>".into(),
             other => format!("<{other:?}>"),
         }

@@ -4,7 +4,8 @@
 //! The wire carries JavaScript values exactly: JSON's own scalars stand for
 //! themselves, and everything JSON cannot say is a tagged array —
 //! `["u"]` undefined, `["n", "NaN" | "Infinity" | "-Infinity" | "-0"]`, a
-//! list `["l", id, [items…]]`, an object `["o", id, [[key, value]…]]` (its
+//! string holding a lone surrogate `["s16", [units…]]` (its UTF-16 code
+//! units; an object's key too, in the key's place), a list `["l", id, [items…]]`, an object `["o", id, [[key, value]…]]` (its
 //! keys in the object's own order), `["r", id]` the same list or object
 //! again. On the way back `["i", id]` is one of the caller's own objects,
 //! handed back as itself. Identity has to cross because `===` compares
@@ -92,7 +93,7 @@ pub struct Envelope {
 }
 
 pub fn read_envelope(text: &str) -> Result<Envelope, String> {
-    let json: Json = serde_json::from_str(text).map_err(|e| format!("the bindings are not JSON: {e}"))?;
+    let json: Json = crate::js_string::from_json_text(text).map_err(|e| format!("the bindings are not JSON: {e}"))?;
     let mut decoder = Decoder::default();
     let mut env = Env::new();
     for (name, binding) in json.get("bindings").and_then(Json::as_object).ok_or("the envelope has no `bindings`")? {
@@ -177,7 +178,8 @@ impl Decoder<'_> {
             Json::Null => Js::Null,
             Json::Bool(b) => Js::Bool(*b),
             Json::Number(n) => Js::Number(n.as_f64().ok_or("a number the wire cannot read")?),
-            Json::String(s) => Js::String(s.clone()),
+            Json::String(s) => Js::str(s.clone()),
+            Json::Array(tagged) if tagged.first().and_then(Json::as_str) == Some("s16") => Js::String(text_of_wire(json)?),
             Json::Array(tagged) => {
                 let tag = tagged.first().and_then(Json::as_str).ok_or_else(|| format!("an untagged wire array: {json}"))?;
                 let id = || tagged.get(1).and_then(Json::as_u64).ok_or_else(|| format!("a wire `{tag}` without an id"));
@@ -206,10 +208,10 @@ impl Decoder<'_> {
                         let entries = tagged.get(2).and_then(Json::as_array).ok_or("a wire object without entries")?;
                         let mut object = JsObject::new();
                         for entry in entries {
-                            let (Some(key), Some(value)) = (entry.get(0).and_then(Json::as_str), entry.get(1)) else {
+                            let (Some(key), Some(value)) = (entry.get(0).and_then(|key| text_of_wire(key).ok()), entry.get(1)) else {
                                 return Err(format!("a wire entry is [key, value]: {entry}"));
                             };
-                            object.set(key.to_string(), self.value(value)?);
+                            object.set(key.into_string(), self.value(value)?);
                         }
                         object.origin = Some(id as u32);
                         let value = Js::object(object);
@@ -238,14 +240,15 @@ impl Decoder<'_> {
                         let Some(Json::Object(shown)) = tagged.get(2) else { return Err(format!("a wire file without its display: {json}")) };
                         let handle = match shown.get("handle") {
                             None | Some(Json::Null) => None,
-                            Some(Json::String(handle)) => Some(handle.clone()),
-                            Some(_) => return Err(format!("a wire file's handle is text: {json}")),
+                            Some(handle) => Some(text_of_wire(handle).map_err(|_| format!("a wire file's handle is text: {json}"))?.into_string()),
                         };
                         let mut display = JsObject::new();
                         for key in ["name", "contentType", "size"] {
                             match shown.get(key) {
                                 None | Some(Json::Null) => {}
-                                Some(Json::String(text)) if key != "size" => display.set(key.into(), Js::str(text.clone())),
+                                Some(text @ (Json::String(_) | Json::Array(_))) if key != "size" => {
+                                    display.set(key.into(), Js::String(text_of_wire(text).map_err(|_| format!("a wire file's {key} is text: {json}"))?));
+                                }
                                 Some(Json::Number(n)) if key == "size" => display.set(key.into(), Js::Number(n.as_f64().unwrap_or(f64::NAN))),
                                 Some(_) => return Err(format!("a wire file's {key} is not one: {json}")),
                             }
@@ -265,6 +268,33 @@ impl Decoder<'_> {
             Json::Object(_) => return Err(format!("a bare object on the wire: {json}")),
         })
     }
+}
+
+/// A text on the wire: itself, or `["s16", [units…]]` when it holds a lone
+/// surrogate.
+fn text_of_wire(json: &Json) -> Result<crate::js::JsString, String> {
+    match json {
+        Json::String(text) => Ok(crate::js::JsString::from(text.as_str())),
+        Json::Array(tagged) if tagged.first().and_then(Json::as_str) == Some("s16") => {
+            let units = tagged.get(1).and_then(Json::as_array).ok_or_else(|| format!("a wire `s16` without its units: {json}"))?;
+            let units = units
+                .iter()
+                .map(|unit| unit.as_u64().and_then(|u| u16::try_from(u).ok()).ok_or_else(|| format!("a wire `s16` unit is a UTF-16 code unit: {json}")))
+                .collect::<Result<Vec<u16>, _>>()?;
+            Ok(crate::js::JsString::from_units(&units))
+        }
+        _ => Err(format!("a wire text is a string or `[\"s16\", units]`: {json}")),
+    }
+}
+
+/// A text for the wire: itself, or its code units tagged `s16` when it
+/// holds a lone surrogate (JSON text carries one only as an escape a JSON
+/// reader may refuse).
+fn wire_text(text: &str) -> Json {
+    if crate::js_string::is_well_formed(text) {
+        return json!(text);
+    }
+    json!(["s16", crate::js_string::units_vec(text)])
 }
 
 /// One value off the wire, on its own.
@@ -386,7 +416,7 @@ impl Encoder<'_> {
             Js::Number(n) if n.is_infinite() => json!(["n", if *n > 0.0 { "Infinity" } else { "-Infinity" }]),
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
-            Js::String(s) => json!(s),
+            Js::String(s) => wire_text(s),
             // The built-in itself, which the host names back (`Object`, or
             // `Object.prototype[name]`).
             Js::Function(function) => json!(["f", function.0]),
@@ -431,7 +461,7 @@ impl Encoder<'_> {
                 Some(id) => json!(["i", id]),
                 None => {
                     let mut written = self.shared(Rc::as_ptr(object) as usize, |this| {
-                        json!(object.entries().iter().map(|(k, v)| json!([k, this.value(v)])).collect::<Vec<_>>())
+                        json!(object.entries().iter().map(|(k, v)| json!([wire_text(k), this.value(v)])).collect::<Vec<_>>())
                     }, "o");
                     // A prototype a filing gave it, which the host's object
                     // is given too: `["o", id, entries, prototype]`.
@@ -710,6 +740,21 @@ mod tests {
         assert!(matches!(crate::js::object_property(&object, "__proto__"), Js::Object(own) if own.get("x").is_some()));
         assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [["a", 1.0], ["__proto__", ["o", 1, [["x", 2.0]]]]]]));
         assert_eq!(json_of_js(&Js::Object(object)), json!({ "a": 1, "__proto__": { "x": 2 } }));
+    }
+
+    /// A lone surrogate crosses tagged, in a value and in a key, both ways;
+    /// a pair crosses as the text it is.
+    #[test]
+    fn a_lone_surrogate_crosses_as_its_code_units() {
+        let wire = Wire::default();
+        let sent = json!(["o", 0, [[["s16", [0xD83D]], ["s16", [0x61, 0xDE00]]], ["k", "😀"]]]);
+        let Js::Object(object) = wire.decode(&sent).unwrap() else { panic!("an object") };
+        let (key, value) = &object.entries()[0];
+        assert_eq!(crate::js_string::units_vec(key), [0xD83D]);
+        assert!(matches!(value, Js::String(text) if crate::js_string::units_vec(text) == [0x61, 0xDE00]));
+        assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [[["s16", [0xD83D]], ["s16", [0x61, 0xDE00]]], ["k", "😀"]]]));
+        // Two halves on the wire, one after the other, are the pair.
+        assert!(matches!(decode(&json!(["s16", [0xD83D, 0xDE00]])).unwrap(), Js::String(text) if text == "😀"));
     }
 
     #[test]

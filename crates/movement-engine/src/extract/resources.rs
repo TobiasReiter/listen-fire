@@ -246,7 +246,7 @@ impl Run<'_> {
         }
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {
             let key = file_handle(file).or_else(|| match member(file, "name") {
-                Js::String(name) => Some(name),
+                Js::String(name) => Some(name.into_string()),
                 _ => None,
             });
             let key = key.unwrap_or_default();
@@ -302,9 +302,9 @@ impl Materializer<'_, '_> {
                 if is_file_ref(&datum) {
                     let file = self.file_segment(&datum).await?;
                     if let Js::String(id) = member(&file.resource, "id")
-                        && !seen_resource_ids.contains(&id)
+                        && !seen_resource_ids.contains(&id.to_string())
                     {
-                        seen_resource_ids.push(id);
+                        seen_resource_ids.push(id.into_string());
                         resources.push(file.resource.clone());
                         files.push(file.traced.clone());
                     }
@@ -332,7 +332,7 @@ impl Materializer<'_, '_> {
     async fn file_segment(&self, file: &Js) -> Result<FileResolution, Stop> {
         let handle = file_handle(file);
         let name = match member(file, "name") {
-            Js::String(name) => Some(name),
+            Js::String(name) => Some(name.into_string()),
             _ => None,
         };
         let key = handle.clone().or(name);

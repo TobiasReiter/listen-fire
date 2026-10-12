@@ -411,7 +411,7 @@ impl<'a> Evaluator<'a> {
                     }
                     provs.push(part.prov);
                 }
-                Ok(Evaluated { value: Js::String(text), prov: self.union(&provs.iter().collect::<Vec<_>>()) })
+                Ok(Evaluated { value: Js::str(text), prov: self.union(&provs.iter().collect::<Vec<_>>()) })
             }
             Expression::Conditional { condition, then, else_ } => {
                 let condition = self.eval(condition).await?;
@@ -478,7 +478,7 @@ impl<'a> Evaluator<'a> {
                 let instant = crate::js_date::to_iso_string(now);
                 let value = if key == "current_date" { instant[..10].to_string() } else { instant };
                 let id = reader.meta(key);
-                Ok(Evaluated { value: Js::String(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
+                Ok(Evaluated { value: Js::str(value), prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             // `AI(prompt[, tier])` (`evaluateAi`): a prompt expression
             // evaluated and made text (absent as ""), else the prompt as
@@ -689,7 +689,7 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Min => Js::Number(math_min(values.iter().map(Js::to_number))),
             AggregationFunction::Max if values.is_empty() => Js::Null,
             AggregationFunction::Max => Js::Number(math_max(values.iter().map(Js::to_number))),
-            AggregationFunction::Join => Js::String(
+            AggregationFunction::Join => Js::str(
                 values.iter().filter(|v| !v.is_nullish()).map(Js::to_text).collect::<Result<Vec<_>, _>>().map_err(thrown)?.join(separator.unwrap_or(", ")),
             ),
             AggregationFunction::Collect => Js::array(values),
@@ -884,7 +884,7 @@ impl<'a> Evaluator<'a> {
             return Err(EvalError::engine("MOVENG_RUNTIME", format!("FILE()'s artifact type must be \"pdf\" or \"text\", got {}", json_text(&kind.value))));
         }
         let text = if content.value.is_nullish() { String::new() } else { content.value.to_js_string() };
-        let value = reader.ask(Ask::RenderFile { content: text, kind: kind_text.clone() }).await?.value;
+        let value = reader.ask(Ask::RenderFile { content: text, kind: kind_text.to_string() }).await?.value;
         Ok(Evaluated { value, prov: self.union(&[&content.prov, &kind.prov]) })
     }
 

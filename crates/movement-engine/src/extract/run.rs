@@ -171,7 +171,7 @@ impl PluginResult {
     fn of(answer: &Js) -> PluginResult {
         let member = |key: &str| crate::unique::get(&answer, key);
         let text = match member("text") {
-            Js::String(text) => Some(text),
+            Js::String(text) => Some(text.into_string()),
             _ => None,
         };
         let data = match member("data") {
@@ -184,7 +184,7 @@ impl PluginResult {
             _ => (Vec::new(), true),
         };
         let outcome = match member("outcome") {
-            Js::String(outcome) if !outcome.is_empty() => Some(outcome),
+            Js::String(outcome) if !outcome.is_empty() => Some(outcome.into_string()),
             _ => None,
         };
         PluginResult { text, data, records, records_not_a_list, outcome }
@@ -211,7 +211,7 @@ impl PluginResult {
         }
         let fields = self.data_keys();
         if !fields.is_empty() {
-            entry.set("fields", Js::array(fields.into_iter().map(Js::String).collect()));
+            entry.set("fields", Js::array(fields.into_iter().map(Js::str).collect()));
         }
         if let Some(outcome) = &self.outcome {
             entry.set("outcome", Js::str(outcome.clone()));
@@ -330,7 +330,7 @@ impl Firing for FiringScope<'_, '_> {
         };
         let value = self.run.evaluate_slot(slot, scope).await?.value;
         Ok(match value {
-            Js::String(text) => text,
+            Js::String(text) => text.into_string(),
             nullish if nullish.is_nullish() => String::new(),
             other => other.to_js_string(),
         })
@@ -749,7 +749,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
             unreadable: uncarried.iter().any(|m| m == "parsedJson"),
             parsed_json: member("parsedJson"),
             raw_text: match member("rawText") {
-                Js::String(text) => Some(text),
+                Js::String(text) => Some(text.into_string()),
                 _ => None,
             },
             effort_stepped_down: Some(member("effortSteppedDown")).filter(Js::truthy),
@@ -1232,7 +1232,7 @@ pub(crate) fn reply_digest(reply: &Reply, why: &[&str], focus: Option<&(String, 
     };
     let mut digest = vec![
         ("why", Js::array(why.iter().map(|w| Js::str(*w)).collect())),
-        ("keys", Js::array(keys.into_iter().take(TRACE_INPUT_PARTS).map(Js::String).collect())),
+        ("keys", Js::array(keys.into_iter().take(TRACE_INPUT_PARTS).map(Js::str).collect())),
         ("sample", Js::str(emission::cut(&body, TRACE_REPLY_CHARS))),
     ];
     if let Some((at, _)) = focus {
