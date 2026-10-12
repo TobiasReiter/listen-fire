@@ -752,13 +752,27 @@ impl<'p> Callees<'p> {
 
     /// The name of the closure a call names from version 3 (`resolveCallee`):
     /// one bound to the name as written, or, where the calling scope binds
-    /// nothing under it exactly (`bound_exactly`), to it in another letter
-    /// case (`resolveFunction`), as the program binds it.
+    /// nothing under it exactly (`bound_exactly`), the one closure name the
+    /// program binds in another letter case. `resolveFunction` takes the
+    /// first such name in the call's own scope chain, innermost first; these
+    /// names are the whole program's, so a second spelling (one in a sibling
+    /// scope, `Get` in an `if` arm beside `get`) leaves the call unread here
+    /// and the run refused, and a sole spelling out of the call's chain is a
+    /// call the checker refuses (MOV_NAME_UNRESOLVED).
     fn closure_name(&self, written: &str, bound_exactly: bool) -> Option<&str> {
         if self.language_version < 3 || self.movement(written).is_some() {
             return None;
         }
-        spelled(self.closures.keys(), String::as_str, written, !bound_exactly).map(String::as_str)
+        if let Some(name) = spelled(self.closures.keys(), String::as_str, written, false) {
+            return Some(name);
+        }
+        if bound_exactly {
+            return None;
+        }
+        let folded = crate::js::to_lower_case(written);
+        let mut spellings = self.closures.keys().filter(|name| crate::js::to_lower_case(name) == folded);
+        let name = spellings.next()?;
+        spellings.next().is_none().then_some(name.as_str())
     }
 
     /// The movement declared as `name`, exactly.

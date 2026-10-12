@@ -15,12 +15,12 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { makeTestHost } from '../test_host';
-import { runFailureCause, runMovement } from '../run';
+import { makeFakeParkSink, makeTestHost } from '../test_host';
+import { resumeMovement, runFailureCause, runMovement } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c9');
-const emailSchema: InstanceSchema = { positions: { message: { properties: { subject: 'text', text: 'text' }, edges: {} } }, collections: {}, writableRoots: {} };
+const emailSchema: InstanceSchema = { positions: { message: { properties: { subject: 'text', text: 'text', meta: 'json' }, edges: {} } }, collections: {}, writableRoots: {} };
 const companyFields = { name: 'text', stage: 'text' } as const;
 const attioSchema: InstanceSchema = {
   positions: {
@@ -88,26 +88,40 @@ function fakeAttio(log: unknown[]) {
 function fakeEmail(log: unknown[]): Adapter {
   return { ...fakeAttio(log), adapterType: 'email', getRelated: async (input) => { log.push(['email.getRelated', Reflect.get(input, 'fieldId')]); return []; } };
 }
+const WEBHOOK_PAYLOAD = { subject: 'Acme', text: 'acme.dev' };
 function webhook(): TriggerEvent {
-  return { pipelineInputId: 'pi-review2', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'acme.dev' } };
+  return { pipelineInputId: 'pi-review2', adapterType: 'email', triggerType: 'webhook', payload: WEBHOOK_PAYLOAD };
 }
 
-async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: LanguageVersion, replies: unknown[]) {
+interface RunOptions {
+  /** The event's payload, over the webhook's own. */
+  payload?: Record<string, unknown>;
+  /** A parked state to resume instead of a fresh run. */
+  state?: unknown;
+  /** Where the run's timer parks are kept. */
+  parks?: unknown[];
+}
+
+async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: LanguageVersion, replies: unknown[], options: RunOptions = {}) {
   const previous = process.env.MOVEMENT_ENGINE;
   process.env.MOVEMENT_ENGINE = engine;
   const log: unknown[] = [];
   const queue = [...replies];
+  const park = makeFakeParkSink();
   try {
-    const result = await runMovement({
-      source, event: webhook(), teamId: TEAM_ID, catalog, languageVersion,
+    const input = {
+      source, event: { ...webhook(), payload: { ...WEBHOOK_PAYLOAD, ...options.payload } }, teamId: TEAM_ID, catalog, languageVersion,
       host: makeTestHost({
         adapters: { resolve: ({ adapterType }) => (adapterType === 'attio' ? fakeAttio(log) : fakeEmail(log)) },
+        park: { sink: park.sink },
         llm: {
           client: { call: async (): Promise<LlmCallResult> => ({ parsedJson: queue.shift() ?? {} }) },
           transforms: { async invoke({ plugin, config }) { log.push(['plugin', plugin, desc(config)]); return { text: `page of ${String(Reflect.get(config, 'url') ?? Reflect.get(config, 'data'))}` }; } },
         },
       }),
-    });
+    };
+    const result = options.state !== undefined ? await resumeMovement({ ...input, state: options.state } as never) : await runMovement(input);
+    options.parks?.push(...park.timerParks.map((parked) => parked.state));
     return { log, ok: { writes: result.writes.map((w) => [w.recordType, w.outcome, desc(w.writtenValues)]), trace: desc(result.trace) } };
   } catch (error) {
     const cause = runFailureCause(error);
@@ -124,10 +138,10 @@ const wrap = (value: unknown) => ({ evidence: 'Acme Corp', value });
 
 /** Both engines on `source`: what each adapter was handed and how the run
  *  ended agree exactly, and the Rust engine ran it, with no shim fault. */
-async function agreeExactly(source: string, languageVersion: LanguageVersion): Promise<{ ts: unknown; rust: unknown }> {
-  const ts = await runOn('ts', source, languageVersion, []);
+async function agreeExactly(source: string, languageVersion: LanguageVersion, options: RunOptions = {}): Promise<{ ts: unknown; rust: unknown }> {
+  const ts = await runOn('ts', source, languageVersion, [], options);
   resetRustRunStats();
-  const rust = await runOn('rust', source, languageVersion, []);
+  const rust = await runOn('rust', source, languageVersion, [], options);
   expect(rust).toEqual(ts);
   expect(isDeepStrictEqual(rust, ts)).toBe(true);
   expect(rustRunStats).toMatchObject({ ranWhole: 1, shimFaults: 0, unreproduced: 0, notAdmitted: {}, declined: {} });
@@ -162,5 +176,56 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
       const { rust } = await agreeExactly(m('  co = write crm-[:companies]-> { name: "a" }', `  held = ${held}`, '  g = graph { ...held }'), version);
       expect(rust).toMatchObject({ err: expect.stringContaining("'k' holds a record") });
     }
+  });
+
+  it('AT and a map spread read a null-prototype map as the map it is, from a literal, an event and a parked state', async () => {
+    const reads = ['  k = "b"', '  write crm-[:notes]-> { body: "z", payload: { a: AT(x, k), b: AT(x, "b"), c: x.b, y: { ...x, c: 1 } } }'];
+    const written = { own: { body: 'z', payload: { own: { a: 2, b: 2, c: 2, y: { own: { b: 2, c: 1 }, proto: 'Object' } }, proto: 'Object' } }, proto: 'Object' };
+    const literal = await agreeExactly(m('  x = { __proto__: null, b: 2 }', ...reads), version);
+    expect(created(literal.rust as { log: unknown[] })).toEqual([['create', written]]);
+    const fromEvent = await agreeExactly(m('  x = msg.meta', ...reads), version, { payload: { meta: Object.assign(Object.create(null), { b: 2 }) } });
+    expect(created(fromEvent.rust as { log: unknown[] })).toEqual([['create', written]]);
+    // Parked by the TypeScript engine, the binding made a null-prototype map
+    // in memory (a park read from storage is JSON, which keeps none), then
+    // resumed on each engine.
+    const parks: unknown[] = [];
+    const source = m('  x = { b: 2 }', '  await sleep(1h)', ...reads);
+    await runOn('ts', source, version, [], { parks });
+    const nulled = (state: unknown): unknown => {
+      if (Array.isArray(state)) return state.map(nulled);
+      if (state === null || typeof state !== 'object') return state;
+      const entries = Object.entries(state).map(([key, value]) => [key, nulled(value)] as const);
+      const isMap = entries.length === 1 && entries[0]![0] === 'b' && entries[0]![1] === 2;
+      return isMap ? Object.assign(Object.create(null), { b: 2 }) : Object.fromEntries(entries);
+    };
+    expect(parks).toHaveLength(1);
+    const resumed = await agreeExactly(source, version, { state: nulled(parks[0]) });
+    expect(created(resumed.rust as { log: unknown[] })).toEqual([['create', written]]);
+  });
+
+  it('a call in another letter case resolves in its own scope chain, never a sibling scope', async () => {
+    // `Get` in an `if` arm beside `get`: TypeScript's resolveFunction walks
+    // the call's chain and finds `get`, whose value hides a record, which
+    // this engine refuses at admission, so both engines run it alike.
+    const source = pm(
+      'import { summarise } from plugins',
+      '  co = write crm-[:companies]-> { name: "a" }',
+      '  if msg.`subject` == "zzz" {',
+      '    Get = () => {',
+      '      return "v"',
+      '    }',
+      '  }',
+      '  get = () => {',
+      '    return { k: COALESCE(co, "x") }',
+      '  }',
+      '  r = summarise(data: GET())',
+      '  write crm-[:notes]-> { body: r }',
+    );
+    const ts = await runOn('ts', source, version, []);
+    resetRustRunStats();
+    const rust = await runOn('rust', source, version, []);
+    expect(isDeepStrictEqual(rust, ts)).toBe(true);
+    expect(rustRunStats).toMatchObject({ ranWhole: 0, unreproduced: 0, shimFaults: 0 });
+    expect(Object.keys(rustRunStats.notAdmitted)).toHaveLength(1);
   });
 });
