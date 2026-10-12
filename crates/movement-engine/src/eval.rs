@@ -226,6 +226,11 @@ pub trait Reader {
     fn ai_origin(&self, _prompt: &str, _inputs: &[u32]) -> u32 {
         0
     }
+    /// A resource field (`@resource.field`, a `_resources` WHERE's read):
+    /// the current resource's, in a run; `None` where no run answers it.
+    fn resource_field(&self, _field: &str) -> Option<Evaluated> {
+        None
+    }
     /// A `READ(file)`'s origin (`{kind: 'file', rawTextId?, handle?, name?,
     /// contentType?}`).
     fn file_origin(&self, _origin: Js) -> u32 {
@@ -522,6 +527,9 @@ impl<'a> Evaluator<'a> {
                 Ok(Evaluated { value, prov: Prov::Built(Trail { origins: vec![id], direct: Some(id) }) })
             }
             Expression::Traverse { alias_root: Some(root), .. } => self.traverse_from(expr, root).await,
+            Expression::Traverse { alias_root: None, .. } => {
+                Err(EvalError::unsupported("relative traversal (no alias root)", "E1 expressions read from named bindings only"))
+            }
             Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
                 self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
             }
@@ -530,6 +538,12 @@ impl<'a> Evaluator<'a> {
             // else the TypeScript's evaluator refuses it.
             Expression::Exists { .. } if self.scoped => self.ask_run(Ask::ScopedExists { expr: expr.clone() }).await,
             Expression::Exists { .. } => Err(rootless_exists()),
+            // `case 'resource'`: the current resource's field, null where
+            // the evaluation has none (outside a `_resources` WHERE).
+            Expression::Resource { field } => match self.reader().and_then(|reader| reader.resource_field(field)) {
+                Some(read) => Ok(read),
+                None => Err(EvalError::Fallback("a resource field is the run's".into())),
+            },
             other if has_no_typescript_case(other) => Err(EvalError::unsupported_bare(&format!("the expression kind '{}'", kind_of(expr)))),
             other => Err(EvalError::Fallback(format!("the expression kind {:?} needs the host", kind_of(other)))),
         }

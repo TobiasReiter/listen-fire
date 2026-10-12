@@ -17,7 +17,7 @@ import type { MovementTraceEntry } from '../expression';
 
 import { logger } from '../../logger';
 import { containerAssociation } from '../../translation_graph/adapter';
-import { positionData } from '../../translation_graph/types';
+import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { openRunContext } from '../run_context';
 import { credentialIdsFor, makeTestHost, endedInRust, type TestHostOverrides } from '../test_host';
 import { AdapterCallFailed } from '../host_adapter';
@@ -582,7 +582,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
       // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
-      [movement('  x = FIRST(crm-[:companies]->-[:deals]->)'), 'select_multi_hop'],
       [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
@@ -592,8 +591,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
       [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
-      // A head over a run-built node walks one hop.
-      [`node Co { name: <text>\n  node founder { first: <text> } }\n${movement('  d = node { cos: <Co> }\n  d-[c:cos]->-[f:founder]-> {\n    x = 1\n  }')}`, 'block_multi_hop'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
@@ -604,8 +601,6 @@ describe('a whole run in the Rust engine', () => {
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = { page: fetch_url(msg.`text`) }')}`, 'plugin_call'],
-      // An extraction this engine does not run (chunk 6A Task 3b runs the rest).
-      [movement('  found = extract from [msg.`text`] {\n    node co: "c" { name: "a" }\n  }\n  found-[f:_resources]-> {\n    x = 1\n  }'), 'block_head_resources'],
       // A record the TypeScript would hand its host as the binding object,
       // or whose internals a reading would hand out.
       [movement('  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = TEXT.REGEX_EXTRACT(top, "x")'), 'builtin_arg_record'],
@@ -654,6 +649,38 @@ describe('IS <Decl> of a record a system describes', () => {
       // An undiscriminated webhook: both engines stop, naming why (the
       // corpora's `IS` cases take each arm on a typed event).
       await agree({ source: `${declaration}\n${movement(body)}`, event: webhook({ subject: 'Acme' }) });
+      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
+    }
+  });
+});
+
+describe('a `_resources` head', () => {
+  // PLAN-08A group D: the record's bundle through the event's source
+  // (`resolvePositionResources`), each resource without an id given one, the
+  // hop's WHERE read over each resource with it current.
+  const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  const resources = [
+    { externalId: 'att-1', type: 'FILE', name: 'pitch.pdf', fileRef: { __brand: 'FileRef', name: 'pitch.pdf', source: { adapterType: 'email', handle: 'h-1' } }, data: { filename: 'pitch.pdf', type: 'FILE' } },
+    { externalId: 'txt-1', type: 'TEXT', name: 'body', data: { type: 'TEXT', content: 'hello' } },
+  ];
+  const withResources = (): TestHostOverrides => {
+    const email = fakeEmail();
+    const adapter: Adapter = {
+      ...email.adapter,
+      getRelated: async ({ fieldId }) =>
+        fieldId === '_resources'
+          ? resources.map((data, i) => ({ position: makeStablePosition({ adapterType: 'email', recordType: 'resource', recordId: `r-${i}`, data }) }))
+          : [],
+    };
+    return { adapters: { resolve: () => adapter } };
+  };
+  it('walks the bundle and filters it by its WHERE as the TypeScript engine does, whole on Rust', async () => {
+    for (const body of [
+      '  names = msg-[f:_resources]-> {\n    return f.`filename`\n  }\n  return names',
+      '  files = msg-[f:_resources WHERE type == "FILE"]-> {\n    return "${f.`filename`}: ${f.`type`}"\n  }\n  return files',
+      '  msg-[f:_resources WHERE contentType == "audio/ogg"]-> {\n    return "never"\n  }\n  return "none"',
+    ]) {
+      await agree({ source: movement(body), event: webhook({ subject: 'Acme' }), host: withResources });
       expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
     }
   });

@@ -651,7 +651,7 @@ impl Run<'_> {
 impl Run<'_> {
     /// The resource case: `resource.data?.[field] ?? null`, cited by the
     /// resource.
-    fn resource_field(&self, resource: &Js, field: &str) -> Evaluated {
+    pub(crate) fn resource_field(&self, resource: &Js, field: &str) -> Evaluated {
         let value = match record::get(resource, "data") {
             Ok(data) if !data.is_nullish() => record::get(&data, field).unwrap_or(Js::Undefined),
             _ => Js::Null,

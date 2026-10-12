@@ -126,8 +126,10 @@ const path = require('node:path');
 // recursion hands back the value it declares, 2026-10-12) lifts v3 13: v3
 // 2172. Its second part (a collection op and a built-in's call forms inside
 // an expression, at the call's own place in its slot, stamped by the check;
-// a returned block, 2026-10-12) lifts v3 32: v3 2204.
-const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2204 };
+// a returned block, 2026-10-12) lifts v3 32: v3 2204. PLAN-08A group D (a
+// head of many hops, a `_resources` head, a pick of many hops, a hop off a
+// kept walk, 2026-10-12) lifts v1 5, v2 7, v3 11: v1 1030, v2 1260, v3 2215.
+const RAN_WHOLE_FLOOR = { v1: 1030, v2: 1260, v3: 2215 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -185,40 +187,42 @@ const RAN_WHOLE_FLOOR = { v1: 1025, v2: 1253, v3: 2204 };
 // group C's second part (2026-10-12): v3 refused 66 to 34 (builtin_call_form
 // 16, expression_closure 15 and rvalue:block 2 retired; the
 // write_field_record its MAP over a named closure exposed is retired with
-// them); evaluator not admitted v3 580 to 276.
+// them); evaluator not admitted v3 580 to 276. Lowered by group D
+// (2026-10-12): refused 10 / 19 / 34 to 5 / 12 / 23 (block_multi_hop 4 / 4 /
+// 8 and block_head_resources 1 / 3 / 3 retired); evaluator not admitted 79 /
+// 97 / 276 to 62 / 72 / 242 (the expressions inside the walks it admits).
 const CEILINGS = {
   v1: {
-    refused: 10,
-    everyReason: { block_multi_hop: 4, 'function:chunks': 3, write_root_not_held: 2, block_head_resources: 1 },
+    refused: 5,
+    everyReason: { 'function:chunks': 3, write_root_not_held: 2 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 79,
+    evaluatorNotAdmitted: 62,
     mirroredFailure: 6,
   },
   v2: {
-    refused: 19,
-    everyReason: { import_from_file: 7, block_multi_hop: 4, block_head_resources: 3, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2 },
+    refused: 12,
+    everyReason: { import_from_file: 7, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2 },
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 97,
+    evaluatorNotAdmitted: 72,
     mirroredFailure: 6,
   },
   v3: {
-    refused: 34,
+    refused: 23,
     everyReason: {
-      block_multi_hop: 8, import_from_file: 7, 'statement:shape': 4, node_spread_path: 4, block_head_resources: 3,
-      'function:chunks': 3, extract_call_shape: 2, write_root_not_held: 2, 'statement:call': 2, extract_call_model: 1,
-      delete_not_record: 1,
+      import_from_file: 7, 'statement:shape': 4, node_spread_path: 4, 'function:chunks': 3, extract_call_shape: 2,
+      write_root_not_held: 2, 'statement:call': 2, extract_call_model: 1, delete_not_record: 1,
     },
     declined: { expression_does_not_lower: 3 },
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 276,
+    evaluatorNotAdmitted: 242,
     mirroredFailure: 4,
   },
 };

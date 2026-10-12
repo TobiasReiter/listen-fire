@@ -696,10 +696,10 @@ impl Run<'_> {
     }
 
     /// A branch's exports (`serializeBranchExport`): its scope's own
-    /// bindings, a fan-out iteration's hop aliases left out.
+    /// bindings, a fan-out iteration's hop aliases (every hop's) left out.
     fn branch_exports(&self, child: &Rc<Scope>, container: &Statement, descent: char) -> Result<Js, Stop> {
         let aliases: Vec<String> = if descent == 'i' {
-            fan_out_block_of(container, "").and_then(|(block, _)| crate::traverse::head_step(&block.head).ok()).and_then(|step| step.alias).into_iter().collect()
+            fan_out_block_of(container, "").map(|(block, _)| crate::traverse::head_aliases(&block.head)).unwrap_or_default()
         } else {
             Vec::new()
         };

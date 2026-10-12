@@ -1431,16 +1431,19 @@ impl<'c> Bound<'c> {
         // A head over what an extraction yielded lands on its entities.
         let over_extract = matches!(&block.head.root, Some(PathRoot::Name { name }) if self.extracts.contains(name));
         let over_node = matches!(&block.head.root, Some(PathRoot::Name { name }) if self.nodes.contains(name) || self.members.contains(name));
-        if let Ok(step) = crate::traverse::head_step(&block.head)
-            && let Some(alias) = step.alias
-        {
-            let kind = if over_extract {
-                Kind::Extracted
-            } else if over_node {
-                Kind::Member
-            } else {
-                Kind::Landing
-            };
+        let kind = if over_extract {
+            Kind::Extracted
+        } else if over_node {
+            Kind::Member
+        } else {
+            Kind::Landing
+        };
+        // Every hop's alias names its own level's record on the path; a
+        // `_resources` hop's, the resource (a record, as a landing is).
+        if let Some(alias) = crate::traverse::resources_alias(&block.head.hops_raw) {
+            self.bind(&alias, Kind::Landing, &inner);
+        }
+        for alias in crate::traverse::head_steps(&block.head).unwrap_or_default().into_iter().filter_map(|step| step.alias) {
             self.bind(&alias, kind, &inner);
         }
         self.blocks += 1;
@@ -1840,7 +1843,7 @@ impl<'c> Bound<'c> {
                 NodeEntry::Nodes { nodes, .. } => nodes.iter().all(|n| self.literal_free_with(n, aliases)),
                 NodeEntry::Traversal { head, mapping, .. } => mapping.as_ref().is_none_or(|m| {
                     let mut inner = aliases.clone();
-                    inner.extend(crate::traverse::head_step(head).ok().and_then(|step| step.alias));
+                    inner.extend(crate::traverse::head_aliases(head));
                     self.literal_free_with(m, &inner)
                 }),
                 NodeEntry::Declared { .. } => true,
@@ -2409,7 +2412,7 @@ impl Names<'_> {
                 NodeEntry::Nodes { nodes, .. } => nodes.iter().all(|n| self.literal_clean_with(n, aliases)),
                 NodeEntry::Traversal { head, mapping, .. } => mapping.as_ref().is_none_or(|m| {
                     let mut inner = aliases.clone();
-                    inner.extend(crate::traverse::head_step(head).ok().and_then(|step| step.alias));
+                    inner.extend(crate::traverse::head_aliases(head));
                     self.literal_clean_with(m, &inner)
                 }),
                 NodeEntry::Declared { .. } => true,
@@ -2469,28 +2472,36 @@ impl Names<'_> {
         let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
         let steps = match &walk {
             Expression::Traverse { steps, .. } => steps,
-            Expression::ResourceTraverse { .. } => return refuse("block_head_resources"),
+            // The record's resource bundle (`resolvePositionResources`), its
+            // WHERE read over each resource; off an instance or a handle the
+            // run fails as the TypeScript's does.
+            Expression::ResourceTraverse { expression_filter, .. } => return self.resource_filter(expression_filter.as_deref()),
             _ => return refuse("block_head_does_not_lower"),
         };
-        let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
-        let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
-        refuse_meta_edge(&step.edge_type_id)?;
-        if let Some(filter) = &step.expression_filter {
-            self.scoped(filter)?;
-        }
-        if let Some(key) = step.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
-            self.scoped(key)?;
-        }
-        Ok(())
+        // Every hop off every path the hop before reached
+        // (`walkSourceHeadPaths`), each one's WHERE and ORDER BY scoped at
+        // its landing, over the head's own scope.
+        steps.iter().try_for_each(|step| match step {
+            TraversalStep::Edge(step) => self.hop(step),
+            _ => refuse("block_head_step"),
+        })
     }
 
     /// A head rooted at a value (or an expression): one edge hop off each
     /// record it holds — any kind of record, so its WHERE and ORDER BY are
     /// held to what every kind reads.
     fn value_head(&self, head: &PathHead) -> Admitted {
-        let step = crate::traverse::head_step(head).map_err(|_| "block_multi_hop".to_string())?;
-        refuse_meta_edge(&step.edge_type_id)?;
-        self.hop(&step)
+        if let Some(filter) = resources_head_filter(head) {
+            return self.resource_filter(filter.as_deref());
+        }
+        let steps = crate::traverse::head_steps(head).map_err(|_| "block_head_step".to_string())?;
+        steps.iter().try_for_each(|step| self.hop(step))
+    }
+
+    /// A `_resources` hop's WHERE, read over each resource with it current
+    /// (`filterResources`): resource fields, literals and their operators.
+    fn resource_filter(&self, filter: Option<&Expression>) -> Admitted {
+        filter.map_or(Ok(()), |filter| self.expression(filter))
     }
 
     /// A head over a node the run built (`walkNodePlane`): one hop down one
@@ -2502,15 +2513,22 @@ impl Names<'_> {
         let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
         let steps = match &walk {
             Expression::Traverse { steps, .. } => steps,
+            // The run fails as the TypeScript's does: a node has no bundle.
+            Expression::ResourceTraverse { expression_filter, .. } => return self.resource_filter(expression_filter.as_deref()),
             _ => return refuse("block_head_does_not_lower"),
         };
-        let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
-        let TraversalStep::Edge(step) = step else { return refuse("block_head_step") };
+        let Some((TraversalStep::Edge(step), rest)) = steps.split_first() else { return refuse("block_head_step") };
         refuse_meta_edge(&step.edge_type_id)?;
-        match &step.expression_filter {
-            Some(filter) => self.scoped(filter),
-            None => Ok(()),
+        if let Some(filter) = &step.expression_filter {
+            self.scoped(filter)?;
         }
+        // Past the node's own edge the walk is the landing's: a node's edge
+        // again, or a system's record walked on as a source head walks
+        // (`walkNodePlane`), so a later hop is held to both.
+        rest.iter().try_for_each(|step| match step {
+            TraversalStep::Edge(step) => self.hop(step),
+            _ => refuse("block_head_step"),
+        })
     }
 
     /// A head over what an extraction yielded: one hop down one of its
@@ -2524,14 +2542,15 @@ impl Names<'_> {
         let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
         let steps = match &walk {
             Expression::Traverse { steps, .. } => steps,
-            // A file read off one carries forward into a write as the very
-            // descriptor, which crosses this engine's wire as a copy.
-            Expression::ResourceTraverse { .. } => return refuse("block_head_resources"),
+            // The content the extraction read, as it stamped it (a file
+            // among them carried forward as the very file).
+            Expression::ResourceTraverse { expression_filter, .. } => return self.resource_filter(expression_filter.as_deref()),
             _ => return refuse("block_head_does_not_lower"),
         };
-        let [step] = steps.as_slice() else { return refuse("block_multi_hop") };
-        let TraversalStep::Edge(_) = step else { return refuse("block_head_step") };
-        Ok(())
+        match steps.iter().all(|step| matches!(step, TraversalStep::Edge(_))) {
+            true => Ok(()),
+            false => refuse("block_head_step"),
+        }
     }
 
     /// `x = <expression>`: a bare name of a record is a second name for it
@@ -2558,8 +2577,10 @@ impl Names<'_> {
             && self.walks_from(root)
             && !crate::reading::starts_with_old_edge(steps)
         {
-            let [TraversalStep::Edge(step)] = steps else { return refuse("select_multi_hop") };
-            return self.hop(step);
+            return steps.iter().try_for_each(|step| match step {
+                TraversalStep::Edge(step) => self.hop(step),
+                _ => refuse("traversal_step"),
+            });
         }
         self.expression(&expr)
     }
@@ -2600,12 +2621,9 @@ impl Names<'_> {
     /// A walk's hops off `root` (crate::reading `read_from`): edges, each
     /// one's WHERE and ORDER BY scoped at the record it lands on; off an
     /// extraction, plain hops down its result. Off a value, the walk is off
-    /// the records it holds; off a kept walk, the walk runs on past its
-    /// head, which this engine does not do.
+    /// the records it holds; off a kept walk, the walk runs on past its head
+    /// (`resolveDeferred`), each hop held to what every kind reads.
     fn walk_hops(&self, root: &str, steps: &[TraversalStep]) -> Admitted {
-        if self.lazies.contains(root) {
-            return refuse("traversal_root");
-        }
         // Down an extraction, plain hops (`walkExtractSteps`): a WHERE or a
         // hop that is no edge fails the run as the TypeScript's fails it
         // (crate::traverse `walk_extract`, the same `unsupported`, before the
@@ -3266,9 +3284,9 @@ impl Names<'_> {
             Some(PathRoot::Name { name }) => name.as_str(),
             _ => "",
         };
-        let alias = crate::traverse::head_step(head).ok().and_then(|step| step.alias);
         let (mut extracts, mut members, mut landings) = (self.extracts.clone(), self.members.clone(), self.landings.clone());
-        if let Some(alias) = alias {
+        landings.extend(crate::traverse::resources_alias(&head.hops_raw));
+        for alias in crate::traverse::head_steps(head).unwrap_or_default().into_iter().filter_map(|step| step.alias) {
             if self.extracts.contains(root) {
                 extracts.insert(alias);
             } else if self.nodes.contains(root) || self.members.contains(root) {
@@ -3515,6 +3533,9 @@ impl Names<'_> {
             // fails it (`unsupported`, crate::eval).
             Expression::Exists { steps, where_ } if scoped => self.exists(steps, where_.as_deref()),
             Expression::Exists { .. } => Ok(()),
+            // A resource's field: the current resource's (a `_resources`
+            // WHERE), null outside one, as the TypeScript's evaluator reads.
+            Expression::Resource { .. } => Ok(()),
             // A kind the TypeScript's evaluator has no case for (the retired
             // `KG_VALUE` / `KG_EXISTS`, which the checker passes): the run
             // fails as it fails it, before any part is read (`unsupported`,
@@ -3561,7 +3582,10 @@ impl Names<'_> {
                 }
                 _ => refuse("traversal_terminal"),
             },
-            Expression::Traverse { alias_root: None, .. } => refuse("traversal_root"),
+            // A walk with no root (`-[:a]->.b`, or a resource walk past a hop,
+            // whose root the lowering drops): the run fails as the
+            // TypeScript's evaluator fails it (`unsupported`, crate::eval).
+            Expression::Traverse { alias_root: None, .. } => Ok(()),
             // `-0` runs: this engine lowers the program itself, so the
             // literal is never JSON (a host request carries it as JSON
             // writes it, `0`, as the TypeScript's does). No literal reads as
@@ -4243,6 +4267,20 @@ fn is_meta_edge(edge: &str) -> bool {
     edge.starts_with('#')
 }
 
+/// A head whose one hop is `-[…:_resources …]->`: its WHERE.
+fn resources_head_filter(head: &PathHead) -> Option<Option<Box<Expression>>> {
+    let root = match &head.root {
+        Some(PathRoot::Name { name }) => crate::write::spell_name(name),
+        _ => "__movement_expression_root__".into(),
+    };
+    let probe = format!("{root}{}.`__movement_engine_probe__`", head.hops_raw);
+    let tree = movement_parser::expr::parse_expression(&probe).ok()?;
+    match movement_parser::lowering::lower_expression(&tree, &probe).ok()? {
+        Expression::ResourceTraverse { expression_filter, .. } => Some(expression_filter),
+        _ => None,
+    }
+}
+
 /// A hop over `-[:@old]->` (version 4 on) is answered by the write handle
 /// it is off (crate::reading `is_old_edge`), so only the meta edges refuse.
 fn refuse_meta_edge(edge: &str) -> Admitted {
@@ -4368,7 +4406,6 @@ mod tests {
     fn refuses_each_construct_it_does_not_run_with_its_reason() {
         for (body, reason) in [
             ("  x = @trigger", "meta:trigger"),
-            ("  x = FIRST(crm-[:companies]->-[:deals]->)", "select_multi_hop"),
             ("  x = FIRST(crm-[:#foo]->)", "traversal_meta_edge"),
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
             ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
@@ -4572,12 +4609,16 @@ mod tests {
         assert_eq!(refused("  x = COUNT(MAP([1], (v) => { y = @trigger\n return v }))").as_deref(), Some("meta:trigger"));
     }
 
+    /// A head walks every hop (`walkSourceHeadPaths`), each hop's alias
+    /// naming its own level's record; a pick walks the same.
     #[test]
-    fn refuses_each_block_construct_it_does_not_run_with_its_reason() {
-        for (body, reason) in [
-            ("  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n  }", "block_multi_hop"),
+    fn admits_a_walk_of_many_hops() {
+        for body in [
+            "  crm-[c:companies]->-[d:deals]-> {\n    x = d.`title`\n    y = c.`name`\n  }",
+            "  crm-[c:companies WHERE c.`name` != \"x\" ORDER BY c.`name` LIMIT 2]->-[d:deals LIMIT 1]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }",
+            "  x = FIRST(crm-[:companies]->-[:deals]->)",
         ] {
-            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+            assert_eq!(refused(body), None, "{body}");
         }
     }
 
@@ -4712,12 +4753,14 @@ mod tests {
             "  g = graph<Company> { name: msg.`subject`, files: msg-[a:attachments]->, founder: { first: \"Ann\" } }\n  write g-[:founder]-> { first: \"Bob\" }",
             // A head off a kept walk walks on past its head.
             "  files = lazy msg-[a:attachments]->\n  files-[f:x]-> {\n    y = 1\n  }",
+            // A read off a kept walk walks on past its head.
+            "  files = lazy msg-[a:attachments]->\n  x = files-[:x]->.`name`",
+            // A head of many hops down a node's edges.
+            "  d = node { companies: <Company> }\n  d-[c:companies]->-[f:founder]-> {\n    x = f.`first`\n  }",
         ] {
             assert_eq!(file(&declared(body)), None, "{body}");
         }
         for (body, reason) in [
-            ("  files = lazy msg-[a:attachments]->\n  x = files-[:x]->.`name`", "traversal_root"),
-            ("  d = node { companies: <Company> }\n  d-[c:companies]->-[f:founder]-> {\n    x = f.`first`\n  }", "block_multi_hop"),
         ] {
             assert_eq!(file(&declared(body)).as_deref(), Some(reason), "{body}");
         }
@@ -4821,13 +4864,15 @@ mod tests {
             "\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }",
             "\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }",
             "\n  if EXISTS(deals-[c:co ORDER BY `name` LIMIT 1]->) {\n    x = 1\n  }",
+            "\n  deals-[c:co]->-[p:people]-> {\n    x = p.`name`\n  }",
+            // A `_resources` head: the record's bundle, or the content the
+            // extraction read, its WHERE over each resource.
+            "\n  msg-[f:_resources]-> {\n    x = f.`name`\n  }",
+            "\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    write crm-[:notes]-> { body: f.`name` }\n  }",
         ] {
             assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
         }
         for (after, reason) in [
-            ("\n  deals-[c:co]->-[p:people]-> {\n    x = 1\n  }", "block_multi_hop"),
-            ("\n  msg-[f:_resources]-> {\n    x = 1\n  }", "block_head_resources"),
-            ("\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    x = 1\n  }", "block_head_resources"),
             ("\n  delete deals", "delete_not_record"),
         ] {
             assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");

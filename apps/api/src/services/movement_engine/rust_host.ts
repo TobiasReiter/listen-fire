@@ -31,6 +31,8 @@ import {
   type ShapeDeclaration,
 } from 'movement-lang';
 import { filesAtType, fileValueOf, isFileValue, type ParkedScopeState } from 'engine-contracts';
+import type { Resource } from '../translation_graph/adapter';
+import { withResourceFile } from '../translation_graph/engine/files/resources';
 import { z } from 'zod';
 
 import { compareValues } from '#shared/expression/filter';
@@ -212,7 +214,11 @@ const ROUTES: Record<string, Route> = {
     // engine is handed each as an opaque handle.
     const filesAt = request.filesAt === undefined ? undefined : schemaFieldTypeOf(request.filesAt);
     if (request.filesAt !== undefined && filesAt === undefined) throw new RustShimError(`adapters.call ${method} filesAt is a field type`);
-    const result = wire.value(filesAt !== undefined ? filesAtType(filesAt, answer.result) : answer.result);
+    // A `_resources` reference's records are resources, whose `fileRef` slot
+    // is the envelope that declares a file (`withResourceFile`).
+    if (request.filesIn !== undefined && request.filesIn !== 'resources') throw new RustShimError(`adapters.call ${method} filesIn is "resources" or absent`);
+    const answered = request.filesIn === 'resources' ? relatedResourcesWithFiles(answer.result) : answer.result;
+    const result = wire.value(filesAt !== undefined ? filesAtType(filesAt, answered) : answered);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
   },
@@ -681,6 +687,30 @@ function declaredSchema(program: Program, name: string): { declaration: ShapeDec
   if (chain.length === 0) throw new RustShimError(`check.compatible: '${name}' is not a node declaration of the file`);
   const types = declaredTypesIn(program);
   return foldedShape(chain.map((declaration) => ({ declaration, types: (type: string) => types.get(type) })));
+}
+
+/** `getRelated`'s answer over the resources reference with each resource's
+ *  file made (resources.ts `withResourceFile`); the adapter's own objects
+ *  are never changed, and a resource with no `fileRef` is passed as itself. */
+function relatedResourcesWithFiles(related: unknown): unknown {
+  if (!Array.isArray(related)) return related;
+  return related.map((item: unknown) => {
+    if (!isPlainRecord(item) || !isPlainRecord(item.position) || !isPlainRecord(item.position.identity)) return item;
+    const data = item.position.identity.data;
+    if (!isResourceWithFileSlot(data)) return item;
+    const identity = { ...item.position.identity, data: withResourceFile(data) };
+    return { ...item, position: { ...item.position, identity } };
+  });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A resource whose `fileRef` slot is filled: the slot is the file's
+ *  envelope whatever it holds (`withResourceFile` reads nothing else). */
+function isResourceWithFileSlot(value: unknown): value is Resource {
+  return isPlainRecord(value) && value.fileRef !== undefined;
 }
 
 function segmentOf(request: Record<string, unknown>): string {

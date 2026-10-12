@@ -54,7 +54,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, TraversalStep};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -1533,10 +1533,7 @@ impl Run<'_> {
         if !graph {
             return Ok(None);
         }
-        let [TraversalStep::Edge(step)] = steps.as_slice() else {
-            unreachable!("admission picks only from a walk of one hop")
-        };
-        let landings = self.selection_landings(root, step, scope, slot).await?;
+        let landings = self.selection_landings(root, steps, scope, slot).await?;
         if *pick == AggregationFunction::Only && landings.len() > 1 {
             return Err(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -1612,6 +1609,16 @@ impl Run<'_> {
         self.evaluate_with(expr, scope, span, subject, None).await
     }
 
+    /// `evaluateMovementExpression` with `currentResource`: a `_resources`
+    /// WHERE over one resource (`filterResources`).
+    pub(crate) async fn evaluate_over_resource(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, resource: &Js) -> Result<Evaluated, Stop> {
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
+        let reader = Reading { run: self, scope, span, subject: None, field: None, resource: Some(resource) };
+        Evaluator::in_run(scope.as_ref(), self.version(), around, &reader).eval(expr).await.map_err(|error| {
+            Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
+        })
+    }
+
     /// `evaluate_scoped`, as a write field's value when `field` names the
     /// functions that field advertises (`bindMovementFieldFunctions`).
     pub(crate) async fn evaluate_with(
@@ -1624,7 +1631,7 @@ impl Run<'_> {
     ) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
         let scoped = subject.is_some();
-        let reader = Reading { run: self, scope, span: span.clone(), subject, field };
+        let reader = Reading { run: self, scope, span: span.clone(), subject, field, resource: None };
         let evaluator = if scoped {
             Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
         } else {
@@ -2214,6 +2221,9 @@ struct Reading<'r, 'h> {
     subject: Option<Scoped>,
     /// The functions the write field this is the value of advertises.
     field: Option<&'r crate::write::FieldFunctions>,
+    /// The resource a `_resources` WHERE is evaluated over
+    /// (`currentResource`).
+    resource: Option<&'r Js>,
 }
 
 /// What a position-scoped evaluation's bare names read (`PositionScope`).
@@ -2239,6 +2249,13 @@ impl Reader for Reading<'_, '_> {
 
     fn field_function(&self, id: &str) -> bool {
         self.field.is_some_and(|field| field.has(id))
+    }
+
+    fn resource_field(&self, field: &str) -> Option<Evaluated> {
+        Some(match self.resource {
+            Some(resource) => self.run.resource_field(resource, field),
+            None => Evaluated { value: Js::Null, prov: Prov::Built(Trail::default()) },
+        })
     }
 
     fn ai_origin(&self, prompt: &str, inputs: &[u32]) -> u32 {

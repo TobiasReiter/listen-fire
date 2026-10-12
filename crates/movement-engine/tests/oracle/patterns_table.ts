@@ -885,8 +885,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'block_multi_hop',
-    routes: 'refused',
-    note: 'a block head of more than one hop: needs multi-hop walks',
+    routes: 'whole',
+    note: "closed in PLAN-08A group D: a head walks every hop off every path the hop before reached (walkSourceHeadPaths), each hop's alias naming its own level's record",
     programs: [
       () => ({ body: '  crm-[c:companies]->-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }' }),
       () => ({ body: '  crm-[:companies]->-[:deals]->-[p:people]-> {\n    write crm-[:notes]-> { body: p.`name` }\n  }' }),
@@ -903,9 +903,10 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'block_head_resources',
-    routes: 'refused',
-    note: 'a `_resources` head (off the event or an extraction): needs resource descriptors (FileRef) crossing as the descriptor',
+    routes: 'whole',
+    note: "closed in PLAN-08A group D: a `_resources` head walks the record's bundle (resolvePositionResources, the host making each resource's fileRef a file) or the content an extraction read, its WHERE over each resource with it current",
     programs: [
+      () => ({ body: '  msg-[f:_resources WHERE type == "FILE"]-> {\n    write crm-[:notes]-> { body: f.`name` }\n  }' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  found-[f:_resources]-> {\n    write crm-[:notes]-> { body: "a file" }\n  }' }),
       () => ({ body: '  msg-[f:_resources]-> {\n    write crm-[:notes]-> { body: "a file" }\n  }' }),
     ],
@@ -921,8 +922,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'select_multi_hop',
-    routes: 'refused',
-    note: '`x = FIRST(…)` of a walk of more than one hop: needs the full walk evaluator',
+    routes: 'whole',
+    note: "closed in PLAN-08A group D: a pick walks every hop as a block head does (selectedPositionBinding over walkSourceHeadPaths)",
     programs: [
       () => ({ body: '  x = FIRST(crm-[:companies]->-[d:deals ORDER BY `title`]->)' }),
       () => ({ body: '  x = LAST(crm-[:companies]->-[n:notes ORDER BY `body`]->)' }),
@@ -1171,10 +1172,10 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'traversal_root',
-    routes: 'refused',
-    note: 'a walk rooted at a name not held as its root (a hop off a kept walk): needs the full walk evaluator (a field read off a kept walk runs)',
+    routes: 'whole',
+    note: "closed in PLAN-08A group D: a hop off a kept walk continues the walk past its head (resolveDeferred); a walk with no root fails as the TypeScript's evaluator fails it (MOVENG_UNSUPPORTED 'relative traversal (no alias root)')",
     programs: [
-      () => ({ body: '  files = lazy msg-[a:files]->\n  x = COLLECT(files.`filename`)', routes: 'whole' }),
+      () => ({ body: '  files = lazy msg-[a:files]->\n  x = COLLECT(files.`filename`)' }),
       () => ({ body: '  cos = lazy crm-[c:companies]->\n  x = COUNT(cos-[:deals]->)' }),
     ],
   },

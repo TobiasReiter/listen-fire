@@ -211,35 +211,133 @@ pub(crate) fn head_step(head: &PathHead) -> Result<EdgeStep, String> {
     }
 }
 
+/// The head's hops, probe-parsed: every edge hop it walks, in order; an
+/// error where a hop is no edge or the head is no walk.
+pub(crate) fn head_steps(head: &PathHead) -> Result<Vec<EdgeStep>, String> {
+    let root = match &head.root {
+        Some(PathRoot::Name { name }) => spell_name(name),
+        Some(PathRoot::Expression { .. }) => EXPRESSION_ROOT_PROBE.into(),
+        None => String::new(),
+    };
+    let probe = format!("{root}{}.`__movement_engine_probe__`", head.hops_raw);
+    let tree = movement_parser::expr::parse_expression(&probe).map_err(|e| format!("{e:?}"))?;
+    match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| format!("{e:?}"))? {
+        Expression::Traverse { steps, .. } => steps
+            .into_iter()
+            .map(|step| match step {
+                TraversalStep::Edge(step) => Ok(step),
+                _ => Err("a hop that is not an edge".to_string()),
+            })
+            .collect(),
+        _ => Err("a head that is not a walk".into()),
+    }
+}
+
+/// `hopAliasNamesOf`: the names a fan-out's iteration binds from its head —
+/// a `_resources` hop's alias and every hop's alias, as the head's text
+/// spells them (no I/O).
+pub(crate) fn head_aliases(head: &PathHead) -> Vec<String> {
+    let mut names: Vec<String> = resources_alias(&head.hops_raw).into_iter().collect();
+    let root = match &head.root {
+        Some(PathRoot::Name { name }) => spell_name(name),
+        Some(PathRoot::Expression { .. }) => EXPRESSION_ROOT_PROBE.into(),
+        None => String::new(),
+    };
+    let probe = format!("{root}{}.`__movement_engine_probe__`", head.hops_raw);
+    let lowered = movement_parser::expr::parse_expression(&probe).ok().and_then(|tree| movement_parser::lowering::lower_expression(&tree, &probe).ok());
+    if let Some(Expression::Traverse { steps, .. }) = lowered {
+        for step in steps {
+            if let TraversalStep::Edge(EdgeStep { alias: Some(alias), .. }) = step
+                && !names.contains(&alias)
+            {
+                names.push(alias);
+            }
+        }
+    }
+    names
+}
+
+/// `RESOURCES_HEAD_ALIAS`: the alias of a head's leading `_resources` (or
+/// `#resources`) hop, `-[f:_resources …]->`.
+pub(crate) fn resources_alias(hops_raw: &str) -> Option<String> {
+    let rest = hops_raw.trim_start().strip_prefix("-[")?.trim_start();
+    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(rest.len());
+    let (alias, rest) = rest.split_at(end);
+    if alias.is_empty() || alias.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let rest = rest.trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix("_resources").or_else(|| rest.strip_prefix("#resources"))?;
+    // `\b`: the word ends there.
+    (!rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).then(|| alias.to_string())
+}
+
+/// `RESOURCES_REFERENCE_FIELD_ID`: the reserved reference a record's
+/// resources are related through.
+const RESOURCES_REFERENCE_FIELD_ID: &str = "_resources";
+
+/// The envelope a `_resources` reference's answer is (rust_host.ts): the host
+/// makes each resource's `fileRef` slot a file (`withResourceFile`).
+const RESOURCES_ENVELOPE: &str = "resources";
+
+/// One iteration per resource, the hop's alias naming it.
+fn resource_paths(resources: Vec<Js>, alias: Option<&str>) -> Paths {
+    resources
+        .into_iter()
+        .map(|resource| {
+            let landing = Binding::Resource(Rc::new(resource));
+            let aliases = alias.iter().map(|alias| (alias.to_string(), landing.clone())).collect();
+            (aliases, landing)
+        })
+        .collect()
+}
+
 /// What a head walk yields: each iteration's aliases and its landing.
 pub(crate) type Paths = Vec<(Vec<(String, Binding)>, Binding)>;
 
 /// `EXPRESSION_ROOT_PROBE`: what an expression root reads as in the probe.
 const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
 
-/// `probeHead` with `extraSteps` appended: the head's hops when it parses as
-/// a traversal, `None` when it parses as anything else.
-pub(crate) fn head_probe(root: &str, hops_raw: &str, extra: &[TraversalStep]) -> Result<Option<Vec<TraversalStep>>, Failure> {
+/// What a head probe-parses as (`probeHead`).
+pub(crate) enum Probe {
+    /// A traversal: its hops.
+    Walk(Vec<TraversalStep>),
+    /// `-[f:_resources …]->`: the position's resource bundle, the hop's
+    /// alias read off its text (`RESOURCES_HEAD_ALIAS`) and its WHERE.
+    Resources { alias: Option<String>, filter: Option<Box<Expression>> },
+    /// Anything else.
+    Other,
+}
+
+impl Probe {
+    fn steps(&self) -> Option<&[TraversalStep]> {
+        match self {
+            Probe::Walk(steps) => Some(steps),
+            _ => None,
+        }
+    }
+}
+
+/// `probeHead` with `extraSteps` appended.
+pub(crate) fn head_probe(root: &str, hops_raw: &str, extra: &[TraversalStep]) -> Result<Probe, Failure> {
     let probe = format!("{root}{hops_raw}.`__movement_engine_probe__`");
     let invalid = |e: String| Failure::engine("MOVENG_RUNTIME", format!("invalid block head (the checker should have caught this): {e}"));
     let tree = movement_parser::expr::parse_expression(&probe).map_err(|e| invalid(format!("{e:?}")))?;
     // Every lowering refusal is a `BridgeError`, which `probeHead` rewraps
     // by its message.
-    let steps = match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| invalid(e.message))? {
+    let probed = match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| invalid(e.message))? {
         Expression::Traverse { mut steps, .. } => {
             steps.extend(extra.iter().cloned());
-            Some(steps)
+            Probe::Walk(steps)
         }
-        // The resource bundle's hop, which this engine does not walk.
-        Expression::ResourceTraverse { .. } => {
-            return Err(Failure::unreproduced("a `_resources` block head", "the TypeScript engine resolves the position's resource bundle"));
-        }
-        _ => None,
+        // The lowering writes no structured `filter` (the formula grammar's).
+        Expression::ResourceTraverse { expression_filter, .. } => Probe::Resources { alias: resources_alias(hops_raw), filter: expression_filter },
+        _ => Probe::Other,
     };
-    if !extra.is_empty() && steps.is_none() {
+    if !extra.is_empty() && !matches!(probed, Probe::Walk(_)) {
         return Err(Failure::unsupported("continuing a walk past a head that is not a traversal", ""));
     }
-    Ok(steps)
+    Ok(probed)
 }
 
 /// A hop over an extraction's entities: an edge, and no WHERE.
@@ -444,7 +542,7 @@ impl Run<'_> {
             Some(PathRoot::Expression { .. }) => EXPRESSION_ROOT_PROBE.into(),
             None => String::new(),
         };
-        let steps = head_probe(&probe_root, &head.hops_raw, extra).map_err(Stop::Thrown)?;
+        let probe = head_probe(&probe_root, &head.hops_raw, extra).map_err(Stop::Thrown)?;
         let span = env::js_of_serialized(&head.span);
         let (binding, root) = match &head.root {
             Some(PathRoot::Name { name }) => (scope.resolve(name), spell_name(name)),
@@ -453,36 +551,43 @@ impl Run<'_> {
         };
         let binding = binding
             .ok_or_else(|| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this"))))?;
-        self.head_iterations_from(binding, &root, steps.as_deref(), scope, &span).await
+        self.head_iterations_from(binding, &root, &probe, scope, &span).await
     }
 
     /// `headIterationsFrom`: the head's hops off one root — each of a
     /// block's returned records, each record a value holds, an extraction's
     /// entities under the edges, a node's arrow plane, a kept walk run on, or
-    /// the records an adapter walk lands on. `steps` is `None` where the head
-    /// probed as no traversal.
+    /// the records an adapter walk lands on; a `_resources` hop, the
+    /// resources an extraction read or a source record's bundle.
     pub(crate) fn head_iterations_from<'s>(
         &'s self,
         binding: Binding,
         root: &'s str,
-        steps: Option<&'s [TraversalStep]>,
+        probe: &'s Probe,
         scope: &'s Rc<Scope>,
         span: &'s Js,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Paths, Stop>> + 's>> {
         Box::pin(async move {
+            let steps = probe.steps();
             let over = |what: String| Stop::Thrown(Failure::unsupported(&format!("this block head over {what}"), ""));
             match binding {
                 // The hops off each returned record, concatenated.
                 Binding::Positions(landings) => {
                     let mut iterations = Vec::new();
                     for landing in landings {
-                        iterations.extend(self.head_iterations_from(landing, root, steps, scope, span).await?);
+                        iterations.extend(self.head_iterations_from(landing, root, probe, scope, span).await?);
                     }
                     Ok(iterations)
                 }
                 // `deals-[c:company]-> { … }`: the extract's own entities under
                 // those edges, in hand; no host is asked. Its ORDER BY and LIMIT
                 // are not read, as the TypeScript does not read them.
+                // `deal-[f:_resources]-> { … }`: the content the extraction
+                // read, as it stamped it on the entity (no readback).
+                Binding::Extracted { emission, .. } if let Probe::Resources { alias, filter } = probe => {
+                    let resources = self.filter_resources(emission.resources.clone(), filter.as_deref(), scope, span).await?;
+                    Ok(resource_paths(resources, alias.as_deref()))
+                }
                 extracted @ Binding::Extracted { .. } => {
                     let Some(steps) = steps else { return Err(over("an extract result".into())) };
                     extract_paths(extracted, steps).map_err(Stop::Thrown)
@@ -517,7 +622,7 @@ impl Run<'_> {
                                 ),
                             )));
                         };
-                        iterations.extend(self.head_iterations_from(position, root, steps, scope, span).await?);
+                        iterations.extend(self.head_iterations_from(position, root, probe, scope, span).await?);
                     }
                     Ok(iterations)
                 }
@@ -556,7 +661,8 @@ impl Run<'_> {
                     if rest.is_empty() {
                         return Ok(vec![(aliases, old)]);
                     }
-                    let onward = self.head_iterations_from(old, root, Some(rest), scope, span).await?;
+                    let rest = Probe::Walk(rest.to_vec());
+                    let onward = self.head_iterations_from(old, root, &rest, scope, span).await?;
                     Ok(onward
                         .into_iter()
                         .map(|(bindings, landing)| {
@@ -571,6 +677,20 @@ impl Run<'_> {
                         })
                         .collect())
                 }
+                // `msg-[f:_resources]-> { … }`: the record's resource bundle,
+                // read through the event's source (`resolvePositionResources`
+                // over `this.source.adapter`, whichever graph the record was
+                // landed in).
+                Binding::Event | Binding::Landed(_) if let Probe::Resources { alias, filter } = probe => {
+                    let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
+                    let start = match &binding {
+                        Binding::Landed(landed) => landed.position.clone(),
+                        _ => source.position.to_js(),
+                    };
+                    let resources = self.position_resources(&start, &source.read).await.map_err(Stop::Thrown)?;
+                    let resources = self.filter_resources(resources, filter.as_deref(), scope, span).await?;
+                    Ok(resource_paths(resources, alias.as_deref()))
+                }
                 binding @ (Binding::Instance(_) | Binding::Handle(_) | Binding::Event | Binding::Landed(_)) => {
                     let Some(steps) = steps else { return Err(over(crate::record::describe(&binding))) };
                     let (start, read) = self.head_start(&binding, root).await.map_err(Stop::Thrown)?;
@@ -579,6 +699,38 @@ impl Run<'_> {
                 other => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {} binding)", crate::record::kind_of(&other)), ""))),
             }
         })
+    }
+
+    /// `resolvePositionResources`: the resources the record's reserved
+    /// `_resources` reference relates it to, each one's `data` (its `fileRef`
+    /// slot made a file by the host, `withResourceFile`), every one without
+    /// an id given one.
+    async fn position_resources(&self, start: &Js, read: &Rc<Read>) -> Result<Vec<Js>, Failure> {
+        let step = EdgeStep {
+            edge_type_id: RESOURCES_REFERENCE_FIELD_ID.into(),
+            direction: EdgeDirection::Outgoing,
+            alias: None,
+            cardinality: None,
+            filter: None,
+            expression_filter: None,
+        };
+        let args = vec![("fieldId", Js::str(RESOURCES_REFERENCE_FIELD_ID)), ("direction", Js::str("outgoing"))];
+        let related = self.related_items_as(start, &step, read, args, Some(RESOURCES_ENVELOPE)).await?;
+        let resources = related.into_iter().map(|(position, _)| position_data(&position)).filter(|data| !data.is_nullish()).collect();
+        self.stamp_resources(resources).await
+    }
+
+    /// `filterResources`: the WHERE evaluated over each resource, with the
+    /// resource current (`currentResource`), the ones it holds for kept.
+    async fn filter_resources(&self, resources: Vec<Js>, filter: Option<&Expression>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Js>, Stop> {
+        let Some(filter) = filter else { return Ok(resources) };
+        let mut kept = Vec::new();
+        for resource in resources {
+            if self.evaluate_over_resource(filter, scope, Some(span.clone()), &resource).await?.value.truthy() {
+                kept.push(resource);
+            }
+        }
+        Ok(kept)
     }
 
     /// `walkSourceHeadPaths`: each hop off every path the hop before it
@@ -734,11 +886,18 @@ impl Run<'_> {
 
     /// The records `FIRST`/`LAST`/`ONLY` of a bare walk picks from
     /// (`selectedPositionBinding`): the walk a block head takes.
-    pub(crate) async fn selection_landings(&self, root: &str, step: &EdgeStep, scope: &Rc<Scope>, slot: &movement_parser::ast::ExprSlot) -> Result<Vec<Rc<Landed>>, Failure> {
+    pub(crate) async fn selection_landings(&self, root: &str, steps: &[TraversalStep], scope: &Rc<Scope>, slot: &movement_parser::ast::ExprSlot) -> Result<Vec<Rc<Landed>>, Failure> {
         let span = env::js_of_serialized(&slot.span);
         let binding = scope.resolve(root).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this")))?;
         let (start, read, _) = self.walk_start(root, &binding).await?;
-        self.walk(&start, step, read, scope, &span).await
+        let paths = self.source_head_paths(&start, read, steps, scope, &span).await?;
+        Ok(paths
+            .into_iter()
+            .map(|(_, landing)| match landing {
+                Binding::Landed(landed) => landed,
+                _ => unreachable!("a source walk lands on records"),
+            })
+            .collect())
     }
 
     /// `instanceSourceRead`: the instance resolved as a source, once per
@@ -855,6 +1014,11 @@ impl Run<'_> {
     /// the collection's target; any other is stamped from its origin's
     /// natural type.
     async fn related_items(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, args: Vec<(&str, Js)>) -> Result<Vec<(Js, Js)>, Failure> {
+        self.related_items_as(start, step, read, args, None).await
+    }
+
+    /// `related_items`, its answer the `envelope` the host makes files in.
+    async fn related_items_as(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, args: Vec<(&str, Js)>, envelope: Option<&str>) -> Result<Vec<(Js, Js)>, Failure> {
         let schema = read.schema.as_ref();
         let (from, landed_type) = if record_type(start).as_deref() == Some("meta") {
             (start.clone(), schema.and_then(|s| s.collections.get(&step.edge_type_id)).map(|c| c.target.clone()))
@@ -863,7 +1027,7 @@ impl Run<'_> {
             let from = restamp(start, surface.as_deref(), &read.adapter_type);
             (from, landed_surface_type(schema, surface.as_deref(), &step.edge_type_id, step.direction))
         };
-        let related = self.call_adapter_at(&read.instance, "getRelated", &from, args).await?;
+        let related = self.call_adapter_enveloped(&read.instance, "getRelated", &from, args, envelope).await?;
         let mut items = Vec::new();
         for item in list_items(&related)? {
             let position = get(&item, "position");
@@ -1219,6 +1383,15 @@ impl Run<'_> {
         self.call_adapter_typed(instance, method, position, rest, None).await
     }
 
+    /// `call_adapter_at`, its answer an envelope the host makes files in
+    /// (`filesIn`, rust_host.ts).
+    async fn call_adapter_enveloped(&self, instance: &Instance, method: &str, position: &Js, rest: Vec<(&str, Js)>, envelope: Option<&str>) -> Result<Js, Failure> {
+        match envelope {
+            None => self.call_adapter_at(instance, method, position, rest).await,
+            Some(envelope) => self.call_adapter_with(instance, method, position, rest, None, Some(envelope)).await,
+        }
+    }
+
     /// `getFieldValue` of a field whose declared type is `files_at`: the host
     /// makes the files that type calls for (`filesAtType`, rust_host.ts) and
     /// hands them back as files; any other answer is data.
@@ -1228,6 +1401,10 @@ impl Run<'_> {
     }
 
     async fn call_adapter_typed(&self, instance: &Instance, method: &str, position: &Js, rest: Vec<(&str, Js)>, files_at: Option<&FieldType>) -> Result<Js, Failure> {
+        self.call_adapter_with(instance, method, position, rest, files_at, None).await
+    }
+
+    async fn call_adapter_with(&self, instance: &Instance, method: &str, position: &Js, rest: Vec<(&str, Js)>, files_at: Option<&FieldType>, files_in: Option<&str>) -> Result<Js, Failure> {
         let files_at = files_at.map(|ty| serde_json::to_value(ty).expect("a field type is JSON"));
         let mut request = match position {
             Js::Object(object) => {
@@ -1244,6 +1421,9 @@ impl Run<'_> {
         };
         if let Some(files_at) = files_at {
             request.args["filesAt"] = files_at;
+        }
+        if let Some(files_in) = files_in {
+            request.args["filesIn"] = Json::String(files_in.into());
         }
         self.adapter_answer(self.ask(request).await?)
     }
@@ -1357,5 +1537,27 @@ fn stopped(stop: Stop) -> Failure {
     match stop {
         Stop::Thrown(failure) => failure,
         _ => unreachable!("an evaluation stops only by failing"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resources_alias;
+
+    /// `RESOURCES_HEAD_ALIAS`: `^\s*-\[\s*(ident)\s*:\s*(?:_resources|#resources)\b`.
+    #[test]
+    fn reads_a_resources_hops_alias_as_the_typescripts_pattern_does() {
+        for (hops, alias) in [
+            ("-[f:_resources]->", Some("f")),
+            ("  -[ file : _resources WHERE type == \"FILE\"]->", Some("file")),
+            ("-[r:#resources]->", Some("r")),
+            ("-[r:_resources:TEXT]->", Some("r")),
+            ("-[r:_resourcesx]->", None),
+            ("-[:_resources]->", None),
+            ("-[1f:_resources]->", None),
+            ("-[c:companies]->-[f:_resources]->", None),
+        ] {
+            assert_eq!(resources_alias(hops).as_deref(), alias, "{hops}");
+        }
     }
 }
