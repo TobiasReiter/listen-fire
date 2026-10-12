@@ -956,6 +956,25 @@ function traceEntry(value: unknown): MovementRunResult['trace'][number] {
       return extractionTraceEntry(entry);
     case 'plugin':
       return pluginTraceEntry(entry);
+    case 'chunks': {
+      const counts = (list: unknown): list is number[] => Array.isArray(list) && list.every((n) => typeof n === 'number' && Number.isInteger(n));
+      if (typeof entry.pieces !== 'number' || !Number.isInteger(entry.pieces) || !counts(entry.sizes)) {
+        throw new RustShimError('a chunks trace entry counts its pieces and their sizes');
+      }
+      const mode = entry.mode;
+      if (mode !== 'size' && mode !== 'entities') throw new RustShimError('a chunks trace entry names its mode');
+      if (entry.expectedEntities !== undefined && !counts(entry.expectedEntities)) {
+        throw new RustShimError("a chunks trace entry's estimates are counts");
+      }
+      return {
+        kind: 'chunks',
+        pieces: entry.pieces,
+        sizes: entry.sizes,
+        unit: 'chars',
+        mode,
+        ...(entry.expectedEntities !== undefined ? { expectedEntities: entry.expectedEntities } : {}),
+      };
+    }
     case 'field_miss': {
       const available = entry.available;
       if (!Array.isArray(available) || !available.every((key) => typeof key === 'string')) {

@@ -220,7 +220,7 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('...m.k in a write (286561483a): run whole in Rust; in a graph literal, refused by name', async () => {
+  it('...m.k in a write (286561483a) and in a graph literal (PLAN-08A group E): run whole in Rust', async () => {
     await onBoth(
       movement('  n = node { name: msg.`subject`, stage: "lead" }', '  held = { k: n }', '  write crm-[:companies]-> { ...held.k, stage: "won" }'),
       // The spread's lines read the record the map holds (chunk 7A Task 3).
@@ -229,7 +229,7 @@ describe("main's language changes on both engines", () => {
     );
     await onBoth(
       movement('  held = { k: { name: msg.`subject` } }', '  g = graph { ...held.k, stage: "new" }', '  write crm-[:companies]-> { name: g.name, stage: g.stage }'),
-      { refused: 'node_spread_path' },
+      { runsWhole: true },
       [['create', { name: 'Acme', stage: 'new' }]],
     );
   });
@@ -264,12 +264,12 @@ describe("main's language changes on both engines", () => {
     );
   });
 
-  it('one binding for a record, held in a list (405b9c0cf2, 5b7c0011dc): refused, the record read through the list', async () => {
+  it('one binding for a record, held in a list (405b9c0cf2, 5b7c0011dc): the record read through the list, run whole in Rust', async () => {
     await onBoth(
       movement('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }'),
-      // A field read off a fold's answer does not lower here yet: the check
-      // passes it, so it is declined after the check (chunk 7A Task 6).
-      { declined: 'expression_does_not_lower' },
+      // A field read off a fold's answer: the call bound to a name first,
+      // as the TypeScript stages it (`hoistingMemberReads`, PLAN-08A group F′).
+      { runsWhole: true },
       [['create', { body: '2 Acme' }]],
     );
   });

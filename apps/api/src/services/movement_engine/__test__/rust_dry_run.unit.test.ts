@@ -56,8 +56,8 @@ const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)')
  *  shape (which may stay refused by name: no corpus run reaches it). */
 const IS_DECLARED = ['  g = graph { name: "a" }', '  if g IS <Lead> {', '    x = 1', '  }'];
 const REFUSED = `node Lead { name: <text> }\n${program(...IS_DECLARED, '  return msg.`subject`')}`;
-/** Refused for two reasons: the closure, and a retired knowledge-graph read. */
-const REFUSED_TWICE = `node Lead { name: <text> }\n${program(...IS_DECLARED, '  y = CHUNKS("q", { size: 4 })', '  return msg.`subject`')}`;
+/** Refused for two reasons: the IS test, and a bound write. */
+const REFUSED_TWICE = `node Lead { name: <text> }\n${program(...IS_DECLARED, '  write inbox-[:message]-> bind msg { subject: "a" }', '  return msg.`subject`')}`;
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -190,14 +190,15 @@ describe('the admission dry run, through the real artifact', () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { is_test_declared_graph: 1 }, all: { is_test_declared_graph: 1, 'function:chunks': 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['is_test_declared_graph', 'function:chunks'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({ first: { is_test_declared_graph: 1 }, all: { is_test_declared_graph: 1, write_bind: 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['is_test_declared_graph', 'write_bind'] }]);
   });
 
   // A real run leaves a slot this engine's lowering misses to its check
   // (declined after a passing one); the dry run, never answered, names it.
   it('names a slot the lowering misses, which a real run leaves to its check', async () => {
-    const missed = program('  rows = crm-[c:companies]-> {', '    return c', '  }', '  held = { entries: rows }', '  x = FIRST(held.entries).name');
+    // A namespaced member the language does not have (the checker refuses it).
+    const missed = program('  x = TEXT.CHUNKS(msg.`subject`)');
     const { segment, asked } = await failingSegment(missed.replace('inbox = email(credentials: dealflow_inbox)', 'inbox = email(credentials: dealflow_inbox)\ncrm = email(credentials: dealflow_inbox)'), 'run-missed');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);

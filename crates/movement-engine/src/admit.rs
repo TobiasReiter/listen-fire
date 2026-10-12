@@ -28,12 +28,13 @@ use movement_parser::lowering::condition::MovementCondition;
 use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 
+use crate::program::DeclaringFile;
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
 /// The flat built-ins and namespaced members the evaluator runs
 /// (crate::stdlib): an expression calling any other is refused.
-const FUNCTIONS: [&str; 34] = [
-    "file", "read", "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
+const FUNCTIONS: [&str; 35] = [
+    "chunks", "file", "read", "isnull", "coalesce", "trim", "lower", "upper", "length", "abs", "round", "floor", "ceil", "tostring", "tonumber", "multi", "split",
     "date", "datetime", "number", "currency.get_number_from_figure", "currency.get_code_from_figure", "currency.format_figure", "date.parse",
     "date.add_days", "date.format", "date.format_iso", "date.today", "datetime.at", "text.regex_extract", "text.slug", "text.pairs",
     "text.serialise", "url.host", "number.format",
@@ -111,7 +112,15 @@ pub fn reachable<'p>(program: &'p ast::Program, entry: Option<&str>, language_ve
     let movements: Vec<&ast::MovementDeclaration> =
         program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let Some(entry) = entry_of(&movements, entry, language_version) else { return movements };
-    let mut reached = vec![entry];
+    reachable_from(program, vec![entry])
+}
+
+/// The movements of `program` that `start` reaches, transitively, by the
+/// names their bodies spell (`reachable`), in source order.
+fn reachable_from<'p>(program: &'p ast::Program, start: Vec<&'p ast::MovementDeclaration>) -> Vec<&'p ast::MovementDeclaration> {
+    let movements: Vec<&ast::MovementDeclaration> =
+        program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+    let mut reached = start;
     let mut next = 0;
     while let Some(movement) = reached.get(next).copied() {
         // A tree that does not serialise is read as naming every movement.
@@ -189,28 +198,115 @@ pub fn refusals(
     entry: Option<&ast::MovementDeclaration>,
     language_version: u32,
     catalog: &Plugins<'_>,
+    libraries: &Libraries,
 ) -> Admission {
     let reasons = Reasons::default();
+    let mut called = Vec::new();
+    let mut seeds: Vec<Seed> = Vec::new();
+    let walking = Walking { language_version, catalog, libraries, reasons: &reasons, record_called: entry.is_some() };
+    let start: Vec<Walk> = match entry {
+        Some(entry) => vec![Walk { movement: entry, signature: vec![Kind::Event; entry.params.len()], called: false }],
+        None => movements.iter().map(|m| Walk { movement: m, signature: vec![Kind::Event; m.params.len()], called: false }).collect(),
+    };
+    admit_file(&walking, program, &DeclaringFile::Root, movements, start, entry.is_some(), &mut called, &mut seeds);
+    // Each library a file imports from, its declarations and values walked
+    // (the run binds them when its importer's import is bound, or when a
+    // shape's words first read them); then each library movement a walked
+    // body calls (or names), walked in its own file under what the call
+    // passes it, transitively.
+    let mut walked: Vec<Seed> = Vec::new();
+    let mut next = 0;
+    while let Some(seed) = seeds.get(next).cloned() {
+        next += 1;
+        if walked.contains(&seed) {
+            continue;
+        }
+        walked.push(seed.clone());
+        let library = libraries.0.get(&seed.path);
+        if seed.name.is_empty() {
+            match library {
+                Some(library) => admit_file(&walking, library, &DeclaringFile::Library(seed.path.clone()), &[], Vec::new(), false, &mut called, &mut seeds),
+                None => reasons.note("import_from_file"),
+            }
+            continue;
+        }
+        let movement = library.and_then(|library| {
+            library.statements.iter().find_map(|s| match s {
+                Statement::Movement(m) if m.name == seed.name => Some(m),
+                _ => None,
+            })
+        });
+        let (Some(library), Some(movement)) = (library, movement) else {
+            reasons.note("import_from_file");
+            continue;
+        };
+        let reached = reachable_from(library, vec![movement]);
+        let start = vec![Walk { movement, signature: seed.signature.clone(), called: seed.called }];
+        admit_file(&walking, library, &DeclaringFile::Library(seed.path.clone()), &reached, start, false, &mut called, &mut seeds);
+    }
+    Admission { reasons: reasons.0.into_inner(), called }
+}
+
+/// What every file's walk shares.
+struct Walking<'a> {
+    language_version: u32,
+    catalog: &'a Plugins<'a>,
+    libraries: &'a Libraries,
+    reasons: &'a Reasons,
+    /// A run of the entry: each called movement's event parameters are noted.
+    record_called: bool,
+}
+
+/// A library movement to walk: by its library and its declared name, under
+/// the kinds a call binds its parameters to (`called`), or with them as the
+/// event (a movement named, not called); with no name, the library's own
+/// declarations and values alone.
+#[derive(Debug, Clone, PartialEq)]
+struct Seed {
+    path: String,
+    name: String,
+    signature: Signature,
+    called: bool,
+}
+
+/// The library files a run's catalog snapshot carries, by the path an
+/// import names, parsed under the importing program's pin: what admission
+/// walks an imported movement and its file in (the check links the same
+/// sources, `resolveFileFromSnapshot`).
+#[derive(Debug, Default)]
+pub struct Libraries(pub BTreeMap<String, ast::Program>);
+
+/// One file's walk: its declarations and values, then `start` and every
+/// movement it reaches (`movements`, the reachable ones). The root's walk
+/// stops before any body where a file statement or the entry fails every
+/// run (`stops_at_entry`); a library's file statements fail at the moment
+/// its importer binds it, which the run mirrors.
+#[allow(clippy::too_many_arguments)]
+fn admit_file<'p>(
+    walking: &Walking<'p>,
+    program: &'p ast::Program,
+    file: &DeclaringFile,
+    movements: &[&'p ast::MovementDeclaration],
+    start: Vec<Walk<'p>>,
+    has_entry: bool,
+    called: &mut Vec<(DeclaringFile, String, Vec<String>)>,
+    seeds: &mut Vec<Seed>,
+) {
+    let Walking { language_version, catalog, libraries, reasons, record_called } = *walking;
+    let entry = if has_entry { start.first().map(|w| w.movement) } else { None };
     let mut file_names = BTreeSet::new();
     let mut instances = BTreeSet::new();
-    let mut plugins = BTreeSet::new();
-    // What a plain call of each imported plugin binds, by its local name.
-    let mut plugin_binds: BTreeMap<String, PluginBinds> = BTreeMap::new();
-    for statement in &program.statements {
-        if let Statement::Import(import) = statement
-            && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
-        {
-            for name in &import.names {
-                let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
-                plugin_binds.insert(local.clone(), catalog.binds(&name.name, language_version));
-                plugins.insert(local);
-            }
-        }
-    }
-    let mut callees = Callees::of(program, &plugin_binds, language_version);
+    let plugin_binds = plugin_binds_of(program, catalog, language_version);
+    let plugins: BTreeSet<String> = plugin_binds.keys().cloned().collect();
+    let imported = imported_movements(program, walking);
+    let mut callees = Callees::of(program, &plugin_binds, language_version, imported);
     callees.models = catalog.1.map(<[String]>::to_vec);
-    let movement_names: BTreeSet<String> =
-        program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m.name.clone()) } else { None }).collect();
+    let movement_names: BTreeSet<String> = program
+        .statements
+        .iter()
+        .filter_map(|s| if let Statement::Movement(m) = s { Some(m.name.clone()) } else { None })
+        .chain(callees.imported.iter().map(|i| i.local.clone()))
+        .collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
     // `resolveCallee`: as written, or from version 3 in any letter case.
     let movement_named = |callee: &str| spelled(&movement_names, String::as_str, callee, language_version >= 3).is_some();
@@ -229,7 +325,23 @@ pub fn refusals(
                 match &import.source {
                     ImportSource::Builtin { namespace } if namespace == "adapters" || namespace == "credentials" || namespace == "plugins" => {}
                     ImportSource::Builtin { namespace } => reasons.note(format!("import_from_{namespace}")),
-                    ImportSource::File { .. } => reasons.note("import_from_file"),
+                    // A name the snapshot's file declares (the checker holds it
+                    // to an exported one); any other the link leaves unresolved,
+                    // and the run ends at the check on either engine.
+                    ImportSource::File { path } => {
+                        let declares = |name: &str| {
+                            libraries.0.get(path).is_some_and(|library| {
+                                library.statements.iter().any(|s| matches!(s, Statement::Movement(m) if m.name == name) || matches!(s, Statement::Shape(d) if d.name == name))
+                            })
+                        };
+                        if !import.names.iter().all(|n| declares(&n.name)) {
+                            reasons.note("import_from_file");
+                        }
+                        let seed = Seed { path: path.clone(), name: String::new(), signature: Vec::new(), called: false };
+                        if !seeds.contains(&seed) {
+                            seeds.push(seed);
+                        }
+                    }
                 }
                 for name in &import.names {
                     file_names.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()));
@@ -279,10 +391,20 @@ pub fn refusals(
     }
     let none = BTreeSet::new();
     let no_closures = BTreeMap::new();
+    // The file's node declarations: its own, and those it imports from a
+    // library.
     let shapes: BTreeSet<String> = program
         .statements
         .iter()
-        .filter_map(|s| if let Statement::Shape(shape) = s { Some(shape.name.clone()) } else { None })
+        .flat_map(|s| match s {
+            Statement::Shape(shape) => vec![shape.name.clone()],
+            Statement::Import(ast::ImportStatement { source: ImportSource::File { path }, names, .. }) => names
+                .iter()
+                .filter(|n| libraries.0.get(path).is_some_and(|l| l.statements.iter().any(|s| matches!(s, Statement::Shape(d) if d.name == n.name))))
+                .map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone()))
+                .collect(),
+            _ => Vec::new(),
+        })
         .collect();
     let mut values = BTreeSet::new();
     for (name, value) in &file_values {
@@ -305,6 +427,7 @@ pub fn refusals(
                 extracts: &none,
                 graphs: &none,
                 shapes: &shapes,
+                shape_aliases: &none,
                 callees: &callees,
                 unknown_calls: &[],
                 language_version,
@@ -324,7 +447,7 @@ pub fn refusals(
     // untyped one or a value fails the run there, on either engine.
     let fails_at_entry = entry.is_some_and(|e| e.params.len() != 1 || matches!(e.params[0].type_, None | Some(ParamTypeRef::Value(_))));
     if fails_at_file || fails_at_entry {
-        return Admission { reasons: reasons.0.into_inner(), called: Vec::new() };
+        return;
     }
     // A declared shape's words are read in the file's scope once an
     // extraction asks for them.
@@ -346,6 +469,7 @@ pub fn refusals(
         extracts: &none,
         graphs: &none,
         shapes: &shapes,
+        shape_aliases: &none,
         callees: &callees,
         unknown_calls: &[],
         language_version,
@@ -360,20 +484,32 @@ pub fn refusals(
             reasons.noted(file_scope.shape_words(&shape.root));
         }
     }
-    let mut called: Vec<(String, Vec<String>)> = Vec::new();
-    for walk in walks(&callees, movements, entry) {
+    let walked = walks(&callees, movements, start, seeds);
+    // A library movement a walked body names without calling it (an arm, a
+    // callback, a function handed by name) takes its parameters as the
+    // event, as a movement of the file's own that no call reaches does.
+    for movement in &walked {
+        let Some(spelled) = names_spelled(movement.movement) else { continue };
+        for import in &callees.imported {
+            let seed = Seed { path: import.path.clone(), name: import.declaration.name.clone(), signature: vec![Kind::Event; import.declaration.params.len()], called: false };
+            if spelled.contains(&crate::js::to_lower_case(&import.local)) && !seeds.iter().any(|s| s.path == seed.path && s.name == seed.name) {
+                seeds.push(seed);
+            }
+        }
+    }
+    for walk in walked {
         let movement = walk.movement;
-        if walk.called && entry.is_some() {
+        if walk.called && record_called {
             let params = movement.params.iter().zip(&walk.signature).filter(|(_, k)| **k == Kind::Event).map(|(p, _)| p.name.clone());
-            match called.iter_mut().find(|(m, _)| *m == movement.name) {
-                Some((_, known)) => {
+            match called.iter_mut().find(|(f, m, _)| f == file && *m == movement.name) {
+                Some((_, _, known)) => {
                     for param in params {
                         if !known.contains(&param) {
                             known.push(param);
                         }
                     }
                 }
-                None => called.push((movement.name.clone(), params.collect())),
+                None => called.push((file.clone(), movement.name.clone(), params.collect())),
             }
         }
         // A movement no call reaches takes its parameters as the event. One
@@ -395,6 +531,10 @@ pub fn refusals(
         let values = bound.values.union(&file_values).cloned().collect();
         let value_holders = bound.value_holders();
         let closure_holders: BTreeMap<String, Holder> = callees.closure_bodies.keys().map(|name| (name.clone(), bound.closure_call_holder(name))).collect();
+        // A shape declared in the body is hoisted for it, as the file's are
+        // for the file.
+        let body_shapes: BTreeSet<String> = shapes.iter().cloned().chain(crate::code::shapes_declared_in(&movement.body)).collect();
+        let shape_aliases = if language_version >= 3 { shape_aliases_in(&movement.body, &body_shapes) } else { BTreeSet::new() };
         let names = Names {
             reasons: &reasons,
             events: &events,
@@ -412,7 +552,8 @@ pub fn refusals(
             plugin_binds: &plugin_binds,
             extracts: &bound.extracts,
             graphs: &bound.graphs,
-            shapes: &shapes,
+            shapes: &body_shapes,
+            shape_aliases: &shape_aliases,
             callees: &callees,
             unknown_calls: &bound.unknown_calls,
             language_version,
@@ -424,7 +565,48 @@ pub fn refusals(
         };
         names.body(&movement.body, Within::Body);
     }
-    Admission { reasons: reasons.0.into_inner(), called }
+}
+
+/// The names a body binds, once and only once anywhere in it, to the bare
+/// name of a shape (or of another such name): from version 3 each is the
+/// shape itself (`aliasedNodeBinding`). A name bound more than once is no
+/// alias here (`name_rebound` refuses it anyway).
+fn shape_aliases_in(body: &[Statement], shapes: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut assigned: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    fn collect(body: &[Statement], assigned: &mut BTreeMap<String, Vec<String>>) {
+        for statement in body {
+            match statement {
+                Statement::Assign(assign) => {
+                    let raw = match &assign.value {
+                        RValue::Expr { expr } => crate::js::trim(&expr.raw).to_string(),
+                        _ => String::new(),
+                    };
+                    assigned.entry(assign.name.clone()).or_default().push(raw);
+                }
+                Statement::If(statement) => {
+                    statement.arms.iter().for_each(|arm| collect(&arm.body, assigned));
+                    if let Some(arm) = &statement.else_arm {
+                        collect(&arm.body, assigned);
+                    }
+                }
+                Statement::Block(statement) => collect(&statement.block.body, assigned),
+                _ => {}
+            }
+        }
+    }
+    collect(body, &mut assigned);
+    let mut aliases = BTreeSet::new();
+    loop {
+        let found: Vec<String> = assigned
+            .iter()
+            .filter(|(name, values)| !aliases.contains(*name) && values.len() == 1 && (shapes.contains(&values[0]) || aliases.contains(&values[0])))
+            .map(|(name, _)| name.clone())
+            .collect();
+        if found.is_empty() {
+            return aliases;
+        }
+        aliases.extend(found);
+    }
 }
 
 /// What admission found: why this engine does not run the program (empty
@@ -433,7 +615,7 @@ pub fn refusals(
 /// event's dated fields through them).
 pub struct Admission {
     pub reasons: Vec<String>,
-    pub called: Vec<(String, Vec<String>)>,
+    pub called: Vec<(DeclaringFile, String, Vec<String>)>,
 }
 
 /// One movement as admission walks it: its parameters bound as a call
@@ -450,17 +632,21 @@ struct Walk<'p> {
 /// transitively, and every other movement the entry reaches with its
 /// parameters as the event — in source order, a movement's signatures in
 /// the order met.
-fn walks<'p>(callees: &'p Callees<'p>, movements: &[&'p ast::MovementDeclaration], entry: Option<&'p ast::MovementDeclaration>) -> Vec<Walk<'p>> {
+fn walks<'p>(callees: &'p Callees<'p>, movements: &[&'p ast::MovementDeclaration], start: Vec<Walk<'p>>, seeds: &mut Vec<Seed>) -> Vec<Walk<'p>> {
     let as_event = |m: &ast::MovementDeclaration| vec![Kind::Event; m.params.len()];
-    let mut walks: Vec<Walk<'p>> = match entry {
-        Some(entry) => vec![Walk { movement: entry, signature: as_event(entry), called: false }],
-        None => movements.iter().map(|m| Walk { movement: m, signature: as_event(m), called: false }).collect(),
-    };
+    let mut walks: Vec<Walk<'p>> = start;
     let mut next = 0;
     while next < walks.len() {
         let bound = callees.bound(walks[next].movement, &walks[next].signature, Vec::new());
-        for (callee, signature) in bound.calls {
-            let Some(movement) = callees.movement(&callee) else { continue };
+        for (movement, signature) in bound.calls {
+            // A library's movement is walked in its own file.
+            if let Some(import) = callees.imported_as(movement) {
+                let seed = Seed { path: import.path.clone(), name: movement.name.clone(), signature, called: true };
+                if !seeds.contains(&seed) {
+                    seeds.push(seed);
+                }
+                continue;
+            }
             if !walks.iter().any(|w| w.called && std::ptr::eq(w.movement, movement) && w.signature == signature) {
                 walks.push(Walk { movement, signature, called: true });
             }
@@ -665,8 +851,92 @@ fn file_holders(program: &ast::Program) -> BTreeMap<String, Holder> {
     holders
 }
 
+/// A movement a file imports from a library, by the name the file binds.
+struct Imported<'p> {
+    local: String,
+    path: String,
+    declaration: &'p ast::MovementDeclaration,
+    /// The `type`s its library declares: what its parameters' refinements name.
+    types: BTreeSet<String>,
+    /// Its library, and what the library's own plugin imports and file
+    /// imports bind: what its body's names are read against.
+    library: &'p ast::Program,
+    plugin_binds: BTreeMap<String, PluginBinds>,
+    nested: Vec<Imported<'p>>,
+}
+
+impl Clone for Imported<'_> {
+    fn clone(&self) -> Self {
+        Imported {
+            local: self.local.clone(),
+            path: self.path.clone(),
+            declaration: self.declaration,
+            types: self.types.clone(),
+            library: self.library,
+            plugin_binds: self.plugin_binds.clone(),
+            nested: self.nested.clone(),
+        }
+    }
+}
+
+/// What a plain call of each plugin a file imports binds, by its local name.
+fn plugin_binds_of(program: &ast::Program, catalog: &Plugins<'_>, language_version: u32) -> BTreeMap<String, PluginBinds> {
+    let mut plugin_binds = BTreeMap::new();
+    for statement in &program.statements {
+        if let Statement::Import(import) = statement
+            && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
+        {
+            for name in &import.names {
+                plugin_binds.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), catalog.binds(&name.name, language_version));
+            }
+        }
+    }
+    plugin_binds
+}
+
+/// Each movement `program` imports from a library the snapshot carries.
+fn imported_movements<'p>(program: &ast::Program, walking: &Walking<'p>) -> Vec<Imported<'p>> {
+    imported_through(program, walking, &[])
+}
+
+/// `imported_movements`, below the libraries `above` (an import cycle,
+/// which the link refuses, is not followed round).
+fn imported_through<'p>(program: &ast::Program, walking: &Walking<'p>, above: &[&str]) -> Vec<Imported<'p>> {
+    let libraries = walking.libraries;
+    let mut imported = Vec::new();
+    for statement in &program.statements {
+        let Statement::Import(ast::ImportStatement { source: ImportSource::File { path }, names, .. }) = statement else { continue };
+        if above.contains(&path.as_str()) {
+            continue;
+        }
+        let Some(library) = libraries.0.get(path) else { continue };
+        let types: BTreeSet<String> = library.statements.iter().filter_map(|s| if let Statement::Type(t) = s { Some(t.name.clone()) } else { None }).collect();
+        for name in names {
+            let declaration = library.statements.iter().find_map(|s| match s {
+                Statement::Movement(m) if m.name == name.name => Some(m),
+                _ => None,
+            });
+            if let Some(declaration) = declaration {
+                imported.push(Imported {
+                    local: name.alias.clone().unwrap_or_else(|| name.name.clone()),
+                    path: path.clone(),
+                    declaration,
+                    types: types.clone(),
+                    library,
+                    plugin_binds: plugin_binds_of(library, walking.catalog, walking.language_version),
+                    nested: imported_through(library, walking, &[above, &[path.as_str()]].concat()),
+                });
+            }
+        }
+    }
+    imported
+}
+
 struct Callees<'p> {
     movements: Vec<&'p ast::MovementDeclaration>,
+    /// The movements the file imports from libraries: callees too, walked
+    /// in their own files.
+    imported: Vec<Imported<'p>>,
     plugin_binds: &'p BTreeMap<String, PluginBinds>,
     /// The `type`s the file declares: a parameter typed by one takes a value.
     types: BTreeSet<String>,
@@ -692,7 +962,7 @@ struct Callees<'p> {
 }
 
 impl<'p> Callees<'p> {
-    fn of(program: &'p ast::Program, plugin_binds: &'p BTreeMap<String, PluginBinds>, language_version: u32) -> Callees<'p> {
+    fn of(program: &'p ast::Program, plugin_binds: &'p BTreeMap<String, PluginBinds>, language_version: u32, imported: Vec<Imported<'p>>) -> Callees<'p> {
         let mut movements = Vec::new();
         let mut types = BTreeSet::new();
         let mut file_scope = BTreeSet::new();
@@ -720,6 +990,7 @@ impl<'p> Callees<'p> {
         let file_holders = file_holders(program);
         let mut callees = Callees {
             movements,
+            imported,
             plugin_binds,
             types,
             file_scope,
@@ -778,9 +1049,14 @@ impl<'p> Callees<'p> {
         spellings.next().is_none().then_some(name.as_str())
     }
 
-    /// The movement declared as `name`, exactly.
+    /// The movement declared or imported as `name`, exactly.
     fn movement(&self, name: &str) -> Option<&'p ast::MovementDeclaration> {
-        self.movements.iter().copied().find(|m| m.name == name)
+        self.movements.iter().copied().find(|m| m.name == name).or_else(|| self.imported.iter().find(|i| i.local == name).map(|i| i.declaration))
+    }
+
+    /// The import `movement` is, when it is a library's.
+    fn imported_as(&self, movement: &ast::MovementDeclaration) -> Option<&Imported<'p>> {
+        self.imported.iter().find(|i| std::ptr::eq(i.declaration, movement))
     }
 
     /// `resolveCallee` (run.ts `calleeName`): the movement a call names —
@@ -789,7 +1065,9 @@ impl<'p> Callees<'p> {
     /// binds it).
     fn callee(&self, written: &str, bound_in_body: bool) -> Option<&'p ast::MovementDeclaration> {
         let bound = bound_in_body || self.file_scope.contains(written);
-        spelled(&self.movements, |m| &m.name, written, self.language_version >= 3 && !bound).copied()
+        let named: Vec<(&str, &'p ast::MovementDeclaration)> =
+            self.movements.iter().map(|m| (m.name.as_str(), *m)).chain(self.imported.iter().map(|i| (i.local.as_str(), i.declaration))).collect();
+        spelled(&named, |(name, _)| name, written, self.language_version >= 3 && !bound).map(|(_, m)| *m)
     }
 
     /// `isValueParam`. The checker holds every argument to a value
@@ -798,17 +1076,23 @@ impl<'p> Callees<'p> {
     /// through `COALESCE` or `MULTI`, so every argument bound to one is held
     /// to it as well (`call_arg_record`).
     fn takes_value(&self, param: &ast::MovementParam) -> bool {
-        self.is_value_type(param.type_.as_ref())
+        // An imported movement's parameter names its own library's `type`s.
+        let types = self.imported.iter().find(|i| i.declaration.params.as_ptr_range().contains(&std::ptr::from_ref(param))).map_or(&self.types, |i| &i.types);
+        self.is_value_type_in(param.type_.as_ref(), types)
     }
 
     /// Whether a declared type is a value's (no record, no walk).
     fn is_value_type(&self, type_: Option<&ParamTypeRef>) -> bool {
+        self.is_value_type_in(type_, &self.types)
+    }
+
+    fn is_value_type_in(&self, type_: Option<&ParamTypeRef>, types: &BTreeSet<String>) -> bool {
         match type_ {
             None => false,
             Some(ParamTypeRef::Value(_)) => true,
             Some(ParamTypeRef::Name(type_)) if type_.hops_raw.is_some() => false,
             Some(ParamTypeRef::Name(type_)) => {
-                movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some() || self.types.contains(&type_.graph)
+                movement_parser::catalog::helpers::parse_field_type_name(Some(&type_.graph)).is_some() || types.contains(&type_.graph)
             }
         }
     }
@@ -844,6 +1128,13 @@ impl<'p> Callees<'p> {
     /// returns share, or `None` where they differ or a recursion's cycle
     /// leaves it open.
     fn returns(&'p self, movement: &ast::MovementDeclaration, signature: &[Kind], stack: &[(String, Signature)]) -> (Option<Kind>, Holder) {
+        // A library's movement hands back what its body does, read in its
+        // own file.
+        if let Some(import) = self.imported_as(movement) {
+            let mut library = Callees::of(import.library, &import.plugin_binds, self.language_version, import.nested.clone());
+            library.models = self.models.clone();
+            return library.returns(movement, signature, &[]);
+        }
         let key = (movement.name.clone(), signature.to_vec());
         if stack.contains(&key) {
             // A recursion: what it hands back is what it declares, when it
@@ -895,7 +1186,7 @@ struct Bound<'c> {
     /// The calls being worked out above this body (a recursion's cycle).
     stack: Vec<(String, Signature)>,
     /// Each call the body makes, by callee and what it passes.
-    calls: Vec<(String, Signature)>,
+    calls: Vec<(&'c ast::MovementDeclaration, Signature)>,
     /// The kind each `return` of the body (not of a block's iteration)
     /// hands back; `None` where it is not known.
     returns: Vec<Option<Kind>>,
@@ -1084,7 +1375,7 @@ impl<'c> Bound<'c> {
                     }
                 }
                 for signature in signatures {
-                    self.calls.push((movement.name.clone(), signature));
+                    self.calls.push((movement, signature));
                 }
             }
         }
@@ -1562,7 +1853,7 @@ impl<'c> Bound<'c> {
         let mut returned: Option<Option<Kind>> = None;
         let mut holder: Option<Holder> = None;
         for signature in signatures {
-            self.calls.push((declaration.name.clone(), signature.clone()));
+            self.calls.push((declaration, signature.clone()));
             let (kind, held) = callees.returns(declaration, &signature, &self.stack);
             returned = Some(match returned {
                 None => kind,
@@ -2007,6 +2298,9 @@ struct Names<'n> {
     graphs: &'n BTreeSet<String>,
     /// The node declarations the file makes.
     shapes: &'n BTreeSet<String>,
+    /// Names a body binds to a shape's name (`D = Detail`, from version 3 a
+    /// second name for the shape itself, `aliasedNodeBinding`).
+    shape_aliases: &'n BTreeSet<String>,
     /// The movements as callees: what a call's arguments bind.
     callees: &'n Callees<'n>,
     /// The calls whose arguments or value are of a kind not known.
@@ -2111,7 +2405,12 @@ impl Names<'_> {
             // written handles, as the TypeScript's `resolveEdgeEndpoint` says.
             Statement::Unlink(_) => Ok(()),
             Statement::Delete(statement) => {
-                if self.handles.contains(&statement.name) || self.landings.contains(&statement.name) { Ok(()) } else { refuse("delete_not_record") }
+                // What a node's edge holds is the record it is (a system's,
+                // deleted in its system), or a run-built node, which the
+                // TypeScript refuses as it refuses any binding that is no
+                // record position (`resolvePositionWriteTarget`), mirrored.
+                let held = self.handles.contains(&statement.name) || self.landings.contains(&statement.name) || self.members.contains(&statement.name);
+                if held { Ok(()) } else { refuse("delete_not_record") }
             }
             Statement::Await(statement) => sleep(&statement.r#await.source),
             Statement::Combinator(statement) => self.combinator(&statement.combinator, within),
@@ -2127,6 +2426,9 @@ impl Names<'_> {
             }
             Statement::Block(statement) => self.block(&statement.block),
             Statement::Error(statement) => self.slot(&statement.message),
+            // A node declaration in a body names a shape for the whole body
+            // (hoisted); its words read the body's scope.
+            Statement::Shape(shape) => self.shape_words(&shape.root),
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             Statement::Call(call) if self.callee(&call.callee).is_some() => self.call(call),
             Statement::Call(call) if self.calls_closure(&call.callee) => self.closure_call(call),
@@ -2908,24 +3210,22 @@ impl Names<'_> {
     /// too — a bare name there reads the entity's field of that name first,
     /// else a value the body binds.
     /// The extraction call (crate::extract::call): its content walked as an
-    /// expression; its shape a declaration of the file, or one written in
-    /// place whose words are written down and whose base is the file's
-    /// (the words of a shape written in place read the body's scope, which
-    /// the spec builder does not); its settings read clean.
+    /// expression; its shape a declaration in scope (or a name bound to one,
+    /// from version 3), or one written in place, whose words read the body's
+    /// scope and whose base is one in scope; its settings read clean.
     fn extract_call(&self, call: &ast::ExtractCallExpression) -> Admitted {
         match &call.shape {
+            ast::ExtractCallShape::Named { name, .. } if self.shape_aliases.contains(name) => {}
             ast::ExtractCallShape::Named { name, .. } if !self.shapes.contains(name) || self.binds_in_body(name) => return refuse("extract_call_shape"),
+            // Written in place: a declaration of the calling body's, its words
+            // read in the body's scope (walked here as the body's slots), its
+            // base one the body sees.
             ast::ExtractCallShape::Inline { declaration, .. } => {
-                fn written_down(node: &ast::ShapeNode) -> bool {
-                    let literal = |slot: &Option<ExprSlot>| {
-                        slot.as_ref().is_none_or(|slot| matches!(lowered(&slot.raw), Ok(Expression::Static { .. })))
-                    };
-                    literal(&node.description) && node.fields.iter().all(|f| literal(&f.description)) && node.children.iter().all(written_down)
-                }
                 let based = declaration.extends.as_ref().is_none_or(|base| self.shapes.contains(&base.name) && !self.binds_in_body(&base.name));
-                if !written_down(&declaration.root) || !based {
+                if !based {
                     return refuse("extract_call_shape");
                 }
+                self.shape_words(&declaration.root)?;
             }
             _ => {}
         }
@@ -3084,7 +3384,7 @@ impl Names<'_> {
         match &write.target {
             // One record at the convergence of its paths, each a linked
             // write's (`resolveTupleWriteTarget`).
-            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write"))?,
+            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "write", false))?,
             // `write m.k { … }`: the record a map holds, bound for the write
             // alone (run.ts `bindTargetRoots`); a root that is no member
             // path fails, on either engine.
@@ -3097,7 +3397,8 @@ impl Names<'_> {
             // handle moved on to it from version 4); anything else fails as
             // the TypeScript's `executePositionWrite` fails it.
             WriteTarget::Position { root: PathRoot::Name { .. }, .. } => {}
-            WriteTarget::Linked { path, .. } => self.target_path(path, "write")?,
+            // A linked write may be a shape write (`target_path`).
+            WriteTarget::Linked { path, .. } => self.target_path(path, "write", true)?,
         }
         for clause in &write.unique_by {
             unique_clause(&clause.predicate.raw)?;
@@ -3140,7 +3441,8 @@ impl Names<'_> {
 
     /// A write's or a match's linked target: one edge off an instance, a
     /// handle, the event or a hop alias, its WHERE scoped at the candidate.
-    fn target_path(&self, path: &PathHead, verb: &str) -> Admitted {
+    /// `shape_write`: a linked write's, which a declared shape may root.
+    fn target_path(&self, path: &PathHead, verb: &str, shape_write: bool) -> Admitted {
         let bound;
         let root = match &path.root {
             Some(PathRoot::Name { name }) => name,
@@ -3155,10 +3457,11 @@ impl Names<'_> {
         };
         // Rooted at any name: the record it holds parents the write (or the
         // engine is the adapter, into a node the run built), and anything
-        // else fails as the TypeScript's `linkedPathGraph` fails it — but a
-        // declared shape's name is a shape write (an in-memory position),
-        // which this engine does not make.
-        if self.shapes.contains(root) && !self.binds_in_body(root) {
+        // else fails as the TypeScript's `linkedPathGraph` fails it. A
+        // declared shape's name is a shape write: an in-memory position of
+        // its type (`materializeShapeWrite`), its fields held to what a
+        // system's write takes; a match against one is not made.
+        if self.shapes.contains(root) && !self.binds_in_body(root) && !shape_write {
             return refuse(format!("{verb}_root_not_held"));
         }
         match edge_shape(path) {
@@ -3179,7 +3482,7 @@ impl Names<'_> {
     /// a system, keyed `unique by` clauses, field values the evaluator runs.
     fn match_(&self, m: &ast::MatchExpression) -> Admitted {
         match &m.target {
-            WriteTarget::Linked { path, .. } => self.target_path(path, "match")?,
+            WriteTarget::Linked { path, .. } => self.target_path(path, "match", false)?,
             WriteTarget::Tuple { .. } => return refuse("match_tuple"),
             WriteTarget::Position { .. } => return refuse("match_position"),
         }
@@ -3226,8 +3529,14 @@ impl Names<'_> {
         // as it is: what a node's edge holds, a walked or extracted record too.
         let copied = |name: &str| records(name) || self.members.contains(name) || self.landings.contains(name) || self.extracts.contains(name);
         for spread in literal.spreads.iter().flatten() {
-            if spread.path.is_some() {
-                return refuse("node_spread_path");
+            // `...m.k`: what the map holds under the keys, bound as `x = m.k`
+            // binds it (`spreadSourceBinding`), copied as a record by the
+            // checker's plan or spread as a map.
+            if let Some(path) = &spread.path {
+                if !self.values.contains(&path.root) {
+                    return refuse("node_spread_path");
+                }
+                continue;
             }
             if !self.values.contains(&spread.source) && !copied(&spread.source) {
                 return refuse("node_spread_source");
@@ -4296,7 +4605,7 @@ mod tests {
     fn refusal(program: &ast::Program, language_version: u32, catalog: &Plugins<'_>) -> Option<String> {
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let entry = entry_of(&declared, None, language_version);
-        refusals(program, &reachable(program, None, language_version), entry, language_version, catalog).reasons.into_iter().next()
+        refusals(program, &reachable(program, None, language_version), entry, language_version, catalog, &Libraries::default()).reasons.into_iter().next()
     }
 
     const PRELUDE: &str = "import { email, attio } from adapters\nimport { dealflow_inbox, acme_main } from credentials\ninbox = email(credentials: dealflow_inbox)\ncrm = attio(credentials: acme_main)\n";
@@ -4317,7 +4626,7 @@ mod tests {
         let program = movement_parser::stmt::parse_program(source, language_version, false).expect("the test's program parses");
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let picked = entry_of(&declared, Some(entry), language_version);
-        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None, None)).reasons
+        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None, None), &Libraries::default()).reasons
     }
 
     /// A movement nothing the entry reaches names is not walked: what it
@@ -4419,7 +4728,7 @@ mod tests {
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
             ("  g = graph { owner: msg }", "node_event_entry"),
             ("  g = graph { ...msg }", "node_spread_source"),
-            ("  held = { k: 1 }\n  g = graph { ...held.k }", "node_spread_path"),
+            ("  g = graph { ...msg.k }", "node_spread_path"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
@@ -4474,11 +4783,8 @@ mod tests {
     /// and the scan rules the parser mirrors are admitted.
     #[test]
     fn refuses_mains_new_constructs_by_name_and_admits_its_scan_rules() {
-        for (body, reason) in [
-            ("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }", "node_spread_path"),
-        ] {
-            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
-        }
+        // A member of a value spread into a graph runs since PLAN-08A group E.
+        assert_eq!(refused("  held = { k: { name: \"a\" } }\n  g = graph { ...held.k }"), None);
         assert_eq!(
             file(&format!("import {{ fetch_url }} from plugins\n{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  x = fetch_url(url: fetch_url(url: msg.`text`))\n}}")).as_deref(),
             Some("plugin_call")

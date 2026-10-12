@@ -22,6 +22,7 @@ import { callEvalExpression, openEngineSegment } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
+import { chatModelNames } from '../../lib/models/registry';
 import { RunCostCapExceeded } from '../../lib/run_cost';
 import { extractionTierAssignments } from './ai_tiers';
 import { CallDepthExceeded, maxCallDepth } from './call_depth';
@@ -735,6 +736,9 @@ function segmentInput(
       // What this deployment buys for each extraction tier: read here so the
       // engine reads no environment; the built-in table where it names none.
       extractionTiers: extractionTierAssignments(),
+      // The chat models the model registry knows: an extraction call's
+      // `model` is held to them, as `parseChatModelName` holds it.
+      chatModels: [...chatModelNames],
     },
     'the segment input',
   );

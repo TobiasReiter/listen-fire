@@ -87,6 +87,27 @@ const LIBRARY = [
   '}',
 ].join('\n');
 
+/** A library with its own instance, value, `type` and shape, and a function
+ *  that writes through them, nests a call, and hands back a value. */
+const NOTES_LIBRARY = [
+  'import { attio } from adapters',
+  'import { crm_cred } from credentials',
+  'crm = attio(credentials: crm_cred)',
+  'prefix = "lib"',
+  'type Mood = <"calm" | "loud">',
+  'export node Note {',
+  '  body: <text>',
+  '}',
+  'export function note(n: <Note>, tag: <text>) {',
+  '  copy = FIRST(MAP([n], (v) => {',
+  '    g = graph { ...v }',
+  '    return g',
+  '  }))',
+  '  write crm-[:notes]-> { body: "${prefix}:${tag}:${copy.body}" }',
+  '  return UPPER(copy.body)',
+  '}',
+].join('\n');
+
 const COMPANY_DECL = [
   'node Company: "each company named in this message" {',
   '  name: <text> "the company\'s name"',
@@ -200,7 +221,7 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  write crm-[:notes]-> { body: CURRENCY.PARSE(msg.`text`) }', checks: false }),
       () => ({ body: '  x = TEXT.NOPE(msg.`text`)', checks: false }),
-      () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }', routes: 'declined' }),
+      () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  write crm-[:notes]-> { body: "${COUNT(held.entries)} ${FIRST(held.entries).name}" }', routes: 'whole' }),
     ],
   },
   {
@@ -224,8 +245,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'import_from_file',
-    routes: 'refused',
-    note: "a library file's imports: needs the file scope from the check's link (imported movements and shapes, libraryShape/shapeChain) and calls into library movements",
+    routes: 'whole',
+    note: "closed in PLAN-08A group F: a library's movements run as callees in the library's own scope, its shapes' words, types and bases read in the file that wrote them; a file the snapshot does not carry the link refuses at the check",
     programs: [
       () => ({
         file: `import { Deal } from "lib/deals"\n${m('  d = extract from [msg.`text`] {\n    node deal: <Deal>\n  }\n  d-[x:deal]-> {\n    write crm-[:notes]-> { body: x.`name` }\n  }')}`,
@@ -236,6 +257,15 @@ export const PATTERNS: Pattern[] = [
         file: `import { Deal } from "lib/deals"\n${m(`  d = extract from [msg.\`subject\`] {\n    node deal: <Deal> "the deal ${pick(WORDS)}"\n  }`)}`,
         files: { 'lib/deals': { source: LIBRARY } },
       }),
+      (pick) => ({
+        file: `import { note as jot } from "lib/notes"\n${m(`  jot(n: node { body: msg.\`subject\` }, tag: "${pick(WORDS)}")`)}`,
+        files: { 'lib/notes': { source: NOTES_LIBRARY } },
+      }),
+      () => ({
+        file: `import { note } from "lib/notes"\n${m('  r = note(n: node { body: msg.`text` }, tag: "x")\n  write crm-[:notes]-> { body: r }')}`,
+        files: { 'lib/notes': { source: NOTES_LIBRARY } },
+      }),
+      () => ({ file: `import { Deal } from "lib/missing"\n${m('  x = 1')}`, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -526,11 +556,16 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'statement:<kind>',
-    routes: 'refused',
-    note: 'any other statement, by its kind: a shape declared in a body (`statement:shape`); needs body-local shape declarations, and their park (`resume_state_kind:localShape`)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A group F: a shape declared in a body (`statement:shape`) is hoisted for the body, its words and base read there; any other statement kind in a body the parser or the checker refuses',
     programs: [
       () => ({ body: '  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: msg.`subject` }' }),
       () => ({ body: '  node Lead {\n    who: <text>\n  }\n  write crm-[:notes]-> { body: "lead" }' }),
+      (pick) => ({ body: `  t = graph<Tag> { label: "${pick(WORDS)}" }\n  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: t.label }` }),
+      (pick) => ({
+        body: `  word = "${pick(WORDS)}"\n  node Tag: "a tag, \${word}" {\n    label: <text> "its label"\n  }\n  d = extract from [msg.\`subject\`] {\n    node tag: <Tag>\n  }\n  d-[x:tag]-> {\n    write crm-[:notes]-> { body: x.label }\n  }`,
+        replies: [{ 'x:extract_result#1': [{ tag: [{ label: said('Infra') }] }] }],
+      }),
     ],
   },
   {
@@ -554,11 +589,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_call_shape',
-    routes: 'refused',
-    note: "an extraction call whose shape is written in place with words worked out (read in the body's scope, which the spec builder does not), or names a shape the body rebinds: needs a shape's words read in the body's scope",
+    routes: 'whole',
+    note: "closed in PLAN-08A group F′: a shape written in place reads its words in the body's scope; a name bound to a shape is the shape",
     programs: [
       () => ({ body: '  found = extract([msg.`text`], node Lead: "a lead about ${msg.`subject`}" { who: <text> "the person" })\n  write crm-[:notes]-> { body: "${COUNT(found)}" }' }),
       (pick) => ({ body: `  found = extract([msg.\`text\`], node Lead: "a lead" { who: <text> "who wrote \${msg.\`subject\`}" })\n  write crm-[:notes]-> { body: "${pick(WORDS)}" }` }),
+      () => ({ file: `${COMPANY_DECL}\n${m('  C = Company\n  found = extract([msg.`text`], C)\n  write crm-[:notes]-> { body: "${COUNT(found)}" }')}`, replies: [{ records: [] }] }),
     ],
   },
   {
@@ -573,9 +609,9 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'extract_call_model',
     routes: 'refused',
-    note: "an extraction call naming a model the catalog does not list: the TypeScript holds it to the model registry, which this engine does not hold; needs the registry's chat models as run input",
+    note: "an extraction call naming a model the registry does not hold as a chat model (the TypeScript's parseChatModelName throws a plain error); a registry chat model runs since PLAN-08A group F′ (`chatModels`, a run input)",
     programs: [
-      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }] }),
+      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }], routes: 'whole' }),
       (pick) => ({ file: `${COMPANY_DECL}\n${m(`  one = extractOne([msg.\`subject\`], Company, { model: 'claude-sonnet-4-6', effort: '${pick(['low', 'medium'])}' })`)}` }),
     ],
   },
@@ -679,8 +715,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'delete_not_record',
-    routes: 'refused',
-    note: "`delete x` where x is not a write's handle or a hop alias (what a node's edge holds): needs a delete of what a node's edge holds",
+    routes: 'whole',
+    note: "closed for what a node's edge holds in PLAN-08A group E: a system's record deleted in its system, a run-built node failed as resolvePositionWriteTarget fails it; the event or a value stays refused",
     programs: [
       () => ({ body: '  g = graph { files: msg-[:files]-> }\n  g-[f:files]-> {\n    delete f\n  }' }),
       () => ({ file: `node Entry {\n  name: <text>\n}\n${m('  d = node { entries: <Entry> }\n  e = write d-[:entries]-> { name: "a" }\n  delete e')}` }),
@@ -715,11 +751,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'write_root_not_held',
-    routes: 'refused',
-    note: "a linked write rooted at a shape the file declares (`write Note-[:item]-> { … }`): needs the TypeScript's root resolution",
+    routes: 'whole',
+    note: "closed in PLAN-08A group E: a linked write rooted at a declared shape is the retired shape write (materializeShapeWrite), an in-memory position of the shape's type",
     programs: [
       () => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m('  persist(n: write Note-[:item]-> { title: msg.`subject` })')}`, movementName: 'm' }),
       (pick) => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m(`  persist(n: write Note-[:item]-> { title: "${pick(NAMES)}" })`)}`, movementName: 'm' }),
+      () => ({ file: `node Note {\n  title: <text>\n}\n${m('  n = write Note-[:item]-> { unique by (`title`), title: msg.`subject` }')}` }),
     ],
   },
   {
@@ -770,11 +807,12 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'node_spread_path',
-    routes: 'refused',
-    note: '`...m.k` in a graph literal: needs spreads of map members',
+    routes: 'whole',
+    note: "closed for a value's member in PLAN-08A group E: what the map holds under the keys (spreadSourceBinding), a map spread or a record copied by the checker's plan",
     programs: [
       () => ({ body: '  held = { k: { name: "a" } }\n  g = graph { ...held.k }' }),
       () => ({ body: '  held = { k: { name: msg.`subject` } }\n  g = graph { ...held.k, extra: 1 }' }),
+      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    g = graph { ...held.k }\n    write crm-[:notes]-> { body: g.`name` }\n  }' }),
     ],
   },
   {
@@ -1052,10 +1090,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'function:<id>',
-    routes: 'refused',
-    note: "CHUNKS, or a namespaced member this engine lacks: needs CHUNKS's cut and density estimate ported (their patterns need \\p{Lu} and case-insensitive matching the engine's regex lacks); a closure's, a plugin's or an extraction's call inside an expression runs since chunk 7A Task 6 (nested_call)",
+    routes: 'whole',
+    note: "CHUNKS runs since PLAN-08A group F′ (its cut, and the entities estimate on the engine's own letter tables); a closure called in another letter case runs where the program spells it one way; several case-variant spellings stay refused by name",
     programs: [
       (pick) => ({ body: `  pieces = CHUNKS("aaaa bbbb cccc dddd eeee ffff", { size: ${pick([8, 12])} })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+      (pick) => ({ body: `  pieces = CHUNKS("Acme Corp met Example Ventures\\n- one\\n- two\\nsee acme.com", { entities: ${pick([1, 2])}, overlap: 3 })\n  write crm-[:notes]-> { body: "\${COUNT(pieces)}" }` }),
+      () => ({ body: '  pieces = CHUNKS(msg.`missing`, { size: 10 })\n  write crm-[:notes]-> { body: "${COUNT(pieces)}" }' }),
+      () => ({ body: '  pieces = CHUNKS(msg.`subject`, { size: 0 })\n  write crm-[:notes]-> { body: "x" }' }),
       // A closure called in another letter case (from version 3) is its
       // call, nested too (PLAN-08A Task 2, `function:inc`).
       (pick) => ({ body: `  inc = (v: <number>) => v + ${pick([1, 2])}\n  c = INC(inc(1)) * 10\n  write crm-[:notes]-> { body: "\${c}" }`, routes: 'whole' }),
@@ -1230,8 +1271,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'resume_state_kind:localShape',
-    routes: 'refused',
-    note: 'a parked state holding a shape declared in a body: needs its rehydration (serialize.ts rehydrate)',
+    routes: 'whole',
+    note: 'closed in PLAN-08A group F: a shape declared in a body, held across a park, is rebuilt from its declaration where the program writes it',
     programs: [
       () => ({ body: '  node Note {\n    title: <text>\n  }\n  await sleep(1h)\n  d = extract from [msg.`text`] {\n    node note: <Note>\n  }' }),
       () => ({ body: '  node Tag {\n    label: <text>\n  }\n  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }' }),
@@ -1240,7 +1281,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'resume_state_kind:blockMeta',
     routes: 'refused',
-    note: "a parked state holding a block's meta edges bound as a name: needs its rehydration (serialize.ts rehydrate); no program parks holding one, so the state is made",
+    note: "a parked state holding a block's meta edges bound as a name: the TypeScript builds no such binding (its builders are called nowhere), so the state is made; kept refused by name under Henry's ruling (needs a block-meta binding kind and its reads)",
     programs: [
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => withBinding(state, 'meta', { kind: 'blockMeta', edges: [] }) }),
       () => ({ body: '  await sleep(1h)\n  x = 1', resume: (state) => withBinding(state, 'm2', { kind: 'blockMeta', edges: [] }) }),
@@ -1287,8 +1328,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'condition_does_not_lower',
-    routes: 'declined',
-    note: "a condition this engine's lowering misses and the checker passes (a field read off a fold's answer): declined after the check; needs the lowering's coverage",
+    routes: 'whole',
+    note: "a field read off a call's answer in a condition runs since PLAN-08A group F′: the call bound to a name first, as the TypeScript stages it (hoistingMemberReads); no other condition the checker passes is known to miss the lowering",
     programs: [
       () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  if FIRST(held.entries).name == "Acme" {\n    write crm-[:notes]-> { body: "acme" }\n  }' }),
       () => ({ body: '  rows = crm-[c:companies]-> {\n    return c\n  }\n  held = { entries: rows }\n  if LAST(held.entries).name != "" {\n    x = 1\n  }' }),

@@ -239,7 +239,7 @@ impl Run<'_> {
                     runtime: None,
                 }),
                 Some(Binding::Movement(declared)) => {
-                    let (declaration, declared_at) = self.declaration(&declared)?;
+                    let (declaration, path) = self.declaration(&declared)?;
                     if !declaration.params.is_empty() {
                         return Err(Stop::Thrown(Failure::engine(
                             "MOVENG_RUNTIME",
@@ -251,8 +251,8 @@ impl Run<'_> {
                     }
                     // A movement runs against the file scope it was declared
                     // in, not the one that named it here.
-                    let file = self.file_scope.borrow().clone().map(|file| file.capture());
-                    Ok(Arm { body: Rc::new(declaration.body), path: format!("/statements/{declared_at}/body"), captured: file, name: Some(name.clone()), runtime: None })
+                    let file = self.scope_of_file(&declared.file).map(|file| file.capture());
+                    Ok(Arm { body: Rc::new(declaration.body), path, captured: file, name: Some(name.clone()), runtime: None })
                 }
                 other => {
                     let what = other.as_ref().map_or_else(|| "not in scope".to_string(), crate::record::describe);

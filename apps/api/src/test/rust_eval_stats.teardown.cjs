@@ -129,7 +129,18 @@ const path = require('node:path');
 // a returned block, 2026-10-12) lifts v3 32: v3 2204. PLAN-08A group D (a
 // head of many hops, a `_resources` head, a pick of many hops, a hop off a
 // kept walk, 2026-10-12) lifts v1 5, v2 7, v3 11: v1 1030, v2 1260, v3 2215.
-const RAN_WHOLE_FLOOR = { v1: 1030, v2: 1260, v3: 2215 };
+// PLAN-08A group F (the file scope: an imported library's movements called
+// in the library's own scope, its shapes' words and types read there; a
+// shape declared in a body, and parked, 2026-10-12) lifts v2 7, v3 11: v2
+// 1267, v3 2226. PLAN-08A group E (a shape-rooted write as the in-memory
+// position it makes, a graph spread of a value's member, a delete of what a
+// node's edge holds, 2026-10-12) lifts v1 1, v2 1, v3 6: v1 1031, v2 1268,
+// v3 2232. PLAN-08A group F′ (CHUNKS; an extraction call's shape bound to
+// another name, its in-place words read in the body; the registry's chat
+// models as a run input; a call whose value a member access reads staged as
+// the TypeScript stages it, 2026-10-12) lifts v1 3, v2 3, v3 7: v1 1034, v2
+// 1271, v3 2239.
+const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2239 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -191,39 +202,57 @@ const RAN_WHOLE_FLOOR = { v1: 1030, v2: 1260, v3: 2215 };
 // (2026-10-12): refused 10 / 19 / 34 to 5 / 12 / 23 (block_multi_hop 4 / 4 /
 // 8 and block_head_resources 1 / 3 / 3 retired); evaluator not admitted 79 /
 // 97 / 276 to 62 / 72 / 242 (the expressions inside the walks it admits).
+// Lowered by group F (2026-10-12): refused v2 12 to 5, v3 23 to 12
+// (import_from_file 7 / 7, statement:shape 4 and statement:call 2 / 2
+// retired; extract_call_shape 2 to 1, the statement:shape run having held
+// both); evaluator not admitted v2 72 to 62, v3 242 to 202. Lowered by
+// group E (2026-10-12): refused 5 / 5 / 12 to 3 / 3 / 5 (write_root_not_held
+// 2 / 2 / 2, node_spread_path 4 and delete_not_record 1 retired); evaluator
+// not admitted 62 / 62 / 202 to 58 / 58 / 174. mirroredFailure is 7 / 7 / 5
+// where it was 6 / 6 / 4: one corpus case per corpus (`unique by` on a shape
+// write) was refused as write_root_not_held and now ends in the TypeScript's
+// own MOVENG_UNSUPPORTED on both engines, which is that guard's ending; a
+// refusal turned into the same ending as the TypeScript's takes its first
+// measurement, as a reason a closed one hid does, and the refused-plus-
+// mirrored total still falls (11 / 11 / 16 to 10 / 10 / 10). Lowered by
+// group F′ (2026-10-12): refused 3 / 3 / 5 to 0 / 0 / 1 (function:chunks 3 /
+// 3 / 3, extract_call_shape 1, extract_call_model 1 retired); declined v3
+// expression_does_not_lower 3 to 0; evaluator not admitted 58 / 58 / 174 to
+// 47 / 47 / 128. at_record_key v3 1 is a reason one of the closed declines
+// hid (`AT(keyed, FIRST(x.entries).name)`, a KEYBY over what an extraction
+// call answered inside a MAP's member, which admission's holders read as
+// anything): it carries its first measurement, and the refused-plus-declined
+// total falls 5 to 1.
 const CEILINGS = {
   v1: {
-    refused: 5,
-    everyReason: { 'function:chunks': 3, write_root_not_held: 2 },
+    refused: 0,
+    everyReason: {},
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 62,
-    mirroredFailure: 6,
+    evaluatorNotAdmitted: 47,
+    mirroredFailure: 7,
   },
   v2: {
-    refused: 12,
-    everyReason: { import_from_file: 7, 'function:chunks': 3, 'statement:call': 2, write_root_not_held: 2 },
+    refused: 0,
+    everyReason: {},
     declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 72,
-    mirroredFailure: 6,
+    evaluatorNotAdmitted: 47,
+    mirroredFailure: 7,
   },
   v3: {
-    refused: 23,
-    everyReason: {
-      import_from_file: 7, 'statement:shape': 4, node_spread_path: 4, 'function:chunks': 3, extract_call_shape: 2,
-      write_root_not_held: 2, 'statement:call': 2, extract_call_model: 1, delete_not_record: 1,
-    },
-    declined: { expression_does_not_lower: 3 },
+    refused: 1,
+    everyReason: { at_record_key: 1 },
+    declined: {},
     unreproduced: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
-    evaluatorNotAdmitted: 242,
-    mirroredFailure: 4,
+    evaluatorNotAdmitted: 128,
+    mirroredFailure: 5,
   },
 };
 

@@ -208,9 +208,9 @@ impl Run<'_> {
                     let callee = text(at(&frame, "callee")).unwrap_or("").to_string();
                     let (root, body, body_path) = match scope.resolve(&callee) {
                         Some(Binding::Movement(declared)) => {
-                            let (declaration, declared_at) = self.declaration(&declared)?;
-                            let file = self.file_scope.borrow().clone().ok_or_else(|| runtime("no file scope for a movement call".into()))?;
-                            (file, Rc::new(declaration.body), format!("/statements/{declared_at}/body"))
+                            let (declaration, body_path) = self.declaration(&declared)?;
+                            let file = self.scope_of_file(&declared.file).ok_or_else(|| runtime("no file scope for a movement call".into()))?;
+                            (file, Rc::new(declaration.body), body_path)
                         }
                         Some(Binding::Closure(closure)) => (closure.captured.clone(), Rc::new(closure.code.ast.body.clone()), format!("{}/body", closure.code.path)),
                         _ => return Err(malformed(&format!("'{callee}' is no longer a function in the calling scope"))),
@@ -280,7 +280,7 @@ impl Run<'_> {
                     if text(at(&frame, "kind")) != Some("arm") || id_of(at(&frame, "arm")) != Some(descent_index as u64) {
                         return Err(malformed(&format!("its run-time arm {descent_index} has no matching frame")));
                     }
-                    let code = self.closure_code(at(&frame, "body").unwrap_or(&Js::Undefined)).map_err(|e| runtime(format!("resume: {e}")))?;
+                    let (code, _) = self.closure_code(at(&frame, "body").unwrap_or(&Js::Undefined)).map_err(|e| runtime(format!("resume: {e}")))?;
                     arm_boundary = Some(Boundary::Arm { arm: descent_index, body: code.clone() });
                     (Rc::new(code.ast.body.clone()), stmt_address.branch(descent_index), format!("{}/body", code.path))
                 }
@@ -378,7 +378,7 @@ impl Run<'_> {
                 CombinatorArms::Literal { arms, .. } => match arms.get(index) {
                     Some(movement_parser::ast::ArmExpression::Closure { closure, .. }) => Some((closure.body.clone(), format!("{combinator_path}/arms/arms/{index}/closure/body"))),
                     Some(movement_parser::ast::ArmExpression::Ref { name, .. }) => match self.file_scope.borrow().as_ref().and_then(|file| file.resolve(name)) {
-                        Some(Binding::Movement(declared)) => self.declaration(&declared).ok().map(|(d, at)| (d.body, format!("/statements/{at}/body"))),
+                        Some(Binding::Movement(declared)) => self.declaration(&declared).ok().map(|(d, path)| (d.body, path)),
                         _ => None,
                     },
                     None => None,
@@ -436,7 +436,7 @@ impl Run<'_> {
                 if let Some(op) = self.op_of_call(call, scope)?
                     && Some(op.span) == span
                 {
-                    let path = self.nested_path(&slot, at, &value);
+                    let path = self.nested_path(&slot, at, &value, &scope.written_in());
                     return Ok(Some((op, OpOrigin::Call { call: call.clone(), path: format!("{path}/value/call") })));
                 }
             }
@@ -974,6 +974,19 @@ impl Run<'_> {
                 })),
                 Some("resource") => Binding::Resource(Rc::new(rehydrate_resource(at(descriptor, "resource").unwrap_or(&Js::Undefined)))),
                 Some("instance") => Binding::Instance(Rc::new(self.rehydrate_instance(at(descriptor, "instance").unwrap_or(&Js::Null))?)),
+                // A shape declared in a body: its declaration, found again in
+                // the re-parsed program where it is written; its words read
+                // the running file's scope now (serialize.ts `localShape`).
+                Some("localShape") => {
+                    let declaration = at(descriptor, "declaration");
+                    let name = declaration.and_then(|d| text(at(d, "name"))).unwrap_or("");
+                    let span = declaration.and_then(|d| at(d, "span")).and_then(|s| crate::code::span_json(s)).map(|(span, _)| span);
+                    let files = std::iter::once(&self.checked.root).chain(self.checked.files.values().map(|(file, _)| file));
+                    let found = span.and_then(|span| files.into_iter().find_map(|file| crate::code::body_shape_at(&file.program, name, &span)));
+                    let Some(declaration) = found else { return Err(runtime(format!("resume: the shape '{name}' the parked state declares is not in the program"))) };
+                    let declared = crate::program::DeclaredShape { declaration, file: crate::program::DeclaringFile::Root };
+                    Binding::Shape(Rc::new(crate::bindings::ShapeBinding { declared, local: true, declared_in: None }))
+                }
                 // Code refs, re-resolved from the re-parsed program by name.
                 Some("shape" | "movement" | "opaque") => {
                     let name = text(at(descriptor, "name")).unwrap_or("");
@@ -997,8 +1010,8 @@ impl Run<'_> {
                     Binding::Tuple(Rc::new(slots))
                 }
                 Some("closure") => {
-                    let code = self.closure_code(at(descriptor, "closure").unwrap_or(&Js::Undefined)).map_err(|e| runtime(format!("resume: {e}")))?;
-                    let captured = Scope::root();
+                    let (code, written) = self.closure_code(at(descriptor, "closure").unwrap_or(&Js::Undefined)).map_err(|e| runtime(format!("resume: {e}")))?;
+                    let captured = Scope::root_written_in(written);
                     for (name, entry) in pairs(at(descriptor, "captured")) {
                         captured.declare(name.clone(), self.rehydrate(entry, park).await?);
                     }
@@ -1081,11 +1094,17 @@ impl Run<'_> {
     }
 
     /// A closure the state names, as the program writes it.
-    fn closure_code(&self, closure: &Js) -> Result<Code<movement_parser::ast::ClosureExpression>, String> {
+    /// The file it is written in: the root's first, then each library's.
+    fn closure_code(&self, closure: &Js) -> Result<(Code<movement_parser::ast::ClosureExpression>, crate::program::DeclaringFile), String> {
         let (span, span_json) = crate::record::get(closure, "span").ok().and_then(|s| crate::code::span_json(&s)).ok_or("a closure with no span")?;
-        let ast = crate::code::closure_at(&self.checked.root.program, &span).ok_or("a closure the parked state names is not in the program")?;
-        let path = crate::code::path_of(&self.checked.root.tree, &["params", "body", "span"], &span_json).ok_or("a closure the parked state names is not in the program")?;
-        Ok(Code { ast: Rc::new(ast), path })
+        let files = std::iter::once(crate::program::DeclaringFile::Root).chain(self.checked.files.keys().map(|path| crate::program::DeclaringFile::Library(path.clone())));
+        for written in files {
+            let Some(file) = self.checked.file(&written) else { continue };
+            let Some(ast) = crate::code::closure_at(&file.program, &span) else { continue };
+            let path = crate::code::path_of(&file.tree, &["params", "body", "span"], &span_json).ok_or("a closure the parked state names is not in the program")?;
+            return Ok((Code { ast: Rc::new(ast), path: crate::program::in_file(&written, &path) }, written));
+        }
+        Err("a closure the parked state names is not in the program".into())
     }
 
     /// `rehydrateEmission`.

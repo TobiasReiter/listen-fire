@@ -809,6 +809,7 @@ The Rust engine (`crates/movement-engine`, behind `MOVEMENT_ENGINE=rust`) is an 
   - `extractionFileChars`: how much of one source file's text an extraction prompt takes (extraction.ts `maxFileChars`, 50,000 when absent), the deployment's `EXTRACTION_FILE_CHARS` as written, a fraction included.
   - `maxCallDepth`: how many named calls deep one run may nest from version 3 (call_depth.ts `maxCallDepth`), the deployment's `MOVEMENT_MAX_CALL_DEPTH`.
   - `extractionTiers`: what the deployment buys for each extraction tier (`extract "careful" from …`), the deployment's `EXTRACTION_TIERS` parsed (ai_tiers.ts `extractionTierAssignments`): an object from a tier (`quick`, `careful`, `thorough`) to `{ model?, effort? }`, each member over the built-in row's (sonnet at `low`, `high`, `xhigh`). Optional; absent, or a tier it does not name, is the built-in table; the language version stays as it is (a tier's settings are the platform's, not the program's).
+  - `chatModels`: the chat models the deployment's model registry knows (registry.ts `chatModelNames`), which an extraction call's written `model` is held to, as `parseChatModelName` holds it. Optional; absent, the catalog snapshot's `models` (a model neither lists is refused at admission, `extract_call_model`).
 
   The engine also reads the catalog snapshot's `plugins` before admission, to decide what a plugin's plain call binds (its declared output under the movement's pin) without a host call.
 - **The trace, a statement at a time.** `trace.append` carries every entry one statement traced, at any depth, in one request, and once more as the segment ends for what a park or a failure left; the run's trace is the same entries in the same order as the TypeScript engine's.
@@ -832,6 +833,7 @@ Five requests are the Rust engine's own: they are not `EngineHost` methods, and 
 - **Within version 1, the Rust engine's requests and inputs (chunk 7A).** None is an `EngineHost` method or a required member, so the version holds; an embedder of the Rust engine serves or sends each as "The Rust engine's requests" says:
   - **`localZone`** (input, optional): the zone an offset-less date-time text is read in; absent, UTC.
   - **`extractionTiers`** (input, optional): the deployment's tier table; absent, the built-in rows.
+  - **`chatModels`** (input, optional, PLAN-08A group F′): the model registry's chat models; absent, the catalog's `models`.
   - **`check.compatible`** (engine's own request): the checker's assignability, for `IS <Decl>` of a system's record.
   - **The files family's opaque handle:** the engine holds a file as an opaque handle with its `name`, `contentType`, `size` and `handle`, and the host is handed the plain descriptor (`files.resolveFileText`, write fields); a file is made only where an envelope declares one.
   - **`check.program` before the segment:** the in-process run host checks a program before it opens the segment and answers the engine's request from that check, so a program that fails it makes no host request.

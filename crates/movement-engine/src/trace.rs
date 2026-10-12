@@ -37,6 +37,9 @@ pub enum TraceEntry {
     /// One `READ(file)`: the file's name and type, and its text's length or
     /// why there is none.
     Read(Members),
+    /// One `CHUNKS(…)`: how many pieces, each one's size, the mode, and in
+    /// the entities mode each piece's estimate.
+    Chunks(Members),
 }
 
 /// An entry's members (all but `kind`), in the order the TypeScript writes
@@ -83,10 +86,11 @@ impl TraceEntry {
             TraceEntry::Block { root, positions } => {
                 env::object_of(vec![kind("block"), ("root", Js::str(root.clone())), ("positions", Js::Number(*positions as f64))])
             }
-            TraceEntry::Extraction(members) | TraceEntry::Plugin(members) | TraceEntry::Read(members) => {
+            TraceEntry::Extraction(members) | TraceEntry::Plugin(members) | TraceEntry::Read(members) | TraceEntry::Chunks(members) => {
                 let name = match self {
                     TraceEntry::Extraction(_) => "extraction",
                     TraceEntry::Plugin(_) => "plugin",
+                    TraceEntry::Chunks(_) => "chunks",
                     _ => "read",
                 };
                 let mut object = js::JsObject::new();

@@ -404,6 +404,13 @@ impl Run<'_> {
             return Ok(written);
         }
         let lines = self.write_lines(write, path)?;
+        // Against a declared shape: an in-memory position of its type.
+        if let WriteTarget::Linked { path, .. } = &write.target
+            && let Some(PathRoot::Name { name }) = &path.root
+            && let Some(Binding::Shape(shape)) = scope.resolve(name)
+        {
+            return self.shape_write(write, &lines, path, &shape, binding_name, scope).await;
+        }
         // Into an edge of a node this run built: the engine is the adapter.
         if let WriteTarget::Linked { path, .. } = &write.target
             && let Some(PathRoot::Name { name }) = &path.root
@@ -466,7 +473,7 @@ impl Run<'_> {
         let mut expanded: Vec<Line> = Vec::new();
         for (index, spread) in spreads.iter().enumerate().rev() {
             let at = format!("{path}/spreads/{index}");
-            let Some(Stamp::SpreadFields(fields)) = self.checked.root.stamps.get(&at) else {
+            let Some(Stamp::SpreadFields(fields)) = self.checked.stamp(&at) else {
                 return Err(thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!(
@@ -682,6 +689,42 @@ impl Run<'_> {
     }
 
     /// `singleWriteEdge`: the one edge step a linked path walks, and its WHERE.
+    /// `materializeShapeWrite`: `write Files-[:file]-> { … }` against a
+    /// shape (retired at author time, run while a saved program still holds
+    /// one): no adapter, no identity, no firing record — the fields evaluate
+    /// here and the result is an in-memory position of the shape's type,
+    /// every field's trail intact.
+    async fn shape_write(&self, write: &WriteExpression, lines: &[Line], path: &ast::PathHead, shape: &crate::bindings::ShapeBinding, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        let (node, where_) = self.single_edge(path, "a linked write walks exactly one declared edge from its root")?;
+        if where_.is_some() {
+            return Err(thrown(Failure::unsupported("WHERE on a shape write", "a shape position is in-memory — there are no existing records to narrow")));
+        }
+        if !write.unique_by.is_empty() {
+            return Err(thrown(Failure::unsupported("unique by on a shape write", "a shape position is in-memory — there is no store to resolve identity against")));
+        }
+        let mut fields = JsObject::new();
+        let mut provenance = JsObject::new();
+        for line in lines {
+            let evaluated = self.evaluate_slot(&line.slot, scope).await?;
+            if matches!(evaluated.value, Js::Undefined) {
+                continue;
+            }
+            let trail = self.trail_or_none(&evaluated.prov, scope);
+            fields.set(line.name.clone(), evaluated.value);
+            provenance.set(line.name.clone(), crate::park::provenance_of(self, &trail));
+        }
+        let written = Binding::ShapePosition(Rc::new(crate::bindings::ShapePosition {
+            shape: Js::str(shape.declared.declaration.name.clone()),
+            node: Js::str(node),
+            fields: Js::object(fields),
+            field_provenance: Js::object(provenance),
+        }));
+        if let Some(name) = binding_name {
+            scope.declare(name, written.clone());
+        }
+        Ok(written)
+    }
+
     pub(crate) fn single_edge(&self, path: &ast::PathHead, detail: &str) -> Result<(String, Option<TargetWhere>), Stop> {
         match edge_shape(path) {
             EdgeShape::One { edge, where_ } => Ok((edge, where_)),

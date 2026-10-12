@@ -297,21 +297,41 @@ impl Firing for FiringScope<'_, '_> {
         self.instances.iter().find(|(n, _)| n == name)?.1.schema.as_ref()
     }
 
+    fn file(&self) -> DeclaringFile {
+        self.scope.file_env()
+    }
+
+    fn shape(&self, name: &str, _: &crate::program::Declarations) -> Option<spec::ShapeLink> {
+        match self.scope.resolve(name)? {
+            Binding::Shape(shape) => Some(self.run.shape_link(&shape)),
+            _ => None,
+        }
+    }
+
+    fn base(&self, of: &spec::ShapeLink, name: &str, declarations: &crate::program::Declarations) -> Option<spec::ShapeLink> {
+        match &of.words {
+            WordsScope::Body(body) => match body.resolve(name)? {
+                Binding::Shape(shape) => Some(self.run.shape_link(&shape)),
+                _ => None,
+            },
+            _ => declarations.of_file(&of.file)?.shapes.get(name).map(spec::ShapeLink::declared),
+        }
+    }
+
     async fn describe(&self, slot: &ExprSlot, scope: &WordsScope) -> Result<String, Stop> {
         let file;
         let scope = match scope {
             WordsScope::Firing => self.scope,
+            WordsScope::Body(body) => body,
+            // A declaration's words read the scope of the file that declared
+            // it (`describeIn(slot, libraryEnv(library) | fileEnv)`).
             WordsScope::File(DeclaringFile::Root) => {
-                file = self.scope.chain_from_root()[0].clone();
+                file = self.run.scope_of_file(&DeclaringFile::Root).unwrap_or_else(|| self.scope.chain_from_root()[0].clone());
                 &file
             }
-            // A library's words read the library's own scope, which this
-            // engine builds no copy of: admission refuses file imports.
             WordsScope::File(DeclaringFile::Library(path)) => {
-                return Err(thrown(Failure::unreproduced(
-                    &format!("a description written in the library '{path}'"),
-                    "the Rust engine builds no library scope",
-                )));
+                file = self.run.library_scope(path).await?;
+                &file
             }
         };
         let value = self.run.evaluate_slot(slot, scope).await?.value;
@@ -389,6 +409,20 @@ pub(crate) struct Reply {
 }
 
 impl Run<'_> {
+    /// A shape binding as the spec builder reads it: one declared in a body
+    /// reads its words and base in that body while it stands, and in the
+    /// running file once a park has rebuilt it.
+    pub(crate) fn shape_link(&self, shape: &crate::bindings::ShapeBinding) -> spec::ShapeLink {
+        if !shape.local {
+            return spec::ShapeLink::declared(&shape.declared);
+        }
+        let words = match shape.body_scope() {
+            Some(body) => WordsScope::Body(body),
+            None => WordsScope::File(DeclaringFile::Root),
+        };
+        spec::ShapeLink { declaration: shape.declared.declaration.clone(), file: shape.declared.file.clone(), words }
+    }
+
     /// `x = extract from […] { tree }`: the spec built for this firing, the
     /// tree materialised, and the emitted entities hung off the extract's
     /// last call on the trace (`recordExtractedEntities`).
