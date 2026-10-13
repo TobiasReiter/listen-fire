@@ -119,7 +119,8 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # Core's MCP OAuth flow keeps in-flight state here; automations' runaway-loop
+  # Optional to the API (unset hostname = it never connects), but the composition names
+  # this one. Core's MCP OAuth flow keeps in-flight state here; automations' runaway-loop
   # guard keeps its counters here. Every shipped composition runs it — a bare
   # `docker compose up` mounts every unit, and two of them write here — so its
   # profile is on by default and the only thing that parks it is naming your own

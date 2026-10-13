@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import Redis from 'ioredis';
 
 import { Queue } from '../lib/utils/queue';
-import { getRedisPool } from '../redisPool';
+import { getRedisPool, redisConfigured } from '../redisPool';
 
 const requestQueue = new Queue<Readable | null>({ concurrency: 10 });
 
@@ -53,7 +53,9 @@ async function getIconForUrlInner(hostname: string, size: string) {
   return null;
 }
 
+// The cache is Redis-only: with no Redis configured every lookup is a miss.
 async function getCachedIcon(hostname: string, size: string) {
+  if (!redisConfigured()) return null;
   const cacheKey = `${hostname}:${size}`;
   const pool = getRedisPool();
   let client: Redis | null = null;
@@ -71,6 +73,7 @@ async function getCachedIcon(hostname: string, size: string) {
 }
 
 async function cacheIcon(hostname: string, size: string, buffer: Buffer) {
+  if (!redisConfigured()) return;
   const oneMonth = 30 * 24 * 60 * 60; // 30 days in seconds
   const cacheKey = `${hostname}:${size}`;
 

@@ -13,6 +13,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
+### Changed
+
+- Redis is optional. The API connects to Redis only when `MESSAGE_QUEUE_REDIS_HOSTNAME` is set
+  (the port still defaults to 6379); unset, nothing ever tries to connect, in every environment.
+  Without it the runaway-loop guard counts in each API process's memory (exact for one instance;
+  several instances each count only their own firings), the icon cache is off, and in-flight MCP
+  OAuth state is not shared between instances. The bundled composition and the Render blueprint
+  still name their Redis. The `localhost` default the API used outside production moved into the
+  dev loop, which exports it for the Redis container it runs.
+
 ### Fixed
 
 - A Redis outage no longer stalls automations. The loop guard is meant to step aside when Redis is

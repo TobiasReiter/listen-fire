@@ -215,6 +215,7 @@ services:
         fromDatabase:
           name: listen-fire-postgres
           property: connectionString
+      # Redis is optional to the code; this blueprint provisions one and names it.
       - key: MESSAGE_QUEUE_REDIS_HOSTNAME
         fromService:
           type: keyvalue

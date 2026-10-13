@@ -1,7 +1,15 @@
 import IORedis, { Redis } from 'ioredis';
 import { createPool, Pool } from 'generic-pool';
 
-import { getEnvVar } from '../lib/utils/environment';
+/**
+ * Redis is one optional backend: it is in use only when MESSAGE_QUEUE_REDIS_HOSTNAME is set, in
+ * every environment. Read once, so a caller's choice of backend cannot flip mid-process.
+ */
+const configuredHostname = process.env.MESSAGE_QUEUE_REDIS_HOSTNAME || undefined;
+
+function redisConfigured(): boolean {
+  return configuredHostname !== undefined;
+}
 
 let redisPool: Pool<Redis> | null = null;
 
@@ -16,15 +24,15 @@ const CONNECT_TIMEOUT_MS = 1500;
 const CREATE_RETRY_PAUSE_MS = 250;
 
 function getRedisPool(): Pool<Redis> {
+  if (configuredHostname === undefined) {
+    throw new Error('getRedisPool() called but MESSAGE_QUEUE_REDIS_HOSTNAME is not set');
+  }
   if (!redisPool) {
     const factory = {
       create: async () => {
-        const host = getEnvVar('MESSAGE_QUEUE_REDIS_HOSTNAME', { devDefault: 'localhost' });
-        const port = getEnvVar('MESSAGE_QUEUE_REDIS_PORT', {
-          devDefault: '6379',
-        });
+        const port = process.env.MESSAGE_QUEUE_REDIS_PORT || '6379';
         let ready = false;
-        const client = new IORedis(Number(port), host, {
+        const client = new IORedis(Number(port), configuredHostname, {
           maxRetriesPerRequest: null,
           connectTimeout: CONNECT_TIMEOUT_MS,
           // Until the first connection works, give up (the pool then rejects the create). Once
@@ -62,4 +70,4 @@ function getRedisPool(): Pool<Redis> {
   return redisPool;
 }
 
-export { getRedisPool };
+export { getRedisPool, redisConfigured };

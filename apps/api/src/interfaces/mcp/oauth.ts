@@ -7,7 +7,7 @@ import { ApiKeyService } from '../../services/api_key';
 import { recordUserMilestone } from '../../lib/journey';
 import { sessionJwtAudience } from '../../lib/middleware/authentication/session_jwt_audience';
 import { logger } from '../../services/logger';
-import { getRedisPool } from '../../redisPool';
+import { getRedisPool, redisConfigured } from '../../redisPool';
 import { getOrigin } from './origin';
 
 /**
@@ -18,7 +18,9 @@ import { getOrigin } from './origin';
  * the whole flow — which the user experienced as the consent button "needing a
  * double-click". Reads try memory first, then Redis; writes go to both,
  * best-effort on the Redis leg (a Redis hiccup degrades to today's
- * single-instance behavior instead of failing the flow).
+ * single-instance behavior instead of failing the flow). With no Redis configured
+ * the Redis leg is skipped: the flow is exact within one process, but a restart
+ * mid-flow, or another API instance answering the token exchange, loses it.
  */
 interface AuthCodeData {
   apiKey: string;
@@ -48,6 +50,7 @@ setInterval(() => {
 }, 60_000);
 
 async function redisOp<T>(op: (client: import('ioredis').Redis) => Promise<T>): Promise<T | null> {
+  if (!redisConfigured()) return null;
   try {
     const pool = getRedisPool();
     const client = await pool.acquire();
