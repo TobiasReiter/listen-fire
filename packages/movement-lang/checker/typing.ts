@@ -545,6 +545,11 @@ export interface InstanceRef {
  */
 export interface ReturnShape extends PlaneType {
   returns: boolean;
+  /** What the value handed back may hold where its type cannot say — a
+   *  `return COALESCE(org, "x")`, or returns that disagree — so a CALL's value
+   *  carries it as a name bound to the same expression does
+   *  (`ScopeSymbol.mayHold`). A walk input, never a type. */
+  mayHold?: FieldType;
 }
 
 /** A type on whichever PLANE it lives: a record POSITION (the arrow plane) or

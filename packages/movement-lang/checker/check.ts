@@ -4480,10 +4480,22 @@ class Checker {
         later.span,
       );
     }
+    // What the value may hold is what ANY return may hold — TypeScript's
+    // return type is the union of its returns. The type stays the first's;
+    // the union travels as the walk input a bound conditional's arms do, so a
+    // record one return hands back is seen wherever the call's value goes.
+    const arms = collector.returns
+      .map(returned => returned.mayHold ?? returned.fieldType)
+      .filter((arm): arm is FieldType => arm !== undefined);
+    const mayHold: FieldType | undefined = arms.length === 0
+      ? undefined
+      : arms.length === 1 && collector.returns.length === 1 ? arms[0] : { kind: 'union', of: arms };
+    const revealed = mayHold !== undefined && showsMoreHandles(mayHold, first.fieldType) ? mayHold : undefined;
     return {
       returns: true,
       ...(first.posType !== undefined ? { posType: first.posType } : {}),
       ...(first.fieldType !== undefined ? { fieldType: first.fieldType } : {}),
+      ...(revealed !== undefined ? { mayHold: revealed } : {}),
     };
   }
 
@@ -4509,6 +4521,7 @@ class Checker {
       span: statement.span,
       ...(shape.posType !== undefined ? { posType: shape.posType } : {}),
       ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
+      ...(shape.mayHold !== undefined ? { mayHold: shape.mayHold } : {}),
     });
   }
 
@@ -5425,9 +5438,11 @@ class Checker {
       }
       case 'collection': {
         const result = this.checkCollectionOp(value.collection, scope);
+        const mayHold = this.collectionMayHold.get(value.collection);
         symbol = {
           ...symbol,
           ...(result !== undefined ? { fieldType: result } : {}),
+          ...(mayHold !== undefined ? { mayHold } : {}),
           bindingPlane: 'scalar',
         };
         break;
@@ -5612,11 +5627,17 @@ class Checker {
     plural?: true,
   ): Partial<ScopeSymbol> {
     const { fieldType, posType } = returned;
+    // What the returns may hold beyond the type travels with the value, as a
+    // bound conditional's arms do (`ScopeSymbol.mayHold`).
+    const mayHold = returned.mayHold !== undefined && collectAs !== undefined
+      ? listOf(returned.mayHold, collectAs)
+      : returned.mayHold;
     if (fieldType !== undefined) {
       return {
         ...symbol,
         fieldType: collectAs !== undefined ? listOf(fieldType, collectAs) : fieldType,
         bindingPlane: 'scalar',
+        ...(mayHold !== undefined ? { mayHold } : {}),
       };
     }
     if (posType !== undefined) {
@@ -5627,6 +5648,7 @@ class Checker {
         ...(plural ? { plural, collectedOrder: collectAs ?? 'unknown' } : {}),
       };
     }
+    if (mayHold !== undefined) return { ...symbol, bindingPlane: 'scalar', mayHold };
     return symbol;
   }
 
@@ -7058,6 +7080,10 @@ class Checker {
    * refusal `JOIN` gets. `GROUPBY`'s groups each keep the source's ordering;
    * the dict around them has none, because a dict is looked up, not folded.
    */
+  /** What a MAP or REDUCE's value may hold beyond its type — its function's
+   *  returns' (`ReturnShape.mayHold`), read where the op is bound. */
+  private readonly collectionMayHold = new WeakMap<CollectionOpExpression, FieldType>();
+
   private checkCollectionOp(expr: CollectionOpExpression, scope: Scope): FieldType | undefined {
     const spelling = COLLECTION_OP_SPELLING[expr.op];
     const source = this.checkExprSlot(expr.source, scope);
@@ -7092,6 +7118,11 @@ class Checker {
     // that returns text — there is no second type for "a collection of
     // records" and no second rule for what an op does with one.
     const returned = valueOfReturn(shape);
+    // What the function's returns may hold beyond that type travels with the
+    // op's value, as a call's does: MAP's as members, REDUCE's as itself.
+    if (shape.mayHold !== undefined && (expr.op === 'map' || expr.op === 'reduce')) {
+      this.collectionMayHold.set(expr, expr.op === 'map' ? listOf(shape.mayHold, ordering) : shape.mayHold);
+    }
 
     switch (expr.op) {
       case 'map':
@@ -12057,6 +12088,24 @@ class Checker {
   private checkReturnFit(expected: string, declared: PlaneType, returned: ReturnShape & { span: Span }): void {
     const { span } = returned;
     if (declared.fieldType !== undefined) {
+      // A record or file a return MAY hand back is one the declared type has
+      // to take — TypeScript's `Org | string` is no `string`. Its call is
+      // typed by the declaration, so this is the last place it is seen.
+      const hidden = returned.mayHold !== undefined
+        ? handleWithin(returned.mayHold, heldWalk(handleKindsTaken(declared.fieldType)))
+        : undefined;
+      if (hidden !== undefined) {
+        const steps = spellHeldSteps(hidden.steps);
+        const file = variantOf(hidden.handle).kind === 'file';
+        const where = steps === '' ? `may be ${describeFieldType(hidden.handle)}` : `may hold ${describeFieldType(hidden.handle)} at '${steps}'`;
+        const repair = file ? "return its text in its place ('READ(f)')" : "return a field off it ('r.`Name`')";
+        this.report(
+          DiagnosticCodes.RETURN_TYPE,
+          `${expected}, but this ${where} — ${file ? 'a file' : 'a record'}, not a value. A call is typed by what it declares, so ${repair}`,
+          span,
+        );
+        return;
+      }
       const got = returned.fieldType ?? (returned.posType !== undefined ? recordOf(returned.posType) : undefined);
       if (got === undefined) return;
       if (isMaybeAbsent(got) && !isMaybeAbsent(declared.fieldType)) {
