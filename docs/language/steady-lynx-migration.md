@@ -22,7 +22,7 @@ Language version 3, **Steady Lynx**, arrives in v0.10.0. The release's [changelo
 ## 1. How the pin moves
 
 - Language version 3 arrives: **Steady Lynx**. A new automation is written in it, and the deploy check moves an automation up to it when it validates cleanly there. It reads a list literal exactly, which refuses programs Bright Otter (2) accepted, so those stay on their version until repaired and upgraded.
-- An automation that does not validate under Steady Lynx (3) is shown with the **Review** badge, and the automation page lists the diagnostics (see the v0.8.0 entries in [`CHANGELOG.md`](../../CHANGELOG.md) for the deploy check and `upgradeAutomation`).
+- An automation that does not validate under Steady Lynx (3) is shown with the **Review** badge, and the automation page lists the diagnostics (see the v0.8.0 entries in [`docs/changelog/v0.8.md`](../changelog/v0.8.md) for the deploy check and `upgradeAutomation`).
 
 ## 2. List literals are tuples
 
