@@ -94,6 +94,11 @@ export interface ScopeSymbol {
    *  written through the import would never fit the library movement's
    *  parameter. Absent = this symbol IS the graph's declaration. */
   graphToken?: ScopeSymbol;
+  /** For `instance`: the system's ADDRESS token (adapter, credential, literal
+   *  construction arguments), interned per check so two constructions of one
+   *  system share it. Absent when an argument is not a literal — the symbol is
+   *  then its own graph. */
+  addressToken?: object;
   /** For `param` / `alias` / `binding`: the bound position's type (when derivable). */
   posType?: PositionTypeRef;
   /**

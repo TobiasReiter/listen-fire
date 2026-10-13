@@ -332,6 +332,89 @@ describe('a record passed to another file\'s function (B12)', () => {
   });
 });
 
+describe('a system\'s address is its LITERAL construction arguments (B12)', () => {
+  // The address is the adapter, the credential and the literal arguments'
+  // VALUES. An argument that is not a literal (`base: b`) has no value the
+  // checker knows, so that construction is a system of its own.
+  const sheetCatalog = mockCatalog({
+    adapters: {
+      sheet: {
+        constructionArgs: [
+          { name: 'credentials', kind: 'credential', required: true },
+          { name: 'base', kind: 'position', required: false },
+        ],
+        schema: {
+          positions: { row: { properties: { name: 'text' }, edges: {} } },
+          collections: { rows: { target: 'row' } },
+          writableRoots: { row: { fields: { name: 'text' }, resultShape: { externalId: 'text' } } },
+        },
+      },
+    },
+    credentials: { s1: { adapter: 'sheet' }, s2: { adapter: 'sheet' } },
+  });
+  const lib = (top: string[]): string =>
+    [
+      'import { sheet } from adapters',
+      'import { s1, s2 } from credentials',
+      ...top,
+      'export movement name_of(r: <rows-[:row]->>) {',
+      '  return r.`name`',
+      '}',
+    ].join('\n');
+  const caller = (top: string[]): string =>
+    [
+      'import { sheet } from adapters',
+      'import { s1, s2 } from credentials',
+      'import { name_of } from "lib/rows"',
+      ...top,
+      'movement go() {',
+      '  r = write rows-[:rows]-> { name: "x" }',
+      '  n = name_of(r: r)',
+      '}',
+    ].join('\n');
+  const errors = (libTop: string[], callerTop: string[]): string[] =>
+    checkProgram(parseProgram(caller(callerTop)), sheetCatalog, {
+      resolveFile: resolverOver({ 'lib/rows': lib(libTop) }),
+    })
+      .filter(d => (d.severity ?? 'error') === 'error')
+      .map(d => `${d.code}: ${d.message}`);
+
+  it('the same credential and the same literal: one system', () => {
+    expect(errors(['rows = sheet(credentials: s1, base: "X")'], ['rows = sheet(credentials: s1, base: "X")'])).toEqual([]);
+  });
+
+  it('a literal is its value, not its spelling: "X" and \'X\' are one system', () => {
+    expect(errors(['rows = sheet(credentials: s1, base: "X")'], ["rows = sheet(credentials: s1, base: 'X')"])).toEqual([]);
+  });
+
+  it('a different literal: two systems, and the message names the argument', () => {
+    const found = errors(['rows = sheet(credentials: s1, base: "X")'], ['rows = sheet(credentials: s1, base: "Y")']);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain(C.CALL_ARG_TYPE);
+    expect(found[0]).toContain('two different systems');
+    expect(found[0]).toContain(`'base: "X"'`);
+    expect(found[0]).toContain(`'base: "Y"'`);
+  });
+
+  it('a different credential: two systems, and the message names the credential', () => {
+    const found = errors(['rows = sheet(credentials: s1, base: "X")'], ['rows = sheet(credentials: s2, base: "X")']);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain('two different systems');
+    expect(found[0]).toContain("'s1'");
+    expect(found[0]).toContain("'s2'");
+  });
+
+  it('an argument that is not a literal keeps the binding its own system, even spelled alike in both files', () => {
+    const found = errors(
+      ['b = "X"', 'rows = sheet(credentials: s1, base: b)'],
+      ['b = "Y"', 'rows = sheet(credentials: s1, base: b)'],
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain(C.CALL_ARG_TYPE);
+    expect(found[0]).toContain('not a literal');
+  });
+});
+
 describe('failure modes', () => {
   it('unresolved path → MOV_IMPORT_FILE_UNRESOLVED (names opaque, no cascade)', () => {
     const diagnostics = check(CONSUMER, () => undefined);

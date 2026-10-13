@@ -1319,6 +1319,7 @@ export function checkProgramWithLink(
   const checker = new Checker(catalog, {
     languageVersion,
     ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+    addressTokens: new Map(),
     ...(link ? { linkContext: { link, checked: new Map() } } : {}),
     ...(recording ? { recording } : {}),
   });
@@ -2308,34 +2309,80 @@ function isGraphSymbol(symbol: ScopeSymbol): boolean {
 }
 
 /** Graph identity, compared by reference. A constructed INSTANCE is a system,
- *  and a system is its address — the adapter and what it was constructed
- *  with (the credential, the other arguments as written) — never the name a
- *  file binds it to: two files (or two names) constructing the same system
- *  hold the same records, so a record passes to another file's function. A
- *  declared shape is its declaring symbol — for imports, the LIBRARY's
- *  (`graphToken`). */
+ *  and a system is its address — the adapter, the credential, and the LITERAL
+ *  construction arguments (`base: "appXYZ"`) — never the name a file binds it
+ *  to: two files (or two names) constructing the same system hold the same
+ *  records, so a record passes to another file's function. A construction with
+ *  an argument that is not a literal (`base: b`) has no address the checker
+ *  can know, so it is its own symbol, as is any graph the address does not
+ *  reach. A declared shape is its declaring symbol — for imports, the
+ *  LIBRARY's (`graphToken`). */
 export function instanceRefOf(symbol: ScopeSymbol): InstanceRef | undefined {
   return symbol.schema
-    ? { token: symbol.graphToken ?? instanceAddressToken(symbol) ?? symbol, name: symbol.name, schema: symbol.schema }
+    ? { token: symbol.graphToken ?? symbol.addressToken ?? symbol, name: symbol.name, schema: symbol.schema }
     : undefined;
 }
 
-/** One opaque token per system address, so every symbol that constructs the
- *  same system derives the same one. Only ever compared, never read back. */
-const INSTANCE_ADDRESS_TOKENS = new Map<string, object>();
+/** A system's address as an identity token (`Checker.addressTokenOf`). Two
+ *  constructions of one system share ONE of these, so identity is compared by
+ *  reference; the parts are read only to say how two systems differ. */
+class SystemAddress {
+  constructor(
+    readonly adapter: string,
+    readonly credential: string | undefined,
+    readonly args: ReadonlyArray<readonly [string, unknown]>,
+  ) {}
+}
 
-function instanceAddressToken(symbol: ScopeSymbol): object | undefined {
-  if (symbol.kind !== 'instance' || symbol.adapter === undefined) return undefined;
-  const args = Object.entries(symbol.constructionArgs ?? {})
-    .map(([name, raw]) => [name, raw.trim()] as const)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const address = JSON.stringify([symbol.adapter, symbol.credential ?? null, args]);
-  let token = INSTANCE_ADDRESS_TOKENS.get(address);
-  if (token === undefined) {
-    token = { address };
-    INSTANCE_ADDRESS_TOKENS.set(address, token);
+/** ` — these are two different systems: …`, naming what differs, when a
+ *  record of one system is handed where another's is expected; empty when the
+ *  two are one system or are not both constructed instances. */
+function systemDifference(arg: PositionTypeRef, param: PositionTypeRef): string {
+  if (!('instance' in arg) || !('instance' in param)) return '';
+  const a = arg.instance.token;
+  const b = param.instance.token;
+  if (a === b) return '';
+  if (a instanceof SystemAddress && b instanceof SystemAddress) {
+    if (a.adapter !== b.adapter) {
+      return ` — these are two different systems: one is ${b.adapter}, the other ${a.adapter}`;
+    }
+    if (a.credential !== b.credential) {
+      return ` — these are two different systems: one is reached with the credential '${b.credential ?? '(none)'}', the other with '${a.credential ?? '(none)'}'`;
+    }
+    const names = [...new Set([...a.args, ...b.args].map(([name]) => name))];
+    const valueOf = (address: SystemAddress, name: string): string => {
+      const entry = address.args.find(([n]) => n === name);
+      return entry === undefined ? '(not given)' : JSON.stringify(entry[1]);
+    };
+    const differing = names.find((name) => valueOf(a, name) !== valueOf(b, name));
+    return differing !== undefined
+      ? ` — these are two different systems: one is constructed with '${differing}: ${valueOf(b, differing)}', the other with '${differing}: ${valueOf(a, differing)}'`
+      : ' — these are two different systems';
   }
-  return token;
+  const unaddressed = [b, a].find((t): t is ScopeSymbol => !(t instanceof SystemAddress) && isInstanceSymbol(t));
+  if (unaddressed !== undefined) {
+    return ` — these are two different systems as far as the checker can tell: '${unaddressed.name}' is constructed with an argument that is not a literal, so its address is not known until it runs — write its construction arguments as literals to make it the same system`;
+  }
+  return isInstanceSymbol(a) || isInstanceSymbol(b) || a instanceof SystemAddress || b instanceof SystemAddress
+    ? ' — these are two different systems'
+    : '';
+}
+
+function isInstanceSymbol(token: object): token is ScopeSymbol {
+  return 'kind' in token && token.kind === 'instance';
+}
+
+/** The value of a slot that is a bare LITERAL (`"X"`, `'X'`, `true`, `3`),
+ *  undefined for anything else — so two spellings of one value are one value. */
+function staticLiteralOf(slot: ExprSlot): { value: unknown } | undefined {
+  let parsed: Expression;
+  try {
+    parsed = expressionOfSlot(slot);
+  } catch (e) {
+    if (e instanceof BridgeError) return undefined;
+    throw e;
+  }
+  return parsed.type === 'static' ? { value: parsed.value } : undefined;
 }
 
 /** The position a bound name denotes: its own type, a record value's record,
@@ -3521,6 +3568,11 @@ interface CheckerOptions {
   languageVersion: LanguageVersion;
   /** See `CheckOptions.upgradingFrom`. */
   upgradingFrom?: LanguageVersion;
+  /** One opaque token per system ADDRESS (`instanceRefOf`), interned for this
+   *  one check — the root file and every library it imports share it, so two
+   *  files constructing one system get one token, and nothing outlives the
+   *  check. */
+  addressTokens: Map<string, object>;
   linkContext?: LinkContext;
   /** The file being checked, when it is an imported library (its imports
    *  resolve through `file.imports` rather than `link.imports`). */
@@ -3588,6 +3640,34 @@ class Checker {
 
   private get languageVersion(): LanguageVersion {
     return this.options.languageVersion;
+  }
+
+  /** A constructed system's identity token: its address — adapter, credential
+   *  and the VALUES of its literal arguments — interned for this check, so
+   *  every construction of the same system shares it. Undefined when an
+   *  argument is not a literal (`base: b`): its value is not known here, so the
+   *  construction is its own system (`instanceRefOf` falls back to the
+   *  symbol). */
+  private addressTokenOf(
+    adapter: string,
+    credential: string | undefined,
+    args: ReadonlyArray<{ name: string; value: ExprSlot }>,
+  ): object | undefined {
+    const literals: Array<[string, unknown]> = [];
+    for (const arg of args) {
+      const literal = staticLiteralOf(arg.value);
+      if (literal === undefined) return undefined;
+      literals.push([arg.name, literal.value]);
+    }
+    literals.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const key = JSON.stringify([adapter, credential ?? null, literals]);
+    const tokens = this.options.addressTokens;
+    let token = tokens.get(key);
+    if (token === undefined) {
+      token = new SystemAddress(adapter, credential, literals);
+      tokens.set(key, token);
+    }
+    return token;
   }
 
   /** This check is for a move up across the change version `n` made — see
@@ -4993,6 +5073,7 @@ class Checker {
     const checker = new Checker(this.catalog, {
       languageVersion: this.languageVersion,
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
+      addressTokens: this.options.addressTokens,
       linkContext: context,
       currentFile: file,
       library: true,
@@ -5228,11 +5309,17 @@ class Checker {
         });
         // The non-credential args, raw — the instance's entry position rides
         // here, and a listen's required address hops read it (`checkListen`).
+        const credentialArg = credentialArgOf(this.catalog.adapter(value.construct.callee) ?? { constructionArgs: [] });
         const constructionArgs: Record<string, string> = {};
         for (const arg of value.construct.args) {
-          if (arg.name === 'credentials') continue;
+          if (arg.name === (credentialArg?.name ?? 'credentials')) continue;
           constructionArgs[arg.name] = arg.value.raw;
         }
+        const credentialUnresolved =
+          credential === undefined && value.construct.args.some((a) => a.name === credentialArg?.name);
+        const addressToken = adapter !== undefined && !credentialUnresolved
+          ? this.addressTokenOf(adapter, credential, value.construct.args.filter((a) => a.name !== credentialArg?.name))
+          : undefined;
         symbol = {
           ...symbol,
           kind: 'instance',
@@ -5240,6 +5327,7 @@ class Checker {
           ...(credential !== undefined ? { credential } : {}),
           ...(schema ? { schema } : {}),
           ...(Object.keys(constructionArgs).length > 0 ? { constructionArgs } : {}),
+          ...(addressToken !== undefined ? { addressToken } : {}),
         };
         break;
       }
@@ -11564,7 +11652,7 @@ class Checker {
     if (positionsMatch(argType, paramType) === false) {
       this.report(
         DiagnosticCodes.CALL_ARG_TYPE,
-        `'${callee}' expects ${describePosition(paramType)}${place}, but this argument is ${describePosition(argType)}`,
+        `'${callee}' expects ${describePosition(paramType)}${place}, but this argument is ${describePosition(argType)}${systemDifference(argType, paramType)}`,
         span,
       );
     }

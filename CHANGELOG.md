@@ -100,9 +100,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 - A record passed to a function another file exports is no longer refused when that file constructs
   the same system ("expects inbox.message, but this argument is inbox.message"). A system is its
-  address (the adapter, credential and construction arguments), not the name a file binds it to,
-  so two names, in one file or two, for the same system hold the same records; a different
-  credential is still a different system. Every language version.
+  address (the adapter, the credential and the values of literal construction arguments), not
+  the name a file binds it to, so two names, in one file or two, for the same system hold the
+  same records; a different credential or literal is still a different system, and the refusal
+  says which differs. A construction with an argument that is not a literal (`base: b`) stays a
+  system of its own. Every language version.
 - A Redis outage no longer stalls automations. The loop guard is meant to step aside when Redis is
   unreachable, but a dead Redis used to hang every trigger dispatch indefinitely. Connecting to
   Redis now gives up within seconds, and the guard lets runs through unchecked, pausing its
