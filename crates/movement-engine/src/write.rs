@@ -514,7 +514,18 @@ impl Run<'_> {
         let (path, explicit_type) = match target {
             WriteTarget::Linked { path, explicit_type, .. } => (path, explicit_type),
             WriteTarget::Tuple { paths, explicit_type, .. } => return self.tuple_target(paths, explicit_type.as_deref(), scope, verb).await,
-            WriteTarget::Position { .. } => unreachable!("position writes are dispatched first"),
+            // A write's never reaches here (`write` dispatches it first); a
+            // match's fails as the TypeScript's does.
+            WriteTarget::Position { root, .. } => {
+                let spelled = match root {
+                    PathRoot::Name { name } => spell_name(name),
+                    PathRoot::Expression { expr } => expr.raw.clone(),
+                };
+                return Err(thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("'write {spelled} {{ … }}' is a position write — it should have been dispatched to the update path"),
+                )));
+            }
         };
         let root_name = match &path.root {
             Some(PathRoot::Name { name }) => Some(name.clone()),

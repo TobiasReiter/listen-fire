@@ -701,11 +701,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'match_tuple',
-    routes: 'refused',
-    note: 'a match over a tuple of paths: needs a tuple binding kind and per-slot matches',
+    routes: 'whole',
+    note: "closed by PLAN-08B Task 2: one record at the convergence of the tuple's paths, resolved as a tuple write's target under the verb `match`, bound or missed as a linked match is",
     programs: [
+      // A tuple rooted at an instance fails on both engines as a tuple write's does.
       () => ({ body: '  crm-[p:people]-> {\n    found = match (crm-[:companies]->, p-[:company]->) { unique by (`name`), name: "Acme" }\n  }' }),
-      (pick) => ({ body: `  crm-[p:people]-> {\n    found = match (crm-[:companies]->, p-[:company]->) { unique by (\`name\`), name: "${pick(NAMES)}" }\n  }` }),
+      (pick) => ({ body: `  crm-[c:companies]-> {\n    c-[d:deals]-> {\n      found = match (c-[:people]->, d-[:people]->) { unique by (\`name\`), name: "${pick(NAMES)} founder" }\n      write crm-[:notes]-> { body: COALESCE(found.\`name\`, "none") }\n    }\n  }` }),
+      (pick) => ({ body: `  crm-[c:companies]-> {\n    c-[d:deals]-> {\n      found = match (c-[:people]->, d-[:people]->) { unique by (\`name\`), name: "${pick(NAMES)}" }\n      write crm-[:notes]-> { body: IF found == null THEN "absent" ELSE found.\`name\` END }\n    }\n  }`, version: 4 }),
     ],
   },
   {

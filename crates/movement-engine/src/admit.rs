@@ -3460,8 +3460,18 @@ impl Names<'_> {
     fn match_(&self, m: &ast::MatchExpression) -> Admitted {
         match &m.target {
             WriteTarget::Linked { path, .. } => self.target_path(path, "match", false)?,
-            WriteTarget::Tuple { .. } => return refuse("match_tuple"),
-            WriteTarget::Position { .. } => return refuse("match_position"),
+            // One record at the convergence of its paths, each a linked
+            // match's (`resolveTupleWriteTarget` under the verb `match`).
+            WriteTarget::Tuple { paths, .. } => paths.iter().try_for_each(|path| self.target_path(path, "match", false))?,
+            // The parser refuses a match of a bare alias; a member path's
+            // root is bound for the match alone, and either fails as the
+            // TypeScript's `resolveWriteTarget` fails it (crate::write).
+            WriteTarget::Position { root: PathRoot::Expression { expr }, .. } => {
+                if crate::write::member_path_binding_name(expr).is_some() {
+                    self.assigned(expr)?;
+                }
+            }
+            WriteTarget::Position { root: PathRoot::Name { .. }, .. } => {}
         }
         for clause in &m.unique_by {
             unique_clause(&clause.predicate.raw)?;
