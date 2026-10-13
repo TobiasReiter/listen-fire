@@ -97,10 +97,9 @@ function isParkedScopeState(value: unknown): value is ParkedScopeState {
 
 const COLLECTION_TYPE: Record<string, string> = { companies: 'company', people: 'person', notes: 'note' };
 
-function fakeCrm(c: Case, received: unknown[]): Adapter {
-  // What each call was handed, as it was handed: the TypeScript engine goes
-  // on to mutate an object it handed an in-process adapter (`refresh`
-  // moves a handle's `writtenValues`, the very object a create was given).
+function fakeCrm(c: Case, received: unknown[], kept: unknown[] = []): Adapter {
+  // What each call was handed, as it was handed (an adapter's data is data:
+  // `kept` holds the very objects a create was given, read after the run).
   const calls = { push: (call: unknown) => received.push(structuredClone(call)) };
   let minted = 0;
   const rows = Object.values(c.related ?? {}).flat();
@@ -140,6 +139,7 @@ function fakeCrm(c: Case, received: unknown[]): Adapter {
     },
     async createRecord(input) {
       calls.push(['createRecord', input]);
+      kept.push(input.fields);
       minted += 1;
       return { adapterType: 'attio', externalId: `attio-${minted}`, data: { minted } };
     },
@@ -184,7 +184,8 @@ async function runOn(engine: Engine, c: Case) {
   const asked: unknown[] = [];
   const park = makeFakeParkSink();
   const snapshot = { ...catalog, files: c.files ?? {} };
-  const crm = fakeCrm(c, calls);
+  const kept: unknown[] = [];
+  const crm = fakeCrm(c, calls, kept);
   const email = fakeEmail();
   const judge: Judge = async (input) => {
     asked.push({ asserted: input.asserted, candidates: input.candidates, recordType: input.recordType });
@@ -219,7 +220,7 @@ async function runOn(engine: Engine, c: Case) {
     else process.env.MOVEMENT_ENGINE = previous;
   }
   const stats = { routed: rustRunStats.routed, ranWhole: rustRunStats.ranWhole, unreproduced: rustRunStats.unreproduced, notAdmitted: { ...rustRunStats.notAdmitted }, declined: { ...rustRunStats.declined } };
-  return { observed: normalised({ ...outcome, calls, asked, parks: park.timerParks }), parks: park.timerParks, stats };
+  return { observed: normalised({ ...outcome, calls, asked, kept, parks: park.timerParks }), parks: park.timerParks, stats };
 }
 
 /** What a caller sees, ids named by first appearance. */
@@ -251,7 +252,11 @@ async function parkAndResume(c: Case): Promise<string> {
   const resumed: string[] = [];
   for (const writer of [parked.ts, parked.rust]) {
     expect(writer.parks).toHaveLength(1);
-    const state = writer.parks[0]?.state;
+    // The bytes themselves: either engine writes the same state.
+    expect(normalised(parked.rust.parks[0]?.state)).toBe(normalised(parked.ts.parks[0]?.state));
+    // As production stores it: parked state is jsonb, so object identity
+    // does not survive the park.
+    const state: unknown = JSON.parse(JSON.stringify(writer.parks[0]?.state));
     if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
     const { rust, ts } = await both({ ...c, resume: state });
     resumed.push(ts.observed, rust.observed);
@@ -448,6 +453,27 @@ describe('a graph spread of a record', () => {
   });
 });
 
+describe('a parked closure holding a record spread', () => {
+  it('parks the same bytes from either engine, for a handle, a landing and the event', async () => {
+    for (const spread of ['...co', '...msg']) {
+      const body = [
+        '  co = write crm-[:companies]-> { name: "Acme" }',
+        '  f = (x: <text>) => {',
+        `    g = graph { ${spread}, extra: x }`,
+        '    return g.`extra`',
+        '  }',
+        '  await sleep(1h)',
+        '  write crm-[:notes]-> { body: f("1") }',
+      ].join('\n');
+      const resumed = await parkAndResume({ body });
+      expect(resumed).toContain('"body":"1"');
+    }
+    const landing = ['  crm-[c:companies]-> {', '    f = (x: <text>) => {', '      g = graph { ...c, extra: x }', '      return g.`extra`', '    }', '    await sleep(1h)', '    write crm-[:notes]-> { body: f("1") }', '  }'].join('\n');
+    const resumed = await parkAndResume({ body: landing, related: { companies: [{ id: 'c-1', fields: { name: 'Acme' } }] } });
+    expect(resumed).toContain('"body":"1"');
+  });
+});
+
 // ── refresh ────────────────────────────────────────────────────────────────
 
 const FRESH = { 'attio-1': { name: 'Acme Inc', region: 'EU' }, 'c-1': { name: 'Fresh', region: 'US' } };
@@ -490,6 +516,12 @@ describe('refresh', () => {
     const source = ['import { fresh_name } from "lib/forms"', movement(['  b = fresh_name(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(b, "none") }'])].join('\n');
     const { rust } = await both({ source, files, read: FRESH });
     expect(rust.observed).toContain('"body":"Acme Inc"');
+  });
+
+  it('leaves an object an adapter kept from a create as it was handed', async () => {
+    const { ts, rust } = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
+    expect(rust.observed).toContain('"kept":[{"name":"Acme"}');
+    expect(ts.observed).toContain('"kept":[{"name":"Acme"}');
   });
 
   it('carries a refreshed handle through a park, and refreshes one after it, on whichever engine resumes', async () => {

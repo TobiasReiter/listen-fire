@@ -38,12 +38,43 @@ pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
         let steps: Vec<String> = rest.split('/').skip(1).map(|t| t.replace("~1", "/").replace("~0", "~")).collect();
         let (key, value) = match stamp {
             Stamp::SpreadFields(fields) => ("fields", crate::js::Js::array(fields.iter().map(|f| crate::js::Js::str(f.clone())).collect())),
-            Stamp::Copy(copy) => ("copy", crate::env::js_of_json(copy)),
+            Stamp::Copy(copy) => ("copy", copy_plan_js(copy)),
             Stamp::Reference => ("reference", crate::js::Js::Bool(true)),
         };
         code = stamped(&code, &steps, key, value);
     }
     Some(code)
+}
+
+/// A copy plan as the checker writes it: `{ fields, edges }` in that order
+/// (`copyPlanOf`), each edge's plan likewise. The plan reaches Rust through
+/// serde_json with its keys sorted (`edges` before `fields`), and a parked
+/// closure holding the plan must hold the same bytes the TypeScript parks.
+/// (The edge names inside `edges` keep the sorted order; the wire does not
+/// carry the declaration order.)
+fn copy_plan_js(plan: &Json) -> crate::js::Js {
+    let Json::Object(map) = plan else { return crate::env::js_of_json(plan) };
+    let mut object = crate::js::JsObject::new();
+    for key in ["fields", "edges"] {
+        let Some(value) = map.get(key) else { continue };
+        let value = match (key, value) {
+            ("edges", Json::Object(edges)) => {
+                let mut nested = crate::js::JsObject::new();
+                for (name, edge) in edges {
+                    nested.set(name.clone(), copy_plan_js(edge));
+                }
+                crate::js::Js::object(nested)
+            }
+            _ => crate::env::js_of_json(value),
+        };
+        object.set(key.to_string(), value);
+    }
+    for (key, value) in map {
+        if key != "fields" && key != "edges" {
+            object.set(key.clone(), crate::env::js_of_json(value));
+        }
+    }
+    crate::js::Js::object(object)
 }
 
 /// The node at `path` in `file`'s tree. A call nested in an expression

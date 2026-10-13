@@ -11592,7 +11592,9 @@ class Interpreter {
     const updated = await input.adapter.updateRecord({
       recordType: input.recordType,
       externalId: input.externalId,
-      fields: fieldsToWrite,
+      // A copy: `refresh` moves the handle's own `writtenValues`, and an
+      // adapter that keeps what it was handed must not see it change.
+      fields: { ...fieldsToWrite },
       evidence: evidenceForWrite(input.fieldEvidence, fieldsToWrite),
       ...(hasResources ? { resources: input.resources } : {}),
       mutationContext: this.mutationContext,
@@ -11723,7 +11725,8 @@ class Interpreter {
     // side (streamFileRef / exposeFile). The engine hands fields through.
     const created = await input.adapter.createRecord({
       recordType: input.recordType,
-      fields: input.fields,
+      // A copy (see the update above): the adapter's data is its own.
+      fields: { ...input.fields },
       evidence: evidenceForWrite(input.fieldEvidence, input.fields),
       // Node-level resources (Layer 5) — the source content that fed the
       // extracted node, persisted against the new record by the adapter's
