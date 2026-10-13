@@ -15,6 +15,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Changed
 
+- Moving an automation up to language version 4 now warns (`MOV_HANDLE_READ_FOUND`, a move-up
+  warning) on a read of a write handle's `url`. Under version 4 it reads the found record's url,
+  where versions 1 to 3 read the link the write returned (null when the update returned none).
+  Only `externalId` is still exempt as the handle's own field.
 - A field or child node named `__proto__` in a node declaration or an extraction is refused
   (`MOV_SHAPE_FIELD_PROTO`), and so is a binding, parameter or alias named `__proto__`
   (`MOV_NAME_PROTO`), on every language version. Both used to validate but misbehaved at run time,

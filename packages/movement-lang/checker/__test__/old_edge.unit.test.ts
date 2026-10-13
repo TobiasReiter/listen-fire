@@ -207,10 +207,21 @@ describe('a field the write did not set, read off its handle', () => {
   it('crossing 4 reading a field the body set with plain `:` is silent', () => {
     expect(crossing([SET_NAME, '  write crm-[:notes]-> { title: org.`Name` }'].join('\n'))).toEqual([]);
   });
-  it("crossing 4 the handle's own fields (externalId, url) do not warn; an unset record field still does", () => {
-    expect(crossing([SET_NAME, read('url')].join('\n'))).toEqual([]);
+  it("crossing 4 the handle's own externalId does not warn; an unset record field still does", () => {
     expect(crossing([SET_NAME, read('externalId')].join('\n'))).toEqual([]);
     expect(crossing([SET_NAME, read('Domains')].join('\n'))).toHaveLength(1);
+  });
+  it("crossing 4 a read of the handle's url warns: it reads the found record's url, where 3 read the write's (often null)", () => {
+    const d = crossing([SET_NAME, read('url')].join('\n'));
+    expect(d).toHaveLength(1);
+    expect(d[0].upgrade).toBe(true);
+    expect(d[0].message).toContain("'url' on 'org' reads the record as the write found it");
+  });
+  it('a url read is silent under 3, and under 4 without a move up', () => {
+    const src = inMovement([SET_NAME, read('url')].join('\n'));
+    for (const languageVersion of [3, 4] as const) {
+      expect(checkProgram(parseProgram(src), catalog, { languageVersion }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+    }
   });
   it('crossing 4 a `?:` fill does not count as set', () => {
     const fill = '  org = write crm-[:companies]-> { unique by (`Name`), Name: "Acme", Domains ?: ["acme.com"] }';
