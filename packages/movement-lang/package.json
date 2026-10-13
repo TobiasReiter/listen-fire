@@ -13,7 +13,8 @@
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
     "test:conformance:v1": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v1.cjs",
     "test:conformance:v2": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v2.cjs",
-    "test:conformance:v3": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v3.cjs"
+    "test:conformance:v3": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v3.cjs",
+    "test:conformance:v4": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v4.cjs"
   },
   "main": "index.js",
   "types": "index.ts",

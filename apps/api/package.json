@@ -77,6 +77,7 @@
     "test:conformance:v1": "jest --config src/test/jest-conformance-v1.config.ts",
     "test:conformance:v2": "jest --config src/test/jest-conformance-v2.config.ts",
     "test:conformance:v3": "jest --config src/test/jest-conformance-v3.config.ts",
+    "test:conformance:v4": "jest --config src/test/jest-conformance-v4.config.ts",
     "db:restore": ". ./scripts/restore_db_snapshot.sh",
     "db:dump": ". ./scripts/dump_db_snapshot.sh",
     "schema:compare": "bash src/db/compare.sh",
