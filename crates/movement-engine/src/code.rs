@@ -1,23 +1,17 @@
-//! The program's code a parked state carries back (a closure's body, a
-//! kept walk's head and mapping): found again in the re-parsed program by
-//! where it is written. The pin makes the re-parse the same tree, so a span
-//! names the one node it named when the state was written; the node itself
-//! is taken from the program, never read back out of the state, and its AST
-//! path is where the next park writes it from.
+//! What a program's bodies write, at any depth: the closures they bind to a
+//! name, the node declarations they write. (Code a parked state carries
+//! comes back from its own syntax tree, never from here: crate::resume.)
 
 use movement_parser::ast::{
-    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorArms, CombinatorExpression, NodeEntry, NodeLiteral, PathHead, Program,
+    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorArms, CombinatorExpression, NodeEntry, NodeLiteral, Program,
     RValue, Span, Statement, UntilCondition,
 };
 use serde_json::Value as Json;
 
 use crate::js::Js;
 
-/// A node of the program a state names.
+/// A node a body writes.
 pub(crate) enum Found<'p> {
-    Closure(&'p ClosureExpression),
-    /// A kept walk: its head, and the mapping its landings go through.
-    Walk(&'p PathHead, Option<&'p NodeLiteral>),
     /// A closure bound to a name (`f = (…) => { … }`).
     Bound(&'p str, &'p ClosureExpression),
     /// A node declaration written in a body.
@@ -35,25 +29,6 @@ pub(crate) fn shapes_declared_in(body: &[Statement]) -> Vec<String> {
     found
 }
 
-/// The node declaration a body writes at `span`, named `name`.
-pub(crate) fn body_shape_at(program: &Program, name: &str, span: &Span) -> Option<movement_parser::ast::ShapeDeclaration> {
-    let mut found = None;
-    for statement in &program.statements {
-        if let Statement::Movement(movement) = statement {
-            visit(&movement.body, &mut |node| {
-                if found.is_none()
-                    && let Found::Shape(shape) = node
-                    && shape.name == name
-                    && shape.span == *span
-                {
-                    found = Some(shape.clone());
-                }
-            });
-        }
-    }
-    found
-}
-
 /// Every closure the program binds to a name, anywhere, by that name.
 pub(crate) fn bound_closures(program: &Program) -> Vec<(&str, &ClosureExpression)> {
     let mut found = Vec::new();
@@ -65,72 +40,8 @@ pub(crate) fn bound_closures(program: &Program) -> Vec<(&str, &ClosureExpression
     found
 }
 
-/// The closure written at `span`.
-pub(crate) fn closure_at(program: &Program, span: &Span) -> Option<ClosureExpression> {
-    let mut found = None;
-    visit(&program.statements, &mut |node| {
-        if found.is_none()
-            && let Found::Closure(closure) = node
-            && closure.span == *span
-        {
-            found = Some(closure.clone());
-        }
-    });
-    found
-}
 
-/// The kept walk whose head is written at `span`.
-pub(crate) fn walk_at(program: &Program, span: &Span) -> Option<(PathHead, Option<NodeLiteral>)> {
-    let mut found = None;
-    visit(&program.statements, &mut |node| {
-        if found.is_none()
-            && let Found::Walk(head, mapping) = node
-            && head.span == *span
-        {
-            found = Some((head.clone(), mapping.cloned()));
-        }
-    });
-    found
-}
 
-/// The AST path (a JSON Pointer into the program's tree) of the object with
-/// every one of `keys` whose `span` is `span`.
-pub(crate) fn path_of(tree: &Json, keys: &[&str], span: &Json) -> Option<String> {
-    fn search(node: &Json, at: &mut String, keys: &[&str], span: &Json) -> bool {
-        match node {
-            Json::Object(map) => {
-                if keys.iter().all(|key| map.contains_key(*key)) && map.get("span") == Some(span) {
-                    return true;
-                }
-                for (key, child) in map {
-                    let before = at.len();
-                    at.push('/');
-                    at.push_str(&key.replace('~', "~0").replace('/', "~1"));
-                    if search(child, at, keys, span) {
-                        return true;
-                    }
-                    at.truncate(before);
-                }
-                false
-            }
-            Json::Array(items) => {
-                for (index, child) in items.iter().enumerate() {
-                    let before = at.len();
-                    at.push('/');
-                    at.push_str(&index.to_string());
-                    if search(child, at, keys, span) {
-                        return true;
-                    }
-                    at.truncate(before);
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-    let mut at = String::new();
-    search(tree, &mut at, keys, span).then_some(at)
-}
 
 /// A state's `span` object, as the program's tree holds it.
 pub(crate) fn span_json(value: &Js) -> Option<(Span, Json)> {
@@ -191,7 +102,6 @@ fn rvalue<'p>(value: &'p RValue, f: &mut dyn FnMut(Found<'p>)) {
         RValue::Closure { closure: c } => closure(c, f),
         RValue::Node { node: n } => node(n, f),
         RValue::Lazy { lazy } => {
-            f(Found::Walk(&lazy.head, lazy.mapping.as_ref()));
             if let Some(mapping) = &lazy.mapping {
                 node(mapping, f);
             }
@@ -201,7 +111,6 @@ fn rvalue<'p>(value: &'p RValue, f: &mut dyn FnMut(Found<'p>)) {
 }
 
 fn closure<'p>(c: &'p ClosureExpression, f: &mut dyn FnMut(Found<'p>)) {
-    f(Found::Closure(c));
     visit(&c.body, f);
 }
 
@@ -248,12 +157,6 @@ fn node<'p>(literal: &'p NodeLiteral, f: &mut dyn FnMut(Found<'p>)) {
             NodeEntry::Nodes { nodes, .. } => {
                 for n in nodes {
                     node(n, f);
-                }
-            }
-            NodeEntry::Traversal { head, lazy: true, mapping, .. } => {
-                f(Found::Walk(head, mapping.as_ref()));
-                if let Some(mapping) = mapping {
-                    node(mapping, f);
                 }
             }
             NodeEntry::Traversal { mapping: Some(mapping), .. } => node(mapping, f),

@@ -49,6 +49,7 @@ impl Firing for Stand<'_> {
             WordsScope::Firing => "firing",
             WordsScope::File(DeclaringFile::Root) => "root",
             WordsScope::File(DeclaringFile::Library(path)) => path,
+            WordsScope::File(DeclaringFile::Parked(_)) => "parked",
             // The oracle's programs declare no shape in a body.
             WordsScope::Body(_) => "body",
         };

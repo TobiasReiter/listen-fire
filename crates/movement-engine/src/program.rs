@@ -172,15 +172,45 @@ pub struct Checked {
     pub version_warning: Option<(String, String)>,
     /// What the root file declares, and the shapes it imports.
     pub declarations: Declarations,
+    /// The code a resume rebuilt from its parked state (a closure, a kept
+    /// walk), each its own file (`DeclaringFile::Parked`), in the order the
+    /// resume read it.
+    pub parked: std::cell::RefCell<Vec<std::rc::Rc<File>>>,
 }
 
 impl Checked {
-    /// A file of the run, by who wrote it: the root, or a linked library.
+    /// A file of the program, by who wrote it: the root, or a linked
+    /// library (a parked piece of code is no file of the program).
     pub fn file(&self, file: &DeclaringFile) -> Option<&File> {
         match file {
             DeclaringFile::Root => Some(&self.root),
             DeclaringFile::Library(path) => self.files.get(path).map(|(file, _)| file),
+            DeclaringFile::Parked(_) => None,
         }
+    }
+
+    /// `read` over any file of the run, a parked piece of code's included.
+    pub fn with_file<R>(&self, file: &DeclaringFile, read: impl FnOnce(&File) -> R) -> Option<R> {
+        match file {
+            DeclaringFile::Parked(index) => self.parked.borrow().get(*index).map(|file| read(file)),
+            other => self.file(other).map(read),
+        }
+    }
+
+    /// The code a parked state carries (docs/contracts/park-state.md, "Code
+    /// is carried as a name, or as its syntax tree"), as a file of its own:
+    /// `tree` as the typed AST writes it, `stamped` the same tree as it was
+    /// parked, the checker's facts on it (`code_at` writes them so). The
+    /// same tree parked twice is one file.
+    pub fn park_code(&self, tree: Json, stamped: &Json) -> DeclaringFile {
+        let mut parked = self.parked.borrow_mut();
+        let mut stamps = BTreeMap::new();
+        stamps_in(stamped, &mut String::new(), &mut stamps);
+        if let Some(index) = parked.iter().position(|file| file.tree == tree && file.stamps == stamps) {
+            return DeclaringFile::Parked(index);
+        }
+        parked.push(std::rc::Rc::new(File { program: ast::Program { statements: Vec::new() }, tree, stamps, version: self.root.version }));
+        DeclaringFile::Parked(parked.len() - 1)
     }
 
     /// A file's own file imports.
@@ -188,45 +218,83 @@ impl Checked {
         match file {
             DeclaringFile::Root => &self.imports,
             DeclaringFile::Library(path) => self.files.get(path).map_or(&[], |(_, imports)| imports.as_slice()),
+            DeclaringFile::Parked(_) => &[],
         }
     }
 
-    /// The file an engine AST path is in, and the path within it
-    /// (`in_file`).
-    pub fn at_path<'p>(&self, path: &'p str) -> Option<(&File, &'p str)> {
-        let (file, rest) = file_of_path(path);
-        Some((self.file(&file)?, rest))
-    }
-
     /// The stamp at an engine AST path.
-    pub fn stamp(&self, path: &str) -> Option<&Stamp> {
-        let (file, rest) = self.at_path(path)?;
-        file.stamps.get(rest)
+    pub fn stamp(&self, path: &str) -> Option<Stamp> {
+        let (file, rest) = file_of_path(path);
+        self.with_file(&file, |file| file.stamps.get(rest).cloned()).flatten()
     }
 
     /// `code_at` at an engine AST path.
     pub fn code_at(&self, path: &str) -> Option<crate::js::Js> {
-        let (file, rest) = self.at_path(path)?;
-        code_at(file, rest)
+        let (file, rest) = file_of_path(path);
+        self.with_file(&file, |file| code_at(file, rest)).flatten()
     }
 }
 
 /// An AST path as the engine carries it: the root file's paths as the
 /// checker writes them (`/statements/2/body`), a library's after its path,
-/// pointer-escaped, behind an `@` (`@lib~1deals/statements/1/body`), so a
+/// pointer-escaped, behind an `@` (`@lib~1deals/statements/1/body`), a
+/// parked piece of code's after its number behind a `%` (`%0/body/1`), so a
 /// path names its file wherever it travels.
 pub fn in_file(file: &DeclaringFile, path: &str) -> String {
     match file {
         DeclaringFile::Root => path.to_string(),
         DeclaringFile::Library(name) => format!("@{}{path}", name.replace('~', "~0").replace('/', "~1")),
+        DeclaringFile::Parked(index) => format!("%{index}{path}"),
     }
 }
 
 /// The file an engine AST path names (`in_file`), and the path within it.
 pub fn file_of_path(path: &str) -> (DeclaringFile, &str) {
+    if let Some(rest) = path.strip_prefix('%') {
+        let end = rest.find('/').unwrap_or(rest.len());
+        if let Ok(index) = rest[..end].parse() {
+            return (DeclaringFile::Parked(index), &rest[end..]);
+        }
+    }
     let Some(rest) = path.strip_prefix('@') else { return (DeclaringFile::Root, path) };
     let end = rest.find('/').unwrap_or(rest.len());
     (DeclaringFile::Library(rest[..end].replace("~1", "/").replace("~0", "~")), &rest[end..])
+}
+
+/// The checker's facts on a tree as a park carries it (`code_at` writes
+/// them there), by their paths in it: the keys no parser writes, on the
+/// nodes `join_check` places each kind of stamp on.
+fn stamps_in(node: &Json, at: &mut String, stamps: &mut BTreeMap<String, Stamp>) {
+    match node {
+        Json::Object(map) => {
+            if let Some(fields) = map.get("fields").filter(|_| is_write_spread(at, node))
+                && let Ok(fields) = serde_json::from_value(fields.clone())
+            {
+                stamps.insert(at.clone(), Stamp::SpreadFields(fields));
+            } else if let Some(copy) = map.get("copy").filter(|_| is_map_spread(node)) {
+                stamps.insert(at.clone(), Stamp::Copy(copy.clone()));
+            } else if map.get("reference") == Some(&Json::Bool(true)) && is_value_entry(node) {
+                stamps.insert(at.clone(), Stamp::Reference);
+            }
+            for (key, child) in map {
+                let before = at.len();
+                at.push('/');
+                at.push_str(&key.replace('~', "~0").replace('/', "~1"));
+                stamps_in(child, at, stamps);
+                at.truncate(before);
+            }
+        }
+        Json::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let before = at.len();
+                at.push('/');
+                at.push_str(&index.to_string());
+                stamps_in(child, at, stamps);
+                at.truncate(before);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The file that wrote a declaration: the scope its words are evaluated in,
@@ -237,6 +305,10 @@ pub enum DeclaringFile {
     Root,
     /// A linked library, by its path.
     Library(String),
+    /// A piece of code a resume rebuilt from its parked tree, by its number
+    /// (`Checked::park_code`): code written somewhere the parked state does
+    /// not say, run as it was parked.
+    Parked(usize),
 }
 
 /// `node <Name> { … }` as written, and the file that wrote it.
@@ -275,6 +347,7 @@ impl Declarations {
         match file {
             DeclaringFile::Root => Some(&self.root),
             DeclaringFile::Library(path) => self.libraries.get(path),
+            DeclaringFile::Parked(_) => None,
         }
     }
 
@@ -362,7 +435,7 @@ pub fn join_check(root: File, answer: &Json, language_version: u32) -> Result<Ch
             Some((text("code").ok_or("a version warning has no code")?, text("message").ok_or("a version warning has no message")?))
         }
     };
-    let mut checked = Checked { root, imports: Vec::new(), files: BTreeMap::new(), diagnostics, version_warning, declarations: Declarations::default() };
+    let mut checked = Checked { root, imports: Vec::new(), files: BTreeMap::new(), diagnostics, version_warning, declarations: Declarations::default(), parked: Default::default() };
     if let Some(link) = answer.get("link") {
         checked.imports = imports_of(link.get("imports"))?;
         for file in link.get("files").and_then(Json::as_array).ok_or("the link has no files")? {
@@ -539,5 +612,25 @@ mod tests {
             "stamps": [],
         });
         assert!(join_check(parse(SOURCE, 3).unwrap(), &unlinked, 3).unwrap_err().contains("unlinked file"));
+    }
+
+    /// Parked code is a file of its own: the checker's facts its tree
+    /// carries are its stamps, and it writes back as it was parked.
+    #[test]
+    fn parked_code_is_a_file_of_its_own_with_the_facts_its_tree_carries() {
+        let source = "import { attio } from adapters\ncrm = attio()\nmovement m(e: <crm>) {\n  f = (d) => {\n    write crm-[:companies]-> { ...d }\n  }\n}";
+        let closure = "/statements/2/body/0/value/closure";
+        let spread = format!("{closure}/body/0/write/spreads/0");
+        let answer = json!({ "diagnostics": [], "stamps": [{ "path": spread, "spreadFields": ["name"] }] });
+        let checked = join_check(parse(source, 3).unwrap(), &answer, 3).unwrap();
+        let parked = crate::env::json_of_js(&checked.code_at(closure).unwrap());
+        assert_eq!(parked.pointer("/body/0/write/spreads/0/fields"), Some(&json!(["name"])));
+        let typed = serde_json::to_value(serde_json::from_value::<ast::ClosureExpression>(parked.clone()).unwrap()).unwrap();
+        assert_eq!(checked.park_code(typed.clone(), &parked), DeclaringFile::Parked(0));
+        // The same tree parked again is the same file.
+        assert_eq!(checked.park_code(typed, &parked), DeclaringFile::Parked(0));
+        assert_eq!(checked.stamp("%0/body/0/write/spreads/0"), Some(Stamp::SpreadFields(vec!["name".into()])));
+        assert_eq!(crate::env::json_of_js(&checked.code_at("%0").unwrap()), parked);
+        assert_eq!(file_of_path("%0/body"), (DeclaringFile::Parked(0), "/body"));
     }
 }

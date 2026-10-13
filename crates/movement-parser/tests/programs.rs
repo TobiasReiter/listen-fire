@@ -165,3 +165,26 @@ fn a_rust_error_compares_as_the_movement_parse_error_it_becomes() {
     let pinned = json!({ "message": "boom (line 2, col 3)", "loc": { "line": 2, "col": 3 } });
     assert_eq!(as_pinned_error(&rust), pinned);
 }
+
+/// A parked state carries code as its syntax tree (docs/contracts/
+/// park-state.md), and a resume rebuilds the code from that tree: every
+/// corpus program's tree reads back as the AST it was written from, and
+/// writes out as the same tree again — the eager parse's slot trees, which
+/// no park carries, aside.
+#[test]
+fn every_program_tree_reads_back_as_the_ast_it_was_written_from() {
+    let mut read = 0usize;
+    for record in records() {
+        let Ok(program) = movement_parser::stmt::parse_program(&record.source, record.version, false) else { continue };
+        let tree = serde_json::to_value(&program).unwrap();
+        let back: movement_parser::ast::Program =
+            serde_json::from_value(tree.clone()).unwrap_or_else(|e| panic!("v{} {:?}: {e}", record.version, prefix(&record.source, 80)));
+        if back != program {
+            let at = program.statements.iter().zip(&back.statements).find(|(a, b)| a != b);
+            panic!("v{} {:?} reads back as another AST: {at:#?}", record.version, prefix(&record.source, 80));
+        }
+        assert_eq!(serde_json::to_value(&back).unwrap(), tree);
+        read += 1;
+    }
+    assert!(read > 1000, "only {read} programs read back");
+}

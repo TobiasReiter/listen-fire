@@ -323,7 +323,7 @@ impl Run<'_> {
     async fn apply_spreads(&self, node: &Rc<RefCell<Node>>, spreads: &[(usize, &MapSpread)], at: usize, scope: &Rc<Scope>, path: &str, shape: Option<&ShapeNode>) -> Result<(), Stop> {
         for (j, spread) in spreads.iter().filter(|(_, s)| s.after == at) {
             match self.checked.stamp(&format!("{path}/spreads/{j}")) {
-                Some(Stamp::Copy(plan)) => self.spread_record(node, spread, plan, scope, shape).await?,
+                Some(Stamp::Copy(plan)) => self.spread_record(node, spread, &plan, scope, shape).await?,
                 _ => {
                     if let Some(map) = self.spread_map(spread, scope)? {
                         spread_into_graph(&mut node.borrow_mut(), &map, shape)?;

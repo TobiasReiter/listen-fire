@@ -357,9 +357,7 @@ impl Run<'_> {
         let mut by_file = self.slot_paths.borrow_mut();
         let paths = by_file.entry(file.clone()).or_insert_with(|| {
             let mut paths = SlotPaths::new();
-            if let Some(written) = self.checked.file(file) {
-                register_slots(&written.tree, &crate::program::in_file(file, ""), false, &mut paths);
-            }
+            self.checked.with_file(file, |written| register_slots(&written.tree, &crate::program::in_file(file, ""), false, &mut paths));
             paths
         });
         let Some(slot_path) = paths.get(&span_key(&slot.span)) else { return "#nested".to_string() };

@@ -333,6 +333,11 @@ impl Firing for FiringScope<'_, '_> {
                 file = self.run.library_scope(path).await?;
                 &file
             }
+            // A declaration is written in a file of the program, never in
+            // parked code.
+            WordsScope::File(DeclaringFile::Parked(_)) => {
+                return Err(Stop::Thrown(crate::run::Failure::engine("MOVENG_RUNTIME", "a declaration's words read in parked code".into())));
+            }
         };
         let value = self.run.evaluate_slot(slot, scope).await?.value;
         Ok(match value {

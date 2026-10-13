@@ -990,6 +990,8 @@ impl Run<'_> {
         match file {
             DeclaringFile::Root => self.file_scope.borrow().clone(),
             DeclaringFile::Library(path) => self.library_scopes.borrow().iter().find(|(p, _)| p == path).map(|(_, scope)| scope.clone()),
+            // Parked code declares no movement.
+            DeclaringFile::Parked(_) => None,
         }
     }
 
@@ -2990,8 +2992,7 @@ mod tests {
 
     /// A declared shape travels by name and is re-resolved from the program's
     /// file scope wherever the state holds it; one declared in a body travels
-    /// as its declaration (serialize.ts `localShape`), found again where the
-    /// program writes it.
+    /// as its declaration's tree (serialize.ts `localShape`), rebuilt from it.
     #[test]
     fn a_shape_is_resumed_by_name_or_by_its_declaration() {
         let state = |file: Json, body: Json| {
@@ -3000,8 +3001,14 @@ mod tests {
         let shape = json!({ "kind": "shape", "name": "Lead" });
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({ "Lead": shape }), json!({})))), None);
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))), None);
-        let local = json!({ "kind": "localShape", "declaration": { "kind": "shape", "name": "Tag" } });
+        // A shape declared in a body rides as its declaration's tree, and one
+        // that does not read as a declaration is refused by name.
+        let declared = crate::program::parse("movement m() {\n  node Tag {\n    label: <text>\n  }\n}", 3).unwrap();
+        let declaration = declared.tree.pointer("/statements/0/body/0").cloned().unwrap();
+        let local = json!({ "kind": "localShape", "declaration": declaration });
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Tag": local })))), None);
+        let partial = json!({ "kind": "localShape", "declaration": { "kind": "shape", "name": "Tag" } });
+        assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Tag": partial })))), Some("resume_state_code_does_not_read".into()));
     }
 
     #[test]

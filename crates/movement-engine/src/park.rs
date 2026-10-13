@@ -30,6 +30,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use movement_parser::ast;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
@@ -470,7 +471,9 @@ pub(crate) fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
 /// when it does: a state of version 1 whose `suspended`, when present, is
 /// `true`, and whose scopes, frames and journal hold only the binding kinds
 /// this engine rebuilds (crate::resume) — every kind serialize.ts writes
-/// but a block meta-node, which no run of either engine makes.
+/// but a block meta-node, which no run of either engine makes — and whose
+/// code (a closure, an arm's body, a kept walk, a body-local declaration)
+/// reads back as the syntax tree it rides as.
 pub fn resume_refusal(state: &Json) -> Option<String> {
     let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
     if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {
@@ -507,6 +510,24 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
     match value {
         Js::Array(list) => list.items().iter().find_map(descriptors_refusal),
         Js::Object(object) => {
+            // Code rides as its syntax tree (docs/contracts/park-state.md):
+            // a tree this engine does not read back as the AST it was
+            // written from is a resume it does not run (crate::resume
+            // rebuilds code from the tree, never by looking in the program).
+            let code = match object.get("kind") {
+                Some(Js::String(kind)) if kind == "closure" => code_reads::<ast::ClosureExpression>(object.get("closure")),
+                Some(Js::String(kind)) if kind == "arm" => code_reads::<ast::ClosureExpression>(object.get("body")),
+                Some(Js::String(kind)) if kind == "localShape" => code_reads::<ast::ShapeDeclaration>(object.get("declaration")),
+                // A kept walk (a `lazyWalk`'s, a node edge's).
+                _ if object.get("head").is_some() && object.get("captured").is_some() => {
+                    code_reads::<ast::PathHead>(object.get("head"))
+                        && object.get("mapping").is_none_or(|mapping| matches!(mapping, Js::Undefined) || code_reads::<ast::NodeLiteral>(Some(mapping)))
+                }
+                _ => true,
+            };
+            if !code {
+                return Some("resume_state_code_does_not_read".into());
+            }
             match object.get("kind") {
                 Some(Js::String(kind)) if kind == "blockMeta" => return Some(format!("resume_state_kind:{kind}")),
                 // Data: a value's own, a callback's params, a position.
@@ -523,6 +544,11 @@ fn descriptors_refusal(value: &Js) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Whether `tree` reads back as the AST `T` (crate::resume `parked_tree`).
+fn code_reads<T: serde::de::DeserializeOwned>(tree: Option<&Js>) -> bool {
+    tree.is_some_and(|tree| serde_json::from_value::<T>(crate::env::json_of_js(tree)).is_ok())
 }
 
 // ── Suspension ──

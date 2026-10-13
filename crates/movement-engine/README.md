@@ -45,7 +45,7 @@ Under `MOVEMENT_ENGINE=rust` the engine runs two things:
 | `letter_number` | `/[\p{L}\p{N}]/u`'s code points, as Node reads them (generated) |
 | `park` | `ParkedScopeState` v1 written as serialize.ts writes it (one `ParkWriter` across scopes, frames and journal), the suspension points, and the resume admission |
 | `resume` | `resumeAlongAddress`: a state's spine descended (`if` arms, iterations, branches, call and member frames), the leaf bound or re-entered, each enclosing body finished, joins closed and races settled through the host; `settleRaceFrame` and `fireCallbackBody`; every descriptor kind rehydrated |
-| `code` | the program's code a state names (a closure, a kept walk's head and mapping), found again in the re-parsed program by its span |
+| `code` | what a program's bodies write at any depth (the closures they bind to a name, their node declarations); parked code is never looked for here, but rebuilt from its tree (`resume`) |
 | `flow` | a flow's own state (its trace buffer, ledger slot, call sites, lock holds), swapped in on each poll; shared futures several flows await (an adapter's resolution) |
 | `combinator` | `parallel` and `race`: arms as flows joined on the executor, the write ledger spliced in arm order, a race's winner and its losers cancelled, arms that park joined through their frame |
 | `awaits` | `await` of a landing, an `until`, a callback (`park.callbacks.mint`, its `called` edge), and the park each writes |
@@ -116,6 +116,7 @@ Measured 2026-10-07 (gzip -9):
 | a file prints as its opaque view (PLAN-07A Task 4d fix round 3) | 3,271,054 | 980,111 |
 | admission reads the checker's types for parameters, calls and spreads (PLAN-07A Task 6b) | 3,285,051 | 984,745 |
 | a record handed to a position parameter checked at every call (PLAN-07A Task 6b fix round 1) | 3,288,623 | 985,934 |
+| parked code rebuilt from its tree: the AST's `Deserialize` (PLAN-08A batch review fix 1; 1,004,729 before it) | 4,002,853 | 1,108,094 |
 | **`movement_parser.wasm`**, the browser's, split out | 1,182,906 | 321,899 |
 
 The evaluator added about 89 KB gzipped (reading the lowered `Expression`
@@ -511,13 +512,25 @@ binding kind included; only these are refused:
 | `resume_state_does_not_read` | it does not read off the wire, or its scopes, frames or journals (a frame's own) are not lists, which the TypeScript does not read either (chunk 7A Task 6 fix round 1) | **Closed**: a malformed state, which the TypeScript does not read either. |
 | `resume_state_version` | a version other than 1 | **Closed**: the park-state contract refuses it on either engine. |
 | `resume_state_suspended` | a `suspended` other than `true` | **Closed**: the park-state contract refuses it on either engine. |
-| `resume_state_kind:localShape` | a shape declared in a body, held across a park (serialize.ts `localShape`) | **Closed** (PLAN-08A group F): rebuilt from its declaration, found again by its name and span where the program (or a library) writes it, its words read in the running file as serialize.ts's rehydration leaves them. Takes: nothing |
+| `resume_state_kind:localShape` | a shape declared in a body, held across a park (serialize.ts `localShape`) | **Closed** (PLAN-08A group F; batch review fix 1): rebuilt from the declaration the state carries, as serialize.ts rehydrates it, never looked for in the program; its words read in the running file as serialize.ts's rehydration leaves them. Takes: nothing |
+| `resume_state_code_does_not_read` | code the state carries as its syntax tree (a closure's, a run-time arm's body, a body-local declaration, a kept walk's head or mapping) that does not read back as the AST it was written from | **Closed** (batch review fix 1): a state neither engine writes — both park every such piece as the whole tree (serialize.ts; park.rs `program_code`, since the first Rust park), so none in a store lacks one. Refused by name rather than guessed at by searching the program. Takes: nothing |
 | `resume_state_kind:blockMeta` | a block's meta edges bound as a name (serialize.ts writes and rehydrates one) | **Open** (no corpus run meets it, and no run makes one: the TypeScript's only builders of a `blockMeta` binding, run.ts `buildCombinatorReceipt` and `buildRaceReceipt`, are called nowhere, so only a state made by hand holds one). Kept refused by name under Henry's ruling (2026-10-12: more than a day's port for a construct no corpus run reaches). Takes: a block-meta binding kind with its reads (a head over its meta edges, `metaEdgeBindings`, expression.ts `walkMetaSteps` and the surface reads), which `traversal_meta_edge` needs too |
 
 A state that reads but is malformed for its kind (a `handle` without its
-record, a closure whose span names no closure in the re-parsed program)
-fails the resume loudly (MOVENG_RUNTIME, "the parked state holds …"),
-never resumes it wrong.
+record) fails the resume loudly (MOVENG_RUNTIME, "the parked state holds
+…"), never resumes it wrong.
+
+**Parked code is rebuilt from its tree** (docs/contracts/park-state.md, "Code
+is carried as a name, or as its syntax tree"; batch review fix 1). A
+closure, a run-time arm's body, a kept walk's head and mapping, and a
+body-local declaration come back as the tree the state carries — read into
+the typed AST (movement-parser's `Deserialize`, by `kind`) — exactly as
+serialize.ts rehydrates them, never by finding a span in the re-parsed
+program: a span names no file, and a library edited while the run slept
+holds other code at it. A closure or a walk becomes a file of its own
+(`DeclaringFile::Parked`, paths `%<n>/…`): its stamps are the checker's
+facts the parked tree carries (`fields`, `copy`, `reference`), its nested
+calls are placed in it, and the next park writes it back from it.
 
 **The shim's input checks** (`notAdmitted`, one reason each):
 
@@ -1152,9 +1165,9 @@ scope's own bindings in declaration order, then the frames, innermost last
 (a call's site with its finished calls and the callee's scope, a collection
 op's member, a combinator arm's join), with nodes and kept walks numbered
 once across all of it, as one `serializeBinding` pass numbers them. Code a
-state carries (a closure's body, a kept walk's head and mapping) is found
-again in the re-parsed program by its span (`code.rs`): the pin makes the
-re-parse the same tree. States cross on the eval wire both ways, so every
+state carries (a closure's body, a kept walk's head and mapping) is rebuilt
+from the tree it carries, never found again in the program ("Parked code is
+rebuilt from its tree", above). States cross on the eval wire both ways, so every
 object keeps its key order.
 
 A resume (`input.resume = {state, reenter?, answer?,

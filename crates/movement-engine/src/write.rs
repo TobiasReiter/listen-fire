@@ -483,7 +483,7 @@ impl Run<'_> {
                 )));
             };
             let mut these = Vec::new();
-            for name in fields {
+            for name in &fields {
                 if written.contains(name) {
                     continue;
                 }
