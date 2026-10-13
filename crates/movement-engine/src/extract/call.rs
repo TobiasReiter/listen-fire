@@ -59,12 +59,6 @@ pub(crate) struct WrittenSettings {
     effort: Option<String>,
 }
 
-impl WrittenSettings {
-    pub(crate) fn model(&self) -> Option<&str> {
-        self.model.as_deref()
-    }
-}
-
 /// What the run's extraction calls share (`ExtractCallRunState`).
 #[derive(Default)]
 pub(crate) struct CallState {
@@ -201,6 +195,13 @@ pub(crate) fn read_config(slot: &ast::ExprSlot) -> Result<WrittenSettings, Vec<S
         None => None,
     };
     if problems.is_empty() { Ok(WrittenSettings { tier, model, effort }) } else { Err(problems) }
+}
+
+/// `unreachedModelMessage` (ai_tiers.ts): why a run refuses an extraction
+/// call's written `model`, the list it is not in printed.
+fn unreached_model_message(model: &str, models: &[String]) -> String {
+    let reached = if models.is_empty() { "none".to_string() } else { models.iter().map(|m| format!("'{m}'")).collect::<Vec<_>>().join(", ") };
+    format!("'extract''s model '{model}' is not a model this deployment reaches — it reaches {reached}")
 }
 
 /// `countShapeNodes`: what the density heuristic picks a model by.
@@ -408,10 +409,13 @@ impl Run<'_> {
     }
 
     /// `extractCallSettings`: the tier's assignment on this deployment, then
-    /// the author's model and effort. A model is held to the catalog's list
-    /// of the models this deployment reaches, which the checker held it to;
-    /// with no list, the TypeScript asks the model registry, which this
-    /// engine does not hold, and the call is refused as its own.
+    /// the author's model and effort. A model is held to the catalog
+    /// snapshot's `models`, the run's one list (ai_tiers.ts `runChatModels`,
+    /// which the shim always sends) and the one the checker held it to, so
+    /// only an unchecked program fails here, in the TypeScript's words
+    /// (`unreachedModelMessage`). With no list (an embedder that sends none),
+    /// the TypeScript would ask the model registry, which this engine does
+    /// not hold, and the call is refused as its own.
     fn extract_call_settings(&self, call: &ast::ExtractCallExpression, spec: &NodeSpec) -> Result<CallSettings, Stop> {
         let WrittenSettings { tier, model, effort } = match &call.config {
             None => WrittenSettings::default(),
@@ -419,14 +423,16 @@ impl Run<'_> {
                 thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid 'extract' settings (the checker should have caught this): {}", problems.join("; "))))
             })?,
         };
-        let known = self.input.chat_models.as_ref().or(self.catalog.models.as_ref());
-        if let Some(model) = &model
-            && !known.is_some_and(|models| models.contains(model))
-        {
-            return Err(thrown(Failure::unreproduced(
-                &format!("'extract''s model '{model}' with no model list holding it"),
-                "the Rust engine holds a model to the registry's chat models (`chatModels`), else the catalog's list",
-            )));
+        if let Some(model) = &model {
+            let Some(models) = self.catalog.models.as_ref() else {
+                return Err(thrown(Failure::unreproduced(
+                    &format!("'extract''s model '{model}' with no model list holding it"),
+                    "the Rust engine holds a model to the catalog snapshot's `models`",
+                )));
+            };
+            if !models.contains(model) {
+                return Err(thrown(Failure::engine("MOVENG_RUNTIME", unreached_model_message(model, models))));
+            }
         }
         let density = if count_shape_nodes(spec) >= ENTITY_DENSITY_OPUS_THRESHOLD { "opus" } else { "sonnet" };
         Ok(crate::extract::run::extraction_call_settings_over(tier.as_deref(), density, &self.input.extraction_tiers, model.as_deref(), effort.as_deref()))

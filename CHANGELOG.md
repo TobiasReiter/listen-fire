@@ -33,10 +33,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
   written inside an expression (a closure's, a plugin's, an extraction's), `ONLY` of any expression,
   `write m.k { … }`, collection ops with `concurrency`, and the file scope as the TypeScript reads
   it. The deployment's `EXTRACTION_TIERS` now reaches the Rust engine too, as run input, so a tier's
-  model and effort are the same on both engines. An extraction call naming a `model` the catalog
-  does not list still runs on the TypeScript engine (reason `extract_call_model`). New refusal
-  reasons that can appear in a run's `engine_reason`: `nested_movement_call`, `nested_call_form`,
-  `extract_call_shape`, `extract_call_settings`, `extract_call_model`. Nothing to set.
+  model and effort are the same on both engines. New refusal reasons that can appear in a run's
+  `engine_reason`: `nested_movement_call`, `nested_call_form`, `extract_call_shape`,
+  `extract_call_settings`. Nothing to set.
+- An extraction call's `model` is held at run time to the models this deployment reaches, the list
+  the editor and the save already check it against, on both engines. A run whose saved catalog
+  carried no model list could name a model the code knows but this deployment has no credentials
+  for, pass, and fail at the provider; it now fails before the call, naming the models this
+  deployment reaches. Nothing to set.
 - A parked run's reason is no longer limited to a fixed list at the database: the core keeps
   `timer`, `await` and `limit`, and a unit (no unit writes its own reason yet; `ask` was a legacy
   value) may park under any other non-empty reason. The column loses its default of `ask` (migration

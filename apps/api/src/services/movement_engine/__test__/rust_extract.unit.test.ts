@@ -17,6 +17,7 @@ import type { LlmCallResult } from '../../translation_graph/engine/batched_extra
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { FileTextResolution, TransformInvocationResult } from '../extraction';
 
+import { availableChatModels } from '../../../lib/models/map';
 import { RunCostCapExceeded } from '../../../lib/run_cost';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
@@ -105,6 +106,8 @@ interface Case {
   messages?: ReadonlyArray<Record<string, unknown>>;
   /** A park sink that can suspend: what it is handed is compared. */
   parks?: true;
+  /** The snapshot's `models`: absent, the snapshot says none. */
+  models?: string[];
 }
 
 /** A park sink that suspends, recording each call (its state key for key). */
@@ -136,7 +139,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
     source: PRELUDE + c.source,
     event: c.event ?? EVENT,
     teamId: TEAM_ID,
-    catalog: c.files !== undefined ? { ...catalog, files: c.files } : catalog,
+    catalog: { ...catalog, ...(c.files !== undefined ? { files: c.files } : {}), ...(c.models !== undefined ? { models: c.models } : {}) },
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     ...c.spend,
     host: makeTestHost({
@@ -147,6 +150,12 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
           call: async (request): Promise<LlmCallResult> => {
             asked.push({ label: request.label, model: request.model, effort: request.effort, maxTokens: request.maxTokens, userMessage: request.userMessage });
             return { parsedJson: replies.shift() ?? {} };
+          },
+        },
+        extractCall: {
+          call: async (request) => {
+            asked.push({ label: request.label, model: request.model, effort: request.effort, maxTokens: request.maxTokens });
+            return { parsedJson: replies.shift() ?? {}, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
           },
         },
         transforms: {
@@ -422,6 +431,42 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       if (previous === undefined) delete process.env.EXTRACTION_TIERS;
       else process.env.EXTRACTION_TIERS = previous;
     }
+  });
+
+  // One model list (PLAN-08B Task 1): the snapshot's `models`, which the
+  // checker holds a written model to, is the list both engines hold it to at
+  // run time (`runChatModels`); a snapshot without one gets the deployment's
+  // (`availableChatModels`), and the model is then unchecked.
+  describe("an extraction call's written model, held to the run's one list", () => {
+    const company = 'node Company {\n  name: <text>\n}\n';
+    const calling = (model: string) =>
+      `${company}movement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.\`text\`], Company, { model: '${model}' })\n  return COUNT(found)\n}`;
+
+    it('runs a listed model whole, the model asked the one written, on both engines', async () => {
+      for (const models of [undefined, ['claude-opus-5', 'claude-sonnet-5']]) {
+        const ts = await agree({ source: calling('claude-opus-5'), replies: [{ records: [] }], ...(models !== undefined ? { models } : {}) }, { runsWhole: true });
+        expect(ts.asked).toMatchObject([{ model: 'claude-opus-5' }]);
+      }
+    });
+
+    it('ends a checked program naming a model outside the list at its check, on both engines alike', async () => {
+      const ts = await agree({ source: calling('claude-opus-5'), models: ['claude-sonnet-5'] }, { endsAtCheck: true });
+      expect('error' in ts && runFailureCause(ts.error)).toMatchObject({ code: 'MOVENG_CHECK', message: expect.stringContaining('not a model this deployment reaches') });
+      expect(ts.asked).toEqual([]);
+    });
+
+    it('fails an unchecked program naming a model outside the list identically on both engines, the list printed', async () => {
+      // No `models` on the snapshot: the checker leaves the model unchecked,
+      // and the run holds it to the deployment's list.
+      const ts = await agree({ source: calling('claude-sonnet-4-6') }, { runsWhole: true });
+      const cause = 'error' in ts ? runFailureCause(ts.error) : undefined;
+      expect(cause).toBeInstanceOf(MovementEngineError);
+      expect(cause).toMatchObject({
+        code: 'MOVENG_RUNTIME',
+        message: `MOVENG_RUNTIME: 'extract''s model 'claude-sonnet-4-6' is not a model this deployment reaches — it reaches ${availableChatModels().map((m) => `'${m}'`).join(', ')}`,
+      });
+      expect(ts.asked).toEqual([]);
+    });
   });
 
   it('declines, before any effect, a file-level value holding a nested call (it stages nested calls in a body only)', async () => {

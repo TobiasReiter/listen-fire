@@ -621,10 +621,10 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_call_model',
-    routes: 'refused',
-    note: "an extraction call naming a model the registry does not hold as a chat model (the TypeScript's parseChatModelName throws a plain error); a registry chat model runs since PLAN-08A group F′ (`chatModels`, a run input)",
+    routes: 'whole',
+    note: "closed in PLAN-08B Task 1: an extraction call's written model is held to one list, the catalog snapshot's `models` (runChatModels), by the checker and both engines; a snapshot without one (the oracle's) leaves it unchecked, and a model outside the deployment's list fails the run in the TypeScript's words on either engine",
     programs: [
-      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }], routes: 'whole' }),
+      () => ({ file: `${COMPANY_DECL}\n${m("  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }")}`, replies: [{ records: [] }] }),
       (pick) => ({ file: `${COMPANY_DECL}\n${m(`  one = extractOne([msg.\`subject\`], Company, { model: 'claude-sonnet-4-6', effort: '${pick(['low', 'medium'])}' })`)}` }),
     ],
   },

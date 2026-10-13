@@ -159,12 +159,6 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
-    /// The chat models the deployment's model registry knows (registry.ts
-    /// `chatModelNames`): an extraction call's `model` is held to it, as
-    /// `parseChatModelName` holds it. Absent: the catalog snapshot's `models`.
-    /// The shim reads the registry, so the engine reads no environment.
-    #[serde(default)]
-    pub chat_models: Option<Vec<String>>,
     /// The admission dry run's start (rust_engine.ts `dryAdmit`): never
     /// answered past its first step, so a slot this engine's lowering misses,
     /// which a real run leaves to the check, is named among the refusals.
@@ -202,8 +196,6 @@ fn default_file_chars() -> f64 {
 struct CatalogPlugins {
     #[serde(default = "no_plugins")]
     plugins: movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec>,
-    #[serde(default)]
-    models: Option<Vec<String>>,
 }
 
 /// The movement files a snapshot carries for file imports
@@ -518,7 +510,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
     let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
     let crate::admit::Admission { mut reasons } =
-        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins), input.chat_models.as_deref().or_else(|| plugins.as_ref().and_then(|c| c.models.as_deref()))), &libraries);
+        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)), &libraries);
     if let Some(resume) = &input.resume {
         reasons.extend(crate::park::resume_refusal(&resume.state));
     }

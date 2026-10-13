@@ -22,8 +22,8 @@ import { z } from 'zod';
 import { AI_EFFORTS, AI_TIERS, aiTier } from '#shared/expression/types';
 import type { AiTier } from '#shared/expression/types';
 
-import { chatModelAvailability } from '../../lib/models/map';
-import { isModelName, parseChatModelName } from '../../lib/models/registry';
+import { availableChatModels, chatModelAvailability } from '../../lib/models/map';
+import { hasCapability, isModelName, parseChatModelName } from '../../lib/models/registry';
 import type { ChatModelName } from '../../lib/models/registry';
 
 /**
@@ -228,6 +228,31 @@ export function extractionCallSettings(
       : { ...BUILT_IN_EXTRACTION_TIERS[named], ...extractionTiers(env).get(named) };
   const effort = request.effort ?? row.effort;
   return { model: request.model ?? row.model, effort, ...roomToThink(effort) };
+}
+
+/**
+ * The chat models an extraction call's written `model` is held to on a run:
+ * the run's catalog snapshot's `models`, the list the checker held it to,
+ * which the snapshot builders fill from {@link availableChatModels}; a
+ * snapshot written without one gets that function's answer here. One list for
+ * the checker and both engines: the Rust engine is handed it as the
+ * snapshot's `models` (rust_engine.ts), so a checked program's model is always
+ * in it. A name the model registry holds as no chat model is dropped, so the
+ * list is names a call can be made with.
+ */
+export function runChatModels(catalog: { models?: readonly string[] }): ChatModelName[] {
+  return (catalog.models ?? availableChatModels()).filter(
+    (name): name is ChatModelName => isModelName(name) && hasCapability(name, 'chat'),
+  );
+}
+
+/** Why a run refuses an extraction call's written `model`, both engines'
+ *  words (crates/movement-engine/src/extract/call.rs mirrors them): it is not
+ *  in {@link runChatModels}, which it prints. Only a program the checker did
+ *  not hold to the same list reaches it. */
+export function unreachedModelMessage(model: string, models: readonly string[]): string {
+  const reached = models.length === 0 ? 'none' : models.map((m) => `'${m}'`).join(', ');
+  return `'extract''s model '${model}' is not a model this deployment reaches — it reaches ${reached}`;
 }
 
 // ── The deployment's tier assignments ──────────────────────────────────────

@@ -290,8 +290,7 @@ import {
   runExtractCall,
   type ExtractCallLlmClient,
 } from './extraction_call';
-import { extractionCallSettings, type ExtractionCallSettings } from './ai_tiers';
-import { parseChatModelName } from '../../lib/models/registry';
+import { extractionCallSettings, runChatModels, unreachedModelMessage, type ExtractionCallSettings } from './ai_tiers';
 import { selectModel } from '../translation_graph/engine/batched_extraction/model_choice';
 import {
   buildDeclarationSpec,
@@ -7524,10 +7523,17 @@ class Interpreter {
       );
     }
     const { tier, model, effort } = written.settings;
+    // Held to the run's one list (the snapshot's `models`, which the checker
+    // held it to), as the Rust engine holds it.
+    const models = runChatModels(this.input.catalog);
+    const listed = model === undefined ? undefined : models.find((m) => m === model);
+    if (model !== undefined && listed === undefined) {
+      throw new MovementEngineError('MOVENG_RUNTIME', unreachedModelMessage(model, models));
+    }
     return extractionCallSettings({
       tier,
       densityModel: selectModel(countShapeNodes(spec)),
-      ...(model !== undefined ? { model: parseChatModelName(model, "'extract''s model") } : {}),
+      ...(listed !== undefined ? { model: listed } : {}),
       ...(effort !== undefined ? { effort } : {}),
     });
   }

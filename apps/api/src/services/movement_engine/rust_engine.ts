@@ -22,9 +22,8 @@ import { callEvalExpression, openEngineSegment } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
-import { chatModelNames } from '../../lib/models/registry';
 import { RunCostCapExceeded } from '../../lib/run_cost';
-import { extractionTierAssignments } from './ai_tiers';
+import { extractionTierAssignments, runChatModels } from './ai_tiers';
 import { CallDepthExceeded, maxCallDepth } from './call_depth';
 import { logger } from '../logger';
 import { MovementEngineError, MovementRunFailed, isCheckFailure, type MovementEngineErrorCode } from './errors';
@@ -722,7 +721,10 @@ function segmentInput(
       // The zone a date-time text with no offset is read in: this
       // process's, as its `Date` reads one (verified against it).
       localZone,
-      catalog: input.catalog,
+      // The snapshot, its `models` the run's one list (`runChatModels`): an
+      // extraction call's `model` is held to it, as the TypeScript engine
+      // holds it, and it is the list the checker held it to.
+      catalog: { ...input.catalog, models: runChatModels(input.catalog) },
       // What the host serves: the engine asks an optional family's method
       // only of a host that serves it, as the TypeScript engine reads its
       // host object (a park sink's, `canSuspend`).
@@ -737,9 +739,6 @@ function segmentInput(
       // What this deployment buys for each extraction tier: read here so the
       // engine reads no environment; the built-in table where it names none.
       extractionTiers: extractionTierAssignments(),
-      // The chat models the model registry knows: an extraction call's
-      // `model` is held to them, as `parseChatModelName` holds it.
-      chatModels: [...chatModelNames],
     },
     'the segment input',
   );
