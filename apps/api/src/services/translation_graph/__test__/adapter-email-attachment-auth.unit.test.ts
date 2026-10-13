@@ -37,7 +37,10 @@ function authHeaderFrom(init: RequestInit | undefined): string | undefined {
 describe('email attachment byte auth (resolveFileRef)', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
 
+  const savedDomain = process.env.MAILGUN_SENDING_DOMAIN;
+
   beforeEach(() => {
+    process.env.MAILGUN_SENDING_DOMAIN = 'example.com';
     fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response('bytes', {
         status: 200,
@@ -47,6 +50,8 @@ describe('email attachment byte auth (resolveFileRef)', () => {
   });
 
   afterEach(() => {
+    if (savedDomain === undefined) delete process.env.MAILGUN_SENDING_DOMAIN;
+    else process.env.MAILGUN_SENDING_DOMAIN = savedDomain;
     fetchSpy.mockRestore();
   });
 
@@ -63,6 +68,53 @@ describe('email attachment byte auth (resolveFileRef)', () => {
     expect(auth).toMatch(/^Basic /);
     const decoded = Buffer.from(auth!.replace('Basic ', ''), 'base64').toString();
     expect(decoded.startsWith('api:')).toBe(true);
+  });
+
+  it('refuses, without fetching, another team\'s mailgun.net storage URL and an unset domain', async () => {
+    const adapter = new EmailAdapter(TEAM_ID);
+    const other = 'https://storage.mailgun.net/v3/domains/other-team.com/messages/abc/attachments/0';
+    await expect(adapter.resolveFileRef(refFor(other))).rejects.toThrow(/configured Mailgun domain/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    delete process.env.MAILGUN_SENDING_DOMAIN;
+    await expect(
+      adapter.resolveFileRef(
+        refFor('https://storage.mailgun.net/v3/domains/example.com/messages/abc/attachments/0'),
+      ),
+    ).rejects.toThrow(/configured Mailgun domain/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('never sends the key for userinfo, a suffix-lookalike host or an encoded path step, and accepts a mixed-case host and domain', async () => {
+    const adapter = new EmailAdapter(TEAM_ID);
+    const tail = 'messages/abc/attachments/0';
+    // These are not Mailgun hosts, and no provider issued them: refused by name, unfetched.
+    for (const handle of [
+      `https://mailgun.net@evil.com/v3/domains/example.com/${tail}`,
+      `https://x.mailgun.net.evil.com/v3/domains/example.com/${tail}`,
+      `https://evilmailgun.net/v3/domains/example.com/${tail}`,
+    ]) {
+      await expect(adapter.resolveFileRef(refFor(handle))).rejects.toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+    // These are Mailgun's but not under the configured domain: refused unfetched.
+    for (const handle of [
+      `https://user:pw@storage.mailgun.net/v3/domains/example.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%2fother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%2Fother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%5cother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/%2e%2e/other-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/../other-team.com/${tail}`,
+    ]) {
+      await expect(adapter.resolveFileRef(refFor(handle))).rejects.toThrow(
+        /configured Mailgun domain/,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+    process.env.MAILGUN_SENDING_DOMAIN = 'Example.COM';
+    await adapter.resolveFileRef(
+      refFor(`https://Storage.MAILGUN.net/v3/domains/example.com/${tail}`),
+    );
+    expect(authHeaderFrom(fetchSpy.mock.calls[0][1])).toMatch(/^Basic /);
   });
 
   it.each([

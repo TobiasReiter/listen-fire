@@ -1,4 +1,4 @@
-// Loop guard — the Redis sliding-window store (the hot path).
+// Loop guard — the sliding-window counter store (the hot path).
 //
 // Sliding-window-by-buckets: each metric is counted into a per-SECOND-bucket
 // key with a short TTL; a "current value" is the SUM of the buckets covering
@@ -9,55 +9,33 @@
 // All keys are short-TTL and self-expiring: nothing here needs cleanup, and a
 // metric that goes quiet simply ages out. No DB on this path.
 //
-// FAIL-OPEN: every operation that touches Redis is wrapped so that a connection
+// The buckets live in Redis when MESSAGE_QUEUE_REDIS_HOSTNAME is set and in this process's memory
+// otherwise (./counters). The backend is picked once, at load. Memory is exact for one process; with
+// several API instances and no Redis each counts only its own firings.
+//
+// FAIL-OPEN: every backend operation is wrapped so that a connection
 // error, timeout, or unexpected reply degrades to "no signal" — `increment`
 // returns the amount as if it succeeded-but-empty, and reads return 0. A broken
 // guard must NEVER block legitimate work (P4).
 
-import type { Redis } from 'ioredis';
-
-import { getRedisPool } from '../../redisPool';
+import { redisConfigured } from '../../redisPool';
 import { logger } from '../logger';
+import type { BucketBackend } from './counters/backend';
+import { createMemoryBucketBackend } from './counters/memory';
+import { redisBucketBackend } from './counters/redis';
+
+export { resetAcquireBackoffForTests } from './counters/redis';
 
 /** Bucket granularity. One bucket per second keeps windows precise to ~1s. */
 const BUCKET_SECONDS = 1;
 
-/** Cap a Redis op so a stalled connection can't blow the latency budget. */
-const REDIS_OP_TIMEOUT_MS = 20;
+const backend: BucketBackend = redisConfigured() ? redisBucketBackend : createMemoryBucketBackend();
+// A deployment that meant to share counters across instances but lost its Redis setting would
+// otherwise count per instance without a trace.
+logger.info(`[LoopGuard] counters kept in ${redisConfigured() ? 'Redis' : 'process memory'}`);
 
 function bucketStamp(nowMs: number): number {
   return Math.floor(nowMs / 1000 / BUCKET_SECONDS);
-}
-
-/** Race a promise against a timeout; on timeout the rejection drives fail-open. */
-async function withTimeout<T>(p: Promise<T>): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeout = new Promise<T>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('loop_guard redis op timed out')), REDIS_OP_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([p, timeout]);
-  } finally {
-    clearTimeout(timer!);
-  }
-}
-
-/**
- * Run a function with a pooled Redis client, always releasing it. The pool
- * `acquire()` is NOT under the tight op-timeout — the first acquire pays a
- * one-time TCP-connect + ping cost that legitimately exceeds the per-op budget;
- * only the Redis commands themselves (inside `fn`, via `withTimeout`) are
- * budgeted. A genuinely dead Redis still fails fast: acquire rejects on connect
- * error and the caller's catch fails open.
- */
-async function withClient<T>(fn: (client: Redis) => Promise<T>): Promise<T> {
-  const pool = getRedisPool();
-  const client = await pool.acquire();
-  try {
-    return await fn(client);
-  } finally {
-    pool.release(client).catch(() => {});
-  }
 }
 
 /**
@@ -67,7 +45,7 @@ async function withClient<T>(fn: (client: Redis) => Promise<T>): Promise<T> {
  * The bucket key gets a TTL of `windowSeconds + a small slack` so it survives
  * exactly long enough to be summed and no longer.
  *
- * Fail-open: on any Redis error the metric is treated as 0 (well under any
+ * Fail-open: on any backend error the metric is treated as 0 (well under any
  * threshold) so the caller allows the run.
  */
 export async function incrementAndSum(input: {
@@ -90,33 +68,16 @@ export async function incrementAndSum(input: {
   for (let b = oldest; b <= current; b += 1) readKeys.push(`${input.key}:${b}`);
 
   try {
-    return await withClient(async (client) => {
-      const pipeline = client.pipeline();
-      pipeline.incrby(currentKey, input.amount);
-      pipeline.expire(currentKey, input.windowSeconds + BUCKET_SECONDS * 2);
-      pipeline.mget(...readKeys);
-      const results = await withTimeout(pipeline.exec());
-      if (!results) return { total: input.amount, failOpen: true };
-
-      // results: [[err, incrReply], [err, expireReply], [err, mgetReply]]
-      const mgetEntry = results[2];
-      if (!mgetEntry || mgetEntry[0]) {
-        // mget failed — fall back to the increment reply alone.
-        return { total: input.amount, failOpen: true };
-      }
-      const values = mgetEntry[1];
-      if (!Array.isArray(values)) return { total: input.amount, failOpen: true };
-      let total = 0;
-      for (const v of values) {
-        if (typeof v === 'string') {
-          const n = Number(v);
-          if (Number.isFinite(n)) total += n;
-        }
-      }
-      return { total, failOpen: false };
+    const values = await backend.addAndRead({
+      bucketKey: currentKey,
+      amount: input.amount,
+      ttlSeconds: input.windowSeconds + BUCKET_SECONDS * 2,
+      readKeys,
+      nowMs,
     });
+    return { total: values.reduce((sum, n) => sum + n, 0), failOpen: false };
   } catch (err) {
-    logger.warn('[LoopGuard] redis incrementAndSum failed — failing open', {
+    logger.warn('[LoopGuard] incrementAndSum failed — failing open', {
       key: input.key,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -142,9 +103,9 @@ export async function resetWindow(input: {
     keys.push(`${input.key}:${b}`);
   }
   try {
-    await withClient((client) => withTimeout(client.del(...keys)));
+    await backend.remove(keys);
   } catch (err) {
-    logger.warn('[LoopGuard] redis resetWindow failed', {
+    logger.warn('[LoopGuard] resetWindow failed', {
       key: input.key,
       error: err instanceof Error ? err.message : String(err),
     });

@@ -298,9 +298,28 @@ export function makeFileTextResolver(rawText: RawTextStore, bytes: StreamFileRef
       return { unreadable: 'extraction_failed', detail: message };
     }
     if (text !== null && typeof text !== 'string') return text;
+    // A font map with no glyph for some characters leaves U+0000 in the text
+    // layer (a real deck produced 43 of them); Postgres rejects NUL in a text
+    // column outright, so swap it for a space here — once, for every file
+    // kind — before the no-text check or the store ever see it. A missing
+    // glyph usually stood where a separator was, so a space keeps word
+    // boundaries intact.
+    if (text !== null) text = text.replace(/\u0000/g, ' ');
     if (!text || text.trim().length === 0) return { unreadable: 'no_text' };
 
-    const rawTextId = await rawText.getOrCreateId(text);
-    return { text, rawTextId };
+    try {
+      const rawTextId = await rawText.getOrCreateId(text);
+      return { text, rawTextId };
+    } catch (error) {
+      // Provenance is a nice-to-have on top of the extracted text, not a
+      // precondition for it — a store failure (e.g. an encoding edge case
+      // that slips past sanitisation) must not take the whole run down.
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('[movement:file-text] could not store raw text provenance', {
+        name: ref.name,
+        message,
+      });
+      return { text };
+    }
   };
 }

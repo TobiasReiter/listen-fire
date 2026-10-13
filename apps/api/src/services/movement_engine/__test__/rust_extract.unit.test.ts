@@ -601,6 +601,25 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     });
   });
 
+  describe("the file reader's answer when storing its provenance failed (main's PR #25: text, no rawTextId)", () => {
+    // The host's reader swaps U+0000 for a space, and when storing the text as
+    // provenance fails it answers the text alone. The run carries on, on both
+    // engines alike: the READ's value, the prompt and the trace.
+    const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
+    const withDeck: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck } };
+    const fileText = { text: 'The deck says GPT 5.6 Luna powers the product.' };
+    const read = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '  ERROR("${t}")', '}'].join('\n');
+    const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
+    const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+
+    it.each([
+      ['READ', { source: read, event: withDeck, fileText }],
+      ['an extraction', { source: file, event: withDeck, fileText, replies: [reply] }],
+    ] as const)('%s reads on as the TypeScript does', async (_what, c) => {
+      await agree(c, { runsWhole: true });
+    });
+  });
+
   it("fails the run by name, never as the shim's fault, when the file reader calls a file unreadable for a reason outside the four", async () => {
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
     const source = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '}'].join('\n');

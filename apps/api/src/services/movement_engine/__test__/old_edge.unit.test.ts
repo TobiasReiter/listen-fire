@@ -332,6 +332,29 @@ const WRITE_ACME = (domain: string) =>
   `  org = write crm-[:companies]-> { unique by (\`name\`), name: "Acme Incorporated", domain: "${domain}" }`;
 
 describe('-[:@old]-> off a write handle', () => {
+  it('the result\'s write record has no old member (version 4), though -[:@old]-> read it during the run', async () => {
+    const body = [WRITE_ACME('new.example'), note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END')];
+    // `run` compares both engines' writes; here each engine's result is also
+    // read whole: no `old` on either, and the two serialise byte for byte.
+    const crm = await run(body, () => makeCrm([ACME]), { languageVersion: 4 });
+    expect(notes(crm)).toEqual(['matched']);
+    const previous = process.env.MOVEMENT_ENGINE;
+    const serialised: string[] = [];
+    try {
+      for (const engine of ['ts', 'rust'] as const) {
+        process.env.MOVEMENT_ENGINE = engine;
+        const result = await runOn(body, makeCrm([ACME]).adapter, { languageVersion: 4 });
+        expect(result.writes.length).toBeGreaterThan(0);
+        for (const w of result.writes) expect(Object.hasOwn(w, 'old')).toBe(false);
+        serialised.push(JSON.stringify(result.writes));
+      }
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+    }
+    expect(serialised[1]).toBe(serialised[0]);
+  });
+
   it('a created record has no @old', async () => {
     const crm = await run(
       [

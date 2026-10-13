@@ -312,3 +312,39 @@ describe('the existing kinds are untouched', () => {
     expect(ocrMock).not.toHaveBeenCalled();
   });
 });
+
+describe('NUL bytes in a font map with missing glyphs', () => {
+  it('sanitises the text before the no-text check and the store', async () => {
+    // Mirrors a real deck: a font map with no glyph for some characters left
+    // U+0000 in the text layer (43 of them, e.g. `GPT\u00005.6\u0000Luna`).
+    const raw =
+      'Example Ventures backed the company. The deck says GPT\u00005.6\u0000Luna powers ' +
+      'the product, with strong revenue growth and a large addressable market this year.';
+    extractTextMock.mockResolvedValue({ totalPages: 1, text: raw });
+    streamFileRefMock.mockResolvedValue({ stream: Readable.from([Buffer.from('%PDF')]), size: 4 });
+    getOrCreateRawTextIdMock.mockResolvedValue('rt-sanitised');
+
+    const result = await makeFileTextResolver(rawText, FILE_BYTES)({ file: pdfRef() });
+
+    const sanitised = raw.replace(/\u0000/g, ' ');
+    expect(sanitised).not.toContain('\u0000');
+    expect(getOrCreateRawTextIdMock).toHaveBeenCalledWith(sanitised);
+    expect(result).toEqual({ text: sanitised, rawTextId: 'rt-sanitised' });
+    expect(ocrMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves the run alone when storing provenance fails', async () => {
+    const text = 'Acme Corp raised a $5M seed round led by Example Ventures. Revenue is $1.2M ARR this year.';
+    extractTextMock.mockResolvedValue({ totalPages: 1, text });
+    streamFileRefMock.mockResolvedValue({ stream: Readable.from([Buffer.from('%PDF')]), size: 4 });
+    getOrCreateRawTextIdMock.mockRejectedValue(new Error('invalid byte sequence for encoding "UTF8": 0x00'));
+
+    const result = await makeFileTextResolver(rawText, FILE_BYTES)({ file: pdfRef() });
+
+    expect(result).toEqual({ text });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not store raw text provenance'),
+      expect.objectContaining({ name: 'onepager.pdf', message: expect.stringContaining('0x00') }),
+    );
+  });
+});

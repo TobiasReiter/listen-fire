@@ -37,6 +37,41 @@ interface EmailProvider {
   fetchAttachment(handle: string): Promise<ResolveFileRefResult>;
 }
 
+/** `mailgun.net` or a host under it (a bare `endsWith` also took `evilmailgun.net`). */
+function isMailgunHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === 'mailgun.net' || host.endsWith('.mailgun.net');
+}
+
+/**
+ * Whether `handle` is an https Mailgun storage URL of the domain this
+ * deployment is configured for: `/v3/domains/<MAILGUN_SENDING_DOMAIN>/…` on a
+ * mailgun.net host, which is the shape Mailgun's storage URLs have. Unset
+ * domain means no URL qualifies, so the key is never sent.
+ */
+function isConfiguredMailgunStorageUrl(
+  handle: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const domain = env.MAILGUN_SENDING_DOMAIN?.trim().toLowerCase();
+  if (domain === undefined || domain === '') return false;
+  try {
+    const url = new URL(handle);
+    return (
+      url.protocol === 'https:' &&
+      isMailgunHost(url.hostname) &&
+      url.username === '' &&
+      url.password === '' &&
+      // WHATWG URL leaves `%2f` / `%5c` alone, so `..%2fother` would pass the
+      // prefix check yet may be read as a path step upstream.
+      !/%(2f|5c)/i.test(url.pathname) &&
+      url.pathname.toLowerCase().startsWith(`/v3/domains/${encodeURIComponent(domain)}/`)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Mailgun stores inbound attachments behind its own API, and a bare GET 401s:
  * fetching one takes HTTP Basic auth with the same key the inbound webhook is
@@ -48,12 +83,21 @@ const MAILGUN_PROVIDER: EmailProvider = {
   owns(handle) {
     try {
       const url = new URL(handle);
-      return url.protocol === 'https:' && (url.hostname === 'mailgun.net' || url.hostname.endsWith('.mailgun.net'));
+      return url.protocol === 'https:' && isMailgunHost(url.hostname);
     } catch {
       return false;
     }
   },
   async fetchAttachment(handle) {
+    // The deployment holds ONE Mailgun key, which reads any domain's storage
+    // on Mailgun's side, so the key goes only to a URL under the domain this
+    // deployment is configured for. Another team's unguessable URL on the
+    // same host is refused, not fetched.
+    if (!isConfiguredMailgunStorageUrl(handle)) {
+      throw new Error(
+        'Refusing to fetch a Mailgun attachment outside this deployment\'s configured Mailgun domain (MAILGUN_SENDING_DOMAIN)',
+      );
+    }
     const key = getEnvVar('MAILGUN_API_KEY', { devDefault: 'fake_mailgun_key' });
     return fetchUrlToStream(handle, {
       headers: { Authorization: `Basic ${Buffer.from(`api:${key}`).toString('base64')}` },

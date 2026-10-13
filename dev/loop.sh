@@ -112,6 +112,11 @@ export LISTEN_FIRE_STACK="${LISTEN_FIRE_STACK:-$STACK_NAME_DEFAULT}"
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-$POSTGRES_HOST_PORT_DEFAULT}"
 export REDIS_HOST_PORT="${REDIS_HOST_PORT:-$REDIS_HOST_PORT_DEFAULT}"
 
+# The API only uses Redis when it is named (there is no localhost default in the code), so the
+# dev loop names the container it runs, on this profile's port.
+export MESSAGE_QUEUE_REDIS_HOSTNAME="${MESSAGE_QUEUE_REDIS_HOSTNAME:-localhost}"
+export MESSAGE_QUEUE_REDIS_PORT="${MESSAGE_QUEUE_REDIS_PORT:-$REDIS_HOST_PORT}"
+
 case "$SHAPE" in
   loop|push-tick) ;;
   *)
@@ -196,8 +201,6 @@ done
 if [ "$PROFILE" = "agent" ]; then
   export DATABASE_URL="${DATABASE_URL:-postgresql://listenfire:localdevpassword@localhost:$POSTGRES_HOST_PORT/listenfire}"
   export DATABASE_URL_READONLY="${DATABASE_URL_READONLY:-postgresql://readonly:readonly@localhost:$POSTGRES_HOST_PORT/listenfire}"
-  export MESSAGE_QUEUE_REDIS_HOSTNAME="${MESSAGE_QUEUE_REDIS_HOSTNAME:-localhost}"
-  export MESSAGE_QUEUE_REDIS_PORT="${MESSAGE_QUEUE_REDIS_PORT:-$REDIS_HOST_PORT}"
 
   echo "[dev:loop] Applying schema to the agent stack's own database (idempotent)..."
   NODE_ENV= bash apps/api/src/db/migrate.sh "$DATABASE_URL" \

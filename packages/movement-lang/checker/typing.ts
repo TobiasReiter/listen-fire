@@ -4058,10 +4058,11 @@ export class ExpressionTyping {
     if (position?.kind !== 'handle' || position.written !== true) return;
     if (position.setFields?.has(propertyId) === true) return;
     // A name the write's result declares and the record does not (the host's
-    // `externalId`, `url`) is the handle's own — its identity and the write's
-    // link — and reads the same on either side of 4.
+    // `externalId`) is the handle's own — its identity — and reads the same on
+    // either side of 4. `url` is not: before 4 it read the write's own link
+    // (null when the update returned none); from 4 the found record's url.
     const ofRecord = positionSchemaOfRef(position)?.properties[propertyId] !== undefined;
-    if (!ofRecord && position.resultShape[propertyId] !== undefined) return;
+    if (!ofRecord && propertyId !== 'url' && position.resultShape[propertyId] !== undefined) return;
     if (!this.upgradeCrosses(4)) return;
     this.report(
       TypedDiagnosticCodes.HANDLE_READ_FOUND,

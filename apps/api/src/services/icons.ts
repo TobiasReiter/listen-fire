@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import Redis from 'ioredis';
 
 import { Queue } from '../lib/utils/queue';
-import { getRedisPool } from '../redisPool';
+import { getRedisPool, redisConfigured } from '../redisPool';
 
 const requestQueue = new Queue<Readable | null>({ concurrency: 10 });
 
@@ -53,34 +53,39 @@ async function getIconForUrlInner(hostname: string, size: string) {
   return null;
 }
 
+// The cache is Redis-only: with no Redis configured every lookup is a miss.
 async function getCachedIcon(hostname: string, size: string) {
+  if (!redisConfigured()) return null;
   const cacheKey = `${hostname}:${size}`;
   const pool = getRedisPool();
-  const client: Redis = await pool.acquire();
+  let client: Redis | null = null;
 
   try {
+    client = await pool.acquire();
     const data = await client.getBuffer(cacheKey); // ioredis supports getBuffer
     return data || null;
   } catch (error) {
     console.error(`Failed to get cache for ${cacheKey}:`, error);
     return null;
   } finally {
-    await pool.release(client);
+    if (client) await pool.release(client);
   }
 }
 
 async function cacheIcon(hostname: string, size: string, buffer: Buffer) {
+  if (!redisConfigured()) return;
   const oneMonth = 30 * 24 * 60 * 60; // 30 days in seconds
   const cacheKey = `${hostname}:${size}`;
 
   const pool = getRedisPool();
-  const client: Redis = await pool.acquire();
+  let client: Redis | null = null;
   try {
+    client = await pool.acquire();
     await client.set(cacheKey, buffer, 'EX', oneMonth);
   } catch (error) {
     console.error(`Failed to cache icon for ${cacheKey}:`, error);
   } finally {
-    await pool.release(client);
+    if (client) await pool.release(client);
   }
 }
 

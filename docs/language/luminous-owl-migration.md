@@ -115,7 +115,7 @@ if was != null AND was.Name != org.Name {
 - A write off a record found earlier (`x = write c { … }` on a traversal landing or a matched record) is a write handle too, and has `@old`.
 - `@old` on a match handle, a traversal landing or a local node is `MOV_OLD_EDGE_NOT_A_WRITE`. Any other `@name` is `MOV_ARTIFICIAL_EDGE_UNKNOWN`.
 - Under Quiet Heron (1), Bright Otter (2) and Steady Lynx (3) the edge does not exist: `-[:@old]->` is the plain unknown edge, `MOV_TRAVERSE_UNKNOWN_EDGE`.
-- Under Luminous Owl (4), reading a field off a write handle that the write did not set with `:` reads the record as the write found it. Under versions 1 to 3 it read what the system handed back from the write, which was often nothing, and nothing when the write changed nothing. A field set with `?:` or `+:` counts as not set. Why: the handle names the record, so its fields are the record's.
+- Under Luminous Owl (4), reading a field off a write handle that the write did not set with `:` reads the record as the write found it; so does `url`, which under versions 1 to 3 read the link the write returned (null when the update returned none). Under versions 1 to 3 it read what the system handed back from the write, which was often nothing, and nothing when the write changed nothing. A field set with `?:` or `+:` counts as not set. Why: the handle names the record, so its fields are the record's.
 - `MOV_HANDLE_READ_FOUND` is a move-up warning on each such read, and holds the pin until acknowledged. If the code assumed the old reading (for example, an empty value meaning "the write did not touch it"), change it, then upgrade.
 
 ## 6. A write on a write handle updates in place
