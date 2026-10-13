@@ -30,6 +30,9 @@ export { resetAcquireBackoffForTests } from './counters/redis';
 const BUCKET_SECONDS = 1;
 
 const backend: BucketBackend = redisConfigured() ? redisBucketBackend : createMemoryBucketBackend();
+// A deployment that meant to share counters across instances but lost its Redis setting would
+// otherwise count per instance without a trace.
+logger.info(`[LoopGuard] counters kept in ${redisConfigured() ? 'Redis' : 'process memory'}`);
 
 function bucketStamp(nowMs: number): number {
   return Math.floor(nowMs / 1000 / BUCKET_SECONDS);
