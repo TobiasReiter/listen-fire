@@ -4106,6 +4106,18 @@ class Interpreter {
             env.declare(statement.name, bindValue(value, provenance, { many: this.bindsManyValues(rhs.expr, env) }));
             return;
           }
+          case 'closure':
+            // A closure bound at file level — the root program's or a
+            // library's — is in scope in that file's functions, as the
+            // checker's file scope says. It captures the file scope as it
+            // stands here, exactly as one bound in a body does.
+            env.declare(statement.name, binding({
+              kind: 'closure',
+              closure: rhs.closure,
+              captured: captureScope(env),
+              ...(since(this.languageVersion, 3) ? { self: statement.name } : {}),
+            }));
+            return;
           case 'extract':
           case 'extractCall':
             throw unsupported(

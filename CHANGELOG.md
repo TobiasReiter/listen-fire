@@ -105,6 +105,10 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- A closure bound at a file's top level (`f = (n: <number>) => …`), in a library or the root
+  program, is now in scope inside that file's functions, as the checker already said. The run
+  used to fail "'f' is not in scope" (or call a built-in of the same name). Every language version
+  from 3, where a closure became callable; it always failed before, so nothing that ran changes.
 - A record passed to a function another file exports is no longer refused when that file constructs
   the same system ("expects inbox.message, but this argument is inbox.message"). A system is its
   address (the adapter, the credential and the values of literal construction arguments), not
