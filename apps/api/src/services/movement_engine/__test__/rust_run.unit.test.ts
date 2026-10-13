@@ -596,8 +596,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
-      // `...m.k` in a graph off a root that is no value (a value's member runs since PLAN-08A group E).
-      [movement('  g = graph { ...msg.k }'), 'node_spread_path'],
       // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url()')}`, 'plugin_call'],

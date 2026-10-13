@@ -1209,20 +1209,18 @@ function graphValueMisfit(
   return undefined;
 }
 
-/**
- * The binding a spread copies from: its name's, or — for `...m.k` — what the
- * map holds under the key, bound as `x = m.k` would bind it.
- */
-function spreadSourceBinding(spread: MapSpread, env: Environment): Binding | undefined {
-  if (spread.path === undefined) return env.resolve(spread.source);
-  let bound = env.resolve(spread.path.root);
-  for (const key of spread.path.members) {
-    const held = bound?.kind === 'value' ? bound.value : undefined;
-    if (!isDictValue(held)) return undefined;
-    bound = bindValue(held[key] ?? null, bound?.kind === 'value' ? bound.provenance : undefined);
-  }
-  return bound;
-}
+/** The bindings a member of `...r.k` is read off as a record's field
+ *  (`readLandingField`), the event's source position among them. */
+const SPREAD_RECORD_KINDS: ReadonlySet<Binding['kind']> = new Set([
+  'sourcePosition',
+  'handle',
+  'nodePosition',
+  'shapePosition',
+  'extractPosition',
+  'extractRoot',
+  'resource',
+  'positions',
+]);
 
 /**
  * The one record `...r` copies — held as a value or bound on the arrow plane —
@@ -9811,7 +9809,7 @@ class Interpreter {
           await this.spreadRecordIntoGraph(node, { spread, plan: spread.copy, env, shape });
           continue;
         }
-        const map = this.spreadMap(spread, env);
+        const map = await this.spreadMap(spread, env);
         if (map !== undefined) this.spreadIntoGraph(node, map, shape);
       }
     };
@@ -9904,9 +9902,11 @@ class Interpreter {
       }
       case 'positions':
         return bound.landings;
-      case 'event':
-        if (this.source !== undefined) return [binding({ kind: 'sourcePosition', position: this.source.position })];
+      case 'event': {
+        const record = this.eventRecord();
+        if (record !== undefined) return [record];
         break;
+      }
       case 'sourcePosition':
       case 'handle':
       case 'nodePosition':
@@ -9935,10 +9935,37 @@ class Interpreter {
     );
   }
 
+  /** The trigger's own record, as the source position it is. */
+  private eventRecord(): Binding | undefined {
+    return this.source !== undefined ? binding({ kind: 'sourcePosition', position: this.source.position }) : undefined;
+  }
+
+  /**
+   * The binding a spread copies from: its name's, or — for `...m.k` — what
+   * `m` holds under each key in turn, bound as `x = m.k` would bind it: a
+   * map's key, or a record's field read off it. The event is a record like
+   * any other: its source position.
+   */
+  private async spreadSourceBinding(spread: MapSpread, env: Environment): Promise<Binding | undefined> {
+    const root = env.resolve(spread.path === undefined ? spread.source : spread.path.root);
+    let bound = root?.kind === 'event' ? (this.eventRecord() ?? root) : root;
+    for (const key of spread.path?.members ?? []) {
+      if (bound !== undefined && SPREAD_RECORD_KINDS.has(bound.kind)) {
+        const read = await readLandingField(bound, key, spread.source, this.exprContext(env));
+        bound = bindValue(read.value ?? null, read.provenance);
+        continue;
+      }
+      const held = bound?.kind === 'value' ? bound.value : undefined;
+      if (!isDictValue(held)) return undefined;
+      bound = bindValue(held[key] ?? null, bound?.kind === 'value' ? bound.provenance : undefined);
+    }
+    return bound;
+  }
+
   /** The map a `...v` spreads, as it is at run time — undefined when it is
    *  absent, which copies nothing, as TypeScript's `...undefined` does. */
-  private spreadMap(spread: MapSpread, env: Environment): Record<string, unknown> | undefined {
-    const bound = spreadSourceBinding(spread, env);
+  private async spreadMap(spread: MapSpread, env: Environment): Promise<Record<string, unknown> | undefined> {
+    const bound = await this.spreadSourceBinding(spread, env);
     const value = bound?.kind === 'value' ? bound.value : undefined;
     if (bound?.kind === 'value' && (value === undefined || value === null)) return undefined;
     if (!isDictValue(value)) {
@@ -9960,7 +9987,7 @@ class Interpreter {
     node: Extract<Binding, { kind: 'nodePosition' }>,
     { spread, plan, env, shape }: { spread: MapSpread; plan: CopyPlan; env: Environment; shape: ShapeNode | undefined },
   ): Promise<void> {
-    const record = spreadRecord(spread, spreadSourceBinding(spread, env));
+    const record = spreadRecord(spread, await this.spreadSourceBinding(spread, env));
     if (record === undefined) return;
     const copy = await this.snapshotRecord(record, plan, env);
     for (const field of plan.fields) {

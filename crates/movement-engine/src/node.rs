@@ -325,7 +325,7 @@ impl Run<'_> {
             match self.checked.stamp(&format!("{path}/spreads/{j}")) {
                 Some(Stamp::Copy(plan)) => self.spread_record(node, spread, &plan, scope, shape).await?,
                 _ => {
-                    if let Some(map) = self.spread_map(spread, scope)? {
+                    if let Some(map) = self.spread_map(spread, scope).await? {
                         spread_into_graph(&mut node.borrow_mut(), &map, shape)?;
                     }
                 }
@@ -405,10 +405,7 @@ impl Run<'_> {
                 Ok(records)
             }
             Binding::Positions(landings) => Ok(landings),
-            Binding::Event => {
-                let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
-                Ok(vec![Binding::Landed(Rc::new(crate::bindings::Landed::new(source.position.to_js(), None, source.read.clone())))])
-            }
+            Binding::Event => Ok(vec![self.event_record()]),
             binding @ (Binding::Landed(_) | Binding::Handle(_) | Binding::Node(_) | Binding::Extracted { .. }) => Ok(vec![binding]),
             other => Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
@@ -417,12 +414,63 @@ impl Run<'_> {
         }
     }
 
+    /// `eventRecord`: the trigger's own record, as the source position it is.
+    fn event_record(&self) -> Binding {
+        let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
+        Binding::Landed(Rc::new(crate::bindings::Landed::new(source.position.to_js(), None, source.read.clone())))
+    }
+
+    /// `spreadSourceBinding`: the binding a spread copies from, its name's,
+    /// or for `...m.k` what `m` holds under each key in turn, bound as `x =
+    /// m.k` binds it: a map's key (`held[key] ?? null`), or a record's field
+    /// read off it (`readLandingField`); none where a step is neither. The
+    /// event is a record like any other: its source position.
+    async fn spread_source_binding(&self, spread: &MapSpread, scope: &Scope) -> Result<Option<Binding>, Stop> {
+        let root = scope.resolve(spread.path.as_ref().map_or(&spread.source, |path| &path.root));
+        let mut bound = match root {
+            Some(Binding::Event) => Some(self.event_record()),
+            other => other,
+        };
+        for key in spread.path.iter().flat_map(|path| &path.members) {
+            match &bound {
+                Some(
+                    record @ (Binding::Landed(_)
+                    | Binding::Handle(_)
+                    | Binding::Node(_)
+                    | Binding::ShapePosition(_)
+                    | Binding::Extracted { .. }
+                    | Binding::Resource(_)
+                    | Binding::Positions(_)),
+                ) => {
+                    let read = self.landing_field(record, key, &spread.source).await.map_err(Stop::Thrown)?;
+                    let trail = match read.prov {
+                        Prov::Built(trail) => trail,
+                        prov @ Prov::Binding(_) => self.trail_or_none(&prov, scope),
+                    };
+                    let value = if read.value.is_nullish() { Js::Null } else { read.value };
+                    bound = Some(crate::record::bind_value(value, Some(trail), false));
+                }
+                Some(Binding::Value(held)) if crate::js::is_dict(&held.value) => {
+                    let Js::Object(map) = &held.value else { return Ok(None) };
+                    // `held[key] ?? null`.
+                    let value = match crate::js::plain_property(map, key) {
+                        value if value.is_nullish() => Js::Null,
+                        value => value,
+                    };
+                    bound = Some(crate::record::bind_value(value, held.trail.clone(), false));
+                }
+                _ => return Ok(None),
+            }
+        }
+        Ok(bound)
+    }
+
     /// `spreadRecordIntoGraph`: the record copied by the checker's plan, its
     /// fields and planned edges laid over what the node holds so far.
     async fn spread_record(&self, node: &Rc<RefCell<Node>>, spread: &MapSpread, plan: &Json, scope: &Scope, shape: Option<&ShapeNode>) -> Result<(), Stop> {
         // `spreadRecord`: the record held as a value or bound as one; none
         // at all copies nothing.
-        let bound = match spread_source_binding(spread, scope) {
+        let bound = match self.spread_source_binding(spread, scope).await? {
             None => return Ok(()),
             Some(Binding::Value(value)) if value.value.is_nullish() => return Ok(()),
             Some(Binding::Value(value)) => crate::record::binding_of(&value.value),
@@ -527,8 +575,8 @@ impl Run<'_> {
     }
 
     /// `spreadMap`: the map a `...v` spreads, `None` when it is absent.
-    fn spread_map(&self, spread: &MapSpread, scope: &Scope) -> Result<Option<JsObject>, Stop> {
-        let bound = spread_source_binding(spread, scope);
+    async fn spread_map(&self, spread: &MapSpread, scope: &Scope) -> Result<Option<JsObject>, Stop> {
+        let bound = self.spread_source_binding(spread, scope).await?;
         let value = match &bound {
             Some(Binding::Value(v)) => v.value.clone(),
             _ => Js::Undefined,
@@ -600,29 +648,6 @@ fn plain_hop(edge: &str) -> movement_parser::lowering::expression::EdgeStep {
         filter: None,
         expression_filter: None,
     }
-}
-
-/// `spreadSourceBinding`: the binding a spread copies from, its name's, or
-/// for `...m.k` what the map holds under each key in turn, bound as `x =
-/// m.k` binds it (a record held there as itself); none where a step is no
-/// map.
-fn spread_source_binding(spread: &MapSpread, scope: &Scope) -> Option<Binding> {
-    let Some(path) = &spread.path else { return scope.resolve(&spread.source) };
-    let mut bound = scope.resolve(&path.root);
-    for key in &path.members {
-        let Some(Binding::Value(held)) = &bound else { return None };
-        if !crate::js::is_dict(&held.value) {
-            return None;
-        }
-        let Js::Object(map) = &held.value else { return None };
-        // `held[key] ?? null`.
-        let value = match crate::js::plain_property(map, key) {
-            value if value.is_nullish() => Js::Null,
-            value => value,
-        };
-        bound = Some(crate::record::bind_value(value, held.trail.clone(), false));
-    }
-    bound
 }
 
 /// `spreadsAnywhere`: does any body of this graph literal take keys from a map?

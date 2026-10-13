@@ -382,6 +382,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Fixed
 
+- A graph literal spreading the event (`graph { ...msg }`) or a member of a record (`graph<S> {
+  ...co.meta }`, `...msg.meta`) passed its check and then failed every run (MOVENG_UNSUPPORTED for
+  the event, MOVENG_RUNTIME for a record's member). The event is now copied as any record is, and a
+  record's member reads its field, on both engines.
+- `IS <Declaration>` against a declaration a library writes, of a system's record, failed on
+  `MOVEMENT_ENGINE=rust` naming the declaration as unknown; it now compares as on the TypeScript
+  engine.
 - An extraction's `through` stage naming a priced plugin imported under another name (`import {
   fetch_url as fetch } from plugins`, then `through [fetch(url: …)]`) escaped the run's cost cap:
   the engine looked the plugin up by the name the stage wrote, found no plugin of that name, and

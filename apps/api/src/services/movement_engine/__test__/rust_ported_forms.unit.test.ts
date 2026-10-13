@@ -31,7 +31,7 @@ const emailSchema: InstanceSchema = {
 const crmSchema: InstanceSchema = {
   positions: {
     company: {
-      properties: { name: 'text', region: 'text' },
+      properties: { name: 'text', region: 'text', meta: 'json' },
       edges: { notes: { target: 'note', writable: true } },
     },
     person: { properties: { name: 'text' }, edges: { company: { target: 'company' }, notes: { target: 'note', writable: true } } },
@@ -384,5 +384,56 @@ describe('IS <Decl> of a graph literal', () => {
     const source = [TYPED_LEAD, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', '  await sleep(1h)', ...VERDICT])].join('\n');
     const resumed = await parkAndResume({ source });
     expect(resumed).toContain('"body":"does not"');
+  });
+});
+
+// ── a graph spread of the event, and of a record's member ──────────────────
+
+const S = ['node S {', '  a: <text | null>', '}'].join('\n');
+const META = { companies: [{ id: 'c-1', fields: { name: 'Acme', meta: { a: 'x' } } }, { id: 'c-2', fields: { name: 'Beta' } }] };
+
+describe('a graph spread of a record', () => {
+  it('copies the event’s fields, as any record’s', async () => {
+    const { rust } = await both({ body: ['  g = graph { ...msg, extra: 1 }', '  write crm-[:notes]-> { body: "${g.`subject`}/${g.`text`}/${g.`extra`}" }'].join('\n') });
+    expect(rust.observed).toContain('"body":"Acme/EU/1"');
+  });
+
+  it('copies a map a record’s field holds, and nothing where the field is absent', async () => {
+    const { rust } = await both({
+      source: [S, movement(['  crm-[c:companies]-> {', '    g = graph<S> { ...c.`meta` }', '    write crm-[:notes]-> { body: COALESCE(g.`a`, "none") }', '  }'])].join('\n'),
+      related: META,
+    });
+    expect(rust.observed).toContain('"body":"x"');
+    expect(rust.observed).toContain('"body":"none"');
+  });
+
+  it('copies a map a written handle’s field holds', async () => {
+    const { rust } = await both({
+      source: [S, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph<S> { ...co.`meta` }', '  write crm-[:notes]-> { body: COALESCE(g.`a`, "none") }'])].join('\n'),
+    });
+    expect(rust.observed).toContain('"body":"none"');
+  });
+
+  it('copies a map a record’s field holds inside a library function', async () => {
+    const files = library([
+      S,
+      'export function first_a(n: <text>) {',
+      '  crm-[c:companies]-> {',
+      '    g = graph<S> { ...c.`meta` }',
+      '    write crm-[:notes]-> { body: COALESCE(g.`a`, n) }',
+      '  }',
+      '  return n',
+      '}',
+    ]);
+    const source = ['import { first_a } from "lib/forms"', movement(['  first_a(n: msg.`subject`)'])].join('\n');
+    const { rust } = await both({ source, files, related: META });
+    expect(rust.observed).toContain('"body":"x"');
+    expect(rust.observed).toContain('"body":"Acme"');
+  });
+
+  it('keeps the event’s copy across a park, on whichever engine resumes it', async () => {
+    const body = ['  g = graph { ...msg }', '  await sleep(1h)', '  write crm-[:notes]-> { body: g.`subject` }'].join('\n');
+    const resumed = await parkAndResume({ body });
+    expect(resumed).toContain('"body":"Acme"');
   });
 });

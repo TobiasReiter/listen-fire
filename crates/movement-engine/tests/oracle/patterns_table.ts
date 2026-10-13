@@ -825,8 +825,10 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'node_spread_path',
     routes: 'whole',
-    note: "closed for a value's member in PLAN-08A group E: what the map holds under the keys (spreadSourceBinding), a map spread or a record copied by the checker's plan",
+    note: "closed for a value's member in PLAN-08A group E: what the map holds under the keys (spreadSourceBinding), a map spread or a record copied by the checker's plan; for a record's member by PLAN-08B Task 2 (its field read off it, as `x = r.k` binds it)",
     programs: [
+      () => ({ file: `node S {\n  a: <text | null>\n}\n${m('  g = graph<S> { ...msg.`meta` }\n  write crm-[:notes]-> { body: COALESCE(g.`a`, "none") }')}` }),
+      (pick) => ({ file: `node S {\n  a: <text | null>\n}\n${m(`  n = write crm-[:notes]-> { body: "b", payload: { a: "${pick(WORDS)}" } }\n  g = graph<S> { ...n.\`payload\` }\n  write crm-[:notes]-> { body: COALESCE(g.\`a\`, "none") }`)}` }),
       () => ({ body: '  held = { k: { name: "a" } }\n  g = graph { ...held.k }' }),
       () => ({ body: '  held = { k: { name: msg.`subject` } }\n  g = graph { ...held.k, extra: 1 }' }),
       () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    g = graph { ...held.k }\n    write crm-[:notes]-> { body: g.`name` }\n  }' }),
@@ -834,10 +836,11 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'node_spread_source',
-    routes: 'refused',
-    note: "a graph spread of the event: needs spreads of the event's record (a spread of a block's landing runs since chunk 7A Task 3)",
+    routes: 'whole',
+    note: "closed by PLAN-08B Task 2: the event is a record like any other, copied by the checker's plan as its source position (the TypeScript failed it before); a spread of a block's landing runs since chunk 7A Task 3",
     programs: [
       () => ({ body: '  g = graph { ...msg }' }),
+      () => ({ body: '  g = graph { ...msg, extra: 1 }\n  write crm-[:notes]-> { body: "${g.`subject`}/${g.`extra`}" }' }),
       () => ({ body: '  crm-[c:companies]-> {\n    g = graph { ...c }\n  }', routes: 'whole' }),
     ],
   },

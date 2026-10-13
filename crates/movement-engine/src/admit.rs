@@ -3512,26 +3512,15 @@ impl Names<'_> {
             return refuse("node_spread");
         }
         let records = |name: &str| self.handles.contains(name) || self.nodes.contains(name);
-        // A record spread is copied by the checker's plan, read off the record
-        // as it is: what a node's edge holds, a walked or extracted record too.
-        let copied = |name: &str| records(name) || self.members.contains(name) || self.landings.contains(name) || self.extracts.contains(name);
-        for spread in literal.spreads.iter().flatten() {
-            // `...m.k`: what the map holds under the keys, bound as `x = m.k`
-            // binds it (`spreadSourceBinding`), copied as a record by the
-            // checker's plan or spread as a map.
-            if let Some(path) = &spread.path {
-                if !self.values.contains(&path.root) {
-                    return refuse("node_spread_path");
-                }
-                continue;
-            }
-            if !self.values.contains(&spread.source) && !copied(&spread.source) {
-                return refuse("node_spread_source");
-            }
-            // A map holding a record anywhere fails the run as the
-            // TypeScript's `spreadIntoGraph` fails it (`holdsRecord`, before
-            // the record's key is filed): crate::node `spread_into_graph`.
-        }
+        // A spread of a record is copied by the checker's plan, read off the
+        // record as it is (the event's source position too); `...m.k` reads
+        // what `m` holds under each key in turn, a map's key or a record's
+        // field, bound as `x = m.k` binds it (crate::node
+        // `spread_source_binding`); anything else copies nothing, or fails
+        // the run as the TypeScript's `spreadMap` and `spreadRecord` fail it.
+        // A map holding a record anywhere fails the run as the TypeScript's
+        // `spreadIntoGraph` fails it (`holdsRecord`, before the record's key
+        // is filed): crate::node `spread_into_graph`.
         for entry in &literal.entries {
             match entry {
                 NodeEntry::Value { value, .. } => {
@@ -4685,6 +4674,8 @@ mod tests {
             "  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }\n  write co-[:notes]-> { body: co.`name` }\n  write co { stage: \"x\" }",
             "  d = { label: \"x\" }\n  co = write crm-[:companies]-> { name: \"a\" }\n  g = graph { title: d.`label`, owner: co, ...co }\n  n = node { name: d.`label` }\n  write crm-[:companies]-> { ...d, name: g.`title` }",
             "  waited = await sleep(30s)\n  await sleep(1h)",
+            // The event spread is a record's, and a member spread reads a record's field.
+            "  g = graph { ...msg }\n  co = write crm-[:companies]-> { name: \"a\" }\n  h = graph { ...co.`meta` }",
             "  x = NUMBER.FORMAT(1200000, \"compact\")\n  y = { a: [1, -2] }\n  z = y.`a`",
         ] {
             assert_eq!(refused(body), None, "{body}");
@@ -4707,8 +4698,6 @@ mod tests {
             ("  write crm-[:companies]-> { unique by (`name` == \"a\" AND msg-[:replies]->.`y` == 1) name: \"a\" }", "unique_by_reads_beyond_candidate"),
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
             ("  g = graph { owner: msg }", "node_event_entry"),
-            ("  g = graph { ...msg }", "node_spread_source"),
-            ("  g = graph { ...msg.k }", "node_spread_path"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
