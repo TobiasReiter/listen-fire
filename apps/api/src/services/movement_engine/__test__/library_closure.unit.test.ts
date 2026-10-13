@@ -224,3 +224,53 @@ describe("a closure bound at a library's top level (B13)", () => {
     expect(payloadOf(kg.creates)).toEqual({ x: 9 });
   });
 });
+
+describe("a library closure parked before `IS` against the library's own declaration (B11)", () => {
+  const library = [
+    'export node Lead {',
+    '  name: <text>',
+    '}',
+    'export function is_lead(name: <text>): <boolean> {',
+    '  check = (who: <text>) => {',
+    '    n = node { name: who }',
+    '    await sleep(1h)',
+    '    if n IS <Lead> {',
+    '      return true',
+    '    }',
+    '    return false',
+    '  }',
+    '  return check(name)',
+    '}',
+  ].join('\n');
+
+  it('resumes, finding the declaration in the library', async () => {
+    const h: Harness = {
+      library,
+      source: root('import { is_lead } from "lib/leads"', '  x = is_lead(name: "Ada")\n  write graph-[:note]-> { payload: { x: x } }'),
+      parks: makeParkSink(),
+    };
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    // The declaration says which file it is found again in.
+    const parked = JSON.stringify([...h.parks.parks.values()][0]!.state);
+    expect(parked).toContain('{"kind":"shape","name":"Lead","file":"lib/leads"}');
+    const { result, kg } = await resumeOnly(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: true });
+  });
+
+  it('finds the library’s declaration even when the root program declares one by the same name', async () => {
+    const h: Harness = {
+      library,
+      source: root(
+        'import { is_lead } from "lib/leads"\nnode Lead {\n  name: <text>\n  stage: <text>\n}',
+        '  x = is_lead(name: "Ada")\n  write graph-[:note]-> { payload: { x: x } }',
+      ),
+      parks: makeParkSink(),
+    };
+    await start(h);
+    const { result, kg } = await resumeOnly(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: true });
+  });
+});

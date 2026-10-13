@@ -2567,6 +2567,9 @@ class Interpreter {
   /** One environment per library file, memoized — diamonds share it, and
    *  its instance constructions stay per-file. */
   private readonly libraryEnvs = new Map<string, Environment>();
+  /** Each library environment's file path — what a park writes beside a code
+   *  ref declared there, so a resume finds it in that file again. */
+  private readonly libraryPaths = new Map<Environment, string>();
 
   /** The movement's pin — what the engine's `since`/`before` conditionals
    *  read (a plugin or adapter reads the same value off the run scope). */
@@ -3612,7 +3615,7 @@ class Interpreter {
     const skip = frame.descentKind === 'iter' ? this.hopAliasNamesOf(frame.container) : undefined;
     for (const [name, binding] of frame.childEnv.ownBindings()) {
       if (skip?.has(name)) continue;
-      out[name] = serializeBinding(binding);
+      out[name] = serializeBinding(binding, this.newPark());
     }
     return out;
   }
@@ -3779,17 +3782,38 @@ class Interpreter {
         return read.read;
       },
       reviveFileRef: (descriptor) => this.reviveResumedFileRef(descriptor),
-      resolveCodeRef: (name) => {
-        const binding = this.fileEnv?.resolve(name);
+      // In the file it was declared in: a library's declaration is found in
+      // that library, which the root program need not import or may shadow.
+      resolveCodeRef: async (name, file) => {
+        const scope = file === undefined ? this.fileEnv : await this.resumedLibraryEnv(file);
+        const binding = scope?.resolve(name);
         if (!binding) {
           throw new MovementEngineError(
             'MOVENG_RUNTIME',
-            `resume: cannot re-resolve code ref '${name}' from the re-parsed program`,
+            `resume: cannot re-resolve code ref '${name}' from the re-parsed ${file === undefined ? 'program' : `library "${file}"`}`,
           );
         }
         return binding;
       },
     };
+  }
+
+  /** A library's environment by its path, for a code ref a park said was
+   *  declared there. */
+  private async resumedLibraryEnv(path: string): Promise<Environment> {
+    const file = this.link?.files.get(path);
+    if (file === undefined) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `resume: the parked state names the library "${path}", which the re-parsed program does not link`,
+      );
+    }
+    return this.libraryEnv(file);
+  }
+
+  /** A park writer whose code refs say which library they are declared in. */
+  private newPark(): ParkWriter {
+    return newParkWriter((env) => this.libraryPaths.get(env));
   }
 
   /** Re-resolve an instance binding from its serialised identity — the catalog
@@ -4198,6 +4222,7 @@ class Interpreter {
     if (cached) return cached;
     const env = new Environment();
     this.libraryEnvs.set(file.path, env);
+    this.libraryPaths.set(env, file.path);
     this.fileTypes.set(env, this.typesOfLibrary(file));
 
     const savedImports = this.currentImports;
@@ -5272,7 +5297,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(fork.address),
           branchIndex: fork.index,
-          exports: { [RETURN_SLOT]: serializeBinding(value) },
+          exports: { [RETURN_SLOT]: serializeBinding(value, this.newPark()) },
         });
       }
       await this.input.parkSink?.recordJoin({
@@ -5515,7 +5540,7 @@ class Interpreter {
   private parkedState(write: (park: ParkWriter) => ParkedScopeState): ParkedScopeState {
     // One table for the whole state: a node held both in a frame's scopes and
     // the leaf's is written once, and resumes as one.
-    const park = newParkWriter();
+    const park = this.newPark();
     const state = write(park);
     const live = this.boundaries.getStore() ?? [];
     if (live.length === 0) return state;
@@ -7701,7 +7726,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(childIter(parentAddress, index)),
           branchIndex: index,
-          exports: { [RETURN_SLOT]: serializeBinding(value) },
+          exports: { [RETURN_SLOT]: serializeBinding(value, this.newPark()) },
         });
       }
       await this.input.parkSink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });

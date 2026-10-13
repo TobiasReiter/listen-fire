@@ -175,14 +175,19 @@ export type BindingDescriptor =
       url: string;
       params: Extract<Binding, { kind: 'callback' }>['params'];
     }
-  // Bucket 3 — code refs carry ONLY the re-resolution tag (the name). The live
-  // declaration / fileEnv comes from the re-parsed program.
-  | { kind: 'shape'; name: string }
+  // Bucket 3 — code refs carry ONLY the re-resolution tag (the name), and the
+  // library it is declared in. The live declaration / fileEnv comes from the
+  // re-parsed program.
+  /** `file`: the library file the declaration belongs to, where its name is
+   *  found again — a library's closure holds the library's own declarations,
+   *  which the root program may not have (or may declare differently). Absent
+   *  = the root program, as on every park written before it was said. */
+  | { kind: 'shape'; name: string; file?: string }
   /** A node declaration made in a BODY: the re-parsed file scope does not hold
    *  it, so it travels as the declaration — code that is already data, as a
    *  closure's body is. */
   | { kind: 'localShape'; declaration: ShapeDeclaration }
-  | { kind: 'movement'; name: string }
+  | { kind: 'movement'; name: string; file?: string }
   | { kind: 'shapePosition'; shape: string; node: string; fields: Record<string, unknown>; fieldProvenance: Extract<Binding, { kind: 'shapePosition' }>['fieldProvenance'] }
   /** Bucket 3 (recursive) — a synthesised node. Its entry VALUES are already
    *  data; each edge is either landings (bindings, serialised like a
@@ -331,8 +336,10 @@ export interface RehydrationContext {
    * Re-resolve a code ref (`shape` / `movement` / `opaque` import) by name
    * against the re-parsed program's environment — the version pin (P11) makes
    * the AST byte-identical, so the name resolves to an equivalent declaration.
+   * `file` is the library the declaration belongs to; absent = the root
+   * program.
    */
-  resolveCodeRef(name: string): Binding;
+  resolveCodeRef(name: string, file?: string): Binding | Promise<Binding>;
 }
 
 // ── One park's identity table ─────────────────────────────────────────────────
@@ -351,10 +358,21 @@ type NodePosition = Extract<Binding, { kind: 'nodePosition' }>;
  */
 export interface ParkWriter {
   readonly nodes: Map<NodePosition, number>;
+  /** The library file a file environment is, by path — how a code ref
+   *  declared in a library says where it is found again. Undefined (or
+   *  absent) = the root program's. */
+  readonly fileOf?: (env: Environment) => string | undefined;
 }
 
-export function newParkWriter(): ParkWriter {
-  return { nodes: new Map() };
+export function newParkWriter(fileOf?: (env: Environment) => string | undefined): ParkWriter {
+  return { nodes: new Map(), ...(fileOf !== undefined ? { fileOf } : {}) };
+}
+
+/** The library a code ref is declared in, when it is one's: an imported
+ *  declaration names its file, a library's own carries the library's env. */
+function declaringFile(park: ParkWriter, library: { path: string } | undefined, fileEnv: Environment | undefined): { file?: string } {
+  const file = library?.path ?? (fileEnv !== undefined ? park.fileOf?.(fileEnv) : undefined);
+  return file !== undefined ? { file } : {};
 }
 
 /**
@@ -593,9 +611,9 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
     case 'shape':
       return binding.local === true
         ? { kind: 'localShape', declaration: binding.declaration }
-        : { kind: 'shape', name: binding.declaration.name };
+        : { kind: 'shape', name: binding.declaration.name, ...declaringFile(park, binding.library, binding.fileEnv) };
     case 'movement':
-      return { kind: 'movement', name: binding.declaration.name };
+      return { kind: 'movement', name: binding.declaration.name, ...declaringFile(park, undefined, binding.fileEnv) };
     case 'plugin':
       // A plugin name is an import like any other, and travels the same way: a
       // code ref re-resolved from the re-parsed AST, keyed by the slot name the
@@ -838,6 +856,7 @@ async function rehydrateInPark(
     // ── Bucket 3 — code refs from the re-parsed program ──
     case 'shape':
     case 'movement':
+      return ctx.resolveCodeRef(descriptor.name, descriptor.file);
     case 'opaque':
       return ctx.resolveCodeRef(descriptor.name);
     // Its words read the running file's scope after a resume — the body

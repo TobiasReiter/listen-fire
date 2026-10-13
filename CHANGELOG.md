@@ -105,6 +105,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- A library's closure that waited before testing `x IS <Decl>` against the library's own
+  declaration now resumes. The resume looked the declaration up in the root program, so it failed
+  "cannot re-resolve code ref", or used the root's declaration of the same name. A parked node
+  declaration or function now says which library it belongs to, and is found again there. Every
+  language version: the run before the wait already read the library's, so nothing else changes.
 - A closure bound at a file's top level (`f = (n: <number>) => …`), in a library or the root
   program, is now in scope inside that file's functions, as the checker already said. The run
   used to fail "'f' is not in scope" (or call a built-in of the same name). Every language version
