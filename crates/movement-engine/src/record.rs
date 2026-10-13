@@ -237,7 +237,7 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         (Binding::Handle(handle), "targetType") => Ok(Js::str(handle.target_type.clone())),
         (Binding::Handle(handle), "handle") => Ok(handle.record().object.clone()),
         (Binding::Handle(_), "graph") => internal("graph"),
-        (Binding::Landed(landed), "position") => Ok(landed.position.clone()),
+        (Binding::Landed(landed), "position") => Ok(landed.position().clone()),
         (Binding::Landed(landed), "edgeProperties") if landed.edge_properties.is_some() => Ok(landed.edge_properties.clone().unwrap_or(Js::Null)),
         (Binding::Landed(_), "read") => internal("read"),
         (Binding::Node(node), "landedOn") => Ok(node.borrow().landed_on.clone().map_or(Js::Null, Js::str)),
@@ -293,7 +293,7 @@ fn address(binding: &Binding) -> Option<String> {
     let text = |value: Js| value.to_js_string();
     match binding {
         Binding::Landed(landed) => {
-            let position = &landed.position;
+            let position = &landed.position();
             let identity = crate::unique::get(position, "identity");
             if !matches!(crate::unique::get(&identity, "kind"), Js::String(kind) if kind == "stable") {
                 return None;

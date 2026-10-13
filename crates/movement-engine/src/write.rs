@@ -642,7 +642,7 @@ impl Run<'_> {
         let (parent_type, parent_id, parent_data) = match &root {
             Some(Binding::Handle(handle)) => (handle.target_type.clone(), handle.record().get("externalId"), Some(handle.record().get("resultData"))),
             Some(Binding::Landed(landed)) => {
-                let position = &landed.position;
+                let position = &landed.position();
                 match (crate::traverse::record_type(position), crate::traverse::is_stable(position)) {
                     (Some(record_type), true) => (record_type, crate::traverse::record_id(position), Some(crate::traverse::position_data(position))),
                     _ => {
@@ -1530,7 +1530,7 @@ impl Run<'_> {
         match binding {
             None => Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("'{alias}' is not in scope — the checker should have caught this")))),
             Some(Binding::Landed(landed)) => {
-                let position = &landed.position;
+                let position = &landed.position();
                 if !crate::traverse::is_stable(position) {
                     return Err(unstable());
                 }
@@ -1812,7 +1812,7 @@ fn known_record_data(binding: Option<&Binding>) -> JsObject {
             }
         }
         Some(Binding::Landed(landed)) => {
-            let position = crate::traverse::position_data(&landed.position);
+            let position = crate::traverse::position_data(&landed.position());
             if crate::js::is_dict(&position) {
                 spread(position);
             }

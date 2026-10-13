@@ -564,7 +564,7 @@ impl Run<'_> {
             Binding::Landed(landed) => {
                 let step = plain_hop(edge);
                 let span = Js::Undefined;
-                let reached = self.walk(&landed.position, &step, landed.read.clone(), &Scope::root(), &span).await.map_err(Stop::Thrown)?;
+                let reached = self.walk(&landed.position(), &step, landed.read.clone(), &Scope::root(), &span).await.map_err(Stop::Thrown)?;
                 Ok(reached.into_iter().map(Binding::Landed).collect())
             }
             other => Err(Stop::Thrown(Failure::unsupported(

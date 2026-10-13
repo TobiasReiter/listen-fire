@@ -79,6 +79,8 @@ interface Case {
   /** What readRecord answers, by external id. */
   read?: Record<string, Record<string, unknown>>;
   judge?: number | null;
+  /** The CRM answers no `readRecord`. */
+  noReadRecord?: boolean;
   languageVersion?: LanguageVersion;
   resume?: ParkedScopeState;
 }
@@ -95,10 +97,14 @@ function isParkedScopeState(value: unknown): value is ParkedScopeState {
 
 const COLLECTION_TYPE: Record<string, string> = { companies: 'company', people: 'person', notes: 'note' };
 
-function fakeCrm(c: Case, calls: unknown[]): Adapter {
+function fakeCrm(c: Case, received: unknown[]): Adapter {
+  // What each call was handed, as it was handed: the TypeScript engine goes
+  // on to mutate an object it handed an in-process adapter (`refresh`
+  // moves a handle's `writtenValues`, the very object a create was given).
+  const calls = { push: (call: unknown) => received.push(structuredClone(call)) };
   let minted = 0;
   const rows = Object.values(c.related ?? {}).flat();
-  return {
+  const adapter: Adapter = {
     adapterType: 'attio',
     supportedTriggers: [],
     runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
@@ -117,11 +123,13 @@ function fakeCrm(c: Case, calls: unknown[]): Adapter {
     },
     async getFieldValue(input) {
       calls.push(['getFieldValue', input.fieldId]);
+      // The position's inline data first (what `refresh` moves on), then
+      // the row the walk landed on.
+      const data = positionData(input.position);
+      if (isRecord(data) && Object.hasOwn(data, input.fieldId)) return data[input.fieldId];
       const id = positionRecordId(input.position);
       const row = rows.find((r) => r.id === id);
-      if (row !== undefined) return row.fields[input.fieldId] ?? null;
-      const data = positionData(input.position);
-      return isRecord(data) ? (data[input.fieldId] ?? null) : null;
+      return row?.fields[input.fieldId] ?? null;
     },
     async getRelated(read) {
       calls.push(['getRelated', read.fieldId]);
@@ -144,6 +152,8 @@ function fakeCrm(c: Case, calls: unknown[]): Adapter {
       return {};
     },
   };
+  if (c.noReadRecord === true) delete (adapter as Partial<Adapter>).readRecord;
+  return adapter;
 }
 
 function fakeEmail(): Adapter {
@@ -435,5 +445,57 @@ describe('a graph spread of a record', () => {
     const body = ['  g = graph { ...msg }', '  await sleep(1h)', '  write crm-[:notes]-> { body: g.`subject` }'].join('\n');
     const resumed = await parkAndResume({ body });
     expect(resumed).toContain('"body":"Acme"');
+  });
+});
+
+// ── refresh ────────────────────────────────────────────────────────────────
+
+const FRESH = { 'attio-1': { name: 'Acme Inc', region: 'EU' }, 'c-1': { name: 'Fresh', region: 'US' } };
+const NOTE_OF_CO = '  write crm-[:notes]-> { body: "${co.`name`} ${co.`region`}" }';
+
+describe('refresh', () => {
+  it('moves a written handle’s snapshot to the record as it stands, in the run’s result too', async () => {
+    const { rust } = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
+    expect(rust.observed).toContain('"body":"Acme Inc EU"');
+    expect(rust.observed).toContain('"writtenValues":{"name":"Acme Inc"}');
+  });
+
+  it('fails the run on a record the system deleted, and re-reads each field where the adapter has no readRecord', async () => {
+    const gone = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n') });
+    expect(gone.rust.observed).toContain('no longer exists in');
+    const fallback = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), noReadRecord: true });
+    expect(fallback.rust.observed).toContain('getFieldValue');
+  });
+
+  it('moves a traversed record’s inline data, seen through every name that holds it', async () => {
+    const related = { companies: [{ id: 'c-1', fields: { name: 'Stale' } }] };
+    const { rust } = await both({
+      body: ['  crm-[c:companies]-> {', '    held = { k: c }', '    refresh c', '    write crm-[:notes]-> { body: "${c.`name`}/${held.k.`name`}" }', '  }'].join('\n'),
+      related,
+      read: FRESH,
+    });
+    expect(rust.observed).toContain('"body":"Fresh/Fresh"');
+    const fallback = await both({ body: ['  crm-[c:companies]-> {', '    refresh c', '    write crm-[:notes]-> { body: c.`name` }', '  }'].join('\n'), related, noReadRecord: true });
+    expect(fallback.rust.observed).toContain('"body":"Stale"');
+  });
+
+  it('runs inside a library function', async () => {
+    const files = library([
+      'export function fresh_name(n: <text>) {',
+      '  co = write crm-[:companies]-> { name: n }',
+      '  refresh co',
+      '  return co.`name`',
+      '}',
+    ]);
+    const source = ['import { fresh_name } from "lib/forms"', movement(['  b = fresh_name(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(b, "none") }'])].join('\n');
+    const { rust } = await both({ source, files, read: FRESH });
+    expect(rust.observed).toContain('"body":"Acme Inc"');
+  });
+
+  it('carries a refreshed handle through a park, and refreshes one after it, on whichever engine resumes', async () => {
+    const before = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', '  await sleep(1h)', NOTE_OF_CO].join('\n'), read: FRESH });
+    expect(before).toContain('"body":"Acme Inc EU"');
+    const after = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  await sleep(1h)', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
+    expect(after).toContain('"body":"Acme Inc EU"');
   });
 });

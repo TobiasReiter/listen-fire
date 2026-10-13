@@ -560,11 +560,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'statement:refresh',
-    routes: 'refused',
-    note: '`refresh`: needs its semantics (no corpus program runs one)',
+    routes: 'whole',
+    note: "closed by PLAN-08B Task 2: interpretRefresh's re-fetch, the handle's record and a traversed record's inline data moved on in place for every holder",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  refresh co' }),
       () => ({ body: '  crm-[c:companies]-> {\n    refresh c\n  }' }),
+      (pick) => ({ body: `  co = write crm-[:companies]-> { name: "${pick(NAMES)}" }\n  refresh co\n  write crm-[:notes]-> { body: co.\`name\` }` }),
+      () => ({ body: '  crm-[c:companies]-> {\n    held = { k: c }\n    refresh c\n    write crm-[:notes]-> { body: "${c.`name`}/${held.k.`name`}" }\n  }' }),
     ],
   },
   {

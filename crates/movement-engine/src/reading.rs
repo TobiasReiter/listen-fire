@@ -308,7 +308,7 @@ impl Run<'_> {
         let (steps, terminal) = parts(expr);
         // No hops: the start itself, the very record, whose stamped surface
         // every read of it shares.
-        let landed = if steps.is_empty() { vec![start] } else { self.walk_adapter(&start.position, &start.read, steps, name, scope, span).await? };
+        let landed = if steps.is_empty() { vec![start] } else { self.walk_adapter(&start.position(), &start.read, steps, name, scope, span).await? };
         if let Some((hops, where_)) = exists {
             let found = self.exists(hops, where_, landed.into_iter().map(Binding::Landed).collect(), scope, span).await?;
             return Ok(Evaluated { value: Js::Bool(found), prov: none() });
@@ -346,7 +346,7 @@ impl Run<'_> {
                         continue;
                     }
                     Binding::Landed(landed) => {
-                        let walked = self.walk_adapter(&landed.position, &landed.read, steps, name, scope, span).await?;
+                        let walked = self.walk_adapter(&landed.position(), &landed.read, steps, name, scope, span).await?;
                         reached.extend(walked.into_iter().map(Binding::Landed));
                         continue;
                     }
@@ -515,13 +515,13 @@ impl Run<'_> {
                 let mut next = Vec::new();
                 for cursor in &cursors {
                     let gate = match cursor {
-                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position, &landed.read).map(|g| (g, landed.read.clone())),
+                        Binding::Landed(landed) => crate::traverse::member_gate(step, &landed.position(), &landed.read).map(|g| (g, landed.read.clone())),
                         _ => None,
                     };
                     let mut kept = Vec::new();
                     for landed in self.step_cursor(cursor, step, scope, span).await? {
                         if let (Some((gate, read)), Binding::Landed(l)) = (&gate, &landed)
-                            && !gate.admits(read.schema.as_ref(), &l.position)
+                            && !gate.admits(read.schema.as_ref(), &l.position())
                         {
                             continue;
                         }
@@ -563,7 +563,7 @@ impl Run<'_> {
                             &format!("source adapter '{}' cannot traverse incoming edges", read.adapter_type),
                         ));
                     }
-                    let related = self.related(&landed.position, step, read, scope, span).await?;
+                    let related = self.related(&landed.position(), step, read, scope, span).await?;
                     Ok(related.into_iter().map(Binding::Landed).collect())
                 }
                 Binding::Extracted { emission, .. } => Ok(emission

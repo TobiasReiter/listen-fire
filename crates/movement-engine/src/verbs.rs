@@ -102,6 +102,25 @@ pub(crate) fn describe_match_target(m: &MatchExpression) -> String {
     }
 }
 
+/// `{ ...a, ...b }` of two bags: `b`'s own keys laid over `a`'s.
+fn spread_over(base: &Js, over: &Js) -> JsObject {
+    let mut merged = match base {
+        Js::Object(object) => JsObject::clone_of(object),
+        _ => JsObject::new(),
+    };
+    merge_into(&mut merged, over);
+    merged
+}
+
+/// `Object.keys(fresh)`, which throws JavaScript's TypeError of nothing.
+fn fresh_keys(fresh: &Js) -> Result<Vec<String>, Failure> {
+    match fresh {
+        Js::Object(object) => Ok(object.entries().iter().map(|(k, _)| k.clone()).collect()),
+        Js::Null | Js::Undefined => Err(Failure::Engine { class: crate::eval::ErrorClass::TypeError, message: "Cannot convert undefined or null to object".into() }),
+        _ => Ok(Vec::new()),
+    }
+}
+
 /// `ResolvedLinkStatement`: the edge, and the two handles it joins.
 struct LinkPlan {
     edge: Edge,
@@ -194,6 +213,121 @@ impl Run<'_> {
         record.set("resultData".into(), Js::object(data));
         record.set("provenance".into(), Js::object(JsObject::new()));
         Ok(Binding::Handle(self.record_write(Written::plain(Js::object(record)), crate::write::Recorded { binding_name, scope, target: &target, provenance: &[], into: None })))
+    }
+
+    /// `interpretRefresh`: re-fetch the record behind a write handle or a
+    /// traversed record by its id and move its field snapshot to now, for
+    /// every holder of it (the TypeScript mutates the record in place, so
+    /// the run's result and a park see the move too). A handle with no id (a
+    /// rehearsal's) has nothing to move; a record the system deleted fails
+    /// the run (F22).
+    pub(crate) async fn refresh(&self, name: &str, scope: &Rc<Scope>) -> Result<(), Stop> {
+        let at = format!("refresh {name}");
+        let Some(binding) = scope.resolve(name) else {
+            return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{name}' is not in scope"))));
+        };
+        match binding {
+            Binding::Handle(handle) => {
+                let record = handle.record();
+                let external_id = record.get("externalId");
+                if matches!(external_id, Js::Undefined) {
+                    return Ok(());
+                }
+                let record_type = record.get("recordType");
+                let adapter_type = match record.get("adapterType") {
+                    Js::String(text) => text.into_string(),
+                    other => other.to_text().unwrap_or_default(),
+                };
+                // `resolveAdapterFn({ adapterType, role: 'source' })`: the
+                // system's adapter, by its type alone.
+                let resolved = self
+                    .resolve_adapter(&crate::host::ResolveAdapter { adapter_type: adapter_type.clone(), credentials_id: None, construction_args: None, role: crate::host::Role::Source, dry_run: false })
+                    .await
+                    .map_err(thrown)?
+                    .unwrap_or(serde_json::Value::Null);
+                let instance = crate::host::instance_of(&resolved).ok_or_else(|| thrown(Failure::engine("MOVENG_RUNTIME", format!("adapters.resolve answered {resolved}"))))?;
+                let snapshot = spread_over(&Js::object(spread_over(&record.get("foundData"), &record.get("resultData"))), &record.get("writtenValues"));
+                let resolved_type = resolved.get("adapterType").and_then(serde_json::Value::as_str).unwrap_or(&adapter_type).to_string();
+                let fresh = self.refetch(&instance, &resolved_type, None, &record_type, &external_id, &Js::object(snapshot), &at).await?;
+                // `applyRefreshToHandle`: the result data moves on, and a
+                // written field the fresh record names moves with it.
+                let keys = fresh_keys(&fresh).map_err(thrown)?;
+                let Js::Object(object) = &record.object else { unreachable!("a write record is an object") };
+                let mut object = JsObject::clone_of(object);
+                object.set("resultData".into(), Js::object(spread_over(&record.get("resultData"), &fresh)));
+                if let Js::Object(written) = record.get("writtenValues") {
+                    let mut written = JsObject::clone_of(&written);
+                    for key in keys {
+                        if written.get(&key).is_some() || js::is_object_prototype_name(&key) {
+                            written.set(key.clone(), js::object_property(match &fresh { Js::Object(f) => f, _ => unreachable!("keys come of an object") }, &key));
+                        }
+                    }
+                    object.set("writtenValues".into(), Js::object(written));
+                }
+                let moved = Rc::new(WriteRecord { object: Js::object(object) });
+                self.replace_write(&record, moved.clone());
+                handle.move_to(moved, handle.old());
+                Ok(())
+            }
+            Binding::Landed(landed) => {
+                let position = landed.position();
+                let record_type = crate::traverse::record_type(&position);
+                let (true, Some(record_type)) = (crate::traverse::is_stable(&position), record_type) else {
+                    return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{name}' is not a stable record with an id — nothing to re-fetch"))));
+                };
+                let external_id = crate::traverse::record_id(&position);
+                let snapshot = match crate::traverse::position_data(&position) {
+                    data @ Js::Object(_) => data,
+                    _ => Js::object(JsObject::new()),
+                };
+                let fresh = self.refetch(&landed.read.instance, &landed.read.adapter_type, Some(&landed.read), &Js::str(record_type), &external_id, &snapshot, &at).await?;
+                // `applyRefreshToPosition`: the inline data moves on.
+                let Js::Object(object) = &position else { unreachable!("a stable position is an object") };
+                let mut moved = JsObject::clone_of(object);
+                let identity = unique::get(&position, "identity");
+                let Js::Object(identity) = &identity else { unreachable!("a stable position has an identity") };
+                let mut identity = JsObject::clone_of(identity);
+                identity.set("data".into(), Js::object(spread_over(&crate::traverse::position_data(&position), &fresh)));
+                moved.set("identity".into(), Js::object(identity));
+                landed.set_position(Js::object(moved));
+                Ok(())
+            }
+            other => Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{name}' is {}, not a re-fetchable record", describe_binding(&other))))),
+        }
+    }
+
+    /// `refetchForRefresh`: `readRecord` where the adapter has it (null is a
+    /// deleted record, which fails the run), else each snapshot field read
+    /// through `getFieldValue` at a probe position carrying the snapshot as
+    /// its data — through the graph's read wrapper for a traversed record.
+    #[allow(clippy::too_many_arguments)]
+    async fn refetch(&self, instance: &crate::host::Instance, adapter_type: &str, read: Option<&Rc<crate::traverse::Read>>, record_type: &Js, external_id: &Js, snapshot: &Js, at: &str) -> Result<Js, Stop> {
+        if instance.has("readRecord") {
+            let args = env::object_of(vec![("recordType", record_type.clone()), ("externalId", external_id.clone())]);
+            let fresh = self.call_adapter(instance, "readRecord", args).await.map_err(thrown)?;
+            if matches!(fresh, Js::Null) {
+                let id = external_id.to_text().unwrap_or_default();
+                return Err(thrown(Failure::engine(
+                    "MOVENG_RUNTIME",
+                    format!("{at}: record '{id}' no longer exists in '{adapter_type}' — it was deleted, so its snapshot can't be refreshed"),
+                )));
+            }
+            return Ok(fresh);
+        }
+        let probe = env::object_of(vec![
+            ("adapterType", Js::str(adapter_type)),
+            ("recordType", record_type.clone()),
+            ("identity", env::object_of(vec![("kind", Js::str("stable")), ("recordId", external_id.clone()), ("data", snapshot.clone())])),
+        ]);
+        let mut fresh = JsObject::new();
+        for field in fresh_keys(snapshot).map_err(thrown)? {
+            let value = match read {
+                Some(read) => self.landed_field(&crate::bindings::Landed::new(probe.clone(), None, read.clone()), &field).await.map_err(thrown)?.value,
+                None => self.call_adapter_at(instance, "getFieldValue", &probe, vec![("fieldId", Js::str(field.clone()))]).await.map_err(thrown)?,
+            };
+            fresh.set(field, value);
+        }
+        Ok(Js::object(fresh))
     }
 
     /// `readRecord {recordType, externalId}`.

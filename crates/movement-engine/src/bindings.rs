@@ -177,7 +177,9 @@ impl Binding {
 pub struct Landed {
     /// The position as the adapter (or the read wrapper's restamp) answered
     /// it, kept as that very object: it is what the next call is handed.
-    pub position: Js,
+    /// `refresh` moves its inline data on, for every holder of the record
+    /// (run.ts `applyRefreshToPosition` mutates the position in place).
+    position: std::cell::RefCell<Js>,
     /// The walked edge's inline properties, when the adapter answered any.
     pub edge_properties: Option<Js>,
     /// The graph it was landed in, which its fields are read through.
@@ -186,12 +188,35 @@ pub struct Landed {
     /// once: every read of the record names one object, so it crosses to the
     /// host once (a streamed landing is not restamped as it lands, and would
     /// otherwise be stamped afresh per read).
-    pub surface: std::cell::OnceCell<Js>,
+    surface: std::cell::RefCell<Option<Js>>,
 }
 
 impl Landed {
     pub fn new(position: Js, edge_properties: Option<Js>, read: Rc<crate::traverse::Read>) -> Landed {
-        Landed { position, edge_properties, read, surface: std::cell::OnceCell::new() }
+        Landed { position: std::cell::RefCell::new(position), edge_properties, read, surface: std::cell::RefCell::new(None) }
+    }
+
+    /// The position as it stands now.
+    pub fn position(&self) -> Js {
+        self.position.borrow().clone()
+    }
+
+    /// The position `refresh` moved on: its stamped surface is made again
+    /// at the next read.
+    pub fn set_position(&self, position: Js) {
+        *self.position.borrow_mut() = position;
+        *self.surface.borrow_mut() = None;
+    }
+
+    /// The position as the read wrapper stamps it for a field read, made
+    /// once per position.
+    pub fn surface(&self, make: impl FnOnce(&Js) -> Js) -> Js {
+        if let Some(surface) = self.surface.borrow().as_ref() {
+            return surface.clone();
+        }
+        let made = make(&self.position());
+        *self.surface.borrow_mut() = Some(made.clone());
+        made
     }
 }
 

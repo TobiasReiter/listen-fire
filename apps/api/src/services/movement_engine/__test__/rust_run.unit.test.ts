@@ -243,7 +243,8 @@ describe('a whole run in the Rust engine', () => {
     expect(await admission(program('  x = AI("why?")'))).toBe('admitted');
     // CHUNKS runs since PLAN-08A group F′; a bound write stays refused by name.
     expect(await admission(program('  x = CHUNKS("why?", { size: 4 })'))).toBe('admitted');
-    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  refresh co'))).toBe('statement:refresh');
+    // `refresh` runs since PLAN-08B Task 2.
+    expect(await admission(program('  co = write crm-[:companies]-> { name: "a" }\n  refresh co'))).toBe('admitted');
     // The retired KG_VALUE fails the run as the TypeScript's evaluator fails it.
     expect(await admission(program('  x = KG_VALUE("why?")'))).toBe('admitted');
     expect(await admission(program('  if msg IS <inbox-[:message]->> {\n    x = 1\n  }'))).toBe('admitted');
@@ -774,9 +775,9 @@ describe('the run counts', () => {
   it('count a refusal only for a run the Rust engine did not run, and a whole run under no reason', async () => {
     resetRustRunStats();
     const runs = [
-      'movement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: "a" }\n  refresh co\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: "a" }\n  f = () => COALESCE(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  co = write crm-[:companies]-> { name: "b" }\n  refresh co\n}',
+      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  co = write crm-[:companies]-> { name: "b" }\n  f = () => COALESCE(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
       // Fails its check (`crm` has no `#foo`), so never reaches the engine.
       'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n}',
       'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
@@ -788,8 +789,8 @@ describe('the run counts', () => {
     expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, endedAtCheck: 1, declined: {} });
     const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
     expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
-    expect(rustRunStats.notAdmitted).toEqual({ 'statement:refresh': 1, within_compare: 1 });
-    expect(rustRunStats.allReasons).toEqual({ 'statement:refresh': 2, within_compare: 1 });
+    expect(rustRunStats.notAdmitted).toEqual({ write_field_record: 1, within_compare: 1 });
+    expect(rustRunStats.allReasons).toEqual({ write_field_record: 2, within_compare: 1 });
   });
 });
 

@@ -689,6 +689,14 @@ impl Run<'_> {
     /// `WriteLedger.append`: a write, link, unlink or delete on the firing
     /// record, numbered as it happens (later reads cite it by that number),
     /// its place in program order the running flow's next.
+    /// A write record moved on in place (`refresh`): the run's ledger names
+    /// the new one where it named the old.
+    pub(crate) fn replace_write(&self, old: &Rc<WriteRecord>, new: Rc<WriteRecord>) {
+        if let Some(slot) = self.writes.borrow_mut().iter_mut().find(|w| Rc::ptr_eq(w, old)) {
+            *slot = new;
+        }
+    }
+
     pub(crate) fn append_write(&self, record: Rc<WriteRecord>) {
         let key = self.write_order.borrow_mut().key();
         self.writes.borrow_mut().push(record);
@@ -1264,6 +1272,10 @@ impl Run<'_> {
                 self.delete(&statement.name, scope).await?;
                 Ok(Flow::FellThrough)
             }
+            Statement::Refresh(statement) => {
+                self.refresh(&statement.name, scope).await?;
+                Ok(Flow::FellThrough)
+            }
             Statement::Await(statement) => {
                 self.awaiting(&statement.r#await.source, None, scope, at, &format!("{path}/await/source")).await?;
                 Ok(Flow::FellThrough)
@@ -1586,7 +1598,7 @@ impl Run<'_> {
         Ok(Some(match picked {
             // What a selection binds carries the record and its graph, not
             // the walked edge's properties.
-            Some(landed) => Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position.clone(), None, landed.read.clone()))),
+            Some(landed) => Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position().clone(), None, landed.read.clone()))),
             None => Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false }),
         }))
     }
@@ -1726,7 +1738,7 @@ impl Run<'_> {
                 let subject = match subject.expect("a scoped read is asked only of a scoped evaluation") {
                     Scoped::Landed(landed) => {
                         let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
-                        Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position.clone(), None, source.read.clone())))
+                        Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position().clone(), None, source.read.clone())))
                     }
                     Scoped::Emission(emission) => Binding::Extracted { emission: emission.clone(), root: false, id: crate::bindings::Identity::new() },
                     Scoped::Binding(_) => return Ok(Err(crate::eval::rootless_exists())),

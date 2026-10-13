@@ -311,7 +311,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         // named only when it is not the event's source (the TypeScript binds
         // none there), and a pick keeps no edge properties.
         Binding::Landed(landed) => {
-            let mut descriptor = vec![kind("sourcePosition"), ("position", json_round_trip(&landed.position))];
+            let mut descriptor = vec![kind("sourcePosition"), ("position", json_round_trip(&landed.position()))];
             if let Some(properties) = &landed.edge_properties {
                 descriptor.push(("edgeProperties", json_round_trip(properties)));
             }

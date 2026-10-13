@@ -684,7 +684,7 @@ impl Run<'_> {
                 Binding::Event | Binding::Landed(_) if let Probe::Resources { alias, filter } = probe => {
                     let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                     let start = match &binding {
-                        Binding::Landed(landed) => landed.position.clone(),
+                        Binding::Landed(landed) => landed.position().clone(),
                         _ => source.position.to_js(),
                     };
                     let resources = self.position_resources(&start, &source.read).await.map_err(Stop::Thrown)?;
@@ -752,7 +752,7 @@ impl Run<'_> {
             let pushdown = self.pushdown_args(step, &read, scope, span).await;
             let mut next = Vec::new();
             for (aliases, cursor) in &paths {
-                let kept = self.fetch(&cursor.position, step, &read, Fetch { pushdown: &pushdown, paged: read.streams }, scope, span).await?;
+                let kept = self.fetch(&cursor.position(), step, &read, Fetch { pushdown: &pushdown, paged: read.streams }, scope, span).await?;
                 for landed in self.ordered(kept, step, scope, span).await? {
                     let mut aliases = aliases.clone();
                     if let Some(alias) = &step.alias {
@@ -793,7 +793,7 @@ impl Run<'_> {
                         continue;
                     }
                     Binding::Landed(landed) => {
-                        let onward = self.source_head_paths(&landed.position, landed.read.clone(), steps, scope, span).await.map_err(Stop::Thrown)?;
+                        let onward = self.source_head_paths(&landed.position(), landed.read.clone(), steps, scope, span).await.map_err(Stop::Thrown)?;
                         reached.extend(continue_deferred(aliases, onward, None));
                         continue;
                     }
@@ -878,7 +878,7 @@ impl Run<'_> {
             }
             // A nested block: the hop off an enclosing block's landing, from
             // its own position, through the graph it was landed in.
-            Binding::Landed(landed) => (landed.read.clone(), landed.position.clone()),
+            Binding::Landed(landed) => (landed.read.clone(), landed.position().clone()),
             _ => unreachable!("an adapter head is rooted at an instance, a handle, the event or a landing"),
         };
         Ok((start, read))
@@ -1206,7 +1206,7 @@ impl Run<'_> {
                 let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                 Ok((source.position.to_js(), source.read.clone(), "the event position".into()))
             }
-            Binding::Landed(landed) => Ok((landed.position.clone(), landed.read.clone(), "a traversed source record".into())),
+            Binding::Landed(landed) => Ok((landed.position().clone(), landed.read.clone(), "a traversed source record".into())),
             Binding::Instance(instance) => Ok((meta_position(&instance.adapter_slug), self.instance_read(instance).await?, format!("the '{name}' graph"))),
             Binding::Handle(handle) => {
                 // `handleRecord`: a handle that bound no record has none to walk from.
@@ -1244,7 +1244,7 @@ impl Run<'_> {
             let pushdown = self.pushdown_args(step, read, scope, span).await;
             let mut next = Vec::new();
             for cursor in &landed {
-                let kept = self.fetch(&cursor.position, step, read, Fetch { pushdown: &pushdown, paged: false }, scope, span).await?;
+                let kept = self.fetch(&cursor.position(), step, read, Fetch { pushdown: &pushdown, paged: false }, scope, span).await?;
                 next.extend(self.ordered(kept, step, scope, span).await?);
             }
             landed = next;
@@ -1344,30 +1344,31 @@ impl Run<'_> {
     /// `source_field` origin.
     pub(crate) async fn landed_field(&self, landed: &Landed, field: &str) -> Result<Evaluated, Failure> {
         let read = &landed.read;
-        let position = landed.surface.get_or_init(|| {
+        let surface = landed.surface(|position| {
             if read.raw {
-                return landed.position.clone();
+                return position.clone();
             }
-            let natural = record_type(&landed.position).or_else(|| read.start_surface_type.clone());
-            restamp(&landed.position, natural.as_deref(), &read.adapter_type)
+            let natural = record_type(position).or_else(|| read.start_surface_type.clone());
+            restamp(position, natural.as_deref(), &read.adapter_type)
         });
+        let position = &surface;
         // Through the read wrapper, a file is what the catalog declares one
         // (the host makes it); the adapter itself, read raw, answers data.
         let declared = if read.raw { None } else { crate::file::declared_field_type(read.schema.as_ref(), record_type(position).as_deref(), field) };
         let value = self.field_value_at(&read.instance, position, field, declared).await?;
-        let stable = is_stable(&landed.position);
+        let stable = is_stable(&landed.position());
         if value.is_nullish() && !stable {
-            self.trace_miss_in(&read.instance_name, &position_data(&landed.position), field);
+            self.trace_miss_in(&read.instance_name, &position_data(&landed.position()), field);
         }
         let mut entries = vec![
             ("kind", Js::str("source_field")),
             ("instance", Js::str(read.instance_name.clone())),
             ("adapterType", Js::str(read.adapter_type.clone())),
         ];
-        if stable && let Some(record_type) = record_type(&landed.position) {
+        if stable && let Some(record_type) = record_type(&landed.position()) {
             entries.push(("recordType", Js::str(record_type)));
         }
-        let id = record_id(&landed.position);
+        let id = record_id(&landed.position());
         if !matches!(id, Js::Undefined) {
             entries.push(("externalId", id));
         }

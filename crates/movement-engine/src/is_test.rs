@@ -82,7 +82,7 @@ impl Run<'_> {
                 if type_.hops_raw.is_some() || !graph_named(&landed.read.instance_name) {
                     return Ok(false);
                 }
-                let Some(record_type) = crate::traverse::record_type(&landed.position) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
+                let Some(record_type) = crate::traverse::record_type(&landed.position()) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
                 Ok(type_.position.as_ref().is_none_or(|p| *p == record_type))
             }
             _ => Ok(false),
@@ -106,7 +106,7 @@ impl Run<'_> {
             }
             Binding::Handle(handle) => return self.typed_record_fits(name, handle.graph.schema.as_ref(), &handle.target_type, declared).await,
             Binding::Landed(landed) => {
-                let Some(record_type) = crate::traverse::record_type(&landed.position) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
+                let Some(record_type) = crate::traverse::record_type(&landed.position()) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
                 // The graph the landing was yielded from (`graphSchemaOf`).
                 let schema = match scope.resolve(&landed.read.instance_name) {
                     Some(Binding::Instance(instance)) => instance.schema.clone(),
@@ -173,7 +173,7 @@ impl Run<'_> {
                     Some(Binding::Instance(instance)) => instance.schema.clone(),
                     _ => landed.read.schema.clone(),
                 };
-                (schema, crate::traverse::record_type(&landed.position))
+                (schema, crate::traverse::record_type(&landed.position()))
             }
             _ => return Ok(true),
         };

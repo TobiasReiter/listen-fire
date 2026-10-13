@@ -2381,6 +2381,9 @@ impl Names<'_> {
             // Its endpoints are the records the names hold, which must be
             // written handles, as the TypeScript's `resolveEdgeEndpoint` says.
             Statement::Unlink(_) => Ok(()),
+            // The record the name holds, re-fetched; anything else fails the
+            // run as the TypeScript's `interpretRefresh` fails it.
+            Statement::Refresh(_) => Ok(()),
             Statement::Delete(statement) => {
                 // What a node's edge holds is the record it is (a system's,
                 // deleted in its system), or a run-built node, which the
