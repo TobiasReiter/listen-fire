@@ -654,6 +654,12 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
     expect(errorsOf(['  g = graph { k: { a: org } }'])).toEqual([]);
   });
 
+  it('a connection (an adapter instance) is no field: bare, or in an arm', () => {
+    refusedAs(['  g = graph { a: crm }'], `'a' is a field, and 'crm' is 'crm' (the instance itself) — a connection, not a value a field holds`);
+    refusedAs(['  g = graph { a: COALESCE(crm, "x") }'], `'COALESCE(crm, "x")' may be `);
+    refusedAs(['  g = graph { a: COALESCE(crm, "x") }'], 'a connection, not a value a field holds');
+  });
+
   it('values and files are fields', () => {
     expect(errorsOf(['  g = graph { a: COALESCE("y", "x") }'])).toEqual([]);
     expect(errorsOf(['  g = graph { a: f }'])).toEqual([]);

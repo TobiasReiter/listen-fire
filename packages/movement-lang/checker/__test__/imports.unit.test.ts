@@ -383,6 +383,21 @@ describe('a system\'s address is its LITERAL construction arguments (B12)', () =
     expect(errors(['rows = sheet(credentials: s1, base: "X")'], ['rows = sheet(credentials: s1, base: "X")'])).toEqual([]);
   });
 
+  it('an aliased adapter import is the same system as an unaliased one: the credential and literals are read by the imported name', () => {
+    const aliased = (top: string[]): string[] => top;
+    const found = checkProgram(
+      parseProgram(
+        caller(['rows = sheet(credentials: s1, base: "X")']).replace('import { sheet } from adapters', 'import { sheet as sh } from adapters').replace(
+          'rows = sheet(',
+          'rows = sh(',
+        ),
+      ),
+      sheetCatalog,
+      { resolveFile: resolverOver({ 'lib/rows': lib(aliased(['rows = sheet(credentials: s1, base: "X")'])) }) },
+    ).filter(d => (d.severity ?? 'error') === 'error');
+    expect(found).toEqual([]);
+  });
+
   it('a literal is its value, not its spelling: "X" and \'X\' are one system', () => {
     expect(errors(['rows = sheet(credentials: s1, base: "X")'], ["rows = sheet(credentials: s1, base: 'X')"])).toEqual([]);
   });

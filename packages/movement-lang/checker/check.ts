@@ -5314,7 +5314,7 @@ class Checker {
         });
         // The non-credential args, raw — the instance's entry position rides
         // here, and a listen's required address hops read it (`checkListen`).
-        const credentialArg = credentialArgOf(this.catalog.adapter(value.construct.callee) ?? { constructionArgs: [] });
+        const credentialArg = credentialArgOf(this.catalog.adapter(adapter ?? value.construct.callee) ?? { constructionArgs: [] });
         const constructionArgs: Record<string, string> = {};
         for (const arg of value.construct.args) {
           if (arg.name === (credentialArg?.name ?? 'credentials')) continue;
@@ -11370,10 +11370,20 @@ class Checker {
   ): void {
     const walk = heldWalk(GRAPH_SPREAD_TAKES);
     const held = handleWithin(valueType, walk) ?? handleWithin(mayHold, walk);
-    // A connection (`a: crm`) is not a record; this rule does not reach it.
-    if (held === undefined || heldRecordPosition(held)?.kind === 'meta') return;
+    if (held === undefined) return;
     const written = entry.value.raw.trim();
+    const position = heldRecordPosition(held);
     const place = placeInInput(written, held, describeFieldType(held.handle));
+    if (position?.kind === 'meta') {
+      // A connection (`a: crm`) stands for a whole system: no field holds one,
+      // and the engine fails reading it as a bare value. Refused on every version.
+      this.report(
+        DiagnosticCodes.GRAPH_ENTRY_RECORD,
+        `'${entry.name}' is a field, and ${placeInInput(written, held, describePosition(position))} — a connection, not a value a field holds. Write a record read through it, or the fields you want ('${entry.name}: r.\`Name\`')`,
+        entry.span,
+      );
+      return;
+    }
     this.report(
       DiagnosticCodes.GRAPH_ENTRY_RECORD,
       `'${entry.name}' is a field, and ${place} — a record, not a value a field holds. Write a field off the record ('${entry.name}: r.\`Name\`'), or make the entry the record alone ('${entry.name}: r'), which holds it as a reference`,
