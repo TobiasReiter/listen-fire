@@ -499,3 +499,41 @@ describe('refresh', () => {
     expect(after).toContain('"body":"Acme Inc EU"');
   });
 });
+
+// ── a closure called by name inside a library function ─────────────────────
+
+describe('a closure called by name inside a library function', () => {
+  const closures = (call: string) =>
+    library(['export function tag(n: <text>) {', '  f = (x: <text>) => CONCAT(x, "-L")', `  return ${call}`, '}']);
+  const root = ['import { tag } from "lib/forms"', movement(['  r = tag(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(r, "none") }'])].join('\n');
+
+  it('runs as the same body runs in the root, by order and by name', async () => {
+    for (const call of ['f(n)', 'f(x: n)', 'UPPER(f(n))']) {
+      const { rust } = await both({ source: root, files: closures(call) });
+      expect(rust.observed).toContain(call.startsWith('UPPER') ? '"body":"ACME-L"' : '"body":"Acme-L"');
+    }
+  });
+
+  it('runs a function of the root file returning its closure’s call, and hands back absent from an empty one', async () => {
+    const source = [
+      'function tag(n: <text>) {',
+      '  f = (x: <text>) => {',
+      '    if x == "" {',
+      '      return null',
+      '    }',
+      '    return CONCAT(x, "-R")',
+      '  }',
+      '  return f(n)',
+      '}',
+      movement(['  r = tag(n: msg.`subject`)', '  e = tag(n: "")', '  write crm-[:notes]-> { body: "${COALESCE(r, "none")}/${COALESCE(e, "none")}" }']),
+    ].join('\n');
+    const { rust } = await both({ source });
+    expect(rust.observed).toContain('"body":"Acme-R/none"');
+  });
+
+  it('resumes a park inside the library’s closure, on whichever engine resumes it', async () => {
+    const files = library(['export function tag(n: <text>) {', '  f = (x: <text>) => {', '    await sleep(1h)', '    return CONCAT(x, "-L")', '  }', '  return f(n)', '}']);
+    const resumed = await parkAndResume({ source: root, files });
+    expect(resumed).toContain('"body":"Acme-L"');
+  });
+});

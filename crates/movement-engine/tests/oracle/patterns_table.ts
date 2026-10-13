@@ -487,12 +487,18 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'function_call',
     routes: 'whole',
-    note: "closed by chunk 7A Task 6: a bound call of a closure bound to a name runs on Rust; refused by name only where the program binds closures of one name that differ in what their parameters take, which needs the callee's parameters read at run time",
+    note: "closed by chunk 7A Task 6: a bound call of a closure bound to a name runs on Rust (a returned one, and in a library function, since PLAN-08B Task 2); refused by name only where the program binds closures of one name that differ in what their parameters take, which needs the callee's parameters read at run time",
     programs: [
       (pick) => ({ body: `  f = (n: <number>) => {\n    return n + ${pick([1, 2, 5])}\n  }\n  y = f(2)\n  write crm-[:notes]-> { body: "\${y}" }` }),
       () => ({ body: '  base = 5\n  f = (n: <number>) => n + base\n  y = f(n: 3)\n  write crm-[:notes]-> { body: "${y}" }' }),
       () => ({ body: '  name_of = (r: <crm-[:company]->>) => {\n    return r.`name`\n  }\n  co = write crm-[:companies]-> { name: "a" }\n  n = name_of(r: co)\n  write crm-[:notes]-> { body: UPPER(n) }' }),
       (pick) => ({ body: `  f = (n: <number>) => n * 2\n  g = (k: <number>) => k + 1\n  y = g(k: f(n: ${pick([1, 4])}))\n  write crm-[:notes]-> { body: "\${y}" }` }),
+      // Inside a library function, its closure's call returned (the batch review's L2; PLAN-08B Task 2).
+      (pick) => ({
+        file: `import { tag } from "lib/tag"\n${m('  r = tag(n: msg.`subject`)\n  write crm-[:notes]-> { body: COALESCE(r, "none") }')}`,
+        files: { 'lib/tag': { source: `export function tag(n: <text>) {\n  f = (x: <text>) => CONCAT(x, "-${pick(['L', 'M'])}")\n  return f(n)\n}` } },
+        movementName: 'm',
+      }),
       () => ({ body: '  f = (n: <number>) => {\n    return n\n  }\n  y = f(1, 2)\n  write crm-[:notes]-> { body: "${y}" }', checks: false, routes: 'unreached' }),
     ],
   },

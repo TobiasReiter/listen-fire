@@ -388,7 +388,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
   record's member reads its field, on both engines.
 - `MOVEMENT_ENGINE=rust` runs more automations whole instead of handing them to the TypeScript
   engine: a `match` over a tuple of paths, `IS <Declaration>` of a graph literal holding a system's
-  records, a graph spread of the event or of a record's member, and `refresh`. Nothing to set.
+  records, a graph spread of the event or of a record's member, `refresh`, and a function (a
+  library's too) returning its closure's call. Nothing to set.
 - `IS <Declaration>` against a declaration a library writes, of a system's record, failed on
   `MOVEMENT_ENGINE=rust` naming the declaration as unknown; it now compares as on the TypeScript
   engine.

@@ -1680,6 +1680,13 @@ impl<'c> Bound<'c> {
         held
     }
 
+    /// What a call of the closure bound to `name` binds: a value where what
+    /// it hands back is free of records (`closure_call_holder`); not known
+    /// otherwise.
+    fn closure_call_kind(&self, name: &str) -> Option<Kind> {
+        (self.closure_call_holder(name) == Holder::Free).then_some(Kind::Value)
+    }
+
     /// What the movement call written at `span` hands back (`known_call_kind`
     /// worked it out), or anything where it was not.
     fn call_holder(&self, span: ast::Span) -> Holder {
@@ -1766,8 +1773,10 @@ impl<'c> Bound<'c> {
     /// What a right-hand side binds, for what a `return` of it hands back.
     fn value_kind(&mut self, value: &RValue) -> Option<Kind> {
         Some(match value {
-            RValue::Call { call } if self.calls_closure(&call.callee) => return None,
-            RValue::Construct { construct } if self.calls_closure(&construct.callee) => return None,
+            // A closure's call hands back what its returns do: a value where
+            // every closure of the name returns one free of records.
+            RValue::Call { call } if self.calls_closure(&call.callee) => return self.closure_call_kind(&call.callee),
+            RValue::Construct { construct } if self.calls_closure(&construct.callee) => return self.closure_call_kind(&construct.callee),
             RValue::Expr { expr } => self.expression_kind(&expr.raw),
             RValue::Node { node } if node.graph.is_some() => Kind::Graph,
             RValue::Node { .. } => Kind::Node,
@@ -2362,6 +2371,9 @@ impl Names<'_> {
                 RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
+                // A closure's call returned, as one bound is (`executeClosureCall`).
+                RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
+                RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 // A kept walk handed back by a movement's body: the call's
                 // value is the walk (`return` binds the right-hand side as
@@ -5335,6 +5347,24 @@ mod tests {
             ("  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  key = \"kind\"\n  a = AT(top, key)", "at_record_key"),
         ] {
             assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
+        }
+    }
+
+    /// A closure called by name inside a library function runs, as the same
+    /// body does in the root (PLAN-08A batch review, L2), by order, by name
+    /// and nested in an expression.
+    #[test]
+    fn admits_a_closure_called_by_name_inside_a_library_function() {
+        for call in ["f(n)", "f(x: n)", "UPPER(f(n))"] {
+            let library = format!("{PRELUDE}export function tag(n: <text>) {{\n  f = (x: <text>) => CONCAT(x, \"-L\")\n  return {call}\n}}");
+            let library = movement_parser::stmt::parse_program(&library, 3, false).expect("the library parses");
+            let source = format!("{PRELUDE}import {{ tag }} from \"lib/forms\"\nmovement m(msg: <inbox-[:message]->>) {{\n  r = tag(n: msg.`subject`)\n}}");
+            let program = movement_parser::stmt::parse_program(&source, 3, false).expect("the program parses");
+            let libraries = Libraries([("lib/forms".to_string(), library)].into_iter().collect());
+            let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+            let picked = entry_of(&declared, Some("m"), 3);
+            let reasons = refusals(&program, &reachable(&program, Some("m"), 3), picked, 3, &Plugins(None), &libraries).reasons;
+            assert_eq!(reasons, Vec::<String>::new(), "{call}");
         }
     }
 }
