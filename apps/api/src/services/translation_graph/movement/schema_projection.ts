@@ -627,7 +627,16 @@ export function instanceSchemaFromDescriptors(input: {
             `publish — the internal id will surface; publish the type or name it naturally`,
         );
       }
-      if (edges[edge] === undefined) {
+      // A system's own edge and its reserved resources reference may share a
+      // name (a team's ontology edge called `Resources`): the system's own
+      // edge is the one the name walks, whichever the describe listed first.
+      // The reserved reference stays reachable by its address (versions
+      // 1–4's `_resources`).
+      const existing = edges[edge];
+      if (
+        existing === undefined ||
+        (existing.resources === true && ref.fieldId !== RESOURCES_REFERENCE_FIELD_ID)
+      ) {
         edges[edge] = {
           target,
           // The landing type varies per record: reads type as the union and
@@ -677,9 +686,10 @@ export function instanceSchemaFromDescriptors(input: {
           // the body's authored names, which are these same display names.
           ...(ref.genericOver !== undefined ? { genericOver: ref.genericOver } : {}),
           // The system's resources edge (the reserved `_resources` reference,
-          // walked by its own name — the knowledge graph's `Resources`). Only
-          // a diagnostic reads it: since language version 5 `x-[f:_resources]->`
-          // off a record is refused, naming this edge.
+          // walked by its own name — the knowledge graph's `Resources`). The
+          // read wrapper sends a walk of it by its reserved fieldId (its
+          // address, not its name), and since language version 5 the checker's
+          // refusal of `x-[f:_resources]->` off a record names it.
           ...(ref.fieldId === RESOURCES_REFERENCE_FIELD_ID ? { resources: true as const } : {}),
         };
         if (ref.required === true) requiredEdges.push({ edge, from: target });

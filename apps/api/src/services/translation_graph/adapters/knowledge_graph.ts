@@ -289,7 +289,9 @@ export const KG_RESOURCE_TYPE_ID = 'Attached Resource';
 /** The name a node's resources edge is walked by — `c-[f:Resources]->`. It is
  *  an ordinary declared edge; the reserved `_resources` fieldId it is keyed by
  *  is the adapter's own (versions 1–4 of the language walked it as
- *  `c-[f:_resources]->`). */
+ *  `c-[f:_resources]->`). A display name only: `getRelated` matches the edge
+ *  by that fieldId, so a team's ontology edge named `Resources` stays the
+ *  ontology's. */
 export const KG_RESOURCES_EDGE_NAME = 'Resources';
 
 /** An `Attached Resource`'s fields by the name a movement reads them under,
@@ -1231,13 +1233,15 @@ export class KnowledgeGraphAdapter implements Adapter {
     }
 
     // Resources: a node's `node_resource` attachments become resource
-    // positions whose `data` carries the `Resource`. Walked by the edge's
-    // name (`c-[f:Resources]->`, read through `getFieldValue` above) and,
-    // for language versions 1–4, by the engine's reserved `_resources`
-    // reference (`resource_traverse`), which applies any `ResourceFilter`.
-    // The `#`-prefixed sentinel is the engine's own, never an ontology edge —
-    // it crosses verbatim.
-    if (input.fieldId === RESOURCES_REFERENCE_FIELD_ID || input.fieldId === KG_RESOURCES_EDGE_NAME) {
+    // positions whose `data` carries the `Resource`. Matched by the reserved
+    // fieldId — the edge's address — and never by its display name: a team's
+    // ontology edge may be named `Resources` too, and that one is the
+    // ontology's. A walk of the edge by its name (`c-[f:Resources]->`, read
+    // through `getFieldValue` above) reaches here because the read wrapper
+    // (`surfaceReadAdapter`) sends the schema's resources edge as this
+    // fieldId; versions 1–4's `_resources` reference (`resource_traverse`,
+    // which applies any `ResourceFilter`) asks for it directly.
+    if (input.fieldId === RESOURCES_REFERENCE_FIELD_ID) {
       const attached = await kgFetch<{ data: { resourceId: string }[] }>(await this.creds(), {
         method: 'GET',
         path: `/nodes/${nodeId}/resources`,

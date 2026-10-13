@@ -54,4 +54,17 @@ describe('the resources reference projects as an ordinary, named edge', () => {
     });
     expect(projected.schema.positions['Source'].properties).toEqual({ URL: 'text' });
   });
+
+  it("a system's own edge sharing the name holds it, in either order, and is not flagged", () => {
+    const own = { fieldId: 'g:sources', name: 'Sources', targetTypeId: 'g:company', cardinality: 'many' as const, direction: 'outgoing' as const };
+    for (const references of [[company.references[0], own], [own, company.references[0]]]) {
+      const projected = instanceSchemaFromDescriptors({
+        adapterType: 'graph',
+        entries,
+        descriptors: new Map([['g:company', { ...company, references }]]),
+        supportsInPlaceUpdate: false,
+      });
+      expect(projected.schema.positions['Company'].edges['Sources']).toEqual({ target: 'Company' });
+    }
+  });
 });

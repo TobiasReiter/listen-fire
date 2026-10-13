@@ -393,6 +393,20 @@ import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE, KG_RESOURCE_TYPE_ID, KG_RESOURC
 import { persistKgResources } from '../adapters/knowledge_graph_resources';
 import { RESOURCES_REFERENCE_FIELD_ID, type ResourceFilter } from '../adapter';
 import { makeStablePosition } from '../types';
+import { surfaceReadAdapter } from '../../movement_engine/kg';
+import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
+import type { InstanceSchema } from 'movement-lang';
+
+/** A schema whose `Message` declares the knowledge graph's resources edge, as
+ *  the projection flags it. */
+const resourcesSchema: InstanceSchema = {
+  positions: {
+    Message: { properties: {}, edges: { [KG_RESOURCES_EDGE_NAME]: { target: KG_RESOURCE_TYPE_ID, resources: true } } },
+    [KG_RESOURCE_TYPE_ID]: { properties: { Name: 'text', URL: 'text', Type: 'text' }, edges: {} },
+  },
+  collections: {},
+  writableRoots: {},
+};
 import type { SourcePosition } from '../types';
 
 const TEAM_ID = 'team-1' as TeamId;
@@ -478,6 +492,9 @@ const fakeGraph = jest.fn(async (input: unknown, init?: RequestInit): Promise<Re
         .map((r) => ({ resourceId: r.resource_id })),
     });
   }
+
+  // An ontology edge read: no edges in these fixtures, only the request.
+  if (/^\/nodes\/[^/]+\/edges$/.test(path)) return jsonResponse(200, { data: [] });
 
   return jsonResponse(404, { error: 'not_found' });
 });
@@ -863,9 +880,11 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
       node_id: MSG_NODE_ID as string,
       resource_id: RESOURCE_ID as string,
     });
-    const adapter = makeAdapter();
+    // Walked as the engine walks it: through the read wrapper, which sends
+    // the schema's resources edge by its reserved fieldId (its address).
+    const adapter = surfaceReadAdapter({ inner: makeAdapter(), schema: resourcesSchema });
     const related = await adapter.getRelated({
-      position: makeStablePosition({ adapterType: KG_ADAPTER_TYPE, recordType: null, recordId: MSG_NODE_ID as string }),
+      position: makeStablePosition({ adapterType: KG_ADAPTER_TYPE, recordType: 'Message', recordId: MSG_NODE_ID as string }),
       fieldId: KG_RESOURCES_EDGE_NAME,
       direction: 'outgoing',
     });
@@ -877,6 +896,49 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
     expect(await read('Type')).toBe('URL');
     // The field reads are local — only the attachment list crossed the wire.
     expect(graphRequests).toHaveLength(1);
+  });
+
+  it('an ontology edge named `Resources` is the ontology\'s: matched by address, never by the display name', async () => {
+    graphOntology.nodeTypes.push(
+      wireNodeType({ id: 'nt-company', name: 'Company' }),
+      wireNodeType({ id: 'nt-doc', name: 'Doc' }),
+    );
+    graphOntology.edgeTypes.push({
+      id: 'et-resources',
+      sourceNodeTypeId: 'nt-company',
+      targetNodeTypeId: 'nt-doc',
+      outboundName: KG_RESOURCES_EDGE_NAME,
+      inboundName: 'resource of',
+      required: null,
+      scopes: null,
+      filters: null,
+    });
+    dbState.nodeResources.push({
+      id: 'nr-shadow',
+      team_id: TEAM_ID as string,
+      node_id: MSG_NODE_ID as string,
+      resource_id: RESOURCE_ID as string,
+    });
+    const from = makeStablePosition({ adapterType: KG_ADAPTER_TYPE, recordType: 'Company', recordId: MSG_NODE_ID as string });
+    // Bare, and through the wrapper over the projected schema (where the
+    // ontology's edge holds the name): the ontology lookup, every time.
+    const projected = instanceSchemaFromDescriptors({
+      adapterType: KG_ADAPTER_TYPE,
+      entries: [{ typeId: 'Company', displayName: 'Company', readable: true, writable: true }],
+      descriptors: new Map([['Company', (await makeAdapter().describe('Company'))!]]),
+      supportsInPlaceUpdate: false,
+    });
+    expect(projected.schema.positions['Company'].edges[KG_RESOURCES_EDGE_NAME]?.resources).toBeUndefined();
+    for (const adapter of [makeAdapter(), surfaceReadAdapter({ inner: makeAdapter(), schema: projected.schema })]) {
+      graphRequests.length = 0;
+      await adapter.getRelated({ position: from, fieldId: KG_RESOURCES_EDGE_NAME, direction: 'outgoing' });
+      expect(graphRequests.map((r) => r.path)).not.toContain(`/nodes/${MSG_NODE_ID}/resources`);
+      expect(graphRequests.find((r) => r.path === `/nodes/${MSG_NODE_ID}/edges`)?.query.edgeTypeId).toBe('et-resources');
+    }
+    // The node's attachments stay reachable by the reserved fieldId.
+    graphRequests.length = 0;
+    await makeAdapter().getRelated({ position: from, fieldId: RESOURCES_REFERENCE_FIELD_ID, direction: 'outgoing' });
+    expect(graphRequests.map((r) => r.path)).toContain(`/nodes/${MSG_NODE_ID}/resources`);
   });
 
   it('roundtrip: writeResource → getResources returns the written resource, with facts persisted alongside', async () => {

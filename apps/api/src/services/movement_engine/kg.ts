@@ -33,11 +33,12 @@
 // consumer, but it carries no KG knowledge.
 
 import type { InstanceSchema } from 'movement-lang';
-import type {
-  Adapter,
-  GetFieldValueInput,
-  GetRelatedInput,
-  RelatedResult,
+import {
+  RESOURCES_REFERENCE_FIELD_ID,
+  type Adapter,
+  type GetFieldValueInput,
+  type GetRelatedInput,
+  type RelatedResult,
 } from '../translation_graph/adapter';
 import {
   META_RECORD_TYPE,
@@ -219,7 +220,20 @@ export function surfaceReadAdapter(input: {
           // Stamp the FROM position with its natural type so the adapter
           // resolves the (natural) edge name against the right type.
           const position = restamp(read.position, fromSurface ?? undefined);
-          const related = await target.getRelated({ ...read, position });
+          // The one edge that crosses by its address rather than its name:
+          // the system's reserved resources reference (`resources` on the
+          // schema's edge — the knowledge graph's `Resources`). Its display
+          // name is free for a system's own edge to share, so the adapter
+          // matches it by the reserved fieldId alone.
+          const reserved =
+            fromSurface !== null &&
+            (read.direction ?? 'outgoing') === 'outgoing' &&
+            schema?.positions[fromSurface]?.edges[read.fieldId]?.resources === true;
+          const related = await target.getRelated({
+            ...read,
+            position,
+            ...(reserved ? { fieldId: RESOURCES_REFERENCE_FIELD_ID } : {}),
+          });
           const landed = landedSurfaceType(fromSurface, read.fieldId, read.direction ?? 'outgoing');
           return related.map((r) => {
             const natural = landedType(r.position, landed);
