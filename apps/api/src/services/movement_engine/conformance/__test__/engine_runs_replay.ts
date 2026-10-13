@@ -224,11 +224,25 @@ const ENCODED_A_FIXED_BUG: Array<{
     matches: (recording, divergence) =>
       pinnedUnsupported(recording) &&
       recording.requests.length === 0 &&
-      divergence.startsWith('recorded the failure {"class":"MovementEngineError","code":"MOVENG_LANGUAGE_VERSION"') &&
-      divergence.includes('; the replay failed {"class":"MovementEngineError","code":"MOVENG_LANGUAGE_VERSION"'),
+      sameRefusalButForTheVersionName(divergence),
     count: { v1: 0, v2: 1 },
   },
 ];
+
+const RECORDED_PREFIX = 'recorded the failure ';
+const REPLAY_JOINT = '; the replay failed ';
+
+/** Both sides are the MOVENG_LANGUAGE_VERSION refusal and are EQUAL once the
+ *  current version's name and number ("Luminous Owl" (4)) is masked in each. */
+function sameRefusalButForTheVersionName(divergence: string): boolean {
+  if (!divergence.startsWith(RECORDED_PREFIX)) return false;
+  const joint = divergence.indexOf(REPLAY_JOINT);
+  if (joint < 0) return false;
+  const mask = (side: string) => side.replace(/\\?"[A-Z][a-z]+ [A-Z][a-z]+\\?" \(\d+\)/g, '<current version>');
+  const recorded = mask(divergence.slice(RECORDED_PREFIX.length, joint));
+  const replayed = mask(divergence.slice(joint + REPLAY_JOINT.length));
+  return recorded.includes('"code":"MOVENG_LANGUAGE_VERSION"') && recorded === replayed;
+}
 
 /** The recording is pinned to a version this release does not support. */
 function pinnedUnsupported(recording: HostRecording): boolean {
