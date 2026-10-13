@@ -3307,6 +3307,8 @@ function fileEdgesOf(schema: InstanceSchema, positions: readonly string[]): stri
   const filed = new Set<string>();
   for (const position of positions) {
     for (const [name, edge] of Object.entries(schema.positions[position]?.edges ?? {})) {
+      // A write-only edge reaches nothing a read can walk.
+      if (edge.readable === false) continue;
       if (edge.resources === true) {
         declared.add(name);
         continue;
@@ -6678,7 +6680,10 @@ class Checker {
    * value or may hold one, an extracted node or a record this run built (a
    * transient graph — nothing stores it), or any other non-record; by
    * MOV_DELETE_NOT_DECLARED where its type (every member of a union) makes no
-   * such promise. A record whose system describes nothing, or whose type
+   * such promise. A name bound to an `IF` or a `COALESCE` is read as the
+   * union of its operands (what it may hold): every member a record is
+   * checked as a union of records is, and a member that is not one refuses it.
+   * A record whose system describes nothing, a value nothing types, or a type
    * nobody has fetched yet, says nothing, so nothing is refused. Versions 1–4
    * leave all of it to the run.
    */
@@ -6692,6 +6697,7 @@ class Checker {
         span,
       );
     const symbol = resolution.symbol;
+    const held: PositionTypeRef[] = [];
     if (
       this.symbolPositionType(symbol) === undefined &&
       symbol.fieldType === undefined &&
@@ -6699,25 +6705,39 @@ class Checker {
       symbol.bindingPlane !== 'node' &&
       symbol.plural !== true
     ) {
-      // A value no single type describes — a record on one branch and a
-      // value on another (`IF … THEN r ELSE "a" END`).
-      notRecord('a value that may hold something other than one record');
-      return;
-    }
-    const record = this.recordOfName(symbol, name, span);
-    if (record === undefined) return; // reported as the internal error it is
-    if (record.kind === 'value') {
-      notRecord(record.what);
-      return;
-    }
-    if (record.kind === 'undescribed') {
-      // A name typed as holding records that is not ONE record: a list of
-      // them, or a value that may be one (a union with a value).
-      const held = symbol.fieldType;
-      if (held !== undefined && !isRecordType(held)) {
-        notRecord(`${describeFieldType(held)}, which may hold something other than one record`);
+      // A value no single type describes — the arms of an `IF` or a
+      // `COALESCE` that disagree. What it may hold is the union of them: a
+      // member that is not one record refuses it (`IF … THEN r ELSE "a" END`);
+      // a value nothing types says nothing.
+      const mayHold = symbol.mayHold;
+      if (mayHold === undefined) return;
+      const variant = variantOf(mayHold);
+      for (const member of variant.kind === 'union' ? variant.of : [mayHold]) {
+        const one = variantOf(stripAbsent(member));
+        if (one.kind !== 'record') {
+          notRecord('a value that may hold something other than one record');
+          return;
+        }
+        // A record nobody can name says nothing; the rest are checked.
+        if (one.position !== undefined) held.push(one.position);
       }
-      return;
+    } else {
+      const record = this.recordOfName(symbol, name, span);
+      if (record === undefined) return; // reported as the internal error it is
+      if (record.kind === 'value') {
+        notRecord(record.what);
+        return;
+      }
+      if (record.kind === 'undescribed') {
+        // A name typed as holding records that is not ONE record: a list of
+        // them, or a value that may be one (a union with a value).
+        const typed = symbol.fieldType;
+        if (typed !== undefined && !isRecordType(typed)) {
+          notRecord(`${describeFieldType(typed)}, which may hold something other than one record`);
+        }
+        return;
+      }
+      held.push(record.type);
     }
     const undeclared: string[] = [];
     const visit = (type: PositionTypeRef): boolean => {
@@ -6761,7 +6781,8 @@ class Checker {
           return neverAsAny(type);
       }
     };
-    if (!visit(record.type) || undeclared.length === 0) return;
+    for (const type of held) if (!visit(type)) return;
+    if (undeclared.length === 0) return;
     this.report(
       DiagnosticCodes.DELETE_NOT_DECLARED,
       `'${name}' is ${undeclared.length === 1 ? undeclared[0] : `one of ${undeclared.join(', ')}`}, and its system does not declare that it can delete ${undeclared.length === 1 ? 'one' : 'every one of them'} — 'delete' is checked against the system's own promise ('deletable' on the type it describes). Change the record instead ('write ${name} { … }'), or delete it in a system that can.`,
@@ -6783,27 +6804,65 @@ class Checker {
    * result. Any other record reaches its files over an edge its system
    * declares, and the refusal names that edge — derived from the schema, not
    * listed: the system's declared resources edge, else every edge whose
-   * landing has a file-typed field. A root nothing types says nothing (the
-   * run decides).
+   * landing has a file-typed field. The rule is structural — is the root an
+   * extraction's result? — so it needs no schema: a root nothing proves to be
+   * one (a record of a system that describes nothing, a name bound to an `IF`
+   * whose arms are not all extractions' results) is refused too, and only the
+   * "write this instead" needs the schema. A record that itself holds a file
+   * is pointed at its own file field.
    */
-  private checkResourcesOfExtraction(rootType: PositionTypeRef | undefined, rootName: string | undefined, span: Span): void {
-    if (rootType === undefined) return;
+  private checkResourcesOfExtraction(
+    rootType: PositionTypeRef | undefined,
+    rootName: string | undefined,
+    mayHold: FieldType | undefined,
+    span: Span,
+  ): void {
+    const shown = rootName ?? 'the root';
+    const lead = `'-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }')`;
+    if (rootType === undefined) {
+      // A head with no root is the engine's to refuse, in every version.
+      if (rootName === undefined) return;
+      // A name bound to an `IF` or a `COALESCE` is the union of its arms: it
+      // is an extraction's result when every arm provably is one.
+      if (mayHold !== undefined) {
+        const variant = variantOf(mayHold);
+        const arms = variant.kind === 'union' ? variant.of : [mayHold];
+        const extracted = arms.every(arm => {
+          const one = variantOf(stripAbsent(arm));
+          return one.kind === 'record' && one.position !== undefined && unwrapMaybeEmpty(one.position).kind === 'extract';
+        });
+        if (extracted) return;
+      }
+      this.report(
+        DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+        `'${shown}' is not provably an extraction's result, and ${lead}. A record reaches its files over an edge its system declares: walk that edge instead.`,
+        span,
+      );
+      return;
+    }
     const type = unwrapMaybeEmpty(rootType);
     if (type.kind === 'extract') return;
-    const shown = rootName ?? 'the root';
     let instead = '';
     if (type.kind === 'position' || type.kind === 'handle' || type.kind === 'union') {
       const positions =
         type.kind === 'union' ? type.variants : type.position !== undefined ? [type.position] : [];
-      const edges = fileEdgesOf(type.instance.schema, positions);
+      const schema = type.instance.schema;
+      const edges = fileEdgesOf(schema, positions);
       const system = `'${type.instance.name}'`;
-      instead = edges.length > 0
-        ? ` ${system} reaches a record's files over ${edges.map(edge => `'${edge}'`).join(' or ')}: write '${shown}-[f:${spellName(edges[0])}]-> { … }'.`
-        : ` ${system} exposes no files on ${describePosition(type)} — it declares no edge to a record that holds one.`;
+      // The record itself holds a file (an email's attachment): read it.
+      const ownFiles = [...new Set(positions.flatMap(position =>
+        Object.entries(schema.positions[position]?.properties ?? {})
+          .filter(([, field]) => holdsFile(field))
+          .map(([field]) => field)))];
+      instead = ownFiles.length > 0
+        ? ` ${describePosition(type)} holds its file itself, in ${ownFiles.map(field => `'${field}'`).join(' or ')}: read '${shown}.${spellName(ownFiles[0])}'.`
+        : edges.length > 0
+          ? ` ${system} reaches a record's files over ${edges.map(edge => `'${edge}'`).join(' or ')}: write '${shown}-[f:${spellName(edges[0])}]-> { … }'.`
+          : ` ${system} exposes no files on ${describePosition(type)} — it declares no edge to a record that holds one.`;
     }
     this.report(
       DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
-      `'${shown}' is ${describePosition(type)}, and '-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }').${instead}`,
+      `'${shown}' is ${describePosition(type)}, and ${lead}.${instead}`,
       span,
     );
   }
@@ -9960,7 +10019,7 @@ class Checker {
       // `#resources`, its old spelling, is a retired `#` hop of its own.
       && !hopsOfAddress(head.hopsRaw)[0].label.text.startsWith('#')
     ) {
-      this.checkResourcesOfExtraction(rootType, rootName, head.span);
+      this.checkResourcesOfExtraction(rootType, rootName, rootSymbol?.mayHold, head.span);
     }
     // A root that is a VALUE and NOT a record — a name bound to one, or an
     // expression that computes one. There are no positions on the value plane —

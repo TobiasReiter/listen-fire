@@ -83,6 +83,23 @@ describe('`delete` under Dancing Wren (5)', () => {
     expect(codes('  v = ONLY(x-[:people]->)\n  delete v', 5)).toEqual([]);
   });
 
+  it('a name bound to an IF or a COALESCE is the union of its operands', () => {
+    const company = '  y = ONLY(db-[:company]->)\n';
+    // Every member a deletable record: clean.
+    expect(codes(`${company}  v = IF x.name == "a" THEN x ELSE y END\n  delete v`, 5)).toEqual([]);
+    expect(codes(`${company}  v = COALESCE(x, y)\n  delete v`, 5)).toEqual([]);
+    expect(codes('  y = ONLY(x-[:people]->)\n  v = IF x.name == "a" THEN x ELSE y END\n  delete v', 5)).toEqual([]);
+    // A member whose type makes no promise: NOT_DECLARED, not NOT_RECORD.
+    expect(codes('  y = ONLY(db-[:note]->)\n  v = IF x.name == "a" THEN x ELSE y END\n  delete v', 5))
+      .toEqual([C.DELETE_NOT_DECLARED]);
+    // A member that is not a record at all.
+    expect(codes('  v = IF x.name == "a" THEN x ELSE null END\n  delete v', 5)).toEqual([C.DELETE_NOT_RECORD]);
+    // Records of a system that describes nothing say nothing.
+    expect(codes('  y = ONLY(free-[:things]->)\n  v = IF x.name == "a" THEN x ELSE y END\n  delete v', 5, '<free-[:things]->>'))
+      .toEqual([]);
+    expect(codes(`${company}  v = IF x.name == "a" THEN x ELSE y END\n  delete v`, 4)).toEqual([]);
+  });
+
   it('an extracted node — a transient graph: MOV_DELETE_NOT_RECORD', () => {
     const root = [
       '  d = extract from [x.name] {',

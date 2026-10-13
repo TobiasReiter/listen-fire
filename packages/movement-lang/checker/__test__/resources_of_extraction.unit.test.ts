@@ -63,14 +63,16 @@ const catalog = mockCatalog({
     chat: { constructionArgs: [], schema: chatSchema },
     graph: { constructionArgs: [], schema: graphSchema },
     crm: { constructionArgs: [], schema: crmSchema },
+    loose: { constructionArgs: [] },
   },
 });
 
-const source = (param: string, body: string) => `import { mail, chat, graph, crm } from adapters
+const source = (param: string, body: string) => `import { mail, chat, graph, crm, loose } from adapters
 inbox = mail()
 slack = chat()
 kg = graph()
 db = crm()
+free = loose()
 
 movement scan(x: ${param}) {
 ${body}
@@ -131,6 +133,55 @@ describe('`_resources` under Dancing Wren (5)', () => {
     expect(codes('<db-[:company]->>', `  x-[p:people]-> {\n  ${walk('p')}\n  }`, 5)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
     expect(codes('<db-[:company]->>', `  m = write inbox-[:message]-> { Subject: "hi" }\n${walk('m')}`, 5))
       .toContain(C.RESOURCES_NOT_EXTRACTED);
+  });
+
+  it('a record that holds its file itself: pointed at its own file field, not told there are none', () => {
+    const body = `  x-[a:Attachments]-> {\n  ${walk('a')}\n  }`;
+    expect(codes('<inbox-[:message]->>', body, 5)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
+    const message = said('<inbox-[:message]->>', body, 5);
+    expect(message).toContain("'File'");
+    expect(message).toContain('a.File');
+    expect(message).not.toContain('exposes no files');
+  });
+
+  it('a root not provably an extraction\'s result is refused without a schema', () => {
+    // A record of a system that describes nothing.
+    expect(codes('<free-[:things]->>', walk('x'), 5)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
+    // A name bound to an IF of two records.
+    const either = '  w = ONLY(inbox-[:message]->)\n  v = IF x.Subject == "a" THEN x ELSE w END\n';
+    expect(codes('<inbox-[:message]->>', `${either}${walk('v')}`, 5)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
+    expect(codes('<free-[:things]->>', walk('x'), 4)).toEqual([]);
+    expect(codes('<inbox-[:message]->>', `${either}${walk('v')}`, 4)).toEqual([]);
+  });
+
+  it("an IF whose every arm is an extraction's result is one: clean", () => {
+    const extraction = (name: string) => [
+      `  ${name} = extract from [x.Subject] {`,
+      '    node co: "a company" {',
+      '      nm: <text> "the name"',
+      '    }',
+      '  }',
+    ].join('\n');
+    const body = `${extraction('d')}\n${extraction('e')}\n  v = IF x.Subject == "a" THEN d ELSE e END\n${walk('v')}`;
+    expect(codes('<inbox-[:message]->>', body, 5)).toEqual([]);
+  });
+
+  it("a write-only edge is never suggested", () => {
+    const writeOnly: InstanceSchema = {
+      positions: {
+        post: { properties: { Text: 'text' }, edges: { Uploads: { target: 'upload', readable: false } } },
+        upload: { properties: { Data: 'file' }, edges: {} },
+      },
+      collections: { post: { target: 'post' } },
+      writableRoots: {},
+    };
+    const only = mockCatalog({ adapters: { send: { constructionArgs: [], schema: writeOnly } } });
+    const src = `import { send } from adapters\nout = send()\n\nmovement scan(x: <out-[:post]->>) {\n${walk('x')}\n}`;
+    const found = checkProgram(parseProgram(src, { languageVersion: 5 }), only, { languageVersion: 5 })
+      .filter((d) => (d.severity ?? 'error') === 'error');
+    expect(found.map((d) => d.code)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
+    expect(found[0].message).not.toContain('Uploads');
+    expect(found[0].message).toContain('exposes no files');
   });
 
   it("a rootless value walk reads the event's record: refused", () => {

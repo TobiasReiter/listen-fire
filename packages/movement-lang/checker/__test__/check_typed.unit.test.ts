@@ -446,7 +446,7 @@ function expectClean(source: string): void {
 
 // Under a named language version — for a construct a later version retires.
 const checkUnder = (languageVersion: number, source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+  checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
 
 const PRELUDE = [
   'import { email, attio, slack, affinity, dropbox, messaging, kg } from adapters',
