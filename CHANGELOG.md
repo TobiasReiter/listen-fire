@@ -43,6 +43,11 @@ guide](docs/language/dancing-wren-migration.md).
 - **A file is never joined into text** (`MOV_FILE_IN_TEXT`): `"Attached: ${f}"`, or a value that
   may be a file. Why: it joined as `[object Object]`. Its text is `READ(f)`
   (`"${COALESCE(READ(f), "")}"`); the file itself goes into a field that holds files.
+- **A value that may be a record, handed to a record parameter** (`MOV_CALL_ARG_MAYBE_RECORD`):
+  `v = COALESCE(org, "x")` then `hp(r: v)`, an `IF` of a record and text, or a function or closure
+  that returns either. Why: TypeScript's `Org | string` is no `Org`, and the engine refuses the
+  value at run time. Narrow it to the record with `IS`, handle the case where it is not one, or
+  fill the other arm with a record. A union of records alone is one record and still fits.
 
 ### Language version 5, Dancing Wren: new
 
@@ -57,6 +62,12 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- A named function's declared return no longer hides what its body may hand back: under language
+  versions 3 and 4, `function f(): <text> { return COALESCE(org, "x") }` is a call whose use in a
+  graph entry, a spread, a written field or a plugin argument is refused at the use, as a closure's
+  call is (a use that reaches data cannot hold a record, on every version). A call back into a
+  function from its own body (declared recursion) carries nothing for that edge, so recursion is
+  no call cycle. The declaration itself is refused only from version 5.
 - Security: a Mailgun inbound attachment is fetched with the deployment's key only from an https
   storage URL under `MAILGUN_SENDING_DOMAIN` (`/v3/domains/<domain>/…` on a `mailgun.net` host);
   any other Mailgun URL is refused. Inbound-only deployments must now set `MAILGUN_SENDING_DOMAIN`

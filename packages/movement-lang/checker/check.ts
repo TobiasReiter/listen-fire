@@ -319,6 +319,7 @@ import {
   isWalkProjection,
   positionRefIn,
   positionsMatch,
+  mixesRecordWithValue,
   recordsAlone,
   sameStartingPoint,
   positionSchemaOfRef,
@@ -628,6 +629,12 @@ export const DiagnosticCodes = {
    *  a function parameter whose body needs every field in hand (it
    *  serialises, spreads or passes on the record to one that does). */
   CALL_ARG_OPAQUE_RECORD: 'MOV_CALL_ARG_OPAQUE_RECORD',
+  /** From version 5: a value that MAY be a record and may be something else
+   *  (`COALESCE(org, "x")`, a function that returns either) handed to a
+   *  parameter that takes a record position — TypeScript's `Org | string` is no
+   *  `Org`. Earlier versions let it through, and Rust admission refuses it at
+   *  run time. */
+  CALL_ARG_MAYBE_RECORD: 'MOV_CALL_ARG_MAYBE_RECORD',
   // Listeners (trigger rows are derived from `listen` statements)
   LISTEN_FILE_LEVEL: 'MOV_LISTEN_FILE_LEVEL',
   LISTEN_NOT_INSTANCE: 'MOV_LISTEN_NOT_INSTANCE',
@@ -4554,7 +4561,22 @@ class Checker {
     if (!info) return UNKNOWN_RETURN;
     // What the declaration SAYS it returns is what a call is (version 3) — the
     // body is checked against it at the declaration, not consulted here.
-    return this.declaredReturn(info) ?? this.inferMovement(symbol);
+    const declared = this.declaredReturn(info);
+    if (declared === undefined) return this.inferMovement(symbol);
+    // Before version 5 a declaration that does not take what a return may hold
+    // is not refused where it is written (`checkReturnFit`), so the call still
+    // carries what the body may hand back, and a use that reaches data is
+    // refused there — as a closure's call does. The body is inferred for it
+    // (its effect row needs the same walk). A call reached WHILE that walk is
+    // under way — declared recursion — carries nothing for that edge: the
+    // declaration is the answer inside the cycle, and asking the body for its
+    // own would be the false cycle a declared return exists to avoid.
+    if (since(this.languageVersion, 5)) return declared;
+    if (info.returnType === undefined) this.inferMovement(symbol);
+    const inferred = info.returnType?.done === true ? info.returnType.shape : undefined;
+    return inferred?.mayHold !== undefined && showsMoreHandles(inferred.mayHold, declared.fieldType)
+      ? { ...declared, mayHold: inferred.mayHold }
+      : declared;
   }
 
   /**
@@ -10493,6 +10515,7 @@ class Checker {
           return;
         }
         this.refuseValueForPosition(fit, argType === undefined ? valueType : undefined, arg.expr.span);
+        if (argType === undefined) this.refuseMaybeRecordForPosition(fit, [mayHold, valueType], arg.expr.span, arg.expr.raw.trim());
         this.checkCallArgFit(fit, argType, param?.type.posType, arg.expr.span);
         this.checkArgFieldsInHand(fit, argType ?? recordIn(valueType)?.position, arg.expr.span);
         return;
@@ -10556,6 +10579,7 @@ class Checker {
           return;
         }
         this.refuseValueForPosition(fit, value.posType === undefined ? value.fieldType : undefined, arg.call.span);
+        if (value.posType === undefined) this.refuseMaybeRecordForPosition(fit, [value.mayHold, value.fieldType], arg.call.span, `${arg.call.callee}(…)`);
         this.checkCallArgFit(fit, value.posType, param?.type.posType, arg.call.span);
         this.checkArgFieldsInHand(fit, value.posType, arg.call.span);
         return;
@@ -10631,6 +10655,30 @@ class Checker {
     this.report(
       DiagnosticCodes.CALL_ARG_TYPE,
       `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but this argument is ${describeFieldType(valueType)} — a record parameter takes a record (a bound record, a node, or a write); declare the parameter as a value type ('<text>', '<{ … }>') to pass a value`,
+      span,
+    );
+  }
+
+  /**
+   * A value that MAY be a record and may be something else, handed to a
+   * parameter that takes a record position (version 5). TypeScript's own
+   * typing: `Org | string` is no `Org`. The engine hands the parameter a
+   * position, so the value that is not one has nowhere to go. Narrow it first
+   * (`IF v IS …`), or fill the other arm with a record.
+   */
+  private refuseMaybeRecordForPosition(
+    fit: ArgFit,
+    types: ReadonlyArray<FieldType | undefined>,
+    span: Span,
+    written: string,
+  ): void {
+    const posType = fit.param?.type.posType;
+    if (posType === undefined || !since(this.languageVersion, 5)) return;
+    const mixed = types.find(mixesRecordWithValue);
+    if (mixed === undefined) return;
+    this.report(
+      DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
+      `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or something that is not, and \`Org | text\` is no \`Org\`, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
       span,
     );
   }

@@ -2685,6 +2685,24 @@ export function recordsAlone(type: FieldType | undefined): Array<Extract<FieldTy
   return found;
 }
 
+/** Does this type MIX a record with something that is not one — `COALESCE(org,
+ *  "x")`, a call that returns a record or text? TypeScript's `Org | string`:
+ *  neither an `Org` nor a `string`. A union of records alone is one record
+ *  (`recordsAlone`); a type with no record in it mixes nothing. */
+export function mixesRecordWithValue(type: FieldType | undefined): boolean {
+  if (type === undefined) return false;
+  const members: FieldType[] = [];
+  const add = (member: FieldType): void => {
+    const stripped = stripAbsent(member);
+    const variant = variantOf(stripped);
+    if (variant.kind === 'union') variant.of.forEach(add);
+    else members.push(stripped);
+  };
+  add(type);
+  const records = members.filter(member => variantOf(member).kind === 'record').length;
+  return records > 0 && records < members.length;
+}
+
 /** Where a walk off this VALUE starts, when the checker can name it. One record
  *  and a list of them start the same walk — a hop is many-valued either way, so
  *  plurality lives in the traversal and not in a second type. */
