@@ -323,3 +323,66 @@ describe('a match over a tuple of paths', () => {
     expect(resumed).toContain('"body":"Acme"');
   });
 });
+
+// ── IS <Decl> of a graph literal holding a system's records ────────────────
+
+const LEAD = ['node Lead {', '  name: <text>', '  node owner {', '    name: <text>', '  }', '}'].join('\n');
+const TYPED_LEAD = ['node Lead {', '  name: <text>', '  node owner {', '    region: <number>', '  }', '}'].join('\n');
+const VERDICT = ['  if g IS <Lead> {', '    write crm-[:notes]-> { body: "fits" }', '  } else {', '    write crm-[:notes]-> { body: "does not" }', '  }'];
+
+describe('IS <Decl> of a graph literal', () => {
+  it('compares a written handle its edge holds by the handle’s record type', async () => {
+    for (const [declaration, verdict] of [[LEAD, 'fits'], [TYPED_LEAD, 'does not']] as const) {
+      const { rust } = await both({
+        source: [declaration, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', ...VERDICT])].join('\n'),
+      });
+      expect(rust.observed).toContain(`"body":"${verdict}"`);
+    }
+  });
+
+  it('compares a traversed record its edge holds, and fits where the edge holds nothing', async () => {
+    const companies = { companies: [{ id: 'c-1', fields: { name: 'Acme' } }] };
+    for (const [declaration, verdict] of [[LEAD, 'fits'], [TYPED_LEAD, 'does not']] as const) {
+      const { rust } = await both({
+        source: [declaration, movement(['  crm-[c:companies]-> {', '    g = graph { name: c.`name`, owner: c }', ...VERDICT.map((l) => `  ${l}`), '  }'])].join('\n'),
+        related: companies,
+      });
+      expect(rust.observed).toContain(`"body":"${verdict}"`);
+    }
+    const { rust } = await both({ source: [TYPED_LEAD, movement(['  g = graph { name: "a" }', ...VERDICT])].join('\n') });
+    expect(rust.observed).toContain('"body":"fits"');
+  });
+
+  it('compares a record nested two nodes down', async () => {
+    const deep = (type: string) => ['node Lead {', '  name: <text>', '  node team {', '    node owner {', `      region: <${type}>`, '    }', '  }', '}'].join('\n');
+    for (const [type, verdict] of [['text', 'fits'], ['number', 'does not']] as const) {
+      const { rust } = await both({
+        source: [deep(type), movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", team: { owner: co } }', ...VERDICT])].join('\n'),
+      });
+      expect(rust.observed).toContain(`"body":"${verdict}"`);
+    }
+  });
+
+  it('runs inside a library function', async () => {
+    const files = library([
+      TYPED_LEAD,
+      'export function judge(n: <text>) {',
+      '  co = write crm-[:companies]-> { name: n }',
+      '  g = graph { name: n, owner: co }',
+      '  if g IS <Lead> {',
+      '    return "fits"',
+      '  }',
+      '  return "does not"',
+      '}',
+    ]);
+    const source = ['import { judge } from "lib/forms"', movement(['  v = judge(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(v, "none") }'])].join('\n');
+    const { rust } = await both({ source, files });
+    expect(rust.observed).toContain('"body":"does not"');
+  });
+
+  it('compares a handle the graph held across a park, on whichever engine resumes it', async () => {
+    const source = [TYPED_LEAD, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', '  await sleep(1h)', ...VERDICT])].join('\n');
+    const resumed = await parkAndResume({ source });
+    expect(resumed).toContain('"body":"does not"');
+  });
+});

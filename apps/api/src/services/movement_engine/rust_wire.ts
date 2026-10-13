@@ -90,6 +90,13 @@ export function optionalString(value: unknown, what: string): string | undefined
   return value === undefined ? undefined : string(value, what);
 }
 
+/** A list of strings, or none (`[]`). */
+export function optionalStringList(value: unknown, what: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new RustShimError(`${what} must be a list of strings`);
+  return value.map((entry, at) => string(entry, `${what}[${at}]`));
+}
+
 export function optionalStringRecord(value: unknown, what: string): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   const entries = Object.entries(record(value, what));

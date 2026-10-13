@@ -469,7 +469,7 @@ refused where it stands (`is_test_declared_record`).
 | reason | the construct | status, and what closing it takes |
 |---|---|---|
 | `node_declared_entry`, `node_event_entry`, `rvalue:node`, `exists_node` | a declared edge entry inside a graph literal (the parser refuses one); an entry holding the event; a node a block's iteration returns (its block's value would be the records returned); `EXISTS` off a node this run built, or what one's edge holds, of more than one hop or with an ORDER BY or a LIMIT | **Open** (no corpus run meets it). Takes: an entry holding the event; returned records as a block's value; EXISTS's per-origin ORDER BY / LIMIT and its walk past the node plane |
-| `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is a `graph { … }` literal, whose entries may hold a system's records nested (an `IS` of the event, a handle or a landed record runs since chunk 7A Task 6: `check.compatible` asks the checker's assignability of the record type's schema) | **Open** (no corpus run meets it). Takes: the nested comparison of a system's record under a synthesised node |
+| `is_test_declared_graph` | `x IS <Decl>` (a node declaration) where `x` is a `graph { … }` literal, whose entries may hold a system's records nested (an `IS` of the event, a handle or a landed record runs since chunk 7A Task 6: `check.compatible` asks the checker's assignability of the record type's schema) | **Closed** (PLAN-08B Task 2). A system's record a synthesised node's edge holds (a handle, a landed record, the event) is compared with the declaration's node at that place by the checker, as `surfaceMisfit` compares a landing across an edge: `check.compatible` carries the declared edges walked from the root (`path`), and a declaration a library writes names its file (`file`), for the subject itself too. A record of no known type, or one no schema enumerates, fits there, as `subjectSurface` gives such a landing no surface |
 
 **Traversal blocks and heads** (a reached body):
 
@@ -1303,11 +1303,6 @@ TypeScript engine runs the segment, having seen only reads.
 - Parking a value whose message or data would print a record's binding
   object other than the event's or a block's returned records' (its read
   seam, its computed schema): MOVENG_UNSUPPORTED.
-- `x IS <Decl>` of a node whose landing under a declared edge is a system's
-  record (a handle, a landed record): MOVENG_UNSUPPORTED, as that landing's
-  structure is its system's types. Admission lets no such node reach an
-  `IS` (a `node { … }` literal nests nodes only; a `graph { … }` literal is
-  refused, `is_test_declared_graph`).
 - A file reader answering `unreadable` with a reason outside the four
   (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`):
   the host has broken its typed contract; the TypeScript traces the reason
@@ -1626,10 +1621,6 @@ engine runs the segment.
 | parking a value whose message or data would print a record's binding object other than the event's or a block's returned records' | a backstop: the park would write the TypeScript's internals (its read seam, its computed schema), which this engine does not hold | admission refusing each route that reaches one, by name, as each is found (none is known) |
 | a record held in a value reaching a host request admission did not foresee | a backstop: MOVENG_UNSUPPORTED before the request is made, where the TypeScript hands its host the binding object (which a real host refuses mid-run itself) | admission refusing each such route by name, as each is found (none is known) |
 | a file reader answering `unreadable` with a reason outside the four (`unsupported_type`, `bytes_unavailable`, `extraction_failed`, `no_text`) | the host has broken its typed contract; the TypeScript traces the reason as given | nothing on the engine's side: a host fault (a ruling could make the TypeScript refuse it too) |
-
-`x IS <Decl>` of a node whose landing is a system's record also fails by
-name, but admission lets no such node reach an `IS`
-(`is_test_declared_graph`), so no checked program meets it.
 
 The corpora's `mirroredFailure` runs (v1 6, v2 6, v3 4; their
 `unreproduced` is 0) are none of these:

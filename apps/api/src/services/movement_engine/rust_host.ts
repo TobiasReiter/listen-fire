@@ -64,6 +64,7 @@ import {
   isCallbackParam,
   schemaFieldTypeOf,
   optionalString,
+  optionalStringList,
   optionalStringRecord,
   plainJson,
   record,
@@ -156,11 +157,19 @@ const ROUTES: Record<string, Route> = {
    *  landed record): does the schema's `recordType` carry everything the
    *  file's declaration declares, by the checker's own comparator
    *  (run.ts `evaluateDeclaredNodeTest`)? `{fits}`, or `{undescribed}` when
-   *  the schema enumerates nothing at that position. */
+   *  the schema enumerates nothing at that position. With `path` (the
+   *  declared edges from the declaration's root), the record is one a
+   *  synthesised subject's edge holds, compared with the declaration's node
+   *  there as `surfaceMisfit` compares a landing across an edge. With
+   *  `file`, the declaration is a library's, checked as its own file. */
   async 'check.compatible'(request, context) {
     const languageVersion = request.languageVersion;
     if (typeof languageVersion !== 'number') throw new RustShimError('check.compatible languageVersion must be a number');
-    const program = checkedProgram(context, string(request.source, 'check.compatible source'), languageVersion);
+    // The declaration's own file: a library's, by its path in the snapshot.
+    const file = optionalString(request.file, 'check.compatible file');
+    const source = file === undefined ? string(request.source, 'check.compatible source') : context.catalog.files?.[file]?.source;
+    if (source === undefined) throw new RustShimError(`check.compatible: the snapshot holds no file '${file ?? ''}'`);
+    const program = checkedProgram(context, source, languageVersion);
     const declaration = string(request.declaration, 'check.compatible declaration');
     const recordType = string(request.recordType, 'check.compatible recordType');
     const schema = request.schema;
@@ -168,7 +177,9 @@ const ROUTES: Record<string, Route> = {
     const supplied = schemaSurface(schema, recordType);
     if (supplied === undefined) return { undescribed: true };
     const required = declaredSchema(program, declaration);
-    return { fits: surfaceMisfit(supplied, { schema: required.schema, position: required.declaration.name }) === undefined };
+    const at = declaredPositionAt(required.schema, required.declaration.name, optionalStringList(request.path, 'check.compatible path'));
+    if (at === undefined) return { fits: true };
+    return { fits: surfaceMisfit(supplied, { schema: required.schema, position: at.position }, { seen: at.seen }) === undefined };
   },
   async 'adapters.resolve'(request, { host }) {
     const role = request.role;
@@ -665,6 +676,23 @@ export function checkedProgram(context: Pick<RouteContext, 'catalog' | 'checked'
     context.checked.set(key, program);
   }
   return program;
+}
+
+/** The declared position `path`'s edges reach from `root`, and the positions
+ *  `surfaceMisfit` has seen on its way there (each edge's target); undefined
+ *  where it would not have compared that far (an edge to a position it has
+ *  seen), which fits. */
+function declaredPositionAt(schema: InstanceSchema, root: string, path: readonly string[]): { position: string; seen: Set<string> } | undefined {
+  let position = root;
+  const seen = new Set<string>();
+  for (const name of path) {
+    const edge = schema.positions[position]?.edges[name];
+    if (edge === undefined) throw new RustShimError(`check.compatible: '${position}' declares no node '${name}'`);
+    if (seen.has(edge.target)) return undefined;
+    seen.add(edge.target);
+    position = edge.target;
+  }
+  return { position, seen };
 }
 
 /** An instance schema as the engine hands one back. It is the schema the

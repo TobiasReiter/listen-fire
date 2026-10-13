@@ -633,12 +633,21 @@ pub mod check {
     /// `record_type` carry everything the file's declaration declares, by
     /// the checker's assignability (`surfaceMisfit`)? Answered `{fits}`, or
     /// `{undescribed: true}` when the schema enumerates nothing there.
-    pub fn compatible(source: &str, language_version: u32, declaration: &str, schema: Json, record_type: &str) -> Request {
-        Request {
-            family: Family::Check,
-            method: "compatible".into(),
-            args: json!({ "source": source, "languageVersion": language_version, "declaration": declaration, "schema": schema, "recordType": record_type }),
+    /// `file`: the library the declaration is written in (the snapshot's
+    /// file by its path), absent for the root's `source`. `path`: the
+    /// declared edges from the declaration's root to the node the record is
+    /// compared with (a record a synthesised node's edge holds); empty, the
+    /// root, and the request carries none.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compatible(source: &str, language_version: u32, file: Option<&str>, declaration: &str, schema: Json, record_type: &str, path: &[String]) -> Request {
+        let mut args = json!({ "source": source, "languageVersion": language_version, "declaration": declaration, "schema": schema, "recordType": record_type });
+        if let Some(file) = file {
+            args["file"] = json!(file);
         }
+        if !path.is_empty() {
+            args["path"] = json!(path);
+        }
+        Request { family: Family::Check, method: "compatible".into(), args }
     }
 }
 

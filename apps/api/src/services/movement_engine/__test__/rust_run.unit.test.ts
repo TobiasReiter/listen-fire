@@ -592,7 +592,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    x = FIRST(b-[:#foo]->)\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
-      [`node Lead { name: <text> }\n${movement('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}`, 'is_test_declared_graph'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
       [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],

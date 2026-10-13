@@ -9,9 +9,10 @@
 //! run fails rather than pick a branch, as the TypeScript does. A declared
 //! node is compared structurally (checker/conformance.ts `surfaceMisfit`)
 //! for a subject whose structure is its own entries — a node the run built,
-//! an extracted entity; a record whose structure is a schema's types is
-//! refused by admission (`is_test_declared_record`): comparing types is the
-//! checker's assignability, which this engine does not carry.
+//! an extracted entity; a record whose structure is a schema's types (the
+//! subject itself, or one a node's edge holds) is compared by the checker's
+//! assignability, asked of the host (`check.compatible`), which this engine
+//! does not carry.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -92,7 +93,6 @@ impl Run<'_> {
     /// declaration declares? A subject that is no record is an ordinary
     /// false.
     async fn declared_node_test(&self, name: &str, subject: &Binding, declared: &ShapeBinding, scope: &Scope) -> Result<bool, Failure> {
-        let shape = declared.declared.declaration.name.as_str();
         let supplied = match subject {
             Binding::Node(node) => Surface::Node(node.clone()),
             Binding::Extracted { emission, .. } => Surface::Emission(emission.clone()),
@@ -102,9 +102,9 @@ impl Run<'_> {
                 let source = self.source.borrow().clone();
                 let instance = self.source_instance.borrow().clone();
                 let Some(record_type) = source.as_ref().and_then(|s| s.position.record_type.clone()) else { return Err(undiscriminated(name, UNDISCRIMINATED_EVENT)) };
-                return self.typed_record_fits(name, instance.as_ref().and_then(|i| i.schema.as_ref()), &record_type, shape).await;
+                return self.typed_record_fits(name, instance.as_ref().and_then(|i| i.schema.as_ref()), &record_type, declared).await;
             }
-            Binding::Handle(handle) => return self.typed_record_fits(name, handle.graph.schema.as_ref(), &handle.target_type, shape).await,
+            Binding::Handle(handle) => return self.typed_record_fits(name, handle.graph.schema.as_ref(), &handle.target_type, declared).await,
             Binding::Landed(landed) => {
                 let Some(record_type) = crate::traverse::record_type(&landed.position) else { return Err(undiscriminated(name, UNSTAMPED_LANDING)) };
                 // The graph the landing was yielded from (`graphSchemaOf`).
@@ -112,26 +112,101 @@ impl Run<'_> {
                     Some(Binding::Instance(instance)) => instance.schema.clone(),
                     _ => landed.read.schema.clone(),
                 };
-                return self.typed_record_fits(name, schema.as_ref(), &record_type, shape).await;
+                return self.typed_record_fits(name, schema.as_ref(), &record_type, declared).await;
             }
             _ => return Ok(false),
         };
         let required = self.required_shape(declared)?;
-        Ok(!misfits(&supplied, &required)?)
+        Ok(!self.misfits(&supplied, &required, declared, &[], scope).await?)
+    }
+
+    /// `surfaceMisfit` over a synthesised subject: a field the declaration
+    /// requires and the subject lacks is a misfit; an edge the subject lacks
+    /// is the empty set, and an edge it has is compared at its first
+    /// landing. `path` is the declared edges walked from the declaration's
+    /// root to `required`. A landing that is a system's record is compared by
+    /// its record type's schema at that place in the declaration, by the
+    /// checker (`check.compatible`); one whose kind or structure the run
+    /// cannot see is the comparator's ordinary unknown, and fits
+    /// (`subjectSurface` gives no surface below the root).
+    async fn misfits(&self, supplied: &Surface, required: &Required, declaration: &ShapeBinding, path: &[String], scope: &Scope) -> Result<bool, Failure> {
+        if required.fields.iter().any(|field| !supplied.has_property(field)) {
+            return Ok(true);
+        }
+        for (name, child) in &required.children {
+            let Some(landing) = supplied.edge(name) else { continue };
+            let mut below = path.to_vec();
+            below.push(name.clone());
+            let inner = match landing {
+                Some(Binding::Node(node)) => Surface::Node(node),
+                Some(Binding::Extracted { emission, .. }) => Surface::Emission(emission),
+                Some(record @ (Binding::Event | Binding::Landed(_) | Binding::Handle(_))) => {
+                    if !self.nested_record_fits(&record, declaration, &below, scope).await? {
+                        return Ok(true);
+                    }
+                    continue;
+                }
+                // Nothing landed, or no record: nothing to compare, which fits.
+                _ => continue,
+            };
+            if Box::pin(self.misfits(&inner, child, declaration, &below, scope)).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// A system's record a synthesised node's edge holds, against the
+    /// declaration's node at `path` (`subjectSurface` then `surfaceMisfit`
+    /// across the edge): a record of no known type, or one no schema
+    /// enumerates, fits.
+    async fn nested_record_fits(&self, record: &Binding, declaration: &ShapeBinding, path: &[String], scope: &Scope) -> Result<bool, Failure> {
+        let (schema, record_type) = match record {
+            Binding::Event => {
+                let source = self.source.borrow().clone();
+                let instance = self.source_instance.borrow().clone();
+                (instance.and_then(|i| i.schema.clone()), source.and_then(|s| s.position.record_type.clone()))
+            }
+            Binding::Handle(handle) => (handle.graph.schema.clone(), Some(handle.target_type.clone())),
+            Binding::Landed(landed) => {
+                let schema = match scope.resolve(&landed.read.instance_name) {
+                    Some(Binding::Instance(instance)) => instance.schema.clone(),
+                    _ => landed.read.schema.clone(),
+                };
+                (schema, crate::traverse::record_type(&landed.position))
+            }
+            _ => return Ok(true),
+        };
+        let (Some(schema), Some(record_type)) = (schema, record_type) else { return Ok(true) };
+        let answer = self.ask_compatible(&schema, &record_type, declaration, path).await?;
+        if answer.get("undescribed").is_some() {
+            return Ok(true);
+        }
+        compatible_fits(&answer)
+    }
+
+    /// `check.compatible` of the declaration, in the file that declares it.
+    async fn ask_compatible(&self, schema: &movement_parser::catalog::types::InstanceSchema, record_type: &str, declaration: &ShapeBinding, path: &[String]) -> Result<serde_json::Value, Failure> {
+        let schema = serde_json::to_value(schema).map_err(|e| Failure::engine("MOVENG_RUNTIME", e.to_string()))?;
+        let file = match &declaration.declared.file {
+            crate::program::DeclaringFile::Library(path) => Some(path.as_str()),
+            crate::program::DeclaringFile::Root | crate::program::DeclaringFile::Parked(_) => None,
+        };
+        let name = declaration.declared.declaration.name.as_str();
+        let request = crate::host::check::compatible(&self.input.source, self.version(), file, name, schema, record_type, path);
+        Ok(self.ask(request).await?.unwrap_or(serde_json::Value::Null))
     }
 
     /// `positionSurface` then `surfaceMisfit`, asked of the checker: a
     /// schema that enumerates nothing at the record's type is "can't tell".
-    async fn typed_record_fits(&self, name: &str, schema: Option<&movement_parser::catalog::types::InstanceSchema>, record_type: &str, shape: &str) -> Result<bool, Failure> {
+    async fn typed_record_fits(&self, name: &str, schema: Option<&movement_parser::catalog::types::InstanceSchema>, record_type: &str, shape: &ShapeBinding) -> Result<bool, Failure> {
         let undescribed = || undiscriminated(name, &format!("nothing describes the structure of a '{record_type}'"));
         let Some(schema) = schema else { return Err(undescribed()) };
-        let schema = serde_json::to_value(schema).map_err(|e| Failure::engine("MOVENG_RUNTIME", e.to_string()))?;
-        let request = crate::host::check::compatible(&self.input.source, self.version(), shape, schema, record_type);
-        let answer = self.ask(request).await?.unwrap_or(serde_json::Value::Null);
+        let answer = self.ask_compatible(schema, record_type, shape, &[]).await?;
         if answer.get("undescribed").is_some() {
             return Err(undescribed());
         }
-        answer.get("fits").and_then(serde_json::Value::as_bool).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("check.compatible answered {answer}")))
+        compatible_fits(&answer)
     }
 
     /// The declaration as the whole tree it stands for (`resolvedShape`):
@@ -209,32 +284,9 @@ impl Surface {
     }
 }
 
-/// `surfaceMisfit` over a synthesised subject: a field the declaration
-/// requires and the subject lacks is a misfit; an edge the subject lacks is
-/// the empty set, and an edge it has is compared at its first landing.
-fn misfits(supplied: &Surface, required: &Required) -> Result<bool, Failure> {
-    if required.fields.iter().any(|field| !supplied.has_property(field)) {
-        return Ok(true);
-    }
-    for (name, child) in &required.children {
-        let Some(landing) = supplied.edge(name) else { continue };
-        let inner = match landing {
-            Some(Binding::Node(node)) => Surface::Node(node),
-            Some(Binding::Extracted { emission, .. }) => Surface::Emission(emission),
-            Some(Binding::Event | Binding::Landed(_) | Binding::Handle(_)) => {
-                return Err(Failure::unreproduced(
-                    &format!("comparing the record under '{name}' with a declared node"),
-                    "its structure is its system's types, which the Rust engine does not compare",
-                ));
-            }
-            // Nothing landed, or no record: nothing to compare, which fits.
-            _ => continue,
-        };
-        if misfits(&inner, child)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+/// A `check.compatible` answer's verdict.
+fn compatible_fits(answer: &serde_json::Value) -> Result<bool, Failure> {
+    answer.get("fits").and_then(serde_json::Value::as_bool).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("check.compatible answered {answer}")))
 }
 
 /// `/^[A-Za-z_][A-Za-z0-9_]*$/`.

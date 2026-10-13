@@ -909,9 +909,11 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'is_test_declared_graph',
-    routes: 'refused',
-    note: '`x IS <Decl>` on a `graph { … }` literal: as is_test_declared_record',
+    routes: 'whole',
+    note: "closed by PLAN-08B Task 2: a system's record a graph literal's edge holds is compared with the declaration's node there by check.compatible (its `path`), as surfaceMisfit compares a landing across an edge",
     programs: [
+      (pick) => ({ file: `node Lead {\n  name: <text>\n  node owner {\n    name: <text>\n  }\n}\n${m(`  co = write crm-[:companies]-> { name: "${pick(NAMES)}" }\n  g = graph { name: "a", owner: co }\n  if g IS <Lead> {\n    write crm-[:notes]-> { body: "fits" }\n  } else {\n    write crm-[:notes]-> { body: "does not" }\n  }`)}` }),
+      () => ({ file: `node Lead {\n  name: <text>\n  node owner {\n    name: <number>\n  }\n}\n${m('  crm-[c:companies]-> {\n    g = graph { name: c.`name`, owner: c }\n    if g IS <Lead> {\n      write crm-[:notes]-> { body: "fits" }\n    } else {\n      write crm-[:notes]-> { body: "does not" }\n    }\n  }')}` }),
       () => ({ file: `node Lead {\n  name: <text>\n}\n${m('  g = graph { name: "a" }\n  if g IS <Lead> {\n    x = 1\n  }')}` }),
       () => ({ file: `node Lead {\n  name: <text>\n}\n${m('  g = graph { name: msg.`subject` }\n  if g IS <Lead> {\n    write crm-[:notes]-> { body: "lead" }\n  }')}` }),
     ],

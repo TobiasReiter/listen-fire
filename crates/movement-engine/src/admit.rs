@@ -3782,18 +3782,11 @@ impl Names<'_> {
         match condition {
             MovementCondition::And { conjuncts } => conjuncts.iter().try_for_each(|c| self.conjunct(c)),
             MovementCondition::Expr { expr } => self.expression(expr),
-            MovementCondition::IsTest { subject_raw, type_ } => {
-                let subject = crate::js::trim(subject_raw);
-                let declared = self.shapes.contains(&type_.graph) && type_.hops_raw.is_none();
-                // A record a system describes (the event, a handle, a landed
-                // record) is compared by its record type's schema, with the
-                // checker's assignability (`check.compatible`). A graph
-                // literal's entries may hold such records nested.
-                if declared && self.graphs.contains(subject) {
-                    return refuse("is_test_declared_graph");
-                }
-                Ok(())
-            }
+            // A record a system describes (the event, a handle, a landed
+            // record), the subject or one a graph literal's entries hold, is
+            // compared by its record type's schema, with the checker's
+            // assignability (`check.compatible`, crate::is_test).
+            MovementCondition::IsTest { .. } => Ok(()),
         }
     }
 
