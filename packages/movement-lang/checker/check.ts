@@ -783,6 +783,11 @@ export const DiagnosticCodes = {
    *  bound write re-fires as `updateRecord` when the counterpart recurs, so the
    *  target MUST support update-by-id; otherwise it detonates on the 2nd fire. */
   WRITE_BIND_NO_UPDATE: 'MOV_WRITE_BIND_NO_UPDATE',
+  /** RETIRED (language version 5): `write … bind other { … }`. The engine
+   *  kept the correspondence in a store of its own that no system holds; a
+   *  cross-system link is stored explicitly, through an adapter, in the
+   *  system that holds it — a field or an edge there. */
+  WRITE_BIND_RETIRED: 'MOV_WRITE_BIND_RETIRED',
   /** A type reference (`graph.position`) names a position the graph's KNOWN
    *  schema does not declare — movement parameters, IS tests, shape-edge
    *  endpoints. Schema-less graphs stay silent (unknown never errors). */
@@ -3208,6 +3213,14 @@ interface ReturnCollector {
  *  it, which is what makes those slots uncollidable. */
 const RESERVED_NAME_PREFIX = '#';
 
+/** What `write … bind <name>` is written as since language version 5: the
+ *  correspondence stored explicitly, in the system that holds it. */
+function writeBindRetiredMessage(name: string): string {
+  return `'bind ${name}' is retired — a write no longer keeps a hidden link to a record in another system, which no system could show or change. `
+    + `Store the link explicitly, in the system that holds it: a field there that carries ${name}'s identity, which the next write finds the record by `
+    + `('write crm-[:Companies]-> { unique by (\`Source Id\`), \`Source Id\`: …, … }'), or an edge there. Then drop 'bind ${name}'`;
+}
+
 /** A function in a call cycle with no declared return type. `chain` is the
  *  loop as seen from `name`; `example` is the declaration with the type added. */
 function recursiveReturnTypeMessage(name: string, chain: readonly string[], example: string): string {
@@ -5613,7 +5626,9 @@ class Checker {
           DiagnosticCodes.LINKED_HOP_RETIRED,
           "the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. "
             + "Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; "
-            + "or tie a write to a record you hold with 'write … bind other { … }'",
+            + (since(this.languageVersion, 5)
+              ? "or store the link in the system that holds it — a field or an edge there"
+              : "or tie a write to a record you hold with 'write … bind other { … }'"),
           span,
         );
         continue;
@@ -7421,6 +7436,10 @@ class Checker {
   ): void {
     const bind = write.bind;
     if (bind === undefined) return;
+    if (since(this.languageVersion, 5)) {
+      this.report(DiagnosticCodes.WRITE_BIND_RETIRED, writeBindRetiredMessage(bind.name), bind.span);
+      return;
+    }
     if (write.target.kind === 'position') {
       this.report(
         DiagnosticCodes.WRITE_BIND_POSITION,
@@ -9062,7 +9081,8 @@ class Checker {
     // target lands on. The formula grammar has no write and no ask, so a
     // filter that type-checks here is read-only by construction.
     if (linkStep.expressionFilter !== undefined) {
-      if (input.bindName !== undefined) {
+      // Since version 5 the bind itself is refused (MOV_WRITE_BIND_RETIRED).
+      if (input.bindName !== undefined && before(this.languageVersion, 5)) {
         this.report(
           DiagnosticCodes.TARGET_WHERE_BIND,
           `a WHERE on the target and 'bind ${input.bindName}' don't combine — a bound write's identity IS the binding, so there are no candidates for the WHERE to narrow. Drop the WHERE, or the 'bind' to find the record by 'unique by (…)'`,

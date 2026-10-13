@@ -113,6 +113,13 @@ describe('the #linked hop is retired', () => {
     expect(said).toContain('(see handbook: front#identity)');
   });
 
+  it('since Dancing Wren (5), where a bound write is retired, points to storing the link instead', () => {
+    const said = check('  x = -[#linked WHERE type = "ATTIO"]->.external_id', 5).map((d) => d.message).join('\n');
+    expect(said).toContain("'rec = write crm-[:Companies]-> { … }'");
+    expect(said).not.toContain('bind');
+    expect(said).toContain('in the system that holds it');
+  });
+
   it.each([1, 2])('is accepted under version %i — unchanged', (version) => {
     expect(codes('  x = -[#linked WHERE type = "ATTIO"]->.external_id', version)).toEqual([]);
     expect(codes('  x = c-[#linked WHERE type = "ATTIO"]->.external_id', version)).toEqual([]);

@@ -444,6 +444,10 @@ function expectClean(source: string): void {
   expect(diagnostics.map(d => `${d.code}: ${d.message}`)).toEqual([]);
 }
 
+// Under a named language version — for a construct a later version retires.
+const checkUnder = (languageVersion: number, source: string): Diagnostic[] =>
+  checkProgram(parseProgram(source), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+
 const PRELUDE = [
   'import { email, attio, slack, affinity, dropbox, messaging, kg } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace, acme_affinity, team_drive, team_chat, native_knowledge } from credentials',
@@ -1707,21 +1711,21 @@ describe('position writes (`write a { … }`)', () => {
 // ── Bound writes (`write … bind other { … }`) — engine-owned
 //    correspondence between the written record and `other`'s record. ──
 
-describe('bound writes (`write … bind other { … }`)', () => {
+describe('bound writes (`write … bind other { … }`), under Luminous Owl (4)', () => {
   it('a create bound to a traversed source record checks clean', () => {
-    expectClean(
+    expect(checkUnder(4,
       inMovement('  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }'),
-    );
+    )).toEqual([]);
   });
 
   it('MOV_WRITE_BIND_NOT_RECORD when the bind target is not a record position', () => {
     // `crm` resolves to the instance meta position — not a single record.
-    const diagnostics = check(inMovement('  write graph-[:companies]-> bind crm { name: "x" }'));
+    const diagnostics = checkUnder(4, inMovement('  write graph-[:companies]-> bind crm { name: "x" }'));
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_BIND_NOT_RECORD]);
   });
 
   it('MOV_WRITE_BIND_UNIQUE rejects `unique by` together with `bind`', () => {
-    const diagnostics = check(
+    const diagnostics = checkUnder(4,
       inMovement(
         '  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { unique by (`name`)\n      name: "x" }\n  }',
       ),
@@ -1730,14 +1734,14 @@ describe('bound writes (`write … bind other { … }`)', () => {
   });
 
   it('MOV_WRITE_BIND_POSITION rejects `bind` on a position write', () => {
-    const diagnostics = check(
+    const diagnostics = checkUnder(4,
       inMovement('  graph-[c:companies]-> {\n    write c bind c { name: "x" }\n  }'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_BIND_POSITION]);
   });
 
   it('NAME_UNRESOLVED when the bind name is not in scope', () => {
-    expect(codes(inMovement('  write graph-[:companies]-> bind ghost { name: "x" }'))).toEqual([
+    expect(checkUnder(4, inMovement('  write graph-[:companies]-> bind ghost { name: "x" }')).map(d => d.code)).toEqual([
       C.NAME_UNRESOLVED,
     ]);
   });
@@ -1746,10 +1750,32 @@ describe('bound writes (`write … bind other { … }`)', () => {
     // `person` requires `name` on create; a bound write may still mint a
     // fresh record (self-heal), so the gate stands.
     expect(
-      codes(inMovement('  crm-[c:companies]-> {\n    write graph-[:people]-> bind c { company: "Acme" }\n  }')),
+      checkUnder(4, inMovement('  crm-[c:companies]-> {\n    write graph-[:people]-> bind c { company: "Acme" }\n  }')).map(d => d.code),
     ).toEqual([C.WRITE_MISSING_REQUIRED_FIELD]);
   });
 });
+describe('bound writes are retired under Dancing Wren (5)', () => {
+  const bound = inMovement('  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }');
+
+  it('MOV_WRITE_BIND_RETIRED, the message saying where the link is stored instead', () => {
+    const found = check(bound);
+    expect(found.map(d => d.code)).toEqual([C.WRITE_BIND_RETIRED]);
+    expect(found[0].message).toContain("'bind c' is retired");
+    expect(found[0].message).toContain('in the system that holds it');
+    expect(found[0].message).toContain('unique by');
+  });
+
+  it('is the only refusal: the version-4 bind rules stay quiet', () => {
+    expect(codes(inMovement('  graph-[c:companies]-> {\n    write c bind c { name: "x" }\n  }'))).toEqual([C.WRITE_BIND_RETIRED]);
+    expect(codes(inMovement('  write graph-[:companies]-> bind crm { name: "x" }'))).toEqual([C.WRITE_BIND_RETIRED]);
+    expect(codes(inMovement('write drive-[:files]-> bind msg { name: "x" }'))).toEqual([C.WRITE_BIND_RETIRED]);
+  });
+
+  it('under Luminous Owl (4) the same write is clean', () => {
+    expect(checkUnder(4, bound)).toEqual([]);
+  });
+});
+
 
 // ── The instance-param door: a write/link target roots at a graph this
 //    file declares (a constructed instance, kg, or a shape) — never at a
@@ -3281,18 +3307,18 @@ describe('append operators (+: / +?:)', () => {
   });
 });
 
-describe('bind against an unupdatable target (WRITE_BIND_NO_UPDATE)', () => {
+describe('bind against an unupdatable target (WRITE_BIND_NO_UPDATE), under Luminous Owl (4)', () => {
   it('rejects bind on a create-only target — a bound write re-fires as an update', () => {
     // `drive` (dropbox) is create-only: no supportsInPlaceUpdate.
     const source = inMovement('write drive-[:files]-> bind msg { name: "x" }');
-    const found = check(source).filter((d) => d.code === C.WRITE_BIND_NO_UPDATE);
+    const found = checkUnder(4, source).filter((d) => d.code === C.WRITE_BIND_NO_UPDATE);
     expect(found).toHaveLength(1);
     expect(found[0].message).toMatch(/update/i);
   });
 
   it('allows bind on an updatable target (the KG)', () => {
     const source = inMovement('write graph-[:companies]-> bind msg { name: msg.`subject` }');
-    expect(codes(source)).not.toContain(C.WRITE_BIND_NO_UPDATE);
+    expect(checkUnder(4, source).map(d => d.code)).not.toContain(C.WRITE_BIND_NO_UPDATE);
   });
 });
 
