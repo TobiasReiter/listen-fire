@@ -36,7 +36,10 @@ function authHeaderFrom(init: RequestInit | undefined): string | undefined {
 describe('email attachment byte auth (resolveFileRef)', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
 
+  const savedDomain = process.env.MAILGUN_SENDING_DOMAIN;
+
   beforeEach(() => {
+    process.env.MAILGUN_SENDING_DOMAIN = 'example.com';
     fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
       new Response('bytes', {
         status: 200,
@@ -46,6 +49,8 @@ describe('email attachment byte auth (resolveFileRef)', () => {
   });
 
   afterEach(() => {
+    if (savedDomain === undefined) delete process.env.MAILGUN_SENDING_DOMAIN;
+    else process.env.MAILGUN_SENDING_DOMAIN = savedDomain;
     fetchSpy.mockRestore();
   });
 
@@ -62,6 +67,30 @@ describe('email attachment byte auth (resolveFileRef)', () => {
     expect(auth).toMatch(/^Basic /);
     const decoded = Buffer.from(auth!.replace('Basic ', ''), 'base64').toString();
     expect(decoded.startsWith('api:')).toBe(true);
+  });
+
+  it('refuses, without fetching, another team\'s mailgun.net storage URL, a lookalike host and an unset domain', async () => {
+    const adapter = new EmailAdapter(TEAM_ID);
+    const other = 'https://storage.mailgun.net/v3/domains/other-team.com/messages/abc/attachments/0';
+    const lookalike = 'https://evilmailgun.net/v3/domains/example.com/messages/abc/attachments/0';
+    const plain = 'http://storage.mailgun.net/v3/domains/example.com/messages/abc/attachments/0';
+    for (const handle of [other, lookalike, plain]) {
+      await adapter.resolveFileRef(refFor(handle)).catch(() => undefined);
+    }
+    // The lookalike is not Mailgun's: it is a plain URL, fetched without the key.
+    for (const [url, init] of fetchSpy.mock.calls) {
+      expect(String(url)).toBe(lookalike);
+      expect(authHeaderFrom(init)).toBeUndefined();
+    }
+    await expect(adapter.resolveFileRef(refFor(other))).rejects.toThrow(/configured Mailgun domain/);
+    delete process.env.MAILGUN_SENDING_DOMAIN;
+    fetchSpy.mockClear();
+    await expect(
+      adapter.resolveFileRef(
+        refFor('https://storage.mailgun.net/v3/domains/example.com/messages/abc/attachments/0'),
+      ),
+    ).rejects.toThrow(/configured Mailgun domain/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('sends no auth for a non-Mailgun handle (custom-email blob URL)', async () => {

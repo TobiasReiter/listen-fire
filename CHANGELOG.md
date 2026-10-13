@@ -15,6 +15,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Changed
 
+- Security: a Mailgun inbound attachment is fetched with the deployment's key only from an https
+  storage URL under `MAILGUN_SENDING_DOMAIN` (`/v3/domains/<domain>/…` on a `mailgun.net` host);
+  any other Mailgun URL is refused. Inbound-only deployments must now set `MAILGUN_SENDING_DOMAIN`
+  to the domain of their route.
 - Moving an automation up to language version 4 now warns (`MOV_HANDLE_READ_FOUND`, a move-up
   warning) on a read of a write handle's `url`. Under version 4 it reads the found record's url,
   where versions 1 to 3 read the link the write returned (null when the update returned none).
