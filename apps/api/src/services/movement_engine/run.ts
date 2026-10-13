@@ -673,9 +673,11 @@ export { RunCancelledSignal };
  * (see `expression.ts`): producing the adapter write and recording it
  * onto the firing log are one act, so the binding value and the firing
  * entry are the same object. The alias preserves the firing-log name at
- * the call sites that recorded the run's writes.
+ * the call sites that recorded the run's writes. The result's record has no
+ * `old`: that member is the engine's own handle (its instance, adapter slug,
+ * credential name and schema), which only `-[:@old]->` reads while the run lasts.
  */
-export type MovementWriteRecord = WriteRecord;
+export type MovementWriteRecord = Omit<WriteRecord, 'old'>;
 
 export interface MovementRunResult {
   movementName: string;
@@ -2446,7 +2448,7 @@ function flattenAndConjuncts(expr: Expression): Expression[] {
 }
 
 class Interpreter {
-  private readonly writes: MovementWriteRecord[] = [];
+  private readonly writes: WriteRecord[] = [];
   /** Set when the run parked at an `ask` (caught at run() top → the result
    *  carries `parked: true`, the firing caller skips finalisation). */
   private parked = false;
@@ -3737,7 +3739,7 @@ class Interpreter {
   private assembleResult(movementName: string): MovementRunResult {
     return {
       movementName,
-      writes: this.writes,
+      writes: this.writes.map(({ old: _old, ...record }) => record),
       extractionSites: this.summariser.sites,
       trace: this.runTrace,
       ...(this.parked ? { parked: true } : {}),

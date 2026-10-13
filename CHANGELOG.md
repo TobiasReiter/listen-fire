@@ -15,6 +15,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Changed
 
+- Under language version 4 a run's result (and the run records and views built from it) no longer
+  carries a write record's `old` member, the engine's own handle for the record as found (its
+  instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it during the
+  run.
 - Redis is optional. The API connects to Redis only when `MESSAGE_QUEUE_REDIS_HOSTNAME` is set
   (the port still defaults to 6379); unset, nothing ever tries to connect, in every environment.
   Without it the runaway-loop guard counts in each API process's memory (exact for one instance;

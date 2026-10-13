@@ -284,6 +284,22 @@ const WRITE_ACME = (domain: string) =>
   `  org = write crm-[:companies]-> { unique by (\`name\`), name: "Acme Incorporated", domain: "${domain}" }`;
 
 describe('-[:@old]-> off a write handle', () => {
+  it('the result\'s write record has no old member (version 4), though -[:@old]-> read it during the run', async () => {
+    const crm = makeCrm([ACME]);
+    const result = await run(
+      [
+        WRITE_ACME('new.example'),
+        note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END'),
+      ],
+      crm.adapter,
+      { languageVersion: 4 },
+    );
+    expect(notes(crm)).toEqual(['matched']);
+    expect(result.writes.length).toBeGreaterThan(0);
+    for (const w of result.writes) expect(Object.hasOwn(w, 'old')).toBe(false);
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
   it('a created record has no @old', async () => {
     const crm = makeCrm([ACME]);
     await run(
