@@ -24,7 +24,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
-import { type LanguageVersion } from '../../language_version';
+import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -542,5 +542,21 @@ describe.each(VERSIONS)('under language version %i, an adapter instance is no va
 
   it('into the second shape', () => {
     refused(['  write l-[:entries]-> { Amount: 1, Meta: l }'], "'Meta' on l.entry is json, and this is ");
+  });
+});
+
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B2: under language version %i, a record through COALESCE or MULTI reaches no field or json argument', version => {
+  // Closed by the operator typing above (COALESCE, IF and MULTI hold what
+  // their operands hold), on every supported version; pinned here per version
+  // so the engine never again meets the record mid-run.
+  it.each([
+    ['a COALESCE arm, into a json field', note('company: COALESCE(org, "x")'), 'MOV_WRITE_FIELD_TYPE'],
+    ['a MULTI, under a key of a json field', note('company: { a: MULTI(org) }'), 'MOV_WRITE_FIELD_TYPE'],
+    ['a MULTI, into a structured argument', ['  s = summarise(data: MULTI(org))'], 'MOV_CALL_ARG_TYPE'],
+    ['a bound COALESCE, under a key of a structured argument', ['  x = COALESCE(org, "x")', '  s = summarise(data: { a: x })'], 'MOV_CALL_ARG_TYPE'],
+  ])('%s', (_label, body, code) => {
+    const errors = errorsUnder(version, body);
+    expect(errors.map(d => d.code)).toEqual([code]);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
   });
 });
