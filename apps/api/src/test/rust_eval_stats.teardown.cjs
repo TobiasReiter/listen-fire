@@ -142,11 +142,12 @@ const path = require('node:path');
 // 1271, v3 2239. PLAN-08A group F′ part 2 (a GROUPBY over records read as a
 // map of lists of them, so `AT` over it reads a key, 2026-10-12) lifts v3 1:
 // v3 2240. The merge of main's language version 5 (Dancing Wren, 2026-10-13)
-// freezes version 4's corpus, this branch's own live tests at c39a99d6; its
-// floor is not yet measured, so `v4` is absent here and a whole v4 run under
-// rust fails naming what it measured, until the measurement is written in.
-// A floor is measured, never guessed.
-const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240, v4: 2275 };
+// freezes version 4's corpus, this branch's own live tests at c39a99d6,
+// measured at v4 2275. The merge of main's checker gaps (B3, a record in a map
+// spread into a graph refused on every version, 2026-10-13) triages two
+// list_literal_record tests in that frozen copy, whose programs the checker
+// now refuses: v4 2273. A floor is measured, never guessed.
+const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240, v4: 2273 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
