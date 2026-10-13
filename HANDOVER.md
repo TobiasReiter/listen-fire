@@ -21,3 +21,14 @@
 - The oracle files committed by the economy batch were generated ONCE each (Henry's budget rule); CI's "oracle is current" check runs only on a pull request, so open a draft PR from cloud-native to main (or run `generate.ts` a second time locally and `git diff --exit-code` the oracle files) before trusting them.
 - Open rulings and flags: `CHUNK-08-STATUS.md` §2 and §5 (incl. the CHANGELOG hard-wrap + archive split Henry asked for).
 - Next: finish 8A (the remaining refusals, Task 10), then PLAN-08B (the bugs), then the TypeScript engine's deletion gated on an empty refusal inventory and production dry-run telemetry (`pnpm engine:refusals`).
+
+## Rulings of 2026-10-13 (Henry, after the halt — recorded here so the new account has them without the plan folder)
+- `bind` is RETIRED: a cross-system correspondence is stored explicitly through an adapter to whichever system holds the link (a checker diagnostic retires `write … bind`; the host's `park.bindings` family goes with it; the `write_bind` row closes by retirement).
+- Mutation stays for `refresh x` and `write x { … }` on a handle (accumulating handles per write is not what authors expect).
+- Port `match (a->, p->) { … }` and `g IS <Lead>`; the event placed or spread into a graph literal must work (port).
+- Meta (`#`) hops are retired, not ported: every edge is a plain edge (a checker diagnostic).
+- `delete` is valid only for record types whose adapter declares deletion (a describe capability); the checker refuses it on values that may hold a record and on extracted (transient) graphs. Main first.
+- `_resources` becomes an edge only `extract` produces; every other system declares explicit edges such as `attachments`. A language/product change to plan (version conditional if any saved automation uses `_resources` on a non-extracted record). It retires the mirrored quirk of reading resources through the event's source adapter.
+- The model registry feeds the checker and the runtime as ONE list: the catalog snapshot's `models`, carried into the run input, filled by one function. That closes `extract_call_model` for checked programs.
+- Chunk 8B's bugs (B1–B9, H1–H7 in `orientation/engine-chunk8-bugs.md`): all wanted soon.
+- Directions, not scheduled: one shippable binary with installable adapter/plugin modules and a pluggable credential store with a credential door in the adapter protocol; a visual subset stored as a JSON node tree with an adapter `display` block (readable name, icon SVG, per-kind hints), an AST → source printer first.
