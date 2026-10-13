@@ -1965,6 +1965,45 @@ function handleInPluginArgMessage(input: { callee: string; name: string; held: H
   return `${said} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${repairAt(held, 'r.`Name`')}).`;
 }
 
+/** A plugin argument of a declared value type (text, a file, …) holding a
+ *  record or a file the type does not take, where it sits. */
+function handleInTypedPluginArgMessage(input: { callee: string; name: string; declared: SchemaFieldType; held: HeldHandle }): string {
+  const { callee, name, declared, held } = input;
+  const direct = held.steps.length === 0;
+  const where = direct ? 'this' : `'${name}${spellHeldSteps(held.steps)}'`;
+  const said = `'${callee}' takes ${describeFieldType(declared)} for '${name}', and ${where} ${held.may ? 'may be' : 'is'} ${describeFieldType(held.handle)}`;
+  if (isFileHandle(held)) {
+    const asWhole = stripAbsent(declared) === 'file' ? `hand it over as the whole argument ('${name}: f'), or ` : '';
+    return `${said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; ${asWhole}put its text in its place (${repairAt(direct ? name : held, 'READ(f)')}).`;
+  }
+  return `${said} — a record, not a value. Pass one of its fields (${repairAt(direct ? name : held, 'r.`Name`')}).`;
+}
+
+/** A file somewhere BELOW the value — under a key, as a member — in any arm;
+ *  a file that is the whole value (or one arm of it) is not one. */
+function fileBelowWhole(type: FieldType | undefined): HeldHandle | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  if (variant.kind === 'union') {
+    for (const member of variant.of) {
+      const held = fileBelowWhole(member);
+      if (held !== undefined) return { ...held, may: true };
+    }
+    return undefined;
+  }
+  if (variant.kind === 'file') return undefined;
+  return handleWithin(type, heldWalk(RECORDS_ONLY));
+}
+
+/** The walk a plugin argument's value is typed with: for a declared value
+ *  type, the engine objects that type takes are passed over, so what the walk
+ *  finds is one it does not. Structured data (or no declared type) keeps the
+ *  walk that finds every object, the record handed whole included. */
+function pluginArgSlotOptions(declared: SchemaFieldType | undefined): { heldTakes?: ReadonlySet<HandleKind> } {
+  if (declared === undefined || declared === 'json') return {};
+  return { heldTakes: handleKindsTaken(declared) };
+}
+
 function isFileHandle(held: HeldHandle): boolean {
   return handleKind(held) === 'file';
 }
@@ -10259,18 +10298,20 @@ class Checker {
     const fit: ArgFit = { callee, param, index, positional: arg.name === undefined };
     switch (arg.kind) {
       case 'expr': {
-        const { valueType, parsed, held } = this.checkExprSlot(arg.expr, scope);
+        const pluginDeclared = plugin !== undefined && arg.name !== undefined ? plugin.declared[arg.name] : undefined;
+        const { valueType, parsed, held, mayHold } = this.checkExprSlot(arg.expr, scope, pluginArgSlotOptions(pluginDeclared));
         const argType = this.bareSlotPositionType(arg.expr, scope);
         // A plugin's named argument: a value against what the plugin takes
         // (a positional one is refused where the call is checked).
         if (plugin !== undefined && arg.name !== undefined) {
           this.checkPluginArgValue({
             callee,
-            declared: plugin.declared[arg.name],
+            declared: pluginDeclared,
             name: arg.name,
             record: argType ?? recordIn(valueType)?.position,
             valueType,
             ...(held !== undefined ? { held } : {}),
+            ...(mayHold !== undefined ? { mayHold } : {}),
             span: arg.expr.span,
           });
           return;
@@ -13364,14 +13405,16 @@ class Checker {
       this.reportPluginBadArg(plugin.plugin, spec, arg.name, arg.value.span);
       // Held to what the plugin takes exactly as a plain call's argument is:
       // a stage is the same call, and the engine hands it the same value.
-      const { valueType, held } = this.checkExprSlot(arg.value, scope, { fields });
+      const declared = spec?.argTypes?.[arg.name];
+      const { valueType, held, mayHold } = this.checkExprSlot(arg.value, scope, { fields, ...pluginArgSlotOptions(declared) });
       this.checkPluginArgValue({
         callee: plugin.plugin,
-        declared: spec?.argTypes?.[arg.name],
+        declared,
         name: arg.name,
         record: this.bareSlotPositionType(arg.value, scope) ?? recordIn(valueType)?.position,
         valueType,
         ...(held !== undefined ? { held } : {}),
+        ...(mayHold !== undefined ? { mayHold } : {}),
         span: arg.value.span,
       });
     }
@@ -13570,11 +13613,14 @@ class Checker {
     name: string;
     record: PositionTypeRef | undefined;
     valueType: FieldType | undefined;
-    /** The record or file the argument's value holds, found by the walk that typed it. */
+    /** The record or file the argument's value holds, found by the walk that typed it
+     *  (for a declared value type, the first one that type does not take). */
     held?: HeldHandle;
+    /** What the value may turn out to be, arm by arm. */
+    mayHold?: FieldType;
     span: Span;
   }): void {
-    const { callee, declared, name, record, valueType, held, span } = at;
+    const { callee, declared, name, record, valueType, held, mayHold, span } = at;
     // Where a plugin takes a record at all (structured data, or no declared
     // type), it takes it as the WHOLE argument and is handed its fields — the
     // spread `{ ...r }` would copy. A record anywhere inside that value (a
@@ -13609,12 +13655,21 @@ class Checker {
       );
       return;
     }
-    if (record === undefined && (valueType === undefined || !holdsRecords(stripAbsent(valueType)))) return;
-    this.report(
-      DiagnosticCodes.CALL_ARG_TYPE,
-      `'${callee}' takes ${describeFieldType(declared)} for '${name}', and this is a record — pass one of its fields ('${name}: r.website')`,
-      span,
-    );
+    if (record !== undefined || (valueType !== undefined && holdsRecords(stripAbsent(valueType)))) {
+      this.report(
+        DiagnosticCodes.CALL_ARG_TYPE,
+        `'${callee}' takes ${describeFieldType(declared)} for '${name}', and this is a record — pass one of its fields ('${name}: r.website')`,
+        span,
+      );
+      return;
+    }
+    // A declared value type takes what it holds and nothing else of the
+    // engine's: a text argument no file and no record, at any depth or in any
+    // arm; a file argument a file as the whole value, never one inside a map
+    // or a list. Each reached the plugin as the engine's own description.
+    const misplaced = held ?? (stripAbsent(declared) === 'file' ? fileBelowWhole(mayHold ?? valueType) : undefined);
+    if (misplaced === undefined) return;
+    this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInTypedPluginArgMessage({ callee, name, declared, held: misplaced }), span);
   }
 
   /**

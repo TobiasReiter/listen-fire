@@ -611,3 +611,21 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
     expect(errorsOf(['  g = graph { ...org }']).map(d => d.code)).not.toContain('MOV_GRAPH_SPREAD_RECORD');
   });
 });
+
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B5: under language version %i, a record inside a plugin argument of a declared value type is refused', version => {
+  // A text argument used to refuse a record handed whole, and take one under
+  // a key or in an arm, which reached the plugin as the engine's own object.
+  it.each([
+    ['under a key', '  s = tag(label: { a: org })', "'tag' takes text for 'label', and 'label.a' is "],
+    ['in an arm, into a file argument', '  s = ocr(doc: COALESCE(f, org))', "'ocr' takes file for 'doc', and this may be "],
+  ])('%s', (_label, use, said) => {
+    const errors = errorsUnder(version, [use]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
+    expect(errors[0]!.message).toContain(said);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
+  });
+
+  it('a field of it is taken', () => {
+    expect(errorsUnder(version, ['  s = tag(label: { a: org.name })'])).toEqual([]);
+  });
+});

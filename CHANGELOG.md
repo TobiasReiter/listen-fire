@@ -40,6 +40,10 @@ guide](docs/language/dancing-wren-migration.md).
   nothing on the systems that had retired its bundle. Under 5 the engine no longer resolves it
   for a system's record.
 
+- **A file is never joined into text** (`MOV_FILE_IN_TEXT`): `"Attached: ${f}"`, or a value that
+  may be a file. Why: it joined as `[object Object]`. Its text is `READ(f)`
+  (`"${COALESCE(READ(f), "")}"`); the file itself goes into a field that holds files.
+
 ### Language version 5, Dancing Wren: new
 
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
@@ -73,6 +77,13 @@ guide](docs/language/dancing-wren-migration.md).
   (`MOV_GRAPH_SPREAD_RECORD`, with the path), on every language version. It used to validate from
   version 2 and fail the run at the spread. A bug fix, not a language version: write a field off
   the record, or write the record into the graph as an entry of its own (`k: r`).
+- A plugin argument the plugin declares a value type for (text, a file, …) takes no record or file
+  that type does not hold, on every language version (`MOV_CALL_ARG_TYPE`, with the path): a file
+  handed to a text argument (`tag(label: f)`, or one arm of a `COALESCE`), a file or record under a
+  key or in a list of the value (`tag(label: { a: f })`, `ocr(doc: { a: f })`). Each used to
+  validate, and the plugin was handed the engine's own description of the file or record. A bug
+  fix, not a language version: pass the file's text (`READ(f)`), a field of the record, or the
+  file itself to an argument that takes a file.
 - A run's result (and the run records and views built from it) never carries a write record's
   `old` member (it only exists under language version 4), the engine's own handle for the record as
   found (its instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it

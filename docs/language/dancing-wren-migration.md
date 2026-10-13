@@ -2,7 +2,7 @@
 
 Language version 5, **Dancing Wren**, follows Luminous Owl (4). The [changelog entry](../../CHANGELOG.md) lists each change in a line; this guide carries the full detail. Every rule here that says "under Dancing Wren (5)" applies only to an automation pinned to version 5. Quiet Heron (1), Bright Otter (2), Steady Lynx (3) and Luminous Owl (4) keep their old behaviour exactly (proved by the version 4 conformance corpus).
 
-The four changes share one idea: there is no engine-side store and there are no meta edges. Everything a movement reads or writes is an edge or a record that a system declares, and a plugin is a function.
+The first four changes share one idea: there is no engine-side store and there are no meta edges. Everything a movement reads or writes is an edge or a record that a system declares, and a plugin is a function.
 
 ## Contents
 
@@ -11,7 +11,8 @@ The four changes share one idea: there is no engine-side store and there are no 
 - [3. `#` hops are retired; a plugin is a function](#3--hops-are-retired-a-plugin-is-a-function)
 - [4. `delete` only where the system declares it](#4-delete-only-where-the-system-declares-it)
 - [5. `_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result)
-- [6. Diagnostic code index](#6-diagnostic-code-index)
+- [6. A file is never joined into text](#6-a-file-is-never-joined-into-text)
+- [7. Diagnostic code index](#7-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -97,12 +98,30 @@ msg-[f:Attachments]-> { … f.File … }
 
 - The engine follows the checker: under version 5 the movement engine never resolves the reserved reference for a system's record. Versions 1 to 4 keep it, including its quirk of reading another system's record through the event's adapter.
 
-## 6. Diagnostic code index
+## 6. A file is never joined into text
+
+- Under Dancing Wren (5) a file (or a value that may be one, such as `COALESCE(f, "none")`) inside an interpolated text is `MOV_FILE_IN_TEXT`: `"Attached: ${f}"`.
+- Why: a file is a byte channel, not text, and has no text form but the one `READ` gives. Under version 4 and earlier the engine joined the file's description in, and the text read `Attached: [object Object]`. A record in the same place has been refused on every version (`MOV_RECORD_NOT_A_VALUE`).
+- Versions 1 to 4 keep the old behaviour. The error under 5 keeps such an automation on its version until the text is rewritten.
+
+```
+# before (refused under 5)
+write crm-[:notes]-> { title: "Attached: ${f}" }
+
+# after: the file's text
+write crm-[:notes]-> { title: "Attached: ${COALESCE(READ(f), "")}" }
+
+# after: the file itself, into a field that holds files
+write crm-[:notes]-> { title: "Attached", upload: f }
+```
+
+## 7. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
+| `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |
