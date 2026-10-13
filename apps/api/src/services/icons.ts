@@ -56,16 +56,17 @@ async function getIconForUrlInner(hostname: string, size: string) {
 async function getCachedIcon(hostname: string, size: string) {
   const cacheKey = `${hostname}:${size}`;
   const pool = getRedisPool();
-  const client: Redis = await pool.acquire();
+  let client: Redis | null = null;
 
   try {
+    client = await pool.acquire();
     const data = await client.getBuffer(cacheKey); // ioredis supports getBuffer
     return data || null;
   } catch (error) {
     console.error(`Failed to get cache for ${cacheKey}:`, error);
     return null;
   } finally {
-    await pool.release(client);
+    if (client) await pool.release(client);
   }
 }
 
@@ -74,13 +75,14 @@ async function cacheIcon(hostname: string, size: string, buffer: Buffer) {
   const cacheKey = `${hostname}:${size}`;
 
   const pool = getRedisPool();
-  const client: Redis = await pool.acquire();
+  let client: Redis | null = null;
   try {
+    client = await pool.acquire();
     await client.set(cacheKey, buffer, 'EX', oneMonth);
   } catch (error) {
     console.error(`Failed to cache icon for ${cacheKey}:`, error);
   } finally {
-    await pool.release(client);
+    if (client) await pool.release(client);
   }
 }
 

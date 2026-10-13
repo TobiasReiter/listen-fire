@@ -43,16 +43,53 @@ async function withTimeout<T>(p: Promise<T>): Promise<T> {
 }
 
 /**
- * Run a function with a pooled Redis client, always releasing it. The pool
- * `acquire()` is NOT under the tight op-timeout — the first acquire pays a
- * one-time TCP-connect + ping cost that legitimately exceeds the per-op budget;
- * only the Redis commands themselves (inside `fn`, via `withTimeout`) are
- * budgeted. A genuinely dead Redis still fails fast: acquire rejects on connect
- * error and the caller's catch fails open.
+ * Longest the guard waits for a client. Generous next to the per-op budget because the first
+ * acquire pays a one-time connect + ping; short next to everything else a dispatch does.
+ */
+const ACQUIRE_TIMEOUT_MS = 500;
+
+/** After an acquire fails, skip Redis this long so each dispatch doesn't pay the wait again. */
+const ACQUIRE_BACKOFF_MS = 5000;
+
+let skipRedisUntilMs = 0;
+
+/** Test seam: forget a recorded outage. */
+export function resetAcquireBackoffForTests(): void {
+  skipRedisUntilMs = 0;
+}
+
+/**
+ * Run a function with a pooled Redis client, always releasing it. The pool `acquire()` is NOT under
+ * the tight op-timeout (the first acquire pays a one-time TCP-connect + ping cost that exceeds the
+ * per-op budget); it is bounded separately by ACQUIRE_TIMEOUT_MS, and the pool itself rejects when
+ * the connection cannot be made. A dead Redis therefore fails in at most ACQUIRE_TIMEOUT_MS on the
+ * first call and instantly for ACQUIRE_BACKOFF_MS after: the acquire rejects and the caller's catch
+ * fails open.
  */
 async function withClient<T>(fn: (client: Redis) => Promise<T>): Promise<T> {
+  if (Date.now() < skipRedisUntilMs) throw new Error('loop_guard redis unavailable (backing off)');
   const pool = getRedisPool();
-  const client = await pool.acquire();
+  const acquiring = pool.acquire();
+  let timer: NodeJS.Timeout | undefined;
+  let client: Redis;
+  try {
+    client = await Promise.race([
+      acquiring,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('loop_guard redis acquire timed out')),
+          ACQUIRE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (err) {
+    skipRedisUntilMs = Date.now() + ACQUIRE_BACKOFF_MS;
+    // A client that arrives after we gave up goes straight back to the pool.
+    acquiring.then((late) => pool.release(late)).catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   try {
     return await fn(client);
   } finally {
