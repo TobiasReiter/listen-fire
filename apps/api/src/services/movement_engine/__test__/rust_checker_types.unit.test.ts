@@ -325,7 +325,10 @@ describe("admission reads the checker's types, on both engines", () => {
   });
 
   describe('a record handed to a position parameter is held to holding none in a field, at every call', () => {
-    const DIRTY = ['  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: "pre" }', '  x = graph<Co> { name: COALESCE(co, "x"), stage: "lead" }'];
+    // The record reaches the graph's field through a closure's COALESCE: the
+    // checker refuses the COALESCE written in the entry itself
+    // (MOV_GRAPH_ENTRY_RECORD, below) but is silent on a closure's value.
+    const DIRTY = ['  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: "pre" }', '  f = () => COALESCE(co, "x")', '  x = graph<Co> { name: f(), stage: "lead" }'];
 
     it("a clean graph a helper reads field by field runs whole", async () => {
       await wholeOnBoth(
@@ -348,7 +351,7 @@ describe("admission reads the checker's types, on both engines", () => {
     it('a graph a function built holding a record, handed back and read off a closure parameter', async () => {
       await refusedOnBoth(
         withHelpers(
-          ['function mk(c: <crm-[:company]->>) {', '  g = graph<Co> { name: COALESCE(c, "x"), stage: "s" }', '  return g', '}'],
+          ['function mk(c: <crm-[:company]->>) {', '  f = () => COALESCE(c, "x")', '  g = graph<Co> { name: f(), stage: "s" }', '  return g', '}'],
           '  co = write crm-[:companies]-> { name: "a" }',
           '  write crm-[:notes]-> { body: "pre" }',
           '  x = mk(c: co)',
@@ -375,6 +378,16 @@ describe("admission reads the checker's types, on both engines", () => {
     it('a record through COALESCE into a field', async () => {
       await endsAtCheckOnBoth(movement('  co = write crm-[:companies]-> { name: "a" }', '  write crm-[:notes]-> { body: COALESCE(co, "x") }'), 'MOV_WRITE_FIELD_TYPE');
     });
+
+    it("a record through COALESCE written in a graph's entry", async () => {
+      // Before main's graph-entry rule the checker was silent here too, and the
+      // Rust engine refused it by name (position_arg_record, write_field_record);
+      // those refusals are now reached through a closure's value, above and below.
+      await endsAtCheckOnBoth(
+        movement('  co = write crm-[:companies]-> { name: "a" }', '  x = graph<Co> { name: COALESCE(co, "x"), stage: "lead" }', '  named = (r: <Co>) => {', '    write crm-[:notes]-> { body: r.name }', '  }', '  named(r: x)'),
+        'MOV_GRAPH_ENTRY_RECORD',
+      );
+    });
   });
 
   describe('where the checker is silent, admission still refuses by name', () => {
@@ -392,7 +405,7 @@ describe("admission reads the checker's types, on both engines", () => {
 
     it("a graph whose field holds a record through COALESCE, read off a closure's parameter", async () => {
       await refusedOnBoth(
-        movement('  co = write crm-[:companies]-> { name: "a" }', '  x = graph<Co> { name: COALESCE(co, "x"), stage: "lead" }', '  named = (r: <Co>) => {', '    write crm-[:notes]-> { body: r.name }', '  }', '  named(r: x)'),
+        movement('  co = write crm-[:companies]-> { name: "a" }', '  f = () => COALESCE(co, "x")', '  x = graph<Co> { name: f(), stage: "lead" }', '  named = (r: <Co>) => {', '    write crm-[:notes]-> { body: r.name }', '  }', '  named(r: x)'),
         'write_field_record',
       );
     });

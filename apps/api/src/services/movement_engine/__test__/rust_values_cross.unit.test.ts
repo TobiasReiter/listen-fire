@@ -172,9 +172,21 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
   });
 
   it('a record in a null-prototype map spread into a graph fails at its key, as the TypeScript engine fails it', async () => {
-    for (const held of ['{ k: { __proto__: null, inner: co } }', '{ k: [{ __proto__: null, inner: co }] }']) {
-      const { rust } = await agreeExactly(m('  co = write crm-[:companies]-> { name: "a" }', `  held = ${held}`, '  g = graph { ...held }'), version);
+    // The record reaches the map through a closure's COALESCE, where the
+    // checker is silent: written there directly, the checker refuses the
+    // spread (MOV_GRAPH_SPREAD_RECORD) and neither engine runs it.
+    for (const held of ['{ k: { __proto__: null, inner: f() } }', '{ k: [{ __proto__: null, inner: f() }] }']) {
+      const { rust } = await agreeExactly(m('  co = write crm-[:companies]-> { name: "a" }', '  f = () => COALESCE(co, "x")', `  held = ${held}`, '  g = graph { ...held }'), version);
       expect(rust).toMatchObject({ err: expect.stringContaining("'k' holds a record") });
+    }
+    for (const held of ['{ k: { __proto__: null, inner: co } }', '{ k: [{ __proto__: null, inner: co }] }']) {
+      const source = m('  co = write crm-[:companies]-> { name: "a" }', `  held = ${held}`, '  g = graph { ...held }');
+      const ts = await runOn('ts', source, version, []);
+      resetRustRunStats();
+      const rust = await runOn('rust', source, version, []);
+      expect(rust).toEqual(ts);
+      expect(ts).toMatchObject({ log: [], err: expect.stringContaining('MOV_GRAPH_SPREAD_RECORD') });
+      expect(rustRunStats).toMatchObject({ ranWhole: 0, endedAtCheck: 1, notAdmitted: {}, declined: {} });
     }
   });
 
