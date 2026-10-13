@@ -196,12 +196,13 @@ Releases before v0.11 are kept one file per minor line, newest first:
 - [v0.10.x](docs/changelog/v0.10.md) (v0.10.0 to v0.10.9)
 - [v0.9.x](docs/changelog/v0.9.md) (v0.9.0 to v0.9.1)
 - [v0.8.x](docs/changelog/v0.8.md) (v0.8.0 to v0.8.5)
-- [v0.7.x](docs/changelog/v0.7.md) (v0.7.0 to v0.7.0)
+- [v0.7.x](docs/changelog/v0.7.md) (v0.7.0)
 - [v0.6.x](docs/changelog/v0.6.md) (v0.6.0 to v0.6.2)
-- [v0.5.x](docs/changelog/v0.5.md) (v0.5.0 to v0.5.0)
-- [v0.4.x](docs/changelog/v0.4.md) (v0.4.0 to v0.4.0)
-- [v0.3.x](docs/changelog/v0.3.md) (v0.3.0 to v0.3.0)
-- [v0.2.x](docs/changelog/v0.2.md) (v0.2.0 to v0.2.0)
+- [v0.5.x](docs/changelog/v0.5.md) (v0.5.0)
+- [v0.4.x](docs/changelog/v0.4.md) (v0.4.0)
+- [v0.3.x](docs/changelog/v0.3.md) (v0.3.0)
+- [v0.2.x](docs/changelog/v0.2.md) (v0.2.0)
 - [v0.1.x](docs/changelog/v0.1.md) (v0.1.0 to v0.1.2)
 
-[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.11.0...HEAD
+[v0.11.0]: https://github.com/listen-fire/listen-fire/compare/v0.10.9...v0.11.0
