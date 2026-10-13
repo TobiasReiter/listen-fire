@@ -15,6 +15,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Fixed
 
+- A Redis outage no longer stalls automations. The loop guard is meant to step aside when Redis is
+  unreachable, but a dead Redis used to hang every trigger dispatch indefinitely. Connecting to
+  Redis now gives up within seconds, and the guard lets runs through unchecked, pausing its
+  counting for five seconds at a time until Redis is back.
 - A file whose extracted text contains NUL characters (a PDF with glyphs its font map has no name
   for) no longer fails the run. The text is stored with each NUL replaced by a space, and a failure
   to store the extracted text as provenance is logged rather than failing the run.
