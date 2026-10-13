@@ -3621,9 +3621,17 @@ class Interpreter {
   private serializeBranchExport(frame: ResumeAncestorFrame): Record<string, BindingDescriptor> {
     const out: Record<string, BindingDescriptor> = {};
     const skip = frame.descentKind === 'iter' ? this.hopAliasNamesOf(frame.container) : undefined;
-    for (const [name, binding] of frame.childEnv.ownBindings()) {
-      if (skip?.has(name)) continue;
-      out[name] = serializeBinding(binding, this.newPark());
+    // One export is one parked state, so it is written by ONE park: a handle
+    // or node two names hold (`b = a`) is written once and referenced after,
+    // and comes back as one. The returned value goes first — it is the name
+    // the join reads back on its own, so its descriptors hold every first
+    // sighting and it never refers into a name not read.
+    const entries = [...frame.childEnv.ownBindings()]
+      .filter(([name]) => !skip?.has(name))
+      .sort(([a], [b]) => Number(b === RETURN_SLOT) - Number(a === RETURN_SLOT));
+    const park = this.newPark();
+    for (const [name, binding] of entries) {
+      out[name] = serializeBinding(binding, park);
     }
     return out;
   }

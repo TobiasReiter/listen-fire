@@ -109,12 +109,17 @@ guide](docs/language/dancing-wren-migration.md).
   closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
   leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that
   never waits always did. Every language version: a wait is not part of the language, so what a
-  name reads must not depend on it. A parked state that holds each record once is unchanged.
+  name reads must not depend on it. The same holds for the names a `parallel` / `race` arm or a
+  fan-out iteration leaves when it finishes after a wait, and for a node held under two names
+  there. A parked state that holds each record once is unchanged.
 - A library's closure that waited before testing `x IS <Decl>` against the library's own
   declaration now resumes. The resume looked the declaration up in the root program, so it failed
   "cannot re-resolve code ref", or used the root's declaration of the same name. A parked node
   declaration or function now says which library it belongs to, and is found again there. Every
   language version: the run before the wait already read the library's, so nothing else changes.
+  A run that was already waiting when this shipped resumes as before, since its parked state
+  does not say which library: one whose library declaration is shadowed by a same-named
+  declaration in the root program still reads the root's.
 - A closure bound at a file's top level (`f = (n: <number>) => …`), in a library or the root
   program, is now in scope inside that file's functions. The run used to fail "'f' is not in
   scope". It holds its file's scope by reference, as a JavaScript closure holds its module's, so

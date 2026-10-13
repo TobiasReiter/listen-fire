@@ -23,9 +23,11 @@ import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { CallbackSink } from '../callback_sink';
 import type { CallbackCall } from '../callback_store';
-import type { ParkedScopeState } from '../serialize';
+import type { BindingDescriptor, ParkedScopeState, RehydrationContext } from '../serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { binding } from '../expression';
+import { assertParkRead, newParkReader, rehydrateBinding } from '../serialize';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import {
@@ -705,9 +707,10 @@ describe('a state written before body steps existed', () => {
 
 // B7: two names for ONE write handle stay one handle across a park, so an
 // in-place write through one is seen through the other after the resume —
-// exactly as in a run that never parks. Every version that has the in-place
-// write (4 on); a park is not a language construct, so there is no version in
-// which waiting changes what a name reads.
+// exactly as in a run that never parks. Every language version: a park is not
+// a language construct, so there is no version in which waiting changes what
+// a name reads. The tests run 4 and 5, where the in-place write that shows it
+// exists.
 describe('two names for one write handle across a park', () => {
   const twoNames = (alias: string): string =>
     program(
@@ -760,5 +763,79 @@ describe('two names for one write handle across a park', () => {
     expect(Object.keys(state.scopeChain[1]!.bindings.a!)).toEqual(['kind', 'handle', 'targetType', 'graph']);
     const { kg } = await resumeAt(h, address!);
     expect(payloadOf(kg.creates)).toEqual({ seen: 'one' });
+  });
+});
+
+// A completed branch's export is one parked state, written by one park: a
+// handle or a node two of its names hold comes back as ONE, as it does in the
+// main state — and the returned value, the name the join reads on its own,
+// is written first, so it never refers into a name that is not read.
+describe('two names for one handle or node in a completed branch’s export', () => {
+  const ctx: RehydrationContext = {
+    resolveInstance: async (identity) =>
+      binding({ kind: 'instance', name: identity.name, adapterSlug: identity.adapterSlug, schema: { types: {} } as never }),
+    resolveSourceRead: async () => {
+      throw new Error('test: no source reads');
+    },
+    reviveFileRef: () => {
+      throw new Error('test: no files');
+    },
+    resolveCodeRef: () => {
+      throw new Error('test: no code refs');
+    },
+  };
+
+  it('comes back as one handle and one node, and the join still reads the return', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  r = await parallel([',
+          '    () => {',
+          '      a = write graph-[:note]-> { body: "arm 0" }',
+          '      b = a',
+          '      n = node { body: "shared" }',
+          '      m = n',
+          '      return b',
+          '    },',
+          '    () => {',
+          '      write graph-[:note]-> { body: "arm 1" }',
+          '      return 2',
+          '    }',
+          '  ])',
+          '  write graph-[:note]-> { payload: { second: AT(r, 1) } }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    // Arm 0 parks before its return; arm 1 completes. Arm 0 completing on
+    // the resume writes its whole scope as its export.
+    const first = await start(h, ['s0.b0.s4']);
+    expect(first.result.parked).toBe(true);
+    const { result, kg } = await resumeAt(h, 's0.b0.s4');
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ second: 2 });
+
+    const rows = await h.parks.sink.collectBranchExports({ frameAddress: 's0' });
+    const exports = rows.find((row) => row.branchIndex === 0)!.exports as Record<string, BindingDescriptor>;
+    expect(Object.keys(exports)[0]).toBe('#return');
+    expect(JSON.stringify(exports)).toContain('"kind":"handleRef"');
+    expect(JSON.stringify(exports)).toContain('"kind":"nodeRef"');
+
+    // The whole export, read as one state, in an order jsonb might hand over.
+    const park = newParkReader();
+    const read: Record<string, unknown> = {};
+    for (const name of ['m', 'b', 'n', 'a', '#return']) {
+      read[name] = await rehydrateBinding(exports[name]!, ctx, park);
+    }
+    assertParkRead(park);
+    expect(read.b).toBe(read.a);
+    expect(read['#return']).toBe(read.a);
+    expect(read.m).toBe(read.n);
+
+    // The join reads the returned value on its own, as it always did.
+    const alone = await rehydrateBinding(exports['#return']!, ctx);
+    expect(alone.kind).toBe('handle');
   });
 });
