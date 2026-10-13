@@ -15,7 +15,7 @@
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from '../../translation_graph/adapter';
+import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
@@ -116,7 +116,7 @@ function fakeEmail(calls: Call[]): Adapter {
       ];
     },
     createRecord: async () => ({ adapterType: 'email', externalId: 'x', data: {} }),
-    updateRecord: async () => ({ adapterType: 'email', externalId: 'x', data: {} }),
+    updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
     deleteRecord: async () => ({}),
   };
 }
@@ -153,7 +153,7 @@ function fakeGraph(calls: Call[]): Adapter {
       return [];
     },
     createRecord: async () => ({ adapterType: 'kg', externalId: 'x', data: {} }),
-    updateRecord: async () => ({ adapterType: 'kg', externalId: 'x', data: {} }),
+    updateRecord: async (input) => ({ adapterType: 'kg', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
     deleteRecord: async () => ({}),
   };
 }
