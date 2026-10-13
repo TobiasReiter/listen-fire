@@ -44,9 +44,12 @@ guide](docs/language/dancing-wren-migration.md).
 
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
   Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
-  where they delete.
+  where they delete. No protocol version bump: the field is additive, but under language version
+  5 a remote adapter that does not declare it has every `delete` refused.
 - The knowledge graph's `Resources` edge is walked by its name on every version
-  (`c-[f:Resources]-> { … f.URL … }`), its landing typed with `Name`, `URL` and `Type`.
+  (`c-[f:Resources]-> { … f.URL … }`), its landing typed with `Name`, `URL` and `Type`. The
+  adapter matches it by its reserved address, so a team's ontology edge named `Resources` stays
+  the ontology's.
 
 ### Changed
 

@@ -65,11 +65,13 @@ pages = vc_url_retrieval(text: msg.`Body`)
   - `MOV_DELETE_NOT_DECLARED` where `x`'s type does not declare deletion. A union is deletable only when every member is.
   - `MOV_DELETE_NOT_RECORD` where `x` is not one stored record: a value, a name that may hold one (a list of records, `IF … THEN r ELSE "a" END`), an extraction's root or an extracted node (a transient graph nothing stores), a record on a node the run built, the instance itself, a closure or a local node.
 - Why: under version 4 each of these passed the save and failed (or did nothing) at run time, after everything before the `delete` had already run.
+- A name bound to an `IF` or a `COALESCE` is checked as the union of its operands: every operand a deletable record passes, an operand whose type does not declare deletion is `MOV_DELETE_NOT_DECLARED`, and an operand that is not a record (`null`, a value) is `MOV_DELETE_NOT_RECORD`.
 - A system that describes nothing, or a type not yet described, says nothing, so nothing is refused there. Change the record instead (`write x { … }`), or delete it in a system that can.
+- A remote (protocol) adapter written before `deletable` existed declares no type deletable, so under version 5 every `delete` of its records is refused. This is accepted: the field is additive and the protocol version is unchanged, but version 5 requires it. The adapter's author adds `"deletable": true` to the types its `deleteRecord` removes (see the adapter handbook's protocol chapter); movements pinned to version 4 or earlier are unaffected.
 
 ## 5. `_resources` only on an extraction's result
 
-- Under Dancing Wren (5) `x-[f:_resources]->` is `MOV_RESOURCES_NOT_EXTRACTED` unless `x` is an extraction's result: its root or an extracted node, where `_resources` is the source content the extraction read. A rootless `-[:_resources]->` (the event's record) is refused too. Why: off a system's record, `_resources` was a reserved reference the engine resolved through the event's adapter, whatever system the record belonged to. Email, Gmail, WhatsApp and Slack had already retired the bundle it read, so there it read nothing useful; on the knowledge graph it duplicated an edge the graph declares.
+- Under Dancing Wren (5) `x-[f:_resources]->` is `MOV_RESOURCES_NOT_EXTRACTED` unless `x` is provably an extraction's result: its root or an extracted node, where `_resources` is the source content the extraction read. The rule needs no schema, so a root nothing proves to be one is refused too: a record of a system that describes nothing, or a name bound to an `IF` whose arms are not all extractions' results. A rootless `-[:_resources]->` (the event's record) is refused too. Why: off a system's record, `_resources` was a reserved reference the engine resolved through the event's adapter, whatever system the record belonged to. Email, Gmail, WhatsApp and Slack had already retired the bundle it read, so there it read nothing useful; on the knowledge graph it duplicated an edge the graph declares.
 - A record reaches its files over an edge its system declares, and the diagnostic names it:
 
 | System | Write instead of `x-[f:_resources]->` |
@@ -78,7 +80,8 @@ pages = vc_url_retrieval(text: msg.`Body`)
 | Slack | `x-[f:Files]-> { … f.File … }` |
 | Knowledge graph | `x-[f:Resources]-> { … f.URL … }` (fields `Name`, `URL`, `Type`) |
 
-- The edge in the message is derived from the system's schema, not from a list: the edge the system declares as its resources (the knowledge graph's `Resources`), else every edge whose landing has a file-typed field. Where there is none the message says the system exposes no files.
+- The edge in the message is derived from the system's schema, not from a list: the edge the system declares as its resources (the knowledge graph's `Resources`), else every readable edge whose landing has a file-typed field. A record that holds a file itself (an email's attachment) is pointed at its own file field (`a.File`). Where there is neither the message says the system exposes no files.
+- The knowledge graph's `Resources` edge is matched by its reserved address, never by its name: a team's own ontology edge named `Resources` is that edge, in every version.
 
 ```
 # before (an extraction's result: unchanged)
