@@ -575,7 +575,15 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
     );
   };
   const refusedAt = (body: string[], said: string, shaped = false): void => {
-    const errors = errorsOf(body, shaped).filter(d => d.code !== 'MOV_GRAPH_SPREAD_UNTYPED' && d.code !== 'MOV_GRAPH_FIELD_TYPE');
+    const all = errorsOf(body, shaped);
+    if (version === 1 && !shaped) {
+      // Version 1 names no key of a map literal, so the unshaped spread is
+      // refused as untyped alone — the record's refusal comes with the shape
+      // it asks for, not stacked with a path that could only be a guess.
+      expect(all.map(d => d.code)).toEqual(['MOV_GRAPH_SPREAD_UNTYPED']);
+      return;
+    }
+    const errors = all.filter(d => d.code !== 'MOV_GRAPH_SPREAD_UNTYPED' && d.code !== 'MOV_GRAPH_FIELD_TYPE');
     expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_SPREAD_RECORD']);
     expect(errors[0]!.message).toContain(said);
     expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
@@ -589,8 +597,9 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
     refusedAt(['  held = { k: org }', '  g = graph { ...held }'], `'...held' copies a map's values and maps into the graph, and ${atK}`);
   });
 
-  it('a record deep in a list under a key', () => {
+  it('a record deep in a list under a key: the repair writes the list\'s key', () => {
     refusedAt(['  held = { a: "x", deep: { list: [org] } }', '  g = graph { ...held }'], version === 2 ? "'held.deep.list[…]' is " : "'held.deep.list[0]' is ");
+    refusedAt(['  held = { a: "x", deep: { list: [org] } }', '  g = graph { ...held }'], "as an entry of its own ('list: [r, …]')");
   });
 
   it('a record in one arm of a COALESCE under a key', () => {
@@ -609,6 +618,45 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
 
   it('one record spread copies its fields', () => {
     expect(errorsOf(['  g = graph { ...org }']).map(d => d.code)).not.toContain('MOV_GRAPH_SPREAD_RECORD');
+  });
+});
+
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, a graph entry that is not a reference holds no record', version => {
+  // An entry that is ONE record (or a list of them) is a reference — an edge
+  // holding the records. Any other entry is a field, and a field holds values:
+  // a record in an operator's arm would be stored as a field when the graph is
+  // built. Refused on B3's terms, with the path.
+  const errorsOf = (body: string[]): Diagnostic[] =>
+    checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+      d => (d.severity ?? 'error') === 'error',
+    );
+  const refusedAs = (body: string[], said: string): void => {
+    const errors = errorsOf(body);
+    expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_ENTRY_RECORD']);
+    expect(errors[0]!.message).toContain(said);
+  };
+
+  it('a record in one arm of a COALESCE', () => {
+    refusedAs(['  g = graph { a: COALESCE(org, "x") }'], `'a' is a field, and 'COALESCE(org, "x")' may be `);
+  });
+
+  it('a record in one arm of an IF', () => {
+    refusedAs(['  g = graph { a: IF 1 > 0 THEN org ELSE "x" END }'], `'IF 1 > 0 THEN org ELSE "x" END' may be `);
+  });
+
+  it('a record deep in an arm, with the path', () => {
+    refusedAs(['  g = graph { a: COALESCE({ k: org }, { k: "x" }) }'], "may hold a crm.company handle at '.k'");
+  });
+
+  it('a record, a list of records, and a child holding one stay references (edges)', () => {
+    expect(errorsOf(['  g = graph { a: org }'])).toEqual([]);
+    expect(errorsOf(['  g = graph { a: [org] }'])).toEqual([]);
+    expect(errorsOf(['  g = graph { k: { a: org } }'])).toEqual([]);
+  });
+
+  it('values and files are fields', () => {
+    expect(errorsOf(['  g = graph { a: COALESCE("y", "x") }'])).toEqual([]);
+    expect(errorsOf(['  g = graph { a: f }'])).toEqual([]);
   });
 });
 

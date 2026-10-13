@@ -76,7 +76,14 @@ guide](docs/language/dancing-wren-migration.md).
   any key, at any depth or in one arm of an operator, is refused where it is written
   (`MOV_GRAPH_SPREAD_RECORD`, with the path), on every language version. It used to validate from
   version 2 and fail the run at the spread. A bug fix, not a language version: write a field off
-  the record, or write the record into the graph as an entry of its own (`k: r`).
+  the record, or write the record into the graph as an entry of its own (`k: r`). An unshaped
+  spread whose keys nothing names (version 1's map literals) is refused as untyped alone; the
+  record's refusal comes with the shape it asks for.
+- A graph entry that is not one record or a list of them but may hold a record
+  (`graph { a: COALESCE(r, "x") }`, an `IF` arm) is refused where it is written
+  (`MOV_GRAPH_ENTRY_RECORD`, with the path), on every language version, on the same terms as a
+  spread: it used to validate and the run stored the record as a field. `a: r` (an edge holding
+  the record) is untouched.
 - A plugin argument the plugin declares a value type for (text, a file, …) takes no record or file
   that type does not hold, on every language version (`MOV_CALL_ARG_TYPE`, with the path): a file
   handed to a text argument (`tag(label: f)`, or one arm of a `COALESCE`), a file or record under a

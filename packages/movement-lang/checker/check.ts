@@ -516,6 +516,11 @@ export const DiagnosticCodes = {
    *  depth, or in an arm): a spread map copies values and maps, and the
    *  engine refuses the record when the graph is built. */
   GRAPH_SPREAD_RECORD: 'MOV_GRAPH_SPREAD_RECORD',
+  /** A graph entry that is not a reference (one record, or a list of them)
+   *  but may hold a record — an operator arm (`COALESCE(r, "x")`, an `IF`
+   *  arm), at any depth: a field holds values, and the engine would store the
+   *  record as one. B3's rule for a spread, applied to an entry. */
+  GRAPH_ENTRY_RECORD: 'MOV_GRAPH_ENTRY_RECORD',
   /** A declared entry (`companies: <Company>`) whose marker names neither a
    *  node this file declares nor an address. An entry that starts EMPTY is an
    *  edge, so its type has to say what LANDS there, and only those two
@@ -11021,6 +11026,7 @@ class Checker {
             break;
           }
           delete entry.reference;
+          this.refuseRecordInGraphEntry(entry, typed);
           const valueType = this.nodeValueEntryType(entry, typed, scope);
           delete edges[entry.name];
           reads[entry.name] = valueType;
@@ -11303,19 +11309,21 @@ class Checker {
       );
       return undefined;
     }
-    this.refuseRecordInGraphSpread(entry, symbol, valueType);
     const mayBeAbsent = valueType !== undefined && isMaybeAbsentType(valueType);
     const keys = map === 'json' ? undefined : mayBeAbsent && map.shape !== undefined ? absentKeys(map.shape) : map.shape;
-    if (keys === undefined) {
-      if (required === undefined) {
-        this.report(
-          DiagnosticCodes.GRAPH_SPREAD_UNTYPED,
-          `nothing says which keys '${entry.source}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> { ...${entry.source} }'), and it is checked against the shape when it is built`,
-          entry.span,
-        );
-      }
+    if (keys === undefined && required === undefined) {
+      // Already refused, and with no keys known any record's path would be
+      // a guess (`held[…]`): the shape this asks for brings the record's
+      // refusal with it, with its path.
+      this.report(
+        DiagnosticCodes.GRAPH_SPREAD_UNTYPED,
+        `nothing says which keys '${entry.source}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> { ...${entry.source} }'), and it is checked against the shape when it is built`,
+        entry.span,
+      );
       return undefined;
     }
+    this.refuseRecordInGraphSpread(entry, symbol, valueType);
+    if (keys === undefined) return undefined;
     return { ...this.checkSpreadKeys(keys, { required, entry, written, earlier }), mayBeAbsent };
   }
 
@@ -11333,11 +11341,42 @@ class Checker {
     if (held === undefined) return;
     const written = spreadSourceText(entry);
     const place = placeInInput(written, held, describeFieldType(held.handle));
-    const last = held.steps[held.steps.length - 1];
-    const entryName = last?.kind === 'key' ? last.key : 'name';
+    // The entry the record would be written as: the key it sits under — in a
+    // list (`list[0]`), the list's key, holding the records as a list.
+    let lastKey = held.steps.length - 1;
+    while (lastKey >= 0 && held.steps[lastKey]?.kind !== 'key') lastKey -= 1;
+    const keyStep = held.steps[lastKey];
+    const entryName = keyStep?.kind === 'key' ? keyStep.key : 'name';
+    const inList = lastKey < held.steps.length - 1;
+    const asEntry = (value: string): string => `'${entryName}: ${inList ? `[${value}, …]` : value}'`;
     this.report(
       DiagnosticCodes.GRAPH_SPREAD_RECORD,
-      `'...${written}' copies a map's values and maps into the graph, and ${place} — a record, not a value. Write a field off it (${repairAt(held, 'r.`Name`')}), or write the record into the graph as an entry of its own ('${entryName}: r')`,
+      `'...${written}' copies a map's values and maps into the graph, and ${place} — a record, not a value. Write a field off it (${keyStep !== undefined ? asEntry('r.`Name`') : "'r.`Name`'"}), or write the record into the graph as an entry of its own (${asEntry('r')})`,
+      entry.span,
+    );
+  }
+
+  /**
+   * A graph entry that is not a reference but may hold a record — in an
+   * operator's arm (`a: COALESCE(r, "x")`, `a: IF … THEN r ELSE "x" END`) or
+   * inside a value — is a field holding the record, which the graph cannot
+   * hold. Refused on every version, on the terms a spread's record is
+   * (`refuseRecordInGraphSpread`), with the path. A file passes: a graph field
+   * holds one.
+   */
+  private refuseRecordInGraphEntry(
+    entry: Extract<NodeEntry, { kind: 'value' }>,
+    { valueType, mayHold }: { valueType?: FieldType; mayHold?: FieldType },
+  ): void {
+    const walk = heldWalk(GRAPH_SPREAD_TAKES);
+    const held = handleWithin(valueType, walk) ?? handleWithin(mayHold, walk);
+    // A connection (`a: crm`) is not a record; this rule does not reach it.
+    if (held === undefined || heldRecordPosition(held)?.kind === 'meta') return;
+    const written = entry.value.raw.trim();
+    const place = placeInInput(written, held, describeFieldType(held.handle));
+    this.report(
+      DiagnosticCodes.GRAPH_ENTRY_RECORD,
+      `'${entry.name}' is a field, and ${place} — a record, not a value a field holds. Write a field off the record ('${entry.name}: r.\`Name\`'), or make the entry the record alone ('${entry.name}: r'), which holds it as a reference`,
       entry.span,
     );
   }
