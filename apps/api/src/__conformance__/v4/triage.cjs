@@ -11,9 +11,14 @@ const UNSUPPORTED_SITES = 'services/movement_engine/__test__/interpretable_unsup
 const SOURCE_SCAN =
   "reads the engine's and checker's SOURCE files by a path relative to where the test sits, which inside the corpus names no file; it audits the code's own registry of unsupported sites, not anything a version-4 movement does";
 
+const GRAPH_SPREAD_RECORD =
+  "pinned the run failing at the spread of a map that holds a record into a graph; since B3 (MOV_GRAPH_SPREAD_RECORD) the checker refuses that program where it is written, on every language version — a bug fix: the program failed on every run that reached the spread, now it fails its check first. The current tree's copy of this test pins the refusal";
+
 exports.triage = [
   { file: UNSUPPORTED_SITES, test: 'only the registered files throw it', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'expression.ts: the registry lists exactly the call sites in the file', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'run.ts: the registry lists exactly the call sites in the file', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'a checker cover names diagnostic codes the checker really has', reason: SOURCE_SCAN },
+  { file: 'services/movement_engine/__test__/list_literal_record.unit.test.ts', test: 'with no shape: an engine error naming the key, never the record stored as a field', reason: GRAPH_SPREAD_RECORD },
+  { file: 'services/movement_engine/__test__/list_literal_record.unit.test.ts', test: 'with a shape declaring the key a child, holding records by key: the same engine error', reason: GRAPH_SPREAD_RECORD },
 ];

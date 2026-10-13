@@ -228,6 +228,11 @@ export const TypedDiagnosticCodes = {
    *  one spelling as text, and there is no implicit one. Read a field off it,
    *  or walk it. */
   RECORD_NOT_A_VALUE: 'MOV_RECORD_NOT_A_VALUE',
+  /** A FILE combined into text (`"x${f}"`) — from language version 5. A file
+   *  is a byte channel, not text: the engine joined its description in as
+   *  "[object Object]". Its text is `READ(f)`. Versions 1 to 4 keep the old
+   *  meaning; the error under 5 keeps such a program on its version. */
+  FILE_IN_TEXT: 'MOV_FILE_IN_TEXT',
   /** A tuple holding both records and values — `[one, "label"]` — READ as a
    *  list: handed to `MAP`, written into a list field, folded. A list holds
    *  one kind of thing: a list of records is walked, a list of values is read,
@@ -4692,6 +4697,7 @@ export class ExpressionTyping {
       case 'concat': {
         const parts = expr.parts.map(p => this.inferAt(p, position));
         parts.forEach(t => this.requireTransparent(t, 'combined into text'));
+        if (since(this.options.languageVersion, 5)) expr.parts.forEach((p, i) => this.refuseFileInText(p, parts[i]));
         return 'text';
       }
       case 'arithmetic': {
@@ -5320,6 +5326,20 @@ export class ExpressionTyping {
     this.report(
       TypedDiagnosticCodes.DICT_KEY_NOT_TEXT,
       `a dict is keyed by text, and this key is ${describeFieldType(key)} (${where}). There is no one way to spell ${describeFieldType(key)} as text, so ${repair}.`,
+    );
+  }
+
+  /** A file (or one arm that may be one) joined into text, from version 5:
+   *  there is no text form of a file but the one READ gives. */
+  private refuseFileInText(part: Expression, type: FieldType | undefined): void {
+    const may = this.mayHoldType(part);
+    const holdsFile = (t: FieldType | undefined): boolean => t !== undefined && baseKinds(t).includes('file');
+    if (!holdsFile(type) && !holdsFile(may)) return;
+    const definite = type !== undefined && stripAbsent(type) === 'file';
+    this.report(
+      TypedDiagnosticCodes.FILE_IN_TEXT,
+      `this ${definite ? 'is' : 'may be'} a file, and a file is not text, so it can't be combined into text — `
+        + `its text is READ(f) ('\${COALESCE(READ(f), "")}'), or write the file into a field that holds files`,
     );
   }
 

@@ -12,6 +12,9 @@ const LINK_AST =
 const ACCEPTED =
   'refusal became acceptance; no valid v1 program observes it';
 
+const SYSTEM_IS_ITS_ADDRESS =
+  "pinned that two instances constructed the same way (the same adapter, credential and arguments) are two graphs; since B12 a system is its address, not the name a file binds it to, so a record of one passes to a parameter typed by the other (in one file or across a file import) and the effect row lists the system once. A refusal turned into an acceptance — no movement that validated under this version does anything different (the rule of 8c9ee246: a refusal relaxed is never gated). The current tree's tests pin both halves with two different credentials";
+
 exports.triage = [
   { file: PARSE, test: "rejects 'unique by' inside a link body (criteria ARE the identity)", reason: ACCEPTED },
   { file: 'checker/__test__/value_collections.unit.test.ts', test: 'a function that hands nothing back is refused', reason: ACCEPTED },
@@ -80,4 +83,7 @@ exports.triage = [
     reason:
       'still refused with the same code; the message now says `text` rather than `text (or absent)`, because a literal index into a list literal reads its tuple slot, which is always there',
   },
+  { file: 'checker/__test__/check_typed.unit.test.ts', test: 'MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance', reason: SYSTEM_IS_ITS_ADDRESS },
+  { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },
+  { file: 'checker/__test__/effect_row.unit.test.ts', test: 'the entry IS the graph token the type checker compares by, not the spelling', reason: SYSTEM_IS_ITS_ADDRESS },
 ];

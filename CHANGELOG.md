@@ -40,6 +40,10 @@ guide](docs/language/dancing-wren-migration.md).
   nothing on the systems that had retired its bundle. Under 5 the engine no longer resolves it
   for a system's record.
 
+- **A file is never joined into text** (`MOV_FILE_IN_TEXT`): `"Attached: ${f}"`, or a value that
+  may be a file. Why: it joined as `[object Object]`. Its text is `READ(f)`
+  (`"${COALESCE(READ(f), "")}"`); the file itself goes into a field that holds files.
+
 ### Language version 5, Dancing Wren: new
 
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
@@ -410,6 +414,32 @@ guide](docs/language/dancing-wren-migration.md).
   warning) on a read of a write handle's `url`. Under version 4 it reads the found record's url,
   where versions 1 to 3 read the link the write returned (null when the update returned none).
   The handle's own result-shape fields other than `url` (today only `externalId`) are exempt.
+- A field or child node named `__proto__` in a node declaration or an extraction is refused
+  (`MOV_SHAPE_FIELD_PROTO`), and so is a binding, parameter or alias named `__proto__`
+  (`MOV_NAME_PROTO`), on every language version. Both used to validate but misbehaved at run time,
+  because JavaScript reads that key as an object's prototype: the extracted record never held the
+  field, a closure's parameter read as `{}`, and a parked binding was dropped so its resume
+  failed. A bug fix, not a language version: an automation using one now fails its check; rename
+  it.
+- A map spread into a graph (`held = { k: r }` then `graph { ...held }`) that holds a record under
+  any key, at any depth or in one arm of an operator, is refused where it is written
+  (`MOV_GRAPH_SPREAD_RECORD`, with the path), on every language version. It used to validate from
+  version 2 and fail the run at the spread. A bug fix, not a language version: write a field off
+  the record, or write the record into the graph as an entry of its own (`k: r`). An unshaped
+  spread whose keys nothing names (version 1's map literals) is refused as untyped alone; the
+  record's refusal comes with the shape it asks for.
+- A graph entry that is not one record or a list of them but may hold a record
+  (`graph { a: COALESCE(r, "x") }`, an `IF` arm) is refused where it is written
+  (`MOV_GRAPH_ENTRY_RECORD`, with the path), on every language version, on the same terms as a
+  spread: it used to validate and the run stored the record as a field. `a: r` (an edge holding
+  the record) is untouched.
+- A plugin argument the plugin declares a value type for (text, a file, …) takes no record or file
+  that type does not hold, on every language version (`MOV_CALL_ARG_TYPE`, with the path): a file
+  handed to a text argument (`tag(label: f)`, or one arm of a `COALESCE`), a file or record under a
+  key or in a list of the value (`tag(label: { a: f })`, `ocr(doc: { a: f })`). Each used to
+  validate, and the plugin was handed the engine's own description of the file or record. A bug
+  fix, not a language version: pass the file's text (`READ(f)`), a field of the record, or the
+  file itself to an argument that takes a file.
 - A run's result (and the run records and views built from it) never carries a write record's
   `old` member (it only exists under language version 4), the engine's own handle for the record as
   found (its instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it
@@ -460,6 +490,13 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- A record passed to a function another file exports is no longer refused when that file constructs
+  the same system ("expects inbox.message, but this argument is inbox.message"). A system is its
+  address (the adapter, the credential and the values of literal construction arguments), not
+  the name a file binds it to, so two names, in one file or two, for the same system hold the
+  same records; a different credential or literal is still a different system, and the refusal
+  says which differs. A construction with an argument that is not a literal (`base: b`) stays a
+  system of its own. Every language version.
 - A Redis outage no longer stalls automations. The loop guard is meant to step aside when Redis is
   unreachable, but a dead Redis used to hang every trigger dispatch indefinitely. Connecting to
   Redis now gives up within seconds, and the guard lets runs through unchecked, pausing its

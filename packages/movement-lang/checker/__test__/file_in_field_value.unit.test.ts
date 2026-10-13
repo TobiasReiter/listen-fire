@@ -245,20 +245,60 @@ describe('a spread of a file is refused once, for what it is', () => {
   });
 });
 
-describe.each(VERSIONS)('KNOWN GAP: under language version %i, a file the field rule does not reach', version => {
-  // Accepted on main and here; follow-ups. A plugin argument typed other than
-  // structured data is held to no rule for a file (a text one is handed the
-  // file's descriptor; a file one, a dict holding the file), and a file joined
-  // into a text renders as "[object Object]".
-  it.each([
-    ['a text-typed plugin argument, the file itself', '  s = tag(label: f)'],
-    ['a text-typed plugin argument, a dict holding it', '  s = tag(label: { a: f })'],
-    ['a file-typed plugin argument, a dict holding it', '  s = ocr(doc: { a: f })'],
-    ['a file joined into a text', '  write crm-[:notes]-> { title: "x${f}" }'],
-  ])('%s: accepted today', (_label, use) => {
-    expect(errorsUnder(version, [use])).toEqual([]);
+describe.each(VERSIONS)('under language version %i, a plugin argument of a declared value type takes no file it does not hold (B5)', version => {
+  // A text argument takes no file, and a file argument a file only as the
+  // whole value: each used to validate, and the plugin was handed the
+  // engine's description of the file. A bug fix, on every version, as the
+  // structured-data argument's rule already was.
+  const refused = (use: string, said: string): void => {
+    const errors = errorsUnder(version, [use]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
+    expect(errors[0]!.message).toContain(said);
+    expect(errors[0]!.message).toContain(FILE_NOT_A_VALUE);
+  };
+
+  it('a text-typed plugin argument, the file itself', () => {
+    refused('  s = tag(label: f)', "'tag' takes text for 'label', and this is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; put its text in its place ('label: READ(f)').");
   });
 
+  it('a text-typed plugin argument, a dict holding it', () => {
+    refused('  s = tag(label: { a: f })', "'tag' takes text for 'label', and 'label.a' is file");
+  });
+
+  it('a text-typed plugin argument, one arm of a COALESCE', () => {
+    refused('  s = tag(label: COALESCE(f, "x"))', "and this may be file");
+  });
+
+  it('a file-typed plugin argument, a dict holding it', () => {
+    refused('  s = ocr(doc: { a: f })', "'ocr' takes file for 'doc', and 'doc.a' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; hand it over as the whole argument ('doc: f')");
+  });
+
+  it('the file, or its text, is taken', () => {
+    expect(errorsUnder(version, ['  s = ocr(doc: f)'])).toEqual([]);
+    expect(errorsUnder(version, ['  s = tag(label: COALESCE(READ(f), ""))'])).toEqual([]);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, a file joined into a text', version => {
+  // It joined as "[object Object]". Refusing it changes what a saved program
+  // means, so it lands with Dancing Wren (5): versions 1 to 4 keep it, and
+  // the error under 5 keeps such a program on its version.
+  it(version >= 5 ? 'is refused (MOV_FILE_IN_TEXT)' : 'is accepted, as it always was', () => {
+    const errors = errorsUnder(version, ['  write crm-[:notes]-> { title: "x${f}" }']);
+    expect(errors.map(d => d.code)).toEqual(version >= 5 ? ['MOV_FILE_IN_TEXT'] : []);
+    if (version >= 5) expect(errors[0]!.message).toContain("this is a file, and a file is not text, so it can't be combined into text");
+  });
+
+  it('its text joins on every version', () => {
+    expect(errorsUnder(version, ['  write crm-[:notes]-> { title: "x${COALESCE(READ(f), \"\")}" }'])).toEqual([]);
+  });
+
+  it(version >= 5 ? 'one that may be a file is refused' : 'one that may be a file is accepted', () => {
+    expect(errorsUnder(version, ['  t = "x${COALESCE(f, \"y\")}"']).map(d => d.code)).toEqual(version >= 5 ? ['MOV_FILE_IN_TEXT'] : []);
+  });
+});
+
+describe.each(VERSIONS)('under language version %i, a name bound to a conditional carries its arms (B5)', version => {
   // Closed: a name bound to a conditional carries its arms
   // (record_through_operators.unit.test.ts), so the record in one reaches no
   // file field through it.

@@ -415,6 +415,7 @@ const catalog = mockCatalog({
     dealflow_inbox: { adapter: 'email' },
     acme_hubspot: { adapter: 'hubspot' },
     acme_main: { adapter: 'attio' },
+    acme_second: { adapter: 'attio' },
     acme_workspace: { adapter: 'slack' },
     acme_affinity: { adapter: 'affinity' },
     team_drive: { adapter: 'dropbox' },
@@ -3069,7 +3070,25 @@ describe('call fit', () => {
     ).toEqual([C.NODE_ARG_SHAPE]);
   });
 
-  it("MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance", () => {
+  it("MOV_CALL_ARG_TYPE across two systems of the same adapter — a parameter is typed against ITS system", () => {
+    expect(
+      codes(
+        [
+          PRELUDE.replace('import { dealflow_inbox, acme_main,', 'import { dealflow_inbox, acme_main, acme_second,'),
+          'crm2 = attio(credentials: acme_second)',
+          'movement sync(co: <crm-[:company]->>) {',
+          '  …',
+          '}',
+          'movement main(msg: <inbox-[:message]->>) {',
+          '  company = write crm2-[:companies]-> { name: msg.`subject` }',
+          '  sync(co: company)',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([C.CALL_ARG_TYPE]);
+  });
+
+  it('two names for the same system (the same adapter and credential) hold the same records (B12)', () => {
     expect(
       codes(
         [
@@ -3084,7 +3103,7 @@ describe('call fit', () => {
           '}',
         ].join('\n'),
       ),
-    ).toEqual([C.CALL_ARG_TYPE]);
+    ).toEqual([]);
   });
 
   it('an inline synthesised argument is itself checked, entry by entry', () => {

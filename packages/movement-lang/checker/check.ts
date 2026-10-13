@@ -512,6 +512,15 @@ export const DiagnosticCodes = {
   /** `...v`, without a shape, where nothing says which keys `v` holds (or
    *  whether a key holds a nested map) — so nothing could type the graph. */
   GRAPH_SPREAD_UNTYPED: 'MOV_GRAPH_SPREAD_UNTYPED',
+  /** `...m` in a graph body where the map holds a record under a key (at any
+   *  depth, or in an arm): a spread map copies values and maps, and the
+   *  engine refuses the record when the graph is built. */
+  GRAPH_SPREAD_RECORD: 'MOV_GRAPH_SPREAD_RECORD',
+  /** A graph entry that is not a reference (one record, or a list of them)
+   *  but may hold a record — an operator arm (`COALESCE(r, "x")`, an `IF`
+   *  arm), at any depth: a field holds values, and the engine would store the
+   *  record as one. B3's rule for a spread, applied to an entry. */
+  GRAPH_ENTRY_RECORD: 'MOV_GRAPH_ENTRY_RECORD',
   /** A declared entry (`companies: <Company>`) whose marker names neither a
    *  node this file declares nor an address. An entry that starts EMPTY is an
    *  edge, so its type has to say what LANDS there, and only those two
@@ -1315,6 +1324,7 @@ export function checkProgramWithLink(
   const checker = new Checker(catalog, {
     languageVersion,
     ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+    addressTokens: new Map(),
     ...(link ? { linkContext: { link, checked: new Map() } } : {}),
     ...(recording ? { recording } : {}),
   });
@@ -1851,6 +1861,10 @@ function slotHeldWalk(options: SlotOptions | undefined, shape: FieldType | undef
  *  an input of its own), each on its terms. */
 const RECORDS_AND_FILES: ReadonlySet<HandleKind> = new Set(['record', 'file']);
 
+/** What a map spread into a graph takes of the engine's objects: a file (a
+ *  value a graph field holds), never a record. */
+const GRAPH_SPREAD_TAKES: ReadonlySet<HandleKind> = new Set(['file']);
+
 /** The record a held object is, with the position its fields are read off. */
 function heldRecordPosition(held: HeldHandle): PositionTypeRef | undefined {
   const variant = variantOf(stripAbsent(held.handle));
@@ -1955,6 +1969,45 @@ function handleInPluginArgMessage(input: { callee: string; name: string; held: H
     return `${said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place (${repairAt(held.steps.length === 0 ? name : held, 'READ(f)')}).`;
   }
   return `${said} — a record, not a value. A record goes to a plugin only as the whole argument ('${name}: r', which hands it the record's fields); inside a value, write a field off it (${repairAt(held, 'r.`Name`')}).`;
+}
+
+/** A plugin argument of a declared value type (text, a file, …) holding a
+ *  record or a file the type does not take, where it sits. */
+function handleInTypedPluginArgMessage(input: { callee: string; name: string; declared: SchemaFieldType; held: HeldHandle }): string {
+  const { callee, name, declared, held } = input;
+  const direct = held.steps.length === 0;
+  const where = direct ? 'this' : `'${name}${spellHeldSteps(held.steps)}'`;
+  const said = `'${callee}' takes ${describeFieldType(declared)} for '${name}', and ${where} ${held.may ? 'may be' : 'is'} ${describeFieldType(held.handle)}`;
+  if (isFileHandle(held)) {
+    const asWhole = stripAbsent(declared) === 'file' ? `hand it over as the whole argument ('${name}: f'), or ` : '';
+    return `${said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; ${asWhole}put its text in its place (${repairAt(direct ? name : held, 'READ(f)')}).`;
+  }
+  return `${said} — a record, not a value. Pass one of its fields (${repairAt(direct ? name : held, 'r.`Name`')}).`;
+}
+
+/** A file somewhere BELOW the value — under a key, as a member — in any arm;
+ *  a file that is the whole value (or one arm of it) is not one. */
+function fileBelowWhole(type: FieldType | undefined): HeldHandle | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  if (variant.kind === 'union') {
+    for (const member of variant.of) {
+      const held = fileBelowWhole(member);
+      if (held !== undefined) return { ...held, may: true };
+    }
+    return undefined;
+  }
+  if (variant.kind === 'file') return undefined;
+  return handleWithin(type, heldWalk(RECORDS_ONLY));
+}
+
+/** The walk a plugin argument's value is typed with: for a declared value
+ *  type, the engine objects that type takes are passed over, so what the walk
+ *  finds is one it does not. Structured data (or no declared type) keeps the
+ *  walk that finds every object, the record handed whole included. */
+function pluginArgSlotOptions(declared: SchemaFieldType | undefined): { heldTakes?: ReadonlySet<HandleKind> } {
+  if (declared === undefined || declared === 'json') return {};
+  return { heldTakes: handleKindsTaken(declared) };
 }
 
 function isFileHandle(held: HeldHandle): boolean {
@@ -2260,12 +2313,81 @@ function isGraphSymbol(symbol: ScopeSymbol): boolean {
   return symbol.kind === 'instance' || symbol.kind === 'shape';
 }
 
-/** Graph identity: the introducing symbol IS the token compared by
- *  reference — for imports, the LIBRARY's declaring symbol (`graphToken`). */
+/** Graph identity, compared by reference. A constructed INSTANCE is a system,
+ *  and a system is its address — the adapter, the credential, and the LITERAL
+ *  construction arguments (`base: "appXYZ"`) — never the name a file binds it
+ *  to: two files (or two names) constructing the same system hold the same
+ *  records, so a record passes to another file's function. A construction with
+ *  an argument that is not a literal (`base: b`) has no address the checker
+ *  can know, so it is its own symbol, as is any graph the address does not
+ *  reach. A declared shape is its declaring symbol — for imports, the
+ *  LIBRARY's (`graphToken`). */
 export function instanceRefOf(symbol: ScopeSymbol): InstanceRef | undefined {
   return symbol.schema
-    ? { token: symbol.graphToken ?? symbol, name: symbol.name, schema: symbol.schema }
+    ? { token: symbol.graphToken ?? symbol.addressToken ?? symbol, name: symbol.name, schema: symbol.schema }
     : undefined;
+}
+
+/** A system's address as an identity token (`Checker.addressTokenOf`). Two
+ *  constructions of one system share ONE of these, so identity is compared by
+ *  reference; the parts are read only to say how two systems differ. */
+class SystemAddress {
+  constructor(
+    readonly adapter: string,
+    readonly credential: string | undefined,
+    readonly args: ReadonlyArray<readonly [string, unknown]>,
+  ) {}
+}
+
+/** ` — these are two different systems: …`, naming what differs, when a
+ *  record of one system is handed where another's is expected; empty when the
+ *  two are one system or are not both constructed instances. */
+function systemDifference(arg: PositionTypeRef, param: PositionTypeRef): string {
+  if (!('instance' in arg) || !('instance' in param)) return '';
+  const a = arg.instance.token;
+  const b = param.instance.token;
+  if (a === b) return '';
+  if (a instanceof SystemAddress && b instanceof SystemAddress) {
+    if (a.adapter !== b.adapter) {
+      return ` — these are two different systems: one is ${b.adapter}, the other ${a.adapter}`;
+    }
+    if (a.credential !== b.credential) {
+      return ` — these are two different systems: one is reached with the credential '${b.credential ?? '(none)'}', the other with '${a.credential ?? '(none)'}'`;
+    }
+    const names = [...new Set([...a.args, ...b.args].map(([name]) => name))];
+    const valueOf = (address: SystemAddress, name: string): string => {
+      const entry = address.args.find(([n]) => n === name);
+      return entry === undefined ? '(not given)' : JSON.stringify(entry[1]);
+    };
+    const differing = names.find((name) => valueOf(a, name) !== valueOf(b, name));
+    return differing !== undefined
+      ? ` — these are two different systems: one is constructed with '${differing}: ${valueOf(b, differing)}', the other with '${differing}: ${valueOf(a, differing)}'`
+      : ' — these are two different systems';
+  }
+  const unaddressed = [b, a].find((t): t is ScopeSymbol => !(t instanceof SystemAddress) && isInstanceSymbol(t));
+  if (unaddressed !== undefined) {
+    return ` — these are two different systems as far as the checker can tell: '${unaddressed.name}' is constructed with an argument that is not a literal, so its address is not known until it runs — write its construction arguments as literals to make it the same system`;
+  }
+  return isInstanceSymbol(a) || isInstanceSymbol(b) || a instanceof SystemAddress || b instanceof SystemAddress
+    ? ' — these are two different systems'
+    : '';
+}
+
+function isInstanceSymbol(token: object): token is ScopeSymbol {
+  return 'kind' in token && token.kind === 'instance';
+}
+
+/** The value of a slot that is a bare LITERAL (`"X"`, `'X'`, `true`, `3`),
+ *  undefined for anything else — so two spellings of one value are one value. */
+function staticLiteralOf(slot: ExprSlot): { value: unknown } | undefined {
+  let parsed: Expression;
+  try {
+    parsed = expressionOfSlot(slot);
+  } catch (e) {
+    if (e instanceof BridgeError) return undefined;
+    throw e;
+  }
+  return parsed.type === 'static' ? { value: parsed.value } : undefined;
 }
 
 /** The position a bound name denotes: its own type, a record value's record,
@@ -3451,6 +3573,11 @@ interface CheckerOptions {
   languageVersion: LanguageVersion;
   /** See `CheckOptions.upgradingFrom`. */
   upgradingFrom?: LanguageVersion;
+  /** One opaque token per system ADDRESS (`instanceRefOf`), interned for this
+   *  one check — the root file and every library it imports share it, so two
+   *  files constructing one system get one token, and nothing outlives the
+   *  check. */
+  addressTokens: Map<string, object>;
   linkContext?: LinkContext;
   /** The file being checked, when it is an imported library (its imports
    *  resolve through `file.imports` rather than `link.imports`). */
@@ -3518,6 +3645,34 @@ class Checker {
 
   private get languageVersion(): LanguageVersion {
     return this.options.languageVersion;
+  }
+
+  /** A constructed system's identity token: its address — adapter, credential
+   *  and the VALUES of its literal arguments — interned for this check, so
+   *  every construction of the same system shares it. Undefined when an
+   *  argument is not a literal (`base: b`): its value is not known here, so the
+   *  construction is its own system (`instanceRefOf` falls back to the
+   *  symbol). */
+  private addressTokenOf(
+    adapter: string,
+    credential: string | undefined,
+    args: ReadonlyArray<{ name: string; value: ExprSlot }>,
+  ): object | undefined {
+    const literals: Array<[string, unknown]> = [];
+    for (const arg of args) {
+      const literal = staticLiteralOf(arg.value);
+      if (literal === undefined) return undefined;
+      literals.push([arg.name, literal.value]);
+    }
+    literals.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const key = JSON.stringify([adapter, credential ?? null, literals]);
+    const tokens = this.options.addressTokens;
+    let token = tokens.get(key);
+    if (token === undefined) {
+      token = new SystemAddress(adapter, credential, literals);
+      tokens.set(key, token);
+    }
+    return token;
   }
 
   /** This check is for a move up across the change version `n` made — see
@@ -4923,6 +5078,7 @@ class Checker {
     const checker = new Checker(this.catalog, {
       languageVersion: this.languageVersion,
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
+      addressTokens: this.options.addressTokens,
       linkContext: context,
       currentFile: file,
       library: true,
@@ -5158,11 +5314,17 @@ class Checker {
         });
         // The non-credential args, raw — the instance's entry position rides
         // here, and a listen's required address hops read it (`checkListen`).
+        const credentialArg = credentialArgOf(this.catalog.adapter(adapter ?? value.construct.callee) ?? { constructionArgs: [] });
         const constructionArgs: Record<string, string> = {};
         for (const arg of value.construct.args) {
-          if (arg.name === 'credentials') continue;
+          if (arg.name === (credentialArg?.name ?? 'credentials')) continue;
           constructionArgs[arg.name] = arg.value.raw;
         }
+        const credentialUnresolved =
+          credential === undefined && value.construct.args.some((a) => a.name === credentialArg?.name);
+        const addressToken = adapter !== undefined && !credentialUnresolved
+          ? this.addressTokenOf(adapter, credential, value.construct.args.filter((a) => a.name !== credentialArg?.name))
+          : undefined;
         symbol = {
           ...symbol,
           kind: 'instance',
@@ -5170,6 +5332,7 @@ class Checker {
           ...(credential !== undefined ? { credential } : {}),
           ...(schema ? { schema } : {}),
           ...(Object.keys(constructionArgs).length > 0 ? { constructionArgs } : {}),
+          ...(addressToken !== undefined ? { addressToken } : {}),
         };
         break;
       }
@@ -10251,18 +10414,20 @@ class Checker {
     const fit: ArgFit = { callee, param, index, positional: arg.name === undefined };
     switch (arg.kind) {
       case 'expr': {
-        const { valueType, parsed, held } = this.checkExprSlot(arg.expr, scope);
+        const pluginDeclared = plugin !== undefined && arg.name !== undefined ? plugin.declared[arg.name] : undefined;
+        const { valueType, parsed, held, mayHold } = this.checkExprSlot(arg.expr, scope, pluginArgSlotOptions(pluginDeclared));
         const argType = this.bareSlotPositionType(arg.expr, scope);
         // A plugin's named argument: a value against what the plugin takes
         // (a positional one is refused where the call is checked).
         if (plugin !== undefined && arg.name !== undefined) {
           this.checkPluginArgValue({
             callee,
-            declared: plugin.declared[arg.name],
+            declared: pluginDeclared,
             name: arg.name,
             record: argType ?? recordIn(valueType)?.position,
             valueType,
             ...(held !== undefined ? { held } : {}),
+            ...(mayHold !== undefined ? { mayHold } : {}),
             span: arg.expr.span,
           });
           return;
@@ -10861,6 +11026,7 @@ class Checker {
             break;
           }
           delete entry.reference;
+          this.refuseRecordInGraphEntry(entry, typed);
           const valueType = this.nodeValueEntryType(entry, typed, scope);
           delete edges[entry.name];
           reads[entry.name] = valueType;
@@ -11145,17 +11311,84 @@ class Checker {
     }
     const mayBeAbsent = valueType !== undefined && isMaybeAbsentType(valueType);
     const keys = map === 'json' ? undefined : mayBeAbsent && map.shape !== undefined ? absentKeys(map.shape) : map.shape;
-    if (keys === undefined) {
-      if (required === undefined) {
-        this.report(
-          DiagnosticCodes.GRAPH_SPREAD_UNTYPED,
-          `nothing says which keys '${entry.source}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> { ...${entry.source} }'), and it is checked against the shape when it is built`,
-          entry.span,
-        );
-      }
+    if (keys === undefined && required === undefined) {
+      // Already refused, and with no keys known any record's path would be
+      // a guess (`held[…]`): the shape this asks for brings the record's
+      // refusal with it, with its path.
+      this.report(
+        DiagnosticCodes.GRAPH_SPREAD_UNTYPED,
+        `nothing says which keys '${entry.source}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> { ...${entry.source} }'), and it is checked against the shape when it is built`,
+        entry.span,
+      );
       return undefined;
     }
+    this.refuseRecordInGraphSpread(entry, symbol, valueType);
+    if (keys === undefined) return undefined;
     return { ...this.checkSpreadKeys(keys, { required, entry, written, earlier }), mayBeAbsent };
+  }
+
+  /**
+   * A map spread into a graph copies values and maps — the keys become fields
+   * and child nodes. A record under any key, at any depth or in any arm, is
+   * neither: the engine refuses it when the graph is built ("a graph field
+   * cannot hold a record"), so it is refused here, with the path, as a record
+   * inside a write field's value is. A file is a value a graph field holds
+   * (a record's copy keeps its files), so the walk passes over files.
+   */
+  private refuseRecordInGraphSpread(entry: MapSpread, symbol: ScopeSymbol, valueType: FieldType | undefined): void {
+    const walk = heldWalk(GRAPH_SPREAD_TAKES);
+    const held = handleWithin(valueType, walk) ?? handleWithin(symbol.mayHold, walk);
+    if (held === undefined) return;
+    const written = spreadSourceText(entry);
+    const place = placeInInput(written, held, describeFieldType(held.handle));
+    // The entry the record would be written as: the key it sits under — in a
+    // list (`list[0]`), the list's key, holding the records as a list.
+    let lastKey = held.steps.length - 1;
+    while (lastKey >= 0 && held.steps[lastKey]?.kind !== 'key') lastKey -= 1;
+    const keyStep = held.steps[lastKey];
+    const entryName = keyStep?.kind === 'key' ? keyStep.key : 'name';
+    const inList = lastKey < held.steps.length - 1;
+    const asEntry = (value: string): string => `'${entryName}: ${inList ? `[${value}, …]` : value}'`;
+    this.report(
+      DiagnosticCodes.GRAPH_SPREAD_RECORD,
+      `'...${written}' copies a map's values and maps into the graph, and ${place} — a record, not a value. Write a field off it (${keyStep !== undefined ? asEntry('r.`Name`') : "'r.`Name`'"}), or write the record into the graph as an entry of its own (${asEntry('r')})`,
+      entry.span,
+    );
+  }
+
+  /**
+   * A graph entry that is not a reference but may hold a record — in an
+   * operator's arm (`a: COALESCE(r, "x")`, `a: IF … THEN r ELSE "x" END`) or
+   * inside a value — is a field holding the record, which the graph cannot
+   * hold. Refused on every version, on the terms a spread's record is
+   * (`refuseRecordInGraphSpread`), with the path. A file passes: a graph field
+   * holds one.
+   */
+  private refuseRecordInGraphEntry(
+    entry: Extract<NodeEntry, { kind: 'value' }>,
+    { valueType, mayHold }: { valueType?: FieldType; mayHold?: FieldType },
+  ): void {
+    const walk = heldWalk(GRAPH_SPREAD_TAKES);
+    const held = handleWithin(valueType, walk) ?? handleWithin(mayHold, walk);
+    if (held === undefined) return;
+    const written = entry.value.raw.trim();
+    const position = heldRecordPosition(held);
+    const place = placeInInput(written, held, describeFieldType(held.handle));
+    if (position?.kind === 'meta') {
+      // A connection (`a: crm`) stands for a whole system: no field holds one,
+      // and the engine fails reading it as a bare value. Refused on every version.
+      this.report(
+        DiagnosticCodes.GRAPH_ENTRY_RECORD,
+        `'${entry.name}' is a field, and ${placeInInput(written, held, describePosition(position))} — a connection, not a value a field holds. Write a record read through it, or the fields you want ('${entry.name}: r.\`Name\`')`,
+        entry.span,
+      );
+      return;
+    }
+    this.report(
+      DiagnosticCodes.GRAPH_ENTRY_RECORD,
+      `'${entry.name}' is a field, and ${place} — a record, not a value a field holds. Write a field off the record ('${entry.name}: r.\`Name\`'), or make the entry the record alone ('${entry.name}: r'), which holds it as a reference`,
+      entry.span,
+    );
   }
 
   /**
@@ -11468,7 +11701,7 @@ class Checker {
     if (positionsMatch(argType, paramType) === false) {
       this.report(
         DiagnosticCodes.CALL_ARG_TYPE,
-        `'${callee}' expects ${describePosition(paramType)}${place}, but this argument is ${describePosition(argType)}`,
+        `'${callee}' expects ${describePosition(paramType)}${place}, but this argument is ${describePosition(argType)}${systemDifference(argType, paramType)}`,
         span,
       );
     }
@@ -11613,7 +11846,7 @@ class Checker {
     // Every other test has to name THIS union's graph before it rules anything
     // out — two instances can spell the same position name, and identity is the
     // token, never the spelling.
-    if (union.instance.token !== graph.symbol) return;
+    if (union.instance.token !== instanceRefOf(graph.symbol)?.token) return;
     const variant = ruledOutVariant(condition.type, union);
     if (variant === undefined) return;
     eliminated.add(variant);
@@ -13332,14 +13565,16 @@ class Checker {
       this.reportPluginBadArg(plugin.plugin, spec, arg.name, arg.value.span);
       // Held to what the plugin takes exactly as a plain call's argument is:
       // a stage is the same call, and the engine hands it the same value.
-      const { valueType, held } = this.checkExprSlot(arg.value, scope, { fields });
+      const declared = spec?.argTypes?.[arg.name];
+      const { valueType, held, mayHold } = this.checkExprSlot(arg.value, scope, { fields, ...pluginArgSlotOptions(declared) });
       this.checkPluginArgValue({
         callee: plugin.plugin,
-        declared: spec?.argTypes?.[arg.name],
+        declared,
         name: arg.name,
         record: this.bareSlotPositionType(arg.value, scope) ?? recordIn(valueType)?.position,
         valueType,
         ...(held !== undefined ? { held } : {}),
+        ...(mayHold !== undefined ? { mayHold } : {}),
         span: arg.value.span,
       });
     }
@@ -13538,11 +13773,14 @@ class Checker {
     name: string;
     record: PositionTypeRef | undefined;
     valueType: FieldType | undefined;
-    /** The record or file the argument's value holds, found by the walk that typed it. */
+    /** The record or file the argument's value holds, found by the walk that typed it
+     *  (for a declared value type, the first one that type does not take). */
     held?: HeldHandle;
+    /** What the value may turn out to be, arm by arm. */
+    mayHold?: FieldType;
     span: Span;
   }): void {
-    const { callee, declared, name, record, valueType, held, span } = at;
+    const { callee, declared, name, record, valueType, held, mayHold, span } = at;
     // Where a plugin takes a record at all (structured data, or no declared
     // type), it takes it as the WHOLE argument and is handed its fields — the
     // spread `{ ...r }` would copy. A record anywhere inside that value (a
@@ -13577,12 +13815,21 @@ class Checker {
       );
       return;
     }
-    if (record === undefined && (valueType === undefined || !holdsRecords(stripAbsent(valueType)))) return;
-    this.report(
-      DiagnosticCodes.CALL_ARG_TYPE,
-      `'${callee}' takes ${describeFieldType(declared)} for '${name}', and this is a record — pass one of its fields ('${name}: r.website')`,
-      span,
-    );
+    if (record !== undefined || (valueType !== undefined && holdsRecords(stripAbsent(valueType)))) {
+      this.report(
+        DiagnosticCodes.CALL_ARG_TYPE,
+        `'${callee}' takes ${describeFieldType(declared)} for '${name}', and this is a record — pass one of its fields ('${name}: r.website')`,
+        span,
+      );
+      return;
+    }
+    // A declared value type takes what it holds and nothing else of the
+    // engine's: a text argument no file and no record, at any depth or in any
+    // arm; a file argument a file as the whole value, never one inside a map
+    // or a list. Each reached the plugin as the engine's own description.
+    const misplaced = held ?? (stripAbsent(declared) === 'file' ? fileBelowWhole(mayHold ?? valueType) : undefined);
+    if (misplaced === undefined) return;
+    this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInTypedPluginArgMessage({ callee, name, declared, held: misplaced }), span);
   }
 
   /**
@@ -13851,7 +14098,7 @@ class Checker {
         ) {
           const union = subjectSymbol.posType;
           if (
-            union.instance.token === graphSymbol
+            union.instance.token === instanceRefOf(graphSymbol)?.token
             && union.variants.includes(condition.type.position)
           ) {
             narrowInto.declare({

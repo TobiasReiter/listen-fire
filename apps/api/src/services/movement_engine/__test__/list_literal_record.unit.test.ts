@@ -323,12 +323,13 @@ describe('a record through a list literal is the record', () => {
 });
 
 describe('a map holding a record under a key, spread into a graph', () => {
-  const RECORD_IN_FIELD =
-    /'owner' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record/;
-  const RECORD_IN_CHILD =
-    /'founder' holds a record, and a map spread into a graph copies values and maps — a graph field cannot hold a record/;
+  // Refused by the checker on every language version (MOV_GRAPH_SPREAD_RECORD,
+  // B3): the run failed at the spread on every run that reached it. The
+  // engine's own refusal (`spreadIntoGraph`) stays for what no check saw.
+  const RECORD_IN_FIELD = /MOV_GRAPH_SPREAD_RECORD .*'held\.owner' is .* — a record, not a value/;
+  const RECORD_IN_CHILD = /MOV_GRAPH_SPREAD_RECORD .*'held\.founder\[…\]' is .* — a record, not a value/;
 
-  it('with no shape: an engine error naming the key, never the record stored as a field', async () => {
+  it('with no shape: refused where it is written, naming the key, never the record stored as a field', async () => {
     await expect(
       run([
         ...SEED,
@@ -340,7 +341,7 @@ describe('a map holding a record under a key, spread into a graph', () => {
     ).rejects.toThrow(RECORD_IN_FIELD);
   });
 
-  it('with a shape declaring the key a child, holding records by key: the same engine error', async () => {
+  it('with a shape declaring the key a child, holding records by key: the same refusal', async () => {
     await expect(
       run([
         ...SEED,
