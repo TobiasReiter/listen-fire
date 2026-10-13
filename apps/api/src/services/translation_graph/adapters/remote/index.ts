@@ -31,7 +31,7 @@
 
 import { Readable } from 'node:stream';
 
-import { METHODS, WireManifestProtocolVersion } from 'engine-contracts';
+import { isPlainObject, METHODS, WireManifestProtocolVersion } from 'engine-contracts';
 
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type {
@@ -630,12 +630,12 @@ function wirePosition(position: SourcePosition): Record<string, unknown> {
     ...position,
     ...(data !== position.identity.data ? { identity: { ...position.identity, data } } : {}),
     ...(Array.isArray(resources) ? { resources: resources.map(wireResourceShaped) } : {}),
-    ...(isPlainRecord(evidence)
+    ...(isPlainObject(evidence)
       ? {
           evidence: Object.fromEntries(
             Object.entries(evidence).map(([field, entry]) => [
               field,
-              isPlainRecord(entry) && isPlainRecord(entry.sourceResourceRef)
+              isPlainObject(entry) && isPlainObject(entry.sourceResourceRef)
                 ? { ...entry, sourceResourceRef: wireResourceRecord(entry.sourceResourceRef) }
                 : entry,
             ]),
@@ -649,7 +649,7 @@ function wirePosition(position: SourcePosition): Record<string, unknown> {
  *  data, a parent's payload) with its `fileRef` slot — and its `data.file`,
  *  the same file — in the wire's spelling; anything else as it stands. */
 function wireResourceShaped(value: unknown): unknown {
-  return isPlainRecord(value) ? wireResourceRecord(value) : value;
+  return isPlainObject(value) ? wireResourceRecord(value) : value;
 }
 
 function wireResourceRecord(value: Record<string, unknown>): Record<string, unknown> {
@@ -657,15 +657,10 @@ function wireResourceRecord(value: Record<string, unknown>): Record<string, unkn
   const ref = isFileValue(slot) ? { ...slot } : fileDescriptorOf(slot);
   if (ref === undefined) return value;
   const file = wireFile(ref);
-  const data = isPlainRecord(value.data) && Object.hasOwn(value.data, 'file') ? { ...value.data, file } : value.data;
+  const data = isPlainObject(value.data) && Object.hasOwn(value.data, 'file') ? { ...value.data, file } : value.data;
   return { ...value, fileRef: file, ...(value.data !== undefined ? { data } : {}) };
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
 
 /** A descriptor in the wire's spelling: its metadata, its url, its owner type
  *  and handle — no credential. */

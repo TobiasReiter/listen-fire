@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import type { ExtractCallFinds } from 'movement-lang';
 import { z } from 'zod';
 
+import { isPlainRecord } from '../../lib/utils/object';
 import { neverAsAny } from '../../lib/utils/types';
 import type { LlmCallResult } from '../translation_graph/engine/batched_extraction/llm_call';
 import type { FileRef } from '../translation_graph/adapter';
@@ -310,10 +311,6 @@ function emptyRecordRule(finds: ExtractCallFinds): string {
 }
 
 // ── The answer ──────────────────────────────────────────────────────────────
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /** A field's evidence, as the model may actually write it: the citation
  *  object asked for, a bare quote, or nothing. The VALUE half stays strict —

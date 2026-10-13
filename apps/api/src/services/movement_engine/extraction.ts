@@ -65,6 +65,7 @@ import type {
   PluginSpec,
   ShapeNode,
 } from 'movement-lang';
+import { isPlainRecord } from '../../lib/utils/object';
 import { neverAsAny } from '../../lib/utils/types';
 import { mapConcurrent, settledAll } from './fans';
 import {
@@ -2188,10 +2189,6 @@ function declaredKeys(site: CallSite): Set<string> {
     ...site.spec.stages[site.stageIndex].fields.map((f) => f.name),
     ...site.children.map((c) => c.spec.name),
   ]);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** The per-field response wrapping, applied where it does not belong: an

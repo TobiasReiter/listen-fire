@@ -79,10 +79,13 @@ export function hostCallFailure(error: AdapterCallError): Error {
  * included) kept, so the identity of a host's object is unchanged. Only
  * arrays and plain objects are walked; anything else is left as it is.
  */
-export function isoDates<T>(value: T): T {
-  // Why the assertion: the walk changes only `Date`s, which no declared
-  // answer type of an adapter or the event holds.
-  return isoDatesIn(value, new Map()) as T;
+export function isoDates<T>(value: T): T;
+// The walk changes only `Date`s, which no declared answer type of an adapter
+// or the event holds (a host's `Date` can sit only where the type says
+// `unknown`): a value keeps its type, which the typed signature above states
+// once, for every caller, in place of an assertion.
+export function isoDates(value: unknown): unknown {
+  return isoDatesIn(value, new Map());
 }
 
 function isoDatesIn(value: unknown, seen: Map<object, unknown>): unknown {

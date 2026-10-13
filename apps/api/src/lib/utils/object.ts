@@ -4,3 +4,10 @@ type AtLeastOne<T> = {
 }[keyof T];
 
 export { AtLeastOne };
+
+/** A value read as a string-keyed record: any object that is not `null` or an
+ *  array (its prototype is not looked at; engine-contracts' `isPlainObject`
+ *  also asks for a plain one). */
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

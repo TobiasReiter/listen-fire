@@ -230,7 +230,9 @@ export function filesAtType(type: SchemaFieldType | undefined, value: unknown): 
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/** A plain object: not `null`, not an array, its prototype `Object.prototype`
+ *  or none (a JSON object, never a class instance). */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;

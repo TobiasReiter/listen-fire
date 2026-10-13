@@ -38,6 +38,7 @@ import { z } from 'zod';
 import { compareValues } from '#shared/expression/filter';
 import type { FilterOperator } from '#shared/expression/types';
 import { getErrorMessage } from '../../lib/utils/error';
+import { isPlainRecord } from '../../lib/utils/object';
 import { logger } from '../logger';
 import type { TriggerEvent } from '../translation_graph/triggers/types';
 import type { UniquenessConstraints } from '../translation_graph/uniqueness';
@@ -703,10 +704,6 @@ function relatedResourcesWithFiles(related: unknown): unknown {
     const identity = { ...item.position.identity, data: withResourceFile(data) };
     return { ...item, position: { ...item.position, identity } };
   });
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A resource whose `fileRef` slot is filled: the slot is the file's

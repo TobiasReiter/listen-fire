@@ -3,7 +3,7 @@
 // (crates/movement-engine/src/env.rs says the format), the plain-JSON check,
 // and the shim's own faults.
 
-import { fileHandle, fileValueOf, isCallbackParamType, isFileValue, type CallbackParamSpec, type FileValue } from 'engine-contracts';
+import { fileHandle, fileValueOf, isCallbackParamType, isFileValue, isPlainObject, type CallbackParamSpec, type FileValue } from 'engine-contracts';
 import type { SchemaFieldType } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
 import { binding, type Binding } from './expression';
@@ -510,10 +510,4 @@ function resourceFiles(resource: unknown): unknown {
   if (file === undefined) return resource;
   const data = isPlainObject(resource.data) && Object.hasOwn(resource.data, 'file') ? { ...resource.data, file } : resource.data;
   return { ...resource, fileRef: file, ...(resource.data !== undefined ? { data } : {}) };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }
