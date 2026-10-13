@@ -31,8 +31,11 @@ function getRedisPool(): Pool<Redis> {
           // connected, ioredis reconnects with backoff as usual, so a Redis restart is survived.
           retryStrategy: (times) => (ready ? Math.min(times * 200, 2000) : null),
         });
-        // An unhandled 'error' event would be thrown; failures surface through ping()/commands.
-        client.on('error', () => {});
+        // An unhandled 'error' event would be thrown. Before the first connection, ping() surfaces
+        // the failure; after it, a dropped connection is worth a line in the logs.
+        client.on('error', (err) => {
+          if (ready) console.error('redis client error', err);
+        });
         try {
           await client.ping();
         } catch (err) {
