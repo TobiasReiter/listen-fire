@@ -539,7 +539,7 @@ Pick one. Both carry mail in both directions, and configuring both is not a way 
 
 Either way you also set `INBOUND_EMAIL_ADDRESS` — the address automations receive on, local part and domain, e.g. `inbox@yourdomain.com`. There is no default: a default would have your automations tell their authors to forward mail to somebody else's inbox. An automation that listens for email while it is unset is reported as unverified rather than quietly never firing.
 
-**Mailgun.** A domain and an inbound route on it. Hours, gated on DNS propagation. `MAILGUN_API_KEY`, `MAILGUN_SENDING_DOMAIN`, `OUTBOUND_EMAIL_FROM`, and optionally `OUTBOUND_EMAIL_FROM_NAME`, `OUTBOUND_EMAIL_BCC` and `MAILGUN_API_BASE_URL` (the region endpoint defaults to Mailgun's EU host; a US-region account must set `https://api.mailgun.net`). Create a route that forwards to `<API_BASE_URL>/api/mailgun/callback`. The signature on that delivery is checked against the API key, so inbound mail needs the key even if you never send a message.
+**Mailgun.** A domain and an inbound route on it. Hours, gated on DNS propagation. `MAILGUN_API_KEY`, `MAILGUN_SENDING_DOMAIN`, `OUTBOUND_EMAIL_FROM`, and optionally `OUTBOUND_EMAIL_FROM_NAME`, `OUTBOUND_EMAIL_BCC` and `MAILGUN_API_BASE_URL` (the region endpoint defaults to Mailgun's EU host; a US-region account must set `https://api.mailgun.net`). Create a route that forwards to `<API_BASE_URL>/api/mailgun/callback`. The signature on that delivery is checked against the API key, so inbound mail needs the key even if you never send a message. The inbound route must be on `MAILGUN_SENDING_DOMAIN`: attachments are fetched, with the key, only from that domain's stored messages.
 
 **Resend.** A verified domain with an MX record pointing at Resend, and a webhook. `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `OUTBOUND_EMAIL_FROM`, and optionally `OUTBOUND_EMAIL_FROM_NAME` and `OUTBOUND_EMAIL_BCC`. Subscribe a webhook to `email.received` and point it at `<API_BASE_URL>/api/resend/callback`; the `whsec_…` secret Resend shows you is `RESEND_WEBHOOK_SECRET`. Resend's webhook carries only ids, so the API fetches the body and the attachments with the key — inbound needs it as much as sending does.
 
@@ -681,7 +681,7 @@ Everything here is set by you, in `deploy/.env`. Nothing in this table is genera
 | `MESSAGE_QUEUE_REDIS_HOSTNAME` / `_PORT` | only with your own Redis | the bundled Redis, `redis:6379` on compose. Off compose, unset means no Redis at all: nothing connects, loop-guard counts stay per process, icons are not cached, MCP OAuth state stays in the process. Setting the hostname also takes the bundled service out of the composition. Host and port only: no URL, no AUTH, no TLS |
 | `OUTBOUND_EMAIL_FROM` plus one provider's credentials | yes with `core` in production | no mail is sent, so nobody can log in |
 | `RESEND_API_KEY` / `RESEND_WEBHOOK_SECRET` | with Resend | Mailgun is used instead, if it is configured |
-| `MAILGUN_API_KEY` / `MAILGUN_SENDING_DOMAIN` | with Mailgun | as above, in reverse |
+| `MAILGUN_API_KEY` / `MAILGUN_SENDING_DOMAIN` | with Mailgun (the domain also gates inbound attachments: only its stored messages are fetched) | as above, in reverse |
 | `MAILGUN_API_BASE_URL` | US-region Mailgun accounts | Mailgun's EU host |
 | `INBOUND_EMAIL_ADDRESS` | to receive mail at all | none — an automation listening for email is reported unverified |
 | `OUTBOUND_EMAIL_FROM_NAME` / `OUTBOUND_EMAIL_BCC` | no | no display name; no archive copy |

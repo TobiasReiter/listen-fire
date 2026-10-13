@@ -1084,6 +1084,32 @@ describe('extract field duplicates', () => {
     expectClean(inMovement('  proto = 1\n  xs = MAP([1, 2], (p) => {\n    return p\n  })'));
   });
 
+  // Every place an author can spell a name declares it through one door, so
+  // each raises the diagnostic once, at the declaration. Not separate sites:
+  // the movement parameter re-walk (declares what the real walk reported), a
+  // closure's self name (the binding's own name), the names the engine spells
+  // for hoisted calls, and a write's member-path root (`a.b`, never bare).
+  it.each([1, 3, 4] as const)('MOV_NAME_PROTO exactly once at each author-written declaration (version %d)', (languageVersion) => {
+    const protoCount = (src: string) =>
+      checkProgram(parseProgram(src, { languageVersion }), catalog, { languageVersion }).filter(d => d.code === C.NAME_PROTO).length;
+    const sites: Record<string, string> = {
+      'movement parameter (graph)': `${PRELUDE}\nmovement m(__proto__: <inbox-[:message]->>) {\n  x = 1\n}`,
+      'movement parameter (value)': `${PRELUDE}\nmovement m(__proto__: <text>) {\n  x = __proto__\n}`,
+      'movement name': `${PRELUDE}\nmovement __proto__(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
+      'type name': `${PRELUDE}\ntype __proto__ = <"a" | "b">`,
+      'node name': `${PRELUDE}\nnode __proto__: "each x" { name: <text> "n" }`,
+      'import alias': 'import { email as __proto__ } from adapters',
+      'binding in an arm': inMovement('  if true {\n    __proto__ = 1\n  }'),
+      'write binding': inMovement('  __proto__ = write crm-[:company]-> { name: msg.`subject` }'),
+      'closure bound to the name (its self name too)': inMovement('  __proto__ = (n) => {\n    return n\n  }'),
+      'closure parameter': inMovement('  f = (a, __proto__) => {\n    return a\n  }'),
+      'traversal alias': inMovement('  msg-[__proto__:mentions]-> {\n    x = 1\n  }'),
+    };
+    for (const [site, src] of Object.entries(sites)) {
+      expect([site, protoCount(src)]).toEqual([site, 1]);
+    }
+  });
+
   it('a later stage may redeclare an earlier stage\'s field (transformation wins)', () => {
     expectClean(
       inMovement(

@@ -60,6 +60,9 @@ function isConfiguredMailgunStorageUrl(
       isMailgunHost(url.hostname) &&
       url.username === '' &&
       url.password === '' &&
+      // WHATWG URL leaves `%2f` / `%5c` alone, so `..%2fother` would pass the
+      // prefix check yet may be read as a path step upstream.
+      !/%(2f|5c)/i.test(url.pathname) &&
       url.pathname.toLowerCase().startsWith(`/v3/domains/${encodeURIComponent(domain)}/`)
     );
   } catch {

@@ -93,6 +93,49 @@ describe('email attachment byte auth (resolveFileRef)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('never sends the key for userinfo, a suffix-lookalike host or an encoded path step, and accepts a mixed-case host and domain', async () => {
+    // A fresh Response per call: a body is read once.
+    fetchSpy.mockImplementation(
+      async () =>
+        new Response('bytes', {
+          status: 200,
+          headers: { 'content-type': 'application/pdf', 'content-length': '5' },
+        }),
+    );
+    const adapter = new EmailAdapter(TEAM_ID);
+    const tail = 'messages/abc/attachments/0';
+    // These are not Mailgun hosts: plain URLs, fetched without the key.
+    for (const handle of [
+      `https://mailgun.net@evil.com/v3/domains/example.com/${tail}`,
+      `https://x.mailgun.net.evil.com/v3/domains/example.com/${tail}`,
+    ]) {
+      fetchSpy.mockClear();
+      await adapter.resolveFileRef(refFor(handle)).catch(() => undefined);
+      for (const [, init] of fetchSpy.mock.calls) expect(authHeaderFrom(init)).toBeUndefined();
+    }
+    // These are Mailgun's but not under the configured domain: refused unfetched.
+    for (const handle of [
+      `https://user:pw@storage.mailgun.net/v3/domains/example.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%2fother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%2Fother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/..%5cother-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/%2e%2e/other-team.com/${tail}`,
+      `https://storage.mailgun.net/v3/domains/example.com/../other-team.com/${tail}`,
+    ]) {
+      fetchSpy.mockClear();
+      await expect(adapter.resolveFileRef(refFor(handle))).rejects.toThrow(
+        /configured Mailgun domain/,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+    process.env.MAILGUN_SENDING_DOMAIN = 'Example.COM';
+    fetchSpy.mockClear();
+    await adapter.resolveFileRef(
+      refFor(`https://Storage.MAILGUN.net/v3/domains/example.com/${tail}`),
+    );
+    expect(authHeaderFrom(fetchSpy.mock.calls[0][1])).toMatch(/^Basic /);
+  });
+
   it('sends no auth for a non-Mailgun handle (custom-email blob URL)', async () => {
     const adapter = new EmailAdapter(TEAM_ID);
     const handle = 'https://blob.example.com/inbound/xyz/attachment-0';

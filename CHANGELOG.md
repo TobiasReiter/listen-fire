@@ -22,7 +22,7 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 - Moving an automation up to language version 4 now warns (`MOV_HANDLE_READ_FOUND`, a move-up
   warning) on a read of a write handle's `url`. Under version 4 it reads the found record's url,
   where versions 1 to 3 read the link the write returned (null when the update returned none).
-  Only `externalId` is still exempt as the handle's own field.
+  The handle's own result-shape fields other than `url` (today only `externalId`) are exempt.
 - A field or child node named `__proto__` in a node declaration or an extraction is refused
   (`MOV_SHAPE_FIELD_PROTO`), and so is a binding, parameter or alias named `__proto__`
   (`MOV_NAME_PROTO`), on every language version. Both used to validate but misbehaved at run time,
@@ -30,10 +30,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
   field, a closure's parameter read as `{}`, and a parked binding was dropped so its resume
   failed. A bug fix, not a language version: an automation using one now fails its check; rename
   it.
-- Under language version 4 a run's result (and the run records and views built from it) no longer
-  carries a write record's `old` member, the engine's own handle for the record as found (its
-  instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it during the
-  run.
+- A run's result (and the run records and views built from it) never carries a write record's
+  `old` member (it only exists under language version 4), the engine's own handle for the record as
+  found (its instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it
+  during the run.
 - Redis is optional. The API connects to Redis only when `MESSAGE_QUEUE_REDIS_HOSTNAME` is set
   (the port still defaults to 6379); unset, nothing ever tries to connect, in every environment.
   Without it the runaway-loop guard counts in each API process's memory (exact for one instance;
