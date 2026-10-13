@@ -9058,6 +9058,9 @@ class Checker {
       // edge X', so unknown stays silent; the undescribed handle is reported
       // where it is READ, not here.
       if (surfaceNotEnumerated(parentSchema)) return {};
+      // A `#` hop's one refusal under 5 is its retirement, said where the
+      // target is walked (`checkWalkKeepsWhatIsWritten`).
+      if (edgeName.startsWith('#') && since(this.languageVersion, 5)) return {};
       const available = Object.keys(parentSchema.edges);
       this.report(
         DiagnosticCodes.LINKED_UNKNOWN_EDGE,

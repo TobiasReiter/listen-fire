@@ -70,7 +70,9 @@ describe('a `#` hop under Dancing Wren (5)', () => {
 
   it.each(WALKS)('is MOV_META_HOP_RETIRED in %s', (_where, body) => {
     const found = check(source(body), 5);
-    expect(found.map((d) => d.code)).toContain(C.META_HOP_RETIRED);
+    // The retirement is the only refusal: under 4 a described system's walk was
+    // also the unknown edge, and one span carried both.
+    expect(found.map((d) => d.code)).toEqual([C.META_HOP_RETIRED]);
     const said = found.find((d) => d.code === C.META_HOP_RETIRED)!.message;
     expect(said).toContain("'#' hops are retired");
     expect(said).toContain('only the edges a system declares');
