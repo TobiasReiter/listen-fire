@@ -443,7 +443,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'node_spread_record',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a map holding a record spread into a graph fails the run as the TypeScript's spreadIntoGraph fails it (MOVENG_RUNTIME \"'k' holds a record…\", holdsRecord, before the key is filed). Since main's graph-spread rule (MOV_GRAPH_SPREAD_RECORD) the checker refuses a record it sees in the spread map at any depth, so those programs end at the check on both engines; since main's B14 (a call's value holds what its returns may hold: a closure's from version 3) so do the ones handed back by a closure (`k: f()`, `f = () => COALESCE(co, \"x\")`). Only the clean map reaches the engine now
+    note: "closed in PLAN-08A Task 2: a map holding a record spread into a graph fails the run as the TypeScript's spreadIntoGraph fails it (MOVENG_RUNTIME \"'k' holds a record…\", holdsRecord, before the key is filed). Since main's graph-spread rule (MOV_GRAPH_SPREAD_RECORD) the checker refuses a record it sees in the spread map at any depth, so those programs end at the check on both engines; since main's B14 (a call's value holds what its returns may hold: a closure's from version 3) so do the ones handed back by a closure (`k: f()`, `f = () => COALESCE(co, \"x\")`). Only the clean map reaches the engine now",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
       () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
