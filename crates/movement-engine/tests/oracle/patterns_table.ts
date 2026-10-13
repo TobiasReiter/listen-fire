@@ -401,10 +401,12 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'position_arg_record',
     routes: 'refused',
-    note: "a record that may hold a record in a field handed to a position parameter, which the callee reads field by field as data: every call site holds what it hands to a record known to hold none (chunk 7A Task 6b, fix round 1). Needs the binding object as the TypeScript hands it on, as write_field_record does",
+    note: "a record that may hold a record in a field handed to a position parameter, which the callee reads field by field as data: every call site holds what it hands to a record known to hold none (chunk 7A Task 6b, fix round 1). Needs the binding object as the TypeScript hands it on, as write_field_record does. Since main's graph-entry rule (MOV_GRAPH_ENTRY_RECORD, every version) a record through COALESCE written in the graph's entry ends at the check (the first two programs); one handed back by a closure called in the entry (`name: f()`) still checks and is refused",
     programs: [
-      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm' }),
-      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  named = (q: <Co>) => {\n    write crm-[:notes]-> { body: q.name }\n  }\n  named(q: r)\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm', checks: false, routes: 'unreached' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  named = (q: <Co>) => {\n    write crm-[:notes]-> { body: q.name }\n  }\n  named(q: r)\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: COALESCE(co, "x") }\n  hp(r: x)')}`, movementName: 'm', checks: false, routes: 'unreached' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  x = graph<Co> { name: f() }\n  hp(r: x)')}`, movementName: 'm' }),
+      () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  named = (q: <Co>) => {\n    write crm-[:notes]-> { body: q.name }\n  }\n  named(q: r)\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  f = () => COALESCE(co, "x")\n  x = graph<Co> { name: f() }\n  hp(r: x)')}`, movementName: 'm' }),
       () => ({ file: `node Co {\n  name: <text>\n}\nfunction hp(r: <Co>) {\n  write crm-[:notes]-> { body: r.name }\n}\n${m('  x = graph<Co> { name: "Acme" }\n  hp(r: x)')}`, movementName: 'm', routes: 'whole' }),
     ],
   },
@@ -441,16 +443,19 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'node_spread_record',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a map holding a record spread into a graph fails the run as the TypeScript's spreadIntoGraph fails it (MOVENG_RUNTIME \"'k' holds a record…\", holdsRecord, before the key is filed). Main's nested-record rule (forward merge 3) types write and match fields and plugin arguments, not a graph's spread, so these still check",
+    note: "closed in PLAN-08A Task 2: a map holding a record spread into a graph fails the run as the TypeScript's spreadIntoGraph fails it (MOVENG_RUNTIME \"'k' holds a record…\", holdsRecord, before the key is filed). Since main's graph-spread rule (MOV_GRAPH_SPREAD_RECORD) the checker refuses a record it sees in the spread map at any depth, so those programs end at the check on both engines; one handed back by a closure (`k: f()`, `f = () => COALESCE(co, \"x\")`) still checks and runs whole",
     programs: [
-      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }' }),
-      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }' }),
-      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { a: "x", deep: { list: [FIRST(rows)] } }\n  g = graph { ...held }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: co }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { first: FIRST(rows) }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  rows = crm-[c:companies ORDER BY `name`]->\n  held = { a: "x", deep: { list: [FIRST(rows)] } }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
       () => ({ body: '  held = { a: "x", deep: { b: 2 } }\n  g = graph { ...held }\n  write crm-[:notes]-> { body: g.a }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  f = () => COALESCE(co, "x")\n  held = { k: f() }\n  g = graph { ...held }' }),
       // A record nested in a null-prototype map: found at its key as the
       // TypeScript's holdsRecord finds it (isDictValue takes `null`).
-      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: { __proto__: null, inner: co } }\n  g = graph { ...held }' }),
-      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: [{ __proto__: null, inner: co }] }\n  g = graph { ...held }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: { __proto__: null, inner: co } }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  held = { k: [{ __proto__: null, inner: co }] }\n  g = graph { ...held }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  f = () => COALESCE(co, "x")\n  held = { k: { __proto__: null, inner: f() } }\n  g = graph { ...held }' }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "a" }\n  f = () => COALESCE(co, "x")\n  held = { k: [{ __proto__: null, inner: f() }] }\n  g = graph { ...held }' }),
     ],
   },
 
