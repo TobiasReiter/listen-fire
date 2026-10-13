@@ -274,6 +274,64 @@ describe('resolved imports', () => {
 
 // ── Failure modes ──
 
+describe('a record passed to another file\'s function (B12)', () => {
+  // The language is structural: a system is its ADDRESS — the adapter and
+  // what it was constructed with — never the name a file happens to bind it
+  // to. A library that constructs the same system types its parameter as the
+  // same records the caller holds.
+  const INBOX_LIB = (construction: string): string =>
+    [
+      'import { email } from adapters',
+      'import { dealflow_inbox } from credentials',
+      '',
+      `mail = ${construction}`,
+      '',
+      'export movement subject_of(m: <mail-[:message]->>) {',
+      '  return m.`subject`',
+      '}',
+    ].join('\n');
+  const CALLER = [
+    'import { email } from adapters',
+    'import { dealflow_inbox } from credentials',
+    'import { subject_of } from "lib/inbox"',
+    '',
+    'inbox = email(credentials: dealflow_inbox)',
+    '',
+    'movement intake(msg: <inbox-[:message]->>) {',
+    '  s = subject_of(m: msg)',
+    '}',
+  ].join('\n');
+  const under = (construction: string): ResolveFile => resolverOver({ 'lib/inbox': INBOX_LIB(construction) });
+
+  it('the same system, constructed in each file: the record fits', () => {
+    expectClean(CALLER, under('email(credentials: dealflow_inbox)'));
+  });
+
+  it('the same system under the same name in each file: the record fits', () => {
+    const sameName = (path: string) =>
+      path === 'lib/inbox' ? { source: INBOX_LIB('email(credentials: dealflow_inbox)').replace(/\bmail\b/g, 'inbox') } : undefined;
+    expectClean(CALLER, sameName);
+  });
+
+  it('another system (another adapter) is still refused, by its address', () => {
+    const lib = [
+      'import { attio } from adapters',
+      'import { acme_main } from credentials',
+      '',
+      'crm = attio(credentials: acme_main)',
+      '',
+      'export movement name_of(c: <crm-[:company]->>) {',
+      '  return c.`name`',
+      '}',
+    ].join('\n');
+    const caller = CALLER.replace('import { subject_of } from "lib/inbox"', 'import { name_of } from "lib/crm"').replace(
+      'subject_of(m: msg)',
+      'name_of(c: msg)',
+    );
+    expect(codes(caller, resolverOver({ 'lib/crm': lib }))).toEqual([C.CALL_ARG_TYPE]);
+  });
+});
+
 describe('failure modes', () => {
   it('unresolved path → MOV_IMPORT_FILE_UNRESOLVED (names opaque, no cascade)', () => {
     const diagnostics = check(CONSUMER, () => undefined);

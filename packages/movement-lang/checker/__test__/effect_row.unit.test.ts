@@ -6,7 +6,7 @@
 // that instance identity is the graph token rather than the binding's spelling.
 
 import { parseProgram } from '../../parser/parse';
-import { checkProgram, checkProgramWithLink } from '../check';
+import { checkProgram, checkProgramWithLink, instanceRefOf } from '../check';
 import { effectRowOf, isPureRow, type EffectRow } from '../effects';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { Scope } from '../scopes';
@@ -48,9 +48,10 @@ const chatSchema: InstanceSchema = {
 
 const catalog = mockCatalog({
   adapters: {
-    attio: { constructionArgs: [], schema: crmSchema },
+    attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: false }], schema: crmSchema },
     slack: { constructionArgs: [], schema: chatSchema },
   },
+  credentials: { second_crm: { adapter: 'attio' } },
 });
 
 const PRELUDE = `import { attio, slack } from adapters
@@ -160,8 +161,9 @@ describe('reads and writes carry the instance they touch', () => {
     expect(writes(source, 'recheck')).toEqual([]);
   });
 
-  it('two instances of the SAME adapter are two entries — identity is the graph, not the adapter', () => {
-    const source = `other = attio()
+  it('two systems of the SAME adapter are two entries — identity is the system, not the adapter', () => {
+    const source = `import { second_crm } from credentials
+other = attio(credentials: second_crm)
 movement both(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     write chat-[:messages]-> { Body: a.\`Name\` }
@@ -174,6 +176,20 @@ movement both(c: <crm-[:company]->>) {
     expect(reads(source, 'both')).toEqual(['crm', 'other']);
   });
 
+  it('two names for the SAME system are one entry — a system is its address, not its name (B12)', () => {
+    const source = `same = attio()
+movement both(c: <crm-[:company]->>) {
+  crm-[a:companies]-> {
+    write chat-[:messages]-> { Body: a.\`Name\` }
+  }
+  same-[b:companies]-> {
+    write chat-[:messages]-> { Body: b.\`Name\` }
+  }
+}`;
+    expect(errors(source)).toEqual([]);
+    expect(reads(source, 'both')).toEqual(['crm']);
+  });
+
   it('the entry IS the graph token the type checker compares by, not the spelling', () => {
     const source = `${PRELUDE}movement one(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
@@ -184,7 +200,7 @@ movement both(c: <crm-[:company]->>) {
     const instance = scope.symbols.get('crm');
     const row = effectRowOf(scope.symbols.get('one')!)!;
     expect(row.read).toHaveLength(1);
-    expect(row.read[0]!.token).toBe(instance);
+    expect(row.read[0]!.token).toBe(instanceRefOf(instance!)!.token);
   });
 });
 

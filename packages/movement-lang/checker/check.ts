@@ -2307,12 +2307,35 @@ function isGraphSymbol(symbol: ScopeSymbol): boolean {
   return symbol.kind === 'instance' || symbol.kind === 'shape';
 }
 
-/** Graph identity: the introducing symbol IS the token compared by
- *  reference — for imports, the LIBRARY's declaring symbol (`graphToken`). */
+/** Graph identity, compared by reference. A constructed INSTANCE is a system,
+ *  and a system is its address — the adapter and what it was constructed
+ *  with (the credential, the other arguments as written) — never the name a
+ *  file binds it to: two files (or two names) constructing the same system
+ *  hold the same records, so a record passes to another file's function. A
+ *  declared shape is its declaring symbol — for imports, the LIBRARY's
+ *  (`graphToken`). */
 export function instanceRefOf(symbol: ScopeSymbol): InstanceRef | undefined {
   return symbol.schema
-    ? { token: symbol.graphToken ?? symbol, name: symbol.name, schema: symbol.schema }
+    ? { token: symbol.graphToken ?? instanceAddressToken(symbol) ?? symbol, name: symbol.name, schema: symbol.schema }
     : undefined;
+}
+
+/** One opaque token per system address, so every symbol that constructs the
+ *  same system derives the same one. Only ever compared, never read back. */
+const INSTANCE_ADDRESS_TOKENS = new Map<string, object>();
+
+function instanceAddressToken(symbol: ScopeSymbol): object | undefined {
+  if (symbol.kind !== 'instance' || symbol.adapter === undefined) return undefined;
+  const args = Object.entries(symbol.constructionArgs ?? {})
+    .map(([name, raw]) => [name, raw.trim()] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const address = JSON.stringify([symbol.adapter, symbol.credential ?? null, args]);
+  let token = INSTANCE_ADDRESS_TOKENS.get(address);
+  if (token === undefined) {
+    token = { address };
+    INSTANCE_ADDRESS_TOKENS.set(address, token);
+  }
+  return token;
 }
 
 /** The position a bound name denotes: its own type, a record value's record,
@@ -11686,7 +11709,7 @@ class Checker {
     // Every other test has to name THIS union's graph before it rules anything
     // out — two instances can spell the same position name, and identity is the
     // token, never the spelling.
-    if (union.instance.token !== graph.symbol) return;
+    if (union.instance.token !== instanceRefOf(graph.symbol)?.token) return;
     const variant = ruledOutVariant(condition.type, union);
     if (variant === undefined) return;
     eliminated.add(variant);
@@ -13938,7 +13961,7 @@ class Checker {
         ) {
           const union = subjectSymbol.posType;
           if (
-            union.instance.token === graphSymbol
+            union.instance.token === instanceRefOf(graphSymbol)?.token
             && union.variants.includes(condition.type.position)
           ) {
             narrowInto.declare({
