@@ -225,6 +225,109 @@ describe("a closure bound at a library's top level (B13)", () => {
   });
 });
 
+// A file-level closure holds its file scope by REFERENCE, as a JavaScript
+// closure holds its module scope: it sees the file's later closures too, and a
+// park writes it by the name it is declared by — a declaration of the program,
+// found again in the re-parsed file, as a movement is — never its body or the
+// file scope it holds. Before this a park copied every earlier file closure
+// into each later one, so the state doubled with each declaration.
+describe('a file-level closure holds its file scope by reference', () => {
+  it('an earlier one calls a later one', async () => {
+    const h: Harness = {
+      library: '',
+      source: root(
+        'f = (n: <number>) => g(n) + 1\ng = (n: <number>) => n * 10',
+        '  x = f(1)\n  write graph-[:note]-> { payload: { x: x } }',
+      ),
+      parks: makeParkSink(),
+    };
+    const { result, kg } = await start(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: 11 });
+  });
+
+  it('and still does after a park inside the earlier one', async () => {
+    const h: Harness = {
+      library: '',
+      source: root(
+        'f = (n: <number>) => {\n  await sleep(1h)\n  return g(n) + 1\n}\ng = (n: <number>) => n * 10',
+        '  x = f(1)\n  write graph-[:note]-> { payload: { x: x } }',
+      ),
+      parks: makeParkSink(),
+    };
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    const { result, kg } = await resumeOnly(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: 11 });
+  });
+
+  const parkedSize = async (n: number): Promise<{ size: number; parked: string }> => {
+    const decls = Array.from({ length: n }, (_, i) => `h${i} = (v: <number>) => v + ${i}`).join('\n');
+    const h: Harness = {
+      library: '',
+      source: root(decls, '  await sleep(1h)\n  write graph-[:note]-> { payload: { x: 1 } }'),
+      parks: makeParkSink(),
+    };
+    await start(h);
+    const parked = JSON.stringify([...h.parks.parks.values()][0]!.state);
+    return { size: parked.length, parked };
+  };
+
+  it('a park writes each by name, so its size does not compound with how many a file declares', async () => {
+    const two = await parkedSize(2);
+    const fourteen = await parkedSize(14);
+    expect(fourteen.parked).toContain('"h13":{"kind":"fileClosure","name":"h13"}');
+    expect(fourteen.parked).not.toContain('"kind":"closure"');
+    // Linear in the names, a few dozen bytes each (it doubled per closure).
+    expect(fourteen.size - two.size).toBeLessThan(12 * 100);
+  });
+
+  it("a body closure's capture of a library's file closure names the library, and resumes", async () => {
+    const h: Harness = {
+      library: [
+        'double = (n: <number>) => n * 2',
+        'export function twice(n: <number>): <number> {',
+        '  k = (m: <number>) => double(m)',
+        '  await sleep(1h)',
+        '  return k(n) + 1',
+        '}',
+      ].join('\n'),
+      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      parks: makeParkSink(),
+    };
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    const parked = JSON.stringify([...h.parks.parks.values()][0]!.state);
+    expect(parked).toContain('"double":{"kind":"fileClosure","name":"double","file":"lib/leads"}');
+    const { result, kg } = await resumeOnly(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: 9 });
+  });
+
+  it('a park written before file-level closures were bound (none in its state) still resumes', async () => {
+    const h: Harness = {
+      library: '',
+      source: root(
+        'h0 = (v: <number>) => v + 100',
+        '  c = (v: <number>) => v + 1\n  await sleep(1h)\n  x = c(1)\n  write graph-[:note]-> { payload: { x: x } }',
+      ),
+      parks: makeParkSink(),
+    };
+    await start(h);
+    for (const p of h.parks.parks.values()) {
+      const old = JSON.stringify(p.state).replace(/,?"h0":\{"kind":"fileClosure","name":"h0"\},?/g, (m) =>
+        m.startsWith(',') && m.endsWith(',') ? ',' : '',
+      );
+      expect(old).not.toContain('fileClosure');
+      p.state = JSON.parse(old) as ParkedScopeState;
+    }
+    const { result, kg } = await resumeOnly(h);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ x: 2 });
+  });
+});
+
 describe("a library closure parked before `IS` against the library's own declaration (B11)", () => {
   const library = [
     'export node Lead {',

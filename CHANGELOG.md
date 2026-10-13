@@ -116,9 +116,12 @@ guide](docs/language/dancing-wren-migration.md).
   declaration or function now says which library it belongs to, and is found again there. Every
   language version: the run before the wait already read the library's, so nothing else changes.
 - A closure bound at a file's top level (`f = (n: <number>) => …`), in a library or the root
-  program, is now in scope inside that file's functions, as the checker already said. The run
-  used to fail "'f' is not in scope" (or call a built-in of the same name). Every language version
-  from 3, where a closure became callable; it always failed before, so nothing that ran changes.
+  program, is now in scope inside that file's functions. The run used to fail "'f' is not in
+  scope". It holds its file's scope by reference, as a JavaScript closure holds its module's, so
+  it also sees the file's later closures (`f = (n) => g(n) + 1` before `g = …`), and a wait
+  stores it by name, so a parked state stays small however many a file declares. Every language
+  version from 3, where a closure became callable; it always failed before, so nothing that ran
+  changes.
 - A record passed to a function another file exports is no longer refused when that file constructs
   the same system ("expects inbox.message, but this argument is inbox.message"). A system is its
   address (the adapter, the credential and the values of literal construction arguments), not

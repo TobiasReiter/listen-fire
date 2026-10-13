@@ -1407,6 +1407,12 @@ function isClosureBinding(value: unknown): value is Extract<Binding, { kind: 'cl
   return bindingOf(value)?.kind === 'closure';
 }
 
+/** The bindings a closure brings into a scope it runs in: its capture, or a
+ *  file-level closure's file scope as it stands now (as a movement arm's). */
+function closureCaptured(binding: Extract<Binding, { kind: 'closure' }>): Map<string, Binding> {
+  return binding.file !== undefined ? captureScope(binding.file.env) : binding.captured;
+}
+
 /**
  * Build a race RECEIPT from the completed branches' environments (asks-as-adapter
  * chunk C, F13/F18). Reused at runtime as a `blockMeta`: every branch's
@@ -2087,8 +2093,10 @@ type ResumeLeaf =
   /** Settle a race whose arms completed in a batch (the leaf is the race). */
   | { kind: 'settleRace'; frameAddress: string };
 
-/** A closure's captured scope, as the root its body's scopes chain from. */
+/** A closure's captured scope, as the root its body's scopes chain from. A
+ *  file-level closure's is its file's own scope, live — as a movement's is. */
 function closureScope(binding: Extract<Binding, { kind: 'closure' }>): Environment {
+  if (binding.file !== undefined) return binding.file.env;
   const env = new Environment();
   for (const [name, captured] of binding.captured) env.declare(name, captured);
   return env;
@@ -4133,12 +4141,15 @@ class Interpreter {
           case 'closure':
             // A closure bound at file level — the root program's or a
             // library's — is in scope in that file's functions, as the
-            // checker's file scope says. It captures the file scope as it
-            // stands here, exactly as one bound in a body does.
+            // checker's file scope says. It holds the file scope by
+            // REFERENCE, as a JavaScript closure holds its module scope: it
+            // sees the file's later closures too, and a park writes it by
+            // name rather than copying the file scope into it.
             env.declare(statement.name, binding({
               kind: 'closure',
               closure: rhs.closure,
-              captured: captureScope(env),
+              captured: new Map(),
+              file: { name: statement.name, env },
               ...(since(this.languageVersion, 3) ? { self: statement.name } : {}),
             }));
             return;
@@ -5347,7 +5358,7 @@ class Interpreter {
             `arm ${index} of '${expr.kind}' is not a function — a combinator runs what it is given, and this is ${typeof entry}`,
           );
         }
-        return { body: entry.closure.body, captured: entry.captured, runtime: entry.closure };
+        return { body: entry.closure.body, captured: closureCaptured(entry), runtime: entry.closure };
       });
     }
     return expr.arms.arms.map((arm) => this.armInvocation(arm, expr.kind, env));
@@ -5366,7 +5377,7 @@ class Interpreter {
     }
     const binding = env.resolve(arm.name);
     if (binding?.kind === 'closure') {
-      return { body: binding.closure.body, captured: binding.captured, name: arm.name };
+      return { body: binding.closure.body, captured: closureCaptured(binding), name: arm.name };
     }
     if (binding?.kind === 'movement') {
       if (binding.declaration.params.length > 0) {

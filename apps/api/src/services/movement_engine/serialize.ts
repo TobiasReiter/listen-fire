@@ -201,6 +201,12 @@ export type BindingDescriptor =
    *  closure's body is. */
   | { kind: 'localShape'; declaration: ShapeDeclaration }
   | { kind: 'movement'; name: string; file?: string }
+  /** A closure bound at a file's top level: a declaration of the program,
+   *  written by the name it is declared by and found again in the
+   *  re-parsed file (the root program's, or the library `file`), never its
+   *  body or the file scope it holds. That is what keeps a park the same
+   *  size however many of them a file declares. */
+  | { kind: 'fileClosure'; name: string; file?: string }
   | { kind: 'shapePosition'; shape: string; node: string; fields: Record<string, unknown>; fieldProvenance: Extract<Binding, { kind: 'shapePosition' }>['fieldProvenance'] }
   /** Bucket 3 (recursive) — a synthesised node. Its entry VALUES are already
    *  data; each edge is either landings (bindings, serialised like a
@@ -696,6 +702,9 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
     case 'tuple':
       return { kind: 'tuple', slots: binding.slots.map(serialize) };
     case 'closure': {
+      if (binding.file !== undefined) {
+        return { kind: 'fileClosure', name: binding.file.name, ...declaringFile(park, undefined, binding.file.env) };
+      }
       const captured: Record<string, BindingDescriptor> = {};
       for (const [name, entry] of binding.captured) {
         const descriptor = serialize(entry);
@@ -929,6 +938,16 @@ async function rehydrateInPark(
     case 'shape':
     case 'movement':
       return ctx.resolveCodeRef(descriptor.name, descriptor.file);
+    case 'fileClosure': {
+      const found = await ctx.resolveCodeRef(descriptor.name, descriptor.file);
+      if (found.kind !== 'closure') {
+        throw new MovementEngineError(
+          'MOVENG_RUNTIME',
+          `resume: '${descriptor.name}' parked as a file-level function, and the re-parsed ${descriptor.file === undefined ? 'program' : `library "${descriptor.file}"`} binds it to something else`,
+        );
+      }
+      return found;
+    }
     case 'opaque':
       return ctx.resolveCodeRef(descriptor.name);
     // Its words read the running file's scope after a resume — the body
