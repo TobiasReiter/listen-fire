@@ -2667,6 +2667,24 @@ export function recordIn(type: FieldType | undefined): Extract<FieldType, { kind
   }
 }
 
+/** The records a type is made of when EVERY member of it is one — a record, or
+ *  a union (`COALESCE(a, b)`, a call's returns) of nothing but records, however
+ *  nested. Undefined when any member is not a record: a union that mixes a
+ *  record with a value is no record. TypeScript's `A | B` where both are `Org`. */
+export function recordsAlone(type: FieldType | undefined): Array<Extract<FieldType, { kind: 'record' }>> | undefined {
+  if (type === undefined) return undefined;
+  const variant = variantOf(stripAbsent(type));
+  if (variant.kind === 'record') return [variant];
+  if (variant.kind !== 'union') return undefined;
+  const found: Array<Extract<FieldType, { kind: 'record' }>> = [];
+  for (const member of variant.of) {
+    const inner = recordsAlone(member);
+    if (inner === undefined) return undefined;
+    found.push(...inner);
+  }
+  return found;
+}
+
 /** Where a walk off this VALUE starts, when the checker can name it. One record
  *  and a list of them start the same walk — a hop is many-valued either way, so
  *  plurality lives in the traversal and not in a second type. */
@@ -2809,9 +2827,67 @@ function into(walk: HeldWalk, step: HeldStep): HeldWalk {
  *  record, and the other way about. */
 export function handleKindsTaken(target: FieldType | undefined): ReadonlySet<HandleKind> {
   const kinds = new Set<HandleKind>();
-  if (handleWithin(target, heldWalk(new Set(['file']))) !== undefined) kinds.add('record');
-  if (handleWithin(target, heldWalk(new Set(['record']))) !== undefined) kinds.add('file');
+  if (target === undefined) return kinds;
+  const held = kindsHeldBy(target);
+  if (held.record) kinds.add('record');
+  if (held.file) kinds.add('file');
   return kinds;
+}
+
+interface KindsHeld {
+  record: boolean;
+  file: boolean;
+}
+
+const NO_KINDS: KindsHeld = { record: false, file: false };
+
+/** Does a type hold a record, a file, anywhere — the walk `handleWithin` makes,
+ *  answered bottom-up and remembered per type. A type is shared, not copied, as
+ *  it travels (a call's returns nest the calls' returns), so a walk from the
+ *  top would meet each part once per path to it: exponential in the depth. */
+const KINDS_HELD = new WeakMap<object, KindsHeld>();
+
+function kindsHeldBy(type: FieldType): KindsHeld {
+  const variant = variantOf(stripAbsent(type));
+  if (typeof variant === 'string') return NO_KINDS;
+  const known = KINDS_HELD.get(variant);
+  if (known !== undefined) return known;
+  let held: KindsHeld;
+  const merge = (members: ReadonlyArray<FieldType | null | undefined>): KindsHeld => {
+    let record = false;
+    let file = false;
+    for (const member of members) {
+      if (member === null || member === undefined) continue;
+      const inner = kindsHeldBy(member);
+      record ||= inner.record;
+      file ||= inner.file;
+    }
+    return { record, file };
+  };
+  switch (variant.kind) {
+    case 'record':
+      held = { record: true, file: false };
+      break;
+    case 'file':
+      held = { record: false, file: true };
+      break;
+    case 'list':
+      held = merge([variant.of]);
+      break;
+    case 'tuple':
+      held = merge([...variant.of, variant.rest?.of]);
+      break;
+    case 'dict':
+      held = merge([...Object.values(variant.shape ?? {}), variant.of]);
+      break;
+    case 'union':
+      held = merge(variant.of);
+      break;
+    default:
+      held = NO_KINDS;
+  }
+  KINDS_HELD.set(variant, held);
+  return held;
 }
 
 /** The first engine object `value` holds that `target` does not take. */

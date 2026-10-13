@@ -798,9 +798,21 @@ describe.each([4, 5] as LanguageVersion[])('B14: under language version %i, a cl
     refusedAs(errorsWithFunctions(version, ['  g = graph { name: pick() }']), 'MOV_GRAPH_ENTRY_RECORD', "'pick()' may be a crm.company handle");
   });
 
-  it('a declared return type that does not take what a return may hold is refused where it is declared', () => {
-    refused(['  c = (): <text> => COALESCE(org, "x")', '  g = graph { name: c() }'], 'MOV_RETURN_TYPE', "declares it returns <text>, but this may be a crm.company handle");
-    refused(['  c = (): <json> => { return { a: COALESCE(f, "x") } }'], 'MOV_RETURN_TYPE', "may hold file at '.a'");
+  it('a declared return type that does not take what a return may hold: refused where it is declared from version 5, at the use before', () => {
+    const declaredText = '  c = (): <text> => COALESCE(org, "x")';
+    const declaredJson = '  c = (): <json> => { return { a: COALESCE(f, "x") } }';
+    if (version >= 5) {
+      refused([declaredText, '  g = graph { name: c() }'], 'MOV_RETURN_TYPE', "declares it returns <text>, but this may be a crm.company handle");
+      refused([declaredJson], 'MOV_RETURN_TYPE', "may hold file at '.a'");
+      refused([declaredText, '  s = c() = "x"'], 'MOV_RETURN_TYPE', 'but this may be a crm.company handle');
+    } else {
+      // The declaration alone ran on these versions (the call unused, or only
+      // compared): clean. A use that reaches data is still refused, there.
+      expect(errorsUnder(version, [declaredText])).toEqual([]);
+      expect(errorsUnder(version, [declaredText, '  s = c() = "x"', '  t = IF c() = "x" THEN 1 ELSE 2 END'])).toEqual([]);
+      refused([declaredText, '  g = graph { name: c() }'], 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+      refused([declaredText, ...note('company: c()')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+    }
   });
 
   it('closures returning text, numbers and lists of text stay clean', () => {
@@ -822,4 +834,70 @@ describe.each([4, 5] as LanguageVersion[])('B14: under language version %i, a cl
   it('a closure returning one record is an edge, as the record itself is', () => {
     expect(errorsUnder(version, ['  c = () => org', '  g = graph { name: c() }'])).toEqual([]);
   });
+});
+
+// B14 review M1: a union whose every member is a record is ONE record for the
+// graph-entry rule — an edge, as `a: r` is — wherever it comes from: written
+// out, bound, or handed back by a call. A union that mixes a record with a
+// value is still refused. L1: the union of a call's returns is flattened and
+// deduplicated, so a chain or a fan of calls checks in linear time.
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B14 review: under language version %i, records only are one record', version => {
+  const two = [
+    '  o2 = write crm-[:companies]-> { name: "Other" }',
+  ];
+  const TWO = [
+    'function two() {',
+    '  a = write crm-[:companies]-> { name: "A" }',
+    '  b = write crm-[:companies]-> { name: "B" }',
+    '  return COALESCE(a, b)',
+    '}',
+    'function mixed() {',
+    '  a = write crm-[:companies]-> { name: "A" }',
+    '  return COALESCE(a, "x")',
+    '}',
+  ].join('\n');
+  const withTwo = (body: string[]): Diagnostic[] => {
+    const source = `${PRELUDE}\n${TWO}\nmovement m() {\n${[...HELD, ...two, ...body].join('\n')}\n}`;
+    return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+      d => (d.severity ?? 'error') === 'error',
+    );
+  };
+
+  it('written out and bound: an edge', () => {
+    expect(withTwo(['  r = COALESCE(org, o2)', '  g = graph { a: r }'])).toEqual([]);
+    expect(withTwo(['  g = graph { a: COALESCE(org, o2) }'])).toEqual([]);
+  });
+
+  it('a function returning one of two records: an edge, bound or inline', () => {
+    expect(withTwo(['  r = two()', '  g = graph { a: r }'])).toEqual([]);
+    expect(withTwo(['  g = graph { a: two() }'])).toEqual([]);
+  });
+
+  it('a mix of a record and a value is refused', () => {
+    refusedAs(withTwo(['  r = COALESCE(org, "x")', '  g = graph { a: r }']), 'MOV_GRAPH_ENTRY_RECORD', "'r' may be a crm.company handle");
+    refusedAs(withTwo(['  r = mixed()', '  g = graph { a: r }']), 'MOV_GRAPH_ENTRY_RECORD', "'r' may be a crm.company handle");
+  });
+
+  if (version >= 3) {
+    it('a closure returning one of two records: an edge; with a value among them, refused', () => {
+      expect(withTwo(['  c = () => COALESCE(org, o2)', '  r = c()', '  g = graph { a: r }'])).toEqual([]);
+      expect(withTwo(['  c = () => COALESCE(org, o2)', '  g = graph { a: c() }'])).toEqual([]);
+      expect(withTwo(['  c = () => { if 1 > 0 { return org } return o2 }', '  g = graph { a: c() }'])).toEqual([]);
+      refusedAs(withTwo(['  c = () => COALESCE(org, "x")', '  g = graph { a: c() }']), 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+    });
+  }
+
+  if (version >= 4) {
+    it('the unions of a call chain and a call fan are linear to check', () => {
+      const chain = ['  f0 = () => COALESCE(org, "x")'];
+      for (let i = 1; i <= 20; i++) chain.push(`  f${i} = () => { if 1 > 0 { return f${i - 1}() } return f${i - 1}() }`);
+      const fan = ['  h0 = () => COALESCE(org, "x")'];
+      for (let i = 1; i <= 12; i++) fan.push(`  h${i} = () => [h${i - 1}(), h${i - 1}(), h${i - 1}()]`);
+      const started = Date.now();
+      refusedAs(errorsUnder(version, [...chain, '  g = graph { n: f20() }']), 'MOV_GRAPH_ENTRY_RECORD', "'f20()' may be a crm.company handle");
+      refusedAs(errorsUnder(version, [...fan, '  g = graph { n: h12() }']), 'MOV_GRAPH_ENTRY_RECORD', "'h12()' may hold a crm.company handle");
+      // Both measured at a few milliseconds; the old shape took 233 and 465.
+      expect(Date.now() - started).toBeLessThan(500);
+    });
+  }
 });

@@ -319,6 +319,8 @@ import {
   isWalkProjection,
   positionRefIn,
   positionsMatch,
+  recordsAlone,
+  sameStartingPoint,
   positionSchemaOfRef,
   recordHeadPosition,
   recordOf,
@@ -4484,12 +4486,22 @@ class Checker {
     // return type is the union of its returns. The type stays the first's;
     // the union travels as the walk input a bound conditional's arms do, so a
     // record one return hands back is seen wherever the call's value goes.
-    const arms = collector.returns
-      .map(returned => returned.mayHold ?? returned.fieldType)
-      .filter((arm): arm is FieldType => arm !== undefined);
-    const mayHold: FieldType | undefined = arms.length === 0
-      ? undefined
-      : arms.length === 1 && collector.returns.length === 1 ? arms[0] : { kind: 'union', of: arms };
+    // Flattened and deduplicated, so a chain of calls that each return the
+    // last twice carries the one arm, not a tree that doubles per level.
+    const arms: FieldType[] = [];
+    const addArm = (arm: FieldType): void => {
+      const variant = typeof arm === 'string' ? undefined : variantOf(arm);
+      if (variant?.kind === 'union') {
+        variant.of.forEach(addArm);
+        return;
+      }
+      if (!arms.some(seen => seen === arm || fieldTypeEquals(seen, arm))) arms.push(arm);
+    };
+    for (const returned of collector.returns) {
+      const arm = returned.mayHold ?? returned.fieldType;
+      if (arm !== undefined) addArm(arm);
+    }
+    const mayHold: FieldType | undefined = arms.length === 0 ? undefined : arms.length === 1 ? arms[0] : { kind: 'union', of: arms };
     const revealed = mayHold !== undefined && showsMoreHandles(mayHold, first.fieldType) ? mayHold : undefined;
     return {
       returns: true,
@@ -6254,8 +6266,16 @@ class Checker {
     }
     // A parameter handed back is the caller's record again (as a declared
     // function's is).
+    // Before version 5 a declaration that does not take what a return may hold
+    // is not refused where it is written (`checkReturnFit`), so the call still
+    // carries what the body may hand back, and a use that reaches data is
+    // refused there, as it is for a call nobody declared.
+    const undeclaredHold = declared !== undefined && !since(this.languageVersion, 5) && inferred.mayHold !== undefined
+      && showsMoreHandles(inferred.mayHold, declared.fieldType)
+      ? inferred.mayHold
+      : undefined;
     const returns = declared !== undefined
-      ? { returns: true, ...declared }
+      ? { returns: true, ...declared, ...(undeclaredHold !== undefined ? { mayHold: undeclaredHold } : {}) }
       : inferred.posType !== undefined
       ? { ...inferred, posType: withoutParameter(inferred.posType) }
       : inferred;
@@ -11256,7 +11276,7 @@ class Checker {
    */
   private graphReference(
     entry: Extract<NodeEntry, { kind: 'value' }>,
-    { valueType, parsed }: { valueType?: FieldType; parsed?: Expression },
+    { valueType, parsed, mayHold }: { valueType?: FieldType; parsed?: Expression; mayHold?: FieldType },
     scope: Scope,
   ): { position: PositionTypeRef | undefined; sequenced: EdgeSchema['sequenced'] } | undefined {
     // One record, or a list that keeps its order, is held in the order it
@@ -11273,7 +11293,18 @@ class Checker {
       return { position: selected?.kind === 'maybeEmpty' ? selected.of : selected, sequenced: 'arrival' };
     }
     const held = recordIn(valueType);
-    if (held === undefined) return undefined;
+    if (held === undefined) {
+      // A union whose every member is a record (`COALESCE(a, b)`, a call that
+      // returns one of two) is ONE record, as `A | B` of two `Org`s is an
+      // `Org`: an edge to whichever it is. Its position is the members' when
+      // they agree, and unnamed when they do not.
+      const records = valueType === undefined ? recordsAlone(mayHold) : undefined;
+      // A connection is no record to point at (as a bare one is not).
+      if (records === undefined || records.some(record => record.position?.kind === 'meta' || record.position?.kind === 'closure')) return undefined;
+      const first = records[0]!.position;
+      const agree = first !== undefined && records.every(record => record.position !== undefined && sameStartingPoint(record.position, first));
+      return { position: agree ? first : undefined, sequenced: 'arrival' };
+    }
     const list = valueType !== undefined ? variantOf(stripAbsent(valueType)) : undefined;
     const unordered = list?.kind === 'list' && list.unordered === true;
     return { position: held.position, sequenced: unordered ? undefined : 'arrival' };
@@ -12090,8 +12121,11 @@ class Checker {
     if (declared.fieldType !== undefined) {
       // A record or file a return MAY hand back is one the declared type has
       // to take — TypeScript's `Org | string` is no `string`. Its call is
-      // typed by the declaration, so this is the last place it is seen.
-      const hidden = returned.mayHold !== undefined
+      // typed by the declaration, so this is the last place it is seen. From
+      // version 5: earlier, the programs this refuses ran (the call unused, or
+      // only compared), so the call carries the return's `mayHold` instead and
+      // a use that reaches data is refused there.
+      const hidden = returned.mayHold !== undefined && since(this.languageVersion, 5)
         ? handleWithin(returned.mayHold, heldWalk(handleKindsTaken(declared.fieldType)))
         : undefined;
       if (hidden !== undefined) {

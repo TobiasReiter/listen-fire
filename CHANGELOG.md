@@ -89,9 +89,18 @@ guide](docs/language/dancing-wren-migration.md).
   disagree) is refused where the call's value goes, as the bound conditional is: a graph entry
   (`name: f()`), a spread, a written field, a plugin argument, an extraction input, a `MAP` or
   `REDUCE` over it. A named function's bound call on every version; a closure's call (and any call
-  inside an expression) from version 3, where they run. A declared return type that does not take
-  what a return may hold is `MOV_RETURN_TYPE`. It used to validate, and the engine handed its own
-  record object onward. A bug fix, not a language version: return a field off the record.
+  inside an expression) from version 3, where they run. It used to validate, and the engine handed
+  its own record object onward. A bug fix, not a language version: return a field off the record.
+  A declared return type that does not take what a return may hold (`(): <text> => COALESCE(org,
+  "x")`) is `MOV_RETURN_TYPE` at the declaration from **version 5 (Dancing Wren)**: it ran on
+  versions 3 and 4 while the call was unused or only compared, so there the declaration is clean
+  and the call carries what the body may hold, refused where it reaches data.
+- A union whose every member is a record (`COALESCE(a, b)` of two records, or a function returning
+  one of two) is one record for the graph entry: `a: r` over it is an edge, as it is over one
+  record, on every version. It was refused as a field holding a record. A union that mixes a record
+  with a value is still refused.
+- A closure's or function's returns are flattened and deduplicated, and the kinds of engine object
+  a type holds are remembered per type, so a chain or fan of calls checks in linear time.
 - A plugin argument the plugin declares a value type for (text, a file, …) takes no record or file
   that type does not hold, on every language version (`MOV_CALL_ARG_TYPE`, with the path): a file
   handed to a text argument (`tag(label: f)`, or one arm of a `COALESCE`), a file or record under a
