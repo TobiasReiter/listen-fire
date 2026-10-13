@@ -188,3 +188,40 @@ fn every_program_tree_reads_back_as_the_ast_it_was_written_from() {
     }
     assert!(read > 1000, "only {read} programs read back");
 }
+
+/// Every statement kind the corpus holds, at any depth, reads back from its
+/// `kind` tag as the statement it was written from. (`Statement::kind` is
+/// exhaustive over the variants, so a new one cannot be left unlisted there;
+/// this proves each tag reads back.)
+#[test]
+fn a_statement_of_every_kind_reads_back_by_its_tag() {
+    use movement_parser::ast::Statement;
+    use std::collections::BTreeSet;
+
+    fn walk(value: &Value, seen: &mut BTreeSet<&'static str>) {
+        match value {
+            Value::Object(map) => {
+                if map.contains_key("kind") && map.contains_key("span") {
+                    if let Ok(statement) = serde_json::from_value::<Statement>(value.clone()) {
+                        assert_eq!(serde_json::to_value(&statement).unwrap(), *value);
+                        seen.insert(statement.kind());
+                    }
+                }
+                map.values().for_each(|v| walk(v, seen));
+            }
+            Value::Array(items) => items.iter().for_each(|v| walk(v, seen)),
+            _ => {}
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    for record in records() {
+        let Ok(program) = movement_parser::stmt::parse_program(&record.source, record.version, false) else { continue };
+        walk(&serde_json::to_value(&program).unwrap(), &mut seen);
+    }
+    let every = [
+        "assign", "await", "block", "call", "collection", "combinator", "delete", "error", "if", "import", "link", "listen",
+        "match", "movement", "refresh", "return", "shape", "type", "unlink", "write",
+    ];
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), every);
+}

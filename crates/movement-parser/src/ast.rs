@@ -73,63 +73,62 @@ pub struct Program {
 /// Read back by its `kind` (a parked state carries code as this tree): the
 /// statement structs tag themselves on the way out only, so an untagged
 /// read would take the first struct whose fields fit.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Statement {
-    Import(ImportStatement),
-    Assign(AssignStatement),
-    Shape(ShapeDeclaration),
-    Type(TypeDeclaration),
-    Movement(MovementDeclaration),
-    Listen(ListenDeclaration),
-    Write(WriteStatement),
-    Match(MatchStatement),
-    Call(CallStatement),
-    Block(BlockStatement),
-    Link(LinkStatement),
-    Unlink(UnlinkStatement),
-    Delete(DeleteStatement),
-    Refresh(RefreshStatement),
-    If(IfStatement),
-    Await(AwaitStatement),
-    Combinator(CombinatorStatement),
-    Collection(CollectionStatement),
-    Return(ReturnStatement),
-    Error(ErrorStatement),
+///
+/// One list declares each variant with its `kind`; the enum, `kind()` and the
+/// reading by `kind` are all generated from it, so a variant cannot be added
+/// without its tag being readable.
+macro_rules! statements {
+    ($($variant:ident($ty:ident) = $kind:literal;)*) => {
+        #[derive(Debug, Clone, PartialEq, Serialize)]
+        #[serde(untagged)]
+        pub enum Statement {
+            $($variant($ty),)*
+        }
+
+        impl Statement {
+            /// The `kind` tag the statement is written with.
+            pub fn kind(&self) -> &'static str {
+                match self {
+                    $(Statement::$variant(_) => $kind,)*
+                }
+            }
+        }
+
+        impl<'de> Deserialize<'de> for Statement {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                use serde::de::Error;
+                let tree = serde_json::Value::deserialize(deserializer)?;
+                let kind = tree.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| D::Error::custom("a statement without its kind"))?.to_string();
+                match kind.as_str() {
+                    $($kind => Ok(Statement::$variant($ty::deserialize(tree).map_err(D::Error::custom)?)),)*
+                    other => Err(D::Error::custom(format!("a statement of kind '{other}'"))),
+                }
+            }
+        }
+    };
 }
 
-impl<'de> Deserialize<'de> for Statement {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        let tree = serde_json::Value::deserialize(deserializer)?;
-        let kind = tree.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| D::Error::custom("a statement without its kind"))?.to_string();
-        fn read<'de, T: Deserialize<'de>, E: Error>(tree: serde_json::Value) -> Result<T, E> {
-            T::deserialize(tree).map_err(E::custom)
-        }
-        Ok(match kind.as_str() {
-            "import" => Statement::Import(read(tree)?),
-            "assign" => Statement::Assign(read(tree)?),
-            "shape" => Statement::Shape(read(tree)?),
-            "type" => Statement::Type(read(tree)?),
-            "movement" => Statement::Movement(read(tree)?),
-            "listen" => Statement::Listen(read(tree)?),
-            "write" => Statement::Write(read(tree)?),
-            "match" => Statement::Match(read(tree)?),
-            "call" => Statement::Call(read(tree)?),
-            "block" => Statement::Block(read(tree)?),
-            "link" => Statement::Link(read(tree)?),
-            "unlink" => Statement::Unlink(read(tree)?),
-            "delete" => Statement::Delete(read(tree)?),
-            "refresh" => Statement::Refresh(read(tree)?),
-            "if" => Statement::If(read(tree)?),
-            "await" => Statement::Await(read(tree)?),
-            "combinator" => Statement::Combinator(read(tree)?),
-            "collection" => Statement::Collection(read(tree)?),
-            "return" => Statement::Return(read(tree)?),
-            "error" => Statement::Error(read(tree)?),
-            other => return Err(D::Error::custom(format!("a statement of kind '{other}'"))),
-        })
-    }
+statements! {
+    Import(ImportStatement) = "import";
+    Assign(AssignStatement) = "assign";
+    Shape(ShapeDeclaration) = "shape";
+    Type(TypeDeclaration) = "type";
+    Movement(MovementDeclaration) = "movement";
+    Listen(ListenDeclaration) = "listen";
+    Write(WriteStatement) = "write";
+    Match(MatchStatement) = "match";
+    Call(CallStatement) = "call";
+    Block(BlockStatement) = "block";
+    Link(LinkStatement) = "link";
+    Unlink(UnlinkStatement) = "unlink";
+    Delete(DeleteStatement) = "delete";
+    Refresh(RefreshStatement) = "refresh";
+    If(IfStatement) = "if";
+    Await(AwaitStatement) = "await";
+    Combinator(CombinatorStatement) = "combinator";
+    Collection(CollectionStatement) = "collection";
+    Return(ReturnStatement) = "return";
+    Error(ErrorStatement) = "error";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
