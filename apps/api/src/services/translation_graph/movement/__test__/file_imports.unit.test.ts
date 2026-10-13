@@ -247,6 +247,11 @@ const CONSUMER = [
 ].join('\n');
 
 const FILES = new Map([['lib/file-routines', FILES_LIB]]);
+
+// The consumers walk the email's files with `-[f:#resources]->`, which Dancing
+// Wren (5) retires. This file is about imports, so they stay pinned to Luminous
+// Owl (4), where that walk is what it always was.
+const PINNED = { languageVersion: 4 } as const;
 const resolveFile = resolverOverSources(FILES);
 
 // ── 1. Resolver closure ──────────────────────────────────────────────────────
@@ -287,6 +292,7 @@ describe('assembleMovementFileSources', () => {
 describe('diagnoseMovementSource with resolved file imports', () => {
   it('the §G consumer validates clean — imports resolve, nothing engine-unsupported', () => {
     const validation = diagnoseMovementSource(CONSUMER, {
+      ...PINNED,
       catalog,
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveFile,
@@ -304,6 +310,7 @@ describe('diagnoseMovementSource with resolved file imports', () => {
       "  movement nested(g: <Files>) {\n    h = g.`name`\n  }\n  write drive-[:file]-> {",
     );
     const validation = diagnoseMovementSource(CONSUMER, {
+      ...PINNED,
       catalog,
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveFile: resolverOverSources(new Map([['lib/file-routines', badLib]])),
@@ -338,6 +345,7 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
 
     const result = await runMovement({
       source: CONSUMER,
+      ...PINNED,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
@@ -374,6 +382,7 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
         'import { files_to_dropbox, Files } from "lib/file-routines"',
         'import { files_to_dropbox as send, Files } from "lib/file-routines"',
       ).replace('files_to_dropbox(f: node', 'send(f: node'),
+      ...PINNED,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
@@ -422,6 +431,7 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
 
     await runMovement({
       source: consumer,
+      ...PINNED,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'x' }),
       teamId: TEAM_ID,
@@ -443,6 +453,8 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
     await expect(
       runMovement({
         source: CONSUMER,
+        ...PINNED,
+      ...PINNED,
         movementName: 'intake',
         event: webhookEvent('email', { subject: 'x' }),
         teamId: TEAM_ID,
@@ -453,6 +465,8 @@ describe('runMovement with resolveFile (the §G two-file fixture)', () => {
     await expect(
       runMovement({
         source: CONSUMER,
+        ...PINNED,
+      ...PINNED,
         movementName: 'intake',
         event: webhookEvent('email', { subject: 'x' }),
         teamId: TEAM_ID,

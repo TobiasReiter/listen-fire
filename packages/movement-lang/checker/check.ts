@@ -427,6 +427,13 @@ export const DiagnosticCodes = {
   /** RETIRED: the `-[#linked WHERE type = "…"]->` hop, which looked a record
    *  up by another system's id. The record a write lands on is its handle. */
   LINKED_HOP_RETIRED: 'MOV_LINKED_HOP_RETIRED',
+  /** RETIRED (language version 5): any other `#` hop — `-[:#resources]->`
+   *  (the legacy spelling of `_resources`) and `-[:#name]->`, which the engine
+   *  passed to the system as one of its own references. There are no meta
+   *  edges: every edge is one a system declares, and a plugin is a function
+   *  you import and call. (`#transform` and `#linked` keep their own codes,
+   *  retired since version 3; `#extract` was never accepted.) */
+  META_HOP_RETIRED: 'MOV_META_HOP_RETIRED',
   /** RETIRED: `@parent.created` / `@parent.external_id` — the parent action
    *  node's result. A child is written off the parent write's handle. */
   PARENT_READ_RETIRED: 'MOV_PARENT_READ_RETIRED',
@@ -3213,6 +3220,63 @@ interface ReturnCollector {
  *  it, which is what makes those slots uncollidable. */
 const RESERVED_NAME_PREFIX = '#';
 
+/** The `#transform` hop's plugin as what it is since language version 5: a
+ *  function, imported and called, its declared output the call's value. A
+ *  call writes what a stage would have been fed (the required `fedArgs`), and
+ *  a plugin no call can run — one fed only by an extraction, or one that has
+ *  not declared what it does or hands back — is a `through [ … ]` stage. */
+function transformHopAsFunction(plugin: string, spec: PluginSpec): string {
+  const lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
+  const name = spellName(plugin);
+  if (spec.effects === undefined || spec.fedByExtraction === true || spec.output === undefined) {
+    return `${lead}, but '${plugin}' runs only as a stage of an extraction: '${importLine(plugin, 'plugins')}', then 'extract from [ … ] through [${name}] { … }'`;
+  }
+  const required = [
+    ...(spec.requiredArgs ?? []),
+    ...(spec.fedArgs ?? []).filter(fed => fed.required === true).map(fed => fed.name),
+  ];
+  const args = required.map(arg => `${arg}: …`).join(', ');
+  return `${lead}: import it and call it, and bind what it hands back like any function's result — '${importLine(plugin, 'plugins')}', then 'out = ${name}(${args.length > 0 ? args : '…'})'`;
+}
+
+/** A `#` hop language version 5 retires: any hop whose edge name starts
+ *  with `#`, quoted or not (the engine read both as its own reference), other
+ *  than the three with refusals of their own — `#transform` and `#linked`
+ *  (retired since version 3) and `#extract` (never accepted). */
+function isRetiredMetaHop(hop: Hop): boolean {
+  if (!hop.label.text.startsWith('#')) return false;
+  if (isTransformHop(hop) || endingHop(hop) === 'linked') return false;
+  return hop.label.text !== '#extract';
+}
+
+/** What a retired `#` hop is written as instead. */
+function metaHopRetiredMessage(label: string): string {
+  const lead = `'-[:${label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares`;
+  if (label === '#transform') {
+    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+  }
+  if (label === '#linked' || label.startsWith('#linked ')) {
+    return `${lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> { … }', then 'rec.<field>')`;
+  }
+  if (label.split(/[:\s]/, 1)[0] === '#resources') {
+    return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->'`;
+  }
+  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+}
+
+/** The hops of a type's address, read by the expression grammar — none when
+ *  it does not parse (the address's own check says so). */
+function hopsOfAddress(hopsRaw: string): Hop[] {
+  let tree: MExpr;
+  try {
+    tree = parseExpression(`__address_probe__${hopsRaw}`);
+  } catch (e) {
+    if (!(e instanceof ExpressionSyntaxError)) throw e;
+    return [];
+  }
+  return tree.kind === 'path' ? tree.hops : [];
+}
+
 /** What `write … bind <name>` is written as since language version 5: the
  *  correspondence stored explicitly, in the system that holds it. */
 function writeBindRetiredMessage(name: string): string {
@@ -3811,6 +3875,7 @@ class Checker {
     }
     const resolved = this.positionFromTypeRef(symbol, type);
     if (type.hopsRaw !== undefined) {
+      this.reportMetaHopsInTypeRef(type.hopsRaw, span);
       const instance = instanceRefOf(symbol);
       const address = addressOfTypeRef(type.hopsRaw);
       if (instance && address) this.checkAddressPins(instance, address, span);
@@ -5633,6 +5698,10 @@ class Checker {
         );
         continue;
       }
+      if (since(this.languageVersion, 5) && isRetiredMetaHop(hop)) {
+        this.report(DiagnosticCodes.META_HOP_RETIRED, metaHopRetiredMessage(hop.label.text), span);
+        continue;
+      }
       if (hop.config === undefined) continue;
       this.report(
         DiagnosticCodes.HOP_CONFIG_UNREAD,
@@ -5660,6 +5729,18 @@ class Checker {
     );
   }
 
+  /** A type's address may not walk a `#` hop either (language version 5) —
+   *  the same rule a walk in an expression or a head has
+   *  (`checkWalkKeepsWhatIsWritten`), where the address is written. */
+  private reportMetaHopsInTypeRef(hopsRaw: string, span: Span): void {
+    if (before(this.languageVersion, 5)) return;
+    for (const hop of hopsOfAddress(hopsRaw)) {
+      if (isTransformHop(hop) || endingHop(hop) === 'linked' || isRetiredMetaHop(hop)) {
+        this.report(DiagnosticCodes.META_HOP_RETIRED, metaHopRetiredMessage(hop.label.text), span);
+      }
+    }
+  }
+
   /** The plugin call a `#transform` hop is written as instead — named, with
    *  its required arguments, when its `plugin:` setting names one the catalog
    *  has. */
@@ -5673,6 +5754,7 @@ class Checker {
     if (plugin === undefined || spec === undefined) {
       return `${lead}, e.g. '${importLine('fetch_url', 'plugins')}', then 'page = fetch_url(url: m.u)'`;
     }
+    if (since(this.languageVersion, 5)) return transformHopAsFunction(plugin, spec);
     const args = (spec.requiredArgs ?? []).map(arg => `${arg}: …`).join(', ');
     return `${lead}: '${importLine(plugin, 'plugins')}', then 'out = ${spellName(plugin)}(${args.length > 0 ? args : '…'})'`;
   }
@@ -10981,6 +11063,7 @@ class Checker {
       );
       return undefined;
     }
+    if (type.hopsRaw !== undefined) this.reportMetaHopsInTypeRef(type.hopsRaw, type.span);
     const start = this.symbolPositionType(symbol);
     const steps = type.hopsRaw !== undefined ? parseTraversalPath(type.hopsRaw) : undefined;
     if (start === undefined || steps === undefined) return undefined;
