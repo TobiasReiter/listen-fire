@@ -125,7 +125,20 @@ export type BindingDescriptor =
        *  cannot nest, so it is said instead (`oldIsSelf`). */
       old?: BindingDescriptor;
       oldIsSelf?: true;
+      /** Its number in the park's handle table, written only when the park
+       *  reaches the same handle again (a `handleRef` names it): one handle
+       *  held by two names stays one. Absent = held once, as every park
+       *  written before it was said reads. */
+      id?: number;
     }
+  /**
+   * A write handle this park has already written, reached again through a
+   * second name, a closure's capture or a record's `@old`. It names the
+   * handle's `id`, so the resumed run gets back the ONE handle every place
+   * held: an in-place write or a `refresh` through one name is seen through
+   * the other, as it is in a run that never parked.
+   */
+  | { kind: 'handleRef'; id: number }
   | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor }
   | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor }
   | {
@@ -345,6 +358,8 @@ export interface RehydrationContext {
 // ── One park's identity table ─────────────────────────────────────────────────
 
 type NodePosition = Extract<Binding, { kind: 'nodePosition' }>;
+type HandleBinding = Extract<Binding, { kind: 'handle' }>;
+type HandleDescriptor = Extract<BindingDescriptor, { kind: 'handle' }>;
 
 /**
  * The run-built nodes one park has written so far, numbered as they were
@@ -355,9 +370,20 @@ type NodePosition = Extract<Binding, { kind: 'nodePosition' }>;
  * cycle. Everything one park writes into one stored state shares one table.
  *
  * Source records are already handles to their own system and need none.
+ *
+ * A write HANDLE is held by reference too (an in-place write and `refresh`
+ * move it under every name that holds it), so it is written once as well. It
+ * is numbered only when it is reached a second time — its first descriptor
+ * gains the `id` then — so a park that holds each handle once writes exactly
+ * the bytes it always did.
  */
 export interface ParkWriter {
   readonly nodes: Map<NodePosition, number>;
+  /** Each handle written so far: its first descriptor, numbered once a
+   *  second sighting needs it to be. */
+  readonly handles: Map<HandleBinding, HandleDescriptor>;
+  /** How many handles have been numbered. */
+  handleIds: number;
   /** The library file a file environment is, by path — how a code ref
    *  declared in a library says where it is found again. Undefined (or
    *  absent) = the root program's. */
@@ -365,7 +391,7 @@ export interface ParkWriter {
 }
 
 export function newParkWriter(fileOf?: (env: Environment) => string | undefined): ParkWriter {
-  return { nodes: new Map(), ...(fileOf !== undefined ? { fileOf } : {}) };
+  return { nodes: new Map(), handles: new Map(), handleIds: 0, ...(fileOf !== undefined ? { fileOf } : {}) };
 }
 
 /** The library a code ref is declared in, when it is one's: an imported
@@ -386,10 +412,30 @@ export interface ParkReader {
   readonly nodes: Map<number, NodePosition>;
   /** Numbers a reference named whose node has not been read (yet). */
   readonly unfilled: Set<number>;
+  /** Each numbered handle, as the ONE binding every reference to it reads
+   *  as — registered empty and filled in place, as a node is. */
+  readonly handles: Map<number, HandleBinding>;
+  readonly unfilledHandles: Set<number>;
 }
 
 export function newParkReader(): ParkReader {
-  return { nodes: new Map(), unfilled: new Set() };
+  return { nodes: new Map(), unfilled: new Set(), handles: new Map(), unfilledHandles: new Set() };
+}
+
+function handleNumbered(park: ParkReader, id: number): HandleBinding {
+  const known = park.handles.get(id);
+  if (known !== undefined) return known;
+  // Every member is set when its descriptor is read; `assertParkRead`
+  // refuses a state whose reference never was.
+  const handle = binding({
+    kind: 'handle',
+    handle: {} as HandleBinding['handle'],
+    targetType: '',
+    graph: {} as HandleBinding['graph'],
+  });
+  park.handles.set(id, handle);
+  park.unfilledHandles.add(id);
+  return handle;
 }
 
 function nodeNumbered(park: ParkReader, id: number): NodePosition {
@@ -407,11 +453,18 @@ function nodeNumbered(park: ParkReader, id: number): NodePosition {
  * stood, which is worse than not resuming.
  */
 export function assertParkRead(park: ParkReader): void {
-  if (park.unfilled.size === 0) return;
-  throw new MovementEngineError(
-    'MOVENG_RUNTIME',
-    `the parked state refers to run-built node(s) ${[...park.unfilled].map((id) => `#${id}`).join(', ')} that it never wrote`,
-  );
+  if (park.unfilled.size > 0) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      `the parked state refers to run-built node(s) ${[...park.unfilled].map((id) => `#${id}`).join(', ')} that it never wrote`,
+    );
+  }
+  if (park.unfilledHandles.size > 0) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      `the parked state refers to write handle(s) ${[...park.unfilledHandles].map((id) => `#${id}`).join(', ')} that it never wrote`,
+    );
+  }
 }
 
 // ── JSON-serialisability guard (the `value` boundary, §4.1) ───────────────────
@@ -519,14 +572,25 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
     case 'event':
       return { kind: 'event' };
     case 'handle': {
+      const first = park.handles.get(binding);
+      if (first !== undefined) {
+        // Numbered now, on its second sighting: the first descriptor is still
+        // the live object this park is building, so it gains the id in place.
+        if (first.id === undefined) first.id = park.handleIds++;
+        return { kind: 'handleRef', id: first.id };
+      }
       const { old, ...handle } = binding.handle;
-      return {
+      const descriptor: HandleDescriptor = {
         kind: 'handle',
         handle,
         targetType: binding.targetType,
         graph: serializeHandleGraph(binding.graph),
-        ...(old === binding ? { oldIsSelf: true as const } : old !== undefined ? { old: serialize(old) } : {}),
       };
+      // Registered before its `old` is walked, as a node is before its edges.
+      park.handles.set(binding, descriptor);
+      if (old === binding) descriptor.oldIsSelf = true;
+      else if (old !== undefined) descriptor.old = serialize(old);
+      return descriptor;
     }
     case 'extractRoot':
       return { kind: 'extractRoot', emission: serializeEmission(binding.emission) };
@@ -757,12 +821,18 @@ async function rehydrateInPark(
     case 'event':
       return binding({ kind: 'event' });
     case 'handle': {
-      const written: Extract<Binding, { kind: 'handle' }> = binding({
-        kind: 'handle',
-        handle: { ...descriptor.handle },
-        targetType: descriptor.targetType,
-        graph: await rehydrateHandleGraph(descriptor.graph, ctx),
-      });
+      const graph = await rehydrateHandleGraph(descriptor.graph, ctx);
+      let written: HandleBinding;
+      if (descriptor.id === undefined) {
+        written = binding({ kind: 'handle', handle: { ...descriptor.handle }, targetType: descriptor.targetType, graph });
+      } else {
+        // The one binding every `handleRef` to it reads as, filled in place.
+        written = handleNumbered(park, descriptor.id);
+        park.unfilledHandles.delete(descriptor.id);
+        written.handle = { ...descriptor.handle };
+        written.targetType = descriptor.targetType;
+        written.graph = graph;
+      }
       if (descriptor.oldIsSelf === true) {
         written.handle.old = written;
       } else if (descriptor.old !== undefined) {
@@ -826,6 +896,8 @@ async function rehydrateInPark(
     }
     case 'nodeRef':
       return nodeNumbered(park, descriptor.id);
+    case 'handleRef':
+      return handleNumbered(park, descriptor.id);
     case 'lazyWalk':
       return binding({ kind: 'lazyWalk', walk: await rehydrateDeferredWalk(descriptor.walk, ctx, park) });
     case 'value':

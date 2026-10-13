@@ -17,7 +17,7 @@
 // leaf leaves the others parked. A state written before these steps existed
 // still resumes.
 
-import type { InstanceSchema } from 'movement-lang';
+import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -85,6 +85,7 @@ const kgSchema: InstanceSchema = {
   writableRoots: {
     note: { fields: { body: 'text', payload: 'json' }, resultShape: { externalId: 'text' } },
   },
+  supportsInPlaceUpdate: true,
 };
 
 const catalog = staticCatalogFromManifests({
@@ -208,6 +209,7 @@ interface Harness {
   source: string;
   parks: Sink;
   callbacks?: ReturnType<typeof makeCallbackSink>;
+  languageVersion?: LanguageVersion;
 }
 
 function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>) {
@@ -224,6 +226,7 @@ function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>) {
     },
     parkSink: h.parks.sink,
     ...(h.callbacks !== undefined ? { callbackSink: h.callbacks.sink } : {}),
+    ...(h.languageVersion !== undefined ? { languageVersion: h.languageVersion } : {}),
     dryRun: false,
   };
 }
@@ -697,5 +700,65 @@ describe('a state written before body steps existed', () => {
     const { result, kg } = await resumeAt(h, 's1');
     expect(result.parked).toBeUndefined();
     expect(bodies(kg.creates)).toEqual(['hello again']);
+  });
+});
+
+// B7: two names for ONE write handle stay one handle across a park, so an
+// in-place write through one is seen through the other after the resume —
+// exactly as in a run that never parks. Every version that has the in-place
+// write (4 on); a park is not a language construct, so there is no version in
+// which waiting changes what a name reads.
+describe('two names for one write handle across a park', () => {
+  const twoNames = (alias: string): string =>
+    program(
+      '',
+      [
+        '  a = write graph-[:note]-> { body: "one" }',
+        alias,
+        '  await sleep(1h)',
+        '  write a { body: "two" }',
+        '  write graph-[:note]-> { payload: { seen: b.body } }',
+      ].join('\n'),
+    );
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    for (const [how, alias] of [
+      ['b = a', '  b = a'],
+      ['b = write a { … }', '  b = write a { body: "one" }'],
+    ] as const) {
+      it(`version ${languageVersion}, ${how}: the write through 'a' after the resume is seen through 'b'`, async () => {
+        const h: Harness = { source: twoNames(alias), parks: makeParkSink(), languageVersion };
+        const first = await start(h);
+        expect(first.result.parked).toBe(true);
+        const [address] = [...h.parks.parks.keys()];
+        const parked = JSON.stringify(h.parks.parks.get(address!)!.state);
+        expect(parked).toContain('"kind":"handleRef"');
+
+        const { result, kg } = await resumeAt(h, address!);
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual({ seen: 'two' });
+      });
+    }
+  }
+
+  it('a park holding each handle under one name writes no handle reference', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  a = write graph-[:note]-> { body: "one" }',
+          '  await sleep(1h)',
+          '  write graph-[:note]-> { payload: { seen: a.body } }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+    };
+    await start(h);
+    const [address] = [...h.parks.parks.keys()];
+    const state = h.parks.parks.get(address!)!.state;
+    expect(JSON.stringify(state)).not.toContain('handleRef');
+    expect(Object.keys(state.scopeChain[1]!.bindings.a!)).toEqual(['kind', 'handle', 'targetType', 'graph']);
+    const { kg } = await resumeAt(h, address!);
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'one' });
   });
 });

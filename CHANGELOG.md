@@ -105,6 +105,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- Two names for one written record stay one across a wait (`b = a`, `b = write a { … }`, or a
+  closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
+  leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that
+  never waits always did. Every language version: a wait is not part of the language, so what a
+  name reads must not depend on it. A parked state that holds each record once is unchanged.
 - A library's closure that waited before testing `x IS <Decl>` against the library's own
   declaration now resumes. The resume looked the declaration up in the root program, so it failed
   "cannot re-resolve code ref", or used the root's declaration of the same name. A parked node

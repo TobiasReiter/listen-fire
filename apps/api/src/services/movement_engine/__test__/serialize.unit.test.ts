@@ -167,6 +167,72 @@ describe('serializeBinding / rehydrateBinding (§4.1)', () => {
       });
     });
 
+    // B7: a write handle is held by reference (an in-place write and `refresh`
+    // move it under every name), so one park writes it once.
+    describe('a write handle keeps its identity across the park', () => {
+      const graph = { kind: 'instance' as const, instance: binding({ kind: 'instance', name: 'crm', adapterSlug: 'attio' }) };
+      const handle = (domain: string): Extract<Binding, { kind: 'handle' }> => binding({
+        kind: 'handle',
+        handle: {
+          adapterType: 'attio',
+          recordType: 'company',
+          externalId: 'rec_9',
+          created: true,
+          committed: true,
+          writtenValues: { domain },
+          provenance: {},
+        },
+        targetType: 'company',
+        graph,
+      });
+
+      it('a handle held once is written exactly as it always was: no id, no reference', () => {
+        const root = new Environment();
+        root.declare('a', handle('a.example'));
+        root.declare('b', handle('b.example'));
+        const chain = serializeScopeChain([root]);
+        expect(Object.keys(chain[0].bindings.a)).toEqual(['kind', 'handle', 'targetType', 'graph']);
+        expect(JSON.stringify(chain)).not.toContain('handleRef');
+        expect(JSON.stringify(chain)).not.toContain('"id"');
+      });
+
+      it('two names for one handle: the second is a reference, and both resume as one handle', async () => {
+        const shared = handle('one.example');
+        const root = new Environment();
+        root.declare('a', shared);
+        const child = root.child();
+        child.declare('b', shared);
+        const chain = JSON.parse(JSON.stringify(serializeScopeChain(child.chainFromRoot())));
+        expect(chain[0].bindings.a.id).toBe(0);
+        expect(chain[1].bindings.b).toEqual({ kind: 'handleRef', id: 0 });
+
+        // Read the reference first, as jsonb's key order may hand it over.
+        const park = newParkReader();
+        const ctx = makeCtx();
+        const b = await rehydrateBinding(chain[1].bindings.b, ctx, park);
+        const a = await rehydrateBinding(chain[0].bindings.a, ctx, park);
+        assertParkRead(park);
+        expect(b).toBe(a);
+        if (a.kind !== 'handle') throw new Error('expected a handle');
+        expect(a.handle.writtenValues).toEqual({ domain: 'one.example' });
+        expect(a.targetType).toBe('company');
+      });
+
+      it("a handle that is another's @old and held by a name stays one handle", async () => {
+        const found = handle('old.example');
+        const after = handle('new.example');
+        after.handle.old = found;
+        const bound: Binding = binding({ kind: 'tuple', slots: [after, found] });
+        const out = await roundTrip(bound);
+        if (out.kind !== 'tuple' || out.slots[0].kind !== 'handle') throw new Error('unreachable');
+        expect(out.slots[0].handle.old).toBe(out.slots[1]);
+      });
+
+      it('a reference to a handle the state never wrote is refused', async () => {
+        await expect(rehydrateBinding({ kind: 'handleRef', id: 3 }, makeCtx())).rejects.toThrow(/write handle\(s\) #3/);
+      });
+    });
+
     it('extractRoot / extractPosition (materialised emission, never re-run) round-trip', async () => {
       const emission: ExtractEmission = {
         nodeName: 'extract result',
