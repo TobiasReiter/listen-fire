@@ -23,7 +23,7 @@ export type Routes = 'whole' | 'refused' | 'declined' | 'by_contract' | 'unrecor
 
 /** Refusals both engines make by the park-state contract: a parked state
  *  neither reads. The README's port list marks each Closed. */
-export const BY_CONTRACT: readonly string[] = ['resume_state_does_not_read', 'resume_state_suspended'];
+export const BY_CONTRACT: readonly string[] = ['resume_state_does_not_read', 'resume_state_code_does_not_read', 'resume_state_suspended'];
 
 /** Refusals of the shim's, before a segment opens, of an input the eval wire
  *  cannot carry as itself; such a program cannot be recorded either. */
@@ -126,6 +126,19 @@ function withBinding(state: Record<string, unknown>, name: string, binding: unkn
     if (bindings !== null && typeof bindings === 'object') chain[chain.length - 1] = { ...inner, bindings: { ...bindings, [name]: binding } };
   }
   return { ...state, scopeChain: chain };
+}
+
+/** The state with the syntax tree of every piece of parked code (a closure's,
+ *  a kept walk's head) replaced by one that does not read as an AST. */
+function withCodeCorrupted(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withCodeCorrupted);
+  if (value === null || typeof value !== 'object') return value;
+  const object = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(object)) out[key] = withCodeCorrupted(entry);
+  if (object.kind === 'closure') out.closure = 'nonsense';
+  else if ('head' in object && 'captured' in object) out.head = 'nonsense';
+  return out;
 }
 
 const m = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
@@ -1251,6 +1264,17 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  x = msg.`subject`\n  await sleep(1h)\n  write crm-[:notes]-> { body: x }', resume: (state) => ({ ...state, scopeChain: 'nonsense' }) }),
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => state, routes: 'whole' }),
       () => ({ body: '  x = msg.`subject`\n  await sleep(1h)\n  write crm-[:notes]-> { body: x }', resume: (state) => state, routes: 'whole' }),
+    ],
+  },
+  {
+    reason: 'resume_state_code_does_not_read',
+    routes: 'by_contract',
+    note: "a parked state whose code (a closure's, a kept walk's head) is a syntax tree that does not read as the AST it was written from: a state neither engine writes, refused by name; a state an engine parked resumes on Rust",
+    programs: [
+      () => ({ body: '  inc = (v: <number>) => v + 1\n  await sleep(1h)\n  r = MAP([1, 2], inc)\n  write crm-[:notes]-> { body: "${COUNT(r)}" }', resume: (state) => withCodeCorrupted(state) }),
+      () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => withCodeCorrupted(state) }),
+      () => ({ body: '  inc = (v: <number>) => v + 1\n  await sleep(1h)\n  r = MAP([1, 2], inc)\n  write crm-[:notes]-> { body: "${COUNT(r)}" }', resume: (state) => state, routes: 'whole' }),
+      () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => state, routes: 'whole' }),
     ],
   },
   {
