@@ -792,6 +792,8 @@ export class KnowledgeGraphAdapter implements Adapter {
       // entry point — the ontology UUID stays adapter-private (cache + SQL).
       typeId: nodeType.name,
       displayName: nodeType.name,
+      // Every node can be removed (`deleteRecord` → `deleteKgRecord`).
+      deletable: true,
       uniquenessConstraints,
       // The graph resolves fuzzy uniqueness components by trigram similarity
       // (the store's `identity` search), so authors may mark a `unique by`

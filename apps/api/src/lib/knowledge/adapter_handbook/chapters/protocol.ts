@@ -62,7 +62,7 @@ methods below. Each row gives the \`params\` you receive and the
 | \`getRelated\` | \`{ position, fieldId, direction }\` | array of related results (\`[]\` if none) |
 | \`createRecord\` | write input (below) | write result (below) |
 | \`updateRecord\` | write input **+ \`externalId\`** | write result **+ \`association\`**, OR \`{ "notFound": true }\` |
-| \`deleteRecord\` | \`{ recordType, externalId, mutationContext }\` | \`{}\` (optionally \`{ events: [] }\`) |
+| \`deleteRecord\` | \`{ recordType, externalId, mutationContext }\` | \`{}\` (optionally \`{ events: [] }\`) — for a type whose descriptor says \`"deletable": true\` |
 
 If your system is read-only, implement \`getFieldValue\` /
 \`getRelated\` for real and stub the writes. If it is write-only (a pure

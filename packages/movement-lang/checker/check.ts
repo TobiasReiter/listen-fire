@@ -885,6 +885,15 @@ export const DiagnosticCodes = {
   /** `refresh <handle>` on a head that has no re-fetchable record id — the event
    *  payload or an extracted node. Refresh a write handle or a traversed record. */
   REFRESH_UNSTABLE: 'MOV_REFRESH_UNSTABLE',
+  /** `delete x` where `x`'s record type does not declare that its system can
+   *  delete one (language version 5): the describe's per-type `deletable`
+   *  promise, absent. A union is deletable only when every member is. */
+  DELETE_NOT_DECLARED: 'MOV_DELETE_NOT_DECLARED',
+  /** `delete x` where `x` is not one system's stored record (language version
+   *  5): a value, a name that may hold one (a list, a value union), an
+   *  extracted node or a record this run built (transient), the instance
+   *  itself, a closure or a node a construct minted. */
+  DELETE_NOT_RECORD: 'MOV_DELETE_NOT_RECORD',
   // race + receipts + absence (asks-as-adapter chunk C). ABSENT_REQUIRED rides in
   // via TypedDiagnosticCodes (also fired inside the typing layer's comparison
   // check), reached here through the spread below as DiagnosticCodes.ABSENT_REQUIRED.
@@ -4794,6 +4803,7 @@ class Checker {
         });
         this.resolveName(statement.name, statement.span, scope);
         this.noteNamedEffect('write', statement.name, scope);
+        if (since(this.languageVersion, 5)) this.checkDeleteDeclared(statement.name, statement.span, scope);
         return;
       case 'refresh':
         this.checkRefresh(statement, scope);
@@ -6585,6 +6595,112 @@ class Checker {
       `'${statement.name}' is ${what}. 'refresh' re-fetches a stored record by its id — refresh a write handle or a traversed record instead.`,
       statement.nameSpan,
     );
+  }
+
+  /**
+   * `delete x` since language version 5: `x` is one record a system stores,
+   * and its type declares that the system deletes one (the describe's
+   * per-type `deletable`). Refused, by MOV_DELETE_NOT_RECORD, where `x` is a
+   * value or may hold one, an extracted node or a record this run built (a
+   * transient graph — nothing stores it), or any other non-record; by
+   * MOV_DELETE_NOT_DECLARED where its type (every member of a union) makes no
+   * such promise. A record whose system describes nothing, or whose type
+   * nobody has fetched yet, says nothing, so nothing is refused. Versions 1–4
+   * leave all of it to the run.
+   */
+  private checkDeleteDeclared(name: string, span: Span, scope: Scope): void {
+    const resolution = scope.resolve(name);
+    if (resolution.kind !== 'found') return; // `resolveName` said so
+    const notRecord = (what: string): void =>
+      this.report(
+        DiagnosticCodes.DELETE_NOT_RECORD,
+        `'${name}' is ${what} — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').`,
+        span,
+      );
+    const symbol = resolution.symbol;
+    if (
+      this.symbolPositionType(symbol) === undefined &&
+      symbol.fieldType === undefined &&
+      symbol.kind === 'binding' &&
+      symbol.bindingPlane !== 'node' &&
+      symbol.plural !== true
+    ) {
+      // A value no single type describes — a record on one branch and a
+      // value on another (`IF … THEN r ELSE "a" END`).
+      notRecord('a value that may hold something other than one record');
+      return;
+    }
+    const record = this.recordOfName(symbol, name, span);
+    if (record === undefined) return; // reported as the internal error it is
+    if (record.kind === 'value') {
+      notRecord(record.what);
+      return;
+    }
+    if (record.kind === 'undescribed') {
+      // A name typed as holding records that is not ONE record: a list of
+      // them, or a value that may be one (a union with a value).
+      const held = symbol.fieldType;
+      if (held !== undefined && !isRecordType(held)) {
+        notRecord(`${describeFieldType(held)}, which may hold something other than one record`);
+      }
+      return;
+    }
+    const undeclared: string[] = [];
+    const visit = (type: PositionTypeRef): boolean => {
+      switch (type.kind) {
+        case 'maybeEmpty':
+          return visit(type.of);
+        case 'position': {
+          if (type.runBuilt === true) {
+            notRecord(`${describePosition(type)}, a record on a node this run built — the run's own graph, which nothing stores`);
+            return false;
+          }
+          this.collectUndeclaredDelete(type.instance, type.position, describePosition(type), undeclared);
+          return true;
+        }
+        case 'handle':
+          if (type.position === undefined) {
+            undeclared.push(describePosition(type));
+            return true;
+          }
+          this.collectUndeclaredDelete(type.instance, type.position, describePosition(type), undeclared);
+          return true;
+        case 'union':
+          for (const variant of type.variants) {
+            this.collectUndeclaredDelete(
+              type.instance,
+              variant,
+              `${type.instance.name}.${displayNameOf(type.instance, variant)}`,
+              undeclared,
+            );
+          }
+          return true;
+        case 'extract':
+          notRecord(`${describePosition(type)}, an extracted node — a transient graph the extraction built, which nothing stores`);
+          return false;
+        case 'meta':
+        case 'closure':
+        case 'local':
+          notRecord(describePosition(type));
+          return false;
+        default:
+          return neverAsAny(type);
+      }
+    };
+    if (!visit(record.type) || undeclared.length === 0) return;
+    this.report(
+      DiagnosticCodes.DELETE_NOT_DECLARED,
+      `'${name}' is ${undeclared.length === 1 ? undeclared[0] : `one of ${undeclared.join(', ')}`}, and its system does not declare that it can delete ${undeclared.length === 1 ? 'one' : 'every one of them'} — 'delete' is checked against the system's own promise ('deletable' on the type it describes). Change the record instead ('write ${name} { … }'), or delete it in a system that can.`,
+      span,
+    );
+  }
+
+  /** A position whose system describes it and makes no `deletable` promise.
+   *  Undescribed and pending positions say nothing, so they add nothing. */
+  private collectUndeclaredDelete(instance: InstanceRef, position: string, shown: string, into: string[]): void {
+    const schema = instance.schema.positions[position];
+    if (schema === undefined || schema.undescribed === true || schema.pending === true) return;
+    if (schema.deletable !== true) into.push(shown);
   }
 
   // ── the collection ops (core calculus v2, wave 4b) ──

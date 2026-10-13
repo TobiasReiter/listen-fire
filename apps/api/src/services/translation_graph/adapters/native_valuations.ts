@@ -592,6 +592,8 @@ function commandEdgeRefs(parent: string): SchemaReferenceDescriptor[] {
 
 const LEGAL_ENTITY_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: LEGAL_ENTITY_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Legal Entity',
   // `FUZZY` on a name shortlists by similarity (the list route's `search`,
   // whose search vector covers exactly these four) and leaves the call to the
@@ -640,6 +642,8 @@ const LEGAL_ENTITY_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const INVESTMENT_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: INVESTMENT_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Investment',
   fields: [
     ...commonFields(),
@@ -665,6 +669,8 @@ const INVESTMENT_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const TRANSACTION_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: TRANSACTION_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Transaction',
   fields: [
     ...commonFields(),
@@ -681,6 +687,8 @@ const TRANSACTION_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const ASSET_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: ASSET_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Asset',
   fields: [
     ...commonFields(),
@@ -714,6 +722,8 @@ const ASSET_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const ASSET_TRANSFER_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: ASSET_TRANSFER_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Asset Transfer',
   fields: [
     ...commonFields(),
@@ -734,6 +744,8 @@ const ASSET_TRANSFER_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const PRICE_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: PRICE_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Price',
   fields: [
     ...commonFields(),
@@ -753,6 +765,8 @@ const PRICE_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const EVENT_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: EVENT_TYPE,
+  // An entity: `deleteRecord` removes it through the REST surface.
+  deletable: true,
   displayName: 'Event',
   fields: [
     ...commonFields(),

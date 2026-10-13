@@ -59,6 +59,11 @@ Returns one type's full shape, or \`null\` if the \`typeId\` is unknown:
   attachments — nothing can ever be created along it). Read and write
   surfaces are allowed to be asymmetric — describe what each direction
   honestly supports rather than forcing one shape on both.
+- \`"deletable": true\` on a type says your \`deleteRecord\` removes a
+  record of it. Absent means no: an automation's \`delete x\` of that
+  type is refused while it is authored (language version 5 on), rather
+  than failing when it runs. Declare it type by type — a CRM that deletes
+  companies but not their notes says so on Company only.
 
 ### Keeping the two in sync
 

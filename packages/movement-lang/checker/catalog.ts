@@ -1106,6 +1106,14 @@ export interface PositionSchema {
    * has two fields wearing one name.
    */
   ambiguousProperties?: string[];
+  /**
+   * A record of this type can be DELETED — the system's own promise, declared
+   * per type in its describe (`deletable: true`) where its `deleteRecord`
+   * removes one. Absent ⇒ it makes no such promise, and since language
+   * version 5 `delete x` of this type is MOV_DELETE_NOT_DECLARED (an
+   * undescribed or pending position says nothing, so nothing is refused).
+   */
+  deletable?: boolean;
 }
 
 /**

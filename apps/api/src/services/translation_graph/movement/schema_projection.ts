@@ -711,6 +711,9 @@ export function instanceSchemaFromDescriptors(input: {
         ...(droppedField ? { openProperties: true } : {}),
         ...(writeOnlyProperties.length > 0 ? { writeOnlyProperties } : {}),
         ...(ambiguousProperties.length > 0 ? { ambiguousProperties } : {}),
+        // The system removes a record of this type (its `deleteRecord`) — the
+        // promise `delete x` is checked against since language version 5.
+        ...(descriptor.deletable === true ? { deletable: true } : {}),
       };
     }
     // A purely read-only type (no writable field) needs no write shape at

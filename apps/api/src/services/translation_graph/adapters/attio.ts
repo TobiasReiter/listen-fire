@@ -4859,6 +4859,9 @@ async function buildTypeDescriptor(
     externalId: obj.id,
     fields,
     references,
+    // An object's records are removed by `deleteRecord` (Attio's DELETE
+    // endpoint); its list entries, notes, tasks and files are not.
+    deletable: true,
     uniquenessConstraints: uniquenessConstraintsFromAttrs(attrs),
     // Attio resolves a fuzzy uniqueness component via its `$contains`
     // filter (see buildPropertyMatch), so FUZZY is allowed on Attio writes.

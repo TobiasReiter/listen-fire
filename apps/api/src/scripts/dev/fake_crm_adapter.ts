@@ -117,6 +117,7 @@ export function fakeCrmManifest(baseUrl: string): Omit<RemoteAdapterManifestFile
 const COMPANY_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: FAKE_CRM_COMPANY_TYPE,
   displayName: FAKE_CRM_COMPANY_TYPE,
+  deletable: true,
   fields: [
     { fieldId: 'Name', displayName: 'Name', kind: 'string', writable: true, required: true },
     { fieldId: 'Description', displayName: 'Description', kind: 'string', writable: true, required: false },

@@ -1624,6 +1624,17 @@ export const schemaTypeDescriptorSchema = z.object({
    */
   uniquenessAuthorable: z.boolean().optional(),
   /**
+   * Whether a record of this type can be DELETED through the adapter's
+   * `deleteRecord` — a promise per type, like a field's `writable`. Default
+   * (unset) ⇒ no: an adapter declares it on exactly the types its
+   * `deleteRecord` removes (Attio objects, but not its notes; Evertrace
+   * searches, lists and list entries, but not its signals). Since language
+   * version 5 the checker refuses `delete x` where `x`'s type does not
+   * declare it; versions 1–4 leave it to the run, which fails where the
+   * adapter refuses.
+   */
+  deletable: z.boolean().optional(),
+  /**
    * This type's write body is a DISCRIMINATED UNION: the LITERAL value of one
    * required field (`discriminant`) selects which variant of the write shape
    * applies (the write-side dual of read narrowing — a create NAMES its

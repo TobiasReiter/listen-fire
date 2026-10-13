@@ -601,6 +601,8 @@ async function tableDescriptor(input: {
     labelTemplate: `{${table.primaryFieldId}}`,
     fields,
     references,
+    // A table's rows are removed by `deleteRecord`.
+    deletable: true,
     // P2: native uniqueness is never invented for Airtable — identity is
     // the TG layer's concern via author-defined constraints.
     uniquenessConstraints: undefined,
