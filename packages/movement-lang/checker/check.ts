@@ -570,6 +570,17 @@ export const DiagnosticCodes = {
    *  "transformation wins" semantic and stays legal; this only catches two
    *  fields naming the same thing in the same stage. */
   EXTRACT_FIELD_DUPLICATE: 'MOV_EXTRACT_FIELD_DUPLICATE',
+  /** A field or a child node named `__proto__`, in a node declaration or an
+   *  extraction: JavaScript reads that key as the record's prototype, so the
+   *  extracted record never holds it as a field (the engine stored the
+   *  model's answer for it as the record's prototype instead). */
+  SHAPE_FIELD_PROTO: 'MOV_SHAPE_FIELD_PROTO',
+  /** A name the program binds spelled `__proto__` (a binding, a parameter,
+   *  an alias): the engine keeps its scope's names as an object's keys, and
+   *  JavaScript reads that key as the object's prototype, so the name is
+   *  lost (a closure's parameter reads as `{}`, a parked binding is dropped
+   *  and its resume fails). */
+  NAME_PROTO: 'MOV_NAME_PROTO',
   /** `node entry: <X>` where `X` is not a node declaration — an extraction
    *  node's shape is a declared structure, never a system's record type. */
   EXTRACT_SHAPE_NOT_DECLARED: 'MOV_EXTRACT_SHAPE_NOT_DECLARED',
@@ -3504,6 +3515,13 @@ class Checker {
     span: Span,
     options: { visibleFrom?: Loc } = {},
   ): ScopeSymbol | undefined {
+    if (symbol.name === '__proto__') {
+      this.report(
+        DiagnosticCodes.NAME_PROTO,
+        `'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name`,
+        span,
+      );
+    }
     const shadowing = scope.shadowing(symbol.name);
     if (shadowing !== undefined) {
       const where =
@@ -12722,6 +12740,7 @@ class Checker {
    */
   private checkShapeDescriptions(node: ShapeNode, scope: Scope): void {
     this.checkFieldChildNamesApart(node.fields, node.children);
+    this.checkNoPrototypeName([...node.fields, ...node.children]);
     if (node.description !== undefined) this.checkExprSlot(node.description, scope);
     for (const field of node.fields) {
       if (field.description !== undefined) this.checkExprSlot(field.description, scope);
@@ -12800,6 +12819,7 @@ class Checker {
       for (const plugin of stage.through ?? []) {
         this.checkPluginCall(plugin, scope, { prior: new Set(prior), ownOrLater });
       }
+      this.checkNoPrototypeName([...stage.fields, ...stage.children]);
       const seen = new Set<string>();
       for (const field of stage.fields) {
         if (seen.has(field.name)) {
@@ -12851,6 +12871,18 @@ class Checker {
         DiagnosticCodes.EXTRACT_FIELD_DUPLICATE,
         `'${child.name}' is both a field and a child node here — a record's fields and its child nodes share one namespace, so give one of them another name`,
         child.span,
+      );
+    }
+  }
+
+  /** A shape's fields and child nodes, none named `__proto__`. */
+  private checkNoPrototypeName(entries: ReadonlyArray<{ name: string; span: Span }>): void {
+    for (const entry of entries) {
+      if (entry.name !== '__proto__') continue;
+      this.report(
+        DiagnosticCodes.SHAPE_FIELD_PROTO,
+        `'__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name`,
+        entry.span,
       );
     }
   }

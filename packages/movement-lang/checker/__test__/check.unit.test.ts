@@ -1043,6 +1043,47 @@ describe('extract field duplicates', () => {
     expect(diagnostics.map(d => d.code)).toEqual([C.EXTRACT_FIELD_DUPLICATE]);
   });
 
+  // JavaScript reads `__proto__` as an object's prototype: an extracted
+  // record would never hold the field, so naming one so is refused where it
+  // is written, inline or in a declaration, a field or a node.
+  it('MOV_SHAPE_FIELD_PROTO for a field or a node named __proto__, inline or declared', () => {
+    const inline = check(
+      inMovement(
+        [
+          '  deals = extract from [msg.`text`] {',
+          '    node company: "each company" {',
+          '      __proto__: "the pitch"',
+          '      node round: "each round" { __proto__: "the stage" }',
+          '    }',
+          '    node __proto__: "each fund" { name: "the name" }',
+          '  }',
+        ].join('\n'),
+      ),
+    );
+    expect(inline.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO]);
+    expect(inline[0].message).toContain("'__proto__'");
+    const root = check(inMovement(['  deals = extract from [msg.`text`] {', '    __proto__: "the pitch"', '  }'].join('\n')));
+    expect(root.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO]);
+    const declared = check(
+      [PRELUDE, 'node Company: "each company" {', '  name: <text> "the name"', '  node __proto__: "each round" { __proto__: <text> "the stage" }', '}'].join('\n'),
+    );
+    expect(declared.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO]);
+  });
+
+  // The engine keeps a scope's names as an object's keys: a name spelled
+  // `__proto__` would be that object's prototype instead (a parameter reads
+  // as `{}`, a parked binding is dropped). Refused on every version.
+  it.each([1, 3, 4] as const)('MOV_NAME_PROTO for a binding or a parameter named __proto__ (version %d)', (languageVersion) => {
+    const named = (body: string) =>
+      checkProgram(parseProgram(inMovement(body), { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+    const binding = named('  __proto__ = 1');
+    expect(binding.map(d => d.code)).toEqual([C.NAME_PROTO]);
+    expect(binding[0].message).toContain("'__proto__'");
+    const param = named('  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })');
+    expect(param.map(d => d.code)).toEqual([C.NAME_PROTO]);
+    expectClean(inMovement('  proto = 1\n  xs = MAP([1, 2], (p) => {\n    return p\n  })'));
+  });
+
   it('a later stage may redeclare an earlier stage\'s field (transformation wins)', () => {
     expectClean(
       inMovement(

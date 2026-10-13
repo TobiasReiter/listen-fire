@@ -15,6 +15,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ### Changed
 
+- A field or child node named `__proto__` in a node declaration or an extraction is refused
+  (`MOV_SHAPE_FIELD_PROTO`), and so is a binding, parameter or alias named `__proto__`
+  (`MOV_NAME_PROTO`), on every language version. Both used to validate but misbehaved at run time,
+  because JavaScript reads that key as an object's prototype: the extracted record never held the
+  field, a closure's parameter read as `{}`, and a parked binding was dropped so its resume
+  failed. A bug fix, not a language version: an automation using one now fails its check; rename
+  it.
 - Under language version 4 a run's result (and the run records and views built from it) no longer
   carries a write record's `old` member, the engine's own handle for the record as found (its
   instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it during the
