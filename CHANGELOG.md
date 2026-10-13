@@ -433,6 +433,23 @@ guide](docs/language/dancing-wren-migration.md).
   (`MOV_GRAPH_ENTRY_RECORD`, with the path), on every language version, on the same terms as a
   spread: it used to validate and the run stored the record as a field. `a: r` (an edge holding
   the record) is untouched.
+- A call's value holds what any of the function's returns may hold, so a record or file a return
+  hands back through `COALESCE`, `IF` or `MULTI` (`f = () => COALESCE(org, "x")`, or returns that
+  disagree) is refused where the call's value goes, as the bound conditional is: a graph entry
+  (`name: f()`), a spread, a written field, a plugin argument, an extraction input, a `MAP` or
+  `REDUCE` over it. A named function's bound call on every version; a closure's call (and any call
+  inside an expression) from version 3, where they run. It used to validate, and the engine handed
+  its own record object onward. A bug fix, not a language version: return a field off the record.
+  A declared return type that does not take what a return may hold (`(): <text> => COALESCE(org,
+  "x")`) is `MOV_RETURN_TYPE` at the declaration from **version 5 (Dancing Wren)**: it ran on
+  versions 3 and 4 while the call was unused or only compared, so there the declaration is clean
+  and the call carries what the body may hold, refused where it reaches data.
+- A union whose every member is a record (`COALESCE(a, b)` of two records, or a function returning
+  one of two) is one record for the graph entry: `a: r` over it is an edge, as it is over one
+  record, on every version. It was refused as a field holding a record. A union that mixes a record
+  with a value is still refused.
+- A closure's or function's returns are flattened and deduplicated, and the kinds of engine object
+  a type holds are remembered per type, so a chain or fan of calls checks in linear time.
 - A plugin argument the plugin declares a value type for (text, a file, …) takes no record or file
   that type does not hold, on every language version (`MOV_CALL_ARG_TYPE`, with the path): a file
   handed to a text argument (`tag(label: f)`, or one arm of a `COALESCE`), a file or record under a
@@ -490,6 +507,28 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- Two names for one written record stay one across a wait (`b = a`, `b = write a { … }`, or a
+  closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
+  leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that
+  never waits always did. Every language version: a wait is not part of the language, so what a
+  name reads must not depend on it. The same holds for the names a `parallel` / `race` arm or a
+  fan-out iteration leaves when it finishes after a wait, and for a node held under two names
+  there. A parked state that holds each record once is unchanged.
+- A library's closure that waited before testing `x IS <Decl>` against the library's own
+  declaration now resumes. The resume looked the declaration up in the root program, so it failed
+  "cannot re-resolve code ref", or used the root's declaration of the same name. A parked node
+  declaration or function now says which library it belongs to, and is found again there. Every
+  language version: the run before the wait already read the library's, so nothing else changes.
+  A run that was already waiting when this shipped resumes as before, since its parked state
+  does not say which library: one whose library declaration is shadowed by a same-named
+  declaration in the root program still reads the root's.
+- A closure bound at a file's top level (`f = (n: <number>) => …`), in a library or the root
+  program, is now in scope inside that file's functions. The run used to fail "'f' is not in
+  scope". It holds its file's scope by reference, as a JavaScript closure holds its module's, so
+  it also sees the file's later closures (`f = (n) => g(n) + 1` before `g = …`), and a wait
+  stores it by name, so a parked state stays small however many a file declares. Every language
+  version from 3, where a closure became callable; it always failed before, so nothing that ran
+  changes.
 - A record passed to a function another file exports is no longer refused when that file constructs
   the same system ("expects inbox.message, but this argument is inbox.message"). A system is its
   address (the adapter, the credential and the values of literal construction arguments), not

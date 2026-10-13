@@ -683,3 +683,221 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B5: under language version %i, 
     expect(errorsUnder(version, ['  s = tag(label: { a: org.name })'])).toEqual([]);
   });
 });
+
+// B14: a call's value holds what its returns may hold. A body returning
+// `COALESCE(org, "x")` (or returns that disagree) had no type, so its call
+// carried nothing for the walk to find — the record reached a graph entry, a
+// spread, a written field, a plugin argument or an extraction input, and the
+// engine handed its own object onward. The returns' union now travels with
+// the call's value as a bound conditional's arms do: a named function's on
+// every version (a call it binds), a closure's from version 3 (where a
+// closure is called), inside an expression too.
+const PICK = [
+  'function pick() {',
+  '  o = write crm-[:companies]-> { name: "Acme Inc." }',
+  '  return COALESCE(o, "x")',
+  '}',
+  'function scan() {',
+  '  d = FILE("contents", "pdf")',
+  '  return { a: COALESCE(d, "x") }',
+  '}',
+].join('\n');
+
+const errorsWithFunctions = (version: LanguageVersion, body: string[]): Diagnostic[] => {
+  const source = `${PRELUDE}\n${PICK}\nmovement m() {\n${[...HELD, ...body].join('\n')}\n}`;
+  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    d => (d.severity ?? 'error') === 'error',
+  );
+};
+
+const refusedAs = (errors: Diagnostic[], code: string, said: string): void => {
+  expect(errors.map(d => d.code)).toEqual([code]);
+  expect(errors[0]!.message).toContain(said);
+};
+
+describe.each([1, 4, 5] as LanguageVersion[])('B14: under language version %i, a named function\'s bound call holds what its returns hold', version => {
+  const refused = (body: string[], code: string, said: string): void => refusedAs(errorsWithFunctions(version, body), code, said);
+
+  it('a graph entry', () => {
+    refused(['  v = pick()', '  g = graph { name: v }'], 'MOV_GRAPH_ENTRY_RECORD', "'v' may be a crm.company handle");
+  });
+
+  it('a map spread into a graph', () => {
+    const body = ['  v = pick()', '  held = { k: v }', '  g = graph { ...held }'];
+    // Version 1 names no key of a map literal: the spread is refused as untyped
+    // alone, as B3's is (the record's refusal comes with the shape it asks for).
+    if (version === 1) refused(body, 'MOV_GRAPH_SPREAD_UNTYPED', "nothing says which keys 'held' holds");
+    else refused(body, 'MOV_GRAPH_SPREAD_RECORD', "'held.k' may be a crm.company handle");
+  });
+
+  it('a written field', () => {
+    refused(['  v = pick()', ...note('company: v')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+  });
+
+  it('a plugin argument', () => {
+    refused(['  v = pick()', '  s = summarise(data: { a: v })'], 'MOV_CALL_ARG_TYPE', "'data.a' may be a crm.company handle");
+  });
+
+  it('an extraction input', () => {
+    refused(['  v = scan()', ...extract('v')], 'MOV_EXTRACT_CONTENT', "'v.a' may be a file");
+  });
+});
+
+describe.each([4, 5] as LanguageVersion[])('B14: under language version %i, a closure\'s call holds what its returns hold', version => {
+  const refused = (body: string[], code: string, said: string): void => refusedAs(errorsUnder(version, body), code, said);
+  const c = '  c = () => COALESCE(org, "x")';
+
+  it('a graph entry', () => {
+    refused([c, '  g = graph { name: c() }'], 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+  });
+
+  it('a map spread into a graph', () => {
+    refused([c, '  held = { k: c() }', '  g = graph { ...held }'], 'MOV_GRAPH_SPREAD_RECORD', "'held.k' may be a crm.company handle");
+  });
+
+  it('a written field, whole and under a key', () => {
+    refused([c, ...note('company: c()')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+    refused([c, ...note('company: { a: c() }')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+  });
+
+  it('a plugin argument: structured data, and a file into text', () => {
+    refused([c, '  s = summarise(data: { a: c() })'], 'MOV_CALL_ARG_TYPE', "'data.a' may be a crm.company handle");
+    refused(['  c = () => COALESCE(f, "x")', '  s = tag(label: c())'], 'MOV_CALL_ARG_TYPE', FILE_NOT_A_VALUE);
+  });
+
+  it('an extraction input', () => {
+    refused(['  c = () => { return { a: COALESCE(f, "x") } }', ...extract('c()')], 'MOV_EXTRACT_CONTENT', "'c()' may hold a file at '.a'");
+  });
+
+  it('a name bound to the call', () => {
+    refused([c, '  v = c()', '  g = graph { name: v }'], 'MOV_GRAPH_ENTRY_RECORD', "'v' may be a crm.company handle");
+  });
+
+  it('a block body: any of its returns', () => {
+    refused(['  c = () => { if 1 > 0 { return "y" } return COALESCE(org, "x") }', '  g = graph { name: c() }'], 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+    refused(['  c = () => { if 1 > 0 { return "y" } return { a: org } }', '  g = graph { name: c() }'], 'MOV_GRAPH_ENTRY_RECORD', "'c()' may hold a crm.company handle at '.a'");
+  });
+
+  it('a closure a closure returns', () => {
+    refused(
+      ['  c = () => {', '    k = () => COALESCE(org, "x")', '    return k', '  }', '  h = c()', '  g = graph { name: h() }'],
+      'MOV_GRAPH_ENTRY_RECORD',
+      "'h()' may be a crm.company handle",
+    );
+  });
+
+  it('a closure MAP or REDUCE calls: its returns, as members or as the value', () => {
+    refused(['  xs = MAP(["a"], (v) => COALESCE(org, v))', '  g = graph { name: xs }'], 'MOV_GRAPH_ENTRY_RECORD', "'xs[…]' may be a crm.company handle");
+    refused(['  xs = MAP(["a"], (v) => COALESCE(org, v))', '  s = summarise(data: { a: xs })'], 'MOV_CALL_ARG_TYPE', 'may be a crm.company handle');
+    refused(['  r = REDUCE(["a"], "", (acc, v) => COALESCE(org, v))', ...note('company: r')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+    refused([c, '  k = (v: <text>) => c()', '  xs = MAP(["a"], k)', '  g = graph { name: xs }'], 'MOV_GRAPH_ENTRY_RECORD', "'xs[…]' may be a crm.company handle");
+    expect(errorsUnder(version, ['  xs = MAP(["a"], (v) => COALESCE(v, "x"))', '  g = graph { name: xs }'])).toEqual([]);
+  });
+
+  it('a named function called inside an expression', () => {
+    refusedAs(errorsWithFunctions(version, ['  g = graph { name: pick() }']), 'MOV_GRAPH_ENTRY_RECORD', "'pick()' may be a crm.company handle");
+  });
+
+  it('a declared return type that does not take what a return may hold: refused where it is declared from version 5, at the use before', () => {
+    const declaredText = '  c = (): <text> => COALESCE(org, "x")';
+    const declaredJson = '  c = (): <json> => { return { a: COALESCE(f, "x") } }';
+    if (version >= 5) {
+      refused([declaredText, '  g = graph { name: c() }'], 'MOV_RETURN_TYPE', "declares it returns <text>, but this may be a crm.company handle");
+      refused([declaredJson], 'MOV_RETURN_TYPE', "may hold file at '.a'");
+      refused([declaredText, '  s = c() = "x"'], 'MOV_RETURN_TYPE', 'but this may be a crm.company handle');
+    } else {
+      // The declaration alone ran on these versions (the call unused, or only
+      // compared): clean. A use that reaches data is still refused, there.
+      expect(errorsUnder(version, [declaredText])).toEqual([]);
+      expect(errorsUnder(version, [declaredText, '  s = c() = "x"', '  t = IF c() = "x" THEN 1 ELSE 2 END'])).toEqual([]);
+      refused([declaredText, '  g = graph { name: c() }'], 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+      refused([declaredText, ...note('company: c()')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
+    }
+  });
+
+  it('closures returning text, numbers and lists of text stay clean', () => {
+    const uses = (call: string): string[] => [
+      `  g = graph { name: ${call} }`,
+      `  held = { k: ${call} }`,
+      '  g2 = graph { ...held }',
+      ...note(`company: ${call}`),
+      `  s = summarise(data: { a: ${call} })`,
+      `  t = tag(label: ${call})`,
+      ...extract(call),
+    ];
+    expect(errorsUnder(version, ['  c = () => COALESCE("y", "x")', ...uses('c()')])).toEqual([]);
+    expect(errorsUnder(version, ['  c = () => { if 1 > 0 { return 1 } return 2 }', '  g = graph { name: c() }', ...note('company: c()')])).toEqual([]);
+    expect(errorsUnder(version, ['  c = () => [COALESCE("a", "b"), "c"]', '  g = graph { name: c() }', '  s = summarise(data: c())'])).toEqual([]);
+    expect(errorsUnder(version, ['  c = (): <text> => COALESCE("y", "x")', '  g = graph { name: c() }'])).toEqual([]);
+  });
+
+  it('a closure returning one record is an edge, as the record itself is', () => {
+    expect(errorsUnder(version, ['  c = () => org', '  g = graph { name: c() }'])).toEqual([]);
+  });
+});
+
+// B14 review M1: a union whose every member is a record is ONE record for the
+// graph-entry rule — an edge, as `a: r` is — wherever it comes from: written
+// out, bound, or handed back by a call. A union that mixes a record with a
+// value is still refused. L1: the union of a call's returns is flattened and
+// deduplicated, so a chain or a fan of calls checks in linear time.
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B14 review: under language version %i, records only are one record', version => {
+  const two = [
+    '  o2 = write crm-[:companies]-> { name: "Other" }',
+  ];
+  const TWO = [
+    'function two() {',
+    '  a = write crm-[:companies]-> { name: "A" }',
+    '  b = write crm-[:companies]-> { name: "B" }',
+    '  return COALESCE(a, b)',
+    '}',
+    'function mixed() {',
+    '  a = write crm-[:companies]-> { name: "A" }',
+    '  return COALESCE(a, "x")',
+    '}',
+  ].join('\n');
+  const withTwo = (body: string[]): Diagnostic[] => {
+    const source = `${PRELUDE}\n${TWO}\nmovement m() {\n${[...HELD, ...two, ...body].join('\n')}\n}`;
+    return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+      d => (d.severity ?? 'error') === 'error',
+    );
+  };
+
+  it('written out and bound: an edge', () => {
+    expect(withTwo(['  r = COALESCE(org, o2)', '  g = graph { a: r }'])).toEqual([]);
+    expect(withTwo(['  g = graph { a: COALESCE(org, o2) }'])).toEqual([]);
+  });
+
+  it('a function returning one of two records: an edge, bound or inline', () => {
+    expect(withTwo(['  r = two()', '  g = graph { a: r }'])).toEqual([]);
+    expect(withTwo(['  g = graph { a: two() }'])).toEqual([]);
+  });
+
+  it('a mix of a record and a value is refused', () => {
+    refusedAs(withTwo(['  r = COALESCE(org, "x")', '  g = graph { a: r }']), 'MOV_GRAPH_ENTRY_RECORD', "'r' may be a crm.company handle");
+    refusedAs(withTwo(['  r = mixed()', '  g = graph { a: r }']), 'MOV_GRAPH_ENTRY_RECORD', "'r' may be a crm.company handle");
+  });
+
+  if (version >= 3) {
+    it('a closure returning one of two records: an edge; with a value among them, refused', () => {
+      expect(withTwo(['  c = () => COALESCE(org, o2)', '  r = c()', '  g = graph { a: r }'])).toEqual([]);
+      expect(withTwo(['  c = () => COALESCE(org, o2)', '  g = graph { a: c() }'])).toEqual([]);
+      expect(withTwo(['  c = () => { if 1 > 0 { return org } return o2 }', '  g = graph { a: c() }'])).toEqual([]);
+      refusedAs(withTwo(['  c = () => COALESCE(org, "x")', '  g = graph { a: c() }']), 'MOV_GRAPH_ENTRY_RECORD', "'c()' may be a crm.company handle");
+    });
+  }
+
+  if (version >= 4) {
+    it('the unions of a call chain and a call fan are linear to check', () => {
+      const chain = ['  f0 = () => COALESCE(org, "x")'];
+      for (let i = 1; i <= 20; i++) chain.push(`  f${i} = () => { if 1 > 0 { return f${i - 1}() } return f${i - 1}() }`);
+      const fan = ['  h0 = () => COALESCE(org, "x")'];
+      for (let i = 1; i <= 12; i++) fan.push(`  h${i} = () => [h${i - 1}(), h${i - 1}(), h${i - 1}()]`);
+      const started = Date.now();
+      refusedAs(errorsUnder(version, [...chain, '  g = graph { n: f20() }']), 'MOV_GRAPH_ENTRY_RECORD', "'f20()' may be a crm.company handle");
+      refusedAs(errorsUnder(version, [...fan, '  g = graph { n: h12() }']), 'MOV_GRAPH_ENTRY_RECORD', "'h12()' may hold a crm.company handle");
+      // Both measured at a few milliseconds; the old shape took 233 and 465.
+      expect(Date.now() - started).toBeLessThan(500);
+    });
+  }
+});

@@ -12,7 +12,8 @@ The first four changes share one idea: there is no engine-side store and there a
 - [4. `delete` only where the system declares it](#4-delete-only-where-the-system-declares-it)
 - [5. `_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result)
 - [6. A file is never joined into text](#6-a-file-is-never-joined-into-text)
-- [7. Diagnostic code index](#7-diagnostic-code-index)
+- [7. A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return)
+- [8. Diagnostic code index](#8-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -115,7 +116,13 @@ write crm-[:notes]-> { title: "Attached: ${COALESCE(READ(f), "")}" }
 write crm-[:notes]-> { title: "Attached", upload: f }
 ```
 
-## 7. Diagnostic code index
+## 7. A declared return takes what the body may return
+
+- Under Dancing Wren (5) a closure's declared return type that does not take what a return may hand back is `MOV_RETURN_TYPE` at the declaration: `c = (): <text> => COALESCE(org, "x")` (a record may come back where text was declared; TypeScript's `Org | string` is no `string`).
+- Why: a call is typed by what it declares, so the declaration is the last place the record or file is seen. Versions 3 and 4 ran such a program while the call was unused or only compared, so the refusal is new under 5 only. Under 3 and 4 the declaration is clean, and the call still holds what the body may return: a use that reaches data (a graph entry, a written field, a plugin argument) is refused at the use, on every version.
+- Return a field off the record (`org.name`), or declare the type the body returns.
+
+## 8. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
@@ -123,6 +130,7 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |
+| `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |
 | `MOV_WRITE_BIND_RETIRED` | [`write … bind` is retired](#2-write--bind-is-retired) |

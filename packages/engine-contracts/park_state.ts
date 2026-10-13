@@ -96,7 +96,20 @@ export type BindingDescriptor =
        *  JSON cannot nest, so it is said instead (`oldIsSelf`). */
       old?: BindingDescriptor;
       oldIsSelf?: true;
+      /** Its number in the park's handle table, written only when the park
+       *  reaches the same handle again (a `handleRef` names it): one handle
+       *  held by two names stays one. Absent = held once, as every park
+       *  written before it was said reads. */
+      id?: number;
     }
+  /**
+   * A write handle this park has already written, reached again through a
+   * second name, a closure's capture or a record's `@old`. It names the
+   * handle's `id`, so the resumed run gets back the ONE handle every place
+   * held: an in-place write or a `refresh` through one name is seen through
+   * the other, as it is in a run that never parked.
+   */
+  | { kind: 'handleRef'; id: number }
   | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor }
   | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor }
   | {
@@ -146,14 +159,25 @@ export type BindingDescriptor =
       url: string;
       params: CallbackParamSpec[];
     }
-  // Bucket 3 — code refs carry ONLY the re-resolution tag (the name). The live
-  // declaration / fileEnv comes from the re-parsed program.
-  | { kind: 'shape'; name: string }
+  // Bucket 3 — code refs carry ONLY the re-resolution tag (the name), and the
+  // library it is declared in. The live declaration / fileEnv comes from the
+  // re-parsed program.
+  /** `file`: the library file the declaration belongs to, where its name is
+   *  found again — a library's closure holds the library's own declarations,
+   *  which the root program may not have (or may declare differently). Absent
+   *  = the root program, as on every park written before it was said. */
+  | { kind: 'shape'; name: string; file?: string }
   /** A node declaration made in a BODY: the re-parsed file scope does not hold
    *  it, so it travels as the declaration — code that is already data, as a
    *  closure's body is. */
   | { kind: 'localShape'; declaration: ShapeDeclaration }
-  | { kind: 'movement'; name: string }
+  | { kind: 'movement'; name: string; file?: string }
+  /** A closure bound at a file's top level: a declaration of the program,
+   *  written by the name it is declared by and found again in the
+   *  re-parsed file (the root program's, or the library `file`), never its
+   *  body or the file scope it holds. That is what keeps a park the same
+   *  size however many of them a file declares. */
+  | { kind: 'fileClosure'; name: string; file?: string }
   | {
       kind: 'shapePosition';
       shape: string;

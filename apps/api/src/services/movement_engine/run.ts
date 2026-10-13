@@ -1349,6 +1349,12 @@ function isClosureBinding(value: unknown): value is Extract<Binding, { kind: 'cl
   return bindingOf(value)?.kind === 'closure';
 }
 
+/** The bindings a closure brings into a scope it runs in: its capture, or a
+ *  file-level closure's file scope as it stands now (as a movement arm's). */
+function closureCaptured(binding: Extract<Binding, { kind: 'closure' }>): Map<string, Binding> {
+  return binding.file !== undefined ? captureScope(binding.file.env) : binding.captured;
+}
+
 /**
  * Build a race RECEIPT from the completed branches' environments (asks-as-adapter
  * chunk C, F13/F18). Reused at runtime as a `blockMeta`: every branch's
@@ -2035,8 +2041,10 @@ type ResumeLeaf =
   /** Settle a race whose arms completed in a batch (the leaf is the race). */
   | { kind: 'settleRace'; frameAddress: string };
 
-/** A closure's captured scope, as the root its body's scopes chain from. */
+/** A closure's captured scope, as the root its body's scopes chain from. A
+ *  file-level closure's is its file's own scope, live — as a movement's is. */
 function closureScope(binding: Extract<Binding, { kind: 'closure' }>): Environment {
+  if (binding.file !== undefined) return binding.file.env;
   const env = new Environment();
   for (const [name, captured] of binding.captured) env.declare(name, captured);
   return env;
@@ -2526,6 +2534,9 @@ class Interpreter {
   /** One environment per library file, memoized — diamonds share it, and
    *  its instance constructions stay per-file. */
   private readonly libraryEnvs = new Map<string, Environment>();
+  /** Each library environment's file path — what a park writes beside a code
+   *  ref declared there, so a resume finds it in that file again. */
+  private readonly libraryPaths = new Map<Environment, string>();
 
   /** The movement's pin — what the engine's `since`/`before` conditionals
    *  read (an adapter reads the same value off its host segment, opened with
@@ -2561,12 +2572,16 @@ class Interpreter {
   private readonly runWriteOrder = rootWriteOrder();
 
   private readonly catalog: Catalog;
+  /** The program's library link — where a resume finds a library a park
+   *  named. */
+  private readonly link: ProgramLink | undefined;
 
   constructor(
     private readonly input: RunMovementInput,
     prepared: PreparedRun & { context: RunContext },
   ) {
     this.catalog = prepared.catalog;
+    this.link = prepared.link;
     this.context = prepared.context;
     this.priced = pricedCalls(input.host, {
       segmentId: prepared.context.segmentId,
@@ -3607,9 +3622,17 @@ class Interpreter {
   private serializeBranchExport(frame: ResumeAncestorFrame): Record<string, BindingDescriptor> {
     const out: Record<string, BindingDescriptor> = {};
     const skip = frame.descentKind === 'iter' ? this.hopAliasNamesOf(frame.container) : undefined;
-    for (const [name, binding] of frame.childEnv.ownBindings()) {
-      if (skip?.has(name)) continue;
-      out[name] = serializeBinding(binding);
+    // One export is one parked state, so it is written by ONE park: a handle
+    // or node two names hold (`b = a`) is written once and referenced after,
+    // and comes back as one. The returned value goes first — it is the name
+    // the join reads back on its own, so its descriptors hold every first
+    // sighting and it never refers into a name not read.
+    const entries = [...frame.childEnv.ownBindings()]
+      .filter(([name]) => !skip?.has(name))
+      .sort(([a], [b]) => Number(b === RETURN_SLOT) - Number(a === RETURN_SLOT));
+    const park = this.newPark();
+    for (const [name, binding] of entries) {
+      out[name] = serializeBinding(binding, park);
     }
     return out;
   }
@@ -3779,17 +3802,38 @@ class Interpreter {
         }
         return read.read;
       },
-      resolveCodeRef: (name) => {
-        const binding = this.fileEnv?.resolve(name);
+      // In the file it was declared in: a library's declaration is found in
+      // that library, which the root program need not import or may shadow.
+      resolveCodeRef: async (name, file) => {
+        const scope = file === undefined ? this.fileEnv : await this.resumedLibraryEnv(file);
+        const binding = scope?.resolve(name);
         if (!binding) {
           throw new MovementEngineError(
             'MOVENG_RUNTIME',
-            `resume: cannot re-resolve code ref '${name}' from the re-parsed program`,
+            `resume: cannot re-resolve code ref '${name}' from the re-parsed ${file === undefined ? 'program' : `library "${file}"`}`,
           );
         }
         return binding;
       },
     };
+  }
+
+  /** A library's environment by its path, for a code ref a park said was
+   *  declared there. */
+  private async resumedLibraryEnv(path: string): Promise<Environment> {
+    const file = this.link?.files.get(path);
+    if (file === undefined) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `resume: the parked state names the library "${path}", which the re-parsed program does not link`,
+      );
+    }
+    return this.libraryEnv(file);
+  }
+
+  /** A park writer whose code refs say which library they are declared in. */
+  private newPark(): ParkWriter {
+    return newParkWriter((env) => this.libraryPaths.get(env));
   }
 
   /** Re-resolve an instance binding from its serialised identity — the catalog
@@ -4072,6 +4116,21 @@ class Interpreter {
             env.declare(statement.name, bindValue(value, provenance, { many: this.bindsManyValues(rhs.expr, env) }));
             return;
           }
+          case 'closure':
+            // A closure bound at file level — the root program's or a
+            // library's — is in scope in that file's functions, as the
+            // checker's file scope says. It holds the file scope by
+            // REFERENCE, as a JavaScript closure holds its module scope: it
+            // sees the file's later closures too, and a park writes it by
+            // name rather than copying the file scope into it.
+            env.declare(statement.name, binding({
+              kind: 'closure',
+              closure: rhs.closure,
+              captured: new Map(),
+              file: { name: statement.name, env },
+              ...(since(this.languageVersion, 3) ? { self: statement.name } : {}),
+            }));
+            return;
           case 'extract':
           case 'extractCall':
             throw unsupported(
@@ -4152,6 +4211,7 @@ class Interpreter {
     if (cached) return cached;
     const env = new Environment();
     this.libraryEnvs.set(file.path, env);
+    this.libraryPaths.set(env, file.path);
     this.fileTypes.set(env, this.typesOfLibrary(file));
 
     const savedImports = this.currentImports;
@@ -5182,7 +5242,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(fork.address),
           branchIndex: fork.index,
-          exports: { [RETURN_SLOT]: serializeBinding(value) },
+          exports: { [RETURN_SLOT]: serializeBinding(value, this.newPark()) },
         });
       }
       await this.context.host.park.sink?.recordJoin({
@@ -5232,7 +5292,7 @@ class Interpreter {
             `arm ${index} of '${expr.kind}' is not a function — a combinator runs what it is given, and this is ${typeof entry}`,
           );
         }
-        return { body: entry.closure.body, captured: entry.captured, runtime: entry.closure };
+        return { body: entry.closure.body, captured: closureCaptured(entry), runtime: entry.closure };
       });
     }
     return expr.arms.arms.map((arm) => this.armInvocation(arm, expr.kind, env));
@@ -5251,7 +5311,7 @@ class Interpreter {
     }
     const binding = env.resolve(arm.name);
     if (binding?.kind === 'closure') {
-      return { body: binding.closure.body, captured: binding.captured, name: arm.name };
+      return { body: binding.closure.body, captured: closureCaptured(binding), name: arm.name };
     }
     if (binding?.kind === 'movement') {
       if (binding.declaration.params.length > 0) {
@@ -5418,7 +5478,7 @@ class Interpreter {
   private parkedState(write: (park: ParkWriter) => ParkedScopeState): ParkedScopeState {
     // One table for the whole state: a node held both in a frame's scopes and
     // the leaf's is written once, and resumes as one.
-    const park = newParkWriter();
+    const park = this.newPark();
     const state = write(park);
     const live = this.boundaries.getStore() ?? [];
     if (live.length === 0) return state;
@@ -7678,7 +7738,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(childIter(parentAddress, index)),
           branchIndex: index,
-          exports: { [RETURN_SLOT]: serializeBinding(value) },
+          exports: { [RETURN_SLOT]: serializeBinding(value, this.newPark()) },
         });
       }
       await this.context.host.park.sink?.recordJoin({ frameAddress, parkedChildren: parkedIterations });

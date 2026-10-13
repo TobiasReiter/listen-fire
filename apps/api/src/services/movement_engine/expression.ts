@@ -498,6 +498,14 @@ export type BindingShape =
        *  before the name was bound, so the name is handed to each call
        *  instead (`invokeClosure`). */
       self?: string;
+      /** A closure bound at a FILE's top level (the root program's or a
+       *  library's): the file scope it reads, held by REFERENCE as a
+       *  JavaScript closure holds its module scope — so it sees every
+       *  file-level binding, the ones declared after it too — and the name
+       *  it is declared by there. `captured` is then empty. A park writes it
+       *  by that name and finds it again in the re-parsed file, as it does a
+       *  movement: it is a declaration of the program, not run-time data. */
+      file?: { name: string; env: Environment };
     }
   /** `prompt = "…"` — a plain runtime value, carrying the trail of the
    *  expression that produced it so later reads keep propagating. `many`
