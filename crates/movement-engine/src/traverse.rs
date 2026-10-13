@@ -280,6 +280,11 @@ const RESOURCES_REFERENCE_FIELD_ID: &str = "_resources";
 /// makes each resource's `fileRef` slot a file (`withResourceFile`).
 const RESOURCES_ENVELOPE: &str = "resources";
 
+/// Since language version 5 (run.ts): `_resources` off an adapter's record,
+/// the TypeScript's message byte for byte.
+const RESOURCES_RETIRED: &str =
+    "'-[:_resources]->' is read only off an extraction's result since language version 5 — walk the edge the record's system declares to its files";
+
 /// One iteration per resource, the hop's alias naming it.
 fn resource_paths(resources: Vec<Js>, alias: Option<&str>) -> Paths {
     resources
@@ -680,8 +685,16 @@ impl Run<'_> {
                 // `msg-[f:_resources]-> { … }`: the record's resource bundle,
                 // read through the event's source (`resolvePositionResources`
                 // over `this.source.adapter`, whichever graph the record was
-                // landed in).
+                // landed in). Language versions 1–4 only, their quirk
+                // included; since version 5 `_resources` is an extraction's
+                // source content and nothing else's (the checker refuses the
+                // hop, MOV_RESOURCES_NOT_EXTRACTED), and the engine refuses it
+                // as the TypeScript's run.ts does, before the host is asked
+                // for the reserved reference or its `resources` envelope.
                 Binding::Event | Binding::Landed(_) if let Probe::Resources { alias, filter } = probe => {
+                    if movement_parser::version::since(self.version(), 5) {
+                        return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", RESOURCES_RETIRED.to_string())));
+                    }
                     let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
                     let start = match &binding {
                         Binding::Landed(landed) => landed.position().clone(),
@@ -1018,13 +1031,30 @@ impl Run<'_> {
     }
 
     /// `related_items`, its answer the `envelope` the host makes files in.
-    async fn related_items_as(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, args: Vec<(&str, Js)>, envelope: Option<&str>) -> Result<Vec<(Js, Js)>, Failure> {
+    async fn related_items_as(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, mut args: Vec<(&str, Js)>, envelope: Option<&str>) -> Result<Vec<(Js, Js)>, Failure> {
         let schema = read.schema.as_ref();
         let (from, landed_type) = if record_type(start).as_deref() == Some("meta") {
             (start.clone(), schema.and_then(|s| s.collections.get(&step.edge_type_id)).map(|c| c.target.clone()))
         } else {
             let surface = record_type(start).or_else(|| read.start_surface_type.clone());
             let from = restamp(start, surface.as_deref(), &read.adapter_type);
+            // The one edge that crosses by its address rather than its name
+            // (kg.ts `surfaceReadAdapter`): the system's resources edge (the
+            // schema's `resources`, the knowledge graph's `Resources`) goes to
+            // the adapter as the reserved field id, its display name free for
+            // a system's own edge to share. Every language version.
+            let reserved = step.direction == EdgeDirection::Outgoing
+                && surface
+                    .as_deref()
+                    .and_then(|surface| schema?.positions.get(surface)?.edges.get(&step.edge_type_id))
+                    .is_some_and(|edge| edge.resources == Some(true));
+            if reserved {
+                for (key, value) in args.iter_mut() {
+                    if *key == "fieldId" {
+                        *value = Js::str(RESOURCES_REFERENCE_FIELD_ID);
+                    }
+                }
+            }
             (from, landed_surface_type(schema, surface.as_deref(), &step.edge_type_id, step.direction))
         };
         let related = self.call_adapter_enveloped(&read.instance, "getRelated", &from, args, envelope).await?;

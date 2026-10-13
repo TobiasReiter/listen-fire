@@ -246,6 +246,11 @@ Listen-Fire reads only `protocolVersion` from it (see
     absent means read-only;
   - `awaitable`, `watchable`, `resolvesEmpty` (see
     [awaits](#waiting-on-your-system-awaits)).
+- `deletable` (optional, on the type): `true` says your `deleteRecord`
+  removes a record of this type. Absent means no. Under language version 5
+  (Dancing Wren) a `delete` of a type that does not say `"deletable": true`
+  is refused before the automation is saved (`MOV_DELETE_NOT_DECLARED`);
+  automations pinned to an earlier version are unaffected.
 - `edgesFrom` (optional) replaces `describe` for nested systems: `{ position, cursor? }`
   → `{ descriptor, targetPositions?, nextCursor? }` or `null`. The adapter
   handbook's schema chapter covers it.
@@ -349,6 +354,9 @@ The `createRecord` input plus `externalId` →
 ### deleteRecord
 
 `{ "recordType": "Company", "externalId": "company-1", "mutationContext": { … } }` → `{}` (optionally `{ "events": [] }`).
+
+Asked only for a type whose descriptor says `"deletable": true`: under
+language version 5 an automation cannot delete any other.
 
 ### Optional methods
 
@@ -879,4 +887,5 @@ from the root, so no automation can walk the collection.
   - New: awaits (`resolveAwait`, `wakeKeys`), the two push doors (`emit`, `wake`), paging (`iterateRelatedPage`), and files by URL.
   - A webhook subscription must return a secret, and deliveries are signed.
   - Clarified within version 2 (no bump; the reference adapter declares no file field, and conformance is unchanged for it): a file is read only at a field the catalog declares `kind: "file"` or in a resource's `fileRef`; a file ref anywhere else is data. File refs Listen-Fire sends (in a write, a position's resources, evidence) name no credential. The CLI gains `files-declared`.
+- **`deletable` on a type** (within version 2, no bump; language version 5, Dancing Wren). A type's `describe` may say `"deletable": true` when `deleteRecord` removes one. The field is additive: an older server that never sends it still installs, speaks version 2 and passes conformance, and an automation pinned to language version 4 or earlier deletes as before. The ruling: no protocol version bump. Under language version 5 an adapter that omits it has every `delete` of its types refused when the automation is checked (`MOV_DELETE_NOT_DECLARED`); declare it to allow them.
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

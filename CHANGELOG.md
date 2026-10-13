@@ -53,6 +53,10 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- `MOVEMENT_ENGINE=rust` speaks language version 5 as the TypeScript engine does: a `_resources`
+  walk off a system's record fails with the same error under 5 (versions 1 to 4 read it as before),
+  the knowledge graph's `Resources` edge is walked by its reserved address on every version, and a
+  catalog that declares a type `deletable` or an edge `resources` loads in the Rust engine.
 - `MOVEMENT_ENGINE_FALLBACK` (new, optional): `ts`, the default, runs on the TypeScript engine a run
   `MOVEMENT_ENGINE=rust` sends to Rust and Rust refuses, as before; `none` fails that run with the
   refusal's reason instead, and needs `MOVEMENT_ENGINE=rust` (boot refuses it otherwise). Under

@@ -406,3 +406,31 @@ fn either_credential_form_refuses_a_member_it_does_not_declare() {
         assert!(CatalogSnapshot::load(&snapshot.to_string()).is_err(), "{credential}");
     }
 }
+
+// ── language version 5's members (docs/contracts/catalog-snapshot.md) ──
+
+/// A snapshot carrying a type's `deletable` and an edge's `resources` loads
+/// (the reader refuses an undeclared member), and neither is stripped on the
+/// way back out.
+#[test]
+fn a_snapshot_carries_deletable_and_resources() {
+    let schema = json!({
+        "positions": {
+            "Company": { "properties": { "name": "text" }, "edges": { "Resources": { "target": "Attached Resource", "resources": true } }, "deletable": true },
+            "Attached Resource": { "properties": { "Name": "text", "URL": "text", "Type": "text" }, "edges": {} },
+        },
+        "collections": {},
+        "writableRoots": {},
+    });
+    let snapshot = json!({
+        "adapters": { "kg": { "constructionArgs": [], "schemas": { "": schema.clone() } } },
+        "credentials": {},
+        "plugins": {},
+    });
+    let loaded = CatalogSnapshot::load(&snapshot.to_string()).unwrap();
+    let read = &loaded.adapters["kg"].schemas[""];
+    assert_eq!(read.positions["Company"].deletable, Some(true));
+    assert_eq!(read.positions["Company"].edges["Resources"].resources, Some(true));
+    assert_eq!(read.positions["Attached Resource"].deletable, None);
+    assert_eq!(serde_json::to_value(read).unwrap(), schema);
+}

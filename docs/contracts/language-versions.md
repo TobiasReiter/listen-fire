@@ -1,6 +1,6 @@
 # Language versions
 
-Version: 4
+Version: 5
 
 Every saved movement is pinned to the language version it was written against: an integer with a two-word name. The pin governs syntax and semantics, and every layer honours it: the parser, the checker, both engines, plugins and adapters. The version above is the current one, what a movement saved today is pinned to and what an entry point given no version compiles and runs under.
 
@@ -15,8 +15,9 @@ Every saved movement is pinned to the language version it was written against: a
 | 2 | Bright Otter | yes | no | the language from v0.7.0 through v0.9.1 |
 | 3 | Steady Lynx | yes | no | the language from v0.10.0: a list literal is a tuple, exact at a literal index and a list of its members' union elsewhere |
 | 4 | Luminous Owl | yes | no | the language from v0.11.0: a match yields absent on a miss, a write handle reaches its pre-write record through `@old` |
+| 5 | Dancing Wren | yes | no | the language after v0.11.0: no engine-side store and no meta edges; no `write … bind`, no `#` hops (a plugin is a function you call), `delete` only where the system declares a type deletable, `_resources` only on an extraction's result |
 
-The integer is the identity: code compares it and never parses the name, which is display only. A version keeps its row after it leaves the supported set, so a movement pinned to it can still be refused by name. [`docs/language/steady-lynx-migration.md`](../language/steady-lynx-migration.md) is the migration guide from version 2 to 3, and [`docs/language/luminous-owl-migration.md`](../language/luminous-owl-migration.md) from 3 to 4.
+The integer is the identity: code compares it and never parses the name, which is display only. A version keeps its row after it leaves the supported set, so a movement pinned to it can still be refused by name. [`docs/language/steady-lynx-migration.md`](../language/steady-lynx-migration.md) is the migration guide from version 2 to 3, [`docs/language/luminous-owl-migration.md`](../language/luminous-owl-migration.md) from 3 to 4, and [`docs/language/dancing-wren-migration.md`](../language/dancing-wren-migration.md) from 4 to 5.
 
 ## The rules
 
@@ -31,6 +32,7 @@ Breaking changes never break a saved movement.
 
 ## Changes
 
+- **5, Dancing Wren** (after v0.11.0): `write … bind` is retired (`MOV_WRITE_BIND_RETIRED`); every `#` hop is retired (`MOV_META_HOP_RETIRED`), a plugin being a function called by name; `delete` only of one stored record whose type's describe declares `deletable: true` (`MOV_DELETE_NOT_DECLARED`, `MOV_DELETE_NOT_RECORD`); `_resources` only on an extraction's result (`MOV_RESOURCES_NOT_EXTRACTED`), a system's record walking the edge its system declares to its files. Each is a checker refusal. On both engines `_resources` off an adapter's record is a `MOVENG_UNSUPPORTED` under 5 and the host's `filesIn: "resources"` envelope is not asked for one; an extraction's resources are unchanged on every version.
 - **4, Luminous Owl** (v0.11.0): a named `match` yields its handle or absent, and a miss no longer ends the scope (an unnamed match and `link … { match … }` are refused); `created` and `committed` are retired; `-[:@old]->` off a write handle is the record the write found; `write org { … }` on a handle updates it in place; a handle reads the record as found for a field its write did not set; `@` is reserved for artificial edges. Both engines run them (the Rust engine since PLAN-07A Task 4c, each change a `since(v, 4)` conditional where it differs).
 - **3, Steady Lynx** (v0.10.0): a list literal is a tuple. Exact at a literal index; a list of its members' union elsewhere.
 - **2, Bright Otter** (v0.7.0 through v0.9.1).

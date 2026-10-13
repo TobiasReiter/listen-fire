@@ -113,6 +113,7 @@ interface PositionSchema {
   pending?: boolean;
   writeOnlyProperties?: string[];
   ambiguousProperties?: string[];
+  deletable?: boolean;                            // the system removes a record of this type; under language version 5 a `delete` of a type without it is refused
 }
 
 interface WritableRootSchema {
@@ -146,6 +147,7 @@ interface EdgeSchema {
   resolvesEmpty?: boolean;
   watchable?: boolean;
   genericOver?: { field: string; onNonLiteral?: 'error' | 'warn' };
+  resources?: true;                               // the system's resources edge (the describe's reserved `_resources` reference): walked by its name, sent to the adapter by the reserved field id
 }
 
 interface EdgeCapability {
@@ -172,4 +174,4 @@ interface FieldCapability {
 
 ## Changes
 
-- **Version 1** (the first version on the wire). (This page first omitted five optional `InstanceSchema` members, `genericLandings` and the four `event…` members, and inlined no capability types; they were on the wire all along and are documented now. No version change: the shapes did not change.) The snapshot gains `contractVersion`, which both builders set and both readers check. Everything else is the snapshot as it was before it was versioned, when compatibility rested on optional members alone (`files`, `models`, `schemaNotes`, `constructionArgOptions` and the positioned instance keys were each added that way). A plugin's `argTypes` (each argument's declared input type) was added the same way after versioning, so the version stays 1. Since language version 4 (main's bcd8f67407) a write handle's `resultShape` no longer lists `created` and `committed`: the host leaves them out, and the checker adds them back for a program pinned before version 4. A reader that took them from the snapshot reads them from the checker instead; the version stays 1. Since PLAN-07A Task 4d the `file` field type is what makes a field's value a file (above): a descriptor at an untyped or `json` field, read as a file before, is data. No member changed, so the version stays 1.
+- **Version 1** (the first version on the wire). (This page first omitted five optional `InstanceSchema` members, `genericLandings` and the four `event…` members, and inlined no capability types; they were on the wire all along and are documented now. No version change: the shapes did not change.) The snapshot gains `contractVersion`, which both builders set and both readers check. Everything else is the snapshot as it was before it was versioned, when compatibility rested on optional members alone (`files`, `models`, `schemaNotes`, `constructionArgOptions` and the positioned instance keys were each added that way). A plugin's `argTypes` (each argument's declared input type) was added the same way after versioning, so the version stays 1. Since language version 4 (main's bcd8f67407) a write handle's `resultShape` no longer lists `created` and `committed`: the host leaves them out, and the checker adds them back for a program pinned before version 4. A reader that took them from the snapshot reads them from the checker instead; the version stays 1. Since PLAN-07A Task 4d the `file` field type is what makes a field's value a file (above): a descriptor at an untyped or `json` field, read as a file before, is data. No member changed, so the version stays 1. With language version 5 (Dancing Wren) a `PositionSchema` gains `deletable?` (the describe's per-type promise that `deleteRecord` removes one) and an `EdgeSchema` gains `resources?` (the system's resources edge, sent to the adapter by its reserved field id). Both are optional and additive, both readers carry them (the Rust reader declares both, so a snapshot carrying them still loads there), and nothing strips them, so the version stays 1.
