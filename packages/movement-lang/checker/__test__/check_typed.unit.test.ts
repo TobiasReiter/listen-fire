@@ -1298,11 +1298,13 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
     );
   });
 
-  it('§C _resources block + extract + a block that returns its written record', () => {
+  // Since language version 5 an email's files are its declared `files` edge
+  // (`_resources` is an extraction's source content only).
+  it('§C a files block + extract + a block that returns its written record', () => {
     expectClean(
       inMovement(
         [
-          '  msg-[file:_resources WHERE `contentType` == "application/pdf"]-> {',
+          '  msg-[file:files]-> {',
           '    write drive-[:files]-> {',
           '      name: file.`filename`',
           '      data: file.`data`',
@@ -1384,7 +1386,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         'movement intake(msg: <inbox-[:message]->>) {',
         '  d = node { name: "Series A", amount: 5000000, participants: node { name: "Acme Ventures" } }',
         '',
-        '  msg-[f:_resources]-> {',
+        '  msg-[f:files]-> {',
         '    files_to_dropbox(f: node { name: f.`filename`, data: f.`data` })',
         '  }',
         '}',
@@ -1461,8 +1463,9 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
     );
   });
 
-  it('_resources positions are untyped — reads through them stay silent', () => {
-    expectClean(
+  it('_resources positions are untyped — reads through them stay silent (versions 1–4)', () => {
+    expect(checkUnder(
+      4,
       inMovement(
         [
           '  msg-[f:_resources]-> {',
@@ -1470,7 +1473,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
           '  }',
         ].join('\n'),
       ),
-    );
+    ).map(d => `${d.code}: ${d.message}`)).toEqual([]);
   });
 });
 

@@ -396,10 +396,9 @@ export function instanceSchemaFromDescriptors(input: {
   const incomingEdgeNames = new Map<string, Set<string>>();
   for (const descriptor of input.descriptors.values()) {
     for (const reference of descriptor.references) {
-      // `_resources` targets the engine's synthetic resource type by design —
-      // not a node of this graph, and never an entry. It is not reachable
-      // type-space, so it must not mint a position.
-      if (reference.fieldId === RESOURCES_REFERENCE_FIELD_ID) continue;
+      // The resources reference (`_resources`, walked by its name — the
+      // knowledge graph's `Resources`) is an ordinary edge: its landing is
+      // reachable type-space like any other, though never an entry.
       // EVERY member of a polymorphic reference is reachable — a union whose
       // variants aren't positions is a type nobody can read through, and the
       // engine's landed-record restamp is gated on the variant being one.
@@ -677,6 +676,11 @@ export function instanceSchemaFromDescriptors(input: {
           // answer enum). Carried verbatim: the checker matches `field` against
           // the body's authored names, which are these same display names.
           ...(ref.genericOver !== undefined ? { genericOver: ref.genericOver } : {}),
+          // The system's resources edge (the reserved `_resources` reference,
+          // walked by its own name — the knowledge graph's `Resources`). Only
+          // a diagnostic reads it: since language version 5 `x-[f:_resources]->`
+          // off a record is refused, naming this edge.
+          ...(ref.fieldId === RESOURCES_REFERENCE_FIELD_ID ? { resources: true as const } : {}),
         };
         if (ref.required === true) requiredEdges.push({ edge, from: target });
       }

@@ -894,6 +894,12 @@ export const DiagnosticCodes = {
    *  extracted node or a record this run built (transient), the instance
    *  itself, a closure or a node a construct minted. */
   DELETE_NOT_RECORD: 'MOV_DELETE_NOT_RECORD',
+  /** `x-[f:_resources]->` where `x` is not an extraction's result (language
+   *  version 5). `_resources` is the source content an extraction read; a
+   *  system's own records reach their files over an edge the system declares
+   *  (email's `Attachments`, Slack's `Files`, the knowledge graph's
+   *  `Resources`), which the message names. */
+  RESOURCES_NOT_EXTRACTED: 'MOV_RESOURCES_NOT_EXTRACTED',
   // race + receipts + absence (asks-as-adapter chunk C). ABSENT_REQUIRED rides in
   // via TypedDiagnosticCodes (also fired inside the typing layer's comparison
   // check), reached here through the spread below as DiagnosticCodes.ABSENT_REQUIRED.
@@ -3258,6 +3264,62 @@ function isRetiredMetaHop(hop: Hop): boolean {
   return hop.label.text !== '#extract';
 }
 
+/** The record under an `T | absent` landing. */
+function unwrapMaybeEmpty(type: PositionTypeRef): PositionTypeRef {
+  return type.kind === 'maybeEmpty' ? unwrapMaybeEmpty(type.of) : type;
+}
+
+/** A field type that holds a file — one, or a list or tuple of them. */
+function holdsFile(type: SchemaFieldType): boolean {
+  const variant = variantOf(type);
+  switch (variant.kind) {
+    case 'file':
+      return true;
+    case 'list':
+    case 'dict':
+    case 'maybeAbsent':
+      return holdsFile(variant.of);
+    case 'tuple':
+      return variant.of.some(member => member !== null && holdsFile(member));
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'json':
+    case 'absent':
+    case 'enum':
+      return false;
+    default:
+      return neverAsAny(variant);
+  }
+}
+
+/**
+ * The edges a record of these types reaches its files over, derived from the
+ * schema: the edge the system declares as its resources (`resources`, the
+ * knowledge graph's `Resources`) — else every edge whose landing (any member
+ * of a union landing) has a file-typed field (email's `Attachments`, Slack's
+ * `Files`).
+ */
+function fileEdgesOf(schema: InstanceSchema, positions: readonly string[]): string[] {
+  const declared = new Set<string>();
+  const filed = new Set<string>();
+  for (const position of positions) {
+    for (const [name, edge] of Object.entries(schema.positions[position]?.edges ?? {})) {
+      if (edge.resources === true) {
+        declared.add(name);
+        continue;
+      }
+      const landings = schema.unions?.[edge.target] ?? [edge.target];
+      const holds = landings.some(landing =>
+        Object.values(schema.positions[landing]?.properties ?? {}).some(holdsFile));
+      if (holds) filed.add(name);
+    }
+  }
+  return [...(declared.size > 0 ? declared : filed)];
+}
+
 /** What a retired `#` hop is written as instead. */
 function metaHopRetiredMessage(label: string): string {
   const lead = `'-[:${label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares`;
@@ -3268,7 +3330,7 @@ function metaHopRetiredMessage(label: string): string {
     return `${lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> { … }', then 'rec.<field>')`;
   }
   if (label.split(/[:\s]/, 1)[0] === '#resources') {
-    return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->'`;
+    return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files`;
   }
   return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
 }
@@ -5730,7 +5792,19 @@ class Checker {
       );
       return;
     }
-    if (isHead || walk.root === undefined) return;
+    if (isHead) return;
+    if (walk.root === undefined) {
+      // A rootless `-[:_resources]->` read the event's own resources — a
+      // system's record, not an extraction's result (language version 5).
+      if (since(this.languageVersion, 5)) {
+        this.report(
+          DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+          "'-[:_resources]->' with no root reads the event's record, and '-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }'). For the event's files, name the event as a parameter and walk the edge its system declares to them.",
+          span,
+        );
+      }
+      return;
+    }
     const root = walk.root.kind === 'name' ? walk.root.name.text : 'the root';
     this.report(
       DiagnosticCodes.RESOURCE_WALK_UNREAD,
@@ -6701,6 +6775,37 @@ class Checker {
     const schema = instance.schema.positions[position];
     if (schema === undefined || schema.undescribed === true || schema.pending === true) return;
     if (schema.deletable !== true) into.push(shown);
+  }
+
+  /**
+   * `x-[f:_resources]->` since language version 5: `_resources` is the source
+   * content an extraction read, so it is walked only off an extraction's
+   * result. Any other record reaches its files over an edge its system
+   * declares, and the refusal names that edge — derived from the schema, not
+   * listed: the system's declared resources edge, else every edge whose
+   * landing has a file-typed field. A root nothing types says nothing (the
+   * run decides).
+   */
+  private checkResourcesOfExtraction(rootType: PositionTypeRef | undefined, rootName: string | undefined, span: Span): void {
+    if (rootType === undefined) return;
+    const type = unwrapMaybeEmpty(rootType);
+    if (type.kind === 'extract') return;
+    const shown = rootName ?? 'the root';
+    let instead = '';
+    if (type.kind === 'position' || type.kind === 'handle' || type.kind === 'union') {
+      const positions =
+        type.kind === 'union' ? type.variants : type.position !== undefined ? [type.position] : [];
+      const edges = fileEdgesOf(type.instance.schema, positions);
+      const system = `'${type.instance.name}'`;
+      instead = edges.length > 0
+        ? ` ${system} reaches a record's files over ${edges.map(edge => `'${edge}'`).join(' or ')}: write '${shown}-[f:${spellName(edges[0])}]-> { … }'.`
+        : ` ${system} exposes no files on ${describePosition(type)} — it declares no edge to a record that holds one.`;
+    }
+    this.report(
+      DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+      `'${shown}' is ${describePosition(type)}, and '-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }').${instead}`,
+      span,
+    );
   }
 
   // ── the collection ops (core calculus v2, wave 4b) ──
@@ -9844,6 +9949,19 @@ class Checker {
     const rootType =
       (rootSymbol ? this.symbolPositionType(rootSymbol) : undefined)
       ?? recordHeadPosition(rootValueType);
+    // `_resources` is an extraction's source content, and nothing else's
+    // (language version 5). A head with hops before it is
+    // MOV_RESOURCE_WALK_UNREAD already.
+    if (
+      since(this.languageVersion, 5)
+      && parsed?.type === 'resource_traverse'
+      && head.hopsRaw !== undefined
+      && hopsOfAddress(head.hopsRaw).length === 1
+      // `#resources`, its old spelling, is a retired `#` hop of its own.
+      && !hopsOfAddress(head.hopsRaw)[0].label.text.startsWith('#')
+    ) {
+      this.checkResourcesOfExtraction(rootType, rootName, head.span);
+    }
     // A root that is a VALUE and NOT a record — a name bound to one, or an
     // expression that computes one. There are no positions on the value plane —
     // a value type is text, a number, a list or a dict of them — so a hop off a

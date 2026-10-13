@@ -389,7 +389,7 @@ jest.mock('../../../lib/kysely', () => ({
 // Subject under test (loaded after mocks are in place)
 // ---------------------------------------------------------------------------
 
-import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE, KG_RESOURCE_TYPE_ID } from '../adapters/knowledge_graph';
+import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE, KG_RESOURCE_TYPE_ID, KG_RESOURCES_EDGE_NAME } from '../adapters/knowledge_graph';
 import { persistKgResources } from '../adapters/knowledge_graph_resources';
 import { RESOURCES_REFERENCE_FIELD_ID, type ResourceFilter } from '../adapter';
 import { makeStablePosition } from '../types';
@@ -844,6 +844,39 @@ describe('KnowledgeGraphAdapter — getResources / writeResource / writeEvidence
       url: 'https://files/x.pdf',
       type: 'FILE',
     });
+  });
+
+  it('`Resources` is an ordinary edge: walked by its name, each landing reads its fields off itself', async () => {
+    // Language version 5: a node's resources are `c-[f:Resources]-> { … f.URL … }`
+    // — the edge the describe declares, by its name (no `_resources` keying).
+    dbState.resources.push({
+      id: RESOURCE_ID as string,
+      team_id: TEAM_ID as string,
+      type: 'URL',
+      url: 'https://acme.test/deck',
+      name: 'Acme deck',
+      metadata: {},
+    });
+    dbState.nodeResources.push({
+      id: 'nr-by-name',
+      team_id: TEAM_ID as string,
+      node_id: MSG_NODE_ID as string,
+      resource_id: RESOURCE_ID as string,
+    });
+    const adapter = makeAdapter();
+    const related = await adapter.getRelated({
+      position: makeStablePosition({ adapterType: KG_ADAPTER_TYPE, recordType: null, recordId: MSG_NODE_ID as string }),
+      fieldId: KG_RESOURCES_EDGE_NAME,
+      direction: 'outgoing',
+    });
+    expect(related).toHaveLength(1);
+    expect(related[0].position.recordType).toBe(KG_RESOURCE_TYPE_ID);
+    const read = (fieldId: string) => adapter.getFieldValue({ position: related[0].position, fieldId });
+    expect(await read('Name')).toBe('Acme deck');
+    expect(await read('URL')).toBe('https://acme.test/deck');
+    expect(await read('Type')).toBe('URL');
+    // The field reads are local — only the attachment list crossed the wire.
+    expect(graphRequests).toHaveLength(1);
   });
 
   it('roundtrip: writeResource → getResources returns the written resource, with facts persisted alongside', async () => {

@@ -7932,6 +7932,19 @@ class Interpreter {
       // which carries the filter but NOT the alias or root — those are
       // lexical-only, read off the raw hop text exactly as the
       // checker's head-alias extraction does.
+      //
+      // Language versions 1–4 only (including their quirk: the bundle is read
+      // through the EVENT's adapter whatever system the record belongs to).
+      // Since version 5 `_resources` is an extraction's source content and
+      // nothing else's — a system's record walks the edge its system declares
+      // (`-[f:Attachments]->`, `-[f:Resources]->`), and the checker refuses
+      // the hop (MOV_RESOURCES_NOT_EXTRACTED) before a run.
+      if (probe?.type === 'resource_traverse' && since(this.languageVersion, 5)) {
+        throw new MovementEngineError(
+          'MOVENG_UNSUPPORTED',
+          "'-[:_resources]->' is read only off an extraction's result since language version 5 — walk the edge the record's system declares to its files",
+        );
+      }
       if (probe?.type === 'resource_traverse') {
         const alias = RESOURCES_HEAD_ALIAS.exec(head.hopsRaw)?.[1];
         const resources = await this.filterResources(

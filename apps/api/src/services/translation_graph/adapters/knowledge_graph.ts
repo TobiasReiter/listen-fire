@@ -82,6 +82,7 @@ import {
   isStablePosition,
   makeStablePosition,
   makeUnstablePosition,
+  positionData,
   positionRecordId,
   type SchemaEntryPoint,
   type SchemaFieldKind,
@@ -284,6 +285,20 @@ function propertyField(pt: WirePropertyType): SchemaTypeDescriptor['fields'][num
  *  surfaces (the leakage audit's rule — an id that can surface must read as a
  *  name, never as adapter plumbing). */
 export const KG_RESOURCE_TYPE_ID = 'Attached Resource';
+
+/** The name a node's resources edge is walked by — `c-[f:Resources]->`. It is
+ *  an ordinary declared edge; the reserved `_resources` fieldId it is keyed by
+ *  is the adapter's own (versions 1–4 of the language walked it as
+ *  `c-[f:_resources]->`). */
+export const KG_RESOURCES_EDGE_NAME = 'Resources';
+
+/** An `Attached Resource`'s fields by the name a movement reads them under,
+ *  and the key `readResources` materialises each at on the landing's `data`. */
+const KG_RESOURCE_FIELDS: Readonly<Record<string, 'name' | 'url' | 'type'>> = {
+  Name: 'name',
+  URL: 'url',
+  Type: 'type',
+};
 
 /**
  * Fold a candidate's adjacency context into its `data` bag as ordinary
@@ -667,9 +682,9 @@ export class KnowledgeGraphAdapter implements Adapter {
     // position, NOT an ontology node type, so `structuredIdFor` can't recover a
     // UUID for it and it would otherwise render undescribed. Its honest shape is
     // the `Resource` fields `readNodeResources` materialises onto the position
-    // (`name` / `url` / `type`); a `#resources` hop is untyped in the checker
-    // (`resource_traverse` degrades to silence), so this descriptor is
-    // informational — the fields it lists are the real, populated ones. (The
+    // (`name` / `url` / `type`). It types the landing of `-[f:Resources]->`
+    // (a `_resources` hop, versions 1–4, stays untyped in the checker) — the
+    // fields it lists are the real, populated ones. (The
     // lazy `document_url` / `content` are deliberately omitted: they always read
     // null today, so advertising them would be an unchecked promise.)
     if (typeRef === KG_RESOURCE_TYPE_ID) {
@@ -862,7 +877,7 @@ export class KnowledgeGraphAdapter implements Adapter {
           targetTypeId: KG_RESOURCE_TYPE_ID,
           cardinality: 'many' as const,
           direction: 'outgoing' as const,
-          name: 'Resources',
+          name: KG_RESOURCES_EDGE_NAME,
         },
       ],
     };
@@ -1101,6 +1116,13 @@ export class KnowledgeGraphAdapter implements Adapter {
   // ── 3. Field-level access ───────────────────────────────────────────────
 
   async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
+    // A resource landing (`c-[f:Resources]-> { … f.URL … }`) is not a node:
+    // its fields ride the landing itself (`readResources`).
+    if (input.position.recordType === KG_RESOURCE_TYPE_ID) {
+      const key = KG_RESOURCE_FIELDS[input.fieldId] ?? input.fieldId;
+      const data = positionData(input.position) as Record<string, unknown> | null | undefined;
+      return data?.[key] ?? null;
+    }
     const nodeId = expectKgNodeId(input.position, 'getFieldValue');
     // `fieldId` is the NATURAL property name and the position's `recordType`
     // is the NATURAL node-type name (the source-read wrapper stamps it);
@@ -1208,13 +1230,14 @@ export class KnowledgeGraphAdapter implements Adapter {
       ];
     }
 
-    // Resources (`#resources`): a node's `node_resource` attachments become
-    // resource positions whose `data` carries the `Resource`. The engine's
-    // `#resources` meta-edge / `resource_traverse` walk this (P12, replacing
-    // the retired `getResources`); the engine applies any `ResourceFilter`.
+    // Resources: a node's `node_resource` attachments become resource
+    // positions whose `data` carries the `Resource`. Walked by the edge's
+    // name (`c-[f:Resources]->`, read through `getFieldValue` above) and,
+    // for language versions 1–4, by the engine's reserved `_resources`
+    // reference (`resource_traverse`), which applies any `ResourceFilter`.
     // The `#`-prefixed sentinel is the engine's own, never an ontology edge —
     // it crosses verbatim.
-    if (input.fieldId === RESOURCES_REFERENCE_FIELD_ID) {
+    if (input.fieldId === RESOURCES_REFERENCE_FIELD_ID || input.fieldId === KG_RESOURCES_EDGE_NAME) {
       const attached = await kgFetch<{ data: { resourceId: string }[] }>(await this.creds(), {
         method: 'GET',
         path: `/nodes/${nodeId}/resources`,
