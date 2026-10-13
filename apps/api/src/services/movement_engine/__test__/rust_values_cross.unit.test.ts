@@ -171,16 +171,19 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
     }
   });
 
-  it('a record in a null-prototype map spread into a graph fails at its key, as the TypeScript engine fails it', async () => {
-    // The record reaches the map through a closure's COALESCE, where the
-    // checker is silent: written there directly, the checker refuses the
-    // spread (MOV_GRAPH_SPREAD_RECORD) and neither engine runs it.
-    for (const held of ['{ k: { __proto__: null, inner: f() } }', '{ k: [{ __proto__: null, inner: f() }] }']) {
-      const { rust } = await agreeExactly(m('  co = write crm-[:companies]-> { name: "a" }', '  f = () => COALESCE(co, "x")', `  held = ${held}`, '  g = graph { ...held }'), version);
-      expect(rust).toMatchObject({ err: expect.stringContaining("'k' holds a record") });
-    }
-    for (const held of ['{ k: { __proto__: null, inner: co } }', '{ k: [{ __proto__: null, inner: co }] }']) {
-      const source = m('  co = write crm-[:companies]-> { name: "a" }', `  held = ${held}`, '  g = graph { ...held }');
+  it('a record in a null-prototype map spread into a graph ends at the check on both engines', async () => {
+    // Written directly, or reached through a closure's COALESCE: since main's
+    // B14 the checker sees what a closure's call may hold (from version 3),
+    // so it refuses the spread either way (MOV_GRAPH_SPREAD_RECORD) and
+    // neither engine runs it. Before B14 the closure form reached both
+    // engines and failed at its key.
+    for (const held of [
+      '{ k: { __proto__: null, inner: f() } }',
+      '{ k: [{ __proto__: null, inner: f() }] }',
+      '{ k: { __proto__: null, inner: co } }',
+      '{ k: [{ __proto__: null, inner: co }] }',
+    ]) {
+      const source = m('  co = write crm-[:companies]-> { name: "a" }', '  f = () => COALESCE(co, "x")', `  held = ${held}`, '  g = graph { ...held }');
       const ts = await runOn('ts', source, version, []);
       resetRustRunStats();
       const rust = await runOn('rust', source, version, []);
@@ -217,8 +220,10 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
 
   it('a call in another letter case resolves in its own scope chain, never a sibling scope', async () => {
     // `Get` in an `if` arm beside `get`: TypeScript's resolveFunction walks
-    // the call's chain and finds `get`, whose value hides a record, which
-    // this engine refuses at admission, so both engines run it alike.
+    // the call's chain and finds `get`, whose value hides a record. Since
+    // main's B14 the checker sees that record in the call's value (from
+    // version 3) and refuses the plugin argument, so both engines end at the
+    // check; before it, the Rust engine refused `get` at admission.
     const source = pm(
       'import { summarise } from plugins',
       '  co = write crm-[:companies]-> { name: "a" }',
@@ -237,7 +242,7 @@ describe.each([3, 4] as LanguageVersion[])('values handed to a host, both engine
     resetRustRunStats();
     const rust = await runOn('rust', source, version, []);
     expect(isDeepStrictEqual(rust, ts)).toBe(true);
-    expect(rustRunStats).toMatchObject({ ranWhole: 0, unreproduced: 0, shimFaults: 0 });
-    expect(Object.keys(rustRunStats.notAdmitted)).toEqual(['function:get']);
+    expect(ts).toMatchObject({ log: [], err: expect.stringContaining('MOV_CALL_ARG_TYPE') });
+    expect(rustRunStats).toMatchObject({ ranWhole: 0, endedAtCheck: 1, notAdmitted: {}, declined: {} });
   });
 });
