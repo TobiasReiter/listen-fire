@@ -11,10 +11,12 @@
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
+import type { Adapter } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import { makeStablePosition, positionData } from '../../translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
-import { resumeMovement, runFailureCause, runMovement } from '../run';
+import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
+import type { ParkedScopeState } from '../serialize';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
 
 jest.setTimeout(60_000);
@@ -59,45 +61,44 @@ interface Case {
   /** `getRelated` answers by field. */
   related?: Record<string, Array<Record<string, unknown>>>;
   replies?: unknown[];
-  resume?: unknown;
+  resume?: ParkedScopeState;
 }
 
 type Engine = 'ts' | 'rust';
 
-function fakeAdapter(adapterType: string, calls: unknown[], c: Case) {
+function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
   let minted = 0;
   return {
     adapterType,
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false } }),
+    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
     listEntryPoints: async () => [],
-    async describe() {
-      return null;
-    },
-    async resolveEntity(input: unknown) {
+    describe: async () => null,
+    async resolveEntity(input) {
       calls.push([adapterType, 'resolveEntity', input]);
       return { candidates: [] };
     },
-    async getFieldValue(input: { fieldId: string; position: unknown }) {
-      return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId];
+    async getFieldValue(input) {
+      const data = positionData(input.position) as Record<string, unknown> | undefined;
+      return data?.[input.fieldId];
     },
-    async getRelated(read: { fieldId: string }) {
+    async getRelated(read) {
       calls.push([adapterType, 'getRelated', read.fieldId]);
       const rows = adapterType === 'attio' ? (c.related?.[read.fieldId] ?? []) : [];
       return rows.map((data, i) => ({
         position: makeStablePosition({ adapterType, recordType: 'company', recordId: `${adapterType}-${i}`, data }),
       }));
     },
-    async createRecord(input: unknown) {
+    async createRecord(input) {
       calls.push([adapterType, 'createRecord', input]);
       minted += 1;
       return { adapterType, externalId: `${adapterType}-${minted}`, data: { minted } };
     },
-    async updateRecord(input: { externalId: string }) {
+    async updateRecord(input) {
       calls.push([adapterType, 'updateRecord', input]);
       return { adapterType, externalId: input.externalId, data: {}, association: containerAssociation(input) };
     },
-    async deleteRecord(input: unknown) {
+    async deleteRecord(input) {
       calls.push([adapterType, 'deleteRecord', input]);
       return {};
     },
@@ -114,7 +115,7 @@ async function runOn(engine: Engine, c: Case) {
   const snapshot = { ...catalog, files: c.files };
   const email = fakeAdapter('email', calls, c);
   const attio = fakeAdapter('attio', calls, c);
-  const input = {
+  const input: RunMovementInput = {
     source: PRELUDE + c.source,
     event: { pipelineInputId: 'pi-parked-code', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'Acme raised.' } },
     teamId: TEAM_ID,
@@ -123,11 +124,11 @@ async function runOn(engine: Engine, c: Case) {
     firedAt: '2026-05-01T09:00:00.000Z',
     movementName: 'm',
     host: makeTestHost({
-      adapters: { resolve: (r: { adapterType: string }) => (r.adapterType === 'attio' ? attio : email) },
+      adapters: { resolve: (r) => (r.adapterType === 'attio' ? attio : email) },
       llm: {
         client: {
-          call: async (request: { label: string; userMessage: string; systemPrompt?: string }) => {
-            asked.push({ label: request.label, userMessage: request.userMessage, system: request.systemPrompt });
+          call: async (request) => {
+            asked.push({ label: request.label, userMessage: request.userMessage, system: request.system });
             return { parsedJson: replies.shift() ?? {} };
           },
         },
@@ -181,7 +182,7 @@ async function parkAndResume(c: Case, resumeFiles: Record<string, { source: stri
   const resumed: string[] = [];
   for (const writer of [parked.ts, parked.rust]) {
     expect(writer.parks).toHaveLength(1);
-    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: writer.parks[0]?.state });
+    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: writer.parks[0]?.state as ParkedScopeState });
     resumed.push(ts.observed, rust.observed);
   }
   expect(new Set(resumed).size).toBe(1);
