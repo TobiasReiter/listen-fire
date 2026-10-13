@@ -9,7 +9,7 @@
 // batch review, R1 and R2).
 
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
-import { tenantIdOf } from 'engine-contracts';
+import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
@@ -66,6 +66,14 @@ interface Case {
 
 type Engine = 'ts' | 'rust';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isParkedScopeState(value: unknown): value is ParkedScopeState {
+  return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
+}
+
 function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
   let minted = 0;
   return {
@@ -79,8 +87,8 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
       return { candidates: [] };
     },
     async getFieldValue(input) {
-      const data = positionData(input.position) as Record<string, unknown> | undefined;
-      return data?.[input.fieldId];
+      const data = positionData(input.position);
+      return isRecord(data) ? data[input.fieldId] : undefined;
     },
     async getRelated(read) {
       calls.push([adapterType, 'getRelated', read.fieldId]);
@@ -157,8 +165,11 @@ function normalised(value: unknown): string {
   const ids = new Map<string, string>();
   const text = JSON.stringify(value, (_key, x: unknown) => (x instanceof Map ? Object.fromEntries(x) : x)) ?? 'undefined';
   return text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
-    if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
-    return ids.get(id) as string;
+    const known = ids.get(id);
+    if (known !== undefined) return known;
+    const name = `uuid-${ids.size + 1}`;
+    ids.set(id, name);
+    return name;
   });
 }
 
@@ -182,11 +193,15 @@ async function parkAndResume(c: Case, resumeFiles: Record<string, { source: stri
   const resumed: string[] = [];
   for (const writer of [parked.ts, parked.rust]) {
     expect(writer.parks).toHaveLength(1);
-    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: writer.parks[0]?.state as ParkedScopeState });
+    const state = writer.parks[0]?.state;
+    if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: state });
     resumed.push(ts.observed, rust.observed);
   }
   expect(new Set(resumed).size).toBe(1);
-  return resumed[0] as string;
+  const [outcome] = resumed;
+  if (outcome === undefined) throw new Error('nothing resumed');
+  return outcome;
 }
 
 const library = (body: string[]) => ({ 'lib/keep': { source: PRELUDE + body.join('\n') } });
