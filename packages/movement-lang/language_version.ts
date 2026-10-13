@@ -41,14 +41,19 @@ export const LANGUAGE_VERSIONS: readonly LanguageVersionInfo[] = [
     name: 'Luminous Owl',
     is: 'the language from v0.11.0: a match yields absent on a miss, a write handle reaches its pre-write record through @old',
   },
+  {
+    version: 5,
+    name: 'Dancing Wren',
+    is: 'the language after v0.11: no `write … bind`, no `#` hops (a plugin is a function you call), `delete` only where the system declares deletion, `_resources` only on what `extract` produces',
+  },
 ];
 
 /** What a movement saved today is pinned to, and what an entry point given no
  *  version compiles and runs under. */
-export const CURRENT_LANGUAGE_VERSION: LanguageVersion = 4;
+export const CURRENT_LANGUAGE_VERSION: LanguageVersion = 5;
 
 /** The versions this release parses, checks and runs. */
-export const SUPPORTED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set([1, 2, 3, 4]);
+export const SUPPORTED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set([1, 2, 3, 4, 5]);
 
 /** Supported versions that will be removed: they still run, with a warning. */
 export const DEPRECATED_LANGUAGE_VERSIONS: ReadonlySet<LanguageVersion> = new Set<LanguageVersion>();

@@ -31,9 +31,10 @@ describe('the versions table', () => {
       [2, 'Bright Otter'],
       [3, 'Steady Lynx'],
       [4, 'Luminous Owl'],
+      [5, 'Dancing Wren'],
     ]);
-    expect(CURRENT_LANGUAGE_VERSION).toBe(4);
-    expect([...SUPPORTED_LANGUAGE_VERSIONS]).toEqual([1, 2, 3, 4]);
+    expect(CURRENT_LANGUAGE_VERSION).toBe(5);
+    expect([...SUPPORTED_LANGUAGE_VERSIONS]).toEqual([1, 2, 3, 4, 5]);
     expect([...DEPRECATED_LANGUAGE_VERSIONS]).toEqual([]);
     expect(SUPPORTED_LANGUAGE_VERSIONS.has(CURRENT_LANGUAGE_VERSION)).toBe(true);
     expect(Math.max(...LANGUAGE_VERSIONS.map((v) => v.version))).toBe(CURRENT_LANGUAGE_VERSION);
