@@ -146,7 +146,7 @@ const path = require('node:path');
 // floor is not yet measured, so `v4` is absent here and a whole v4 run under
 // rust fails naming what it measured, until the measurement is written in.
 // A floor is measured, never guessed.
-const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240 };
+const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240, v4: 2275 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -264,6 +264,16 @@ const CEILINGS = {
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
     evaluatorNotAdmitted: 67,
     mirroredFailure: 5,
+  },
+  v4: {
+    refused: 0,
+    everyReason: {},
+    declined: {},
+    unreproduced: 0,
+    shimFaults: 0,
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    evaluatorNotAdmitted: 79,
+    mirroredFailure: 7,
   },
 };
 
