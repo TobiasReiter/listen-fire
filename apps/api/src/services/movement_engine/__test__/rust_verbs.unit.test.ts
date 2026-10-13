@@ -27,15 +27,18 @@ const emailSchema: InstanceSchema = {
   writableRoots: {},
 };
 
+// The system deletes a record of any of its types, and says so as a describe
+// would (`deletable`, which version 5 checks a `delete` against).
 const crmSchema: InstanceSchema = {
   positions: {
     company: {
       properties: { name: 'text', region: 'text', summary: 'text' },
       edges: { notes: { target: 'note', writable: true }, portfolio: { target: 'fund' } },
+      deletable: true,
     },
-    person: { properties: { name: 'text', email: 'text' }, edges: { company: { target: 'company' } } },
-    fund: { properties: { name: 'text', vintage: 'text' }, edges: {} },
-    note: { properties: { body: 'text' }, edges: {} },
+    person: { properties: { name: 'text', email: 'text' }, edges: { company: { target: 'company' } }, deletable: true },
+    fund: { properties: { name: 'text', vintage: 'text' }, edges: {}, deletable: true },
+    note: { properties: { body: 'text' }, edges: {}, deletable: true },
   },
   collections: { companies: { target: 'company' }, people: { target: 'person' }, funds: { target: 'fund' }, notes: { target: 'note' } },
   writableRoots: {

@@ -15,6 +15,8 @@ import path from 'node:path';
 import { canonicalJson, hostRecordingSchema, type HostRecording, type ReplayTarget, type ReplayVerdict } from 'engine-contracts/conformance';
 
 import { httpTarget, rustTarget, typescriptTarget } from '../replay';
+import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from 'movement-lang';
+
 import { parsePinned } from '../../program_check';
 import { rustRunStats } from '../../rust_stats';
 
@@ -210,7 +212,29 @@ const ENCODED_A_FIXED_BUG: Array<{
     },
     count: { v1: 0, v2: 1 },
   },
+  {
+    // Not a bug: a fact about the release. A run pinned to a version no
+    // release supports (99) is refused by name, and the refusal's fix names
+    // the CURRENT version ("validate it under …"), which was Luminous Owl (4)
+    // when the recording was made and is Dancing Wren (5) since the merge
+    // that brought it. The refusal itself (MOVENG_LANGUAGE_VERSION, before
+    // any request) is unchanged; matched on exactly that.
+    reason: 'an unsupported version\'s refusal names the current version, 5 since Dancing Wren',
+    is: (recording) => pinnedUnsupported(recording),
+    matches: (recording, divergence) =>
+      pinnedUnsupported(recording) &&
+      recording.requests.length === 0 &&
+      divergence.startsWith('recorded the failure {"class":"MovementEngineError","code":"MOVENG_LANGUAGE_VERSION"') &&
+      divergence.includes('; the replay failed {"class":"MovementEngineError","code":"MOVENG_LANGUAGE_VERSION"'),
+    count: { v1: 0, v2: 1 },
+  },
 ];
+
+/** The recording is pinned to a version this release does not support. */
+function pinnedUnsupported(recording: HostRecording): boolean {
+  const version = recording.input.languageVersion;
+  return version !== undefined && !SUPPORTED_LANGUAGE_VERSIONS.has(version as LanguageVersion);
+}
 
 /** The plugins the recording's program names in its `through` stages. */
 function throughPlugins(recording: HostRecording): string[] {

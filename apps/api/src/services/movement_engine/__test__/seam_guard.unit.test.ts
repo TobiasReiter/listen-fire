@@ -1463,7 +1463,9 @@ describe('every family crosses as JSON', () => {
         },
       },
     );
-    await h.run();
+    // `write … bind` is a version 1–4 construct (retired under 5 by the
+    // checker, MOV_WRITE_BIND_RETIRED).
+    await h.run({ languageVersion: 4 });
     expect(h.crm.creates).toHaveLength(1);
     expect(recorded).toHaveLength(1);
   });

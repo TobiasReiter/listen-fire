@@ -347,8 +347,12 @@ describe('§G under Dancing Wren (5) — `_resources` off an adapter record is n
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
       catalog,
-      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
-      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+      credentialIds: CREDENTIAL_IDS,
+      host: makeTestHost({
+        adapters: {
+          resolve: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+        },
+      }),
     });
     await expect(run).rejects.toThrow(/MOV_RESOURCES_NOT_EXTRACTED|read only off an extraction's result/);
     expect(dropbox.creates).toEqual([]);

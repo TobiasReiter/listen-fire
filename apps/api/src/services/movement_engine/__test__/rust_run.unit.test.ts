@@ -8,7 +8,7 @@
 // `if`, interpolation, `return`, the built-ins, the cancel gate. Writes and
 // parks are rust_write.unit.test.ts's.
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 import type { Adapter } from '../../translation_graph/adapter';
@@ -136,6 +136,8 @@ interface Case {
   /** The checker refuses it: the run ends at its check on either engine,
    *  and the Rust one is never asked. A case says so, or fails. */
   endsAtCheck?: true;
+  /** The run's pin; absent, the current version. */
+  languageVersion?: LanguageVersion;
 }
 
 /** One run on one engine: what it returned or threw, what the adapters
@@ -155,6 +157,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
     ...(c.movementName !== undefined ? { movementName: c.movementName } : {}),
     ...(c.firedAt !== undefined ? { firedAt: c.firedAt } : {}),
+    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     host: makeTestHost({
       adapters: {
         resolve: (request) => {
@@ -681,7 +684,9 @@ describe('a `_resources` head', () => {
       '  files = msg-[f:_resources WHERE type == "FILE"]-> {\n    return "${f.`filename`}: ${f.`type`}"\n  }\n  return files',
       '  msg-[f:_resources WHERE contentType == "audio/ogg"]-> {\n    return "never"\n  }\n  return "none"',
     ]) {
-      await agree({ source: movement(body), event: webhook({ subject: 'Acme' }), host: withResources });
+      // A version 1–4 read: under 5 the checker refuses `_resources` off a
+      // system's record (rust_dancing_wren.unit.test.ts).
+      await agree({ source: movement(body), event: webhook({ subject: 'Acme' }), host: withResources, languageVersion: 4 });
       expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
     }
   });
@@ -804,6 +809,8 @@ describe('admission walks what the entry reaches', () => {
         source: `${helper(unsupported)}${entry('  s = msg.`subject`\n  return UPPER(s)')}`,
         event: webhook({ subject: 'Acme' }),
         movementName: 'm',
+        // A `#` hop is a version 1–4 construct (the checker retires it under 5).
+        languageVersion: 4,
       });
       expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 1, notAdmitted: {}, allReasons: {} });
       expect(result?.movementName).toBe('m');

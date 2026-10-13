@@ -636,9 +636,13 @@ describe('writes in the Rust engine', () => {
   });
 
   it('fails a delete of the event or of a value as the TypeScript engine fails it: no record position', async () => {
+    // Version 5 (Dancing Wren) refuses both at the check, on either engine
+    // (MOV_DELETE_NOT_DECLARED, MOV_DELETE_NOT_RECORD); 4 reaches the engine.
     for (const body of ['  delete msg', '  x = "a"\n  delete x']) {
-      const { rust } = await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ subject: 'Acme' }) });
-      expect(String(rust.error)).toContain('needs a record position');
+      for (const languageVersion of [4, 5] as const) {
+        const { rust } = await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ subject: 'Acme' }), languageVersion, endsAtCheckFrom: 5 });
+        if (languageVersion === 4) expect(String(rust.error)).toContain('needs a record position');
+      }
     }
   });
 
