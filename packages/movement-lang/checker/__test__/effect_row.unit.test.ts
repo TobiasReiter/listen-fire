@@ -17,6 +17,8 @@ const crmSchema: InstanceSchema = {
     company: {
       properties: { Name: 'text', Stage: 'text' },
       edges: { People: { target: 'person', readable: true } },
+      // The system deletes a company (`delete c` is checked against it).
+      deletable: true,
     },
     person: { properties: { Email: 'text' }, edges: {} },
   },

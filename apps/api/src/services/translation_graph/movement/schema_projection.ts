@@ -398,10 +398,9 @@ export function instanceSchemaFromDescriptors(input: {
   const incomingEdgeNames = new Map<string, Set<string>>();
   for (const descriptor of input.descriptors.values()) {
     for (const reference of descriptor.references) {
-      // `_resources` targets the engine's synthetic resource type by design —
-      // not a node of this graph, and never an entry. It is not reachable
-      // type-space, so it must not mint a position.
-      if (reference.fieldId === RESOURCES_REFERENCE_FIELD_ID) continue;
+      // The resources reference (`_resources`, walked by its name — the
+      // knowledge graph's `Resources`) is an ordinary edge: its landing is
+      // reachable type-space like any other, though never an entry.
       // EVERY member of a polymorphic reference is reachable — a union whose
       // variants aren't positions is a type nobody can read through, and the
       // engine's landed-record restamp is gated on the variant being one.
@@ -630,7 +629,16 @@ export function instanceSchemaFromDescriptors(input: {
             `publish — the internal id will surface; publish the type or name it naturally`,
         );
       }
-      if (edges[edge] === undefined) {
+      // A system's own edge and its reserved resources reference may share a
+      // name (a team's ontology edge called `Resources`): the system's own
+      // edge is the one the name walks, whichever the describe listed first.
+      // The reserved reference stays reachable by its address (versions
+      // 1–4's `_resources`).
+      const existing = edges[edge];
+      if (
+        existing === undefined ||
+        (existing.resources === true && ref.fieldId !== RESOURCES_REFERENCE_FIELD_ID)
+      ) {
         edges[edge] = {
           target,
           // The landing type varies per record: reads type as the union and
@@ -679,6 +687,12 @@ export function instanceSchemaFromDescriptors(input: {
           // answer enum). Carried verbatim: the checker matches `field` against
           // the body's authored names, which are these same display names.
           ...(ref.genericOver !== undefined ? { genericOver: ref.genericOver } : {}),
+          // The system's resources edge (the reserved `_resources` reference,
+          // walked by its own name — the knowledge graph's `Resources`). The
+          // read wrapper sends a walk of it by its reserved fieldId (its
+          // address, not its name), and since language version 5 the checker's
+          // refusal of `x-[f:_resources]->` off a record names it.
+          ...(ref.fieldId === RESOURCES_REFERENCE_FIELD_ID ? { resources: true as const } : {}),
         };
         if (ref.required === true) requiredEdges.push({ edge, from: target });
       }
@@ -713,6 +727,9 @@ export function instanceSchemaFromDescriptors(input: {
         ...(droppedField ? { openProperties: true } : {}),
         ...(writeOnlyProperties.length > 0 ? { writeOnlyProperties } : {}),
         ...(ambiguousProperties.length > 0 ? { ambiguousProperties } : {}),
+        // The system removes a record of this type (its `deleteRecord`) — the
+        // promise `delete x` is checked against since language version 5.
+        ...(descriptor.deletable === true ? { deletable: true } : {}),
       };
     }
     // A purely read-only type (no writable field) needs no write shape at

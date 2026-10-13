@@ -459,6 +459,8 @@ const SCHOOL_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const SEARCH_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: EVERTRACE_SEARCH_TYPE_ID,
+  // `deleteEvertraceRecord` removes it (a signal belongs to Evertrace).
+  deletable: true,
   displayName: EVERTRACE_SEARCH_DISPLAY_NAME,
   description:
     'A saved search — a set of filter rows over signals, run on demand by ' +
@@ -501,6 +503,8 @@ const SEARCH_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const LIST_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: EVERTRACE_LIST_TYPE_ID,
+  // `deleteEvertraceRecord` removes it (a signal belongs to Evertrace).
+  deletable: true,
   displayName: EVERTRACE_LIST_DISPLAY_NAME,
   description: 'A curated list of signals.',
   fields: [
@@ -532,6 +536,8 @@ const LIST_DESCRIPTOR: SchemaTypeDescriptor = {
 
 const LIST_ENTRY_DESCRIPTOR: SchemaTypeDescriptor = {
   typeId: EVERTRACE_LIST_ENTRY_TYPE_ID,
+  // `deleteEvertraceRecord` removes it (a signal belongs to Evertrace).
+  deletable: true,
   displayName: EVERTRACE_LIST_ENTRY_DISPLAY_NAME,
   description:
     'One signal’s membership of one list. Both ends are required, so a new ' +

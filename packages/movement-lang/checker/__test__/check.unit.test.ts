@@ -259,7 +259,10 @@ describe('worked examples (zero diagnostics)', () => {
   });
 
   it('§G shapes, _resources block, and composition by call', () => {
-    expectClean(
+    // `_resources` off a system's record is a version 1–4 read: under 5 it is
+    // refused even where the system describes nothing (the root is not an
+    // extraction's result), so this example is checked as version 4.
+    const program = (
       [
         'import { email, dropbox } from adapters',
         'import { dealflow_inbox, team_drive } from credentials',
@@ -284,8 +287,14 @@ describe('worked examples (zero diagnostics)', () => {
         '    files_to_dropbox(f: node { name: f.`filename`, data: f.`data` })',
         '  }',
         '}',
-      ].join('\n'),
+      ].join('\n')
     );
+    const under = (languageVersion: number) =>
+      checkProgram(parseProgram(program, { languageVersion }), catalog, { languageVersion })
+        .filter(d => (d.severity ?? 'error') === 'error')
+        .map(d => d.code);
+    expect(under(4)).toEqual([]);
+    expect(under(5)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
   });
 
   it("a bound block's returned value is readable after the block", () => {

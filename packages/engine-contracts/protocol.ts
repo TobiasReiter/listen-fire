@@ -336,6 +336,10 @@ export const WireSchemaTypeDescriptor = z
     displayName: z.string(),
     fields: z.array(WireSchemaFieldDescriptor),
     references: z.array(WireSchemaReferenceDescriptor),
+    /** The type's records can be removed by `deleteRecord` (absent ⇒ no) —
+     *  named because it is the one promise `delete` is checked against
+     *  (language version 5); it is optional, so an older server is unchanged. */
+    deletable: z.boolean().optional(),
   })
   .passthrough();
 export type WireSchemaTypeDescriptorShape = z.infer<typeof WireSchemaTypeDescriptor>;

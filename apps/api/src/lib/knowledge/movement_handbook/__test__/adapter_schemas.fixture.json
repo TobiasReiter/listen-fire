@@ -298,7 +298,8 @@
               ],
               "orderable": true
             }
-          }
+          },
+          "deletable": true
         },
         "People": {
           "properties": {
@@ -378,12 +379,14 @@
               ],
               "orderable": true
             }
-          }
+          },
+          "deletable": true
         },
         "Deals": {
           "properties": {},
           "edges": {},
-          "undescribed": true
+          "undescribed": true,
+          "deletable": true
         },
         "Funds": {
           "properties": {},

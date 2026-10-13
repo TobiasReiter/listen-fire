@@ -1100,6 +1100,15 @@ export async function describe(input: {
     references,
     fields,
     scope: INHERITS_PARENT.has(entity) ? 'inherits-parent-config' : 'self-configured',
+    // What `deleteRecord` removes: organizations, people, notes, and an entry
+    // of a named list (the generic list-entry type names no list to delete
+    // from). Files have no delete endpoint; the rest are read-only surfaces.
+    ...(entity === 'organization' ||
+    entity === 'person' ||
+    entity === 'note' ||
+    (entity === 'list-entry' && listId != null)
+      ? { deletable: true }
+      : {}),
     // Identity is the TG layer's concern — Affinity's domain/name (org) and
     // email (person) natural keys are surfaced as fields, not invented as
     // native uniqueness constraints (adapter-minimalism).

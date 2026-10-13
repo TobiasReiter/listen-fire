@@ -174,6 +174,8 @@ const THIN_INSTANCE_SCHEMAS: Record<string, InstanceSchema> = {
           investments: { target: 'investment', writable: true },
           portfolio: { target: 'fund', writable: true },
         },
+        // Attio deletes an object's records (its describe says so).
+        deletable: true,
       },
       person: {
         properties: { name: 'text', email: 'text' },
@@ -181,6 +183,7 @@ const THIN_INSTANCE_SCHEMAS: Record<string, InstanceSchema> = {
           company: { target: 'company', writable: true },
           investments: { target: 'investment', writable: true },
         },
+        deletable: true,
       },
       investment: { properties: { amount: 'number' }, edges: {} },
       fund: { properties: { name: 'text', vintage: 'text' }, edges: {} },

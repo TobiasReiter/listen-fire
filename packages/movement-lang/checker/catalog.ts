@@ -979,6 +979,15 @@ export interface EdgeSchema {
    *    (an ask's `Options`): the base type, said nothing about.
    */
   genericOver?: { field: string; onNonLiteral?: 'error' | 'warn' };
+  /**
+   * The edge is the one the system declared as its records' resources (the
+   * describe's reserved `_resources` reference — the knowledge graph's
+   * `Resources`). An ordinary edge, walked by its name like any other; what
+   * the flag records is that a pre-version-5 `x-[f:_resources]->` on this
+   * system read it, so MOV_RESOURCES_NOT_EXTRACTED can name it. Diagnostics
+   * only: nothing resolves `_resources` to it.
+   */
+  resources?: true;
 }
 
 /** A readable position type: its properties and outgoing references. */
@@ -1112,6 +1121,14 @@ export interface PositionSchema {
    * has two fields wearing one name.
    */
   ambiguousProperties?: string[];
+  /**
+   * A record of this type can be DELETED — the system's own promise, declared
+   * per type in its describe (`deletable: true`) where its `deleteRecord`
+   * removes one. Absent ⇒ it makes no such promise, and since language
+   * version 5 `delete x` of this type is MOV_DELETE_NOT_DECLARED (an
+   * undescribed or pending position says nothing, so nothing is refused).
+   */
+  deletable?: boolean;
 }
 
 /**

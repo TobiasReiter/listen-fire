@@ -100,7 +100,8 @@ function makeKgFake(collections: Record<string, NodeRow[]>) {
 
 const kgSchema: InstanceSchema = {
   positions: {
-    company: { properties: { name: 'text', status: 'text' }, edges: {} },
+    // The knowledge graph deletes any node (its describe says `deletable`).
+    company: { properties: { name: 'text', status: 'text' }, edges: {}, deletable: true },
   },
   collections: { company: { target: 'company' } },
   supportsInPlaceUpdate: true,

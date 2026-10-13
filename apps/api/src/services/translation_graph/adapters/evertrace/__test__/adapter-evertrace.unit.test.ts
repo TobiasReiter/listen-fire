@@ -801,6 +801,10 @@ describe('EvertraceAdapter — what an author may filter and order', () => {
     });
     // The meta node and the entry list name the same collections.
     expect(notes.filter((n) => n.includes('root descriptor'))).toEqual([]);
+    // What `deleteRecord` removes declares it; a signal (Evertrace's own) does not.
+    expect(schema.positions.List?.deletable).toBe(true);
+    expect(schema.positions.Search?.deletable).toBe(true);
+    expect(schema.positions.Signal?.deletable).toBeUndefined();
   });
 });
 

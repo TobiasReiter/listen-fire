@@ -427,6 +427,13 @@ export const DiagnosticCodes = {
   /** RETIRED: the `-[#linked WHERE type = "…"]->` hop, which looked a record
    *  up by another system's id. The record a write lands on is its handle. */
   LINKED_HOP_RETIRED: 'MOV_LINKED_HOP_RETIRED',
+  /** RETIRED (language version 5): any other `#` hop — `-[:#resources]->`
+   *  (the legacy spelling of `_resources`) and `-[:#name]->`, which the engine
+   *  passed to the system as one of its own references. There are no meta
+   *  edges: every edge is one a system declares, and a plugin is a function
+   *  you import and call. (`#transform` and `#linked` keep their own codes,
+   *  retired since version 3; `#extract` was never accepted.) */
+  META_HOP_RETIRED: 'MOV_META_HOP_RETIRED',
   /** RETIRED: `@parent.created` / `@parent.external_id` — the parent action
    *  node's result. A child is written off the parent write's handle. */
   PARENT_READ_RETIRED: 'MOV_PARENT_READ_RETIRED',
@@ -783,6 +790,11 @@ export const DiagnosticCodes = {
    *  bound write re-fires as `updateRecord` when the counterpart recurs, so the
    *  target MUST support update-by-id; otherwise it detonates on the 2nd fire. */
   WRITE_BIND_NO_UPDATE: 'MOV_WRITE_BIND_NO_UPDATE',
+  /** RETIRED (language version 5): `write … bind other { … }`. The engine
+   *  kept the correspondence in a store of its own that no system holds; a
+   *  cross-system link is stored explicitly, through an adapter, in the
+   *  system that holds it — a field or an edge there. */
+  WRITE_BIND_RETIRED: 'MOV_WRITE_BIND_RETIRED',
   /** A type reference (`graph.position`) names a position the graph's KNOWN
    *  schema does not declare — movement parameters, IS tests, shape-edge
    *  endpoints. Schema-less graphs stay silent (unknown never errors). */
@@ -873,6 +885,21 @@ export const DiagnosticCodes = {
   /** `refresh <handle>` on a head that has no re-fetchable record id — the event
    *  payload or an extracted node. Refresh a write handle or a traversed record. */
   REFRESH_UNSTABLE: 'MOV_REFRESH_UNSTABLE',
+  /** `delete x` where `x`'s record type does not declare that its system can
+   *  delete one (language version 5): the describe's per-type `deletable`
+   *  promise, absent. A union is deletable only when every member is. */
+  DELETE_NOT_DECLARED: 'MOV_DELETE_NOT_DECLARED',
+  /** `delete x` where `x` is not one system's stored record (language version
+   *  5): a value, a name that may hold one (a list, a value union), an
+   *  extracted node or a record this run built (transient), the instance
+   *  itself, a closure or a node a construct minted. */
+  DELETE_NOT_RECORD: 'MOV_DELETE_NOT_RECORD',
+  /** `x-[f:_resources]->` where `x` is not an extraction's result (language
+   *  version 5). `_resources` is the source content an extraction read; a
+   *  system's own records reach their files over an edge the system declares
+   *  (email's `Attachments`, Slack's `Files`, the knowledge graph's
+   *  `Resources`), which the message names. */
+  RESOURCES_NOT_EXTRACTED: 'MOV_RESOURCES_NOT_EXTRACTED',
   // race + receipts + absence (asks-as-adapter chunk C). ABSENT_REQUIRED rides in
   // via TypedDiagnosticCodes (also fired inside the typing layer's comparison
   // check), reached here through the spread below as DiagnosticCodes.ABSENT_REQUIRED.
@@ -3208,6 +3235,129 @@ interface ReturnCollector {
  *  it, which is what makes those slots uncollidable. */
 const RESERVED_NAME_PREFIX = '#';
 
+/** The `#transform` hop's plugin as what it is since language version 5: a
+ *  function, imported and called, its declared output the call's value. A
+ *  call writes what a stage would have been fed (the required `fedArgs`), and
+ *  a plugin no call can run — one fed only by an extraction, or one that has
+ *  not declared what it does or hands back — is a `through [ … ]` stage. */
+function transformHopAsFunction(plugin: string, spec: PluginSpec): string {
+  const lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
+  const name = spellName(plugin);
+  if (spec.effects === undefined || spec.fedByExtraction === true || spec.output === undefined) {
+    return `${lead}, but '${plugin}' runs only as a stage of an extraction: '${importLine(plugin, 'plugins')}', then 'extract from [ … ] through [${name}] { … }'`;
+  }
+  const required = [
+    ...(spec.requiredArgs ?? []),
+    ...(spec.fedArgs ?? []).filter(fed => fed.required === true).map(fed => fed.name),
+  ];
+  const args = required.map(arg => `${arg}: …`).join(', ');
+  return `${lead}: import it and call it, and bind what it hands back like any function's result — '${importLine(plugin, 'plugins')}', then 'out = ${name}(${args.length > 0 ? args : '…'})'`;
+}
+
+/** A `#` hop language version 5 retires: any hop whose edge name starts
+ *  with `#`, quoted or not (the engine read both as its own reference), other
+ *  than the three with refusals of their own — `#transform` and `#linked`
+ *  (retired since version 3) and `#extract` (never accepted). */
+function isRetiredMetaHop(hop: Hop): boolean {
+  if (!hop.label.text.startsWith('#')) return false;
+  if (isTransformHop(hop) || endingHop(hop) === 'linked') return false;
+  return hop.label.text !== '#extract';
+}
+
+/** The record under an `T | absent` landing. */
+function unwrapMaybeEmpty(type: PositionTypeRef): PositionTypeRef {
+  return type.kind === 'maybeEmpty' ? unwrapMaybeEmpty(type.of) : type;
+}
+
+/** A field type that holds a file — one, or a list or tuple of them. */
+function holdsFile(type: SchemaFieldType): boolean {
+  const variant = variantOf(type);
+  switch (variant.kind) {
+    case 'file':
+      return true;
+    case 'list':
+    case 'dict':
+    case 'maybeAbsent':
+      return holdsFile(variant.of);
+    case 'tuple':
+      return variant.of.some(member => member !== null && holdsFile(member));
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'json':
+    case 'absent':
+    case 'enum':
+      return false;
+    default:
+      return neverAsAny(variant);
+  }
+}
+
+/**
+ * The edges a record of these types reaches its files over, derived from the
+ * schema: the edge the system declares as its resources (`resources`, the
+ * knowledge graph's `Resources`) — else every edge whose landing (any member
+ * of a union landing) has a file-typed field (email's `Attachments`, Slack's
+ * `Files`).
+ */
+function fileEdgesOf(schema: InstanceSchema, positions: readonly string[]): string[] {
+  const declared = new Set<string>();
+  const filed = new Set<string>();
+  for (const position of positions) {
+    for (const [name, edge] of Object.entries(schema.positions[position]?.edges ?? {})) {
+      // A write-only edge reaches nothing a read can walk.
+      if (edge.readable === false) continue;
+      if (edge.resources === true) {
+        declared.add(name);
+        continue;
+      }
+      const landings = schema.unions?.[edge.target] ?? [edge.target];
+      const holds = landings.some(landing =>
+        Object.values(schema.positions[landing]?.properties ?? {}).some(holdsFile));
+      if (holds) filed.add(name);
+    }
+  }
+  return [...(declared.size > 0 ? declared : filed)];
+}
+
+/** What a retired `#` hop is written as instead. */
+function metaHopRetiredMessage(label: string): string {
+  const lead = `'-[:${label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares`;
+  if (label === '#transform') {
+    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+  }
+  if (label === '#linked' || label.startsWith('#linked ')) {
+    return `${lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> { … }', then 'rec.<field>')`;
+  }
+  if (label.split(/[:\s]/, 1)[0] === '#resources') {
+    return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files`;
+  }
+  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+}
+
+/** The hops of a type's address, read by the expression grammar — none when
+ *  it does not parse (the address's own check says so). */
+function hopsOfAddress(hopsRaw: string): Hop[] {
+  let tree: MExpr;
+  try {
+    tree = parseExpression(`__address_probe__${hopsRaw}`);
+  } catch (e) {
+    if (!(e instanceof ExpressionSyntaxError)) throw e;
+    return [];
+  }
+  return tree.kind === 'path' ? tree.hops : [];
+}
+
+/** What `write … bind <name>` is written as since language version 5: the
+ *  correspondence stored explicitly, in the system that holds it. */
+function writeBindRetiredMessage(name: string): string {
+  return `'bind ${name}' is retired — a write no longer keeps a hidden link to a record in another system, which no system could show or change. `
+    + `Store the link explicitly, in the system that holds it: a field there that carries ${name}'s identity, which the next write finds the record by `
+    + `('write crm-[:Companies]-> { unique by (\`Source Id\`), \`Source Id\`: …, … }'), or an edge there. Then drop 'bind ${name}'`;
+}
+
 /** A function in a call cycle with no declared return type. `chain` is the
  *  loop as seen from `name`; `example` is the declaration with the type added. */
 function recursiveReturnTypeMessage(name: string, chain: readonly string[], example: string): string {
@@ -3798,6 +3948,7 @@ class Checker {
     }
     const resolved = this.positionFromTypeRef(symbol, type);
     if (type.hopsRaw !== undefined) {
+      this.reportMetaHopsInTypeRef(type.hopsRaw, span);
       const instance = instanceRefOf(symbol);
       const address = addressOfTypeRef(type.hopsRaw);
       if (instance && address) this.checkAddressPins(instance, address, span);
@@ -4716,6 +4867,7 @@ class Checker {
         });
         this.resolveName(statement.name, statement.span, scope);
         this.noteNamedEffect('write', statement.name, scope);
+        if (since(this.languageVersion, 5)) this.checkDeleteDeclared(statement.name, statement.span, scope);
         return;
       case 'refresh':
         this.checkRefresh(statement, scope);
@@ -5613,9 +5765,15 @@ class Checker {
           DiagnosticCodes.LINKED_HOP_RETIRED,
           "the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. "
             + "Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; "
-            + "or tie a write to a record you hold with 'write … bind other { … }'",
+            + (since(this.languageVersion, 5)
+              ? "or store the link in the system that holds it — a field or an edge there"
+              : "or tie a write to a record you hold with 'write … bind other { … }'"),
           span,
         );
+        continue;
+      }
+      if (since(this.languageVersion, 5) && isRetiredMetaHop(hop)) {
+        this.report(DiagnosticCodes.META_HOP_RETIRED, metaHopRetiredMessage(hop.label.text), span);
         continue;
       }
       if (hop.config === undefined) continue;
@@ -5636,13 +5794,37 @@ class Checker {
       );
       return;
     }
-    if (isHead || walk.root === undefined) return;
+    if (isHead) return;
+    if (walk.root === undefined) {
+      // A rootless `-[:_resources]->` read the event's own resources — a
+      // system's record, not an extraction's result (language version 5).
+      if (since(this.languageVersion, 5)) {
+        this.report(
+          DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+          "'-[:_resources]->' with no root reads the event's record, and '-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }'). For the event's files, name the event as a parameter and walk the edge its system declares to them.",
+          span,
+        );
+      }
+      return;
+    }
     const root = walk.root.kind === 'name' ? walk.root.name.text : 'the root';
     this.report(
       DiagnosticCodes.RESOURCE_WALK_UNREAD,
       `a walk that ends in -[:_resources]-> is read here from no record — '${root}' would be dropped, and the resources read would not be ${root}'s. Walk ${root}'s resources as a block: '${root}-[f:_resources]-> { … f.\`url\` … }'`,
       span,
     );
+  }
+
+  /** A type's address may not walk a `#` hop either (language version 5) —
+   *  the same rule a walk in an expression or a head has
+   *  (`checkWalkKeepsWhatIsWritten`), where the address is written. */
+  private reportMetaHopsInTypeRef(hopsRaw: string, span: Span): void {
+    if (before(this.languageVersion, 5)) return;
+    for (const hop of hopsOfAddress(hopsRaw)) {
+      if (isTransformHop(hop) || endingHop(hop) === 'linked' || isRetiredMetaHop(hop)) {
+        this.report(DiagnosticCodes.META_HOP_RETIRED, metaHopRetiredMessage(hop.label.text), span);
+      }
+    }
   }
 
   /** The plugin call a `#transform` hop is written as instead — named, with
@@ -5658,6 +5840,7 @@ class Checker {
     if (plugin === undefined || spec === undefined) {
       return `${lead}, e.g. '${importLine('fetch_url', 'plugins')}', then 'page = fetch_url(url: m.u)'`;
     }
+    if (since(this.languageVersion, 5)) return transformHopAsFunction(plugin, spec);
     const args = (spec.requiredArgs ?? []).map(arg => `${arg}: …`).join(', ');
     return `${lead}: '${importLine(plugin, 'plugins')}', then 'out = ${spellName(plugin)}(${args.length > 0 ? args : '…'})'`;
   }
@@ -6487,6 +6670,200 @@ class Checker {
       DiagnosticCodes.REFRESH_UNSTABLE,
       `'${statement.name}' is ${what}. 'refresh' re-fetches a stored record by its id — refresh a write handle or a traversed record instead.`,
       statement.nameSpan,
+    );
+  }
+
+  /**
+   * `delete x` since language version 5: `x` is one record a system stores,
+   * and its type declares that the system deletes one (the describe's
+   * per-type `deletable`). Refused, by MOV_DELETE_NOT_RECORD, where `x` is a
+   * value or may hold one, an extracted node or a record this run built (a
+   * transient graph — nothing stores it), or any other non-record; by
+   * MOV_DELETE_NOT_DECLARED where its type (every member of a union) makes no
+   * such promise. A name bound to an `IF` or a `COALESCE` is read as the
+   * union of its operands (what it may hold): every member a record is
+   * checked as a union of records is, and a member that is not one refuses it.
+   * A record whose system describes nothing, a value nothing types, or a type
+   * nobody has fetched yet, says nothing, so nothing is refused. Versions 1–4
+   * leave all of it to the run.
+   */
+  private checkDeleteDeclared(name: string, span: Span, scope: Scope): void {
+    const resolution = scope.resolve(name);
+    if (resolution.kind !== 'found') return; // `resolveName` said so
+    const notRecord = (what: string): void =>
+      this.report(
+        DiagnosticCodes.DELETE_NOT_RECORD,
+        `'${name}' is ${what} — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').`,
+        span,
+      );
+    const symbol = resolution.symbol;
+    const held: PositionTypeRef[] = [];
+    if (
+      this.symbolPositionType(symbol) === undefined &&
+      symbol.fieldType === undefined &&
+      symbol.kind === 'binding' &&
+      symbol.bindingPlane !== 'node' &&
+      symbol.plural !== true
+    ) {
+      // A value no single type describes — the arms of an `IF` or a
+      // `COALESCE` that disagree. What it may hold is the union of them: a
+      // member that is not one record refuses it (`IF … THEN r ELSE "a" END`);
+      // a value nothing types says nothing.
+      const mayHold = symbol.mayHold;
+      if (mayHold === undefined) return;
+      const variant = variantOf(mayHold);
+      for (const member of variant.kind === 'union' ? variant.of : [mayHold]) {
+        const one = variantOf(stripAbsent(member));
+        if (one.kind !== 'record') {
+          notRecord('a value that may hold something other than one record');
+          return;
+        }
+        // A record nobody can name says nothing; the rest are checked.
+        if (one.position !== undefined) held.push(one.position);
+      }
+    } else {
+      const record = this.recordOfName(symbol, name, span);
+      if (record === undefined) return; // reported as the internal error it is
+      if (record.kind === 'value') {
+        notRecord(record.what);
+        return;
+      }
+      if (record.kind === 'undescribed') {
+        // A name typed as holding records that is not ONE record: a list of
+        // them, or a value that may be one (a union with a value).
+        const typed = symbol.fieldType;
+        if (typed !== undefined && !isRecordType(typed)) {
+          notRecord(`${describeFieldType(typed)}, which may hold something other than one record`);
+        }
+        return;
+      }
+      held.push(record.type);
+    }
+    const undeclared: string[] = [];
+    const visit = (type: PositionTypeRef): boolean => {
+      switch (type.kind) {
+        case 'maybeEmpty':
+          return visit(type.of);
+        case 'position': {
+          if (type.runBuilt === true) {
+            notRecord(`${describePosition(type)}, a record on a node this run built — the run's own graph, which nothing stores`);
+            return false;
+          }
+          this.collectUndeclaredDelete(type.instance, type.position, describePosition(type), undeclared);
+          return true;
+        }
+        case 'handle':
+          if (type.position === undefined) {
+            undeclared.push(describePosition(type));
+            return true;
+          }
+          this.collectUndeclaredDelete(type.instance, type.position, describePosition(type), undeclared);
+          return true;
+        case 'union':
+          for (const variant of type.variants) {
+            this.collectUndeclaredDelete(
+              type.instance,
+              variant,
+              `${type.instance.name}.${displayNameOf(type.instance, variant)}`,
+              undeclared,
+            );
+          }
+          return true;
+        case 'extract':
+          notRecord(`${describePosition(type)}, an extracted node — a transient graph the extraction built, which nothing stores`);
+          return false;
+        case 'meta':
+        case 'closure':
+        case 'local':
+          notRecord(describePosition(type));
+          return false;
+        default:
+          return neverAsAny(type);
+      }
+    };
+    for (const type of held) if (!visit(type)) return;
+    if (undeclared.length === 0) return;
+    this.report(
+      DiagnosticCodes.DELETE_NOT_DECLARED,
+      `'${name}' is ${undeclared.length === 1 ? undeclared[0] : `one of ${undeclared.join(', ')}`}, and its system does not declare that it can delete ${undeclared.length === 1 ? 'one' : 'every one of them'} — 'delete' is checked against the system's own promise ('deletable' on the type it describes). Change the record instead ('write ${name} { … }'), or delete it in a system that can.`,
+      span,
+    );
+  }
+
+  /** A position whose system describes it and makes no `deletable` promise.
+   *  Undescribed and pending positions say nothing, so they add nothing. */
+  private collectUndeclaredDelete(instance: InstanceRef, position: string, shown: string, into: string[]): void {
+    const schema = instance.schema.positions[position];
+    if (schema === undefined || schema.undescribed === true || schema.pending === true) return;
+    if (schema.deletable !== true) into.push(shown);
+  }
+
+  /**
+   * `x-[f:_resources]->` since language version 5: `_resources` is the source
+   * content an extraction read, so it is walked only off an extraction's
+   * result. Any other record reaches its files over an edge its system
+   * declares, and the refusal names that edge — derived from the schema, not
+   * listed: the system's declared resources edge, else every edge whose
+   * landing has a file-typed field. The rule is structural — is the root an
+   * extraction's result? — so it needs no schema: a root nothing proves to be
+   * one (a record of a system that describes nothing, a name bound to an `IF`
+   * whose arms are not all extractions' results) is refused too, and only the
+   * "write this instead" needs the schema. A record that itself holds a file
+   * is pointed at its own file field.
+   */
+  private checkResourcesOfExtraction(
+    rootType: PositionTypeRef | undefined,
+    rootName: string | undefined,
+    mayHold: FieldType | undefined,
+    span: Span,
+  ): void {
+    const shown = rootName ?? 'the root';
+    const lead = `'-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }')`;
+    if (rootType === undefined) {
+      // A head with no root is the engine's to refuse, in every version.
+      if (rootName === undefined) return;
+      // A name bound to an `IF` or a `COALESCE` is the union of its arms: it
+      // is an extraction's result when every arm provably is one.
+      if (mayHold !== undefined) {
+        const variant = variantOf(mayHold);
+        const arms = variant.kind === 'union' ? variant.of : [mayHold];
+        const extracted = arms.every(arm => {
+          const one = variantOf(stripAbsent(arm));
+          return one.kind === 'record' && one.position !== undefined && unwrapMaybeEmpty(one.position).kind === 'extract';
+        });
+        if (extracted) return;
+      }
+      this.report(
+        DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+        `'${shown}' is not provably an extraction's result, and ${lead}. A record reaches its files over an edge its system declares: walk that edge instead.`,
+        span,
+      );
+      return;
+    }
+    const type = unwrapMaybeEmpty(rootType);
+    if (type.kind === 'extract') return;
+    let instead = '';
+    if (type.kind === 'position' || type.kind === 'handle' || type.kind === 'union') {
+      const positions =
+        type.kind === 'union' ? type.variants : type.position !== undefined ? [type.position] : [];
+      const schema = type.instance.schema;
+      const edges = fileEdgesOf(schema, positions);
+      const system = `'${type.instance.name}'`;
+      // The record itself holds a file (an email's attachment): read it.
+      const ownFiles = [...new Set(positions.flatMap(position =>
+        Object.entries(schema.positions[position]?.properties ?? {})
+          .filter(([, field]) => holdsFile(field))
+          .map(([field]) => field)))];
+      instead = ownFiles.length > 0
+        ? ` ${describePosition(type)} holds its file itself, in ${ownFiles.map(field => `'${field}'`).join(' or ')}: read '${shown}.${spellName(ownFiles[0])}'.`
+        : edges.length > 0
+          ? ` ${system} reaches a record's files over ${edges.map(edge => `'${edge}'`).join(' or ')}: write '${shown}-[f:${spellName(edges[0])}]-> { … }'.`
+          : ` ${system} exposes no files on ${describePosition(type)} — it declares no edge to a record that holds one.`;
+    }
+    this.report(
+      DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
+      `'${shown}' is ${describePosition(type)}, and ${lead}.${instead}`,
+      span,
     );
   }
 
@@ -7421,6 +7798,10 @@ class Checker {
   ): void {
     const bind = write.bind;
     if (bind === undefined) return;
+    if (since(this.languageVersion, 5)) {
+      this.report(DiagnosticCodes.WRITE_BIND_RETIRED, writeBindRetiredMessage(bind.name), bind.span);
+      return;
+    }
     if (write.target.kind === 'position') {
       this.report(
         DiagnosticCodes.WRITE_BIND_POSITION,
@@ -8957,6 +9338,9 @@ class Checker {
       // edge X', so unknown stays silent; the undescribed handle is reported
       // where it is READ, not here.
       if (surfaceNotEnumerated(parentSchema)) return {};
+      // A `#` hop's one refusal under 5 is its retirement, said where the
+      // target is walked (`checkWalkKeepsWhatIsWritten`).
+      if (edgeName.startsWith('#') && since(this.languageVersion, 5)) return {};
       const available = Object.keys(parentSchema.edges);
       this.report(
         DiagnosticCodes.LINKED_UNKNOWN_EDGE,
@@ -9062,7 +9446,8 @@ class Checker {
     // target lands on. The formula grammar has no write and no ask, so a
     // filter that type-checks here is read-only by construction.
     if (linkStep.expressionFilter !== undefined) {
-      if (input.bindName !== undefined) {
+      // Since version 5 the bind itself is refused (MOV_WRITE_BIND_RETIRED).
+      if (input.bindName !== undefined && before(this.languageVersion, 5)) {
         this.report(
           DiagnosticCodes.TARGET_WHERE_BIND,
           `a WHERE on the target and 'bind ${input.bindName}' don't combine — a bound write's identity IS the binding, so there are no candidates for the WHERE to narrow. Drop the WHERE, or the 'bind' to find the record by 'unique by (…)'`,
@@ -9623,6 +10008,19 @@ class Checker {
     const rootType =
       (rootSymbol ? this.symbolPositionType(rootSymbol) : undefined)
       ?? recordHeadPosition(rootValueType);
+    // `_resources` is an extraction's source content, and nothing else's
+    // (language version 5). A head with hops before it is
+    // MOV_RESOURCE_WALK_UNREAD already.
+    if (
+      since(this.languageVersion, 5)
+      && parsed?.type === 'resource_traverse'
+      && head.hopsRaw !== undefined
+      && hopsOfAddress(head.hopsRaw).length === 1
+      // `#resources`, its old spelling, is a retired `#` hop of its own.
+      && !hopsOfAddress(head.hopsRaw)[0].label.text.startsWith('#')
+    ) {
+      this.checkResourcesOfExtraction(rootType, rootName, rootSymbol?.mayHold, head.span);
+    }
     // A root that is a VALUE and NOT a record — a name bound to one, or an
     // expression that computes one. There are no positions on the value plane —
     // a value type is text, a number, a list or a dict of them — so a hop off a
@@ -10961,6 +11359,7 @@ class Checker {
       );
       return undefined;
     }
+    if (type.hopsRaw !== undefined) this.reportMetaHopsInTypeRef(type.hopsRaw, type.span);
     const start = this.symbolPositionType(symbol);
     const steps = type.hopsRaw !== undefined ? parseTraversalPath(type.hopsRaw) : undefined;
     if (start === undefined || steps === undefined) return undefined;

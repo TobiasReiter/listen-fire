@@ -42,6 +42,7 @@
 //     don't paper over).
 
 import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
+import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
 
 /**
  * A name in the program's NATURAL vocabulary — the adapter's `displayName`
@@ -233,6 +234,11 @@ export function adapterNameResolver(
     const edgeWriteNameByName = new Map<string, string>();
     for (const ref of descriptor.references) {
       const edge = edgeNaturalName(ref);
+      // A system's own edge and its reserved resources reference may share a
+      // name (a team's ontology edge called `Resources`): the name is the
+      // system's own edge's, as the schema projection keys it. The reserved
+      // reference is asked for by its fieldId, never by the name.
+      if (ref.fieldId === RESOURCES_REFERENCE_FIELD_ID && edgeReadIdByName.has(edge)) continue;
       edgeReadIdByName.set(edge, ref.fieldId);
       // The write boundary (parentLink / linkRecords) consumes the edge's own
       // name where the adapter publishes one (KG: `outbound_name`), else the

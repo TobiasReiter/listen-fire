@@ -65,7 +65,15 @@ methods below. Each row gives the \`params\` you receive and the
 | \`getRelated\` | \`{ position, fieldId, direction }\` | array of related results (\`[]\` if none) |
 | \`createRecord\` | write input (below) | write result (below) |
 | \`updateRecord\` | write input **+ \`externalId\`** | write result **+ \`association\`**, OR \`{ "notFound": true }\` |
-| \`deleteRecord\` | \`{ recordType, externalId, mutationContext }\` | \`{}\` (optionally \`{ events: [] }\`) |
+| \`deleteRecord\` | \`{ recordType, externalId, mutationContext }\` | \`{}\` (optionally \`{ events: [] }\`) — for a type whose descriptor says \`"deletable": true\` |
+
+\`deletable\` is an additive descriptor field, so the protocol version
+is unchanged and an adapter written before it still works. But its absence
+means "this type cannot be deleted": under language version 5 (Dancing
+Wren) every \`delete\` of a record of your system is refused while it is
+authored until your \`describe\` says \`"deletable": true\` on the
+types your \`deleteRecord\` removes. Automations pinned to language
+version 4 or earlier are unaffected.
 
 If your system is read-only, implement \`getFieldValue\` /
 \`getRelated\` for real and stub the writes. If it is write-only (a pure

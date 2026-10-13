@@ -141,7 +141,11 @@ const path = require('node:path');
 // the TypeScript stages it, 2026-10-12) lifts v1 3, v2 3, v3 7: v1 1034, v2
 // 1271, v3 2239. PLAN-08A group F′ part 2 (a GROUPBY over records read as a
 // map of lists of them, so `AT` over it reads a key, 2026-10-12) lifts v3 1:
-// v3 2240.
+// v3 2240. The merge of main's language version 5 (Dancing Wren, 2026-10-13)
+// freezes version 4's corpus, this branch's own live tests at c39a99d6; its
+// floor is not yet measured, so `v4` is absent here and a whole v4 run under
+// rust fails naming what it measured, until the measurement is written in.
+// A floor is measured, never guessed.
 const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
@@ -294,6 +298,7 @@ function corpusOf(projectConfig) {
   if (match.includes('__conformance__/v1')) return 'v1';
   if (match.includes('__conformance__/v2')) return 'v2';
   if (match.includes('__conformance__/v3')) return 'v3';
+  if (match.includes('__conformance__/v4')) return 'v4';
   return undefined;
 }
 
@@ -367,6 +372,19 @@ async function globalTeardown(globalConfig, projectConfig) {
   const declined = Object.fromEntries(Object.entries(runs.declined).filter(([reason]) => !LOWERING_MISSES.includes(reason)));
   if (Object.keys(declined).length > 0) failures.push(`the corpus expects no declines but the lowering's misses, and these happened: ${JSON.stringify(declined)}`);
   if (runs.shimFaults > 0) failures.push(`${runs.shimFaults} runs ended in a shim fault`);
+  // A corpus frozen before its counts were measured (v4 at the merge of
+  // version 5) has no floor or ceilings yet: a whole run fails naming what it
+  // measured, so the numbers are written in from a measurement, never a guess.
+  // A narrowed run reports and passes.
+  if (RAN_WHOLE_FLOOR[corpus] === undefined || CEILINGS[corpus] === undefined) {
+    console.log(`Rust routing (${corpus}, not yet measured): ${ranWholeOf(runs)}`);
+    console.log(`Rust counts (${corpus}, not yet measured): ${JSON.stringify(measured(total, runs))}`);
+    if (isWholeCorpus(globalConfig)) {
+      failures.push(`the ${corpus} corpus has no measured floor or ceilings yet: write RAN_WHOLE_FLOOR.${corpus} = ${runs.ranWhole} and CEILINGS.${corpus} from the counts above`);
+    }
+    if (failures.length > 0) throw new Error(`MOVEMENT_ENGINE=rust routing regression (${corpus}): ${failures.join('; ')}`);
+    return;
+  }
   if (isWholeCorpus(globalConfig) && runs.ranWhole < RAN_WHOLE_FLOOR[corpus]) {
     failures.push(`${runs.ranWhole} runs ran whole in Rust, under the ${corpus} floor of ${RAN_WHOLE_FLOOR[corpus]}`);
   }

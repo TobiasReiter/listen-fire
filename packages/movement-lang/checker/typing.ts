@@ -6341,6 +6341,11 @@ export class ExpressionTyping {
     // Only a position/handle hop carries an `EdgeSchema`; reset per hop so the
     // last-resolved edge's schema survives for the `await` checker.
     this.lastEdgeSchema = undefined;
+    // A `#` hop is retired under 5 (MOV_META_HOP_RETIRED), and the checker
+    // says so wherever one is written — a walk, a head, a write's target, a
+    // type's address. That is the one refusal: 'has no edge #foo' would be a
+    // second diagnostic on the same span, so the hop is untyped onward.
+    if (edge.startsWith('#') && since(this.options.languageVersion, 5)) return undefined;
     // A maybe-empty node steps its inner node (below), which comes back here.
     // Before 4 an `@` name is an ordinary edge name and its lookup fails as
     // any unknown edge's does — the behaviour a pinned program was checked by.

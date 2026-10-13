@@ -1189,7 +1189,8 @@ describe('unique by — entity resolution through the shared arbitration split',
         outcome: 'update',
         provenance: expectedProvenance,
         // Since version 4 the handle on a found record reads that record (the
-        // values the write did not send), and `@old` is the record as found.
+        // values the write did not send). Its `@old` lives on the handle while
+        // the run lasts; the result's write record carries none (B1).
         resultData: {},
         foundData: { name: 'U123', summary: 'first message' },
         origin: { kind: 'write', writeIndex: 0, externalId: 'ext-attio-1' },

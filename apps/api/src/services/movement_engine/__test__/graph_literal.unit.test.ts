@@ -232,6 +232,9 @@ const catalog = staticCatalogSnapshot({
         attachment: {
           properties: { filename: 'text', contentType: 'text', data: 'file' },
           edges: { versions: { target: 'version', readable: true } },
+          // This fixture's system deletes an attachment (a test fakes its
+          // `deleteRecord`), and says so as a describe would.
+          deletable: true,
         },
         version: { properties: { label: 'text' }, edges: {} },
       },

@@ -273,6 +273,9 @@ describe('§G — _resources block → call with a synthesised node arg → drop
 
     const result = await runMovement({
       source: INTAKE_G,
+      // `_resources` off an adapter's record is a version 1–4 read (the
+      // test after this one is version 5's refusal).
+      languageVersion: 4,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'Acme deck' }),
       teamId: TEAM_ID,
@@ -328,6 +331,27 @@ describe('§G — _resources block → call with a synthesised node arg → drop
         origin: { kind: 'write', writeIndex: 1, externalId: 'ext-dropbox-2' },
       },
     ]);
+  });
+});
+
+describe('§G under Dancing Wren (5) — `_resources` off an adapter record is not read', () => {
+  it('refuses before a run; the reserved-reference path is never asked', async () => {
+    const email = makeFakeAdapter('email', {
+      resources: [{ externalId: 'att-1', name: 'pitch.pdf', data: { filename: 'pitch.pdf', data: 'BYTES-1' } }],
+    });
+    const dropbox = makeFakeAdapter('dropbox');
+    const run = runMovement({
+      source: INTAKE_G,
+      languageVersion: 5,
+      movementName: 'intake',
+      event: webhookEvent('email', { subject: 'Acme deck' }),
+      teamId: TEAM_ID,
+      catalog,
+      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
+      resolveAdapter: makeResolver({ email: email.adapter, dropbox: dropbox.adapter }),
+    });
+    await expect(run).rejects.toThrow(/MOV_RESOURCES_NOT_EXTRACTED|read only off an extraction's result/);
+    expect(dropbox.creates).toEqual([]);
   });
 });
 

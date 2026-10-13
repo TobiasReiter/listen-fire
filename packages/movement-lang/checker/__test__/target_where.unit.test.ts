@@ -179,15 +179,20 @@ describe('where a target WHERE is refused', () => {
     ).toEqual([C.EXPR_PARSE]);
   });
 
-  it("on a 'bind' write — the binding is the identity, so there is nothing to narrow", () => {
-    const found = errors(
-      inMovement(
-        '  co = match reg-[:entities]-> { unique by (FUZZY `Name`), Name: wanted }',
-        '  if co == null { ERROR("no such entity") }',
-        '  write reg-[e:entities WHERE e.`City` == "Berlin"]-> bind co { Name: wanted }',
-      ),
+  it("on a 'bind' write — the binding is the identity, so there is nothing to narrow (Luminous Owl, 4)", () => {
+    const source = inMovement(
+      '  co = match reg-[:entities]-> { unique by (FUZZY `Name`), Name: wanted }',
+      '  if co == null { ERROR("no such entity") }',
+      '  write reg-[e:entities WHERE e.`City` == "Berlin"]-> bind co { Name: wanted }',
     );
-    expect(found.map((d) => d.code)).toContain(C.TARGET_WHERE_BIND);
+    const under = (languageVersion: number) =>
+      checkProgram(parseProgram(source), catalog, { languageVersion })
+        .filter((d) => (d.severity ?? 'error') === 'error')
+        .map((d) => d.code);
+    expect(under(4)).toContain(C.TARGET_WHERE_BIND);
+    // Since Dancing Wren (5) the bind itself is refused, and only that.
+    expect(under(5)).toContain(C.WRITE_BIND_RETIRED);
+    expect(under(5)).not.toContain(C.TARGET_WHERE_BIND);
   });
 
   it('on an edge of a node this run built', () => {
