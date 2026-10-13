@@ -13,6 +13,41 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
+Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in
+it is a refusal, so an automation that uses a retired form has an error under 5, stays on its
+version, shows Review and behaves exactly as before; rewrite the form and upgrade with
+`upgradeAutomation`. Versions 1 to 4 keep their behaviour (proved by a version 4 conformance
+corpus). Every rule, with rewrites, is in the [Dancing Wren migration
+guide](docs/language/dancing-wren-migration.md).
+
+### Language version 5, Dancing Wren: what breaks
+
+- **`write … bind` is retired** (`MOV_WRITE_BIND_RETIRED`). Why: the engine kept the
+  correspondence in a store no system holds. Store the link in the system that holds it: a field
+  the next write finds the record by (`unique by`), or an edge there.
+- **`#` hops are retired** (`MOV_META_HOP_RETIRED`): `-[:#name]->`, `-[f:#resources]->`, on a walk,
+  a head, a write or match target, or a type's address. Why: there are no meta edges, only the edges
+  a system declares. A plugin is a function: `-[:#transform { plugin: … }]->` (refused since 3)
+  now shows the call form, `import { p } from plugins` then `out = p(…)`.
+- **`delete` only where the system declares it.** `MOV_DELETE_NOT_DECLARED` when the record's type
+  does not say `deletable: true` in its describe; `MOV_DELETE_NOT_RECORD` when the target is a
+  value, a list, an extracted node, a record the run built, or anything but one stored record.
+  Why: each passed the save and failed at run time.
+- **`_resources` only on an extraction's result** (`MOV_RESOURCES_NOT_EXTRACTED`). Off a system's
+  record, walk the edge it declares to its files, which the message names from the schema: email,
+  Gmail and WhatsApp `Attachments`, Slack `Files`, the knowledge graph `Resources`. Why: the
+  reserved reference was read through the event's adapter whatever the record's system, and read
+  nothing on the systems that had retired its bundle. Under 5 the engine no longer resolves it
+  for a system's record.
+
+### Language version 5, Dancing Wren: new
+
+- Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
+  Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
+  where they delete.
+- The knowledge graph's `Resources` edge is walked by its name on every version
+  (`c-[f:Resources]-> { … f.URL … }`), its landing typed with `Name`, `URL` and `Type`.
+
 ### Changed
 
 - Security: a Mailgun inbound attachment is fetched with the deployment's key only from an https
