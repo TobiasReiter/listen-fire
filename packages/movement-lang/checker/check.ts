@@ -512,6 +512,10 @@ export const DiagnosticCodes = {
   /** `...v`, without a shape, where nothing says which keys `v` holds (or
    *  whether a key holds a nested map) — so nothing could type the graph. */
   GRAPH_SPREAD_UNTYPED: 'MOV_GRAPH_SPREAD_UNTYPED',
+  /** `...m` in a graph body where the map holds a record under a key (at any
+   *  depth, or in an arm): a spread map copies values and maps, and the
+   *  engine refuses the record when the graph is built. */
+  GRAPH_SPREAD_RECORD: 'MOV_GRAPH_SPREAD_RECORD',
   /** A declared entry (`companies: <Company>`) whose marker names neither a
    *  node this file declares nor an address. An entry that starts EMPTY is an
    *  edge, so its type has to say what LANDS there, and only those two
@@ -1850,6 +1854,10 @@ function slotHeldWalk(options: SlotOptions | undefined, shape: FieldType | undef
 /** What an extraction input takes: a record (as its fields) and a file (as
  *  an input of its own), each on its terms. */
 const RECORDS_AND_FILES: ReadonlySet<HandleKind> = new Set(['record', 'file']);
+
+/** What a map spread into a graph takes of the engine's objects: a file (a
+ *  value a graph field holds), never a record. */
+const GRAPH_SPREAD_TAKES: ReadonlySet<HandleKind> = new Set(['file']);
 
 /** The record a held object is, with the position its fields are read off. */
 function heldRecordPosition(held: HeldHandle): PositionTypeRef | undefined {
@@ -11143,6 +11151,7 @@ class Checker {
       );
       return undefined;
     }
+    this.refuseRecordInGraphSpread(entry, symbol, valueType);
     const mayBeAbsent = valueType !== undefined && isMaybeAbsentType(valueType);
     const keys = map === 'json' ? undefined : mayBeAbsent && map.shape !== undefined ? absentKeys(map.shape) : map.shape;
     if (keys === undefined) {
@@ -11156,6 +11165,29 @@ class Checker {
       return undefined;
     }
     return { ...this.checkSpreadKeys(keys, { required, entry, written, earlier }), mayBeAbsent };
+  }
+
+  /**
+   * A map spread into a graph copies values and maps — the keys become fields
+   * and child nodes. A record under any key, at any depth or in any arm, is
+   * neither: the engine refuses it when the graph is built ("a graph field
+   * cannot hold a record"), so it is refused here, with the path, as a record
+   * inside a write field's value is. A file is a value a graph field holds
+   * (a record's copy keeps its files), so the walk passes over files.
+   */
+  private refuseRecordInGraphSpread(entry: MapSpread, symbol: ScopeSymbol, valueType: FieldType | undefined): void {
+    const walk = heldWalk(GRAPH_SPREAD_TAKES);
+    const held = handleWithin(valueType, walk) ?? handleWithin(symbol.mayHold, walk);
+    if (held === undefined) return;
+    const written = spreadSourceText(entry);
+    const place = placeInInput(written, held, describeFieldType(held.handle));
+    const last = held.steps[held.steps.length - 1];
+    const entryName = last?.kind === 'key' ? last.key : 'name';
+    this.report(
+      DiagnosticCodes.GRAPH_SPREAD_RECORD,
+      `'...${written}' copies a map's values and maps into the graph, and ${place} — a record, not a value. Write a field off it (${repairAt(held, 'r.`Name`')}), or write the record into the graph as an entry of its own ('${entryName}: r')`,
+      entry.span,
+    );
   }
 
   /**

@@ -560,3 +560,54 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B2: under language version %i, 
     expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
   });
 });
+
+describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, a map spread into a graph holds no record', version => {
+  // A map spread into a graph copies values and maps; the engine refuses a
+  // record under any key when the graph is built (`spreadIntoGraph`, "a graph
+  // field cannot hold a record"), on every run that reaches it. Refused where
+  // it is written, with the path. Version 1 already refused an unshaped spread
+  // of a map (MOV_GRAPH_SPREAD_UNTYPED); the shaped form shows it there too.
+  const SHAPED = 'node Held {\n  k: <text | null>\n}\n';
+  const errorsOf = (body: string[], shaped = false): Diagnostic[] => {
+    const source = shaped ? program(body).replace('movement m()', `${SHAPED}movement m()`) : program(body);
+    return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+      d => (d.severity ?? 'error') === 'error',
+    );
+  };
+  const refusedAt = (body: string[], said: string, shaped = false): void => {
+    const errors = errorsOf(body, shaped).filter(d => d.code !== 'MOV_GRAPH_SPREAD_UNTYPED' && d.code !== 'MOV_GRAPH_FIELD_TYPE');
+    expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_SPREAD_RECORD']);
+    expect(errors[0]!.message).toContain(said);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
+  };
+
+  // Version 1 types a map of one kind of value by that kind, its keys
+  // unnamed; version 2 a list literal as a list, its slots unnumbered.
+  const atK = version === 1 ? "'held[…]' is " : "'held.k' is ";
+
+  it('a record under a key', () => {
+    refusedAt(['  held = { k: org }', '  g = graph { ...held }'], `'...held' copies a map's values and maps into the graph, and ${atK}`);
+  });
+
+  it('a record deep in a list under a key', () => {
+    refusedAt(['  held = { a: "x", deep: { list: [org] } }', '  g = graph { ...held }'], version === 2 ? "'held.deep.list[…]' is " : "'held.deep.list[0]' is ");
+  });
+
+  it('a record in one arm of a COALESCE under a key', () => {
+    refusedAt(['  held = { k: COALESCE(org, "x") }', '  g = graph { ...held }'], "'held.k' may be ");
+  });
+
+  it('a record under a key, into a shaped graph', () => {
+    refusedAt(['  held = { k: org }', '  g = graph<Held> { ...held }'], atK, true);
+  });
+
+  it('values, maps and files are copied', () => {
+    expect(errorsOf(['  held = { k: "x" }', '  g = graph<Held> { ...held }'], true)).toEqual([]);
+    expect(errorsOf(['  held = { k: f }', '  g = graph { ...held }']).map(d => d.code)).not.toContain('MOV_GRAPH_SPREAD_RECORD');
+    expect(errorsOf(['  held = { a: "x", deep: { b: 2 } }', '  g = graph { ...held }']).map(d => d.code)).not.toContain('MOV_GRAPH_SPREAD_RECORD');
+  });
+
+  it('one record spread copies its fields', () => {
+    expect(errorsOf(['  g = graph { ...org }']).map(d => d.code)).not.toContain('MOV_GRAPH_SPREAD_RECORD');
+  });
+});

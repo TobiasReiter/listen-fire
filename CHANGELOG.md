@@ -68,6 +68,11 @@ guide](docs/language/dancing-wren-migration.md).
   field, a closure's parameter read as `{}`, and a parked binding was dropped so its resume
   failed. A bug fix, not a language version: an automation using one now fails its check; rename
   it.
+- A map spread into a graph (`held = { k: r }` then `graph { ...held }`) that holds a record under
+  any key, at any depth or in one arm of an operator, is refused where it is written
+  (`MOV_GRAPH_SPREAD_RECORD`, with the path), on every language version. It used to validate from
+  version 2 and fail the run at the spread. A bug fix, not a language version: write a field off
+  the record, or write the record into the graph as an entry of its own (`k: r`).
 - A run's result (and the run records and views built from it) never carries a write record's
   `old` member (it only exists under language version 4), the engine's own handle for the record as
   found (its instance, adapter slug, credential name and full schema). `-[:@old]->` still reads it
