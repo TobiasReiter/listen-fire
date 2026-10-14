@@ -190,6 +190,20 @@ impl Run<'_> {
         // is the state's own.
         let mut chains: Vec<Vec<Js>> = frames.iter().filter(|f| text(at(f, "kind")) != Some("arm")).map(|f| items(at(f, "scopeChain"))).collect();
         chains.push(items(at(state, "scopeChain")));
+        // A library's file scope is not rebuilt (the live one is used), so a
+        // declaration parked under a library the re-parsed program does not
+        // link would resolve silently: refuse it here, whatever the offset.
+        for scope in chains.iter().flatten() {
+            for (_, entry) in pairs(at(scope, "bindings")) {
+                if matches!(text(at(&entry, "kind")), Some("shape" | "movement" | "fileClosure")) {
+                    if let Some(path) = text(at(&entry, "file")) {
+                        if self.checked.file(&crate::program::DeclaringFile::Library(path.to_string())).is_none() {
+                            return Err(runtime(format!("resume: the parked state names the library \"{path}\", which the re-parsed program does not link")));
+                        }
+                    }
+                }
+            }
+        }
         // The whole state was written as one park, so it is read as one.
         let park = ParkReader::over_state(state);
         let mut segment = 0;
