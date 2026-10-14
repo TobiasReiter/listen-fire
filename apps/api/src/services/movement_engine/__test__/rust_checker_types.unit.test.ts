@@ -435,12 +435,12 @@ describe('a maybe-record handed to a position parameter (B15)', () => {
   ];
 
   /** Runs whole on Rust under version 4, ending as the TypeScript does. */
-  async function sameOnBoth(source: string) {
-    const ts = await runOn('ts', source, 4);
+  async function sameOnBoth(source: string, version: LanguageVersion = 4) {
+    const ts = await runOn('ts', source, version);
     expect(ts.error ?? '').not.toContain('MOVENG_CHECK');
     resetRustEvalStats();
     resetRustRunStats();
-    const rust = await runOn('rust', source, 4);
+    const rust = await runOn('rust', source, version);
     expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, notAdmitted: {}, declined: {} });
     expect(seen(rust)).toEqual(seen(ts));
     return ts;
@@ -452,10 +452,13 @@ describe('a maybe-record handed to a position parameter (B15)', () => {
     ['a number', 'nope', '3'],
     ['null', 'nope', 'NULL'],
   ] as const) {
-    it.each(shapes(subject, other))(`version 4, the value is ${member}: %s`, async (_shape, source) => {
-      const ts = await sameOnBoth(source);
-      if (member === 'the record') expect(ts.writes).toContainEqual(['create', { body: 'Org' }]);
-    });
+    for (const version of [1, 2, 3, 4] as LanguageVersion[]) {
+      // A closure is not a value before version 3.
+      it.each(shapes(subject, other).filter(([shape]) => version >= 3 || !shape.startsWith('a closure')))(`version ${version}, the value is ${member}: %s`, async (_shape, source) => {
+        const ts = await sameOnBoth(source, version);
+        if (member === 'the record') expect(ts.writes).toContainEqual(['create', { body: 'Org' }]);
+      });
+    }
   }
 
   it('version 4, a declared function handing it back', async () => {

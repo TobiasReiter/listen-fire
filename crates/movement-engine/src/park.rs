@@ -587,50 +587,88 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
         return Some("resume_state_does_not_read".into());
     }
     // A value's own data is the host's, never a descriptor: only the
-    // descriptors' kinds are read.
-    descriptors_refusal(&scopes).or_else(|| descriptors_refusal(&frames)).or_else(|| descriptors_refusal(&journal))
+    // descriptors' kinds are read, each by the structure its kind has
+    // (park_state.ts), never by a key name — the names of bindings, captures
+    // and edges are the author's.
+    scopes_refusal(&scopes).or_else(|| frames_refusal(&frames)).or_else(|| journal_refusal(&journal))
 }
 
-/// The first descriptor kind this engine does not rebuild, among the
-/// bindings of scopes, frames and journals (a value descriptor's own value
-/// is data, and is not looked into).
-fn descriptors_refusal(value: &Js) -> Option<String> {
-    match value {
-        Js::Array(list) => list.items().iter().find_map(descriptors_refusal),
-        Js::Object(object) => {
-            // Code rides as its syntax tree (docs/contracts/park-state.md):
-            // a tree this engine does not read back as the AST it was
-            // written from is a resume it does not run (crate::resume
-            // rebuilds code from the tree, never by looking in the program).
-            let code = match object.get("kind") {
-                Some(Js::String(kind)) if kind == "closure" => code_reads::<ast::ClosureExpression>(object.get("closure")),
-                Some(Js::String(kind)) if kind == "arm" => code_reads::<ast::ClosureExpression>(object.get("body")),
-                Some(Js::String(kind)) if kind == "localShape" => code_reads::<ast::ShapeDeclaration>(object.get("declaration")),
-                // A kept walk (a `lazyWalk`'s, a node edge's).
-                _ if object.get("head").is_some() && object.get("captured").is_some() => {
-                    code_reads::<ast::PathHead>(object.get("head"))
-                        && object.get("mapping").is_none_or(|mapping| matches!(mapping, Js::Undefined) || code_reads::<ast::NodeLiteral>(Some(mapping)))
-                }
-                _ => true,
-            };
-            if !code {
-                return Some("resume_state_code_does_not_read".into());
+const NOT_READ: &str = "resume_state_code_does_not_read";
+
+fn scopes_refusal(chain: &Js) -> Option<String> {
+    items(Some(chain)).iter().find_map(|scope| map_refusal(at(scope, "bindings")))
+}
+
+fn journal_refusal(journal: &Js) -> Option<String> {
+    items(Some(journal)).iter().find_map(|event| match at(event, "value") {
+        None | Some(Js::Null) | Some(Js::Undefined) => None,
+        Some(value) => descriptor_refusal(value),
+    })
+}
+
+fn frames_refusal(frames: &Js) -> Option<String> {
+    items(Some(frames)).iter().find_map(|frame| match text(at(frame, "kind")) {
+        Some("call" | "member") => scopes_refusal(at(frame, "scopeChain").unwrap_or(&Js::Undefined))
+            .or_else(|| journal_refusal(at(frame, "journal").unwrap_or(&Js::Undefined))),
+        // A run-time arm: its body is code.
+        Some("arm") => (!code_reads::<ast::ClosureExpression>(at(frame, "body"))).then(|| NOT_READ.to_string()),
+        _ => Some("resume_state_does_not_read".into()),
+    })
+}
+
+/// A map keyed by the author's names, every entry a descriptor.
+fn map_refusal(entries: Option<&Js>) -> Option<String> {
+    pairs(entries).iter().find_map(|(_, entry)| descriptor_refusal(entry))
+}
+
+fn walk_refusal(walk: Option<&Js>) -> Option<String> {
+    let walk = walk?;
+    let mapping = at(walk, "mapping");
+    if !code_reads::<ast::PathHead>(at(walk, "head")) || mapping.is_some_and(|m| !code_reads::<ast::NodeLiteral>(Some(m))) {
+        return Some(NOT_READ.into());
+    }
+    map_refusal(at(walk, "captured"))
+}
+
+fn value_refusal(value: &Js) -> Option<String> {
+    match text(at(value, "kind")) {
+        Some("record") => at(value, "binding").and_then(descriptor_refusal),
+        Some("list") => items(at(value, "of")).iter().find_map(value_refusal),
+        Some("map") => pairs(at(value, "of")).iter().find_map(|(_, entry)| value_refusal(entry)),
+        // Data the engine held, never looked into.
+        Some("data" | "file") => None,
+        _ => Some("resume_state_does_not_read".into()),
+    }
+}
+
+/// The first reason this engine does not rebuild one binding descriptor.
+/// Every kind is named: a kind added to park_state.ts and not here ends at
+/// the last arm, a refusal, never a silent skip.
+fn descriptor_refusal(descriptor: &Js) -> Option<String> {
+    let Some(kind) = text(at(descriptor, "kind")) else { return Some("resume_state_does_not_read".into()) };
+    match kind {
+        "blockMeta" => Some(format!("resume_state_kind:{kind}")),
+        "closure" => {
+            if !code_reads::<ast::ClosureExpression>(at(descriptor, "closure")) {
+                return Some(NOT_READ.into());
             }
-            match object.get("kind") {
-                Some(Js::String(kind)) if kind == "blockMeta" => return Some(format!("resume_state_kind:{kind}")),
-                // Data: a value's own, a callback's params, a position.
-                Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "handle" | "resource" | "extractRoot" | "extractPosition" | "instance") => {
-                    return None;
-                }
-                _ => {}
-            }
-            object
-                .entries()
-                .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "op" | "body" | "closure" | "head" | "mapping" | "fields" | "fieldProvenance" | "position"))
-                .find_map(|(_, v)| descriptors_refusal(v))
+            map_refusal(at(descriptor, "captured"))
         }
-        _ => None,
+        "localShape" => (!code_reads::<ast::ShapeDeclaration>(at(descriptor, "declaration"))).then(|| NOT_READ.to_string()),
+        "lazyWalk" => walk_refusal(at(descriptor, "walk")),
+        "handle" => at(descriptor, "old").and_then(descriptor_refusal),
+        "positions" => items(at(descriptor, "landings")).iter().find_map(descriptor_refusal),
+        "tuple" => items(at(descriptor, "slots")).iter().find_map(descriptor_refusal),
+        "recordValue" => at(descriptor, "value").and_then(value_refusal),
+        "nodePosition" => pairs(at(descriptor, "edges")).iter().find_map(|(_, edge)| match text(at(edge, "kind")) {
+            Some("landed") => items(at(edge, "landings")).iter().find_map(descriptor_refusal),
+            Some("deferred") => walk_refusal(at(edge, "walk")),
+            _ => Some("resume_state_does_not_read".into()),
+        }),
+        // Data, a name or an identity: nothing to look into.
+        "event" | "instance" | "handleRef" | "nodeRef" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource"
+        | "value" | "callback" | "shape" | "movement" | "fileClosure" | "shapePosition" | "opaque" => None,
+        _ => Some("resume_state_does_not_read".into()),
     }
 }
 
@@ -928,8 +966,16 @@ fn index_value(value: &Js, park: &mut ParkReader) {
         Some("list") => items(at(value, "of")).iter().for_each(|entry| index_value(entry, park)),
         Some("map") => pairs(at(value, "of")).iter().for_each(|(_, entry)| index_value(entry, park)),
         // `data` and `file`: data the engine held, numbering nothing.
-        _ => {}
+        Some("data" | "file") => {}
+        // resume_refusal has refused any other kind before a reader indexes.
+        other => unreachable_kind("value", other),
     }
+}
+
+/// A kind the admission check refused is never indexed; one that reaches
+/// here is a kind added without a decision, and fails loudly.
+fn unreachable_kind(what: &str, kind: Option<&str>) {
+    panic!("park reader: {what} kind {kind:?} is not one this engine reads");
 }
 
 fn index_descriptor(descriptor: &Js, park: &mut ParkReader) {
@@ -954,7 +1000,7 @@ fn index_descriptor(descriptor: &Js, park: &mut ParkReader) {
                 match text(at(edge, "kind")) {
                     Some("landed") => items(at(edge, "landings")).iter().for_each(|landing| index_descriptor(landing, park)),
                     Some("deferred") => index_walk(at(edge, "walk"), park),
-                    _ => {}
+                    other => unreachable_kind("edge", other),
                 }
             }
         }
@@ -974,10 +1020,12 @@ fn index_descriptor(descriptor: &Js, park: &mut ParkReader) {
         }
         Some("lazyWalk") => index_walk(at(descriptor, "walk"), park),
         // Nothing a park numbers: their payload is data or code, never a
-        // descriptor (`event`, `instance`, `handleRef`, `nodeRef`, the
-        // extraction and source positions, `resource`, `value`, `callback`,
-        // the code refs, `opaque`).
-        _ => {}
+        // descriptor.
+        Some(
+            "event" | "instance" | "handleRef" | "nodeRef" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource" | "value"
+            | "callback" | "shape" | "localShape" | "movement" | "fileClosure" | "shapePosition" | "opaque",
+        ) => {}
+        other => unreachable_kind("descriptor", other),
     }
 }
 

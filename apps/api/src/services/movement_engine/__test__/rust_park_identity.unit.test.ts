@@ -538,6 +538,32 @@ describe('a reference read before its descriptor, and names like a descriptor me
       });
     }
 
+    it(`version ${languageVersion}: variables named head and captured (a kept walk's members), parked`, async () => {
+      const { resumed } = await parkAndResume({
+        languageVersion,
+        source: movement('  head = "h"', '  captured = "c"', '  await sleep(1h)', '  write crm-[:notes]-> { body: CONCAT(head, "/", captured) }'),
+      });
+      expect(JSON.stringify(resumed.calls)).toContain('{"body":"h/c"}');
+    });
+
+    it(`version ${languageVersion}: a closure capturing head and captured, parked inside its call`, async () => {
+      const { resumed } = await parkAndResume({
+        languageVersion,
+        source: movement('  head = "h"', '  captured = "c"', '  g = (x: <text>) => {', '    await sleep(1h)', '    return CONCAT(x, head, captured)', '  }', '  y = g("q")', '  write crm-[:notes]-> { body: y }'),
+      });
+      expect(JSON.stringify(resumed.calls)).toContain('{"body":"qhc"}');
+    });
+
+    for (const name of ['op', 'body', 'closure', 'head', 'mapping', 'fields', 'fieldProvenance', 'position']) {
+      it(`version ${languageVersion}: a closure bound as '${name}' and a text beside it, parked inside the closure's call`, async () => {
+        const { resumed } = await parkAndResume({
+          languageVersion,
+          source: movement(`  ${name} = (x: <text>) => {`, '    await sleep(1h)', '    return x', '  }', '  captured = "c"', `  y = ${name}("q")`, '  write crm-[:notes]-> { body: CONCAT(y, "/", captured) }'),
+        });
+        expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/c"}');
+      });
+    }
+
     it(`version ${languageVersion}: a second name and a closure's capture of a handle bound as 'body' come back as one handle`, async () => {
       const { resumed } = await parkAndResume({
         languageVersion,
