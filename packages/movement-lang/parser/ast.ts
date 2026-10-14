@@ -30,6 +30,27 @@ export interface Span {
 export interface ExprSlot {
   raw: string;
   span: Span;
+  /**
+   * The closures written as elements of a list literal in the slot
+   * (`fs = [() => { … }, (x) => x + 1]`, language version 5), each parsed by
+   * the statement grammar — a block body is statements, which the expression
+   * grammar keeps only as text. `at` is the closure's offset in `raw`. The
+   * lowering reads each as the name `slotClosureName(at)`, which the checker
+   * and the engine bind to the closure in a scope around the slot: the
+   * closure itself is the value, capturing the slot's scope by reference.
+   */
+  closures?: ReadonlyArray<SlotClosure>;
+}
+
+export interface SlotClosure {
+  at: number;
+  closure: ClosureExpression;
+}
+
+/** The name a list element closure is read by inside its slot — an identity
+ *  compared, never parsed. `#` keeps it out of every author's namespace. */
+export function slotClosureName(at: number): string {
+  return `#closure@${at}`;
 }
 
 // ── Names and references ──

@@ -30,6 +30,7 @@ import { describeStdlibFamily, listStdlibNamespaces, stdlibFamily } from '../../
 import { neverAsAny } from '../../never';
 import { isMapSpread, type BinaryOp, type CallArg, type Hop, type MapEntry, type MExpr, type Name, type TypeExpr } from './tree';
 import { parseExpression } from './parse_expression';
+import { slotClosureName } from '../ast';
 
 export class LoweringError extends BridgeError {
   constructor(message: string, code?: string) {
@@ -67,14 +68,14 @@ interface Ctx {
 const TOP: Ctx = { edgeProps: false };
 
 /** Lower one expression; `source` is the text `tree` was parsed from. */
-export function lowerExpression(tree: MExpr, source: string): Expression {
-  return new Lowering(source).lower(tree, TOP);
+export function lowerExpression(tree: MExpr, source: string, closures?: ReadonlySet<number>): Expression {
+  return new Lowering(source, closures).lower(tree, TOP);
 }
 
 /** Lower one `if` condition into its top-level
  *  `AND` conjuncts, each an `IS` type guard or an expression. */
-export function lowerCondition(tree: MExpr, source: string): MovementCondition {
-  return new Lowering(source).condition(tree);
+export function lowerCondition(tree: MExpr, source: string, closures?: ReadonlySet<number>): MovementCondition {
+  return new Lowering(source, closures).condition(tree);
 }
 
 /** Parse and lower one expression text. */
@@ -145,7 +146,12 @@ type Segment =
   | { kind: 'hops'; hops: Hop[] };
 
 class Lowering {
-  constructor(private readonly source: string) {}
+  constructor(
+    private readonly source: string,
+    /** The offsets of the list element closures the slot's statement parse
+     *  collected (`ExprSlot.closures`, language version 5). */
+    private readonly closures?: ReadonlySet<number>,
+  ) {}
 
   // ── Conditions ──
 
@@ -233,7 +239,12 @@ class Lowering {
         return {
           type: 'list',
           elements: expr.elements.map((e): ListElement =>
-            e.kind === 'spread' ? { type: 'spread', expression: this.lower(e.expr, ctx) } : this.lower(e, ctx),
+            e.kind === 'spread'
+              ? { type: 'spread', expression: this.lower(e.expr, ctx) }
+              : e.kind === 'closure' && this.closures?.has(e.at.start) === true
+              // The closure itself is the value, bound around the slot.
+              ? { type: 'alias_ref', name: slotClosureName(e.at.start) }
+              : this.lower(e, ctx),
           ),
         };
       case 'map':

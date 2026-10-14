@@ -2096,6 +2096,12 @@ function readBareName(name: string, ctx: MovementExprContext): MovementEvalResul
       provenance: { origins: binding.slots.flatMap(bindingEntityOrigins) },
     };
   }
+  if (binding.kind === 'closure' && ctx.languageVersion !== undefined && since(ctx.languageVersion, 5)) {
+    // A closure is a value (language version 5), as a JavaScript function is:
+    // read bare — a list member, a call's argument, a MAP's member — it is
+    // itself, (AST, scope), and whoever holds it may call it.
+    return { value: binding, provenance: NO_PROVENANCE };
+  }
   throw unsupported(
     `reading '${name}' (${describeBinding[binding.kind]}) as a bare value`,
     binding.kind === 'handle'

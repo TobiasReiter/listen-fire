@@ -121,7 +121,7 @@ import {
   type ParamTypeRef,
   type ValueTypeMember,
 } from '../parser/ast';
-import { argumentBindings, isPositionalCall, isValueTypeRef, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
+import { argumentBindings, isPositionalCall, isValueTypeRef, slotClosureName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
 
 export type { ReturnShape } from './typing';
@@ -14178,6 +14178,33 @@ class Checker {
    * Returns the slot's shallow value type when inferable — write-field
    * compatibility (check 2) consumes it.
    */
+  /**
+   * The scope a slot's list element closures are bound in (language version
+   * 5): each closure checked where it is written — its body a child of the
+   * slot's scope, as a closure bound to a name is — and bound under the name
+   * the lowering reads it by, so it is a value like any other: in a list it
+   * is a record of closure type, and the list's element type is the union of
+   * its closures'.
+   */
+  private slotClosureScope(closures: NonNullable<ExprSlot['closures']>, scope: Scope): Scope {
+    const around = new Scope('branch', scope);
+    for (const { at, closure } of closures) {
+      const { params, returns, effects } = this.checkClosure(closure, scope, { label: 'this closure' });
+      around.declare({
+        name: slotClosureName(at),
+        kind: 'binding',
+        span: closure.span,
+        posType: closureType(params, returns, effects),
+        bindingPlane: 'node',
+      });
+    }
+    this.closureScopes.add(around);
+    return around;
+  }
+
+  /** Scopes `slotClosureScope` made — a slot checked in one is not wrapped again. */
+  private readonly closureScopes = new WeakSet<Scope>();
+
   private checkExprSlot(
     slot: ExprSlot,
     scope: Scope,
@@ -14209,6 +14236,9 @@ class Checker {
         ...(held !== undefined ? { held } : {}),
         ...(mayHold !== undefined ? { mayHold } : {}),
       };
+    }
+    if (slot.closures !== undefined && !this.closureScopes.has(scope)) {
+      return this.checkExprSlot(slot, this.slotClosureScope(slot.closures, scope), options);
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);

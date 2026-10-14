@@ -20,6 +20,7 @@ import {
   DurationLiteral,
   ErrorStatement,
   ExprSlot,
+  SlotClosure,
   ExtractCallExpression,
   ExtractCallFinds,
   ExtractCallShape,
@@ -87,6 +88,8 @@ import {
 } from './ast';
 import { memberPathBindingName, spellName, spellPathRoot } from './ast';
 import { originalSlot } from '../expression/bridge';
+import { ExpressionSyntaxError, parseExpression } from './expression/parse_expression';
+import { closuresInLists, type MExpr } from './expression/tree';
 import type { EdgeSequencing } from '@listen-fire/shared/expression/types';
 import {
   callStyleIfMessage,
@@ -848,7 +851,39 @@ class Parser {
     const { stop, contentEnd } = this.scanBalanced(options);
     const raw = this.src.slice(start, contentEnd);
     if (raw.length === 0) this.error(`Expected an expression ${options.context}`, start);
-    return { slot: { raw, span: this.spanFrom(start, contentEnd) }, stop };
+    const closures = this.listElementClosures(raw, start);
+    return {
+      slot: { raw, span: this.spanFrom(start, contentEnd), ...(closures.length > 0 ? { closures } : {}) },
+      stop,
+    };
+  }
+
+  /**
+   * A closure written as an element of a list literal (`[() => { … }, (x) =>
+   * x + 1]`, language version 5 — TypeScript's array of functions), parsed
+   * here by the statement grammar so its block body is statements. Before
+   * version 5, and wherever the expression grammar cannot read the slot, none
+   * is collected: the lowering then refuses the closure by name
+   * (MOV_EXPR_CLOSURE_POSITION) or reports the syntax error, as it always has.
+   */
+  private listElementClosures(raw: string, start: number): SlotClosure[] {
+    if (!since(this.languageVersion, 5) || !raw.includes('=>')) return [];
+    let tree: MExpr;
+    try {
+      tree = parseExpression(raw);
+    } catch (e) {
+      if (e instanceof ExpressionSyntaxError) return [];
+      throw e;
+    }
+    const resume = this.pos;
+    try {
+      return closuresInLists(tree).map(element => {
+        this.pos = start + element.at.start;
+        return { at: element.at.start, closure: this.parseClosure(this.pos, ',]') };
+      });
+    } finally {
+      this.pos = resume;
+    }
   }
 
   // ── Statements ──

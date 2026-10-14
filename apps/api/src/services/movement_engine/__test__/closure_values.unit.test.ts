@@ -1,0 +1,257 @@
+// Closures are values (language version 5, Dancing Wren): a closure may be
+// written as an element of a list literal, and a name, parameter or member
+// whose value is a closure may be called — as TypeScript allows
+// (`[() => a, (x) => x + 1]`, `fs.map(f => f())`). The TypeScript engine is the
+// reference the Rust engine is compared against, so it runs the new forms:
+// a list element closure holds the scope it is written in by REFERENCE, as a
+// closure bound to a name does, and a park inside one resumes.
+
+import type { InstanceSchema } from 'movement-lang';
+import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
+import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { ParkedScopeState } from '../serialize';
+
+import { createManualAdapter } from '../../translation_graph/adapters/manual';
+import { containerAssociation } from '../../translation_graph/adapter';
+import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
+import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from '../run';
+
+const TEAM_ID = '00000000-0000-0000-0000-000000000097' as TeamId;
+const KG = 'kg';
+const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+
+function makeKgFake() {
+  const creates: WriteInput[] = [];
+  const updates: Array<{ externalId: string; fields: Record<string, unknown> }> = [];
+  const adapter: Adapter = {
+    adapterType: KG,
+    supportedTriggers: ['webhook'],
+    runtimeCapabilities: (): RuntimeCapabilities => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
+    async listEntryPoints() {
+      return [];
+    },
+    async describe() {
+      return null;
+    },
+    async resolveEntity() {
+      return { candidates: [] };
+    },
+    async getFieldValue() {
+      return null;
+    },
+    async getRelated() {
+      return [];
+    },
+    async createRecord(write) {
+      creates.push(write);
+      return { adapterType: KG, externalId: `note-${creates.length}`, data: {} };
+    },
+    async updateRecord(input) {
+      updates.push({ externalId: input.externalId, fields: input.fields });
+      return { adapterType: KG, externalId: input.externalId, data: {}, association: containerAssociation(input) };
+    },
+    async deleteRecord() {
+      return {};
+    },
+  };
+  return { adapter, creates, updates };
+}
+
+const kgSchema: InstanceSchema = {
+  positions: { note: { properties: { body: 'text', payload: 'json' }, edges: {} } },
+  collections: { note: { target: 'note' } },
+  writableRoots: {
+    note: { fields: { body: 'text', payload: 'json' }, resultShape: { externalId: 'text' } },
+  },
+  supportsInPlaceUpdate: true,
+};
+
+const catalog = staticCatalogFromManifests({
+  credentials: { kg_cred: { adapters: ['kg'] } },
+  instanceSchemas: { kg: kgSchema },
+});
+
+function manualEvent(): TriggerEvent {
+  return {
+    pipelineInputId: 'trigger:manual-closure-values',
+    adapterType: 'manual',
+    triggerType: 'webhook',
+    payload: { firedAt: '2026-10-14T09:00:00.000Z' },
+    occurredAt: '2026-10-14T09:00:00.000Z',
+  };
+}
+
+function program(body: string[]): string {
+  return `import { manual, kg } from adapters
+import { kg_cred } from credentials
+runs = manual()
+graph = kg(credentials: kg_cred)
+movement recap(go: <runs-[:Invocation]->>) {
+${body.join('\n')}
+}
+listen to runs {} fire recap
+`;
+}
+
+/** An in-memory park sink with the durable join semantics the real one has. */
+function makeParkSink() {
+  const parks = new Map<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>();
+  const joins = new Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>();
+  const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
+  const keep = (kind: 'timer' | 'await' | 'suspension', address: string, state: unknown): void => {
+    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as ParkedScopeState });
+  };
+  const sink: ParkSink = {
+    async recordJoin(input) {
+      const existing = joins.get(input.frameAddress);
+      joins.set(input.frameAddress, {
+        pending: input.parkedChildren,
+        closedBy: existing?.closedBy ?? null,
+        decremented: existing?.decremented ?? new Set(),
+      });
+    },
+    async commitTimerPark(input) {
+      keep('timer', input.address, input.state);
+    },
+    async commitAwaitPark(input) {
+      await input.correlate('run-1');
+      keep('await', input.address, input.state);
+    },
+    async commitSuspension(input) {
+      keep('suspension', input.address, input.state);
+    },
+    async decrementJoin(input) {
+      const frame = joins.get(input.frameAddress);
+      if (frame === undefined) return { closed: false };
+      if (frame.decremented.has(input.branchAddress)) return { closed: frame.closedBy === input.leafAddress };
+      frame.decremented.add(input.branchAddress);
+      if (frame.pending === 0) return { closed: frame.closedBy === input.leafAddress };
+      frame.pending -= 1;
+      if (frame.pending > 0) return { closed: false };
+      frame.closedBy = input.leafAddress;
+      return { closed: true };
+    },
+    async persistBranchExport(input) {
+      const byBranch = exports.get(input.frameAddress) ?? new Map();
+      byBranch.set(input.branchAddress, {
+        branchIndex: input.branchIndex,
+        exports: JSON.parse(JSON.stringify(input.exports)) as unknown,
+      });
+      exports.set(input.frameAddress, byBranch);
+    },
+    async collectBranchExports(input) {
+      return [...(exports.get(input.frameAddress) ?? new Map()).entries()]
+        .map(([branchAddress, row]) => ({ branchAddress, branchIndex: row.branchIndex, exports: row.exports }))
+        .sort((a, b) => a.branchIndex - b.branchIndex);
+    },
+    async cancelSubtrees(input) {
+      const under = (address: string): boolean =>
+        input.subtreeAddresses.some((p) => address === p || address.startsWith(`${p}.`));
+      for (const address of [...parks.keys()]) {
+        if (under(address) && address !== input.excludeLeaf) parks.delete(address);
+      }
+    },
+  };
+  return { sink, parks };
+}
+
+type Sink = ReturnType<typeof makeParkSink>;
+
+function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>) {
+  return {
+    source,
+    event: manualEvent(),
+    teamId: TEAM_ID,
+    catalog,
+    movementName: 'recap',
+    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
+      if (adapterType === 'manual') return manualAdapter;
+      if (adapterType === KG) return kg.adapter;
+      throw new Error(`test: no fake adapter for '${adapterType}'`);
+    },
+    parkSink: parks.sink,
+    dryRun: false,
+  };
+}
+
+async function start(source: string, parks: Sink) {
+  const kg = makeKgFake();
+  const result = await runMovement(runInput(source, parks, kg));
+  return { result, kg };
+}
+
+async function resumeAt(
+  source: string,
+  parks: Sink,
+  address: string,
+): Promise<{ result: MovementRunResult; kg: ReturnType<typeof makeKgFake> }> {
+  const park = parks.parks.get(address);
+  if (park === undefined) throw new Error(`test: nothing parked at '${address}'`);
+  parks.parks.delete(address);
+  const kg = makeKgFake();
+  const result = await resumeMovement({ ...runInput(source, parks, kg), state: park.state, reenter: park.kind !== 'timer' });
+  return { result, kg };
+}
+
+/** Resume parked leaves, first address first, until none is left (a MAP
+ *  member parks after the one before it resumes); the last resume's writes. */
+async function resumeAll(source: string, parks: Sink) {
+  let last: Awaited<ReturnType<typeof resumeAt>> | undefined;
+  for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
+    last = await resumeAt(source, parks, [...parks.parks.keys()].sort()[0]!);
+  }
+  if (last === undefined) throw new Error('test: nothing parked');
+  return last;
+}
+
+const payloadOf = (creates: WriteInput[]): unknown => creates.find((c) => c.fields.payload !== undefined)?.fields.payload;
+
+/** Run to the end (resuming every park), and the payload written. */
+async function finalPayload(body: string[]): Promise<unknown> {
+  const parks = makeParkSink();
+  const source = program(body);
+  const first = await start(source, parks);
+  if (first.result.parked !== true) return payloadOf(first.kg.creates);
+  const { result, kg } = await resumeAll(source, parks);
+  expect(result.parked).toBeUndefined();
+  return payloadOf(kg.creates);
+}
+
+describe('a closure written as a list element', () => {
+  it('is a value: the list holds the closures, and a combinator runs them', async () => {
+    expect(
+      await finalPayload([
+        '  k = 7',
+        '  fs = [() => { return k }, () => { return k * 2 }]',
+        '  r = await parallel(fs)',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: [7, 14] });
+  });
+
+  it('a park inside a list element closure resumes', async () => {
+    expect(
+      await finalPayload([
+        '  k = 3',
+        '  fs = [() => {',
+        '    await sleep(1h)',
+        '    return k + 1',
+        '  }, () => { return 10 }]',
+        '  r = await parallel(fs)',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: [4, 10] });
+  });
+
+  it('a parked list element closure names its scope; it carries no copy of it', async () => {
+    const parks = makeParkSink();
+    await start(program(['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k', '  }]', '  r = await parallel(fs)']), parks);
+    const parked = JSON.stringify([...parks.parks.values()][0]!.state);
+    expect(parked).toContain('"captured":{}');
+    expect(parked).toMatch(/"scope":\{"kind":"scopeRef"/);
+  });
+});

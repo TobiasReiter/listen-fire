@@ -71,6 +71,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BridgeError,
+  slotClosureName,
   DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
@@ -12091,6 +12092,9 @@ class Interpreter {
     return binding?.kind === 'value' && binding.many === true;
   }
 
+  /** Scopes `evaluateSlot` bound a slot's list element closures in. */
+  private readonly closureEnvs = new WeakSet<Environment>();
+
   private async evaluateSlot(
     slot: ExprSlot,
     options: {
@@ -12100,6 +12104,18 @@ class Interpreter {
       fieldFunctions?: MovementExprContext['fieldFunctions'];
     },
   ): Promise<MovementEvalResult> {
+    // A closure written as a list element (language version 5) is a value:
+    // (AST, scope), holding the scope it is written in by REFERENCE, as a
+    // closure bound to a name does. It is bound around the slot under the
+    // name the lowering reads it by.
+    if (slot.closures !== undefined && !this.closureEnvs.has(options.env)) {
+      const around = options.env.child();
+      for (const { at, closure } of slot.closures) {
+        around.declare(slotClosureName(at), binding({ kind: 'closure', closure, captured: new Map(), env: options.env }));
+      }
+      this.closureEnvs.add(around);
+      return this.evaluateSlot(slot, { ...options, env: around });
+    }
     const staged = await this.stageNestedCalls(slot, options.env);
     if (staged !== undefined) return this.evaluateSlot(staged.slot, { ...options, env: staged.env });
     let expr: Expression;

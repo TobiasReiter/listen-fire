@@ -188,3 +188,73 @@ export type MExpr =
   /** `lazy m-[a:Attachments]->` in a node literal's entry — the walk deferred
    *  to every read. */
   | { kind: 'lazy'; walk: MExpr; at: At };
+
+/**
+ * The closures written as ELEMENTS of a list literal (`[() => { … }, (x) =>
+ * x + 1]`), outermost first — language version 5's one new closure position.
+ * A closure's own body is not looked into: a list inside it is that body's
+ * own slot's business.
+ */
+export function closuresInLists(tree: MExpr): Array<Extract<MExpr, { kind: 'closure' }>> {
+  const found: Array<Extract<MExpr, { kind: 'closure' }>> = [];
+  const visit = (expr: MExpr | undefined): void => {
+    if (expr === undefined) return;
+    switch (expr.kind) {
+      case 'list':
+        for (const element of expr.elements) {
+          if (element.kind === 'spread') visit(element.expr);
+          else if (element.kind === 'closure') found.push(element);
+          else visit(element);
+        }
+        return;
+      case 'string':
+        for (const part of expr.parts) if (typeof part !== 'string') visit(part);
+        return;
+      case 'paren':
+        visit(expr.expr);
+        return;
+      case 'map':
+        for (const entry of expr.entries) visit('kind' in entry ? entry.expr : entry.value);
+        return;
+      case 'member':
+        visit(expr.object);
+        return;
+      case 'index':
+        visit(expr.object);
+        visit(expr.index);
+        return;
+      case 'call':
+        visit(expr.callee);
+        for (const arg of expr.args) visit(arg.value);
+        return;
+      case 'path':
+        visit(expr.root);
+        return;
+      case 'unary':
+      case 'exists':
+      case 'within':
+        visit(expr.operand);
+        return;
+      case 'binary':
+        visit(expr.left);
+        visit(expr.right);
+        return;
+      case 'where':
+        visit(expr.source);
+        visit(expr.predicate);
+        return;
+      case 'is':
+        visit(expr.subject);
+        return;
+      case 'if':
+        visit(expr.condition);
+        visit(expr.then);
+        visit(expr.else);
+        return;
+      default:
+        return;
+    }
+  };
+  visit(tree);
+  return found;
+}
