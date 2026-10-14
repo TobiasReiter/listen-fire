@@ -2944,6 +2944,21 @@ class Interpreter {
       ...frames.flatMap((frame) => (frame.kind === 'arm' ? [] : [frame.scopeChain])),
       state.scopeChain,
     ];
+    // A library's file scope is not rebuilt (the live one is used), so a
+    // declaration it parked under a library the re-parsed program does not
+    // link would resolve silently: refuse it here, whatever the chain offset.
+    for (const chain of chains) {
+      for (const scope of chain) {
+        for (const descriptor of Object.values(scope.bindings)) {
+          if (
+            (descriptor.kind === 'shape' || descriptor.kind === 'movement' || descriptor.kind === 'fileClosure') &&
+            descriptor.file !== undefined
+          ) {
+            await this.resumedLibraryEnv(descriptor.file);
+          }
+        }
+      }
+    }
     // The whole state was written as one park, so it is read as one: a node
     // two of its scopes (or frames, or journals) held comes back as one node.
     const park = newParkReader(state);
