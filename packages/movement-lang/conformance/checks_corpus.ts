@@ -144,6 +144,23 @@ export function checkNow(
   return plain;
 }
 
+/** A language-version refusal or deprecation names the CURRENT version in its
+ *  fix ("validate it under "Dancing Wren" (5)"), which changes every release,
+ *  so a pin of it would go stale at each one. Both sides are compared with
+ *  that name and number masked, in those two clauses of those two codes only;
+ *  the message's shape is otherwise exact (the subject version included). */
+function maskCurrentVersion(diagnostics: unknown): unknown {
+  if (!Array.isArray(diagnostics)) return diagnostics;
+  const clause = /\b(under|to) "[^"]+" \(\d+\)/gi;
+  return diagnostics.map(d =>
+    isRecord(d) &&
+    (d.code === 'MOV_LANGUAGE_VERSION_UNSUPPORTED' || d.code === 'MOV_LANGUAGE_VERSION_DEPRECATED') &&
+    typeof d.message === 'string'
+      ? { ...d, message: d.message.replace(clause, '$1 "<current version name>" (<current version number>)') }
+      : d,
+  );
+}
+
 const label = (record: CheckRecord): string => `v${record.version} ${JSON.stringify(record.source.slice(0, 120))}`;
 
 /** Every record without a note replayed against the checker as it is now:
@@ -157,8 +174,8 @@ export function replayChecks(
   const drifted = records
     .filter(record => record.note === undefined)
     .flatMap(record => {
-      const now = canonical(checkNow(record, table));
-      const pinned = canonical(record.diagnostics);
+      const now = canonical(maskCurrentVersion(checkNow(record, table)));
+      const pinned = canonical(maskCurrentVersion(record.diagnostics));
       return now === pinned ? [] : [`${label(record)}: pinned ${pinned.slice(0, 400)} | now ${now.slice(0, 400)}`];
     });
   return { replayed: records.length - noted, noted, drifted };
