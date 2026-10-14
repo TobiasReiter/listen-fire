@@ -503,6 +503,30 @@ pub fn closures_in_lists(tree: &MExpr) -> Vec<usize> {
     closure_extents_in_lists(tree).into_iter().map(|at| at.start).collect()
 }
 
+/// Every name `tree` reads as a value: a bare name anywhere but as the
+/// callee a call names (language version 5 reads a function's name as the
+/// function itself, `g = one`, `[twice, twice]`), a closure's concise body
+/// included.
+pub fn names_read(tree: &MExpr) -> Vec<String> {
+    fn visit(expr: &MExpr, found: &mut Vec<String>) {
+        match expr {
+            MExpr::Name { name, .. } => found.push(name.text.clone()),
+            MExpr::Call { callee, args, .. } => {
+                if !matches!(callee.as_ref(), MExpr::Name { .. }) {
+                    visit(callee, found);
+                }
+                for arg in args {
+                    visit(&arg.value, found);
+                }
+            }
+            other => shared::expr(other, &mut |child| visit(child, found)),
+        }
+    }
+    let mut found = Vec::new();
+    visit(tree, &mut found);
+    found
+}
+
 /// `closures_in_lists`, each closure's whole extent: what an engine that
 /// stages a slot's text finds them again by.
 pub fn closure_extents_in_lists(tree: &MExpr) -> Vec<At> {

@@ -199,6 +199,28 @@ pub fn refusals(
     catalog: &Plugins<'_>,
     libraries: &Libraries,
 ) -> Admission {
+    // Language version 5: a list element closure is read by the name the
+    // lowering gives it, in admission's own copy of each file.
+    let named = slot_closures_named(program);
+    let (program, movements, entry) = match &named {
+        Some(copy) => {
+            let at = |m: &ast::MovementDeclaration| program.statements.iter().position(|s| matches!(s, Statement::Movement(d) if std::ptr::eq(d, m)));
+            let movement_at = |index: Option<usize>| match index.and_then(|i| copy.statements.get(i)) {
+                Some(Statement::Movement(m)) => Some(m),
+                _ => None,
+            };
+            (copy, movements.iter().filter_map(|m| movement_at(at(m))).collect::<Vec<_>>(), entry.and_then(|e| movement_at(at(e))))
+        }
+        None => (program, movements.to_vec(), entry),
+    };
+    let movements = movements.as_slice();
+    let named_libraries;
+    let libraries = if libraries.0.values().any(|l| holds_slot_closures(l)) {
+        named_libraries = Libraries(libraries.0.iter().map(|(path, l)| (path.clone(), slot_closures_named(l).unwrap_or_else(|| l.clone()))).collect());
+        &named_libraries
+    } else {
+        libraries
+    };
     let reasons = Reasons::default();
     let mut seeds: Vec<Seed> = Vec::new();
     let walking = Walking { language_version, catalog, libraries, reasons: &reasons };
@@ -243,6 +265,98 @@ pub fn refusals(
         admit_file(&walking, library, &reached, start, false, &mut seeds);
     }
     Admission { reasons: reasons.0.into_inner() }
+}
+
+/// `program` with every list element closure a slot holds (language
+/// version 5, `ExprSlot::closures`) read as the name the lowering reads it
+/// by, backtick-quoted, in the slot's text: what admission lowers is then
+/// the TypeScript's tree (`#closure@<at>`, a value free of records whose
+/// calls are value calls), and each closure's body stays on the slot, walked
+/// where the slot is. `None` where no slot holds one.
+fn slot_closures_named(program: &ast::Program) -> Option<ast::Program> {
+    if !holds_slot_closures(program) {
+        return None;
+    }
+    let mut json = serde_json::to_value(program).ok()?;
+    name_slot_closures(&mut json);
+    serde_json::from_value(json).ok()
+}
+
+fn holds_slot_closures(program: &ast::Program) -> bool {
+    fn holds(json: &serde_json::Value) -> bool {
+        match json {
+            serde_json::Value::Object(object) => object.get("closures").is_some_and(|c| c.as_array().is_some_and(|c| !c.is_empty())) || object.values().any(holds),
+            serde_json::Value::Array(items) => items.iter().any(holds),
+            _ => false,
+        }
+    }
+    serde_json::to_value(program).is_ok_and(|json| holds(&json))
+}
+
+fn name_slot_closures(json: &mut serde_json::Value) {
+    match json {
+        serde_json::Value::Object(object) => {
+            object.values_mut().for_each(name_slot_closures);
+            let offsets: Vec<usize> = match object.get("closures") {
+                Some(serde_json::Value::Array(closures)) => closures.iter().filter_map(|c| c.get("at")?.as_u64()).map(|at| at as usize).collect(),
+                _ => return,
+            };
+            let Some(serde_json::Value::String(raw)) = object.get("raw") else { return };
+            let Ok(tree) = movement_parser::expr::parse_expression(raw) else { return };
+            let units = movement_parser::util::utf16::Utf16::new(raw);
+            let named = movement_parser::tree::closure_extents_in_lists(&tree)
+                .into_iter()
+                .filter(|at| offsets.contains(&at.start))
+                .map(|at| (at, crate::nested::spelled(&ast::slot_closure_name(at.start))))
+                .collect();
+            let text = crate::nested::rewritten(&units, movement_parser::tree::At { start: 0, end: units.len() }, named);
+            object.insert("raw".into(), serde_json::Value::String(text));
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(name_slot_closures),
+        _ => {}
+    }
+}
+
+/// Every closure `program` writes, wherever it is written (bound, a list
+/// element, an argument in place, an arm, returned, inside a nested call's
+/// arguments), and every name its expressions read as a value: language
+/// version 5's functions a value may hold (`Callees::value_closures`).
+fn functions_as_values(program: &ast::Program, language_version: u32) -> (Vec<ast::ClosureExpression>, BTreeSet<String>) {
+    type Seen = BTreeSet<(String, usize, usize)>;
+    fn walk(json: &serde_json::Value, language_version: u32, closures: &mut Vec<ast::ClosureExpression>, read: &mut BTreeSet<String>, seen: &mut Seen) {
+        match json {
+            serde_json::Value::Object(object) => {
+                let is_closure = ["params", "body", "span"].iter().all(|k| object.contains_key(*k)) && !object.contains_key("name");
+                if is_closure && let Ok(closure) = serde_json::from_value::<ast::ClosureExpression>(json.clone()) {
+                    closures.push(closure);
+                }
+                if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
+                    && let Ok(span) = serde_json::from_value::<ast::Span>(span.clone())
+                    && seen.insert((raw.clone(), span.start.line, span.start.col))
+                    && let Ok(tree) = movement_parser::expr::parse_expression(raw)
+                {
+                    read.extend(movement_parser::tree::names_read(&tree));
+                    let slot = ExprSlot::plain(raw.clone(), span);
+                    let calls = crate::nested::staged_calls(&tree, &|call| matches!(call, movement_parser::tree::MExpr::Call { callee, .. } if callee_written(callee).is_some()));
+                    for at in calls {
+                        if let Ok(value) = crate::nested::nested_call(&slot, at, language_version)
+                            && let Ok(value) = serde_json::to_value(&value)
+                        {
+                            walk(&value, language_version, closures, read, seen);
+                        }
+                    }
+                }
+                object.values().for_each(|value| walk(value, language_version, closures, read, seen));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, language_version, closures, read, seen)),
+            _ => {}
+        }
+    }
+    let (mut closures, mut read) = (Vec::new(), BTreeSet::new());
+    if let Ok(json) = serde_json::to_value(&program.statements) {
+        walk(&json, language_version, &mut closures, &mut read, &mut Seen::new());
+    }
+    (closures, read)
 }
 
 /// What every file's walk shares.
@@ -431,6 +545,7 @@ fn admit_file<'p>(
                 call_holders: &[],
                 nested_holders: &[],
             };
+            names.slot_closures(value);
             reasons.noted(names.rvalue(value));
         }
         values.insert(name.to_string());
@@ -756,6 +871,16 @@ fn closure_bodies(statement: &Statement) -> Vec<&ast::ClosureExpression> {
     bodies
 }
 
+/// The call a statement makes itself: a call statement, or a call bound or
+/// returned.
+fn statement_call(statement: &Statement) -> Option<&CallStatement> {
+    match statement {
+        Statement::Call(call) => Some(call),
+        Statement::Assign(ast::AssignStatement { value: RValue::Call { call }, .. }) | Statement::Return(ast::ReturnStatement { value: RValue::Call { call }, .. }) => Some(call),
+        _ => None,
+    }
+}
+
 /// The AST's own `kind` for a statement.
 fn statement_kind(statement: &Statement) -> &'static str {
     match statement {
@@ -953,6 +1078,29 @@ struct Callees<'p> {
     /// What a call of each closure a library's function hands back hands
     /// back, read in the library's own file (`closures_returned`).
     foreign_holders: RefCell<Vec<(*const ast::ClosureExpression, Holder)>>,
+    /// Language version 5: the functions a value may hold, which a call
+    /// through a value runs (a parameter, a member, `box.g`): every closure
+    /// the file writes, wherever it is written, and every function whose
+    /// name the file reads as a value (`g = one`, `[twice]`).
+    value_closures: Vec<ast::ClosureExpression>,
+    value_movements: Vec<&'p ast::MovementDeclaration>,
+    /// The names any function of the file takes as a parameter: a call of
+    /// one is a call through a value wherever it is written, never of a
+    /// closure bound to the name elsewhere.
+    params_named: BTreeSet<String>,
+    /// What a call through a value hands back (`value_call_holder`).
+    value_calls: std::cell::Cell<ValueCalls>,
+}
+
+/// What a call through a value hands back, worked out once per file: the
+/// join of what every function a value may hold hands back, to a fixed
+/// point (a function's returns may themselves be calls through values).
+#[derive(Debug, Clone, Copy)]
+enum ValueCalls {
+    Unknown,
+    /// Being worked out: the join so far.
+    Settling(Holder),
+    Settled(Holder),
 }
 
 impl<'p> Callees<'p> {
@@ -997,7 +1145,17 @@ impl<'p> Callees<'p> {
             file_statements: &program.statements,
             outside_walking: RefCell::default(),
             foreign_holders: RefCell::default(),
+            value_closures: Vec::new(),
+            value_movements: Vec::new(),
+            params_named: BTreeSet::new(),
+            value_calls: std::cell::Cell::new(ValueCalls::Unknown),
         };
+        if language_version >= 5 {
+            let (closures, read) = functions_as_values(program, language_version);
+            callees.value_movements = callees.movements.iter().copied().filter(|m| read.contains(&m.name)).collect();
+            callees.params_named = closures.iter().flat_map(|c| c.params.iter()).chain(callees.movements.iter().flat_map(|m| m.params.iter())).map(|p| p.name.clone()).collect();
+            callees.value_closures = closures;
+        }
         for (name, closure) in crate::code::bound_closures(program) {
             callees.closure_bodies.entry(name.to_string()).or_default().push(closure);
             let takes = |params: &[ast::MovementParam]| params.iter().map(|p| (p.name.clone(), callees.takes_value(p))).collect::<Vec<_>>();
@@ -1045,6 +1203,103 @@ impl<'p> Callees<'p> {
             }
         }
         callees
+    }
+
+    /// What a call through a value hands back (language version 5): the
+    /// join of what every function a value may hold hands back
+    /// (`value_closures`, `value_movements`, and a library's, through an
+    /// import), read to a fixed point. The TypeScript checker types the
+    /// call by the closure type it reads; admission runs before the check,
+    /// and asks a narrower question (how a record may be held), so it reads
+    /// the functions themselves.
+    fn value_call_holder(&'p self) -> Holder {
+        match self.value_calls.get() {
+            ValueCalls::Settled(held) | ValueCalls::Settling(held) => held,
+            ValueCalls::Unknown => {
+                let mut held = Holder::Free;
+                let settled = loop {
+                    self.value_calls.set(ValueCalls::Settling(held));
+                    self.returns.borrow_mut().clear();
+                    let next = self.value_functions_holder();
+                    let joined = returned_join(held, next);
+                    if joined == held {
+                        break held;
+                    }
+                    held = joined;
+                };
+                self.returns.borrow_mut().clear();
+                self.value_calls.set(ValueCalls::Settled(settled));
+                settled
+            }
+        }
+    }
+
+    /// One round of `value_call_holder`: what each function a value may
+    /// hold hands back, joined.
+    fn value_functions_holder(&'p self) -> Holder {
+        let mut held = Holder::Free;
+        for import in &self.imported {
+            held = returned_join(held, import.callees.value_call_holder());
+        }
+        for movement in &self.value_movements {
+            for signature in self.signatures_called_through_a_value(&movement.params) {
+                held = returned_join(held, self.returns(movement, &signature, &[]).1);
+            }
+        }
+        let at = |loc: ast::Loc| (loc.line, loc.col);
+        let within = |outer: &ast::Span, inner: &ast::Span| at(outer.start) <= at(inner.start) && at(inner.end) <= at(outer.end);
+        let at_file: Vec<&ast::ClosureExpression> = self.value_closures.iter().filter(|c| !self.movements.iter().any(|m| within(&m.span, &c.span))).collect();
+        if !at_file.is_empty() {
+            let mut bound = Bound { plugin_binds: self.plugin_binds.clone(), callees: Some(self), ..Bound::default() };
+            for statement in self.file_statements.iter().filter(|s| matches!(s, Statement::Assign(_))) {
+                bound.collect(std::slice::from_ref(statement), &[]);
+            }
+            for closure in at_file {
+                held = returned_join(held, bound.returned_values_holder(&closure.body));
+            }
+        }
+        for movement in &self.movements {
+            let written: Vec<&ast::ClosureExpression> = self.value_closures.iter().filter(|c| within(&movement.span, &c.span)).collect();
+            if written.is_empty() {
+                continue;
+            }
+            for signature in self.signatures_called_through_a_value(&movement.params) {
+                let bound = self.bound(movement, &signature, Vec::new());
+                for closure in &written {
+                    held = returned_join(held, bound.returned_values_holder(&closure.body));
+                }
+            }
+        }
+        held
+    }
+
+    /// Every signature a movement may be entered under where nothing says
+    /// what its call passes: a value parameter a value, any other each
+    /// record kind a position takes (`concrete`); the event's for one no
+    /// such bound reaches.
+    fn signatures_called_through_a_value(&self, params: &[ast::MovementParam]) -> Vec<Signature> {
+        let signature: Signature = params.iter().map(|p| if self.takes_value(p) { Kind::Value } else { Kind::Held }).collect();
+        concrete(&signature, &self.held_kinds).unwrap_or_else(|| vec![vec![Kind::Event; params.len()]])
+    }
+
+    /// Whether a function a value may hold declares a parameter of a value
+    /// type (`.0`) or of a position (`.1`): what an argument holding a
+    /// record may reach through a call through a value.
+    fn value_params_typed(&self) -> (bool, bool) {
+        let params = self.value_closures.iter().flat_map(|c| c.params.iter()).chain(self.value_movements.iter().flat_map(|m| m.params.iter()));
+        let mut typed = (false, false);
+        for param in params.filter(|p| p.type_.is_some()) {
+            if self.takes_value(param) {
+                typed.0 = true;
+            } else {
+                typed.1 = true;
+            }
+        }
+        for import in &self.imported {
+            let (value, position) = import.callees.value_params_typed();
+            typed = (typed.0 || value, typed.1 || position);
+        }
+        typed
     }
 
     /// What a call of `closure` hands back where the walk calling it did
@@ -1201,7 +1456,7 @@ impl<'p> Callees<'p> {
     /// and the run refused, and a sole spelling out of the call's chain is a
     /// call the checker refuses (MOV_NAME_UNRESOLVED).
     fn closure_name(&self, written: &str, bound_exactly: bool) -> Option<&str> {
-        if self.language_version < 3 || self.movement(written).is_some() {
+        if self.language_version < 3 || self.movement(written).is_some() || self.params_named.contains(written) {
             return None;
         }
         if let Some(name) = spelled(self.closures.keys(), String::as_str, written, false) {
@@ -1558,18 +1813,40 @@ impl<'c> Bound<'c> {
     /// of the movement's, its parameters members of whatever kind.
     fn closures_of(&mut self, statement: &Statement, scope: &[usize]) {
         for closure in closure_bodies(statement) {
-            let inner = self.enter(scope);
-            for param in &closure.params {
-                self.member_params.push((param.name.clone(), inner.clone()));
-                let held = self.closure_param_holder(param);
-                let joined = self.param_holders.get(&param.name).map_or(held, |h| h.join(held));
-                self.param_holders.insert(param.name.clone(), joined);
-            }
-            self.closures_walked.push(closure.span);
-            self.blocks += 1;
-            self.collect(&closure.body, &inner);
-            self.blocks -= 1;
+            self.closure_body(closure, scope);
         }
+        // A slot's list element closures, and a closure written in place
+        // as a function's argument (language version 5; a collection op's
+        // function is its member's, `collection`).
+        for slot in direct_slots(statement) {
+            for written in &slot.closures {
+                self.closure_body(&written.closure, scope);
+            }
+        }
+        if let Some(call) = statement_call(statement)
+            && self.callees.is_some_and(|c| c.language_version >= 5)
+            && self.call_reading(call).is_none()
+        {
+            for arg in &call.args {
+                if let CallArg::Closure { closure, .. } = arg {
+                    self.closure_body(closure, scope);
+                }
+            }
+        }
+    }
+
+    fn closure_body(&mut self, closure: &ast::ClosureExpression, scope: &[usize]) {
+        let inner = self.enter(scope);
+        for param in &closure.params {
+            self.member_params.push((param.name.clone(), inner.clone()));
+            let held = self.closure_param_holder(param);
+            let joined = self.param_holders.get(&param.name).map_or(held, |h| h.join(held));
+            self.param_holders.insert(param.name.clone(), joined);
+        }
+        self.closures_walked.push(closure.span);
+        self.blocks += 1;
+        self.collect(&closure.body, &inner);
+        self.blocks -= 1;
     }
 
     /// What a closure's parameter holds, by the type it is declared with
@@ -1615,8 +1892,12 @@ impl<'c> Bound<'c> {
                             self.closure_call_args(&construction_as_call(construct).args);
                             Kind::Value
                         }
-                        RValue::Call { call } if self.calls_closure(&call.callee) => {
+                        RValue::Call { call } if self.calls_closure(&call.callee) || self.value_callee(&call.callee) => {
                             self.closure_call_args(&call.args);
+                            Kind::Value
+                        }
+                        RValue::Construct { construct } if self.value_callee(&construct.callee) => {
+                            self.closure_call_args(&construction_as_call(construct).args);
                             Kind::Value
                         }
                         RValue::Construct { construct } => self.plugin_kind(&construct.callee).unwrap_or(Kind::Instance),
@@ -1713,7 +1994,7 @@ impl<'c> Bound<'c> {
                 Statement::Call(call) if self.callee(&call.callee).is_some() => {
                     self.call_kind(call);
                 }
-                Statement::Call(call) if self.calls_closure(&call.callee) => self.closure_call_args(&call.args),
+                Statement::Call(call) if self.calls_closure(&call.callee) || self.value_callee(&call.callee) => self.closure_call_args(&call.args),
                 // A plugin's arguments that call a movement: what each hands
                 // back (`Names::plugin_call`).
                 Statement::Call(call) if self.plugin_kind(&call.callee).is_some() => self.closure_call_args(&call.args),
@@ -1835,6 +2116,8 @@ impl<'c> Bound<'c> {
             // off those returns.
             RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call_holder(&call.callee),
             RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call_holder(&construct.callee),
+            RValue::Call { call } if self.value_callee(&call.callee) => self.value_call_holder(),
+            RValue::Construct { construct } if self.value_callee(&construct.callee) => self.value_call_holder(),
             RValue::Call { call } if self.callee(&call.callee).is_some() => self.call_holder(call.span),
             RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call_holder(construct.span),
             // A type's members are its words.
@@ -1870,6 +2153,9 @@ impl<'c> Bound<'c> {
             // A node whose literal holds no record: one record whose fields
             // hold none.
             RValue::Node { node } if self.literal_free(node) => Holder::Record,
+            // A closure is a value (language version 5) that holds no
+            // record itself: what a call of it hands back is the call's.
+            RValue::Closure { .. } if self.callees.is_some_and(|c| c.language_version >= 5) => Holder::Free,
             _ => Holder::Other,
         }
     }
@@ -1993,6 +2279,25 @@ impl<'c> Bound<'c> {
         self.callee(written).is_none() && self.callees.is_some_and(|c| c.closure(written, self.binds_in_body(written)).is_some())
     }
 
+    /// A call through a value (language version 5, run.ts's call of a name
+    /// whose value is a closure): its callee a name the body or the file
+    /// binds — a parameter, a member, `g = one` — or a member of one
+    /// (`box.g`); not a function of the program's, a closure bound to the
+    /// name, or a plugin.
+    fn value_callee(&self, written: &str) -> bool {
+        let Some(callees) = self.callees else { return false };
+        if callees.language_version < 5 || self.callee(written).is_some() || self.calls_closure(written) || self.plugin_kind(written).is_some() {
+            return false;
+        }
+        let holds = |name: &str| self.binds_here(name) || callees.file_holders.contains_key(name);
+        holds(written.split_once('.').map_or(written, |(object, _)| object))
+    }
+
+    /// What a call through a value hands back (`Callees::value_call_holder`).
+    fn value_call_holder(&self) -> Holder {
+        self.callees.map_or(Holder::Other, |c| c.value_call_holder())
+    }
+
     /// What a right-hand side binds, for what a `return` of it hands back.
     fn value_kind(&mut self, value: &RValue) -> Option<Kind> {
         Some(match value {
@@ -2000,6 +2305,8 @@ impl<'c> Bound<'c> {
             // every closure of the name returns one free of records.
             RValue::Call { call } if self.calls_closure(&call.callee) => return self.closure_call_kind(&call.callee),
             RValue::Construct { construct } if self.calls_closure(&construct.callee) => return self.closure_call_kind(&construct.callee),
+            RValue::Call { call } if self.value_callee(&call.callee) => return (self.value_call_holder() == Holder::Free).then_some(Kind::Value),
+            RValue::Construct { construct } if self.value_callee(&construct.callee) => return (self.value_call_holder() == Holder::Free).then_some(Kind::Value),
             RValue::Expr { expr } => self.expression_kind(&expr.raw),
             RValue::Node { node } if node.graph.is_some() => Kind::Graph,
             RValue::Node { .. } => Kind::Node,
@@ -2153,8 +2460,10 @@ impl<'c> Bound<'c> {
             return Holder::Other;
         }
         // A name nothing binds reads as nothing: the read fails on both
-        // engines before any request is made.
+        // engines before any request is made. A function's name read as a
+        // value (language version 5) is the function, free of records.
         match self.callees {
+            Some(callees) if callees.language_version >= 5 && callees.movement(name).is_some() => Holder::Free,
             Some(callees) if callees.file_scope.contains(name) => callees.file_holders.get(name).copied().unwrap_or(Holder::Other),
             _ => Holder::Free,
         }
@@ -2205,7 +2514,7 @@ impl<'c> Bound<'c> {
     fn either_text<'v>(&self, value: &'v RValue) -> Option<&'v str> {
         let raw = match value {
             RValue::Expr { expr } => &expr.raw,
-            RValue::Call { call } if self.callee(&call.callee).is_none() && !self.calls_closure(&call.callee) && self.plugin_kind(&call.callee).is_none() => &call.expression.as_ref()?.raw,
+            RValue::Call { call } if self.callee(&call.callee).is_none() && !self.calls_closure(&call.callee) && !self.value_callee(&call.callee) && self.plugin_kind(&call.callee).is_none() => &call.expression.as_ref()?.raw,
             _ => return None,
         };
         (!self.has_nested_call(raw)).then_some(raw.as_str())
@@ -2215,7 +2524,7 @@ impl<'c> Bound<'c> {
     /// function, a closure or a plugin: what it hands back is not read off
     /// the text itself.
     fn has_nested_call(&self, raw: &str) -> bool {
-        nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.plugin_kind(name).is_some(), &|_, _| Holder::Other, &|name| self.holder(name)).is_some()
+        nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.value_callee(name) || self.plugin_kind(name).is_some(), &|_, _| Holder::Other, &|name| self.holder(name)).is_some()
     }
 
     /// What each `return` of a body hands back, widened: free of records,
@@ -2255,8 +2564,15 @@ impl<'c> Bound<'c> {
             CombinatorArms::Dynamic { expr, .. } => {
                 let Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = lowered(&expr.raw) else { return Holder::Other };
                 return match self.built_arms.get(&name) {
-                    Some(bindings) => bindings.iter().try_fold(Holder::Free, |held, arms| arms.map(|arms| held.join(arms))).unwrap_or(Holder::Other),
-                    None => Holder::Other,
+                    Some(bindings) if let Some(held) = bindings.iter().try_fold(Holder::Free, |held, arms| arms.map(|arms| held.join(arms))) => held,
+                    // Arms a value holds otherwise (language version 5): any
+                    // function a value may hold, each slot what a call
+                    // through a value hands back, a record's slot null.
+                    _ if self.callees.is_some_and(|c| c.language_version >= 5) => match self.value_call_holder() {
+                        Holder::Free | Holder::Record => Holder::Free,
+                        _ => Holder::Other,
+                    },
+                    _ => Holder::Other,
                 };
             }
         };
@@ -2403,6 +2719,8 @@ impl<'c> Bound<'c> {
         let call_holder = |callee: &str, text: &str| {
             if self.calls_closure(callee) {
                 self.closure_call_holder(callee)
+            } else if self.value_callee(callee) {
+                self.value_call_holder()
             } else if self.callee(callee).is_some() {
                 nested_holder(&self.nested_holders, text)
             } else if is_collection_form(callee) && self.plugin_kind(callee).is_none() && !self.binds_in_body(callee) {
@@ -2414,7 +2732,7 @@ impl<'c> Bound<'c> {
                 self.holds(text)
             }
         };
-        let nested = nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.plugin_kind(name).is_some(), &call_holder, &|name| self.holder(name));
+        let nested = nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.value_callee(name) || self.plugin_kind(name).is_some(), &call_holder, &|name| self.holder(name));
         let names = nested.as_ref().map_or(&[][..], |(_, plan)| plan.names.as_slice());
         let holder = |name: &str| match names.iter().find(|(n, _)| n == name) {
             Some((_, held)) => *held,
@@ -2583,7 +2901,18 @@ impl Names<'_> {
         }
     }
 
+    /// A slot's list element closures (language version 5): each body
+    /// walked as a closure's, where the slot is.
+    fn slot_closures(&self, node: &impl serde::Serialize) {
+        for slot in direct_slots(node) {
+            for written in &slot.closures {
+                self.reasons.noted(self.closure(&written.closure.params, &written.closure.body));
+            }
+        }
+    }
+
     fn statement(&self, statement: &Statement, within: Within) -> Admitted {
+        self.slot_closures(statement);
         // A park inside a block's iteration or a collection op's member is
         // joined by its fan-out's frame; inside a callee, resumed through its
         // call frames.
@@ -2600,6 +2929,8 @@ impl Names<'_> {
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
                 RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
+                RValue::Call { call } if self.value_callee(&call.callee) => self.value_call(call),
+                RValue::Construct { construct } if self.value_callee(&construct.callee) => self.value_call(&construction_as_call(construct)),
                 RValue::Construct { construct } if self.plugin(&construct.callee) => {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
@@ -2642,6 +2973,8 @@ impl Names<'_> {
                 // A closure's call returned, as one bound is (`executeClosureCall`).
                 RValue::Call { call } if self.calls_closure(&call.callee) => self.closure_call(call),
                 RValue::Construct { construct } if self.calls_closure(&construct.callee) => self.closure_call(&construction_as_call(construct)),
+                RValue::Call { call } if self.value_callee(&call.callee) => self.value_call(call),
+                RValue::Construct { construct } if self.value_callee(&construct.callee) => self.value_call(&construction_as_call(construct)),
                 RValue::Node { node } => self.node(node, node.graph.is_some()),
                 // A kept walk handed back by a movement's body: the call's
                 // value is the walk (`return` binds the right-hand side as
@@ -2695,6 +3028,7 @@ impl Names<'_> {
             Statement::Call(call) if self.plugin(&call.callee) => self.plugin_call(call),
             Statement::Call(call) if self.callee(&call.callee).is_some() => self.call(call),
             Statement::Call(call) if self.calls_closure(&call.callee) => self.closure_call(call),
+            Statement::Call(call) if self.value_callee(&call.callee) => self.value_call(call),
             Statement::Collection(statement) => self.collection_op(&statement.collection, "statement:collection"),
             Statement::Call(call) if let Some(reading) = self.reading(call)? => match reading {
                 crate::collection::Reading::Collection(op) => self.collection_op(&op, "statement:collection"),
@@ -2837,8 +3171,59 @@ impl Names<'_> {
     /// its parameters take; its body was walked where it is written, its
     /// parameters holding whatever a call hands them.
     fn closure_call(&self, call: &CallStatement) -> Admitted {
-        let Some(Some(params)) = self.callees.closure(&call.callee, self.binds(&call.callee)) else { return refuse("function_call") };
-        self.call_args(params, &call.args)
+        match self.callees.closure(&call.callee, self.binds(&call.callee)) {
+            Some(Some(params)) => self.call_args(params, &call.args),
+            // Closures of the name that differ in what they take: from
+            // language version 5 a call through the value the name holds.
+            Some(None) if self.language_version >= 5 => self.value_call(call),
+            _ => refuse("function_call"),
+        }
+    }
+
+    /// A call through a value (language version 5): a parameter, a member,
+    /// a name bound to a function read as a value, `box.g`
+    /// (`Bound::value_callee`).
+    fn value_callee(&self, written: &str) -> bool {
+        if self.language_version < 5 || self.callee(written).is_some() || self.calls_closure(written) || self.plugin(written) {
+            return false;
+        }
+        self.values.contains(written.split_once('.').map_or(written, |(object, _)| object))
+    }
+
+    /// A call through a value: the function it runs may be any a value may
+    /// hold (`Callees::value_closures`), each body walked where it is
+    /// written. Each argument is walked as an expression; one that may hold
+    /// a record reaches a parameter typed by a value only through a hole
+    /// in the checker's reading (`COALESCE`), and a position's field by
+    /// field: so where such a function takes one, it is refused.
+    fn value_call(&self, call: &CallStatement) -> Admitted {
+        self.call_args(&[], &call.args)?;
+        let (value_typed, position_typed) = self.callees.value_params_typed();
+        for arg in &call.args {
+            let refused = match arg {
+                CallArg::Expr { expr, .. } => self.may_hold_record_slot(expr) && (value_typed || (position_typed && !self.clean_record(expr))),
+                CallArg::Write { .. } | CallArg::Node { .. } => value_typed || position_typed,
+                CallArg::Call { call, .. } => !self.hands_over_clean(self.call_value_holder(call)) && (value_typed || position_typed),
+                CallArg::Closure { .. } | CallArg::Type { .. } => false,
+            };
+            if refused {
+                return refuse("value_call_arg_record");
+            }
+        }
+        Ok(())
+    }
+
+    /// What a call written as an argument hands back.
+    fn call_value_holder(&self, call: &CallStatement) -> Holder {
+        if self.callee(&call.callee).is_some() {
+            self.call_holders.iter().rev().find(|(at, _)| *at == call.span).map_or(Holder::Other, |(_, held)| *held)
+        } else if self.calls_closure(&call.callee) {
+            self.closure_holder(&call.callee)
+        } else if self.value_callee(&call.callee) {
+            self.callees.value_call_holder()
+        } else {
+            call.expression.as_ref().map_or(Holder::Other, |e| self.text_holder(&e.raw))
+        }
     }
 
     /// A call's arguments, each walked as what it binds its parameter to.
@@ -2900,6 +3285,10 @@ impl Names<'_> {
                     self.closure_call(call)?;
                     returns_free(self.closure_holder(&call.callee))?;
                 }
+                CallArg::Call { call, .. } if self.value_callee(&call.callee) => {
+                    self.value_call(call)?;
+                    returns_free(self.callees.value_call_holder())?;
+                }
                 CallArg::Call { call, .. } if takes_value => {
                     let value = self.builtin_value(call)?;
                     self.slot(value)?;
@@ -2910,6 +3299,9 @@ impl Names<'_> {
                     self.assigned(value)?;
                     free(value)?;
                 }
+                // A closure written in place (language version 5): a value,
+                // its body walked as a closure's.
+                CallArg::Closure { closure, .. } if self.language_version >= 5 => self.reasons.noted(self.closure(&closure.params, &closure.body)),
                 CallArg::Closure { .. } => return refuse("rvalue:closure"),
                 CallArg::Type { .. } => return refuse("builtin_call_form"),
             }
@@ -3917,7 +4309,7 @@ impl Names<'_> {
     /// A function a nested call names (crate::nested `runsAsCall`): one of
     /// the program's, or a plugin.
     fn nested_function(&self, name: &str) -> bool {
-        self.callee(name).is_some() || self.calls_closure(name) || self.plugin(name)
+        self.callee(name).is_some() || self.calls_closure(name) || self.value_callee(name) || self.plugin(name)
     }
 
     /// A slot holding nested calls (crate::nested): each nested call walked
@@ -3938,7 +4330,7 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                _ => false,
+                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
             },
             _ => false,
         };
@@ -3978,6 +4370,7 @@ impl Names<'_> {
             &|callee| !self.binds_any_case(callee) && crate::js::to_upper_case(callee) == "COALESCE",
             &|callee, text| match self.callees.closure_name(callee, self.binds(callee)).and_then(|name| self.closure_holders.get(name)) {
                 Some(held) if self.calls_closure(callee) => *held,
+                _ if self.value_callee(callee) => self.callees.value_call_holder(),
                 _ if self.callee(callee).is_some() => nested_holder(self.nested_holders, text),
                 // A collection op: what the collector read it to hand back.
                 _ if is_collection_form(callee) && !self.binds_any_case(callee) && !self.nested_function(callee) => nested_holder(self.nested_holders, text),
@@ -4026,6 +4419,9 @@ impl Names<'_> {
         if self.calls_closure(&call.callee) {
             return self.closure_call(call);
         }
+        if self.value_callee(&call.callee) {
+            return self.value_call(call);
+        }
         if self.plugin(&call.callee) {
             return self.plugin_call(call);
         }
@@ -4049,7 +4445,7 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                _ => false,
+                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
             },
             _ => false,
         };
@@ -4273,7 +4669,11 @@ impl Names<'_> {
             return Holder::Record;
         }
         // A name nothing binds reads as nothing: the read fails on both
-        // engines before any request is made.
+        // engines before any request is made. A function's name read as a
+        // value (language version 5) is the function, free of records.
+        if self.language_version >= 5 && self.movements.contains(name) {
+            return Holder::Free;
+        }
         if self.file_names.contains(name) { Holder::Other } else { Holder::Free }
     }
 
@@ -4657,9 +5057,9 @@ fn plan_nested(
     if matches!(tree, movement_parser::tree::MExpr::Call { .. }) && calls.contains(&at) {
         plan.calls.push(at);
         let held = match tree {
-            movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
-                movement_parser::tree::MExpr::Name { name, .. } => call_holder(&name.text, &units.text(at.start, at.end)),
-                _ => Holder::Other,
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee_written(callee) {
+                Some(written) => call_holder(&written, &units.text(at.start, at.end)),
+                None => Holder::Other,
             },
             _ => Holder::Other,
         };
@@ -4703,6 +5103,21 @@ fn plan_nested(
 }
 
 
+/// The callee a call in an expression names: a name, or (language version
+/// 5) a member of a value written `box.g`, as the statement grammar spells
+/// it.
+fn callee_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
+    use movement_parser::tree::MExpr;
+    match callee {
+        MExpr::Name { name, .. } => Some(name.text.clone()),
+        MExpr::Member { object, property, .. } => match object.as_ref() {
+            MExpr::Name { name, .. } => Some(format!("{}.{}", name.text, property.text)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// A slot's text with its nested calls (crate::nested) read as the names
 /// they are bound to: calls of a function `is_function` names, or of a
 /// built-in that is no value; `None` when it holds none.
@@ -4714,7 +5129,7 @@ fn plan_nested(
 /// expression it reads as: no extraction call and no collection op.
 /// The expression slots a statement holds itself, not those of a body it
 /// holds (a block's, an arm's, a closure's: walked where they are entered).
-pub(crate) fn direct_slots(statement: &Statement) -> Vec<ExprSlot> {
+pub(crate) fn direct_slots(statement: &impl serde::Serialize) -> Vec<ExprSlot> {
     fn loc(json: &serde_json::Value) -> Option<ast::Loc> {
         Some(ast::Loc { line: json.get("line")?.as_u64()? as usize, col: json.get("col")?.as_u64()? as usize })
     }
@@ -4724,7 +5139,8 @@ pub(crate) fn direct_slots(statement: &Statement) -> Vec<ExprSlot> {
                 if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
                     && let (Some(start), Some(end)) = (span.get("start").and_then(loc), span.get("end").and_then(loc))
                 {
-                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false, closures: Vec::new() });
+                    let closures = object.get("closures").and_then(|c| serde_json::from_value(c.clone()).ok()).unwrap_or_default();
+                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false, closures });
                     return;
                 }
                 for (key, value) in object {
@@ -4777,9 +5193,10 @@ fn nested_call_holder(callee: &str, plugin: Option<PluginBinds>) -> Holder {
 fn nested_rewrite(raw: &str, is_function: &dyn Fn(&str) -> bool, call_holder: &dyn Fn(&str, &str) -> Holder, outer: &dyn Fn(&str) -> Holder) -> Option<(String, NestedPlan)> {
     let tree = movement_parser::expr::parse_expression(raw).ok()?;
     let runs = |call: &movement_parser::tree::MExpr| match call {
-        movement_parser::tree::MExpr::Call { callee, .. } => {
-            matches!(callee.as_ref(), movement_parser::tree::MExpr::Name { name, .. } if is_function(&name.text) || crate::nested::is_call_form(&name.text))
-        }
+        movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
+            movement_parser::tree::MExpr::Name { name, .. } => is_function(&name.text) || crate::nested::is_call_form(&name.text),
+            member => callee_written(member).is_some_and(|written| is_function(&written)),
+        },
         _ => false,
     };
     let calls = crate::nested::staged_calls(&tree, &runs);
@@ -5699,7 +6116,8 @@ mod tests {
     /// review, item 4): `mk` a body closure, a file-level one, a function or
     /// a library's function, its returns closures (a literal or a name
     /// bound to one), the call's value a value. A callee one of whose
-    /// returns is no closure leaves the name no closure (`function_call`).
+    /// returns is no closure leaves the name no closure: a call through the
+    /// value it holds (language version 5).
     #[test]
     fn admits_a_closure_bound_from_a_call_and_called_by_name() {
         let mk = "mk = (a: <number>) => {\n  return (b: <number>) => a + b\n}\n";
@@ -5728,7 +6146,10 @@ mod tests {
         assert_eq!(reasons(named, use_h, None), none, "a returned name");
         assert_eq!(reasons("", use_h, Some(&format!("export {function}"))), none, "a library's function");
         let mixed = "mk = (a: <number>) => {\n  if (a > 1) {\n    return (b: <number>) => a + b\n  }\n  return a\n}\n";
-        assert_eq!(reasons(mixed, use_h, None), vec!["function_call".to_string()], "a return that is no closure");
+        // From version 5 a name holding a call's value that may be no
+        // closure is called through the value it holds: run as the
+        // TypeScript runs it, the checker typing the call.
+        assert_eq!(reasons(mixed, use_h, None), none, "a return that is no closure");
     }
 
     /// B15: a value that may be a record and may be data (a COALESCE or an
@@ -5768,5 +6189,64 @@ mod tests {
         assert_eq!(reasons(&format!("{dirty}\n  v = COALESCE(x, \"x\")\n  hp(r: v)")), vec!["position_arg_record".to_string()]);
         // A name bound to a maybe-record and to anything else is not one.
         assert!(reasons("  v = COALESCE(org, \"x\")\n  v = { k: org }\n  hp(r: v)").contains(&"position_arg_record".to_string()));
+    }
+
+    /// A call through a value hands back what any function a value may hold
+    /// hands back; an argument that may hold a record reaches no parameter
+    /// typed by a value through one.
+    #[test]
+    fn a_call_through_a_value_holds_what_its_functions_may() {
+        let reasons = |body: &str| {
+            let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            reasons_of(&source, "m", 5)
+        };
+        let returns_record = "  fs = [() => { return write crm-[:companies]-> { name: \"a\" } }]\n  g = AT(fs, 0)\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
+        assert!(!reasons(returns_record).is_empty(), "a record handed back through a value");
+        let free = "  fs = [() => { return \"a\" }]\n  g = AT(fs, 0)\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
+        assert_eq!(reasons(free), Vec::<String>::new());
+        let record_arg = "  fs = [(n: <number>) => n]\n  co = write crm-[:companies]-> { name: \"a\" }\n  g = AT(fs, 0)\n  x = g(COALESCE(co, 1))";
+        assert_eq!(reasons(record_arg), vec!["value_call_arg_record".to_string()]);
+    }
+
+    /// Closures as values (Dancing Wren, 5): every form closure_values
+    /// (apps/api) runs on both engines is admitted whole.
+    #[test]
+    fn admits_closures_as_values() {
+        let top = "function one() {\n  return \"one\"\n}\nfunction pickOne() {\n  return one\n}\nfunction twice(n: <number>) {\n  return n * 2\n}\nfunction callAll(fs: <() => <text>>[]) {\n  return MAP(fs, (f) => f())\n}\nfunction run(h: <(n: <number>) => <number>>) {\n  return h(20)\n}\n";
+        let write = |fields: &str| format!("  write graph-[:note]-> {{ payload: {{ {fields} }} }}");
+        let cases: Vec<(&str, Vec<String>)> = vec![
+            ("listElements", vec!["  k = 7".into(), "  fs = [() => { return k }, () => { return k * 2 }]".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
+            ("listElementParks", vec!["  k = 3".into(), "  fs = [() => {".into(), "    await sleep(1h)".into(), "    return k + 1".into(), "  }, () => { return 10 }]".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
+            ("namedList", vec!["  a = () => { return 1 }".into(), "  b = () => { return 2 }".into(), "  fs = [a, b]".into(), "  out = MAP(fs, (f) => f())".into(), write("out: out")]),
+            ("inlineListWithArgument", vec!["  k = 10".into(), "  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })".into(), write("out: out")]),
+            ("namedFunctionMember", vec!["  out = MAP([twice, twice], (f) => f(4))".into(), write("out: out")]),
+            ("memberReadWithAt", vec!["  fs = [() => { return \"first\" }, () => { return \"second\" }]".into(), "  g = AT(fs, 1)".into(), "  x = g()".into(), write("x: x")]),
+            ("memberParksByReference", vec!["  k = 5".into(), "  fs = [() => {".into(), "    await sleep(1h)".into(), "    return k + 1".into(), "  }, () => { return k }]".into(), "  out = MAP(fs, (f) => { return f() })".into(), write("out: out")]),
+            ("raceOverFilter", vec!["  all = [() => { return \"a\" }, () => {".into(), "    await sleep(1h)".into(), "    return \"b\"".into(), "  }]".into(), "  arms = FILTER(all, (f) => TRUE)".into(), "  r = await race(arms)".into(), write("r: r")]),
+            ("mapReplacesParallel", vec!["  r = MAP([() => { return 1 }, () => {".into(), "    await sleep(1h)".into(), "    return \"two\"".into(), "  }, () => 3], { concurrency: 3 }, (f) => f())".into(), write("r: r, second: AT(r, 1)")]),
+            ("everyArmWaiting", vec!["  k = 2".into(), "  r = MAP([() => {".into(), "    await sleep(1h)".into(), "    return k".into(), "  }, () => {".into(), "    await sleep(2h)".into(), "    return k * 10".into(), "  }], { concurrency: 2 }, (f) => f())".into(), write("r: r")]),
+            ("closureFromParkedMember", vec!["  a = 3".into(), "  fs = MAP([1, 2], (n) => {".into(), "    await sleep(1h)".into(), "    return () => { return a + n }".into(), "  })".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
+            ("namedFunctionBound", vec!["  g = one".into(), "  x = g()".into(), write("x: x")]),
+            ("namedFunctionFromConcise", vec!["  mk = () => one".into(), "  h = mk()".into(), "  x = h()".into(), write("x: x")]),
+            ("namedFunctionReturned", vec!["  h = pickOne()".into(), "  x = h()".into(), write("x: x")]),
+            ("ifOverClosures", vec!["  a = () => \"a\"".into(), "  c = TRUE".into(), "  g = IF c THEN one ELSE a END".into(), "  x = g()".into(), write("x: x")]),
+            ("coalesceOverClosures", vec!["  a = () => \"a\"".into(), "  g = COALESCE(one, a)".into(), "  x = g()".into(), write("x: x")]),
+            ("listOfClosuresPassed", vec!["  k = \"b\"".into(), "  x = callAll([() => \"a\", () => k])".into(), write("x: x")]),
+            ("closureInPlaceArgument", vec!["  k = 2".into(), "  x = run((n) => n + k)".into(), write("x: x")]),
+            ("extraArgumentDropped", vec!["  x = run(() => 5)".into(), write("x: x")]),
+            ("dottedCall", vec!["  k = \"!\"".into(), "  shout = (t: <text>) => \"${UPPER(t)}${k}\"".into(), "  box = { g: shout }".into(), "  a = box.g(\"hi\")".into(), "  b = LOWER(box.g(\"yo\"))".into(), write("a: a, b: b")]),
+            ("awaitingArrowBody", vec!["  g = () => await race([() => \"first\"])".into(), "  r = g()".into(), write("r: r")]),
+            ("raceSlotHoldingClosure", vec!["  r = await race([() => { return one }])".into(), "  g = COALESCE(AT(r, 0), one)".into(), "  x = g()".into(), write("x: x")]),
+            ("effectsOnly", vec!["  MAP([() => {".into(), "    write graph-[:note]-> { body: \"a\" }".into(), "  }, () => {".into(), "    write graph-[:note]-> { body: \"b\" }".into(), "  }], { concurrency: 2 }, (f) => f())".into(), write("done: 1")]),
+        ];
+        let mut refused = Vec::new();
+        for (name, body) in cases {
+            let source = format!("import {{ manual, kg }} from adapters\nimport {{ kg_cred }} from credentials\nruns = manual()\ngraph = kg(credentials: kg_cred)\n{top}movement recap(go: <runs-[:Invocation]->>) {{\n{}\n}}\nlisten to runs {{}} fire recap\n", body.join("\n"));
+            let reasons = reasons_of(&source, "recap", 5);
+            if !reasons.is_empty() {
+                refused.push(format!("{name}: {reasons:?}"));
+            }
+        }
+        assert!(refused.is_empty(), "{}", refused.join("\n"));
     }
 }

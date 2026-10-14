@@ -29,7 +29,7 @@ use serde_json::{Value as Json, json};
 /// parser writes, so the TypeScript appends them).
 pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
     let node = node_at(file, path)?;
-    let mut code = crate::env::js_of_json(&node);
+    let mut code = js_of_tree(&node);
     for (at, stamp) in &file.stamps {
         let Some(rest) = at.strip_prefix(path) else { continue };
         if !(rest.is_empty() || rest.starts_with('/')) {
@@ -44,6 +44,27 @@ pub fn code_at(file: &File, path: &str) -> Option<crate::js::Js> {
         code = stamped(&code, &steps, key, value);
     }
     Some(code)
+}
+
+/// A node of the tree as the TypeScript holds it: the parser's keys,
+/// sorted, but a slot's list element closures (language version 5) last —
+/// the TypeScript reads the slot first and attaches them after.
+fn js_of_tree(json: &Json) -> crate::js::Js {
+    match json {
+        Json::Array(items) => crate::js::Js::array(items.iter().map(js_of_tree).collect()),
+        Json::Object(map) => {
+            let mut object = crate::js::JsObject::new();
+            let slot = map.contains_key("raw") && map.contains_key("span");
+            for (key, value) in map.iter().filter(|(k, _)| !(slot && *k == "closures")) {
+                object.set(key.clone(), js_of_tree(value));
+            }
+            if slot && let Some(closures) = map.get("closures") {
+                object.set("closures".to_string(), js_of_tree(closures));
+            }
+            crate::js::Js::object(object)
+        }
+        other => crate::env::js_of_json(other),
+    }
 }
 
 /// A copy plan as the checker writes it: `{ fields, edges }` in that order

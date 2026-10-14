@@ -324,6 +324,10 @@ impl Run<'_> {
     /// no value.
     pub(crate) fn runs_as_call(&self, call: &MExpr, scope: &Scope) -> bool {
         let MExpr::Call { callee, .. } = call else { return false };
+        // `box.g()` (language version 5): the member a value holds, called.
+        if let MExpr::Member { object, property, .. } = callee.as_ref() {
+            return matches!(object.as_ref(), MExpr::Name { name, .. } if self.member_callee_object(&format!("{}.{}", name.text, property.text), scope));
+        }
         let MExpr::Name { name, .. } = callee.as_ref() else { return false };
         let written = &name.text;
         if let Some(binding) = scope.resolve(written) {
