@@ -2885,23 +2885,23 @@ class Interpreter {
 
   /**
    * The body of one combinator arm, by position. A closure arm carries its own
-   * body; an arm that is a NAME carries a movement's, which resume finds the
-   * same way the checker resolved it — by name in this program. An arm built at
-   * run time has no place in the source; a park inside one carries its body
-   * (an `arm` frame), and the descent takes it from there.
+   * body; an arm that is a NAME runs what the name holds in the scope around
+   * the combinator — a movement's body, or a body closure's (`f = () => {…}`,
+   * `parallel([f])`) — which resume finds exactly as the run did
+   * (`armInvocation`): by resolving the name in that scope, rehydrated. The
+   * arm's own scope (what the closure brought into it) is the parked chain's
+   * scope for the branch. An arm built at run time has no place in the
+   * source; a park inside one carries its body (an `arm` frame), and the
+   * descent takes it from there.
    */
-  private armBodyAt(container: Statement, index: number): Statement[] | undefined {
+  private armBodyAt(container: Statement, index: number, env: Environment): Statement[] | undefined {
     const arm = literalArmsOf(combinatorOf(container))[index];
     if (arm === undefined) return undefined;
     if (arm.kind === 'closure') return arm.closure.body;
-    const declaration = this.movementDeclaration(arm.name);
-    return declaration?.body;
-  }
-
-  /** A movement declared in the running program, by name. */
-  private movementDeclaration(name: string): MovementDeclaration | undefined {
-    const binding = this.fileEnv?.resolve(name);
-    return binding?.kind === 'movement' ? binding.declaration : undefined;
+    const named = env.resolve(arm.name);
+    if (named?.kind === 'movement') return named.declaration.body;
+    if (named?.kind === 'closure') return named.closure.body;
+    return undefined;
   }
 
   /**
@@ -3094,7 +3094,7 @@ class Interpreter {
           atAnchor: false,
         };
       } else {
-        descended = this.descendForResume({ container, step: descent, stmtAddress, state });
+        descended = this.descendForResume({ container, step: descent, stmtAddress, state, env });
       }
       const namedArm = descent.kind === 'branch' ? literalArmsOf(combinatorOf(container))[descent.index] : undefined;
       const armName = namedArm?.kind === 'ref' ? namedArm.name : undefined;
@@ -3678,13 +3678,14 @@ class Interpreter {
     step: AddressStep;
     stmtAddress: Address;
     state: ParkedScopeState;
+    env: Environment;
   }): {
     statements: Statement[];
     frameAddress: Address;
     atAnchor: boolean;
     position?: SourcePosition;
   } {
-    const { container, step, stmtAddress, state } = input;
+    const { container, step, stmtAddress, state, env } = input;
     if (step.kind === 'iter') {
       const block = fanOutBlockOf(container);
       if (!block) {
@@ -3718,7 +3719,7 @@ class Interpreter {
       };
     }
     if (combinatorOf(container) !== undefined) {
-      const armBody = this.armBodyAt(container, step.index);
+      const armBody = this.armBodyAt(container, step.index, env);
       if (armBody === undefined) {
         throw new MovementEngineError(
           'MOVENG_RUNTIME',

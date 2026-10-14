@@ -753,3 +753,66 @@ describe('both engines: a park written before body closures held their scope', (
     });
   }
 });
+
+describe('a closure whose scope reaches back to itself resumes', () => {
+  // The closure `g` returns is written in a scope whose parent holds `g`: the
+  // scopes form a cycle, and building one must not await the other.
+  const cycles: Record<string, string[]> = {
+    twoScopes: [
+      '  k = 7',
+      '  fs = MAP([1], (n) => {',
+      '    mk = () => {',
+      '      return () => n + k',
+      '    }',
+      '    g = mk()',
+      '    return g',
+      '  })',
+      '  await sleep(1h)',
+      '  r = await parallel(fs)',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ],
+    threeScopes: [
+      '  k = 7',
+      '  fs = MAP([1], (n) => {',
+      '    mk = () => {',
+      '      mk2 = () => {',
+      '        return () => n + k',
+      '      }',
+      '      h = mk2()',
+      '      return h',
+      '    }',
+      '    g = mk()',
+      '    return g',
+      '  })',
+      '  await sleep(1h)',
+      '  r = await parallel(fs)',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ],
+  };
+  for (const version of [3, 4, 5]) {
+    for (const [name, body] of Object.entries(cycles)) {
+      it(`v${version} ${name}: the resume settles with the answer`, async () => {
+        const parks = makeParkSink();
+        const source = program(body);
+        const kg0 = makeKgFake();
+        await runMovement({ ...runInput(source, parks, kg0), languageVersion: version as never });
+        expect(parks.parks.size).toBeGreaterThan(0);
+        let last: Awaited<ReturnType<typeof resumeAt>> | undefined;
+        for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
+          const address = [...parks.parks.keys()].sort()[0]!;
+          const park = parks.parks.get(address)!;
+          parks.parks.delete(address);
+          const kg = makeKgFake();
+          const result = await resumeMovement({
+            ...runInput(source, parks, kg),
+            languageVersion: version as never,
+            state: park.state,
+            reenter: park.kind !== 'timer',
+          });
+          last = { result, kg };
+        }
+        expect(payloadOf(last!.kg.creates)).toEqual({ r: [8] });
+      }, 15_000);
+    }
+  }
+});

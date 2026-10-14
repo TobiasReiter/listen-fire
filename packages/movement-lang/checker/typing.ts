@@ -239,6 +239,12 @@ export const TypedDiagnosticCodes = {
    *  "[object Object]". Its text is `READ(f)`. Versions 1 to 4 keep the old
    *  meaning; the error under 5 keeps such a program on its version. */
   FILE_IN_TEXT: 'MOV_FILE_IN_TEXT',
+  /** A write handle's FILE field the write did not send, used as a file —
+   *  from language version 5. The system hands back its own description of the
+   *  file, not bytes the run can pull; the file is on the record's edge, as a
+   *  walk read gets it. A field the write did send is the program's own file
+   *  and stays usable. */
+  HANDLE_FILE_NOT_SENT: 'MOV_HANDLE_FILE_NOT_SENT',
   /** A tuple holding both records and values — `[one, "label"]` — READ as a
    *  list: handed to `MAP`, written into a list field, folded. A list holds
    *  one kind of thing: a list of records is walked, a list of values is read,
@@ -5467,6 +5473,20 @@ export class ExpressionTyping {
     );
   }
 
+  /** A write handle's file field the write did not send, from version 5: the
+   *  system answers with its description of the file, so there is nothing to
+   *  read or pass on. The file is on the record's edge. */
+  private refuseUnsentFile(position: PositionTypeRef, propertyId: string, type: FieldType): void {
+    if (!since(this.options.languageVersion, 5)) return;
+    if (position.kind !== 'handle' || position.written !== true) return;
+    if (position.setFields?.has(propertyId) === true) return;
+    if (!baseKinds(unwrapList(stripAbsent(type))).includes('file')) return;
+    this.report(
+      TypedDiagnosticCodes.HANDLE_FILE_NOT_SENT,
+      `'${propertyId}' is a file this write did not send, so the write's handle holds the system's description of it, not the file — read the record back through its edge to get the file, as a walk read does (\`h-[:Files]->\`), or send the file in this write`,
+    );
+  }
+
   /** A file (or one arm that may be one) joined into text, from version 5:
    *  there is no text form of a file but the one READ gives. */
   private refuseFileInText(part: Expression, type: FieldType | undefined): void {
@@ -6885,10 +6905,14 @@ export class ExpressionTyping {
       }
       case 'handle': {
         const declared = position.resultShape[propertyId];
-        if (declared !== undefined) return declared;
+        if (declared !== undefined) {
+          this.refuseUnsentFile(position, propertyId, declared);
+          return declared;
+        }
         const schema = positionSchemaOfRef(position);
         const fromPosition = schema?.properties[propertyId];
         if (fromPosition !== undefined) {
+          this.refuseUnsentFile(position, propertyId, fromPosition);
           // Reading the POSITION's surface through the handle, so the
           // position's ambiguity applies here too. (A name resolved off the
           // handle's own `resultShape` above is a different surface — a write

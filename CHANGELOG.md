@@ -43,6 +43,11 @@ guide](docs/language/dancing-wren-migration.md).
 - **A file is never joined into text** (`MOV_FILE_IN_TEXT`): `"Attached: ${f}"`, or a value that
   may be a file. Why: it joined as `[object Object]`. Its text is `READ(f)`
   (`"${COALESCE(READ(f), "")}"`); the file itself goes into a field that holds files.
+- **A write handle's unsent file is not a file** (`MOV_HANDLE_FILE_NOT_SENT`): `READ(h.doc)`, or
+  `h.doc` passed where a file is expected, when the write did not send `doc`. Why: the system
+  answers with its description of the file, not a file, so `READ` failed at run time. Read the
+  record back through its edge to get the file, as a walk read does; a field the write sent stays
+  usable.
 - **A value that may be a record, handed to a record parameter** (`MOV_CALL_ARG_MAYBE_RECORD`):
   `v = COALESCE(org, "x")` then `hp(r: v)`, an `IF` of a record and text, or a function or closure
   that returns either. Why: TypeScript's `Org | string` is no `Org`, and the engine refuses the
@@ -544,6 +549,11 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- A `parallel` or `race` arm that names a closure written in the movement body (`f = () => { … }`
+  then `parallel([f, g])` or `race([f, g])`) and waits inside it resumes. It used to fail "resume:
+  no body for arm 0", because the resume looked an arm's name up only as a movement. It now finds
+  the closure by its name in the scope around the combinator, as the run did, and its arm resumes
+  with the scope it brought in. Every language version; a parked state is unchanged.
 - A movement that holds a written record (or a built node) and then waits inside a function it
   calls resumes again. Since the previous fix below, resuming it failed "the parked state refers to
   write handle(s) #0 that it never wrote", because the resume read the movement's own names from
