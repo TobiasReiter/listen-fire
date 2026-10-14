@@ -213,7 +213,7 @@ write crm-[:notes]-> { title: COALESCE(AT(r, 0), "") }   # may be a record: MOV_
 ### A dotted call on a value
 
 - Under Dancing Wren (5) `box.g()` calls the closure `box` holds under `g`, as TypeScript's does, typed by it: `box = { g: label }` then `v = box.g()` is `label`'s answer, and `UPPER(box.g())` runs it first, as any call in an expression does. A key the value does not have (`box.nope()`, "'box' has no 'nope'") and a member that is no closure are `MOV_CALL_NOT_MOVEMENT`.
-- On every version, a dotted call of a function that is no built-in (`o.nope()`, and before 5 `box.g()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Two forms are unchanged: a built-in in a record's scope (`o.UPPER(name)`), and, before 5, a function inside a write field, which the target may advertise.
+- Under Dancing Wren (5), a dotted call of a function that is no built-in (`o.nope()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Versions 1–4 are unchanged (a saved movement never breaks). Two forms are unchanged on every version: a built-in in a record's scope (`o.UPPER(name)`), and a function inside a write field, which the target may advertise.
 
 ## 13. A closure's type is written `<(params) => <return>>`
 
@@ -266,7 +266,7 @@ r = MAP([a, () => { … }], { concurrency: 2 }, (f) => f())
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_EXPR_CLOSURE_POSITION` | [A closure may be written in a list](#11-a-closure-may-be-written-in-a-list) (no longer for a list element under 5) |
-| `MOV_FUNCTION_UNKNOWN` | [A dotted call on a value](#a-dotted-call-on-a-value) (a dotted call of no built-in; every version) |
+| `MOV_FUNCTION_UNKNOWN` | [A dotted call on a value](#a-dotted-call-on-a-value) (a dotted call of no built-in; version 5) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |

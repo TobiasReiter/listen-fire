@@ -6180,25 +6180,12 @@ class Checker {
    *     `@resource.…`.
    */
   private checkSlotExpression(slot: ExprSlot, scope: Scope, options?: { writeField?: true }): void {
+    if (before(this.languageVersion, 3)) return;
     let tree: MExpr;
     try {
       tree = treeOfSlot(slot);
     } catch {
       return; // the syntax error is reported where the slot is read
-    }
-    if (before(this.languageVersion, 3)) {
-      // Only the dotted call that never ran is said before 3 (`checkDottedCall`).
-      const visit = (expr: MExpr): void => {
-        if (expr.kind === 'call' && expr.callee.kind === 'member' && expr.callee.object.kind === 'name') {
-          this.checkDottedCall(expr.callee.object.name.text, expr.callee.property.text, spanWithin(slot, expr.at.start), {
-            scope,
-            writeField: options?.writeField === true,
-          });
-        }
-        expressionChildren(expr).forEach(visit);
-      };
-      visit(tree);
-      return;
     }
     this.checkExpressionTree(tree, {
       spanOf: (at) => spanWithin(slot, at.start),
@@ -6411,26 +6398,25 @@ class Checker {
   }
 
   /**
-   * `o.f(…)` where `f` is no built-in, outside a write field. Before version 5
-   * the engine reads it as `f` run in `o`'s scope, and a function that is no
-   * built-in has nothing to run outside a write field (whose target may
-   * advertise its own) — the run always failed where it reached it, so it is
-   * refused on every version. From 5 a dotted call on a VALUE calls the member
-   * it holds (`memberCallee`), checked where it is hoisted; this says the rest.
+   * `o.f(…)` where `f` is no built-in, outside a write field. The engine reads
+   * it as `f` run in `o`'s scope, and a function that is no built-in has nothing
+   * to run outside a write field (whose target may advertise its own) — the run
+   * always failed where it reached it, so from version 5 the checker refuses it.
+   * Before 5 it is left as it was (a saved movement never breaks). A dotted call
+   * on a VALUE calls the member it holds (`memberCallee`), checked where it is
+   * hoisted; this says the rest.
    * A built-in in `o`'s scope (`o.UPPER(name)`) and a stdlib family
    * (`TEXT.SERIALISE(…)`) are what they always were.
    */
   private checkDottedCall(object: string, key: string, span: Span, at: { scope: Scope; writeField: boolean }): void {
-    if (at.writeField) return;
+    if (before(this.languageVersion, 5) || at.writeField) return;
     const found = at.scope.resolve(object);
     if (found.kind !== 'found') return; // a stdlib family, or reported where the name is read
-    if (since(this.languageVersion, 5) && isValueSymbol(found.symbol)) return;
-    // The standard library by name, whatever the version: the engine runs a
-    // built-in however the program is pinned.
+    if (isValueSymbol(found.symbol)) return;
     if (lookupBuiltin(key) !== undefined) return;
     this.report(
       DiagnosticCodes.FUNCTION_UNKNOWN,
-      `'${object}.${key}(…)' runs '${key}' in '${object}', and '${key}' is no built-in — there is nothing to run there, and the run would fail where it reached it. Call a function by name ('${key}(${object})')${since(this.languageVersion, 5) ? '' : ', or, from language version 5, call a closure a value holds (\'box.g()\')'}`,
+      `'${object}.${key}(…)' runs '${key}' in '${object}', and '${key}' is no built-in — there is nothing to run there, and the run would fail where it reached it. Call a function by name ('${key}(${object})')`,
       span,
     );
   }

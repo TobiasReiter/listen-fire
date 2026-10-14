@@ -2,11 +2,11 @@
 // closure the value holds under that key, as TypeScript's does, typed by that
 // closure; a key it does not have, or one that is no closure, is refused.
 //
-// Before 5 the engine reads `o.f(…)` as `f` run in `o`'s scope, so a function
-// that is no built-in has nothing to run outside a write field (whose target
-// may advertise its own) — the run always failed where it reached it, so it is
-// refused on every version. A built-in in a record's scope (`o.UPPER(name)`)
-// is what it always was.
+// The engine reads `o.f(…)` as `f` run in `o`'s scope, so a function that is
+// no built-in has nothing to run outside a write field (whose target may
+// advertise its own) — the run always failed where it reached it. That is
+// refused from 5 only: versions 1–4 keep their behaviour. A built-in in a
+// record's scope (`o.UPPER(name)`) is what it always was.
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
@@ -75,13 +75,14 @@ describe('a dotted call on a value (Dancing Wren, 5)', () => {
   });
 });
 
-describe('a dotted call that never ran is refused on every version', () => {
-  it.each<LanguageVersion>([1, 2, 3, 4, 5])('version %s: a record\'s dotted call of no built-in', version => {
-    expect(codes(version, ['  o = made()', '  v = o.nope()'])).toEqual(['MOV_FUNCTION_UNKNOWN']);
+describe('a dotted call that never ran', () => {
+  it('is refused from version 5: a record\'s dotted call of no built-in', () => {
+    expect(codes(5, ['  o = made()', '  v = o.nope()'])).toEqual(['MOV_FUNCTION_UNKNOWN']);
   });
 
-  it.each<LanguageVersion>([1, 2, 3, 4])('version %s: a value\'s dotted call of no built-in', version => {
-    expect(codes(version, ['  box = { g: label }', '  v = box.g()'])).toEqual(['MOV_FUNCTION_UNKNOWN']);
+  it.each<LanguageVersion>([1, 2, 3, 4])('version %s: is left as it was', version => {
+    expect(errorsUnder(version, ['  o = made()', '  v = o.nope()'])).toEqual([]);
+    expect(errorsUnder(version, ['  box = { g: label }', '  v = box.g()'])).toEqual([]);
   });
 
   it.each<LanguageVersion>([1, 2, 3, 4, 5])('version %s: a built-in in a record\'s scope is what it was', version => {
