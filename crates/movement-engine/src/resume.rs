@@ -139,6 +139,14 @@ fn to_tree<T: serde::Serialize>(ast: &T) -> Json {
     serde_json::to_value(ast).expect("an AST is always JSON")
 }
 
+/// Where a parked code ref says it is declared, as a refusal names it.
+fn parked_file(descriptor: &Js) -> String {
+    match text(at(descriptor, "file")).filter(|_| text(at(descriptor, "kind")) != Some("opaque")) {
+        Some(path) => format!("library \"{path}\""),
+        None => "program".to_string(),
+    }
+}
+
 fn runtime(message: String) -> Stop {
     Stop::Thrown(Failure::engine("MOVENG_RUNTIME", message))
 }
@@ -183,7 +191,7 @@ impl Run<'_> {
         let mut chains: Vec<Vec<Js>> = frames.iter().filter(|f| text(at(f, "kind")) != Some("arm")).map(|f| items(at(f, "scopeChain"))).collect();
         chains.push(items(at(state, "scopeChain")));
         // The whole state was written as one park, so it is read as one.
-        let park = ParkReader::default();
+        let park = ParkReader::over(state);
         let mut segment = 0;
         let mut next_frame = 0;
         let mut take_frame = || -> Result<Js, Stop> {
@@ -345,9 +353,7 @@ impl Run<'_> {
             Some(journal) => Some(self.rehydrate_journal(&items(Some(journal)), &park).await?),
             None => None,
         };
-        if let Some(id) = park.unfilled() {
-            return Err(runtime(format!("the parked state refers to run-built node(s) #{id} that it never wrote")));
-        }
+        park.assert_read().map_err(runtime)?;
         match leaf {
             Leaf::FireCallback { values, call_index } => {
                 self.firing_callback.set(true);
@@ -722,14 +728,8 @@ impl Run<'_> {
         } else {
             Vec::new()
         };
-        let mut out = JsObject::new();
-        for (name, binding) in child.own_bindings() {
-            if aliases.contains(&name) {
-                continue;
-            }
-            out.set(name, crate::park::serialize_alone(self, &binding).map_err(Stop::Thrown)?);
-        }
-        Ok(Js::object(out))
+        let exported: Vec<(String, Binding)> = child.own_bindings().into_iter().filter(|(name, _)| !aliases.contains(name)).collect();
+        crate::park::serialize_together(self, &exported).map_err(Stop::Thrown)
     }
 
     /// `mergeJoinBranch`: a closed join's exports folded into its parent as
@@ -892,11 +892,9 @@ impl Run<'_> {
 
     /// A descriptor stored on its own, its own park.
     pub(crate) async fn rehydrate_alone(&self, descriptor: &Js) -> Result<Binding, Stop> {
-        let park = ParkReader::default();
+        let park = ParkReader::over(descriptor);
         let binding = self.rehydrate(descriptor, &park).await?;
-        if let Some(id) = park.unfilled() {
-            return Err(runtime(format!("the parked state refers to run-built node(s) #{id} that it never wrote")));
-        }
+        park.assert_read().map_err(runtime)?;
         Ok(binding)
     }
 
@@ -922,15 +920,16 @@ impl Run<'_> {
             Ok(match text(at(descriptor, "kind")) {
                 Some("event") => Binding::Event,
                 Some("handle") => {
-                    let record = at(descriptor, "handle").ok_or_else(|| malformed("a handle descriptor without its record"))?;
-                    let target_type = text(at(descriptor, "targetType")).ok_or_else(|| malformed("a handle without a targetType"))?;
-                    let graph = at(descriptor, "graph").and_then(|g| at(g, "instance")).ok_or_else(|| malformed("a handle without its graph"))?;
-                    let handle = Rc::new(Handle::new(
-                        Rc::new(WriteRecord { object: record.clone() }),
-                        crate::bindings::Old::Nothing,
-                        target_type.to_string(),
-                        Rc::new(self.rehydrate_instance(graph)?),
-                    ));
+                    // A numbered one is the ONE handle every `handleRef` to it
+                    // reads as, filled in place here.
+                    let handle = match id_of(at(descriptor, "id")) {
+                        Some(id) => {
+                            let handle = self.handle_numbered(id, park)?;
+                            park.handle_filled(id);
+                            handle
+                        }
+                        None => Rc::new(self.handle_of(descriptor)?),
+                    };
                     // The record before its write (`-[:@old]->`): the handle
                     // itself, said as `oldIsSelf`, or a handle of its own.
                     if matches!(at(descriptor, "oldIsSelf"), Some(Js::Bool(true))) {
@@ -958,6 +957,7 @@ impl Run<'_> {
                     };
                     Binding::Landed(Rc::new(Landed::new(position, properties, read)))
                 }
+                Some("handleRef") => Binding::Handle(self.handle_numbered(id_of(at(descriptor, "id")).ok_or_else(|| malformed("a handleRef without an id"))?, park)?),
                 Some("nodeRef") => Binding::Node(park.numbered(id_of(at(descriptor, "id")).ok_or_else(|| malformed("a nodeRef without an id"))?)),
                 Some("nodePosition") => Binding::Node(self.rehydrate_node(descriptor, park).await?),
                 Some("lazyWalk") => Binding::LazyWalk(self.rehydrate_walk(at(descriptor, "walk").unwrap_or(&Js::Undefined), park).await?),
@@ -1001,14 +1001,19 @@ impl Run<'_> {
                     let declared = crate::program::DeclaredShape { declaration, file: crate::program::DeclaringFile::Root };
                     Binding::Shape(Rc::new(crate::bindings::ShapeBinding { declared, local: true, declared_in: None }))
                 }
-                // Code refs, re-resolved from the re-parsed program by name.
-                Some("shape" | "movement" | "opaque") => {
-                    let name = text(at(descriptor, "name")).unwrap_or("");
-                    match self.file_scope.borrow().as_ref().and_then(|file| file.resolve(name)) {
-                        Some(binding) => binding,
-                        None => return Err(runtime(format!("resume: cannot re-resolve code ref '{name}' from the re-parsed program"))),
+                // Code refs, re-resolved by name from the re-parsed program —
+                // in the library a shape or movement was declared in, which
+                // the root program need not import or may shadow.
+                Some("shape" | "movement" | "opaque") => self.code_ref(descriptor).await?,
+                // A closure bound at a file's top level, found again by its
+                // name in that file.
+                Some("fileClosure") => match self.code_ref(descriptor).await? {
+                    found @ Binding::Closure(_) => found,
+                    _ => {
+                        let name = text(at(descriptor, "name")).unwrap_or("");
+                        return Err(runtime(format!("resume: '{name}' parked as a file-level function, and the re-parsed {} binds it to something else", parked_file(descriptor))));
                     }
-                }
+                },
                 Some("positions") => {
                     let mut landings = Vec::new();
                     for landing in items(at(descriptor, "landings")) {
@@ -1029,11 +1034,60 @@ impl Run<'_> {
                     for (name, entry) in pairs(at(descriptor, "captured")) {
                         captured.declare(name.clone(), self.rehydrate(entry, park).await?);
                     }
-                    Binding::Closure(Rc::new(Closure { code, captured, self_name: text(at(descriptor, "self")).map(String::from) }))
+                    Binding::Closure(Rc::new(Closure { code, captured, self_name: text(at(descriptor, "self")).map(String::from), file_name: None }))
                 }
                 other => return Err(runtime(format!("a parked binding of kind {} is not one this engine rebuilds", other.unwrap_or("undefined")))),
             })
         })
+    }
+
+    /// `resolveCodeRef`: a code ref's name in the file it was declared in —
+    /// the library its `file` names (an `opaque` import is the root
+    /// program's), or the root program.
+    async fn code_ref(&self, descriptor: &Js) -> Result<Binding, Stop> {
+        let name = text(at(descriptor, "name")).unwrap_or("");
+        let library = text(at(descriptor, "file")).filter(|_| text(at(descriptor, "kind")) != Some("opaque"));
+        let scope = match library {
+            None => self.file_scope.borrow().clone(),
+            Some(path) => {
+                if self.checked.file(&crate::program::DeclaringFile::Library(path.to_string())).is_none() {
+                    return Err(runtime(format!("resume: the parked state names the library \"{path}\", which the re-parsed program does not link")));
+                }
+                Some(self.library_scope(path).await?)
+            }
+        };
+        match scope.and_then(|file| file.resolve(name)) {
+            Some(binding) => Ok(binding),
+            None => Err(runtime(format!("resume: cannot re-resolve code ref '{name}' from the re-parsed {}", parked_file(descriptor)))),
+        }
+    }
+
+    /// A handle as its descriptor writes it, its record before (`old`) not
+    /// yet read.
+    fn handle_of(&self, descriptor: &Js) -> Result<Handle, Stop> {
+        let malformed = |what: &str| runtime(format!("the parked state holds {what}"));
+        let record = at(descriptor, "handle").ok_or_else(|| malformed("a handle descriptor without its record"))?;
+        let target_type = text(at(descriptor, "targetType")).ok_or_else(|| malformed("a handle without a targetType"))?;
+        let graph = at(descriptor, "graph").and_then(|g| at(g, "instance")).ok_or_else(|| malformed("a handle without its graph"))?;
+        Ok(Handle::new(Rc::new(WriteRecord { object: record.clone() }), crate::bindings::Old::Nothing, target_type.to_string(), Rc::new(self.rehydrate_instance(graph)?)))
+    }
+
+    /// The one handle numbered `id` in this park (`handleNumbered`): made
+    /// from the descriptor that numbers it when first named, whichever is
+    /// read first, a reference or the descriptor itself (a stored state's
+    /// keys come back in jsonb's order). A number no descriptor in the state
+    /// carries is a reference into nothing, refused as the TypeScript's
+    /// `assertParkRead` refuses it.
+    fn handle_numbered(&self, id: u64, park: &ParkReader) -> Result<Rc<Handle>, Stop> {
+        if let Some(handle) = park.handle(id) {
+            return Ok(handle);
+        }
+        let Some(descriptor) = park.handle_descriptor(id) else {
+            return Err(runtime(format!("the parked state refers to write handle(s) #{id} that it never wrote")));
+        };
+        let handle = Rc::new(self.handle_of(&descriptor)?);
+        park.handle_registered(id, handle.clone());
+        Ok(handle)
     }
 
     /// A node, registered before its edges are read (a reference among them

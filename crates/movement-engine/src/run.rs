@@ -888,7 +888,8 @@ impl Run<'_> {
     /// movements, in source order, so a file-level value reads the ones
     /// before it: an import binds its names (a library's movement building
     /// that library's scope as the TypeScript's `declareFileImports` does), a
-    /// construction binds an instance, a value binds a value; a call, or an
+    /// construction binds an instance, a value binds a value, a closure binds
+    /// a closure over the file's own scope; a call, or an
     /// extraction, block, write, match or link, has no event to run about and
     /// fails the run as the TypeScript's does; any other right-hand side
     /// binds nothing.
@@ -897,7 +898,7 @@ impl Run<'_> {
             let Some(program) = self.checked.file(written).map(|f| &f.program) else {
                 return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the file {written:?} is not linked"))));
             };
-            for statement in program.statements.iter().filter(|s| !matches!(s, Statement::Movement(_))) {
+            for (index, statement) in program.statements.iter().enumerate().filter(|(_, s)| !matches!(s, Statement::Movement(_))) {
                 match statement {
                     Statement::Import(ast::ImportStatement { source: ast::ImportSource::File { path }, names, .. }) => {
                         self.declare_file_imports(names, path, written, file).await?;
@@ -925,6 +926,12 @@ impl Run<'_> {
                         RValue::Write { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level writes", "writes run inside a movement body"))),
                         RValue::Match { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level matches", "a match runs inside a movement body"))),
                         RValue::Link { .. } => return Err(Stop::Thrown(Failure::unsupported("file-level links", "a link runs inside a movement body"))),
+                        // In scope in the file's functions, holding the file's
+                        // scope by reference (`file_closure_binding`).
+                        RValue::Closure { closure } => {
+                            let path = crate::program::in_file(written, &format!("/statements/{index}/value/closure"));
+                            file.declare(assign.name.clone(), self.file_closure_binding(closure, &assign.name, file, &path));
+                        }
                         _ => {}
                     },
                     other => self.file_statement(other, file, written),

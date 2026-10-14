@@ -34,7 +34,7 @@ use movement_parser::ast;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
-use crate::bindings::{Binding, InstanceBinding, LandingShape, Node, Scope};
+use crate::bindings::{Binding, Handle, InstanceBinding, LandingShape, Node, Scope};
 use crate::env::Trail;
 use crate::env::{json_round_trip, object_of};
 use crate::host;
@@ -82,21 +82,24 @@ pub(crate) enum Leaf<'a> {
 /// park's node table runs through the whole state, in the order it is
 /// written.
 pub(crate) fn park_state(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: Leaf<'_>, scope: &Rc<Scope>) -> Result<Js, Failure> {
-    let mut park = Vec::new();
+    one_park(|park| park_state_in(run, address, binding_name, &leaf, scope, park))
+}
+
+fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: &Leaf<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
     let mut state = vec![("version", Js::Number(1.0)), ("address", Js::str(address)), ("bindingName", binding_name.map_or(Js::Null, Js::str))];
-    match leaf {
+    match *leaf {
         Leaf::Timer { presence: true } => state.push(("presenceBind", Js::Bool(true))),
         Leaf::Timer { presence: false } | Leaf::Plain => {}
         Leaf::Until => state.push(("until", Js::Bool(true))),
         Leaf::Suspended(journal) => {
             state.push(("suspended", Js::Bool(true)));
-            state.push(("journal", serialize_journal(run, journal, &mut park)?));
+            state.push(("journal", serialize_journal(run, journal, park)?));
         }
     }
-    state.push(("scopeChain", scope_chain(run, scope, &mut park)?));
+    state.push(("scopeChain", scope_chain(run, scope, park)?));
     let boundaries = run.boundaries.borrow().clone();
     if !boundaries.is_empty() {
-        let frames = boundaries.iter().map(|boundary| serialize_boundary(run, boundary, &mut park)).collect::<Result<Vec<_>, _>>()?;
+        let frames = boundaries.iter().map(|boundary| serialize_boundary(run, boundary, park)).collect::<Result<Vec<_>, _>>()?;
         state.push(("frames", Js::array(frames)));
     }
     Ok(object_of(state))
@@ -165,23 +168,71 @@ fn serialize_boundary(run: &Run<'_>, boundary: &Boundary, park: &mut ParkWriter)
     })
 }
 
-/// One binding written alone, as its own park (a branch's export, a
+/// One binding written alone, as its own park (a returned value, a
 /// collection op's kept members).
 pub(crate) fn serialize_alone(run: &Run<'_>, binding: &Binding) -> Result<Js, Failure> {
-    serialize_binding(run, "", binding, &mut Vec::new())
+    one_park(|park| serialize_binding(run, "", binding, park))
 }
 
-/// The nodes one park has written, numbered as first reached (`ParkWriter`),
-/// each held so that it outlives the writing that numbers it.
-type ParkWriter = Vec<Rc<RefCell<crate::bindings::Node>>>;
+/// A completed branch's exports (`serializeBranchExport`): one stored
+/// state, so ONE park writes every name — a handle or node two of them hold
+/// is written once and referenced after — the returned value first, as the
+/// name the join reads back on its own: its descriptors hold every first
+/// sighting, so it never refers into a name that is not read.
+pub(crate) fn serialize_together(run: &Run<'_>, bindings: &[(String, Binding)]) -> Result<Js, Failure> {
+    let mut ordered: Vec<&(String, Binding)> = bindings.iter().collect();
+    ordered.sort_by_key(|(name, _)| name != crate::run::RETURN_SLOT);
+    one_park(|park| {
+        let mut out = JsObject::new();
+        for (name, binding) in &ordered {
+            out.set(name.clone(), serialize_binding(run, "", binding, park)?);
+        }
+        Ok(Js::object(out))
+    })
+}
+
+/// What one park has written (`ParkWriter`): the nodes, numbered as first
+/// reached and held so they outlive the writing that numbers them; and the
+/// write handles, each written once (a handle is held by reference: an
+/// in-place write and `refresh` move it under every name that holds it).
+/// A handle is numbered only when it is reached a second time, and its
+/// FIRST descriptor carries that `id` (last, as serialize.ts back-patches
+/// it), so a park that holds each handle once writes exactly the bytes it
+/// always did.
+#[derive(Default)]
+pub(crate) struct ParkWriter {
+    nodes: Vec<Rc<RefCell<crate::bindings::Node>>>,
+    /// Each handle written so far, in first-sighting order, with its number
+    /// once a second sighting gave it one.
+    handles: Vec<(Rc<Handle>, Option<usize>)>,
+    handle_ids: usize,
+    /// The numbers an earlier pass over the same state gave: what each
+    /// handle's first descriptor says (`id`).
+    known: Vec<(Rc<Handle>, usize)>,
+}
+
+/// One park, written whole. The TypeScript back-patches a handle's `id`
+/// onto its first descriptor when a later sighting numbers it; this
+/// engine's descriptors are built immutably, so a state whose handles were
+/// numbered is written again, each first descriptor then saying the number
+/// the first pass gave it (the walk is the same, so the numbers are).
+fn one_park(write: impl Fn(&mut ParkWriter) -> Result<Js, Failure>) -> Result<Js, Failure> {
+    let mut park = ParkWriter::default();
+    let written = write(&mut park)?;
+    let known: Vec<(Rc<Handle>, usize)> = park.handles.into_iter().filter_map(|(handle, id)| id.map(|id| (handle, id))).collect();
+    if known.is_empty() {
+        return Ok(written);
+    }
+    write(&mut ParkWriter { known, ..ParkWriter::default() })
+}
 
 /// The number `written` has in this park, numbering it if it is new.
 fn number(park: &mut ParkWriter, written: Rc<RefCell<crate::bindings::Node>>) -> Result<usize, usize> {
-    match park.iter().position(|p| Rc::ptr_eq(p, &written)) {
+    match park.nodes.iter().position(|p| Rc::ptr_eq(p, &written)) {
         Some(id) => Err(id),
         None => {
-            park.push(written);
-            Ok(park.len() - 1)
+            park.nodes.push(written);
+            Ok(park.nodes.len() - 1)
         }
     }
 }
@@ -245,6 +296,13 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             object_of(vec![kind("tuple"), ("slots", Js::array(slots))])
         }
         // Its body rides across as AST, its capture by the ordinary rules.
+        // One bound at a file's top level: a declaration of the program,
+        // written by its name (and its library) and found again there,
+        // never its body or the file scope it holds.
+        Binding::Closure(closure) if closure.file_name.is_some() => {
+            let name = closure.file_name.clone().unwrap_or_default();
+            object_of(with_file(vec![kind("fileClosure"), ("name", Js::str(name))], &closure.captured.written_in()))
+        }
         Binding::Closure(closure) => {
             let mut members = vec![kind("closure"), ("closure", run.program_code(&closure.code.path)?), ("captured", serialize_captured(run, &closure.captured, park)?)];
             if let Some(name) = &closure.self_name {
@@ -255,14 +313,32 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Event => object_of(vec![kind("event")]),
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
         Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
-        Binding::Movement(movement) => object_of(vec![kind("movement"), ("name", Js::str(movement.name.clone()))]),
+        // Code refs: the name, and the library it is declared in, where a
+        // resume finds it again (serialize.ts `declaringFile`).
+        Binding::Movement(movement) => object_of(with_file(vec![kind("movement"), ("name", Js::str(movement.name.clone()))], &movement.file)),
         // One declared in a body has no name to re-resolve by: its
         // declaration rides across (serialize.ts `localShape`).
         Binding::Shape(shape) if shape.local => object_of(vec![kind("localShape"), ("declaration", crate::env::js_of_json(&serde_json::to_value(&shape.declared.declaration).expect("an AST is always JSON")))]),
-        Binding::Shape(shape) => object_of(vec![kind("shape"), ("name", Js::str(shape.declared.declaration.name.clone()))]),
+        Binding::Shape(shape) => object_of(with_file(vec![kind("shape"), ("name", Js::str(shape.declared.declaration.name.clone()))], &shape.declared.file)),
         // A plugin travels as the import it is, re-resolved by its slot name.
         Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
         Binding::Handle(handle) => {
+            // Reached again: a reference to the one handle, numbered now.
+            if let Some(slot) = park.handles.iter().position(|(h, _)| Rc::ptr_eq(h, handle)) {
+                let id = match park.handles[slot].1 {
+                    Some(id) => id,
+                    None => {
+                        let id = park.handle_ids;
+                        park.handle_ids += 1;
+                        park.handles[slot].1 = Some(id);
+                        id
+                    }
+                };
+                return Ok(object_of(vec![kind("handleRef"), ("id", Js::Number(id as f64))]));
+            }
+            // Registered before its `old` is walked, as a node is before its
+            // edges.
+            park.handles.push((handle.clone(), None));
             let mut members = vec![
                 kind("handle"),
                 ("handle", handle.record().object.clone()),
@@ -275,6 +351,9 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
                 crate::bindings::Old::Nothing => {}
                 crate::bindings::Old::Itself => members.push(("oldIsSelf", Js::Bool(true))),
                 crate::bindings::Old::Was(old) => members.push(("old", serialize_binding(run, "", &Binding::Handle(old), park)?)),
+            }
+            if let Some((_, id)) = park.known.iter().find(|(h, _)| Rc::ptr_eq(h, handle)) {
+                members.push(("id", Js::Number(*id as f64)));
             }
             object_of(members)
         }
@@ -335,6 +414,15 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             ("emission", emission.descriptor(&|id| run.origin(id))),
         ]),
     })
+}
+
+/// `declaringFile`: a library's path beside a code ref declared there; the
+/// root program's says none.
+fn with_file<'k>(mut members: Vec<(&'k str, Js)>, file: &crate::program::DeclaringFile) -> Vec<(&'k str, Js)> {
+    if let crate::program::DeclaringFile::Library(path) = file {
+        members.push(("file", Js::str(path.clone())));
+    }
+    members
 }
 
 /// A captured scope (`captured`, a flat `Map`), each binding by the
@@ -675,15 +763,60 @@ pub(crate) fn id_of(value: Option<&Js>) -> Option<u64> {
     }
 }
 
-/// The reading side of one park's node table (`ParkReader`): each number is
-/// the one node every reference to it rehydrates to.
+/// The reading side of one park's tables (`ParkReader`): each number is
+/// the one node, or the one write handle, every reference to it rehydrates
+/// to.
 #[derive(Default)]
 pub(crate) struct ParkReader {
     nodes: RefCell<Vec<(u64, Rc<RefCell<Node>>)>>,
     unfilled: RefCell<Vec<u64>>,
+    /// Each numbered handle's descriptor in the state, by its number: what
+    /// the handle is made from when a reference names it first.
+    handle_descriptors: Vec<(u64, Js)>,
+    handles: RefCell<Vec<(u64, Rc<Handle>)>>,
+    unfilled_handles: RefCell<Vec<u64>>,
 }
 
 impl ParkReader {
+    /// A reader of the park `state` was written as (a whole state, or one
+    /// descriptor stored on its own).
+    pub(crate) fn over(state: &Js) -> ParkReader {
+        let mut handle_descriptors = Vec::new();
+        numbered_handles(state, &mut handle_descriptors);
+        ParkReader { handle_descriptors, ..ParkReader::default() }
+    }
+
+    pub(crate) fn handle(&self, id: u64) -> Option<Rc<Handle>> {
+        self.handles.borrow().iter().find(|(i, _)| *i == id).map(|(_, h)| h.clone())
+    }
+
+    pub(crate) fn handle_descriptor(&self, id: u64) -> Option<Js> {
+        self.handle_descriptors.iter().find(|(i, _)| *i == id).map(|(_, d)| d.clone())
+    }
+
+    /// Made, and its own descriptor not read yet.
+    pub(crate) fn handle_registered(&self, id: u64, handle: Rc<Handle>) {
+        self.handles.borrow_mut().push((id, handle));
+        self.unfilled_handles.borrow_mut().push(id);
+    }
+
+    pub(crate) fn handle_filled(&self, id: u64) {
+        self.unfilled_handles.borrow_mut().retain(|i| *i != id);
+    }
+
+    /// `assertParkRead`: every number a reference named was read, a node's
+    /// or a handle's; a resume that went on would read an empty stand-in
+    /// where the run had something.
+    pub(crate) fn assert_read(&self) -> Result<(), String> {
+        if let Some(id) = self.unfilled() {
+            return Err(format!("the parked state refers to run-built node(s) #{id} that it never wrote"));
+        }
+        if let Some(id) = self.unfilled_handles.borrow().first() {
+            return Err(format!("the parked state refers to write handle(s) #{id} that it never wrote"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn numbered(&self, id: u64) -> Rc<RefCell<Node>> {
         if let Some((_, node)) = self.nodes.borrow().iter().find(|(i, _)| *i == id) {
             return node.clone();
@@ -700,6 +833,32 @@ impl ParkReader {
 
     pub(crate) fn unfilled(&self) -> Option<u64> {
         self.unfilled.borrow().first().copied()
+    }
+}
+
+/// Every handle descriptor a state numbers (`id`), by its number: the
+/// descriptors of its scopes, frames, journals and exports, never a value's
+/// own data.
+fn numbered_handles(value: &Js, out: &mut Vec<(u64, Js)>) {
+    match value {
+        Js::Array(list) => list.items().iter().for_each(|item| numbered_handles(item, out)),
+        Js::Object(object) => match object.get("kind") {
+            Some(Js::String(kind)) if kind == "handle" => {
+                if let Some(id) = id_of(object.get("id")) {
+                    out.push((id, value.clone()));
+                }
+                if let Some(old) = object.get("old") {
+                    numbered_handles(old, out);
+                }
+            }
+            Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "resource" | "extractRoot" | "extractPosition" | "instance") => {}
+            _ => object
+                .entries()
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "op" | "body" | "closure" | "head" | "mapping" | "fields" | "fieldProvenance" | "position" | "declaration"))
+                .for_each(|(_, v)| numbered_handles(v, out)),
+        },
+        _ => {}
     }
 }
 

@@ -479,6 +479,10 @@ guide](docs/language/dancing-wren-migration.md).
   engine: a `match` over a tuple of paths, `IS <Declaration>` of a graph literal holding a system's
   records, a graph spread of the event or of a record's member, `refresh`, and a function (a
   library's too) returning its closure's call. Nothing to set.
+- `MOVEMENT_ENGINE=rust` parks and resumes as the TypeScript engine now does: one write handle two
+  names hold is written once and comes back as one, a library's node declaration or function is
+  found again in its library, and a closure bound at a file's top level is in scope in that file's
+  functions and parks by name. A state either engine parks resumes on the other.
 - `IS <Declaration>` against a declaration a library writes, of a system's record, failed on
   `MOVEMENT_ENGINE=rust` naming the declaration as unknown; it now compares as on the TypeScript
   engine.

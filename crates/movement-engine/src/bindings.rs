@@ -118,11 +118,31 @@ pub struct ShapePosition {
 }
 
 /// `{kind: 'closure', closure, captured, self?}`.
-#[derive(Debug)]
 pub struct Closure {
     pub code: crate::flow::Code<movement_parser::ast::ClosureExpression>,
     pub captured: Rc<Scope>,
     pub self_name: Option<String>,
+    /// A closure bound at a FILE's top level (the root program's or a
+    /// library's), by the name it is declared by there: `captured` is then
+    /// that file's own scope, held by REFERENCE as a JavaScript closure
+    /// holds its module scope — so it sees every file-level binding, those
+    /// declared after it too — and a park writes it by this name
+    /// (`fileClosure`), finding it again in the re-parsed file, as it does a
+    /// movement (expression.ts `file`).
+    pub file_name: Option<String>,
+}
+
+/// A file-level closure's scope holds the closure: it is named, not printed.
+impl std::fmt::Debug for Closure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("Closure");
+        out.field("code", &self.code).field("self_name", &self.self_name);
+        match &self.file_name {
+            Some(name) => out.field("file_name", name),
+            None => out.field("captured", &self.captured),
+        };
+        out.finish()
+    }
 }
 
 /// The identity of a binding object the TypeScript engine makes where this

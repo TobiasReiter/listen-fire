@@ -300,6 +300,22 @@ impl Run<'_> {
             code: Code { ast: Rc::new(closure.clone()), path: path.to_string() },
             captured: scope.capture(),
             self_name: name.filter(|_| self.version() >= 3).map(String::from),
+            file_name: None,
+        }))
+    }
+
+    /// A closure bound at a file's top level, the root program's or a
+    /// library's (run.ts `interpretFileStatement`): in scope in that file's
+    /// functions, as the checker's file scope says. It holds the file's
+    /// scope by REFERENCE, as a JavaScript closure holds its module scope:
+    /// it sees the file's later closures too, and a park writes it by name
+    /// rather than copying the file scope into it.
+    pub(crate) fn file_closure_binding(&self, closure: &ClosureExpression, name: &str, file: &Rc<Scope>, path: &str) -> Binding {
+        Binding::Closure(Rc::new(Closure {
+            code: Code { ast: Rc::new(closure.clone()), path: path.to_string() },
+            captured: file.clone(),
+            self_name: (self.version() >= 3).then(|| name.to_string()),
+            file_name: Some(name.to_string()),
         }))
     }
 
