@@ -10,7 +10,7 @@ set -eu
 CONFIG_DIR="${CONFIG_DIR:-/config}"
 TARGET="$CONFIG_DIR/generated.env"
 PGPASS_FILE="$CONFIG_DIR/postgres_password"
-MINIO_PASS_FILE="$CONFIG_DIR/minio_password"
+OBJECTSTORE_PASS_FILE="$CONFIG_DIR/objectstore_password"
 
 # Governs every file/dir this script creates below, including CONFIG_DIR
 # itself on a from-scratch volume.
@@ -20,21 +20,24 @@ mkdir -p "$CONFIG_DIR"
 # A crash between writing the .tmp and the rename leaves a stale partial
 # write; it is safe to discard because the finished generated.env (below) is
 # the only thing that gates re-generation.
-rm -f "$TARGET.tmp" "$PGPASS_FILE.tmp" "$MINIO_PASS_FILE.tmp"
+rm -f "$TARGET.tmp" "$PGPASS_FILE.tmp" "$OBJECTSTORE_PASS_FILE.tmp"
 
 # node, not openssl: node:22-slim carries no openssl CLI.
 rand_base64() { node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64"))'; }
 rand_url()    { node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))'; }
 new_uuid()    { node -e 'process.stdout.write(require("crypto").randomUUID())'; }
 
-# The bundled object store's root password. Minted OUTSIDE the one-way-door set
+# The bundled object store's S3 secret. Minted OUTSIDE the one-way-door set
 # below, and separately from generated.env, for two reasons: an installation
 # older than the bundled store has a generated.env that this script will never
 # rewrite, and this password is not a one-way door — nothing is encrypted under
 # it, so an installation that loses it re-mints it and carries on.
-if [ ! -f "$MINIO_PASS_FILE" ]; then
-  rand_url > "$MINIO_PASS_FILE.tmp"
-  mv "$MINIO_PASS_FILE.tmp" "$MINIO_PASS_FILE"
+# An installation that ran the bundled MinIO also has a `minio_password` here;
+# it is left exactly as it is — it is the credential that MinIO's volume still
+# answers to (SELF_HOSTING.md, "Upgrading from the bundled MinIO").
+if [ ! -f "$OBJECTSTORE_PASS_FILE" ]; then
+  rand_url > "$OBJECTSTORE_PASS_FILE.tmp"
+  mv "$OBJECTSTORE_PASS_FILE.tmp" "$OBJECTSTORE_PASS_FILE"
 fi
 
 # A deployment with no model key has no agents, no property arbitration and no

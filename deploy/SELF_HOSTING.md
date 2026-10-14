@@ -75,10 +75,10 @@ API_BASE_URL=https://api.example.com
 WEB_BASE_URL=https://app.example.com
 ```
 
-**Which optional pieces run is `COMPOSE_PROFILES` in `deploy/.env`,** not a flag you remember to type. Five profile names exist. Three are the bundled datastores — `postgres`, `redis`, `minio` — and the shipped line turns all three on; each turns itself off when you name a datastore of your own, so leave that part alone (see "Bringing your own datastores"). The other two are `admin`, the operator console, which is only useful with `core`, and `demo`, the stand-in third parties and the sample data:
+**Which optional pieces run is `COMPOSE_PROFILES` in `deploy/.env`,** not a flag you remember to type. Five profile names exist. Three are the bundled datastores — `postgres`, `redis`, `objectstore` (which also answers to `minio`, its name before SeaweedFS replaced MinIO, so an older `.env` keeps working) — and the shipped line turns all three on; each turns itself off when you name a datastore of your own, so leave that part alone (see "Bringing your own datastores"). The other two are `admin`, the operator console, which is only useful with `core`, and `demo`, the stand-in third parties and the sample data:
 
 ```
-COMPOSE_PROFILES=postgres,redis,minio,admin
+COMPOSE_PROFILES=postgres,redis,objectstore,admin
 ```
 
 **Put them there rather than on the command line.** A `--profile` flag REPLACES this list on older Docker Compose versions instead of adding to it, which is how a `docker compose --profile admin down` ends up leaving the database container running. One list in one file is correct on every version. `up.sh` names its own profiles on the command line and passes no list, which is the same rule from the other side.
@@ -300,7 +300,7 @@ Demo mode is a way to look at Listen-Fire, not a security posture. Do not expose
 - **Two database roles must exist before the first migration**, and both paths create them for you. The migration set grants to `agent` and `readonly`, and a database without them dies on an early migration having built almost nothing. The bundled Postgres creates them from `postgres-init/00-roles.sql` on an empty data directory; on a managed database the migration runner runs that same file itself before it applies anything, which needs the connecting user to hold `CREATEROLE` — a managed provider's database owner does. **Run the file by hand only when the runner tells you to**, which it does, having applied nothing, when the user in `DATABASE_URL` is neither a superuser nor able to create roles. The bundled image is `pgvector/pgvector:pg16` because the migration set is monolithic.
 - **The migration set is monolithic.** It creates every unit's tables whatever you mount, so a `psql` prompt shows tables you have no unit for. They stay empty. The practical consequence is that every installation needs the union of the extensions — `vector`, `pg_trgm`, `citext` — even one whose own tables need none of them.
 - **`API_BASE_URL` must be stable forever.** Answer links, file links, callbacks and every webhook you register with a third party are absolute at it, and by the time you want to change the hostname they are in other people's inboxes and other systems' configuration. There is no rewrite mechanism and there cannot be one.
-- **File storage is an S3-compatible bucket, and there is no local-filesystem driver.** Compose bundles one — a MinIO on a volume, wired up for you — so a stack that has named no object store of its own still handles files. Two honest limits on the bundled one: it is reachable only on the compose network, so a presigned link handed to a browser or a third party does not resolve, and it is one container on one disk. A deployment that hands out file links points `AWS_S3_ENDPOINT` at a real object store (AWS, Cloudflare R2, GCS through its S3 API, Supabase), which is also what parks the bundled one — see "Bringing your own datastores". With nothing configured at all the process boots normally and only the file-touching steps fail, naming what they wanted. `AWS_S3_FORCE_PATH_STYLE` is compared to the literal lowercase `true` — `TRUE` and `1` read as false, which is what bites MinIO and Ceph.
+- **File storage is an S3-compatible bucket, and there is no local-filesystem driver.** Compose bundles one — a [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (Apache-2.0) S3 server on a volume, wired up for you — so a stack that has named no object store of its own still handles files. Two honest limits on the bundled one: it is reachable only on the compose network, so a presigned link handed to a browser or a third party does not resolve, and it is one container on one disk. A deployment that hands out file links points `AWS_S3_ENDPOINT` at a real object store (AWS, Cloudflare R2, GCS through its S3 API, Supabase), which is also what parks the bundled one — see "Bringing your own datastores". With nothing configured at all the process boots normally and only the file-touching steps fail, naming what they wanted. `AWS_S3_FORCE_PATH_STYLE` is compared to the literal lowercase `true` — `TRUE` and `1` read as false, which is what bites MinIO, SeaweedFS and Ceph.
 - **A proxy in front of the API loses two things**: WebSocket upgrades, which live updates ride, and very long agent requests, which outlive most proxy timeouts. Both should reach the API origin directly.
 
 ## Bringing your own datastores
@@ -311,7 +311,7 @@ Postgres, Redis and the object store come bundled, and each one can be moved to 
 |---|---|---|---|
 | database | `postgres`, a `pgvector/pgvector:pg16` on the `pgdata` volume | `DATABASE_URL` (and `DATABASE_URL_READONLY`, which follows it when you have no replica) | leaves the composition |
 | cache and counters (optional) | `redis`, on the `redisdata` volume | `MESSAGE_QUEUE_REDIS_HOSTNAME` and `MESSAGE_QUEUE_REDIS_PORT` | leaves the composition |
-| object store | `minio`, on the `miniodata` volume | `AWS_S3_ENDPOINT`, with the four `AWS_*` values beside it | leaves the composition |
+| object store | `objectstore` (SeaweedFS), on the `objectstoredata` volume | `AWS_S3_ENDPOINT`, with the four `AWS_*` values beside it | leaves the composition |
 
 **Why it is one variable and not two.** The presence of that variable is both what the process connects to and what compose reads to decide whether to start a bundled service, so the two cannot disagree. `up.sh` prints which stores are bundled and which are yours on every start, so a `DATABASE_URL` you forgot was exported in your shell is visible rather than mysterious.
 
@@ -321,7 +321,51 @@ Each move has a runbook in your platform's guide — [GCP](guides/gcp-vm.md), [A
 
 **Redis.** Host and port, with no username, password, TLS or URL form anywhere in the client, so a managed Redis that requires AUTH or in-transit encryption cannot be reached at all through these two variables. Use a private network and let that be the boundary. Redis is optional: with no hostname set the API never connects to one (the composition always sets it, to the bundled `redis`, unless you name yours). Without it, the runaway-loop counters live in each API process's memory, so several instances each count only their own firings; the icon cache is off, so every icon is fetched upstream; and in-flight MCP OAuth state is not shared between instances or kept across a restart. Nothing has to be moved when you switch: what lives there is core's in-flight MCP OAuth state, which costs a person a re-consent, and automations' runaway-loop counters, which fail **open**. Both are rebuilt by use.
 
-**The object store.** Any S3-compatible bucket: set `AWS_S3_ENDPOINT`, `AWS_DOCUMENT_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` together, and `AWS_S3_FORCE_PATH_STYLE=true` only for a store that needs path-style addressing. On AWS itself leave the endpoint unset. Objects have to be copied across: the bundled store's are in the `miniodata` volume and the `listen-fire` bucket, and any S3 client that speaks to both ends will move them. Do it before you flip the variable, because links already handed out are absolute at the old origin.
+**The object store.** Any S3-compatible bucket: set `AWS_S3_ENDPOINT`, `AWS_DOCUMENT_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` together, and `AWS_S3_FORCE_PATH_STYLE=true` only for a store that needs path-style addressing. On AWS itself leave the endpoint unset. Objects have to be copied across: the bundled store's are in the `objectstoredata` volume and the `listen-fire` bucket, and any S3 client that speaks to both ends will move them (the bundled one is reachable as `http://objectstore:8333` on the compose network, user `listenfire`, secret in the config volume's `objectstore_password`). Do it before you flip the variable, because links already handed out are absolute at the old origin.
+
+### Upgrading from the bundled MinIO
+
+Releases before SeaweedFS bundled MinIO as the object store, in a `minio` service on the `miniodata` volume. MinIO no longer publishes container images, so the bundled store is now SeaweedFS (the `objectstore` service, on a NEW volume, `objectstoredata`). An installation that ran the bundled MinIO and has no `AWS_S3_ENDPOINT` of its own still has every file it stored in `miniodata`, under the `listen-fire` bucket — **upgrading does not move them, and nothing deletes that volume**: this release's compose file no longer names it, so not even `down -v` reaches it. Until you do one of the two things below, the upgraded installation reads and writes the new, empty bucket, and a file stored before the upgrade fails to open.
+
+Both use [`legacy-minio.yml`](legacy-minio.yml), an override that runs your old MinIO again from the image **already on your machine** (`pull_policy: never`; set `LEGACY_MINIO_IMAGE` if yours is a different tag than `minio/minio:RELEASE.2025-09-07T16-13-09Z`, and `LEGACY_MINIO_VOLUME` if your compose project is not `listen-fire`), on that volume, with the password the installation minted for it (`minio_password`, still in the config volume). If the image is gone from the machine too, any MinIO build that reads the same data directory serves it. Snapshot the database first, as for any upgrade.
+
+**(a) Keep MinIO as your own object store.** Nothing is copied. In `deploy/.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:legacy-minio.yml
+AWS_S3_ENDPOINT=http://minio:9000
+AWS_DOCUMENT_S3_BUCKET=listen-fire
+AWS_REGION=auto
+AWS_ACCESS_KEY_ID=listenfire
+# the old MinIO password, printed by: docker compose run --rm --no-deps --entrypoint cat init /config/minio_password
+AWS_SECRET_ACCESS_KEY=
+AWS_S3_FORCE_PATH_STYLE=true
+```
+
+Setting `AWS_S3_ENDPOINT` parks the bundled SeaweedFS exactly as naming any store of your own does, and `COMPOSE_FILE` makes both a bare `docker compose` and `up.sh` start MinIO beside the stack. You are then running an image that gets no more updates, so treat this as a holding position and plan to move to (b) or to a managed store.
+
+**(b) Copy the bucket into the bundled SeaweedFS, once.** Leave `AWS_S3_ENDPOINT` unset and, from `deploy/`, after updating to this release:
+
+```bash
+# 1. both stores up, nothing else (the old MinIO from your cached image, the new SeaweedFS)
+docker compose -f docker-compose.yml -f legacy-minio.yml up -d minio objectstore
+
+# 2. copy every object, keys unchanged, then check both sides match (safe to rerun;
+#    MinIO's volume is only read)
+docker compose -f docker-compose.yml -f legacy-minio.yml run --rm copy-from-minio
+
+# 3. retire the old container and start the stack as usual
+docker compose -f docker-compose.yml -f legacy-minio.yml rm -sf minio
+./up.sh <your units>        # or: docker compose up -d --remove-orphans
+```
+
+Step 2 is `rclone copy` then `rclone check --one-way` between the two buckets and ends with `copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store`; the keys are the same, so every `s3://listen-fire/…` the database holds still resolves. Open a few older files in the app to confirm. Only then, and only by hand, reclaim the old volume — keep the config volume's `minio_password` until you have:
+
+```bash
+docker volume rm listen-fire_miniodata      # deletes every file MinIO held; there is no undo
+```
+
+Do the copy before the installation takes new files if you can: a file written between the upgrade and the copy lands in SeaweedFS and is kept (the copy never overwrites what is not in MinIO), but anyone who opens an older file in that window sees it missing.
 
 **One store at a time is the point.** Moving the database and leaving Redis and the object store bundled is a supported shape, and so is every other combination.
 
@@ -592,7 +636,7 @@ docker compose down -v
 
 **A `down` stops what its profiles name, and nothing else.** That is why the profile list belongs in `COMPOSE_PROFILES` in `deploy/.env` rather than on the command line: a `--profile` flag replaces that list on older Docker Compose versions, and a `down` that names fewer profiles than the `up` did leaves the rest running for the next start to inherit. A stack started by `up.sh` is the case where the profiles are on the command line rather than in the file, so `up.sh` prints the matching `down` for the shape it started; use that one.
 
-`down` keeps every volume, so starting again resumes the same installation. **`down -v` also destroys `listen-fire-config`**, which is the volume the section above says must never be regenerated: the encryption keys go with it, and every stored third-party credential in a database you restore afterwards is then permanently unreadable. It destroys `miniodata` too, which is every file the bundled object store holds. Use `down -v` to throw an installation away, never to restart one — and if you only meant to reclaim the disk, back the config volume up first.
+`down` keeps every volume, so starting again resumes the same installation. **`down -v` also destroys `listen-fire-config`**, which is the volume the section above says must never be regenerated: the encryption keys go with it, and every stored third-party credential in a database you restore afterwards is then permanently unreadable. It destroys `objectstoredata` too, which is every file the bundled object store holds. (It does not touch `miniodata`, the bundled MinIO's volume on an installation that ran it: see "Upgrading from the bundled MinIO".) Use `down -v` to throw an installation away, never to restart one — and if you only meant to reclaim the disk, back the config volume up first.
 
 ## Moving a team in or out
 
@@ -670,7 +714,7 @@ Everything here is set by you, in `deploy/.env`. Nothing in this table is genera
 | `LISTEN_FIRE_BIND` | no | every interface. `127.0.0.1` publishes the three apps to loopback only, for a reverse proxy on the same box |
 | `KNOWLEDGE_MUTATION_DELIVERY` | no | derived from your unit list by `up.sh`; the code's own default is `local`. An unrecognised value fails the boot rather than picking one |
 | `ASKS_SETTLE_DELIVERY` | no | as above |
-| `COMPOSE_PROFILES` | only without `up.sh` | nothing optional runs, INCLUDING the bundled datastores. `postgres,redis,minio` is the shipped line; add `admin` for the operator console and `demo` for the stand-ins. Read by `docker compose` itself, from `deploy/.env` |
+| `COMPOSE_PROFILES` | only without `up.sh` | nothing optional runs, INCLUDING the bundled datastores. `postgres,redis,objectstore` is the shipped line (`minio` still works as the object store's profile); add `admin` for the operator console and `demo` for the stand-ins. Read by `docker compose` itself, from `deploy/.env` |
 | `LISTEN_FIRE_PRODUCTS` | only without `up.sh` | every unit. An unknown name fails the boot |
 | `LISTEN_FIRE_PRINCIPAL` | only without `up.sh` | `core`. Must agree with whether `core` is in the unit list, checked in both directions |
 | `LISTEN_FIRE_SCOPES` | no | `*` — the API key grants everything. Narrow it to what a key actually needs |
@@ -685,9 +729,9 @@ Everything here is set by you, in `deploy/.env`. Nothing in this table is genera
 | `MAILGUN_API_BASE_URL` | US-region Mailgun accounts | Mailgun's EU host |
 | `INBOUND_EMAIL_ADDRESS` | to receive mail at all | none — an automation listening for email is reported unverified |
 | `OUTBOUND_EMAIL_FROM_NAME` / `OUTBOUND_EMAIL_BCC` | no | no display name; no archive copy |
-| `AWS_S3_ENDPOINT` | only with your own object store | the bundled MinIO, `http://minio:9000`. Setting it also takes that service out of the composition, and leaves the four below to you. Unset it for AWS S3 itself only if you are also naming your own key |
-| `AWS_DOCUMENT_S3_BUCKET` / `AWS_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | with your own object store | the bundled MinIO's bucket, region and generated root credential. With your own endpoint it is all four together or no storage at all, and file-touching steps fail naming them |
-| `AWS_S3_FORCE_PATH_STYLE` | MinIO and Ceph | on for the bundled store, off for yours — and only the literal lowercase `true` turns it on |
+| `AWS_S3_ENDPOINT` | only with your own object store | the bundled SeaweedFS, `http://objectstore:8333`. Setting it also takes that service out of the composition, and leaves the four below to you. Unset it for AWS S3 itself only if you are also naming your own key |
+| `AWS_DOCUMENT_S3_BUCKET` / `AWS_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | with your own object store | the bundled SeaweedFS's bucket (`listen-fire`), region (`auto`) and generated credential (`listenfire` / the config volume's `objectstore_password`). With your own endpoint it is all four together or no storage at all, and file-touching steps fail naming them |
+| `AWS_S3_FORCE_PATH_STYLE` | MinIO, SeaweedFS and Ceph | on for the bundled store, off for yours — and only the literal lowercase `true` turns it on |
 | `ALLOW_UNSIGNED_WEBHOOKS` | no | inbound doors stay fail-closed. `true` only on a machine nothing else can reach; ignored in production |
 | `SENTRY_DSN` | no | no error reporting |
 | `LISTEN_FIRE_PREVIOUS_VERSION` | no | written by `up.sh`, not set by hand — the one rollback target its post-success image pruning keeps alongside the tag just started. See UPGRADING.md, "Disk" |

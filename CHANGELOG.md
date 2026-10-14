@@ -72,6 +72,28 @@ guide](docs/language/dancing-wren-migration.md).
   adapter matches it by its reserved address, so a team's ontology edge named `Resources` stays
   the ontology's.
 
+### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
+
+- **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
+  (`chrislusf/seaweedfs:4.48`, Apache-2.0), not MinIO.** Why: MinIO no longer publishes container
+  images, so every pull of `minio/minio` — including the tag the bundle pinned — is refused, and a
+  fresh installation could not start its file store. The service is `objectstore` on a new volume,
+  `objectstoredata`; its profile is `objectstore`, and `minio` in `COMPOSE_PROFILES` still starts it.
+  Setting `AWS_S3_ENDPOINT` parks it exactly as before. Nothing changes for an installation that
+  names its own object store.
+- **If your installation used the bundled MinIO, its files stay in the `miniodata` volume and the
+  upgraded installation does not see them until you act.** Nothing deletes that volume (the compose
+  file no longer names it, so not even `down -v` reaches it). Two safe options, both through the new
+  `deploy/legacy-minio.yml` override, which runs your old MinIO from the image already on your
+  machine: **(a)** keep MinIO as your own store — add the override to `COMPOSE_FILE` and point
+  `AWS_S3_ENDPOINT=http://minio:9000` and the other `AWS_*` values at it; or **(b)** copy the bucket
+  into SeaweedFS once — `docker compose -f docker-compose.yml -f legacy-minio.yml run --rm
+  copy-from-minio` (rclone copy + check, keys unchanged, MinIO only read) — then remove the old
+  volume by hand when you are satisfied. The exact steps are in deploy/SELF_HOSTING.md, "Upgrading
+  from the bundled MinIO".
+- The bundled store's credential is a new file in the config volume, `objectstore_password`;
+  `minio_password` is left where it is for option (a) and the copy.
+
 ### Changed
 
 - A closure written in a movement body holds the scope it was written in by reference, as a

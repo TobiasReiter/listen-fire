@@ -32,18 +32,19 @@ fi
 
 # The bundled object store, on the same rule: an operator who supplied a key of
 # their own has an object store of their own, and nothing here touches it.
-# Otherwise this installation's own MinIO is the store, and these are the four
-# values the S3 adapter needs plus the endpoint and the path-style flag it needs
-# to speak to MinIO at all (the flag is compared to the literal lowercase
+# Otherwise this installation's own SeaweedFS (the `objectstore` service) is the
+# store, and these are the four values the S3 adapter needs plus the endpoint
+# and the path-style flag it needs to speak to it at all (the flag is compared
+# to the literal lowercase
 # `true`). The password is a file, not a line in generated.env, because an
 # installation older than the bundled store has a generated.env that the
 # generator will never rewrite.
 # The test is AWS_S3_ENDPOINT, the same variable that tells compose not to start
-# the bundled MinIO, so the two can never disagree about which store is in use.
-if [ -z "${AWS_S3_ENDPOINT:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -f /config/minio_password ]; then
-  export AWS_S3_ENDPOINT=http://minio:9000
+# the bundled store, so the two can never disagree about which store is in use.
+if [ -z "${AWS_S3_ENDPOINT:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -f /config/objectstore_password ]; then
+  export AWS_S3_ENDPOINT=http://objectstore:8333
   export AWS_ACCESS_KEY_ID=listenfire
-  AWS_SECRET_ACCESS_KEY="$(cat /config/minio_password)"
+  AWS_SECRET_ACCESS_KEY="$(cat /config/objectstore_password)"
   export AWS_SECRET_ACCESS_KEY
   export AWS_DOCUMENT_S3_BUCKET="${AWS_DOCUMENT_S3_BUCKET:-listen-fire}"
   export AWS_REGION="${AWS_REGION:-auto}"

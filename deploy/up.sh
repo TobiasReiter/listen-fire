@@ -146,7 +146,7 @@ add_store() {
 }
 add_store postgres DATABASE_URL
 add_store redis MESSAGE_QUEUE_REDIS_HOSTNAME
-add_store minio AWS_S3_ENDPOINT
+add_store objectstore AWS_S3_ENDPOINT
 
 if has_unit core; then PROFILES+=(admin); fi
 if [ "$DEMO" -eq 1 ]; then

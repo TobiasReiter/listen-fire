@@ -22,7 +22,7 @@ Then, when you want a managed datastore, the second half of this page is a runbo
 
 ## 1. The VM
 
-**`e2-standard-2` (2 vCPU, 8 GB) is the floor.** Memory is the lever, not CPU. The API alone wants 1 to 2 GB at rest and more on an extraction or an authoring-agent request, and the bundled Postgres, Redis, MinIO and the web app sit beside it on the same machine. `e2-medium` (4 GB) runs a demo and runs out of memory under real use. Move up to `e2-standard-4` before you move anything off the box, because it is one line and a reboot.
+**`e2-standard-2` (2 vCPU, 8 GB) is the floor.** Memory is the lever, not CPU. The API alone wants 1 to 2 GB at rest and more on an extraction or an authoring-agent request, and the bundled Postgres, Redis, object store (SeaweedFS) and the web app sit beside it on the same machine. `e2-medium` (4 GB) runs a demo and runs out of memory under real use. Move up to `e2-standard-4` before you move anything off the box, because it is one line and a reboot.
 
 **Boot image: Debian 12, or Container-Optimized OS.** Debian is the easier first VM: `psql`, `gcloud` and a reverse proxy install as packages, and the runbooks below use all three on the machine itself. Container-Optimized OS is the smaller attack surface, updates itself, and ships Docker already, but it has no package manager, so anything the runbooks call for has to run in a container. Either works. Install Docker Engine and the Compose plugin on Debian from Docker's own repository; the version in Debian's archive is older than this stack expects.
 
@@ -39,7 +39,7 @@ gcloud compute instances add-metadata listen-fire --zone <zone> \
 
 ## 2. The disk the data lives on
 
-Every piece of state is a Docker named volume: `pgdata`, `redisdata`, `miniodata` and `listen-fire-config`. They all live under Docker's data root, so putting that directory on its own persistent disk puts all of them there at once, and lets the disk be snapshotted and resized without touching the VM.
+Every piece of state is a Docker named volume: `pgdata`, `redisdata`, `objectstoredata` and `listen-fire-config` (plus `miniodata` on an installation that ran the bundled MinIO before SeaweedFS replaced it — see SELF_HOSTING.md, "Upgrading from the bundled MinIO"). They all live under Docker's data root, so putting that directory on its own persistent disk puts all of them there at once, and lets the disk be snapshotted and resized without touching the VM.
 
 Attach a `pd-balanced` disk (100 GB is a reasonable start; it grows online), format it once, and mount it at `/var/lib/docker` **before Docker first starts**. Add it to `/etc/fstab` with `discard,defaults,nofail` so a missing disk does not stop the machine from booting, and turn **auto-delete off** on the attachment so deleting the VM does not delete the data.
 
@@ -135,7 +135,7 @@ WEB_BASE_URL=https://app.example.com
 LISTEN_FIRE_BIND=127.0.0.1
 LISTEN_FIRE_TEAM_NAME=Acme
 LISTEN_FIRE_ADMIN_EMAIL=you@example.com
-COMPOSE_PROFILES=postgres,redis,minio,admin
+COMPOSE_PROFILES=postgres,redis,objectstore,admin
 ```
 
 **A model key is what buys you agents**, and any one of `ANTHROPIC_API_KEY`, `KNOWLEDGE_LLM_API_KEY` or `OPENAI_API_KEY` is enough. Without one the stack starts and serves, and agents, extraction and the arbitration of conflicting facts fail at the moment they are asked for — `init` warns at every boot and so does the API. On `v0.1.0` it was a hard refusal: `init` exited 1 and nothing started at all, so a stack could not come up before you had a key.
@@ -303,14 +303,21 @@ Cloud Storage speaks S3 well enough for the API's storage adapter, which is a pl
 
 **Create an HMAC key** for a service account that has `roles/storage.objectAdmin` on that bucket, and nothing wider. The access id and secret it gives you are what the S3 client authenticates with; a GCP service-account JSON key is not usable here.
 
-**Move the objects.** Both ends speak S3, so one tool talks to both. From the VM, with the bundled MinIO still running:
+**Move the objects.** Both ends speak S3, so one tool talks to both. From the VM, in `deploy/`, with the bundled object store still running:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint sh minio -c '
-  mc alias set src http://minio:9000 listenfire "$(cat /config/minio_password)" &&
-  mc alias set dst https://storage.googleapis.com <hmac-access-id> <hmac-secret> --api S3v4 &&
-  mc mirror src/listen-fire dst/<your-bucket>'
+docker run --rm --network listen-fire_default \
+  -v listen-fire_listen-fire-config:/config:ro --entrypoint sh rclone/rclone:1.75.1 -c '
+  export RCLONE_CONFIG_SRC_TYPE=s3 RCLONE_CONFIG_SRC_PROVIDER=SeaweedFS \
+    RCLONE_CONFIG_SRC_ENDPOINT=http://objectstore:8333 RCLONE_CONFIG_SRC_ACCESS_KEY_ID=listenfire \
+    RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY="$(cat /config/objectstore_password)" \
+    RCLONE_CONFIG_DST_TYPE=s3 RCLONE_CONFIG_DST_PROVIDER=GCS \
+    RCLONE_CONFIG_DST_ENDPOINT=https://storage.googleapis.com \
+    RCLONE_CONFIG_DST_ACCESS_KEY_ID=<hmac-access-id> RCLONE_CONFIG_DST_SECRET_ACCESS_KEY=<hmac-secret> &&
+  rclone copy src:listen-fire dst:<your-bucket> -v && rclone check src:listen-fire dst:<your-bucket> --one-way'
 ```
+
+(Still on the bundled MinIO from an older release? Its files are in `miniodata`, not the bundled store: start it with `legacy-minio.yml` and use `http://minio:9000`, provider `Minio` and `/config/minio_password` as the source instead — SELF_HOSTING.md, "Upgrading from the bundled MinIO".)
 
 `gsutil -m rsync -r` does the same job if you would rather copy the objects out of the volume to the VM's disk first and push them up from there. Either way, do it before you flip the variable: links already handed to a third party are absolute at the old origin and do not follow the data.
 
@@ -324,10 +331,10 @@ AWS_ACCESS_KEY_ID=<hmac-access-id>
 AWS_SECRET_ACCESS_KEY=<hmac-secret>
 ```
 
-All five together. **Leave `AWS_S3_FORCE_PATH_STYLE` unset**: it exists for MinIO and Ceph, it is compared to the literal lowercase `true`, and Cloud Storage does not need it.
+All five together. **Leave `AWS_S3_FORCE_PATH_STYLE` unset**: it exists for MinIO, SeaweedFS and Ceph, it is compared to the literal lowercase `true`, and Cloud Storage does not need it.
 
 **Do not upgrade `@aws-sdk/client-s3` without re-testing an upload against this bucket.** The version pinned here, `3.649.0`, predates the SDK release that started sending integrity-checksum headers on every request by default, and Cloud Storage's XML API rejects those. A routine dependency bump breaks uploads to GCS and to nothing else, so it will not look like a storage change.
 
-Moving to Cloud Storage is also what makes file links work for people outside the VM. The bundled MinIO is reachable only on the compose network, so a presigned link handed to a browser or a third party does not resolve; a Cloud Storage presigned URL does.
+Moving to Cloud Storage is also what makes file links work for people outside the VM. The bundled object store is reachable only on the compose network, so a presigned link handed to a browser or a third party does not resolve; a Cloud Storage presigned URL does.
 
-Then `docker volume rm listen-fire_miniodata` once you have confirmed a file downloads.
+Then `docker volume rm listen-fire_objectstoredata` (and `listen-fire_miniodata`, if you have one) once you have confirmed a file downloads.

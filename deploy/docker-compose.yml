@@ -7,7 +7,7 @@
 #
 # Bare `docker compose up` is the whole of Listen-Fire — every unit, with core
 # identity. WHICH optional pieces come with it is `COMPOSE_PROFILES` in `.env`,
-# not a flag: `postgres`, `redis` and `minio` are the bundled datastores and are
+# not a flag: `postgres`, `redis` and `objectstore` are the bundled datastores and are
 # on in the shipped line; `admin` adds the platform-admin UI and `demo` the fake
 # third parties plus the sample dataset. Keep the list there rather than passing
 # `--profile`, which REPLACES it rather than adding to it on older compose
@@ -30,13 +30,15 @@
 #
 #   DATABASE_URL                    set → the bundled `postgres` is not started
 #   MESSAGE_QUEUE_REDIS_HOSTNAME    set → the bundled `redis` is not started
-#   AWS_S3_ENDPOINT                 set → the bundled `minio` is not started
+#   AWS_S3_ENDPOINT                 set → the bundled `objectstore` is not started
 #
 # The mechanism is the `profiles:` line on each of those three services. A
 # bundled store sits in the profile named after it (`postgres`, `redis`,
-# `minio`), which `deploy/.env`'s COMPOSE_PROFILES enables and `up.sh` names on
-# the command line. Setting the variable rewrites that profile name to
-# `unused-postgres` / `unused-redis` / `unused-minio`, which nothing enables, so
+# `objectstore` — which also answers to `minio`, its name before SeaweedFS
+# replaced MinIO, so an older `.env` still starts it), which `deploy/.env`'s
+# COMPOSE_PROFILES enables and `up.sh` names on the command line. Setting the
+# variable rewrites that profile name to `unused-postgres` / `unused-redis` /
+# `unused-objectstore`, which nothing enables, so
 # the service leaves the composition entirely — it is not started, not built,
 # not `docker compose config`'d. Nothing here needs editing to move a store off
 # the box, which is the whole point: see SELF_HOSTING.md, "Bringing your own
@@ -146,31 +148,48 @@ services:
   # managed one. `with-generated-env` points the api at it whenever the operator
   # has supplied no key of their own.
   #
+  # SeaweedFS (Apache-2.0), in its single-process `weed mini` mode with only the
+  # S3 API on: it replaced MinIO, which stopped publishing container images.
+  # An installation that ran the bundled MinIO keeps its files in the
+  # `miniodata` volume, which this file no longer declares (so no `down -v` can
+  # reach it): SELF_HOSTING.md, "Upgrading from the bundled MinIO".
+  #
   # Not published to the host, deliberately. The api reaches it over the compose
   # network, and a presigned link handed to a BROWSER or a third party resolves
-  # only where the hostname `minio` does — so a deployment that hands out file
-  # links points AWS_S3_ENDPOINT at an object store on a public origin, which is
-  # also what parks this service.
-  minio:
-    profiles: ['${AWS_S3_ENDPOINT:+unused-}minio']
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    environment:
-      MINIO_ROOT_USER: listenfire
-      # Same reason postgres takes POSTGRES_PASSWORD_FILE: the password is in a
-      # named volume, which `env_file` cannot read.
-      MINIO_ROOT_PASSWORD_FILE: /config/minio_password
-      MINIO_BROWSER: 'off'
-    # MinIO creates no bucket on its own, and on its single-drive backend a
-    # directory in the data root IS a bucket.
-    entrypoint: ['sh', '-c', 'mkdir -p /data/listen-fire && exec minio server /data --address :9000']
+  # only where the hostname `objectstore` does — so a deployment that hands out
+  # file links points AWS_S3_ENDPOINT at an object store on a public origin,
+  # which is also what parks this service.
+  objectstore:
+    profiles:
+      - '${AWS_S3_ENDPOINT:+unused-}objectstore'
+      # The profile's name before SeaweedFS replaced MinIO; an existing `.env`
+      # that says COMPOSE_PROFILES=postgres,redis,minio still starts the store.
+      - '${AWS_S3_ENDPOINT:+unused-}minio'
+    image: chrislusf/seaweedfs:4.48
+    # `weed mini` takes its one static S3 credential from AWS_ACCESS_KEY_ID /
+    # AWS_SECRET_ACCESS_KEY. The secret is a file in the config volume for the
+    # same reason postgres takes POSTGRES_PASSWORD_FILE: a named volume is
+    # invisible to `env_file`. `-bucket` creates the bucket when it is missing
+    # and leaves it alone when it is not. `-ip=127.0.0.1` keeps the components
+    # talking over loopback, so a container recreated on a new address still
+    # finds its own data. WebDAV, the admin UI and the table-catalog ports stay
+    # off: nothing here uses them.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export AWS_ACCESS_KEY_ID=listenfire
+        AWS_SECRET_ACCESS_KEY="$$(cat /config/objectstore_password)" &&
+        exec /entrypoint.sh mini -ip=127.0.0.1 -ip.bind=0.0.0.0 -bucket=listen-fire
+        -webdav=false -admin.ui=false -s3.port.iceberg=0 -s3.port.lance=0
     volumes:
-      - miniodata:/data
+      - objectstoredata:/data
       - listen-fire-config:/config:ro
     depends_on:
       init:
         condition: service_completed_successfully
     healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
+      test: ['CMD', 'curl', '-sf', 'http://localhost:8333/healthz']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -457,6 +476,7 @@ volumes:
   pgdata:
   redisdata:
   # The bundled object store's bucket. `down -v` destroys it, and every file an
-  # automation ever wrote with it.
-  miniodata:
+  # automation ever wrote with it. (The bundled MinIO's `miniodata`, on an
+  # installation that ran it, is deliberately no longer named here.)
+  objectstoredata:
   listen-fire-config:
