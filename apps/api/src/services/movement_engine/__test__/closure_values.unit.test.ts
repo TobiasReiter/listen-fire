@@ -157,7 +157,7 @@ function makeParkSink() {
       }
     },
   };
-  return { sink, parks };
+  return { sink, parks, exports };
 }
 
 type Sink = ReturnType<typeof makeParkSink>;
@@ -462,4 +462,192 @@ describe('an arrow body that awaits (language version 5)', () => {
       await finalPayload(['  g = () => await race([() => "first"])', '  r = g()', '  write graph-[:note]-> { payload: { r: r } }']),
     ).toEqual({ r: ['first'] });
   });
+});
+
+// ── Both engines ──────────────────────────────────────────────────────────────
+//
+// The Rust engine runs every form above as the TypeScript engine does: the
+// same writes, and where a run parks, the same parked bytes whichever engine
+// wrote them, resuming on either engine to the same end. Under `rust` the
+// fallback is `none`, so a run the Rust engine refused fails here.
+
+type Engine = 'ts' | 'rust';
+const ENGINES: Engine[] = ['ts', 'rust'];
+
+async function onEngine<T>(engine: Engine, run: () => Promise<T>): Promise<T> {
+  const previous = { engine: process.env.MOVEMENT_ENGINE, fallback: process.env.MOVEMENT_ENGINE_FALLBACK };
+  process.env.MOVEMENT_ENGINE = engine;
+  if (engine === 'rust') process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
+  else delete process.env.MOVEMENT_ENGINE_FALLBACK;
+  try {
+    return await run();
+  } finally {
+    if (previous.engine === undefined) delete process.env.MOVEMENT_ENGINE;
+    else process.env.MOVEMENT_ENGINE = previous.engine;
+    if (previous.fallback === undefined) delete process.env.MOVEMENT_ENGINE_FALLBACK;
+    else process.env.MOVEMENT_ENGINE_FALLBACK = previous.fallback;
+  }
+}
+
+/** Everything a run parked: each leaf's state and each branch's export. */
+function parkedBytes(parks: Sink): string {
+  return JSON.stringify({
+    parks: [...parks.parks.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
+    exports: [...parks.exports.entries()].map(([frame, rows]) => [frame, [...rows.entries()]]),
+  });
+}
+
+/** `source` started on each engine and, where it parks, resumed on each
+ *  engine: the first parks are the same bytes, and every way round ends with
+ *  the same writes. The TypeScript engine's end. */
+async function acrossEngines(source: string): Promise<{ creates: WriteInput[]; parked: boolean }> {
+  const firstParks: Record<string, string> = {};
+  const ends: Record<string, { creates: WriteInput[]; left: string }> = {};
+  for (const parkOn of ENGINES) {
+    const parks = makeParkSink();
+    const first = await onEngine(parkOn, () => start(source, parks));
+    firstParks[parkOn] = parkedBytes(parks);
+    if (first.result.parked !== true) {
+      ends[parkOn] = { creates: first.kg.creates, left: firstParks[parkOn]! };
+      continue;
+    }
+    for (const resumeOn of ENGINES) {
+      const again = makeParkSink();
+      for (const [address, park] of parks.parks) again.parks.set(address, JSON.parse(JSON.stringify(park)) as typeof park);
+      for (const [frame, rows] of parks.exports) again.exports.set(frame, new Map(rows));
+      const creates: WriteInput[] = [...first.kg.creates];
+      for (let guard = 0; again.parks.size > 0 && guard < 10; guard++) {
+        const address = [...again.parks.keys()].sort()[0]!;
+        const { kg } = await onEngine(resumeOn, () => resumeAt(source, again, address));
+        creates.push(...kg.creates);
+      }
+      ends[`${parkOn}→${resumeOn}`] = { creates, left: parkedBytes(again) };
+    }
+  }
+  expect(firstParks.rust).toEqual(firstParks.ts);
+  const reference = ends.ts ?? ends['ts→ts']!;
+  for (const [way, end] of Object.entries(ends)) expect({ way, ...end }).toEqual({ way, ...reference });
+  return { creates: reference.creates, parked: ends.ts === undefined };
+}
+
+describe('both engines: closures as values (version 5)', () => {
+  const TOP = [
+    'function one() {',
+    '  return "one"',
+    '}',
+    'function pickOne() {',
+    '  return one',
+    '}',
+    'function twice(n: <number>) {',
+    '  return n * 2',
+    '}',
+    'function callAll(fs: <() => <text>>[]) {',
+    '  return MAP(fs, (f) => f())',
+    '}',
+    'function run(h: <(n: <number>) => <number>>) {',
+    '  return h(20)',
+    '}',
+  ].join('\n');
+  const withTop = (body: string[]): string => program(body).replace('movement recap', `${TOP}\nmovement recap`);
+  const write = (fields: string): string => `  write graph-[:note]-> { payload: { ${fields} } }`;
+  const CASES: Record<string, { body: string[]; payload: unknown }> = {
+    listElements: { body: ['  k = 7', '  fs = [() => { return k }, () => { return k * 2 }]', '  r = MAP(fs, (f) => f())', write('r: r')], payload: { r: [7, 14] } },
+    listElementParks: {
+      body: ['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return 10 }]', '  r = MAP(fs, (f) => f())', write('r: r')],
+      payload: { r: [4, 10] },
+    },
+    namedList: { body: ['  a = () => { return 1 }', '  b = () => { return 2 }', '  fs = [a, b]', '  out = MAP(fs, (f) => f())', write('out: out')], payload: { out: [1, 2] } },
+    inlineListWithArgument: {
+      body: ['  k = 10', '  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })', write('out: out')],
+      payload: { out: [12, 20] },
+    },
+    namedFunctionMember: { body: ['  out = MAP([twice, twice], (f) => f(4))', write('out: out')], payload: { out: [8, 8] } },
+    memberReadWithAt: { body: ['  fs = [() => { return "first" }, () => { return "second" }]', '  g = AT(fs, 1)', '  x = g()', write('x: x')], payload: { x: 'second' } },
+    memberParksByReference: {
+      body: ['  k = 5', '  fs = [() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return k }]', '  out = MAP(fs, (f) => { return f() })', write('out: out')],
+      payload: { out: [6, 5] },
+    },
+    raceOverFilter: {
+      body: ['  all = [() => { return "a" }, () => {', '    await sleep(1h)', '    return "b"', '  }]', '  arms = FILTER(all, (f) => TRUE)', '  r = await race(arms)', write('r: r')],
+      payload: { r: ['a', null] },
+    },
+    mapReplacesParallel: {
+      body: ['  r = MAP([() => { return 1 }, () => {', '    await sleep(1h)', '    return "two"', '  }, () => 3], { concurrency: 3 }, (f) => f())', write('r: r, second: AT(r, 1)')],
+      payload: { r: [1, 'two', 3], second: 'two' },
+    },
+    everyArmWaiting: {
+      body: ['  k = 2', '  r = MAP([() => {', '    await sleep(1h)', '    return k', '  }, () => {', '    await sleep(2h)', '    return k * 10', '  }], { concurrency: 2 }, (f) => f())', write('r: r')],
+      payload: { r: [2, 20] },
+    },
+    closureFromParkedMember: {
+      body: ['  a = 3', '  fs = MAP([1, 2], (n) => {', '    await sleep(1h)', '    return () => { return a + n }', '  })', '  r = MAP(fs, (f) => f())', write('r: r')],
+      payload: { r: [4, 5] },
+    },
+    namedFunctionBound: { body: ['  g = one', '  x = g()', write('x: x')], payload: { x: 'one' } },
+    namedFunctionFromConcise: { body: ['  mk = () => one', '  h = mk()', '  x = h()', write('x: x')], payload: { x: 'one' } },
+    namedFunctionReturned: { body: ['  h = pickOne()', '  x = h()', write('x: x')], payload: { x: 'one' } },
+    ifOverClosures: { body: ['  a = () => "a"', '  c = TRUE', '  g = IF c THEN one ELSE a END', '  x = g()', write('x: x')], payload: { x: 'one' } },
+    coalesceOverClosures: { body: ['  a = () => "a"', '  g = COALESCE(one, a)', '  x = g()', write('x: x')], payload: { x: 'one' } },
+    listOfClosuresPassed: { body: ['  k = "b"', '  x = callAll([() => "a", () => k])', write('x: x')], payload: { x: ['a', 'b'] } },
+    closureInPlaceArgument: { body: ['  k = 2', '  x = run((n) => n + k)', write('x: x')], payload: { x: 22 } },
+    extraArgumentDropped: { body: ['  x = run(() => 5)', write('x: x')], payload: { x: 5 } },
+    dottedCall: {
+      body: ['  k = "!"', '  shout = (t: <text>) => "${UPPER(t)}${k}"', '  box = { g: shout }', '  a = box.g("hi")', '  b = LOWER(box.g("yo"))', write('a: a, b: b')],
+      payload: { a: 'HI!', b: 'yo!' },
+    },
+    awaitingArrowBody: { body: ['  g = () => await race([() => "first"])', '  r = g()', write('r: r')], payload: { r: ['first'] } },
+    raceSlotHoldingClosure: {
+      body: ['  r = await race([() => { return one }])', '  g = COALESCE(AT(r, 0), one)', '  x = g()', write('x: x')],
+      payload: { x: 'one' },
+    },
+  };
+  // Not yet mirrored on the Rust engine (map-parallel-review §5, main merge
+  // 15): admission refuses each with this reason, so the run fails cleanly
+  // rather than answering differently. Delete a case's entry when the Rust
+  // engine runs it; the test then holds it to the TypeScript's bytes.
+  const RUST_REFUSES: Record<string, string> = {
+    listElements: 'expression_closure',
+    listElementParks: 'expression_closure',
+    namedList: 'rvalue:construct',
+    inlineListWithArgument: 'expression_closure',
+    namedFunctionMember: 'function_call',
+    memberReadWithAt: 'expression_closure',
+    memberParksByReference: 'expression_closure',
+    raceOverFilter: 'expression_closure',
+    mapReplacesParallel: 'expression_closure',
+    everyArmWaiting: 'expression_closure',
+    closureFromParkedMember: 'rvalue:construct',
+    namedFunctionBound: 'function_call',
+    namedFunctionFromConcise: 'function_call',
+    namedFunctionReturned: 'function_call',
+    ifOverClosures: 'function_call',
+    coalesceOverClosures: 'function_call',
+    listOfClosuresPassed: 'rvalue:construct',
+    closureInPlaceArgument: 'function_call',
+    extraArgumentDropped: 'function_call',
+    dottedCall: 'traversal_terminal',
+    raceSlotHoldingClosure: 'function_call',
+    effectsOnly: 'expression_closure',
+  };
+  CASES.effectsOnly = {
+    body: ['  MAP([() => {', '    write graph-[:note]-> { body: "a" }', '  }, () => {', '    write graph-[:note]-> { body: "b" }', '  }], { concurrency: 2 }, (f) => f())', write('done: 1')],
+    payload: { done: 1 },
+  };
+  for (const [name, { body, payload }] of Object.entries(CASES)) {
+    const refused = RUST_REFUSES[name];
+    if (refused === undefined) {
+      it(`${name}: the same writes, and the same parks, on both engines`, async () => {
+        const { creates } = await acrossEngines(withTop(body));
+        expect(payloadOf(creates)).toEqual(payload);
+      }, 30_000);
+    } else {
+      it(`${name}: runs on the TypeScript engine; the Rust engine refuses it (${refused}), not yet mirrored`, async () => {
+        const parks = makeParkSink();
+        const ts = await onEngine('ts', () => start(withTop(body), parks));
+        const creates = ts.result.parked === true ? [...ts.kg.creates, ...(await resumeAll(withTop(body), parks)).kg.creates] : ts.kg.creates;
+        expect(payloadOf(creates)).toEqual(payload);
+        await expect(onEngine('rust', () => start(withTop(body), makeParkSink()))).rejects.toThrow(`(${refused})`);
+      }, 30_000);
+    }
+  }
 });
