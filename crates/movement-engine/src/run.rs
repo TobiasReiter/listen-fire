@@ -2901,6 +2901,28 @@ mod tests {
         assert_eq!(crate::park::resume_refusal(&park.args["state"]), None);
     }
 
+    /// An extraction call whose written `model` meets a run input that carries
+    /// no `models` list is declined `unreproduced` (README `extract_call_model`): the
+    /// TypeScript would ask the model registry, which this engine does not
+    /// hold. The call is refused before the model is asked anything, handed
+    /// back as `unreproduced`.
+    #[test]
+    fn an_extraction_call_with_a_model_and_no_model_list_is_declined_unreproduced() {
+        let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }\n}";
+        let host = plain_host(json!({ "text": "Acme raised." }));
+        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
+            ("ids", "mint") => json!({ "value": ["id-1"] }),
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
+            ("llm.client" | "llm.extractCall", _) => panic!("the model is never asked: {request:?}"),
+            _ => host(request),
+        });
+        // Nothing the host can see had happened (the call is the first effect),
+        // so the segment is handed back to the TypeScript engine as
+        // `unreproduced`, rather than ending the run in a marked failure.
+        assert_eq!(done, json!({ "declined": "unreproduced" }));
+        assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
+    }
+
     /// An extraction asks what the TypeScript asks, in its order: the
     /// `from` slot's read, one `ids.mint` for its text resource, then per
     /// region the cancel gate, the clock either side of the priced model
