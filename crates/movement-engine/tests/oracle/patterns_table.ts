@@ -376,7 +376,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'write_field_record',
     routes: 'refused',
-    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE straight into a field ends at the check since main's record walk (group G, 2026-10-12) (MOV_WRITE_FIELD_TYPE); since main's B14 (a call's value holds what its returns may hold: a closure's from version 3) so does one handed back by a closure called in the field (`body: f()`). No program here reaches the refusal now",
+    note: "a record reaching a system write's field (one typed json): needs the binding object as the TypeScript hands it to the adapter. The checker refuses a record it can see inside a field's value (forward merge 3: main's nested-record rule, the first two programs); a field read off a closure's record parameter bound to a built graph (`(r: <Co>) => { write … { body: r.name } }`) runs whole since chunk 7A Task 6b (admission reads the parameter as the checker types it: one record, its field reads values); a record through COALESCE straight into a field ends at the check since main's record walk (group G, 2026-10-12) (MOV_WRITE_FIELD_TYPE); since main's B14 (a call's value holds what its returns may hold: a closure's from version 3) so does one handed back by a closure called in the field (`body: f()`); since main's receipt typing (4a76f886) so do records a MAP of closures' arms return, held in a parallel receipt. No program here reaches the refusal now",
     programs: [
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { company: co } }', checks: false, routes: 'unreached' }),
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: "x", payload: { a: co, b: "x" } }', checks: false, routes: 'unreached' }),
@@ -385,7 +385,10 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  write crm-[:notes]-> { body: COALESCE(co, "x") }', checks: false, routes: 'unreached' }),
       // Arms a MAP builds: admission follows each arm's returns (PLAN-08A Task 2).
       (pick) => ({ body: `  arms = MAP([1, 2], (n) => {\n    return () => {\n      write crm-[:notes]-> { body: "arm \${n}" }\n      return n * ${pick([5, 7])}\n    }\n  })\n  r = await parallel(arms)\n  write crm-[:notes]-> { body: "x", payload: { r: r } }`, routes: 'whole' }),
-      () => ({ body: '  arms = MAP([1, 2], (n) => {\n    return () => {\n      co = write crm-[:companies]-> { name: "arm ${n}" }\n      return co\n    }\n  })\n  r = await parallel(arms)\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', routes: 'whole' }),
+      // Since main's receipt typing (a MAP of closures types the parallel
+      // receipt, 4a76f886) the checker refuses the written records reaching
+      // the json field (MOV_WRITE_FIELD_TYPE).
+      () => ({ body: '  arms = MAP([1, 2], (n) => {\n    return () => {\n      co = write crm-[:companies]-> { name: "arm ${n}" }\n      return co\n    }\n  })\n  r = await parallel(arms)\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', checks: false, routes: 'unreached' }),
     ],
   },
   {
