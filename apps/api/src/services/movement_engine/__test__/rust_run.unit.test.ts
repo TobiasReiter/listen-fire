@@ -791,11 +791,15 @@ describe('the run counts', () => {
     // `routed` counts every segment the engine started, its admission's
     // refusals among them; the refused ones are exactly `routed - admitted`,
     // and each is under one first reason.
-    expect(rustRunStats).toMatchObject({ routed: 4, admitted: 2, ranWhole: 2, endedAtCheck: 1, declined: {} });
+    expect(rustRunStats).toMatchObject({ routed: 2, admitted: 2, ranWhole: 2, endedAtCheck: 3, declined: {} });
     const refused = Object.values(rustRunStats.notAdmitted).reduce((a, b) => a + b, 0);
     expect(refused).toBe(rustRunStats.routed - rustRunStats.admitted);
-    expect(rustRunStats.notAdmitted).toEqual({ write_field_record: 1, within_compare: 1 });
-    expect(rustRunStats.allReasons).toEqual({ write_field_record: 2, within_compare: 1 });
+    // The two closure programs (`f = () => COALESCE(co, "x")` into a write
+    // field) once reached admission and were refused there; B14's checker
+    // (MOV_WRITE_FIELD_TYPE: the call may hold a record) now ends them at the
+    // check, so no run here is refused and the ended-at-check count is 3.
+    expect(rustRunStats.notAdmitted).toEqual({});
+    expect(rustRunStats.allReasons).toEqual({});
   });
 });
 

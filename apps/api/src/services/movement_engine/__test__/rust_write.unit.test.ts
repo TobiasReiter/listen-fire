@@ -628,10 +628,12 @@ describe('writes in the Rust engine', () => {
     ].join('\n');
     const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
     // The park holds the graph as the TypeScript engine holds it: `owner` an
-    // edge landing the handle, not a field.
+    // edge landing the handle, not a field. `co` and the edge are one write
+    // handle under two names, so the park numbers it once (B7): the edge
+    // refers to the number `co` holds.
     const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
     const g = state.scopeChain[1]?.bindings.g;
-    expect(g).toMatchObject({ kind: 'nodePosition', edges: { owner: { kind: 'landed', landings: [{ kind: 'handle' }] } } });
+    expect(g).toMatchObject({ kind: 'nodePosition', edges: { owner: { kind: 'landed', landings: [{ kind: 'handleRef', id: 0 }] } } });
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
@@ -1030,7 +1032,9 @@ describe('parks in the Rust engine', () => {
       const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
       const held = JSON.stringify(state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined));
       expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
-      expect(held).toContain('"kind":"handle"');
+      // `co` and the dict's entry are one handle under two names (B7): the
+      // entry refers to the number `co` holds.
+      expect(held).toContain('"kind":"handleRef"');
     }
   });
 
