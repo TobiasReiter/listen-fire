@@ -41,6 +41,7 @@ import {
   treeOfSlot,
 } from 'movement-lang';
 import type {
+  LanguageVersion,
   CallArg,
   CallPosition,
   CallReading,
@@ -135,20 +136,24 @@ const EXPRESSION_KIND_LABEL: Partial<Record<Expression['type'], string>> = {
  */
 export function listUnsupportedConstructs(
   source: string,
-  options: { resolveFile?: ResolveFile } = {},
+  options: { resolveFile?: ResolveFile; languageVersion?: LanguageVersion } = {},
 ): string[] {
+  // The program is read as the version it is pinned to says — a form a later
+  // version reads differently (`(v) => f(v)`, a concise call from 5) is
+  // scanned as what it means under the pin.
+  const languageVersion = options.languageVersion ?? CURRENT_LANGUAGE_VERSION;
   let program: Program;
   try {
-    program = parseProgram(source);
+    program = parseProgram(source, { languageVersion });
   } catch (e) {
     if (e instanceof MovementParseError) return [];
     throw e;
   }
-  const found = new InterpretabilityScan().scan(program);
+  const found = new InterpretabilityScan(languageVersion).scan(program);
   if (options.resolveFile) {
     const link = linkImports(program, options.resolveFile);
     for (const [path, file] of link.files) {
-      for (const construct of new InterpretabilityScan().scan(file.program)) {
+      for (const construct of new InterpretabilityScan(languageVersion).scan(file.program)) {
         const labelled = `${construct} (in "${path}")`;
         if (!found.includes(labelled)) found.push(labelled);
       }
@@ -158,6 +163,8 @@ export function listUnsupportedConstructs(
 }
 
 class InterpretabilityScan {
+  constructor(private readonly languageVersion: LanguageVersion) {}
+
   private readonly found: string[] = [];
   private readonly seen = new Set<string>();
   /** File-scope construction + shape names — a movement parameter must
@@ -541,7 +548,7 @@ class InterpretabilityScan {
   /** How a call reads once its callee is resolved, as the checker and the
    *  engine read it. Scanned at the version a program parses at here. */
   private reading(call: CallStatement, position: CallPosition): CallReading {
-    return readCall(call, (callee) => resolveCallee(callee, this.callScope, CURRENT_LANGUAGE_VERSION), position);
+    return readCall(call, (callee) => resolveCallee(callee, this.callScope, this.languageVersion), position);
   }
 
   /** A bound or returned call to a built-in, as the form it resolves to;
@@ -674,7 +681,7 @@ class InterpretabilityScan {
       hoistingMemberReads(tree, (call) =>
         runsAsCall(
           call,
-          (callee) => resolveCallee(callee, this.callScope, CURRENT_LANGUAGE_VERSION),
+          (callee) => resolveCallee(callee, this.callScope, this.languageVersion),
           // The file call scope binds only functions.
           () => true,
         ),
@@ -683,7 +690,7 @@ class InterpretabilityScan {
     if (calls.length === 0) return slot;
     for (const call of calls) {
       try {
-        this.scanValue(parseNestedCall(slot, call.at, CURRENT_LANGUAGE_VERSION));
+        this.scanValue(parseNestedCall(slot, call.at, this.languageVersion));
       } catch (e) {
         if (!(e instanceof MovementParseError)) throw e; // checker territory
       }

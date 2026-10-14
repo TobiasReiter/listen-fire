@@ -317,7 +317,11 @@ movement intake(m: <inbox-[:message]->>) {
   }
 }
 `;
-    expect(listUnsupportedConstructs(inner)).toEqual(['non-built-in function calls (DOMAIN_OF())']);
+    expect(listUnsupportedConstructs(inner, { languageVersion: 3 })).toEqual(['non-built-in function calls (DOMAIN_OF())']);
+    // From 5 a concise body that is one call is that call (`(v) => f(v)`), so
+    // the scan reads a call — whose unknown callee the checker refuses
+    // (MOV_FUNCTION_UNKNOWN), as it refuses one on every version.
+    expect(listUnsupportedConstructs(inner, { languageVersion: 5 })).toEqual([]);
   });
 
   it('a closure bound to a name is a function: its call nested in an expression runs (version 3)', () => {
