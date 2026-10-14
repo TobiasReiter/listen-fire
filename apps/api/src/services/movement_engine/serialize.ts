@@ -548,7 +548,7 @@ export interface ParkReader {
   /** Each numbered scope, as the ONE scope every closure that names it
    *  holds: the live scope a resume rebuilt from a chain copy, or one built
    *  from the scope's written copy when no chain the resume reads holds it. */
-  readonly scopes: Map<number, Promise<Environment>>;
+  readonly scopes: Map<number, Environment>;
   /** Every numbered scope's written copy anywhere in the state — a chain's,
    *  or a closure's `scope` — indexed before anything is read. */
   readonly scopeDescriptors: Map<number, { bindings: Record<string, BindingDescriptor>; parent?: ScopeLink }>;
@@ -776,6 +776,27 @@ function nodeNumbered(park: ParkReader, id: number): NodePosition {
  * holds it gets it back.
  */
 async function scopeOf(link: ScopeLink, ctx: RehydrationContext, park: ParkReader): Promise<Environment> {
+  const pending: Array<{ env: Environment; bindings: Record<string, BindingDescriptor> }> = [];
+  const env = await scopeShell(link, ctx, park, pending);
+  // Every shell on the chain is registered; only now are bindings read, so a
+  // closure that holds a scope still being built gets the registered shell.
+  // Nothing awaits a scope that is being built. Outermost first.
+  for (const { env: shell, bindings } of pending.reverse()) {
+    for (const [name, entry] of Object.entries(bindings)) {
+      shell.declare(name, await rehydrateInPark(entry, ctx, park));
+    }
+  }
+  return env;
+}
+
+/** A scope's shell — its parent link and an empty table — registered under
+ *  its number; its bindings are queued in `pending` for the caller to fill. */
+async function scopeShell(
+  link: ScopeLink,
+  ctx: RehydrationContext,
+  park: ParkReader,
+  pending: Array<{ env: Environment; bindings: Record<string, BindingDescriptor> }>,
+): Promise<Environment> {
   if (link.kind === 'file') {
     if (ctx.resolveFileScope === undefined) {
       throw new MovementEngineError('MOVENG_RUNTIME', 'resume: a parked closure holds a file scope, and this resume has no program to find it in');
@@ -788,22 +809,21 @@ async function scopeOf(link: ScopeLink, ctx: RehydrationContext, park: ParkReade
   if (written === undefined) {
     throw new MovementEngineError('MOVENG_RUNTIME', `the parked state refers to scope #${link.id} that it never wrote`);
   }
-  const made = (async () => {
-    const outer = written.parent !== undefined ? await scopeOf(written.parent, ctx, park) : undefined;
-    return outer !== undefined ? outer.child() : new Environment();
-  })();
-  park.scopes.set(link.id, made);
-  const env = await made;
-  for (const [name, entry] of Object.entries(written.bindings)) {
-    env.declare(name, await rehydrateInPark(entry, ctx, park));
-  }
+  const outer = written.parent !== undefined ? await scopeShell(written.parent, ctx, park, pending) : undefined;
+  // The registration follows the last await, so a concurrent reader cannot
+  // build the same number twice.
+  const again = park.scopes.get(link.id);
+  if (again !== undefined) return again;
+  const env = outer !== undefined ? outer.child() : new Environment();
+  park.scopes.set(link.id, env);
+  pending.push({ env, bindings: written.bindings });
   return env;
 }
 
 /** A chain copy the resume read into `env`, live: when it is numbered, the
  *  scope every closure naming that number holds. */
 export function registerLiveScope(park: ParkReader, scope: SerializedScope, env: Environment): void {
-  if (typeof scope.id === 'number' && !park.scopes.has(scope.id)) park.scopes.set(scope.id, Promise.resolve(env));
+  if (typeof scope.id === 'number' && !park.scopes.has(scope.id)) park.scopes.set(scope.id, env);
 }
 
 /**
