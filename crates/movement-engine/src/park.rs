@@ -770,20 +770,49 @@ pub(crate) fn id_of(value: Option<&Js>) -> Option<u64> {
 pub(crate) struct ParkReader {
     nodes: RefCell<Vec<(u64, Rc<RefCell<Node>>)>>,
     unfilled: RefCell<Vec<u64>>,
-    /// Each numbered handle's descriptor in the state, by its number: what
-    /// the handle is made from when a reference names it first.
+    /// Every numbered descriptor the WHOLE parked state carries, by its
+    /// number, indexed before anything is read (`handleDescriptors`,
+    /// `nodeDescriptors`): a reference is resolved from it whichever copy of
+    /// a scope (or frame, or journal) the reader walks, and in whatever order
+    /// the state's keys come back. The writer numbers a handle or node at its
+    /// FIRST sighting in its own walk order, which need not be a place the
+    /// reader walks at all.
     handle_descriptors: Vec<(u64, Js)>,
+    node_descriptors: Vec<(u64, Js)>,
     handles: RefCell<Vec<(u64, Rc<Handle>)>>,
     unfilled_handles: RefCell<Vec<u64>>,
 }
 
 impl ParkReader {
-    /// A reader of the park `state` was written as (a whole state, or one
-    /// descriptor stored on its own).
-    pub(crate) fn over(state: &Js) -> ParkReader {
-        let mut handle_descriptors = Vec::new();
-        numbered_handles(state, &mut handle_descriptors);
-        ParkReader { handle_descriptors, ..ParkReader::default() }
+    /// A reader of the park `state` was written as — a whole parked state
+    /// (`newParkReader(state)`).
+    pub(crate) fn over_state(state: &Js) -> ParkReader {
+        let mut park = ParkReader::default();
+        index_state(state, &mut park);
+        park
+    }
+
+    /// A reader of one descriptor stored on its own (`newParkReaderOf`).
+    pub(crate) fn over_descriptor(descriptor: &Js) -> ParkReader {
+        let mut park = ParkReader::default();
+        index_descriptor(descriptor, &mut park);
+        park
+    }
+
+    pub(crate) fn node(&self, id: u64) -> Option<Rc<RefCell<Node>>> {
+        self.nodes.borrow().iter().find(|(i, _)| *i == id).map(|(_, n)| n.clone())
+    }
+
+    pub(crate) fn node_descriptor(&self, id: u64) -> Option<Js> {
+        self.node_descriptors.iter().find(|(i, _)| *i == id).map(|(_, d)| d.clone())
+    }
+
+    pub(crate) fn node_unfilled(&self, id: u64) -> bool {
+        self.unfilled.borrow().contains(&id)
+    }
+
+    pub(crate) fn handle_unfilled(&self, id: u64) -> bool {
+        self.unfilled_handles.borrow().contains(&id)
     }
 
     pub(crate) fn handle(&self, id: u64) -> Option<Rc<Handle>> {
@@ -836,28 +865,118 @@ impl ParkReader {
     }
 }
 
-/// Every handle descriptor a state numbers (`id`), by its number: the
-/// descriptors of its scopes, frames, journals and exports, never a value's
-/// own data.
-fn numbered_handles(value: &Js, out: &mut Vec<(u64, Js)>) {
-    match value {
-        Js::Array(list) => list.items().iter().for_each(|item| numbered_handles(item, out)),
-        Js::Object(object) => match object.get("kind") {
-            Some(Js::String(kind)) if kind == "handle" => {
-                if let Some(id) = id_of(object.get("id")) {
-                    out.push((id, value.clone()));
-                }
-                if let Some(old) = object.get("old") {
-                    numbered_handles(old, out);
+/*
+ * The index follows each descriptor's STRUCTURE, the shapes the reader reads
+ * (serialize.ts `indexState` / `indexDescriptor`) — never a list of key
+ * names. A scope's `bindings`, a closure's `captured` and an edge map are
+ * keyed by the AUTHOR's names, so they are walked as maps of descriptors
+ * whatever the names are; a code-tree member (a closure's body, a walk's
+ * head, an arm's body) is skipped only on the descriptor that has it, by not
+ * being a member the walk visits.
+ */
+
+/// Every numbered handle and node descriptor anywhere in a parked state: its
+/// scopes, frames and journals.
+fn index_state(state: &Js, park: &mut ParkReader) {
+    index_scopes(at(state, "scopeChain"), park);
+    index_journal(at(state, "journal"), park);
+    for frame in &items(at(state, "frames")) {
+        // A run-time arm's `body` is code; its bindings ride on the chain.
+        if let Some("call" | "member") = text(at(frame, "kind")) {
+            index_scopes(at(frame, "scopeChain"), park);
+            index_journal(at(frame, "journal"), park);
+        }
+    }
+}
+
+fn index_scopes(chain: Option<&Js>, park: &mut ParkReader) {
+    for scope in &items(chain) {
+        index_map(at(scope, "bindings"), park);
+    }
+}
+
+fn index_journal(journal: Option<&Js>, park: &mut ParkReader) {
+    for event in &items(journal) {
+        match at(event, "value") {
+            None | Some(Js::Null) | Some(Js::Undefined) => {}
+            Some(value) => index_descriptor(value, park),
+        }
+    }
+}
+
+/// A map keyed by the author's names, every entry a descriptor.
+fn index_map(entries: Option<&Js>, park: &mut ParkReader) {
+    for (_, entry) in pairs(entries) {
+        index_descriptor(entry, park);
+    }
+}
+
+fn index_walk(walk: Option<&Js>, park: &mut ParkReader) {
+    // The walk's `head` and `mapping` are code.
+    if let Some(walk) = walk {
+        index_map(at(walk, "captured"), park);
+    }
+}
+
+fn index_value(value: &Js, park: &mut ParkReader) {
+    match text(at(value, "kind")) {
+        Some("record") => {
+            if let Some(binding) = at(value, "binding") {
+                index_descriptor(binding, park);
+            }
+        }
+        Some("list") => items(at(value, "of")).iter().for_each(|entry| index_value(entry, park)),
+        Some("map") => pairs(at(value, "of")).iter().for_each(|(_, entry)| index_value(entry, park)),
+        // `data` and `file`: data the engine held, numbering nothing.
+        _ => {}
+    }
+}
+
+fn index_descriptor(descriptor: &Js, park: &mut ParkReader) {
+    match text(at(descriptor, "kind")) {
+        Some("handle") => {
+            if let Some(id) = id_of(at(descriptor, "id"))
+                && !park.handle_descriptors.iter().any(|(i, _)| *i == id)
+            {
+                park.handle_descriptors.push((id, descriptor.clone()));
+            }
+            if let Some(old) = at(descriptor, "old") {
+                index_descriptor(old, park);
+            }
+        }
+        Some("nodePosition") => {
+            if let Some(id) = id_of(at(descriptor, "id"))
+                && !park.node_descriptors.iter().any(|(i, _)| *i == id)
+            {
+                park.node_descriptors.push((id, descriptor.clone()));
+            }
+            for (_, edge) in pairs(at(descriptor, "edges")) {
+                match text(at(edge, "kind")) {
+                    Some("landed") => items(at(edge, "landings")).iter().for_each(|landing| index_descriptor(landing, park)),
+                    Some("deferred") => index_walk(at(edge, "walk"), park),
+                    _ => {}
                 }
             }
-            Some(Js::String(kind)) if matches!(kind.as_form(), "value" | "data" | "file" | "callback" | "shapePosition" | "sourcePosition" | "resource" | "extractRoot" | "extractPosition" | "instance") => {}
-            _ => object
-                .entries()
-                .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "op" | "body" | "closure" | "head" | "mapping" | "fields" | "fieldProvenance" | "position" | "declaration"))
-                .for_each(|(_, v)| numbered_handles(v, out)),
-        },
+        }
+        Some("blockMeta") => {
+            for (_, landings) in pairs(at(descriptor, "edges")) {
+                items(Some(landings)).iter().for_each(|landing| index_descriptor(landing, park));
+            }
+        }
+        Some("positions") => items(at(descriptor, "landings")).iter().for_each(|landing| index_descriptor(landing, park)),
+        Some("tuple") => items(at(descriptor, "slots")).iter().for_each(|slot| index_descriptor(slot, park)),
+        // A closure's `closure` is code; its capture is a map of descriptors.
+        Some("closure") => index_map(at(descriptor, "captured"), park),
+        Some("recordValue") => {
+            if let Some(value) = at(descriptor, "value") {
+                index_value(value, park);
+            }
+        }
+        Some("lazyWalk") => index_walk(at(descriptor, "walk"), park),
+        // Nothing a park numbers: their payload is data or code, never a
+        // descriptor (`event`, `instance`, `handleRef`, `nodeRef`, the
+        // extraction and source positions, `resource`, `value`, `callback`,
+        // the code refs, `opaque`).
         _ => {}
     }
 }

@@ -504,3 +504,102 @@ describe('a parked state neither engine can rebuild is refused loudly, alike', (
     await refusedAlike(parkedOn('h0 = 5'), state, "resume: 'h0' parked as a file-level function, and the re-parsed program binds it to something else");
   });
 });
+
+// R1 (main's B7 regression): the movement scope rides on BOTH the leaf's chain
+// and the frame of a call the park is inside. The writer walks the leaf's
+// chain first, so a handle (or node) held there is written in full in the
+// leaf's copy and as a reference in the frame's, and the reader rebuilds the
+// movement scope from the frame's: a reference is read before its descriptor.
+// Each reader indexes every numbered descriptor in the whole state by the
+// descriptor's STRUCTURE first, so a variable named like a code-tree member
+// of a descriptor (`body`, `position`, `fields`, …) resumes too.
+describe('a reference read before its descriptor, and names like a descriptor member, on both engines (R1)', () => {
+  const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
+  const names = ['a', 'op', 'body', 'closure', 'head', 'mapping', 'fields', 'fieldProvenance', 'position', 'declaration'];
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    for (const name of names) {
+      it(`version ${languageVersion}: a handle named '${name}', parked inside a closure's call`, async () => {
+        const { state, resumed } = await parkAndResume({
+          languageVersion,
+          source: movement(`  ${name} = write crm-[:companies]-> { name: "one" }`, ...closure, '  y = f("q")', `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`),
+        });
+        expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain('"kind":"handleRef"');
+        expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');
+      });
+
+      it(`version ${languageVersion}: a run-built node named '${name}', parked inside a closure's call`, async () => {
+        const { state, resumed } = await parkAndResume({
+          languageVersion,
+          source: movement(`  ${name} = node { name: "one" }`, ...closure, '  y = f("q")', `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`),
+        });
+        expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain('"kind":"nodeRef"');
+        expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');
+      });
+    }
+
+    it(`version ${languageVersion}: a second name and a closure's capture of a handle bound as 'body' come back as one handle`, async () => {
+      const { resumed } = await parkAndResume({
+        languageVersion,
+        source: movement(
+          '  body = write crm-[:companies]-> { name: "one" }',
+          '  b = body',
+          '  f = (x: <text>) => {',
+          '    await sleep(1h)',
+          '    return CONCAT(x, "/", b.name)',
+          '  }',
+          '  y = f("q")',
+          '  write body { name: "two" }',
+          '  write crm-[:notes]-> { body: CONCAT(y, "/", b.name) }',
+        ),
+      });
+      expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one/two"}');
+    });
+
+    it(`version ${languageVersion}: a handle's record before its write, read through a reference first`, async () => {
+      const { resumed } = await parkAndResume({
+        languageVersion,
+        source: movement(
+          '  a = write crm-[:companies]-> { name: "one" }',
+          '  write a { name: "two" }',
+          ...closure,
+          '  y = f("q")',
+          '  o = FIRST(a-[:@old]->)',
+          '  write crm-[:notes]-> { body: CONCAT(y, "/", o.name, "/", a.name) }',
+        ),
+      });
+      expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one/two"}');
+    });
+  }
+});
+
+// B16: a `parallel` receipt's slot holding the record an arm handed back. From
+// version 5 `AT(r, i)` reads that record, as it does off a list literal; before
+// 5 it read null, and a program pinned there still does.
+describe("a combinator receipt's record slot, on both engines (B16)", () => {
+  const arms = (park: boolean) => [
+    '  r = await parallel([',
+    '    () => {',
+    '      a = write crm-[:companies]-> { name: "arm 0" }',
+    ...(park ? ['      await sleep(1h)'] : []),
+    '      return a',
+    '    },',
+    '    () => 2',
+    '  ])',
+    '  h = AT(r, 0)',
+    '  write crm-[:notes]-> { body: CONCAT(COALESCE(AT(r, 0).name, "none"), "/", COALESCE(h.name, "none"), "/", IF AT(r, 0) == null THEN "missing" ELSE "held" END, "/", AT(r, 1)) }',
+  ];
+  const expected = { 4: '{"body":"none/none/missing/2"}', 5: '{"body":"arm 0/arm 0/held/2"}' } as const;
+
+  for (const languageVersion of [4, 5] as const) {
+    it(`version ${languageVersion}, no park`, async () => {
+      const { ts } = await both({ languageVersion, source: movement(...arms(false)) });
+      expect(JSON.stringify(ts.calls)).toContain(expected[languageVersion]);
+    });
+
+    it(`version ${languageVersion}, the arm parked before its return`, async () => {
+      const { resumed } = await parkAndResume({ languageVersion, source: movement(...arms(true)) });
+      expect(JSON.stringify(resumed.calls)).toContain(expected[languageVersion]);
+    });
+  }
+});

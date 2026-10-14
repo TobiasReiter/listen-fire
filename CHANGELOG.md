@@ -534,6 +534,12 @@ guide](docs/language/dancing-wren-migration.md).
   write handle(s) #0 that it never wrote", because the resume read the movement's own names from
   a copy that only pointed at the record. The resume now finds each record wherever the parked
   state wrote it. Every language version; a parked state written before is unchanged and resumes.
+  `MOVEMENT_ENGINE=rust` resumes it the same way, and also resumes one whose name matches a part of
+  the parked state's own layout (a record named `body`, `position` or `fields`, say).
+- `MOVEMENT_ENGINE=rust` reads a `parallel` / `race` receipt's record slot as the TypeScript engine
+  does (the record from language version 5, null before), and runs whole a value that may be a
+  record or a value handed to a record parameter under versions 1 to 4 (`position_arg_record` no
+  longer appears for it), ending as the TypeScript engine does.
 - Two names for one written record stay one across a wait (`b = a`, `b = write a { … }`, or a
   closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
   leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that

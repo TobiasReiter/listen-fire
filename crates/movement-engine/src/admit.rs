@@ -382,6 +382,7 @@ fn admit_file<'p>(
     }
     let none = BTreeSet::new();
     let no_closures = BTreeMap::new();
+    let no_either = BTreeMap::new();
     // The file's node declarations: its own, and those it imports from a
     // library.
     let shapes: BTreeSet<String> = program
@@ -423,6 +424,7 @@ fn admit_file<'p>(
                 unknown_calls: &[],
                 language_version,
                 value_holders: &callees.file_holders,
+                either_values: &no_either,
                 record_nodes: &none,
                 closure_holders: &no_closures,
                 call_holders: &[],
@@ -465,6 +467,7 @@ fn admit_file<'p>(
         unknown_calls: &[],
         language_version,
         value_holders: &callees.file_holders,
+        either_values: &no_either,
         record_nodes: &none,
         closure_holders: &no_closures,
         call_holders: &[],
@@ -536,6 +539,7 @@ fn admit_file<'p>(
             unknown_calls: &bound.unknown_calls,
             language_version,
             value_holders: &value_holders,
+            either_values: &bound.either_values,
             record_nodes: &bound.record_nodes,
             closure_holders: &closure_holders,
             call_holders: &bound.call_holders,
@@ -1198,6 +1202,11 @@ struct Bound<'c> {
     /// What each value the body binds holds, as far as a record goes: the
     /// widest of its bindings.
     value_holders: BTreeMap<String, Holder>,
+    /// The values bound only to a COALESCE or an IF that hands back a
+    /// record or data (`either_holder`), each binding's text: a maybe-record
+    /// a position parameter takes before version 5 (B15). `None` once any
+    /// binding of the name is something else.
+    either_values: BTreeMap<String, Option<Vec<String>>>,
     /// What each collection op's parameter holds: a member of its source.
     param_holders: BTreeMap<String, Holder>,
     /// The parameters that take a value the checker types as never a record.
@@ -1458,6 +1467,16 @@ impl<'c> Bound<'c> {
                         let holder = if matches!(assign.value, RValue::Block { .. }) { Holder::Free } else { self.rvalue_holder(&assign.value) };
                         let joined = self.value_holders.get(&assign.name).map_or(holder, |h| h.join(holder));
                         self.value_holders.insert(assign.name.clone(), joined);
+                        let either = self.either_text(&assign.value).filter(|raw| lowered(raw).is_ok_and(|e| either_holder(&e, &|name| self.holder(name)).is_some())).map(String::from);
+                        let seen = self.either_values.entry(assign.name.clone()).or_insert_with(|| Some(Vec::new()));
+                        match either {
+                            Some(raw) => {
+                                if let Some(raws) = seen {
+                                    raws.push(raw);
+                                }
+                            }
+                            None => *seen = None,
+                        }
                     }
                     let arms = self.rvalue_collection(&assign.value).and_then(|op| self.built_arms_holder(&op));
                     self.built_arms.entry(assign.name.clone()).or_default().push(arms);
@@ -1961,7 +1980,38 @@ impl<'c> Bound<'c> {
     fn returned_values_holder(&self, body: &[Statement]) -> Holder {
         let mut returns = Vec::new();
         returns_of(body, &mut returns);
-        returns.into_iter().map(|value| self.rvalue_holder(value)).fold(Holder::Free, returned_join)
+        returns.into_iter().map(|value| self.returned_value_holder(value)).fold(Holder::Free, returned_join)
+    }
+
+    /// One `return`'s value, as `returned_values_holder` widens it: a
+    /// COALESCE or an IF handing back a record or data is one record or
+    /// data (`either_holder`), as two returns of each are.
+    fn returned_value_holder(&self, value: &RValue) -> Holder {
+        if let Some(raw) = self.either_text(value)
+            && let Some(held) = lowered(raw).ok().and_then(|e| either_holder(&e, &|name| self.holder(name)))
+        {
+            return held;
+        }
+        self.rvalue_holder(value)
+    }
+
+    /// A right-hand side's expression text where it is one with no nested
+    /// call of a function, a closure or a plugin: an expression, or a
+    /// built-in called (`COALESCE(…)`, staged as a call).
+    fn either_text<'v>(&self, value: &'v RValue) -> Option<&'v str> {
+        let raw = match value {
+            RValue::Expr { expr } => &expr.raw,
+            RValue::Call { call } if self.callee(&call.callee).is_none() && !self.calls_closure(&call.callee) && self.plugin_kind(&call.callee).is_none() => &call.expression.as_ref()?.raw,
+            _ => return None,
+        };
+        (!self.has_nested_call(raw)).then_some(raw.as_str())
+    }
+
+    /// Whether a slot's text holds a nested call (crate::nested) of a
+    /// function, a closure or a plugin: what it hands back is not read off
+    /// the text itself.
+    fn has_nested_call(&self, raw: &str) -> bool {
+        nested_rewrite(raw, &|name| self.callee(name).is_some() || self.calls_closure(name) || self.plugin_kind(name).is_some(), &|_, _| Holder::Other, &|name| self.holder(name)).is_some()
     }
 
     /// What each `return` of a body hands back, widened: free of records,
@@ -2295,6 +2345,9 @@ struct Names<'n> {
     /// What each value (of `values`) holds, as far as a record goes; one
     /// not here may hold anything.
     value_holders: &'n BTreeMap<String, Holder>,
+    /// (`Bound::either_values`): the maybe-record values, each binding's
+    /// text; a parameter of a body walked inside shadows its name.
+    either_values: &'n BTreeMap<String, Option<Vec<String>>>,
     /// The nodes whose literal holds a record in a field (or may).
     record_nodes: &'n BTreeSet<String>,
     /// What a call of each closure bound to a name hands back, as far as a
@@ -2496,8 +2549,10 @@ impl Names<'_> {
             without(self.graphs),
         );
         let mut value_holders = self.value_holders.clone();
+        let mut either_values = self.either_values.clone();
         for param in &params {
             value_holders.insert(param.clone(), held);
+            either_values.remove(param);
         }
         // A parameter typed by a field type (`<text>`) takes a value no
         // record is (the checker holds the argument to it); one typed by a
@@ -2515,6 +2570,7 @@ impl Names<'_> {
         }
         let inner = Names {
             value_holders: &value_holders,
+            either_values: &either_values,
             values: &values,
             events: &events,
             handles: &handles,
@@ -2676,16 +2732,50 @@ impl Names<'_> {
     /// a call returned, to what the callee's returns hold).
     fn clean_record(&self, slot: &ExprSlot) -> bool {
         if !matches!(self.text_holder(&slot.raw), Holder::Free | Holder::Record) {
-            return false;
+            // B15: a value that may be a record and may be data (`COALESCE(co,
+            // "x")`, an IF of the two, a name bound to one). Before version 5
+            // the checker passes it, and the run binds the record, or fails
+            // passing the data (`evaluateCallArg`), alike on both engines;
+            // from 5 the checker refuses it.
+            return self.nested_text(&slot.raw).is_none() && lowered(&slot.raw).is_ok_and(|expr| self.either_clean(&expr, 0));
         }
         if self.record_nodes.is_empty() {
             return true;
         }
+        lowered(&slot.raw).is_ok_and(|expr| self.system_record(&expr))
+    }
+
+    /// A bare name of a record known to hold none in a field: a system's, an
+    /// extraction's, the event.
+    fn system_record(&self, expr: &Expression) -> bool {
         matches!(
-            lowered(&slot.raw),
-            Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name })
-                if self.handles.contains(&name) || self.instances.contains(&name) || self.extracts.contains(&name) || self.events.contains(&name)
+            expr,
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name }
+                if self.handles.contains(name) || self.instances.contains(name) || self.extracts.contains(name) || self.events.contains(name)
         )
+    }
+
+    /// Whether a maybe-record (`either_holder`) hands a position parameter
+    /// only data or a record `clean_record` takes: each operand it may hand
+    /// back, through the names bound to one (`either_values`).
+    fn either_clean(&self, expr: &Expression, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let operand = |operand: &Expression| match value_holder(operand, &|name| self.holder(name)) {
+            Holder::Free => true,
+            Holder::Record => self.record_nodes.is_empty() || self.system_record(operand),
+            _ => self.either_clean(operand, depth + 1),
+        };
+        match expr {
+            Expression::Conditional { then, else_, .. } => operand(then) && operand(else_),
+            Expression::Function { fn_, args } if fn_ == "coalesce" => args.iter().all(operand),
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name } if self.values.contains(name) => match self.either_values.get(name) {
+                Some(Some(raws)) if !raws.is_empty() => raws.iter().all(|raw| lowered(raw).is_ok_and(|bound| self.either_clean(&bound, depth + 1))),
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// Whether a node literal handed to a position parameter holds no record
@@ -2999,13 +3089,16 @@ impl Names<'_> {
                 // A member of a source free of records is free of them; a
                 // REDUCE's accumulator is what the function returned.
                 let mut value_holders = self.value_holders.clone();
+                let mut either_values = self.either_values.clone();
                 for param in &params {
                     value_holders.remove(param);
+                    either_values.remove(param);
                 }
                 let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
                 value_holders.extend(closure.params.iter().enumerate().map(|(index, p)| (p.name.clone(), param_holder(op.op, index, member))));
                 let member = Names {
                     value_holders: &value_holders,
+                    either_values: &either_values,
                     values: &values,
                     events: &events,
                     handles: &handles,
@@ -4178,6 +4271,25 @@ fn value_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Holder {
         return Holder::List;
     }
     map_depth(expr, holder).map_or(Holder::Other, |(depth, lists)| Holder::Map { depth, lists })
+}
+
+/// What a COALESCE or an IF hands back where each operand it may hand back
+/// is free of records or one record whose fields hold none: such a record or
+/// data, widened as `returned_join` widens two returns. The checker types it
+/// the union of the two (B15). `None` for any other expression.
+fn either_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Option<Holder> {
+    let operands: Vec<&Expression> = match expr {
+        Expression::Conditional { then, else_, .. } => vec![then.as_ref(), else_.as_ref()],
+        Expression::Function { fn_, args } if fn_ == "coalesce" => args.iter().collect(),
+        _ => return None,
+    };
+    operands
+        .into_iter()
+        .map(|operand| either_holder(operand, holder).unwrap_or_else(|| value_holder(operand, holder)))
+        .try_fold(Holder::Free, |held, one| match returned_join(held, one) {
+            joined @ (Holder::Free | Holder::Record) => Some(joined),
+            _ => None,
+        })
 }
 
 /// How many keys deep a map literal holds a record (`{ k: co }` is 1), when
@@ -5366,5 +5478,44 @@ mod tests {
             let reasons = refusals(&program, &reachable(&program, Some("m"), 3), picked, 3, &Plugins(None), &libraries).reasons;
             assert_eq!(reasons, Vec::<String>::new(), "{call}");
         }
+    }
+
+    /// B15: a value that may be a record and may be data (a COALESCE or an
+    /// IF of the two, a name bound to one, a closure's or a function's call
+    /// handing one back) handed to a position parameter. Before version 5
+    /// the checker passes it and the run binds the record, or fails passing
+    /// the data, as the TypeScript does: admitted. A record operand is still
+    /// held to holding none in a field.
+    #[test]
+    fn admits_a_maybe_record_handed_to_a_position_parameter() {
+        let hp = "movement hp(r: <crm-[:company]->>) {\n  write crm-[:notes]-> { body: r.name }\n}\n";
+        let f = "function f() {\n  a = write crm-[:companies]-> { name: \"A\" }\n  return COALESCE(a, \"x\")\n}\nnode Co {\n  name: <text>\n}\n";
+        let reasons = |body: &str| {
+            let source = format!("{PRELUDE}{hp}{f}movement m(msg: <inbox-[:message]->>) {{\n  org = write crm-[:companies]-> {{ name: \"A\" }}\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, 4, false).expect("the test's program parses");
+            let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+            let entry = declared.iter().copied().find(|m| m.name == "m");
+            refusals(&program, &reachable(&program, Some("m"), 4), entry, 4, &Plugins(None), &Libraries::default()).reasons
+        };
+        for body in [
+            "  v = COALESCE(org, \"x\")\n  hp(r: v)",
+            "  hp(r: COALESCE(org, \"x\"))",
+            "  hp(r: COALESCE(org, 3))",
+            "  hp(r: COALESCE(org, NULL))",
+            "  hp(r: IF msg.`subject` = \"a\" THEN org ELSE \"x\" END)",
+            "  c = () => COALESCE(org, \"x\")\n  hp(r: c())",
+            "  c = () => COALESCE(org, \"x\")\n  w = c()\n  hp(r: w)",
+            "  hp(r: f())",
+            "  w = f()\n  hp(r: w)",
+            "  n = node { name: \"q\" }\n  hp(r: COALESCE(org, \"x\"))",
+        ] {
+            assert_eq!(reasons(body), Vec::<String>::new(), "{body}");
+        }
+        // A node of the body's that holds a record in a field, as an operand.
+        let dirty = "  x = graph<Co> { name: COALESCE(org, \"x\") }";
+        assert_eq!(reasons(&format!("{dirty}\n  hp(r: IF msg.`subject` = \"a\" THEN x ELSE \"x\" END)")), vec!["position_arg_record".to_string()]);
+        assert_eq!(reasons(&format!("{dirty}\n  v = COALESCE(x, \"x\")\n  hp(r: v)")), vec!["position_arg_record".to_string()]);
+        // A name bound to a maybe-record and to anything else is not one.
+        assert!(reasons("  v = COALESCE(org, \"x\")\n  v = { k: org }\n  hp(r: v)").contains(&"position_arg_record".to_string()));
     }
 }

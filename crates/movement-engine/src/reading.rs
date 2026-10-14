@@ -99,14 +99,17 @@ impl Run<'_> {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: Js::array(landings.iter().cloned().map(record::held).collect()), prov });
         }
-        // The receipt read as a plain list: its slots' values, in order, a
-        // slot holding a record null (`slotValue`).
+        // The receipt read as a plain list: its slots, in order. From
+        // version 5 a slot holding ONE record reads as that record, as a
+        // list literal's member does; before 5 it read null (`slotValue`).
         if let Binding::Tuple(slots) = &binding {
             let prov = origins(&binding)?;
+            let records_as_themselves = self.version() >= 5;
             let values = slots
                 .iter()
                 .map(|slot| match slot {
                     Binding::Value(value) => value.value.clone(),
+                    slot if records_as_themselves && record::is_one_record(slot) => record::held(slot.clone()),
                     _ => Js::Null,
                 })
                 .collect();

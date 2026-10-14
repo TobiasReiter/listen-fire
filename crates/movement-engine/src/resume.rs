@@ -191,7 +191,7 @@ impl Run<'_> {
         let mut chains: Vec<Vec<Js>> = frames.iter().filter(|f| text(at(f, "kind")) != Some("arm")).map(|f| items(at(f, "scopeChain"))).collect();
         chains.push(items(at(state, "scopeChain")));
         // The whole state was written as one park, so it is read as one.
-        let park = ParkReader::over(state);
+        let park = ParkReader::over_state(state);
         let mut segment = 0;
         let mut next_frame = 0;
         let mut take_frame = || -> Result<Js, Stop> {
@@ -892,7 +892,7 @@ impl Run<'_> {
 
     /// A descriptor stored on its own, its own park.
     pub(crate) async fn rehydrate_alone(&self, descriptor: &Js) -> Result<Binding, Stop> {
-        let park = ParkReader::over(descriptor);
+        let park = ParkReader::over_descriptor(descriptor);
         let binding = self.rehydrate(descriptor, &park).await?;
         park.assert_read().map_err(runtime)?;
         Ok(binding)
@@ -921,9 +921,13 @@ impl Run<'_> {
                 Some("event") => Binding::Event,
                 Some("handle") => {
                     // A numbered one is the ONE handle every `handleRef` to it
-                    // reads as, filled in place here.
+                    // reads as, filled in place here — or read already,
+                    // through a reference that named it first.
                     let handle = match id_of(at(descriptor, "id")) {
                         Some(id) => {
+                            if let Some(read) = park.handle(id).filter(|_| !park.handle_unfilled(id)) {
+                                return Ok(Binding::Handle(read));
+                            }
                             let handle = self.handle_numbered(id, park)?;
                             park.handle_filled(id);
                             handle
@@ -957,8 +961,30 @@ impl Run<'_> {
                     };
                     Binding::Landed(Rc::new(Landed::new(position, properties, read)))
                 }
-                Some("handleRef") => Binding::Handle(self.handle_numbered(id_of(at(descriptor, "id")).ok_or_else(|| malformed("a handleRef without an id"))?, park)?),
-                Some("nodeRef") => Binding::Node(park.numbered(id_of(at(descriptor, "id")).ok_or_else(|| malformed("a nodeRef without an id"))?)),
+                // Named before its own descriptor was read: read it now,
+                // whole (its record before included), from wherever in the
+                // state it was written. A number no descriptor carries is a
+                // reference into nothing, which `assertParkRead` refuses.
+                Some("handleRef") => {
+                    let id = id_of(at(descriptor, "id")).ok_or_else(|| malformed("a handleRef without an id"))?;
+                    match park.handle(id) {
+                        Some(handle) => Binding::Handle(handle),
+                        None => match park.handle_descriptor(id) {
+                            Some(written) => self.rehydrate(&written, park).await?,
+                            None => Binding::Handle(self.handle_numbered(id, park)?),
+                        },
+                    }
+                }
+                Some("nodeRef") => {
+                    let id = id_of(at(descriptor, "id")).ok_or_else(|| malformed("a nodeRef without an id"))?;
+                    match park.node(id) {
+                        Some(node) => Binding::Node(node),
+                        None => match park.node_descriptor(id) {
+                            Some(written) => self.rehydrate(&written, park).await?,
+                            None => Binding::Node(park.numbered(id)),
+                        },
+                    }
+                }
                 Some("nodePosition") => Binding::Node(self.rehydrate_node(descriptor, park).await?),
                 Some("lazyWalk") => Binding::LazyWalk(self.rehydrate_walk(at(descriptor, "walk").unwrap_or(&Js::Undefined), park).await?),
                 Some("value") => {
@@ -1094,6 +1120,10 @@ impl Run<'_> {
     /// may lead back to it), filled in place.
     async fn rehydrate_node(&self, descriptor: &Js, park: &ParkReader) -> Result<Rc<RefCell<Node>>, Stop> {
         let node = match id_of(at(descriptor, "id")) {
+            // Read already — through a reference that named it first.
+            Some(id) if park.node(id).is_some() && !park.node_unfilled(id) => return Ok(park.numbered(id)),
+            // Registered (and so reachable by its references) before its
+            // edges are read, which is what lets an edge lead back to it.
             Some(id) => {
                 let node = park.numbered(id);
                 park.filled(id);

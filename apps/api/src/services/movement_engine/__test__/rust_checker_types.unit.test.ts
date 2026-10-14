@@ -415,3 +415,69 @@ describe("admission reads the checker's types, on both engines", () => {
     });
   });
 });
+
+// B15: a value that may be a record and may be data, handed to a parameter
+// that takes a record position. Before version 5 the checker passes it, and
+// the TypeScript engine binds the record, or fails passing the data
+// (`evaluateCallArg`); the Rust engine runs it whole and ends alike, for each
+// member the value turns out to be. From version 5 the checker refuses it
+// (MOV_CALL_ARG_MAYBE_RECORD) on both engines.
+describe('a maybe-record handed to a position parameter (B15)', () => {
+  const HP = ['movement hp(r: <crm-[:company]->>) {', '  write crm-[:notes]-> { body: r.name }', '}'];
+  /** The value: the record where the subject is `Acme`, else `other`. */
+  const either = (subject: string, other: string) => `IF msg.\`subject\` = "${subject}" THEN org ELSE ${other} END`;
+  const shapes = (subject: string, other: string): Array<[string, string]> => [
+    ['written in place', withHelpers(HP, '  org = write crm-[:companies]-> { name: "Org" }', `  hp(r: ${either(subject, other)})`)],
+    ['bound to a name', withHelpers(HP, '  org = write crm-[:companies]-> { name: "Org" }', `  v = ${either(subject, other)}`, '  hp(r: v)')],
+    ['through COALESCE', withHelpers(HP, '  org = write crm-[:companies]-> { name: "Org" }', `  hp(r: COALESCE(${either(subject, 'NULL')}, ${other}))`)],
+    ['a closure handing it back, called in place', withHelpers(HP, '  org = write crm-[:companies]-> { name: "Org" }', `  c = () => ${either(subject, other)}`, '  hp(r: c())')],
+    ['a closure handing it back, bound', withHelpers(HP, '  org = write crm-[:companies]-> { name: "Org" }', `  c = () => ${either(subject, other)}`, '  w = c()', '  hp(r: w)')],
+  ];
+
+  /** Runs whole on Rust under version 4, ending as the TypeScript does. */
+  async function sameOnBoth(source: string) {
+    const ts = await runOn('ts', source, 4);
+    expect(ts.error ?? '').not.toContain('MOVENG_CHECK');
+    resetRustEvalStats();
+    resetRustRunStats();
+    const rust = await runOn('rust', source, 4);
+    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, notAdmitted: {}, declined: {} });
+    expect(seen(rust)).toEqual(seen(ts));
+    return ts;
+  }
+
+  for (const [member, subject, other] of [
+    ['the record', 'Acme', '"x"'],
+    ['text', 'nope', '"x"'],
+    ['a number', 'nope', '3'],
+    ['null', 'nope', 'NULL'],
+  ] as const) {
+    it.each(shapes(subject, other))(`version 4, the value is ${member}: %s`, async (_shape, source) => {
+      const ts = await sameOnBoth(source);
+      if (member === 'the record') expect(ts.writes).toContainEqual(['create', { body: 'Org' }]);
+    });
+  }
+
+  it('version 4, a declared function handing it back', async () => {
+    for (const subject of ['Acme', 'nope']) {
+      const fn = [
+        'function f(s: <text>) {',
+        '  a = write crm-[:companies]-> { name: "Fn" }',
+        `  return IF s = "${subject}" THEN a ELSE "x" END`,
+        '}',
+      ];
+      await sameOnBoth(withHelpers([...HP, ...fn], '  hp(r: f(s: msg.`subject`))'));
+      await sameOnBoth(withHelpers([...HP, ...fn], '  w = f(s: msg.`subject`)', '  hp(r: w)'));
+    }
+  });
+
+  it('version 5: the checker refuses it, on both engines', async () => {
+    const source = shapes('Acme', '"x"')[1]![1];
+    for (const engine of ['ts', 'rust'] as const) {
+      resetRustRunStats();
+      const outcome = await runOn(engine, source, 5);
+      expect(outcome.error ?? '').toContain('MOV_CALL_ARG_MAYBE_RECORD');
+      expect(outcome.writes).toEqual([]);
+    }
+  });
+});
