@@ -489,6 +489,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- `MOVEMENT_ENGINE=rust`: a file bound to a name such as `fields`, `body`, `head`, `position`, `op`,
+  `mapping`, `closure`, `params`, `origin` or `handle` is a file again after a park and resume
+  (before, it came back as a dict and `READ` of it failed). The host now finds a parked state's
+  files by the park's structure, never by a member's name, so data shaped like a file (a JSON field,
+  an adapter's answer) is never revived as one, whatever key it sits under.
 - A graph literal spreading the event (`graph { ...msg }`) or a member of a record (`graph<S> {
   ...co.meta }`, `...msg.meta`) passed its check and then failed every run (MOVENG_UNSUPPORTED for
   the event, MOVENG_RUNTIME for a record's member). The event is now copied as any record is, and a

@@ -60,7 +60,7 @@ import {
   RunAborted,
   RustShimError,
   WireOut,
-  filesInParkState,
+  filesInBranchExports,
   isCallbackParam,
   schemaFieldTypeOf,
   optionalString,
@@ -508,7 +508,7 @@ const ROUTES: Record<string, Route> = {
       segmentId: segmentOf(request),
     });
     // A branch's exports are parked state: its files the host's to make.
-    const value = wire.value(filesInParkState(rows));
+    const value = wire.value(filesInBranchExports(rows));
     if (value === REFUSED) throw new RustShimError('park.sink.collectBranchExports answered exports the eval wire cannot carry as themselves');
     return new Plain(value);
   },

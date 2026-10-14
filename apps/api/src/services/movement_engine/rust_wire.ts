@@ -3,7 +3,25 @@
 // (crates/movement-engine/src/env.rs says the format), the plain-JSON check,
 // and the shim's own faults.
 
-import { fileHandle, fileValueOf, isCallbackParamType, isFileValue, isPlainObject, type CallbackParamSpec, type FileValue } from 'engine-contracts';
+import {
+  fileHandle,
+  fileValueOf,
+  isCallbackParamType,
+  isFileValue,
+  isPlainObject,
+  type BindingDescriptor,
+  type CallbackParamSpec,
+  type DeferredWalkDescriptor,
+  type ExtractEmissionDescriptor,
+  type FileFields,
+  type FileValue,
+  type NodeEdgeDescriptor,
+  type ParkedScopeState,
+  type SerializedCallEvent,
+  type SerializedFrame,
+  type SerializedScope,
+  type ValueDescriptor,
+} from 'engine-contracts';
 import type { SchemaFieldType } from 'movement-lang';
 import { neverAsAny } from '../../lib/utils/types';
 import { binding, type Binding } from './expression';
@@ -476,38 +494,208 @@ export function schemaFieldTypeOf(value: unknown): SchemaFieldType | undefined {
   }
 }
 
-/** Members of a park descriptor that hold data, which no walk reads into.
- *  A name list, not a walk typed per descriptor kind: a future descriptor
- *  whose new member holds data, left off this list, is walked into, and a
- *  `{ kind: 'file', file }`-shaped object in that data would be made a file
- *  (a file revived from data). Each new descriptor member is added here, or
- *  the walk is typed per kind (the README's chunk 8 list). */
-const PARKED_DATA_MEMBERS: ReadonlySet<string> = new Set([
-  'fields', 'fieldProvenance', 'provenance', 'position', 'handle', 'op', 'body', 'closure', 'head', 'mapping', 'params', 'edgeProperties', 'origin',
-]);
+/*
+ * A parked state's files, made host-side so the engine is handed each one's
+ * opaque handle and never its descriptor. The walk follows the park's
+ * STRUCTURE (engine-contracts' park_state.ts), as the park reader's index does
+ * (serialize.ts `indexState`, park.rs `over_state`) — never a list of key
+ * names: a scope's `bindings`, a closure's `captured` and an edge map are
+ * keyed by the AUTHOR's names, so they are walked as maps of descriptors
+ * whatever the names are, and each descriptor is read by its `kind`.
+ *
+ * A file is made ONLY where the structure says one is: a `{ kind: 'file' }`
+ * value descriptor (a record value's, or one a `fileFields` entry names) and a
+ * resource's `fileRef` slot (with its `data.file`). A data payload — a
+ * `value`, a `data` value, a record's `fields`, an edge's properties, a write
+ * handle's record — and code (a closure's body, a walk's head, an op) are
+ * never read into: whatever shape data has, it is never a file. A descriptor
+ * of a kind this walk does not know is left as it is (data), never searched.
+ */
+
+/** A parked state (`ParkedScopeState`) with its files made. */
+export function filesInParkState(state: unknown): unknown {
+  if (!isPlainObject(state)) return state;
+  const parked = state as unknown as ParkedScopeState;
+  const out: Record<string, unknown> = { ...state };
+  if (Array.isArray(parked.scopeChain)) out.scopeChain = scopesFiles(parked.scopeChain);
+  if (Array.isArray(parked.journal)) out.journal = journalFiles(parked.journal);
+  if (Array.isArray(parked.frames)) out.frames = parked.frames.map(frameFiles);
+  return out;
+}
 
 /**
- * A parked state (or a branch's exports) as the engine reads it: every file
- * the park SAYS is one — a `{ kind: 'file', file }` value, the fields
- * `fileFields` names, a resource's `fileRef` slot and its `data.file` — made a
- * file host-side, so the engine is handed its opaque handle and never its
- * descriptor. A data payload (`{ kind: 'data' }`, a `value`, a record's
- * `fields`) is not read into: nothing in data is ever a file.
+ * A frame's persisted branch rows (`collectBranchExports`) with their files
+ * made. A row's `exports` is one of four shapes, and in each every member
+ * that is an object is a binding descriptor: a branch's exports (its names →
+ * descriptors), an op's start (`source`, `init`), a finished member
+ * (`kept`, a boolean, and `answer`), a run-time combinator's `arms` (a
+ * number). So each object member is walked as the descriptor it is.
  */
-export function filesInParkState(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(filesInParkState);
-  if (!isPlainObject(value)) return value;
-  const kind: unknown = value.kind;
-  if (kind === 'data' || kind === 'value') return value;
-  if (kind === 'file' && Object.hasOwn(value, 'file')) return { ...value, file: fileValueOf(value.file) ?? value.file };
+export function filesInBranchExports(rows: unknown): unknown {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row: unknown) => {
+    if (!isPlainObject(row) || !isPlainObject(row.exports)) return row;
+    const exports = row.exports;
+    return { ...row, exports: mapFiles(exports, (member) => (isPlainObject(member) ? descriptorFiles(member as unknown as BindingDescriptor) : member)) };
+  });
+}
+
+/** A map keyed by the author's names (or a record's fields), each entry
+ *  walked by `files`: the keys never matter. */
+function mapFiles(entries: unknown, files: (entry: unknown) => unknown): unknown {
+  if (!isPlainObject(entries)) return entries;
   const out: Record<string, unknown> = {};
-  for (const [key, member] of Object.entries(value)) {
-    if (PARKED_DATA_MEMBERS.has(key)) ownEntry(out, key, member);
-    else if (key === 'resource' && kind === 'resource') ownEntry(out, key, resourceFiles(member));
-    else if (key === 'resources' && Array.isArray(member)) ownEntry(out, key, member.map(resourceFiles));
-    else ownEntry(out, key, filesInParkState(member));
-  }
+  for (const [key, entry] of Object.entries(entries)) ownEntry(out, key, files(entry));
   return out;
+}
+
+function listFiles<T>(list: unknown, files: (entry: T) => unknown): unknown {
+  return Array.isArray(list) ? list.map((entry: T) => files(entry)) : list;
+}
+
+function bindingsFiles(bindings: unknown): unknown {
+  return mapFiles(bindings, (entry) => descriptorFiles(entry as BindingDescriptor));
+}
+
+function scopesFiles(chain: SerializedScope[]): unknown {
+  return chain.map((scope) => (isPlainObject(scope) ? { ...scope, bindings: bindingsFiles(scope.bindings) } : scope));
+}
+
+function journalFiles(journal: SerializedCallEvent[]): unknown {
+  return journal.map((event) =>
+    isPlainObject(event) && isPlainObject(event.value) ? { ...event, value: descriptorFiles(event.value) } : event,
+  );
+}
+
+function frameFiles(frame: SerializedFrame): unknown {
+  if (!isPlainObject(frame)) return frame;
+  switch (frame.kind) {
+    // A member frame's `op` is code.
+    case 'call':
+    case 'member':
+      return {
+        ...frame,
+        scopeChain: Array.isArray(frame.scopeChain) ? scopesFiles(frame.scopeChain) : frame.scopeChain,
+        journal: Array.isArray(frame.journal) ? journalFiles(frame.journal) : frame.journal,
+      };
+    // A run-time arm's `body` is code; its bindings ride on the chain.
+    case 'arm':
+      return frame;
+    default:
+      neverAsAny(frame);
+      return frame;
+  }
+}
+
+function walkFiles(walk: DeferredWalkDescriptor): unknown {
+  // The walk's `head` and `mapping` are code.
+  return isPlainObject(walk) ? { ...walk, captured: bindingsFiles(walk.captured) } : walk;
+}
+
+/** A value descriptor: a `file` made a file, a record's binding and a list's
+ *  or map's members walked, `data` left as it is. */
+function valueFiles(value: ValueDescriptor): unknown {
+  if (!isPlainObject(value)) return value;
+  switch (value.kind) {
+    case 'data':
+      return value;
+    case 'file':
+      return { ...value, file: fileValueOf(value.file) ?? value.file };
+    case 'record':
+      return { ...value, binding: descriptorFiles(value.binding) };
+    case 'list':
+      return { ...value, of: listFiles(value.of, valueFiles) };
+    case 'map':
+      return { ...value, of: mapFiles(value.of, (entry) => valueFiles(entry as ValueDescriptor)) };
+    default:
+      neverAsAny(value);
+      return value;
+  }
+}
+
+/** A record's `fileFields`: the fields that hold a file, each its value
+ *  descriptor. The record's `fields` beside it stay data. */
+function fileFieldsFiles(fileFields: FileFields | undefined): unknown {
+  return mapFiles(fileFields, (entry) => valueFiles(entry as ValueDescriptor));
+}
+
+function emissionFiles(emission: ExtractEmissionDescriptor): unknown {
+  if (!isPlainObject(emission)) return emission;
+  // `fields`, `provenance` and `origin` are data.
+  return {
+    ...emission,
+    ...(emission.fileFields !== undefined ? { fileFields: fileFieldsFiles(emission.fileFields) } : {}),
+    ...(emission.resources !== undefined ? { resources: listFiles(emission.resources, resourceFiles) } : {}),
+    ...(emission.children !== undefined ? { children: mapFiles(emission.children, (list) => listFiles(list, emissionFiles)) } : {}),
+  };
+}
+
+function descriptorFiles(descriptor: BindingDescriptor): unknown {
+  if (!isPlainObject(descriptor)) return descriptor;
+  switch (descriptor.kind) {
+    case 'handle':
+      // `handle` (the record written) and `graph` are data.
+      return descriptor.old !== undefined ? { ...descriptor, old: descriptorFiles(descriptor.old) } : descriptor;
+    case 'extractRoot':
+    case 'extractPosition':
+      return { ...descriptor, emission: emissionFiles(descriptor.emission) };
+    case 'resource':
+      return { ...descriptor, resource: resourceFiles(descriptor.resource) };
+    case 'blockMeta':
+      return { ...descriptor, edges: mapFiles(descriptor.edges, (landings) => listFiles(landings, descriptorFiles)) };
+    case 'positions':
+      return { ...descriptor, landings: listFiles(descriptor.landings, descriptorFiles) };
+    case 'tuple':
+      return { ...descriptor, slots: listFiles(descriptor.slots, descriptorFiles) };
+    // A closure's `closure` is code; its capture is a map of descriptors.
+    case 'closure':
+      return { ...descriptor, captured: bindingsFiles(descriptor.captured) };
+    case 'recordValue':
+      return { ...descriptor, value: valueFiles(descriptor.value) };
+    case 'shapePosition':
+      // `fields` and `fieldProvenance` are data.
+      return descriptor.fileFields !== undefined ? { ...descriptor, fileFields: fileFieldsFiles(descriptor.fileFields) } : descriptor;
+    case 'nodePosition':
+      // `fields` and `fieldProvenance` are data.
+      return {
+        ...descriptor,
+        ...(descriptor.fileFields !== undefined ? { fileFields: fileFieldsFiles(descriptor.fileFields) } : {}),
+        edges: mapFiles(descriptor.edges, (edge) => edgeFiles(edge as NodeEdgeDescriptor)),
+      };
+    case 'lazyWalk':
+      return { ...descriptor, walk: walkFiles(descriptor.walk) };
+    // Data or code throughout: nothing in them is a file.
+    case 'event':
+    case 'instance':
+    case 'handleRef':
+    case 'nodeRef':
+    case 'sourcePosition':
+    case 'value':
+    case 'callback':
+    case 'shape':
+    case 'localShape':
+    case 'movement':
+    case 'fileClosure':
+    case 'opaque':
+      return descriptor;
+    default:
+      neverAsAny(descriptor);
+      return descriptor;
+  }
+}
+
+function edgeFiles(edge: NodeEdgeDescriptor): unknown {
+  if (!isPlainObject(edge)) return edge;
+  switch (edge.kind) {
+    // `landing` / `landingShape` are the shape a later write mints from.
+    case 'landed':
+      return { ...edge, landings: listFiles(edge.landings, descriptorFiles) };
+    case 'deferred':
+      return { ...edge, walk: walkFiles(edge.walk) };
+    default:
+      neverAsAny(edge);
+      return edge;
+  }
 }
 
 /** A parked resource with its `fileRef` slot (and `data.file`) a file. */

@@ -25,6 +25,8 @@ import { makeUnstablePosition, positionData } from '../../translation_graph/type
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
 import { isCheckFailure } from '../errors';
 import { runFailureCause, resumeMovement, runMovement, type RunMovementInput } from '../run';
+import { filesInBranchExports, filesInParkState } from '../rust_wire';
+import { isFileValue } from 'engine-contracts';
 import { resetRustRunStats, rustRunStats } from '../rust_stats';
 import { installMemoryDocumentStore } from '../../translation_graph/engine/files/__test__/memory_document_store';
 import { FileOutsideTeamError } from '../../translation_graph/engine/files/retrieve';
@@ -83,6 +85,8 @@ const EVENT: TriggerEvent = {
 const served: Array<[string, string | undefined]> = [];
 /** Each file a write handed the CRM, as JSON (what a remote host receives). */
 const writtenFiles: unknown[] = [];
+/** What the source double's records hold at `meta` (a `json` field). */
+let recordMeta: unknown = SPELLED;
 /** Set: the email double serves its files as the real email adapter does. */
 let realEmailOwner: Adapter | undefined;
 
@@ -162,7 +166,7 @@ function hostFor(
       return { adapterType: 'attio', externalId: `n-${titles.length}`, data: {} };
     },
   };
-  const records = [{ subject: 'Acme', meta: SPELLED, deck: SPELLED }];
+  const records = [{ subject: 'Acme', meta: recordMeta, deck: SPELLED }];
   return makeTestHost({
     adapters: {
       resolve: (r) => (r.adapterType === 'attio' ? crm : sourceAdapter(r.adapterType, records)),
@@ -361,6 +365,142 @@ describe('a parked file', () => {
       expect(resumed.titles).toEqual([]);
       expect(String(runFailureCause(resumed.error) ?? resumed.error)).toContain('READ() reads a file');
     }
+  });
+});
+
+describe('a parked file is found by the park\'s structure, never by a name', () => {
+  // The names a park's own descriptors use for their members: bound by the
+  // author, each is only a key in a scope's bindings, and a file bound to it
+  // is a file after the resume.
+  const NAMES = ['fields', 'body', 'head', 'position', 'op', 'mapping', 'closure', 'params', 'origin', 'handle'];
+
+  function bodyFor(name: string): string {
+    return PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', `  ${name} = msg.\`deck\``, '  await sleep(1h)', `  write crm-[:notes]-> { title: COALESCE(READ(${name}), "unread") }`, '}'].join('\n');
+  }
+
+  async function parkOn(engine: 'ts' | 'rust', source: string, event: TriggerEvent = EVENT): Promise<string> {
+    return onEngine(engine, async () => {
+      resetRustRunStats();
+      const park = makeFakeParkSink();
+      await runMovement({ ...baseInput(source), event, host: hostFor([], [], [], park) });
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+      expect(park.timerParks).toHaveLength(1);
+      return JSON.stringify(park.timerParks[0]?.state);
+    });
+  }
+
+  async function resumedOn(engine: 'ts' | 'rust', source: string, state: string, event: TriggerEvent = EVENT): Promise<Ran> {
+    const ran: Ran = { read: [], titles: [], prompts: [] };
+    return onEngine(engine, async () => {
+      resetRustRunStats();
+      try {
+        const parsed: ParkedScopeState = JSON.parse(state);
+        ran.result = await resumeMovement({ ...baseInput(source), event, state: parsed, host: hostFor(ran.read, ran.titles, ran.prompts) });
+      } catch (error) {
+        ran.error = error;
+      }
+      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+      return ran;
+    });
+  }
+
+  it.each(NAMES)('a file bound to `%s` parks the same on both engines and is read after the resume on either', async (name) => {
+    const source = bodyFor(name);
+    const ts = await parkOn('ts', source);
+    const rust = await parkOn('rust', source);
+    expect(rust).toBe(ts);
+    expect(ts).toContain('"kind":"file"');
+    for (const engine of ['ts', 'rust'] as const) {
+      const resumed = await resumedOn(engine, source, ts);
+      expect(resumed.error).toBeUndefined();
+      expect(resumed.titles).toEqual(['the deck']);
+      expect(resumed.read).toEqual([SPELLED]);
+    }
+  });
+
+  /** A file's value descriptor, as data would spell it. */
+  const LOOKALIKE = { kind: 'file', file: SPELLED };
+  const serialised = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  OPEN', '  d = r.`meta`', '  await sleep(1h)', '  write crm-[:notes]-> { title: TEXT.SERIALISE(d, "JSON") }', '  CLOSE', '}'].join('\n');
+
+  it.each([
+    ['a webhook field holding its JSON text, read as a json field', SOURCES[0]!, JSON.stringify(LOOKALIKE)],
+    ["an adapter's answer holding it", SOURCES[1]!, LOOKALIKE],
+  ])('data shaped like a file — %s — resumes as the data it is, on either engine', async (_what, from, meta) => {
+    const source = serialised.replace('  OPEN', from.open.join('\n')).replace('  CLOSE', from.close.join('\n'));
+    const event: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', meta, deck: SPELLED } };
+    recordMeta = meta;
+    try {
+      // What the run writes when it never parks.
+      const unparked = source.replace('  await sleep(1h)\n', '');
+      const whole = await onEngine('ts', async () => {
+        const ran: Ran = { read: [], titles: [], prompts: [] };
+        await runMovement({ ...baseInput(unparked), event, host: hostFor(ran.read, ran.titles, ran.prompts) });
+        return ran;
+      });
+      expect(whole.titles).toHaveLength(1);
+      expect(whole.read).toEqual([]);
+      const ts = await parkOn('ts', source, event);
+      const rust = await parkOn('rust', source, event);
+      expect(rust).toBe(ts);
+      for (const engine of ['ts', 'rust'] as const) {
+        const resumed = await resumedOn(engine, source, ts, event);
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.read).toEqual([]);
+        expect(resumed.titles).toEqual(whole.titles);
+      }
+    } finally {
+      recordMeta = SPELLED;
+    }
+  });
+
+  it('the host walk makes a file only where the structure says one is', () => {
+    const fileValue = { kind: 'file', file: SPELLED };
+    const binding = { kind: 'recordValue', value: fileValue };
+    const state = {
+      version: 1,
+      address: 'a',
+      bindingName: null,
+      scopeChain: [
+        {
+          bindings: {
+            ...Object.fromEntries(NAMES.map((name) => [name, binding])),
+            // Data whatever its shape: a value, a data member, a record's
+            // fields, an edge's properties, a written record.
+            plain: { kind: 'value', value: fileValue },
+            data: { kind: 'recordValue', value: { kind: 'map', of: { x: { kind: 'data', value: fileValue } } } },
+            shaped: {
+              kind: 'shapePosition', shape: 's', node: 'n', fields: { deck: fileValue, other: fileValue },
+              fileFields: { deck: fileValue }, fieldProvenance: {},
+            },
+            edge: { kind: 'sourcePosition', position: { data: fileValue }, edgeProperties: { p: fileValue } },
+            written: { kind: 'handle', handle: { fields: { deck: fileValue } }, targetType: 't', graph: {} },
+            unknown: { kind: 'notAKindYet', fields: fileValue, file: SPELLED },
+          },
+        },
+      ],
+    };
+    const made = filesInParkState(JSON.parse(JSON.stringify(state))) as typeof state;
+    const bindings = made.scopeChain[0]!.bindings as Record<string, any>;
+    for (const name of NAMES) expect(isFileValue(bindings[name].value.file)).toBe(true);
+    expect(bindings.plain).toEqual(state.scopeChain[0]!.bindings.plain);
+    expect(bindings.data).toEqual(state.scopeChain[0]!.bindings.data);
+    expect(bindings.edge).toEqual(state.scopeChain[0]!.bindings.edge);
+    expect(bindings.written).toEqual(state.scopeChain[0]!.bindings.written);
+    expect(bindings.unknown).toEqual(state.scopeChain[0]!.bindings.unknown);
+    expect(bindings.shaped.fields).toEqual({ deck: fileValue, other: fileValue });
+    expect(isFileValue(bindings.shaped.fileFields.deck.file)).toBe(true);
+
+    // A branch's exports are its names' descriptors, whatever the names.
+    const rows = filesInBranchExports([
+      { branchAddress: 'b0', branchIndex: 0, exports: { kept: binding, source: binding, plain: { kind: 'value', value: fileValue } } },
+      { branchAddress: 'b1', branchIndex: 1, exports: { kept: true, answer: binding } },
+      { branchAddress: 'f', branchIndex: -1, exports: { arms: 2 } },
+    ]) as Array<{ exports: Record<string, any> }>;
+    expect(isFileValue(rows[0]!.exports.kept.value.file)).toBe(true);
+    expect(isFileValue(rows[0]!.exports.source.value.file)).toBe(true);
+    expect(rows[0]!.exports.plain).toEqual({ kind: 'value', value: fileValue });
+    expect(isFileValue(rows[1]!.exports.answer.value.file)).toBe(true);
+    expect(rows[2]!.exports).toEqual({ arms: 2 });
   });
 });
 
