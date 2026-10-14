@@ -146,8 +146,13 @@ const path = require('node:path');
 // measured at v4 2275. The merge of main's checker gaps (B3, a record in a map
 // spread into a graph refused on every version, 2026-10-13) triages two
 // list_literal_record tests in that frozen copy, whose programs the checker
-// now refuses: v4 2273. A floor is measured, never guessed.
-const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240, v4: 2273 };
+// now refuses: v4 2273. The merge of main's body closures by reference
+// (26467db3, 2026-10-14) triages one call_value test in every frozen copy
+// ("parks with the closure in scope — its body as AST, its capture as
+// bindings", BODY_CLOSURE_PARK_FORMAT: it pins the old snapshot park
+// format), each the one run it parked: v1 1033, v2 1270, v3 2239, v4 2272.
+// A floor is measured, never guessed.
+const RAN_WHOLE_FLOOR = { v1: 1033, v2: 1270, v3: 2239, v4: 2272 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
