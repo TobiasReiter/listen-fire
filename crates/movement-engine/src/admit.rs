@@ -17,6 +17,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use movement_parser::ast::{
     self, ArmExpression, CollectionOp, AwaitSource, CallArg, CallStatement, CollectionOpExpression, ExprSlot, ImportSource, NodeEntry, NodeLiteral, ParamTypeRef,
@@ -842,6 +843,9 @@ struct Imported<'p> {
     library: &'p ast::Program,
     plugin_binds: BTreeMap<String, PluginBinds>,
     nested: Vec<Imported<'p>>,
+    /// The library read as a file of its own, built once per import (its
+    /// fixpoint is not cheap) and shared by every lookup.
+    callees: Rc<Callees<'p>>,
 }
 
 impl Clone for Imported<'_> {
@@ -854,6 +858,7 @@ impl Clone for Imported<'_> {
             library: self.library,
             plugin_binds: self.plugin_binds.clone(),
             nested: self.nested.clone(),
+            callees: self.callees.clone(),
         }
     }
 }
@@ -896,14 +901,18 @@ fn imported_through<'p>(program: &ast::Program, walking: &Walking<'p>, above: &[
                 _ => None,
             });
             if let Some(declaration) = declaration {
+                let plugin_binds = plugin_binds_of(library, walking.catalog, walking.language_version);
+                let nested = imported_through(library, walking, &[above, &[path.as_str()]].concat());
+                let callees = Rc::new(Callees::of(library, &plugin_binds, walking.language_version, nested.clone()));
                 imported.push(Imported {
                     local: name.alias.clone().unwrap_or_else(|| name.name.clone()),
                     path: path.clone(),
                     declaration,
                     types: types.clone(),
                     library,
-                    plugin_binds: plugin_binds_of(library, walking.catalog, walking.language_version),
-                    nested: imported_through(library, walking, &[above, &[path.as_str()]].concat()),
+                    plugin_binds,
+                    nested,
+                    callees,
                 });
             }
         }
@@ -1048,7 +1057,10 @@ impl<'p> Callees<'p> {
         if let Some((_, held)) = self.foreign_holders.borrow().iter().find(|(c, _)| std::ptr::eq(*c, closure)) {
             return *held;
         }
-        if self.outside_walking.borrow().contains(&closure.span) {
+        if self.outside_walking.borrow().contains(&closure.span) || !self.reaches(closure) {
+            // A cycle, or a closure of no file read here (spans carry no
+            // file, so it would be read against names that are not its
+            // own): nothing is known of what it holds.
             return Holder::Other;
         }
         let at = |loc: ast::Loc| (loc.line, loc.col);
@@ -1071,6 +1083,32 @@ impl<'p> Callees<'p> {
         held
     }
 
+    /// Whether `closure` is one of this file's: bound to a name, or one a
+    /// movement's or closure's returns hand back, at any depth.
+    fn reaches(&self, closure: &ast::ClosureExpression) -> bool {
+        let mut seen: Vec<&'p ast::ClosureExpression> = self.closure_bodies.values().flatten().copied().collect();
+        let mut at = 0;
+        let mut found = seen.iter().any(|c| std::ptr::eq(*c, closure));
+        let mut pending: Vec<&'p [Statement]> = self.movements.iter().map(|m| m.body.as_slice()).collect();
+        loop {
+            while let Some(body) = pending.pop() {
+                let mut returned = Vec::new();
+                self.returned_closures(body, &mut returned);
+                for c in returned {
+                    if !seen.iter().any(|s| std::ptr::eq(*s, c)) {
+                        found |= std::ptr::eq(c, closure);
+                        seen.push(c);
+                    }
+                }
+            }
+            if found || at >= seen.len() {
+                return found;
+            }
+            pending.push(&seen[at].body);
+            at += 1;
+        }
+    }
+
     /// The closures a call of `callee` hands back, where every `return` of
     /// it hands back a closure: a closure literal, or a name bound to
     /// closures. `None` where any return is something else, or the callee
@@ -1084,9 +1122,24 @@ impl<'p> Callees<'p> {
             // A library's function: its returns read in its own file, and
             // what a call of each closure hands back with them.
             Some(movement) if let Some(import) = self.imported_as(movement) => {
-                let library = Callees::of(import.library, &import.plugin_binds, self.language_version, import.nested.clone());
+                let library = import.callees.clone();
                 let returned = library.closures_returned(&movement.name)?;
-                for closure in &returned {
+                // Every closure a call of these can hand back, however deep
+                // (`(b) => (c) => b`), is the library's too: its holder is
+                // read in the library's file, never in this one.
+                let mut reached = returned.clone();
+                let mut at = 0;
+                while at < reached.len() {
+                    let mut deeper = Vec::new();
+                    library.returned_closures(&reached[at].body, &mut deeper);
+                    for closure in deeper {
+                        if !reached.iter().any(|c| std::ptr::eq(*c, closure)) {
+                            reached.push(closure);
+                        }
+                    }
+                    at += 1;
+                }
+                for closure in &reached {
                     if !self.foreign_holders.borrow().iter().any(|(c, _)| std::ptr::eq(*c, *closure)) {
                         let held = library.outside_closure_holder(closure);
                         self.foreign_holders.borrow_mut().push((*closure, held));
@@ -1245,7 +1298,7 @@ impl<'p> Callees<'p> {
         // A library's movement hands back what its body does, read in its
         // own file.
         if let Some(import) = self.imported_as(movement) {
-            let library = Callees::of(import.library, &import.plugin_binds, self.language_version, import.nested.clone());
+            let library = import.callees.clone();
             return library.returns(movement, signature, &[]);
         }
         let key = (movement.name.clone(), signature.to_vec());

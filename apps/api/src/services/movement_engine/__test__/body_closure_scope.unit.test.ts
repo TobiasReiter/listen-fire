@@ -1069,6 +1069,27 @@ describe('both engines: a closure bound from a call, then called by name (admit.
       source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  out = MAP([1, 2], h)', write('out: out')]),
       payload: { out: [3, 4] },
     },
+    // A closure one level deeper in a library (`mk` hands back a closure that
+    // hands back one): read in the library's own file, as its one-level twin.
+    libChainPlain: {
+      source: (park) =>
+        program(['  h = mk(2)', '  k = h(1)', '  r = k(3)', write('r: r')]).replace('runs = manual()', 'import { mk } from "lib/mk"\nruns = manual()'),
+      files: (park) => ({
+        'lib/mk': {
+          source: [
+            'export function mk(a: <number>) {',
+            '  return (b: <number>) => {',
+            '    return (c: <number>) => {',
+            ...(park ? ['      await sleep(1h)'] : []),
+            '      return a + b + c',
+            '    }',
+            '  }',
+            '}',
+          ].join('\n'),
+        },
+      }),
+      payload: { r: 6 },
+    },
     fromClosureInClosure: {
       source: (park) =>
         program([
@@ -1108,3 +1129,47 @@ describe('both engines: a closure bound from a call, then called by name (admit.
   }
 });
 
+describe('both engines: a library closure two levels deep is read in the library, as one level deep (admit.rs foreign_holders)', () => {
+  // `go` is a record. A library `mk` hands back `(b: <record>) => (c) => b`;
+  // the main file calls it twice over (`k = h(go)`, `r = k(1)`) and writes `r`
+  // into a json field. The innermost closure's `b` is the library's name, so
+  // its holder is read there: a record, which the Rust engine refuses by name
+  // exactly as it refuses the one-level `(b) => b`. Handing back plain data it
+  // is admitted and writes what the TypeScript does.
+  const lib = (inner: string[]): Record<string, { source: string }> => ({
+    'lib/mk': { source: ['import { manual } from adapters', 'runs = manual()', 'export function mk(a: <number>) {', ...inner, '}'].join('\n') },
+  });
+  const main = (calls: string[]): string =>
+    program([...calls, '  write graph-[:note]-> { payload: { r: r } }']).replace('runs = manual()', 'import { mk } from "lib/mk"\nruns = manual()');
+  const chain = (innermost: string): Record<string, { source: string }> =>
+    lib(['  return (b: <runs-[:Invocation]->>) => {', `    return (c: <number>) => ${innermost}`, '  }']);
+  const oneLevel = (innermost: string): Record<string, { source: string }> => lib([`  return (b: <runs-[:Invocation]->>) => ${innermost}`]);
+  const twoCalls = main(['  h = mk(2)', '  k = h(go)', '  r = k(1)']);
+  const oneCall = main(['  h = mk(2)', '  r = h(go)']);
+  for (const version of [3, 5]) {
+    it(`v${version}: the chain and its one-level twin are both refused by name when the closure returns the record`, async () => {
+      for (const [source, files] of [
+        [twoCalls, chain('b')],
+        [oneCall, oneLevel('b')],
+      ] as const) {
+        await expect(onEngine('rust', () => runMovement(inputOn(source, makeParkSink(), makeKgFake(), { version, files })))).rejects.toThrow('write_field_record');
+      }
+    }, 60_000);
+    it(`v${version}: the chain and its one-level twin are both admitted, and write what the TypeScript does, when the closure returns plain data`, async () => {
+      for (const [source, files, payload] of [
+        [twoCalls, chain('c + a'), { r: 3 }],
+        [oneCall, oneLevel('a'), { r: 2 }],
+      ] as const) {
+        const wrote: Record<string, WriteInput[]> = {};
+        for (const engine of ENGINES) {
+          const kg = makeKgFake();
+          const result = await onEngine(engine, () => runMovement(inputOn(source, makeParkSink(), kg, { version, files })));
+          expect({ engine, parked: result.parked, error: (result as { error?: unknown }).error }).toEqual({ engine, parked: undefined, error: undefined });
+          wrote[engine] = kg.creates;
+        }
+        expect(payloadOf(wrote.ts!)).toEqual(payload);
+        expect(wrote.rust).toEqual(wrote.ts);
+      }
+    }, 60_000);
+  }
+});
