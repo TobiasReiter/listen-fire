@@ -1547,11 +1547,13 @@ impl Run<'_> {
     /// record it picks (`selectedPositionBinding`); anything else, the value
     /// it evaluates to.
     pub(crate) async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
-        if let Some(around) = self.around_slot(slot, scope) {
-            return Box::pin(self.bind_slot_binding(slot, &around)).await;
-        }
+        // Staged first, as `bindSlotValue` stages before `evaluateSlot`
+        // binds the list element closures: they hold the staging's scope.
         if let Some((staged, scratch)) = self.staged(slot, scope).await? {
             return Box::pin(self.bind_slot_binding(&staged, &scratch)).await;
+        }
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.bind_slot_binding(slot, &around)).await;
         }
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression")
             .map_err(Stop::Thrown)?;
@@ -1665,11 +1667,12 @@ impl Run<'_> {
     /// `evaluateCondition`: the condition's conjuncts, each an expression's
     /// truthiness.
     pub(crate) async fn condition(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<bool, Stop> {
-        if let Some(around) = self.around_slot(slot, scope) {
-            return Box::pin(self.condition(slot, &around)).await;
-        }
+        // Staged first, as `evaluateCondition` stages it.
         if let Some(held) = self.staged_condition(slot, scope).await? {
             return Ok(held);
+        }
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.condition(slot, &around)).await;
         }
         let condition = lowered(slot, |tree| movement_parser::lowering::lower_slot_condition(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "condition")
             .map_err(Stop::Thrown)?;

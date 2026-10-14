@@ -206,37 +206,57 @@ pub(crate) fn rewritten(units: &Utf16, at: At, mut replaced: Vec<(At, String)>) 
 /// The place of a list element closure a staged text no longer holds.
 const NOT_CARRIED: usize = usize::MAX;
 
-/// A piece of `origin`'s text, staged or cut, as a slot holding `origin`'s
-/// list element closures again at their places in `text`. Its closures keep
-/// `origin`'s order, so the k-th is the program's k-th; one `text` no longer
-/// holds (a nested call's argument, settled) is `NOT_CARRIED`. The
-/// TypeScript keeps the offsets of the original slot instead
-/// (`slotOfTree`); this engine's staged text does not keep them, so each
-/// closure is found again by its own text, in order.
-pub(crate) fn carried(origin: &ExprSlot, text: String, span: movement_parser::ast::Span) -> ExprSlot {
+/// A piece of a slot's text, staged or cut: the text at `at` with each of
+/// `replaced` (inside it, a nested call or an operand settled) written as
+/// the name it was bound to.
+pub(crate) struct Piece {
+    pub at: At,
+    pub replaced: Vec<(At, String)>,
+}
+
+impl Piece {
+    /// The text at `at`, as written.
+    pub(crate) fn whole(at: At) -> Piece {
+        Piece { at, replaced: Vec::new() }
+    }
+
+    /// The text at `at`, read as `name`.
+    pub(crate) fn named(at: At, name: String) -> Piece {
+        Piece { at, replaced: vec![(at, name)] }
+    }
+}
+
+/// `piece` of a part of `origin` starting `offset` units in (`units`, the
+/// part's), as a slot holding `origin`'s list element closures again at
+/// their places in the piece's text. Its closures keep `origin`'s order, so
+/// the k-th is the program's k-th; one the piece no longer holds (inside a
+/// part settled, or outside the piece) is `NOT_CARRIED`. Each is followed by
+/// its place, as the TypeScript keeps the original slot's offsets
+/// (`slotOfTree`): two closures written alike stay two.
+pub(crate) fn carried(origin: &ExprSlot, offset: usize, units: &Utf16, piece: &Piece, span: movement_parser::ast::Span) -> ExprSlot {
+    let text = rewritten(units, piece.at, piece.replaced.clone());
     if origin.closures.is_empty() {
         return ExprSlot::plain(text, span);
     }
-    let extents = |raw: &str| {
-        movement_parser::expr::parse_expression(raw).map(|tree| movement_parser::tree::closure_extents_in_lists(&tree)).unwrap_or_default()
-    };
-    let (old_units, new_units) = (Utf16::new(&origin.raw), Utf16::new(&text));
-    let old: Vec<At> = extents(&origin.raw);
-    let mut closures: Vec<movement_parser::ast::SlotClosure> =
-        origin.closures.iter().map(|c| movement_parser::ast::SlotClosure { at: NOT_CARRIED, closure: c.closure.clone() }).collect();
-    let mut next = 0;
-    for found in extents(&text) {
-        let written = new_units.text(found.start, found.end);
-        while next < origin.closures.len() {
-            let candidate = next;
-            next += 1;
-            let same = old.iter().find(|at| at.start == origin.closures[candidate].at).is_some_and(|at| old_units.text(at.start, at.end) == written);
-            if same {
-                closures[candidate].at = found.start;
-                break;
+    let width = |name: &str| name.encode_utf16().count();
+    let place = |at: usize| -> usize {
+        let Some(at) = at.checked_sub(offset).filter(|at| (piece.at.start..piece.at.end).contains(at)) else { return NOT_CARRIED };
+        let mut moved = at - piece.at.start;
+        for (part, name) in &piece.replaced {
+            if (part.start..part.end).contains(&at) {
+                return NOT_CARRIED;
+            }
+            if part.end <= at {
+                moved = moved + width(name) - (part.end - part.start);
             }
         }
-    }
+        moved
+    };
+    let closures = origin
+        .closures
+        .iter()
+        .map(|c| movement_parser::ast::SlotClosure { at: if c.at == NOT_CARRIED { NOT_CARRIED } else { place(c.at) }, closure: c.closure.clone() })
+        .collect();
     ExprSlot { raw: text, span, eager: false, closures }
 }
 
@@ -315,7 +335,7 @@ struct Staging<'s> {
     bound: Cell<usize>,
 }
 
-type Staged<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, Stop>> + 's>>;
+type Staged<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Piece, Stop>> + 's>>;
 type Settled<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Binding, Stop>> + 's>>;
 
 impl Run<'_> {
@@ -370,34 +390,34 @@ impl Run<'_> {
             return Ok(None);
         }
         let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.child(), calls, scope, bound: Cell::new(0) };
-        let text = self.stage_tree(&tree, &staging).await?;
-        Ok(Some((carried(origin, text, slot.span), staging.scratch)))
+        let piece = self.stage_tree(&tree, &staging).await?;
+        Ok(Some((carried(origin, offset, &staging.units, &piece, slot.span), staging.scratch)))
     }
 
     /// `stageTree`: `tree` with its nested calls run, in order.
     fn stage_tree<'s>(&'s self, tree: &'s MExpr, staging: &'s Staging<'s>) -> Staged<'s> {
         Box::pin(async move {
             if !holds(tree, &staging.calls) {
-                return Ok(staging.units.text(tree.at().start, tree.at().end));
+                return Ok(Piece::whole(tree.at()));
             }
             if matches!(tree, MExpr::Call { .. }) && staging.calls.contains(&tree.at()) {
-                return self.settle_nested_call(tree, staging).await;
+                return Ok(Piece::named(tree.at(), self.settle_nested_call(tree, staging).await?));
             }
             let is_coalesce = |callee: &str| self.is_coalesce(callee, staging.scope);
             if let Some(short) = short_circuit_of(tree, &is_coalesce) {
                 let binding = self.settle_short_circuit(short, staging).await?;
-                return Ok(self.bind_settled(binding, staging));
+                return Ok(Piece::named(tree.at(), self.bind_settled(binding, staging)));
             }
             let operands = value_children(tree);
             let Some(last) = operands.iter().rposition(|operand| holds(operand, &staging.calls)) else {
-                return Ok(staging.units.text(tree.at().start, tree.at().end));
+                return Ok(Piece::whole(tree.at()));
             };
             let mut replaced = Vec::new();
             for operand in &operands[..=last] {
                 let binding = self.settled_binding(operand, staging).await?;
                 replaced.push((operand.at(), self.bind_settled(binding, staging)));
             }
-            Ok(rewritten(&staging.units, tree.at(), replaced))
+            Ok(Piece { at: tree.at(), replaced })
         })
     }
 
@@ -503,8 +523,8 @@ impl Run<'_> {
     /// first.
     fn settled_binding<'s>(&'s self, expr: &'s MExpr, staging: &'s Staging<'s>) -> Settled<'s> {
         Box::pin(async move {
-            let text = self.stage_tree(expr, staging).await?;
-            let slot = carried(staging.origin, text, staging.slot.span);
+            let piece = self.stage_tree(expr, staging).await?;
+            let slot = carried(staging.origin, staging.offset, &staging.units, &piece, staging.slot.span);
             self.bind_slot_binding(&slot, &staging.scratch).await
         })
     }
@@ -540,7 +560,7 @@ impl Run<'_> {
         }
         let units = Utf16::new(&slot.raw);
         for conjunct in conjuncts_of(&tree) {
-            let part = carried(slot, units.text(conjunct.at().start, conjunct.at().end), slot.span);
+            let part = carried(slot, 0, &units, &Piece::whole(conjunct.at()), slot.span);
             let held = match self.staged_part(slot, &part, conjunct.at().start, scope).await? {
                 Some((staged, scratch)) => Box::pin(self.condition(&staged, &scratch)).await?,
                 None => Box::pin(self.condition(&part, scope)).await?,

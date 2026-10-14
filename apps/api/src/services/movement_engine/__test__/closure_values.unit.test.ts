@@ -598,6 +598,23 @@ describe('both engines: closures as values (version 5)', () => {
       payload: { x: 'one' },
     },
   };
+  // Two closures written alike in one slot that stages a call (FILTER in
+  // the IF's condition): the ELSE arm's is the slot's second closure, whose
+  // park names it, not the first.
+  CASES.alikeClosuresInAStagedSlot = {
+    body: [
+      '  g = IF COUNT(FILTER([1], (n) => TRUE)) > 5 THEN AT([() => {',
+      '    await sleep(1h)',
+      '    return 1',
+      '  }], 0) ELSE AT([() => {',
+      '    await sleep(1h)',
+      '    return 1',
+      '  }], 0) END',
+      '  x = g()',
+      write('x: x'),
+    ],
+    payload: { x: 1 },
+  };
   CASES.effectsOnly = {
     body: ['  MAP([() => {', '    write graph-[:note]-> { body: "a" }', '  }, () => {', '    write graph-[:note]-> { body: "b" }', '  }], { concurrency: 2 }, (f) => f())', write('done: 1')],
     payload: { done: 1 },
