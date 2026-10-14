@@ -192,7 +192,7 @@ const ENCODED_A_FIXED_BUG: Array<{
    *  not the target ran it: a target that skips it still accounts for it. */
   is: (recording: HostRecording) => boolean;
   /** The replay diverged exactly where the fixed bug says. */
-  matches: (recording: HostRecording, divergence: string) => boolean;
+  matches: (recording: HostRecording, divergence: string, verdict: Extract<ReplayVerdict, { kind: 'diverged' }>) => boolean;
   count: Record<keyof typeof FLOORS, number>;
 }> = [
   {
@@ -227,7 +227,50 @@ const ENCODED_A_FIXED_BUG: Array<{
       sameRefusalButForTheVersionName(divergence),
     count: { v1: 0, v2: 1 },
   },
+  {
+    // B7 (shared-handle numbering): a write handle bound under two names is
+    // one handle, so a park's state now numbers it (`id` on the descriptor)
+    // and the repeated descriptor is a `handleRef` to that number. The
+    // recordings predate it. Matched on exactly that: the replayed park
+    // request is a recorded one once both sides' handle numbering is masked
+    // (ids dropped, each handleRef resolved to the descriptor it names).
+    reason: 'a park numbers a write handle bound under two names, and the repeats refer to it (B7)',
+    is: (recording) => recording.requests.some((request) => request.family === 'park.callbacks' && JSON.stringify(request.args).includes('"landings"') && JSON.stringify(request.args).includes('"kind":"handle"')),
+    matches: (recording, _divergence, verdict) => {
+      if (verdict.unmatched === undefined) return false;
+      const { path, args } = verdict.unmatched;
+      if (!path.startsWith('park.')) return false;
+      const replayed = canonicalJson(args);
+      const masked = canonicalJson(maskHandleNumbering(args));
+      return recording.requests.some((request) => {
+        if (`${request.family}.${request.method}` !== path) return false;
+        const recorded = canonicalJson(request.args);
+        return recorded !== replayed && canonicalJson(maskHandleNumbering(request.args)) === masked;
+      });
+    },
+    count: { v1: 1, v2: 1 },
+  },
 ];
+
+/** A park state with its handle numbering masked: every descriptor loses its
+ *  `id`, and every `handleRef` becomes the numbered descriptor it names. */
+function maskHandleNumbering(root: unknown): unknown {
+  const numbered = new Map<number, unknown>();
+  const collect = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(collect);
+    if (!isObject(node)) return;
+    if (node.kind === 'handle' && typeof node.id === 'number') numbered.set(node.id, node);
+    Object.values(node).forEach(collect);
+  };
+  collect(root);
+  const mask = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(mask);
+    if (!isObject(node)) return node;
+    if (node.kind === 'handleRef' && typeof node.id === 'number' && numbered.has(node.id)) return mask(numbered.get(node.id));
+    return Object.fromEntries(Object.entries(node).filter(([key]) => !(key === 'id' && node.kind === 'handle')).map(([key, value]) => [key, mask(value)]));
+  };
+  return mask(root);
+}
 
 const RECORDED_PREFIX = 'recorded the failure ';
 const REPLAY_JOINT = '; the replay failed ';
@@ -314,7 +357,7 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
         break;
       }
       case 'diverged': {
-        const known = ENCODED_A_FIXED_BUG.find((entry) => entry.matches(recording, verdict.divergence));
+        const known = ENCODED_A_FIXED_BUG.find((entry) => entry.matches(recording, verdict.divergence, verdict));
         if (known !== undefined) fixed.set(known.reason, (fixed.get(known.reason) ?? 0) + 1);
         else diverged.push(`${label(recording, i)}: ${verdict.divergence}`);
         break;
