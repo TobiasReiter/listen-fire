@@ -15,9 +15,12 @@ const FILE_RULE_B5 =
 const SYSTEM_IS_ITS_ADDRESS =
   "pinned that two instances constructed the same way (the same adapter, credential and arguments) are two graphs; since B12 a system is its address, not the name a file binds it to, so a record of one passes to a parameter typed by the other (in one file or across a file import) and the effect row lists the system once. A refusal turned into an acceptance — no movement that validated under this version does anything different (the rule of 8c9ee246: a refusal relaxed is never gated). The current tree's tests pin both halves with two different credentials";
 
+const RECEIPT_RECORD = "pinned as accepted a `parallel` receipt whose literal arm returns a record, written into a json field — the engine's own handle object written as data (`{\"kind\":\"handle\",…}` on TypeScript, null under 3 and 4). Since the receipt-records fix a receipt holds what its arms return, as `[a(), b()]` does, and the field rule refuses it on every language version (a bug fix: the form always leaked an engine object). The current tree's record_in_field_value and receipt_record_in_field tests pin the refusal; arms built at run time stay accepted, pinned by the same block";
+
 exports.triage = [
   { file: VERSIONS, test: 'names each integer once; the current version is the newest and supported', reason: RELEASE_TABLE },
   { file: VERSIONS, test: 'the default release is this one', reason: RELEASE_TABLE },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i, a literal arm: accepted today', reason: RECEIPT_RECORD },
   { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: 'KNOWN GAP: under language version %i, a file the field rule does not reach', reason: FILE_RULE_B5 },
   { file: 'checker/__test__/check_typed.unit.test.ts', test: 'MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },

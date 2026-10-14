@@ -239,13 +239,12 @@ describe('a spread that may be a record copies its fields either way', () => {
   });
 });
 
-describe('KNOWN GAP: a combinator receipt holding records is not typed from its arms', () => {
+describe('KNOWN GAP: a combinator receipt over arms built at run time is not typed from its arms', () => {
   // The receipt is a list of what the arms returned (the engine's `parallel`),
-  // so arms returning a record put the engine's object into the field. The
-  // checker types a receipt over arms built at run time as untyped — a value
-  // it cannot see into — and a literal arm returning a record as an untyped
-  // slot. Both are accepted TODAY; the fix is to type a receipt from what its
-  // arms return, after which these become refusals.
+  // so arms returning a record put the engine's object into the field. A
+  // collection of functions built at run time has no function type to read
+  // its returns through, so the receipt is untyped — accepted TODAY. Literal
+  // arms are typed from their returns (receipt_record_in_field).
   it.each(VERSIONS.filter(v => v >= 3))('under language version %i, arms built at run time: accepted today', version => {
     expect(
       errorsUnder(version, [
@@ -256,8 +255,10 @@ describe('KNOWN GAP: a combinator receipt holding records is not typed from its 
     ).toEqual([]);
   });
 
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm: accepted today', version => {
-    expect(errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')])).toEqual([]);
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm returning a record is refused', version => {
+    const errors = errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
   });
 });
 

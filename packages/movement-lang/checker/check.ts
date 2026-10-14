@@ -4005,6 +4005,13 @@ class Checker {
     return true;
   }
 
+  /** A name bound to a combinator's receipt carries what its slots may hold
+   *  where the receipt's type cannot say it (`combinatorMayHold`). */
+  private withReceiptMayHold(symbol: Partial<ScopeSymbol>, combinator: CombinatorExpression): Partial<ScopeSymbol> {
+    const mayHold = this.combinatorMayHold.get(combinator);
+    return mayHold !== undefined && showsMoreHandles(mayHold, symbol.fieldType) ? { ...symbol, mayHold } : symbol;
+  }
+
   /** What a bound name may hold beyond its type — `ScopeSymbol.mayHold`. */
   private symbolMayHold(scope: Scope, name: string): FieldType | undefined {
     const resolution = scope.resolve(name);
@@ -5483,8 +5490,9 @@ class Checker {
           result.fieldType !== undefined || value.await.source.kind === 'combinator'
             ? { ...symbol, ...(result.fieldType !== undefined ? { fieldType: result.fieldType } : {}), bindingPlane: 'scalar' }
             : { ...symbol, ...(result.posType ? { posType: result.posType } : {}), bindingPlane: 'node' };
-        if (value.await.source.kind === 'combinator' && this.recordSlotCombinators.has(value.await.source.combinator)) {
-          symbol = { ...symbol, receiptHoldsRecord: true };
+        if (value.await.source.kind === 'combinator') {
+          if (this.recordSlotCombinators.has(value.await.source.combinator)) symbol = { ...symbol, receiptHoldsRecord: true };
+          symbol = this.withReceiptMayHold(symbol, value.await.source.combinator);
         }
         break;
       }
@@ -5497,6 +5505,7 @@ class Checker {
           bindingPlane: 'scalar',
           ...(this.recordSlotCombinators.has(value.combinator) ? { receiptHoldsRecord: true as const } : {}),
         };
+        symbol = this.withReceiptMayHold(symbol, value.combinator);
         break;
       }
       case 'collection': {
@@ -7496,6 +7505,11 @@ class Checker {
    * construction but nothing here can see their type — the receipt is untyped
    * and the row says the row is a lower bound.
    */
+  /** What a combinator's receipt may hold beyond its type — each arm's
+   *  returns' (`ReturnShape.mayHold`, or the record it hands back), read where
+   *  the receipt is bound. */
+  private readonly combinatorMayHold = new WeakMap<CombinatorExpression, FieldType>();
+
   private checkCombinator(
     expr: CombinatorExpression,
     scope: Scope,
@@ -7528,6 +7542,22 @@ class Checker {
     if (slots.some(slot => slot.returns && (slot.posType !== undefined || isRecordType(slot.fieldType)))) {
       this.recordSlotCombinators.add(expr);
     }
+    // What each slot may hold travels with the receipt as a list literal's
+    // members do (`[a(), b()]`): an arm's call holds what its returns may hold
+    // (`ReturnShape.mayHold`), and a record it hands back — which the tuple
+    // cannot type — is one the receipt may hold, so a written field, a graph
+    // entry, a plugin argument or an extraction input sees it.
+    this.combinatorMayHold.set(expr, {
+      kind: 'tuple',
+      of: slots.map(slot => {
+        if (!slot.returns) return 'absent';
+        const held = slot.mayHold
+          ?? slot.fieldType
+          ?? (slot.posType !== undefined && slot.posType.kind !== 'closure' ? recordOf(slot.posType) : undefined);
+        if (held === undefined) return null;
+        return (expr.kind === 'race' ? maybeAbsent(held) : held) ?? null;
+      }),
+    });
     return {
       kind: 'tuple',
       of: slots.map(slot => {
