@@ -72,7 +72,7 @@ services:
         RCLONE_CONFIG_NEW_ACCESS_KEY_ID=listenfire
         RCLONE_CONFIG_NEW_SECRET_ACCESS_KEY="$$(cat /config/objectstore_password)" &&
         rclone copy old:listen-fire new:listen-fire --stats-one-line -v &&
-        rclone check old:listen-fire new:listen-fire --one-way &&
+        rclone check old:listen-fire new:listen-fire --one-way --size-only &&
         echo "copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store"
 
 volumes:

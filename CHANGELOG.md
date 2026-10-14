@@ -91,6 +91,11 @@ guide](docs/language/dancing-wren-migration.md).
   copy-from-minio` (rclone copy + check, keys unchanged, MinIO only read) — then remove the old
   volume by hand when you are satisfied. The exact steps are in deploy/SELF_HOSTING.md, "Upgrading
   from the bundled MinIO".
+- **`./up.sh` now refuses to start** when the bundled store is in use, `<project>_miniodata` exists
+  and `<project>_objectstoredata` does not, naming the two paths above; `--fresh-objectstore` (or
+  `LF_FRESH_OBJECTSTORE=1`) is the explicit opt-in to an empty store. A bare `docker compose up`
+  is not blocked (containers cannot see host volumes) but logs a WARNING when the config volume
+  holds `minio_password`. The copy's check is `rclone check --one-way --size-only`.
 - The bundled store's credential is a new file in the config volume, `objectstore_password`;
   `minio_password` is left where it is for option (a) and the copy.
 

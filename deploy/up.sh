@@ -44,8 +44,12 @@ for arg in "$@"; do
     # Skip the post-success image pruning below. For an operator who manages
     # image retention themselves, or wants every pulled tag kept around.
     --keep-images) KEEP_IMAGES=1 ;;
+    # Continue with an EMPTY bundled object store on an installation that still
+    # has the old bundled MinIO's volume (see the guard below). Same as
+    # LF_FRESH_OBJECTSTORE=1.
+    --fresh-objectstore) LF_FRESH_OBJECTSTORE=1 ;;
     -h|--help)
-      echo "usage: ./up.sh <unit…> [--demo] [--build|--no-build] [--no-space-check] [--keep-images]"
+      echo "usage: ./up.sh <unit…> [--demo] [--build|--no-build] [--no-space-check] [--keep-images] [--fresh-objectstore]"
       echo "units: ${VALID_UNITS[*]}"
       echo
       echo "Images come from ghcr.io/listen-fire at \$LISTEN_FIRE_VERSION (default: latest)."
@@ -53,6 +57,8 @@ for arg in "$@"; do
       echo "  --no-build         use the images already on this machine"
       echo "  --no-space-check   skip the free-space refusal before pulling or building"
       echo "  --keep-images      skip pruning old images after a successful start"
+      echo "  --fresh-objectstore  continue with an EMPTY bundled object store although this"
+      echo "                     project still has the old bundled MinIO's volume (files not copied)"
       exit 0
       ;;
     -*)
@@ -144,9 +150,46 @@ add_store() {
     STORES_REPORT+=("$service (bundled)")
   fi
 }
+# An installation that ran the bundled MinIO still has every file it stored in
+# the `miniodata` volume. Upgrading starts the new, EMPTY `objectstoredata` and
+# points the API at it, and nothing says so: files stored before the upgrade
+# just fail to open. So when the bundled store is in use, MinIO's volume exists
+# and the new one does not, stop -- unless the operator says, explicitly, that
+# an empty store is what they want (--fresh-objectstore or LF_FRESH_OBJECTSTORE=1).
+# Once the new volume exists (the first start creates it, as does the copy in
+# SELF_HOSTING.md) the guard is silent.
+objectstore_upgrade_guard() {
+  [ -z "$(configured AWS_S3_ENDPOINT)" ] || return 0
+  [ "${LF_FRESH_OBJECTSTORE:-}" != 1 ] || return 0
+  local project
+  project="$(configured COMPOSE_PROJECT_NAME)"
+  if [ -z "$project" ]; then
+    project="$(docker compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)"
+  fi
+  [ -n "$project" ] || project="$(basename "$DEPLOY_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  docker volume inspect "${project}_miniodata" >/dev/null 2>&1 || return 0
+  ! docker volume inspect "${project}_objectstoredata" >/dev/null 2>&1 || return 0
+  cat >&2 <<GUARD_MESSAGE
+[up] STOPPED: this installation ran the bundled MinIO and has not moved its files.
+[up]   volume ${project}_miniodata exists; ${project}_objectstoredata (the new bundled
+[up]   SeaweedFS store) does not. Continuing would start an EMPTY object store and point
+[up]   the API at it: every file stored before the upgrade would fail to open.
+[up]
+[up]   Read SELF_HOSTING.md, "Upgrading from the bundled MinIO", and take one path:
+[up]     (a) keep MinIO as your own object store (legacy-minio.yml + AWS_S3_ENDPOINT), or
+[up]     (b) copy the bucket into SeaweedFS once (docker compose -f docker-compose.yml
+[up]         -f legacy-minio.yml run --rm copy-from-minio), then rerun ./up.sh.
+[up]
+[up]   If you really want an empty store (the old files are not needed or are restored
+[up]   another way), rerun with --fresh-objectstore (or LF_FRESH_OBJECTSTORE=1).
+GUARD_MESSAGE
+  exit 1
+}
+
 add_store postgres DATABASE_URL
 add_store redis MESSAGE_QUEUE_REDIS_HOSTNAME
 add_store objectstore AWS_S3_ENDPOINT
+objectstore_upgrade_guard
 
 if has_unit core; then PROFILES+=(admin); fi
 if [ "$DEMO" -eq 1 ]; then

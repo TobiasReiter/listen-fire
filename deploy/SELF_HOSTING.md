@@ -325,7 +325,7 @@ Each move has a runbook in your platform's guide — [GCP](guides/gcp-vm.md), [A
 
 ### Upgrading from the bundled MinIO
 
-Releases before SeaweedFS bundled MinIO as the object store, in a `minio` service on the `miniodata` volume. MinIO no longer publishes container images, so the bundled store is now SeaweedFS (the `objectstore` service, on a NEW volume, `objectstoredata`). An installation that ran the bundled MinIO and has no `AWS_S3_ENDPOINT` of its own still has every file it stored in `miniodata`, under the `listen-fire` bucket — **upgrading does not move them, and nothing deletes that volume**: this release's compose file no longer names it, so not even `down -v` reaches it. Until you do one of the two things below, the upgraded installation reads and writes the new, empty bucket, and a file stored before the upgrade fails to open.
+Releases before SeaweedFS bundled MinIO as the object store, in a `minio` service on the `miniodata` volume. MinIO no longer publishes container images, so the bundled store is now SeaweedFS (the `objectstore` service, on a NEW volume, `objectstoredata`). An installation that ran the bundled MinIO and has no `AWS_S3_ENDPOINT` of its own still has every file it stored in `miniodata`, under the `listen-fire` bucket — **upgrading does not move them, and nothing deletes that volume**: this release's compose file no longer names it, so not even `down -v` reaches it. `./up.sh` therefore refuses to start while `miniodata` exists, `objectstoredata` does not and `AWS_S3_ENDPOINT` is unset, naming this section; to continue with an empty store anyway, pass `--fresh-objectstore` (or set `LF_FRESH_OBJECTSTORE=1`). A bare `docker compose up` cannot see host volumes, so it is not blocked: the init step logs a `WARNING` when the config volume still holds `minio_password`. Until you do one of the two things below, the upgraded installation reads and writes the new, empty bucket, and a file stored before the upgrade fails to open.
 
 Both use [`legacy-minio.yml`](legacy-minio.yml), an override that runs your old MinIO again from the image **already on your machine** (`pull_policy: never`; set `LEGACY_MINIO_IMAGE` if yours is a different tag than `minio/minio:RELEASE.2025-09-07T16-13-09Z`, and `LEGACY_MINIO_VOLUME` if your compose project is not `listen-fire`), on that volume, with the password the installation minted for it (`minio_password`, still in the config volume). If the image is gone from the machine too, any MinIO build that reads the same data directory serves it. Snapshot the database first, as for any upgrade.
 
@@ -338,6 +338,7 @@ AWS_DOCUMENT_S3_BUCKET=listen-fire
 AWS_REGION=auto
 AWS_ACCESS_KEY_ID=listenfire
 # the old MinIO password, printed by: docker compose run --rm --no-deps --entrypoint cat init /config/minio_password
+# (this prints the secret: do not paste it into tickets or logs)
 AWS_SECRET_ACCESS_KEY=
 AWS_S3_FORCE_PATH_STYLE=true
 ```
@@ -359,7 +360,7 @@ docker compose -f docker-compose.yml -f legacy-minio.yml rm -sf minio
 ./up.sh <your units>        # or: docker compose up -d --remove-orphans
 ```
 
-Step 2 is `rclone copy` then `rclone check --one-way` between the two buckets and ends with `copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store`; the keys are the same, so every `s3://listen-fire/…` the database holds still resolves. Open a few older files in the app to confirm. Only then, and only by hand, reclaim the old volume — keep the config volume's `minio_password` until you have:
+Step 2 is `rclone copy` then `rclone check --one-way --size-only` between the two buckets (sizes, not hashes: a multipart object carries a different ETag in MinIO and SeaweedFS, so a hash comparison would report a false mismatch for a faithful copy; `rclone copy` itself verifies each transfer) and ends with `copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store`; the keys are the same, so every `s3://listen-fire/…` the database holds still resolves. Open a few older files in the app to confirm. Only then, and only by hand, reclaim the old volume — keep the config volume's `minio_password` until you have:
 
 ```bash
 docker volume rm listen-fire_miniodata      # deletes every file MinIO held; there is no undo

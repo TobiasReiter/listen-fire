@@ -49,6 +49,14 @@ if [ -z "${AWS_S3_ENDPOINT:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -f 
   export AWS_DOCUMENT_S3_BUCKET="${AWS_DOCUMENT_S3_BUCKET:-listen-fire}"
   export AWS_REGION="${AWS_REGION:-auto}"
   export AWS_S3_FORCE_PATH_STYLE=true
+  # A config volume that still holds minio_password belongs to an installation
+  # that ran the bundled MinIO. A container cannot see the host's volumes, so it
+  # cannot tell whether the files were moved; say so in the log. This never
+  # blocks: ./up.sh holds the real guard, and a bare `docker compose up` must
+  # keep working for installations that have already copied or never had files.
+  if [ -f /config/minio_password ] && [ "${LF_FRESH_OBJECTSTORE:-}" != 1 ]; then
+    echo "WARNING: this installation ran the bundled MinIO (/config/minio_password exists). If its files were not copied into the new SeaweedFS store they are NOT visible here: see SELF_HOSTING.md, 'Upgrading from the bundled MinIO'. Set LF_FRESH_OBJECTSTORE=1 to silence this." >&2
+  fi
 fi
 
 # The dev-loop harness ids are a SWITCH, not identity. `isTestHarnessTeam` is a
