@@ -422,10 +422,106 @@ export interface ParkReader {
    *  as — registered empty and filled in place, as a node is. */
   readonly handles: Map<number, HandleBinding>;
   readonly unfilledHandles: Set<number>;
+  /** Every numbered descriptor the WHOLE parked state carries, by its
+   *  number, indexed before anything is read: a reference is resolved from
+   *  it whichever copy of a scope (or frame, or journal) the reader walks,
+   *  and in whatever order the state's keys come back. The writer numbers a
+   *  handle or node at its FIRST sighting in its own walk order, which need
+   *  not be a place the reader walks at all — the movement scope rides on
+   *  both the leaf's chain and an outer frame's, and the reader rebuilds it
+   *  from the frame's. */
+  readonly handleDescriptors: Map<number, HandleDescriptor>;
+  readonly nodeDescriptors: Map<number, NodeDescriptor>;
 }
 
-export function newParkReader(): ParkReader {
-  return { nodes: new Map(), unfilled: new Set(), handles: new Map(), unfilledHandles: new Set() };
+type NodeDescriptor = Extract<BindingDescriptor, { kind: 'nodePosition' }>;
+
+/** A reader of the park `state` was written as — a whole parked state, or one
+ *  descriptor stored on its own. */
+export function newParkReader(state?: unknown): ParkReader {
+  const park: ParkReader = {
+    nodes: new Map(),
+    unfilled: new Set(),
+    handles: new Map(),
+    unfilledHandles: new Set(),
+    handleDescriptors: new Map(),
+    nodeDescriptors: new Map(),
+  };
+  if (state !== undefined) indexNumbered(state, park);
+  return park;
+}
+
+/** Descriptor kinds that hold nothing a park numbers: their payload is data
+ *  (a value, a record's fields, an instance), never another descriptor. */
+const UNNUMBERED_KINDS = new Set([
+  'value',
+  'data',
+  'callback',
+  'shapePosition',
+  'sourcePosition',
+  'resource',
+  'extractRoot',
+  'extractPosition',
+  'instance',
+  'localShape',
+  'shape',
+  'movement',
+  'fileClosure',
+  'opaque',
+  'event',
+  'handleRef',
+  'nodeRef',
+]);
+
+/** Keys that hold code (an op, an arm body, a closure, a walk's head and
+ *  mapping, a declaration) or a record's own data, never a descriptor. */
+const UNNUMBERED_KEYS = new Set([
+  'op',
+  'body',
+  'closure',
+  'head',
+  'mapping',
+  'fields',
+  'fieldProvenance',
+  'position',
+  'declaration',
+]);
+
+/** Every numbered handle and node descriptor anywhere in a parked state: its
+ *  scopes, frames, journals and exports, never a value's own data. */
+function indexNumbered(value: unknown, park: ParkReader): void {
+  if (Array.isArray(value)) {
+    for (const item of value) indexNumbered(item, park);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const object = value as Record<string, unknown>;
+  const kind = object.kind;
+  if (kind === 'handle') {
+    const handle = object as HandleDescriptor;
+    if (typeof handle.id === 'number' && !park.handleDescriptors.has(handle.id)) {
+      park.handleDescriptors.set(handle.id, handle);
+    }
+    if (handle.old !== undefined) indexNumbered(handle.old, park);
+    return;
+  }
+  if (kind === 'nodePosition') {
+    const node = object as NodeDescriptor;
+    if (typeof node.id === 'number' && !park.nodeDescriptors.has(node.id)) {
+      park.nodeDescriptors.set(node.id, node);
+    }
+    indexNumbered(node.edges, park);
+    return;
+  }
+  // A value-plane map: its keys are the record's own, every entry a descriptor.
+  if (kind === 'map' && object.of !== null && typeof object.of === 'object' && !Array.isArray(object.of)) {
+    for (const entry of Object.values(object.of)) indexNumbered(entry, park);
+    return;
+  }
+  if (typeof kind === 'string' && UNNUMBERED_KINDS.has(kind)) return;
+  for (const [key, entry] of Object.entries(object)) {
+    if (!UNNUMBERED_KEYS.has(key)) indexNumbered(entry, park);
+  }
 }
 
 function handleNumbered(park: ParkReader, id: number): HandleBinding {
@@ -813,7 +909,7 @@ export async function rehydrateBinding(
 ): Promise<Binding> {
   if (park !== undefined) return rehydrateInPark(descriptor, ctx, park);
   // A descriptor stored on its own is its own park.
-  const own = newParkReader();
+  const own = newParkReader(descriptor);
   const binding = await rehydrateInPark(descriptor, ctx, own);
   assertParkRead(own);
   return binding;
@@ -830,14 +926,20 @@ async function rehydrateInPark(
     case 'event':
       return binding({ kind: 'event' });
     case 'handle': {
-      const graph = await rehydrateHandleGraph(descriptor.graph, ctx);
       let written: HandleBinding;
       if (descriptor.id === undefined) {
+        const graph = await rehydrateHandleGraph(descriptor.graph, ctx);
         written = binding({ kind: 'handle', handle: { ...descriptor.handle }, targetType: descriptor.targetType, graph });
       } else {
-        // The one binding every `handleRef` to it reads as, filled in place.
+        // Read already — through a reference that named it first.
+        const read = park.handles.get(descriptor.id);
+        if (read !== undefined && !park.unfilledHandles.has(descriptor.id)) return read;
+        // The one binding every `handleRef` to it reads as, filled in place —
+        // registered before anything awaits, so a reference read alongside it
+        // finds it rather than reading the descriptor a second time.
         written = handleNumbered(park, descriptor.id);
         park.unfilledHandles.delete(descriptor.id);
+        const graph = await rehydrateHandleGraph(descriptor.graph, ctx);
         written.handle = { ...descriptor.handle };
         written.targetType = descriptor.targetType;
         written.graph = graph;
@@ -878,6 +980,10 @@ async function rehydrateInPark(
         fieldProvenance: descriptor.fieldProvenance,
       });
     case 'nodePosition': {
+      // Read already — through a reference that named it first.
+      if (descriptor.id !== undefined && park.nodes.has(descriptor.id) && !park.unfilled.has(descriptor.id)) {
+        return park.nodes.get(descriptor.id)!;
+      }
       // Registered (and so reachable by its references) before its edges are
       // read, which is what lets an edge lead back to it.
       const node: NodePosition =
@@ -903,10 +1009,17 @@ async function rehydrateInPark(
       node.edges = edges;
       return node;
     }
-    case 'nodeRef':
-      return nodeNumbered(park, descriptor.id);
-    case 'handleRef':
-      return handleNumbered(park, descriptor.id);
+    // Named before its own descriptor was read: read it now, from wherever in
+    // the state it was written. A number no descriptor carries stays an
+    // empty stand-in, which `assertParkRead` refuses.
+    case 'nodeRef': {
+      const written = park.nodes.has(descriptor.id) ? undefined : park.nodeDescriptors.get(descriptor.id);
+      return written !== undefined ? rehydrate(written) : nodeNumbered(park, descriptor.id);
+    }
+    case 'handleRef': {
+      const written = park.handles.has(descriptor.id) ? undefined : park.handleDescriptors.get(descriptor.id);
+      return written !== undefined ? rehydrate(written) : handleNumbered(park, descriptor.id);
+    }
     case 'lazyWalk':
       return binding({ kind: 'lazyWalk', walk: await rehydrateDeferredWalk(descriptor.walk, ctx, park) });
     case 'value':

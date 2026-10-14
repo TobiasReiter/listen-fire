@@ -839,3 +839,143 @@ describe('two names for one handle or node in a completed branch’s export', ()
     expect(alone.kind).toBe('handle');
   });
 });
+
+// R1 (B7 regression): the movement scope rides on BOTH the leaf's chain and the
+// frame of a call the park is inside. The writer walks the leaf's chain first,
+// so a handle (or node) held there is written in full in the leaf's copy and as
+// a reference in the frame's — and the reader rebuilds the movement scope from
+// the frame's. The reader indexes every numbered descriptor in the whole state
+// before it resolves a reference, so it no longer matters which copy it walks.
+describe('a handle in the movement scope, parked inside a body closure call', () => {
+  const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
+  const handleProgram = (call: string[]): string =>
+    program(
+      '',
+      [
+        '  a = write graph-[:note]-> { body: "one" }',
+        ...closure,
+        ...call,
+        '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", a.body) } }',
+      ].join('\n'),
+    );
+
+  async function parkAndResume(h: Harness) {
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    const [address] = [...h.parks.parks.keys()];
+    const state = h.parks.parks.get(address!)!.state;
+    return { address: address!, state };
+  }
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    it(`version ${languageVersion}: resumes with the handle the movement scope held`, async () => {
+      const h: Harness = { source: handleProgram(['  y = f("q")']), parks: makeParkSink(), languageVersion };
+      const { address, state } = await parkAndResume(h);
+      // The shape that failed: the frame's copy of the movement scope names
+      // the handle the leaf's copy numbered.
+      expect(JSON.stringify(state.frames)).toContain('"kind":"handleRef"');
+      const { result, kg } = await resumeAt(h, address);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+    });
+
+    it(`version ${languageVersion}: a second name and a closure's capture of it come back as one handle`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  a = write graph-[:note]-> { body: "one" }',
+            '  b = a',
+            '  f = (x: <text>) => {',
+            '    await sleep(1h)',
+            '    return CONCAT(x, "/", b.body)',
+            '  }',
+            '  y = f("q")',
+            '  write a { body: "two" }',
+            '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", b.body) } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      const { address } = await parkAndResume(h);
+      const { result, kg } = await resumeAt(h, address);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one/two' });
+    });
+  }
+
+  it('a park inside the closure called inside a branch resumes', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  a = write graph-[:note]-> { body: "one" }',
+          ...closure,
+          '  if (a.body == "one") {',
+          '    y = f("q")',
+          '    write graph-[:note]-> { payload: { seen: CONCAT(y, "/", a.body) } }',
+          '  }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    const { address } = await parkAndResume(h);
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+
+  it('a run-built node in the movement scope resumes too', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  n = node { body: "one" }',
+          ...closure,
+          '  y = f("q")',
+          '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", n.body) } }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    const { address, state } = await parkAndResume(h);
+    expect(JSON.stringify(state.frames)).toContain('"kind":"nodeRef"');
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+
+  it('a park written before handles were numbered (each copy in full) still resumes', async () => {
+    const h: Harness = { source: handleProgram(['  y = f("q")']), parks: makeParkSink(), languageVersion: 4 };
+    const { address, state } = await parkAndResume(h);
+    // What the writer wrote before B7: every sighting of the handle in full,
+    // no `id`, no `handleRef`.
+    const numbered = new Map<number, unknown>();
+    const collect = (value: unknown): void => {
+      if (Array.isArray(value)) return value.forEach(collect);
+      if (value === null || typeof value !== 'object') return;
+      const object = value as Record<string, unknown>;
+      if (object.kind === 'handle' && typeof object.id === 'number') numbered.set(object.id, object);
+      Object.values(object).forEach(collect);
+    };
+    const unnumber = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(unnumber);
+      if (value === null || typeof value !== 'object') return value;
+      const object = value as Record<string, unknown>;
+      if (object.kind === 'handleRef') return unnumber(numbered.get(object.id as number));
+      const out: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(object)) if (!(object.kind === 'handle' && key === 'id')) out[key] = unnumber(entry);
+      return out;
+    };
+    collect(state);
+    const old = unnumber(state) as ParkedScopeState;
+    expect(JSON.stringify(old)).not.toContain('handleRef');
+    h.parks.parks.set(address, { kind: 'timer', state: old });
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+});

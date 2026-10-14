@@ -135,6 +135,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- A movement that holds a written record (or a built node) and then waits inside a function it
+  calls resumes again. Since the previous fix below, resuming it failed "the parked state refers to
+  write handle(s) #0 that it never wrote", because the resume read the movement's own names from
+  a copy that only pointed at the record. The resume now finds each record wherever the parked
+  state wrote it. Every language version; a parked state written before is unchanged and resumes.
 - Two names for one written record stay one across a wait (`b = a`, `b = write a { … }`, or a
   closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
   leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that
