@@ -117,7 +117,7 @@ pub struct ShapePosition {
     pub field_provenance: Js,
 }
 
-/// `{kind: 'closure', closure, captured, self?}`.
+/// `{kind: 'closure', closure, captured, self?, scope?}`.
 pub struct Closure {
     pub code: crate::flow::Code<movement_parser::ast::ClosureExpression>,
     pub captured: Rc<Scope>,
@@ -130,15 +130,35 @@ pub struct Closure {
     /// (`fileClosure`), finding it again in the re-parsed file, as it does a
     /// movement (expression.ts `file`).
     pub file_name: Option<String>,
+    /// A closure written in a BODY (expression.ts `env`): `captured` is the
+    /// scope it was written in, held by REFERENCE as a JavaScript closure
+    /// holds its enclosing scope — it reads that scope as it stands when it
+    /// runs — and a park writes the scope once, numbered, and the closure as
+    /// its code and a link to it (`scope`). False for a snapshot: an
+    /// in-place function a collection op or an `until` runs, a movement
+    /// handed as a function, and a closure parked before scopes were
+    /// numbered (its flat `captured`).
+    pub by_reference: bool,
 }
 
-/// A file-level closure's scope holds the closure: it is named, not printed.
+impl Closure {
+    /// run.ts `closureScope`: the scope its body's scopes chain from — the
+    /// scope it holds (a file's, a body's), live, or a fresh one built from
+    /// its snapshot.
+    pub fn call_root(&self) -> Rc<Scope> {
+        if self.by_reference || self.file_name.is_some() { self.captured.clone() } else { self.captured.fresh_copy() }
+    }
+}
+
+/// A file-level closure's scope holds the closure, and so may a body
+/// closure's: they are named, not printed.
 impl std::fmt::Debug for Closure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("Closure");
         out.field("code", &self.code).field("self_name", &self.self_name);
         match &self.file_name {
             Some(name) => out.field("file_name", name),
+            None if self.by_reference => out.field("by_reference", &true),
             None => out.field("captured", &self.captured),
         };
         out.finish()
@@ -448,6 +468,22 @@ impl Scope {
         }
     }
 
+    /// Whether this is a file's own top-level scope (run.ts `isFileScope`):
+    /// found again in the re-parsed program, never written by a park.
+    pub fn is_file_scope(&self) -> bool {
+        self.file_env.is_some()
+    }
+
+    /// The file whose own scope this is, when it is one.
+    pub fn own_file(&self) -> Option<&crate::program::DeclaringFile> {
+        self.file_env.as_ref()
+    }
+
+    /// The scope this one is nested in — none for a file's own scope.
+    pub fn outer(&self) -> Option<&Rc<Scope>> {
+        self.parent.as_ref()
+    }
+
     /// The file the code running here is written in (`written_in`).
     pub fn written_in(&self) -> crate::program::DeclaringFile {
         match (&self.written_in, &self.parent) {
@@ -514,6 +550,13 @@ impl Scope {
     pub fn capture_written_in(self: &Rc<Self>, file: crate::program::DeclaringFile) -> Rc<Scope> {
         let captured = self.capture();
         Rc::new(Scope { bindings: RefCell::new(captured.own_bindings()), parent: None, file_env: None, written_in: Some(file) })
+    }
+
+    /// A fresh scope holding this one's own bindings (run.ts `closureScope`
+    /// of a snapshot): each call of a function that holds a snapshot runs
+    /// over a scope of its own, as the TypeScript builds one per call.
+    pub fn fresh_copy(&self) -> Rc<Scope> {
+        Rc::new(Scope { bindings: RefCell::new(self.own_bindings()), parent: self.parent.clone(), file_env: None, written_in: self.written_in.clone() })
     }
 
     /// The lexical chain, root first, this scope last (`chainFromRoot`).

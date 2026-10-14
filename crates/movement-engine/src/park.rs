@@ -86,6 +86,15 @@ pub(crate) fn park_state(run: &Run<'_>, address: &str, binding_name: Option<&str
 }
 
 fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: &Leaf<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
+    let boundaries = run.boundaries.borrow().clone();
+    // The frames' chains are written after the leaf's: a closure the leaf
+    // reaches that holds one of their scopes names it, rather than writing it.
+    for boundary in &boundaries {
+        match boundary {
+            Boundary::Call { site, .. } | Boundary::Member { site, .. } => park.carries_chain(&site.scope.chain_from_root()),
+            Boundary::Arm { .. } => {}
+        }
+    }
     let mut state = vec![("version", Js::Number(1.0)), ("address", Js::str(address)), ("bindingName", binding_name.map_or(Js::Null, Js::str))];
     match *leaf {
         Leaf::Timer { presence: true } => state.push(("presenceBind", Js::Bool(true))),
@@ -97,7 +106,6 @@ fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf:
         }
     }
     state.push(("scopeChain", scope_chain(run, scope, park)?));
-    let boundaries = run.boundaries.borrow().clone();
     if !boundaries.is_empty() {
         let frames = boundaries.iter().map(|boundary| serialize_boundary(run, boundary, park)).collect::<Result<Vec<_>, _>>()?;
         state.push(("frames", Js::array(frames)));
@@ -121,7 +129,9 @@ pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -
 
 /// The scopes root first, as one park writes them.
 fn scope_chain(run: &Run<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
-    Ok(Js::array(scope.chain_from_root().iter().map(|s| serialize_scope(run, s, park)).collect::<Result<_, _>>()?))
+    let chain = scope.chain_from_root();
+    park.carries_chain(&chain);
+    Ok(Js::array(chain.iter().map(|s| serialize_scope(run, s, park)).collect::<Result<_, _>>()?))
 }
 
 /// `serializeCallRecords`: a statement's finished calls, by index.
@@ -168,10 +178,22 @@ fn serialize_boundary(run: &Run<'_>, boundary: &Boundary, park: &mut ParkWriter)
     })
 }
 
-/// One binding written alone, as its own park (a returned value, a
-/// collection op's kept members).
+/// One binding written alone, as its own park that knows the program's
+/// files (`serializeBinding(value, this.newPark())`): a branch's returned
+/// value.
 pub(crate) fn serialize_alone(run: &Run<'_>, binding: &Binding) -> Result<Js, Failure> {
     one_park(|park| serialize_binding(run, "", binding, park))
+}
+
+/// One binding written alone by a park that knows no program
+/// (`serializeBinding(value)`, a bare `newParkWriter()`): a collection op's
+/// kept member and its start. Such a park takes any scope nested in none
+/// for a file's, and names no library.
+pub(crate) fn serialize_alone_plain(run: &Run<'_>, binding: &Binding) -> Result<Js, Failure> {
+    one_park(|park| {
+        park.plain = true;
+        serialize_binding(run, "", binding, park)
+    })
 }
 
 /// A completed branch's exports (`serializeBranchExport`): one stored
@@ -209,6 +231,43 @@ pub(crate) struct ParkWriter {
     /// The numbers an earlier pass over the same state gave: what each
     /// handle's first descriptor says (`id`).
     known: Vec<(Rc<Handle>, usize)>,
+    /// Each scope a closure held, by its number (`scopeIds`), with the link
+    /// to the scope it is nested in that its chain copies say (`parent`). A
+    /// scope is numbered the first time a closure reaches it, so a park
+    /// holding none writes exactly the bytes it always did.
+    scope_ids: Vec<(Rc<Scope>, usize, Option<Js>)>,
+    /// The scopes a parked chain has written a copy of (`scopeCopies`).
+    scope_copied: Vec<Rc<Scope>>,
+    /// The scopes a parked chain carries, or will (`chainScopes`): a closure
+    /// that holds one names it, and never writes it a second time.
+    chain_scopes: Vec<Rc<Scope>>,
+    /// The numbers an earlier pass gave each scope: what every chain copy of
+    /// it says (`id`, `parent`). The TypeScript back-patches a copy written
+    /// before its scope was numbered; this engine writes the state again.
+    known_scopes: Vec<(Rc<Scope>, usize, Option<Js>)>,
+    /// A park that knows no program (a bare `newParkWriter()`): a scope is a
+    /// file's when it is nested in none, and its link names no library.
+    plain: bool,
+}
+
+impl ParkWriter {
+    /// `carriesChain`.
+    fn carries_chain(&mut self, chain: &[Rc<Scope>]) {
+        for scope in chain {
+            if !self.chain_scopes.iter().any(|s| Rc::ptr_eq(s, scope)) {
+                self.chain_scopes.push(scope.clone());
+            }
+        }
+    }
+
+    /// `isFileScopeIn`.
+    fn is_file_scope(&self, scope: &Scope) -> bool {
+        if self.plain { scope.outer().is_none() } else { scope.is_file_scope() }
+    }
+
+    fn scope_id(&self, scope: &Rc<Scope>) -> Option<usize> {
+        self.scope_ids.iter().find(|(s, _, _)| Rc::ptr_eq(s, scope)).map(|(_, id, _)| *id)
+    }
 }
 
 /// One park, written whole. The TypeScript back-patches a handle's `id`
@@ -220,10 +279,13 @@ fn one_park(write: impl Fn(&mut ParkWriter) -> Result<Js, Failure>) -> Result<Js
     let mut park = ParkWriter::default();
     let written = write(&mut park)?;
     let known: Vec<(Rc<Handle>, usize)> = park.handles.into_iter().filter_map(|(handle, id)| id.map(|id| (handle, id))).collect();
-    if known.is_empty() {
+    // A copy of a numbered scope written before it was numbered says its
+    // number only on the second pass; one written after says it on both.
+    let renumber_scopes = park.scope_ids.iter().any(|(scope, _, _)| park.scope_copied.iter().any(|s| Rc::ptr_eq(s, scope)));
+    if known.is_empty() && !renumber_scopes {
         return Ok(written);
     }
-    write(&mut ParkWriter { known, ..ParkWriter::default() })
+    write(&mut ParkWriter { known, known_scopes: park.scope_ids, plain: park.plain, ..ParkWriter::default() })
 }
 
 /// The number `written` has in this park, numbering it if it is new.
@@ -237,12 +299,88 @@ fn number(park: &mut ParkWriter, written: Rc<RefCell<crate::bindings::Node>>) ->
     }
 }
 
-fn serialize_scope(run: &Run<'_>, scope: &Scope, park: &mut ParkWriter) -> Result<Js, Failure> {
+/// `serializeScope`: a chain copy of one scope — its own bindings, and,
+/// when a closure holds it by number, that number and the scope it is nested
+/// in. A file's own scope is written as it always was, never numbered.
+fn serialize_scope(run: &Run<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
+    // Registered before its bindings are written: a closure in it holds it,
+    // and names it.
+    if !park.is_file_scope(scope) && !park.scope_copied.iter().any(|s| Rc::ptr_eq(s, scope)) {
+        park.scope_copied.push(scope.clone());
+    }
+    let mut members = vec![("bindings", Js::object(write_bindings(run, scope, park)?))];
+    if !park.is_file_scope(scope) {
+        let numbered = park.known_scopes.iter().chain(park.scope_ids.iter()).find(|(s, _, _)| Rc::ptr_eq(s, scope)).map(|(_, id, parent)| (*id, parent.clone()));
+        if let Some((id, parent)) = numbered {
+            members.push(("id", Js::Number(id as f64)));
+            if let Some(parent) = parent {
+                members.push(("parent", parent));
+            }
+        }
+    }
+    Ok(object_of(members))
+}
+
+/// One scope's OWN bindings (`writeBindings`), an import named by its slot.
+fn write_bindings(run: &Run<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<JsObject, Failure> {
     let mut bindings = JsObject::new();
     for (name, binding) in scope.own_bindings() {
         bindings.set(name.clone(), serialize_binding(run, &name, &binding, park)?);
     }
-    Ok(object_of(vec![("bindings", Js::object(bindings))]))
+    Ok(bindings)
+}
+
+/// `scopeRefOf`: where a numbered scope is — by number, or a file's by its
+/// file.
+fn scope_ref_of(park: &ParkWriter, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    if park.is_file_scope(scope) {
+        let file = if park.plain { None } else { scope.own_file() };
+        return Ok(file_link(file.unwrap_or(&crate::program::DeclaringFile::Root)));
+    }
+    let id = park.scope_id(scope).ok_or_else(|| Failure::engine("MOVENG_RUNTIME", "park: a scope was named before it was numbered".to_string()))?;
+    Ok(object_of(vec![("kind", Js::str("scopeRef")), ("id", Js::Number(id as f64))]))
+}
+
+/// `{kind: 'file', file?}`: a file's own scope, found again in the
+/// re-parsed program.
+fn file_link(file: &crate::program::DeclaringFile) -> Js {
+    object_of(with_file(vec![("kind", Js::str("file"))], file))
+}
+
+/// `scopeLinkOf`: the scope a body closure holds, as the park writes it — by
+/// number when the park has numbered it or a chain carries it, a file's by
+/// its file, and otherwise written here, once. Numbering a scope numbers the
+/// scopes it is nested in, up to its file's.
+fn scope_link_of(run: &Run<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
+    if park.is_file_scope(scope) || park.scope_id(scope).is_some() {
+        return scope_ref_of(park, scope);
+    }
+    let id = park.scope_ids.len();
+    park.scope_ids.push((scope.clone(), id, None));
+    let outer = scope.outer().cloned();
+    let parent = match &outer {
+        Some(outer) => Some(scope_link_of(run, outer, park)?),
+        None => None,
+    };
+    // The copies say where it is nested by reference: the scope it is nested
+    // in is numbered now, and written once wherever it was.
+    let parent_ref = match &outer {
+        Some(outer) => Some(scope_ref_of(park, outer)?),
+        None => None,
+    };
+    if let Some(slot) = park.scope_ids.iter_mut().find(|(s, _, _)| Rc::ptr_eq(s, scope)) {
+        slot.2 = parent_ref;
+    }
+    let reference = object_of(vec![("kind", Js::str("scopeRef")), ("id", Js::Number(id as f64))]);
+    if park.scope_copied.iter().any(|s| Rc::ptr_eq(s, scope)) || park.chain_scopes.iter().any(|s| Rc::ptr_eq(s, scope)) {
+        return Ok(reference);
+    }
+    let mut members = vec![("kind", Js::str("scope")), ("id", Js::Number(id as f64))];
+    if let Some(parent) = parent {
+        members.push(("parent", parent));
+    }
+    members.push(("bindings", Js::object(write_bindings(run, scope, park)?)));
+    Ok(object_of(members))
 }
 
 /// `serializeBinding`, for the kinds this engine binds.
@@ -302,6 +440,16 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         Binding::Closure(closure) if closure.file_name.is_some() => {
             let name = closure.file_name.clone().unwrap_or_default();
             object_of(with_file(vec![kind("fileClosure"), ("name", Js::str(name))], &closure.captured.written_in()))
+        }
+        // One written in a body holds its scope by reference: its code, an
+        // empty capture, and a link to the scope (`scope`).
+        Binding::Closure(closure) if closure.by_reference => {
+            let mut members = vec![kind("closure"), ("closure", run.program_code(&closure.code.path)?), ("captured", Js::object(JsObject::new()))];
+            if let Some(name) = &closure.self_name {
+                members.push(("self", Js::str(name.clone())));
+            }
+            members.push(("scope", scope_link_of(run, &closure.captured, park)?));
+            object_of(members)
         }
         Binding::Closure(closure) => {
             let mut members = vec![kind("closure"), ("closure", run.program_code(&closure.code.path)?), ("captured", serialize_captured(run, &closure.captured, park)?)];
@@ -596,7 +744,21 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
 const NOT_READ: &str = "resume_state_code_does_not_read";
 
 fn scopes_refusal(chain: &Js) -> Option<String> {
-    items(Some(chain)).iter().find_map(|scope| map_refusal(at(scope, "bindings")))
+    items(Some(chain)).iter().find_map(|scope| map_refusal(at(scope, "bindings")).or_else(|| at(scope, "parent").and_then(scope_link_refusal)))
+}
+
+/// A scope link a closure holds, or a numbered scope's parent: a written
+/// scope's bindings and parent read as theirs do; a reference or a file's
+/// scope holds nothing.
+fn scope_link_refusal(link: &Js) -> Option<String> {
+    match text(at(link, "kind")) {
+        Some("scope") if id_of(at(link, "id")).is_some() => {
+            map_refusal(at(link, "bindings")).or_else(|| at(link, "parent").and_then(scope_link_refusal))
+        }
+        Some("scopeRef") if id_of(at(link, "id")).is_some() => None,
+        Some("file") => None,
+        _ => Some("resume_state_does_not_read".into()),
+    }
 }
 
 fn journal_refusal(journal: &Js) -> Option<String> {
@@ -652,7 +814,7 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
             if !code_reads::<ast::ClosureExpression>(at(descriptor, "closure")) {
                 return Some(NOT_READ.into());
             }
-            map_refusal(at(descriptor, "captured"))
+            map_refusal(at(descriptor, "captured")).or_else(|| at(descriptor, "scope").and_then(scope_link_refusal))
         }
         "localShape" => (!code_reads::<ast::ShapeDeclaration>(at(descriptor, "declaration"))).then(|| NOT_READ.to_string()),
         "lazyWalk" => walk_refusal(at(descriptor, "walk")),
@@ -819,6 +981,13 @@ pub(crate) struct ParkReader {
     node_descriptors: Vec<(u64, Js)>,
     handles: RefCell<Vec<(u64, Rc<Handle>)>>,
     unfilled_handles: RefCell<Vec<u64>>,
+    /// Every numbered scope's written copy anywhere in the state — a chain's,
+    /// or a closure's `scope` — first wins (`scopeDescriptors`).
+    scope_descriptors: Vec<(u64, Js)>,
+    /// Each numbered scope as the ONE scope every closure naming it holds
+    /// (`scopes`): the live scope a resume read a chain copy into, or one
+    /// built from the scope's written copy.
+    scopes: RefCell<Vec<(u64, Rc<Scope>)>>,
 }
 
 impl ParkReader {
@@ -894,6 +1063,31 @@ impl ParkReader {
         node
     }
 
+    /// The scope numbered `id`, once the resume has it.
+    pub(crate) fn scope(&self, id: u64) -> Option<Rc<Scope>> {
+        self.scopes.borrow().iter().find(|(i, _)| *i == id).map(|(_, s)| s.clone())
+    }
+
+    /// The written copy of the scope numbered `id`, wherever it is.
+    pub(crate) fn scope_descriptor(&self, id: u64) -> Option<Js> {
+        self.scope_descriptors.iter().find(|(i, _)| *i == id).map(|(_, d)| d.clone())
+    }
+
+    /// `scopes.set`: the scope every closure naming `id` holds.
+    pub(crate) fn scope_registered(&self, id: u64, scope: Rc<Scope>) {
+        self.scopes.borrow_mut().push((id, scope));
+    }
+
+    /// `registerLiveScope`: a chain copy the resume read into `scope`, live —
+    /// when it is numbered, the scope every closure naming that number holds.
+    pub(crate) fn register_live_scope(&self, copy: &Js, scope: &Rc<Scope>) {
+        if let Some(id) = id_of(at(copy, "id"))
+            && self.scope(id).is_none()
+        {
+            self.scope_registered(id, scope.clone());
+        }
+    }
+
     pub(crate) fn filled(&self, id: u64) {
         self.unfilled.borrow_mut().retain(|i| *i != id);
     }
@@ -929,7 +1123,38 @@ fn index_state(state: &Js, park: &mut ParkReader) {
 
 fn index_scopes(chain: Option<&Js>, park: &mut ParkReader) {
     for scope in &items(chain) {
+        if let Some(id) = id_of(at(scope, "id")) {
+            index_scope_copy(id, scope, park);
+        }
+        if let Some(parent) = at(scope, "parent") {
+            index_scope_link(parent, park);
+        }
         index_map(at(scope, "bindings"), park);
+    }
+}
+
+fn index_scope_copy(id: u64, copy: &Js, park: &mut ParkReader) {
+    if !park.scope_descriptors.iter().any(|(i, _)| *i == id) {
+        park.scope_descriptors.push((id, copy.clone()));
+    }
+}
+
+/// A scope link (`ScopeLink`): a written `scope`'s bindings are a map of
+/// descriptors, and its parent a link; a `scopeRef` or a `file` holds
+/// nothing.
+fn index_scope_link(link: &Js, park: &mut ParkReader) {
+    match text(at(link, "kind")) {
+        Some("scope") => {
+            if let Some(id) = id_of(at(link, "id")) {
+                index_scope_copy(id, link, park);
+            }
+            if let Some(parent) = at(link, "parent") {
+                index_scope_link(parent, park);
+            }
+            index_map(at(link, "bindings"), park);
+        }
+        Some("scopeRef" | "file") => {}
+        other => unreachable_kind("scope link", other),
     }
 }
 
@@ -1011,8 +1236,14 @@ fn index_descriptor(descriptor: &Js, park: &mut ParkReader) {
         }
         Some("positions") => items(at(descriptor, "landings")).iter().for_each(|landing| index_descriptor(landing, park)),
         Some("tuple") => items(at(descriptor, "slots")).iter().for_each(|slot| index_descriptor(slot, park)),
-        // A closure's `closure` is code; its capture is a map of descriptors.
-        Some("closure") => index_map(at(descriptor, "captured"), park),
+        // A closure's `closure` is code; its capture is a map of descriptors,
+        // and its scope a scope link.
+        Some("closure") => {
+            index_map(at(descriptor, "captured"), park);
+            if let Some(link) = at(descriptor, "scope") {
+                index_scope_link(link, park);
+            }
+        }
         Some("recordValue") => {
             if let Some(value) = at(descriptor, "value") {
                 index_value(value, park);

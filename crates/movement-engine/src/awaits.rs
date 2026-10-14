@@ -106,7 +106,7 @@ impl Run<'_> {
     async fn until_condition(&self, condition: &UntilCondition, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<(Js, Binding), Stop> {
         match condition {
             UntilCondition::Closure { closure } => {
-                let closure = Rc::new(Closure { code: Code { ast: Rc::new(closure.clone()), path: format!("{path}/closure") }, captured: scope.capture(), self_name: None, file_name: None });
+                let closure = Rc::new(Closure { code: Code { ast: Rc::new(closure.clone()), path: format!("{path}/closure") }, captured: scope.capture(), self_name: None, file_name: None, by_reference: false });
                 self.tick(&closure, at).await
             }
             UntilCondition::Expr { expr } => {

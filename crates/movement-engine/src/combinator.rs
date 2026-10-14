@@ -267,8 +267,11 @@ impl Run<'_> {
 
     /// `runArm`: one arm in its own branch scope, as a call by its name.
     async fn run_arm(&self, arm: &Arm, env: &Rc<Scope>, address: &Address) -> Result<Flow, Stop> {
+        // The bindings the arm's function brings (run.ts `closureCaptured`):
+        // the scope it holds, flat, as it stands now — a body closure's whole
+        // chain, a file's own scope, a snapshot's own bindings.
         if let Some(captured) = &arm.captured {
-            for (name, binding) in captured.own_bindings() {
+            for (name, binding) in captured.capture().own_bindings() {
                 env.declare(name, binding);
             }
         }
@@ -293,14 +296,18 @@ impl Run<'_> {
         outcome
     }
 
-    /// `x = (…) => { … }`: the closure, its scope captured as it stands, and
-    /// from version 3 the name its body may call it by.
+    /// `x = (…) => { … }`: the closure, holding the scope it is written in
+    /// by REFERENCE (run.ts `env`), as a JavaScript closure does: it sees the
+    /// bindings made after it too, and a park writes the scope once and the
+    /// closure as a link to it. From version 3, the name its body may call
+    /// it by.
     pub(crate) fn closure_binding(&self, closure: &ClosureExpression, name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Binding {
         Binding::Closure(Rc::new(Closure {
             code: Code { ast: Rc::new(closure.clone()), path: path.to_string() },
-            captured: scope.capture(),
+            captured: scope.clone(),
             self_name: name.filter(|_| self.version() >= 3).map(String::from),
             file_name: None,
+            by_reference: true,
         }))
     }
 
@@ -316,6 +323,7 @@ impl Run<'_> {
             captured: file.clone(),
             self_name: (self.version() >= 3).then(|| name.to_string()),
             file_name: Some(name.to_string()),
+            by_reference: false,
         }))
     }
 
@@ -330,7 +338,10 @@ impl Run<'_> {
     /// already the binding `bindValue` makes of it); a parameter handed
     /// none binds null.
     pub(crate) async fn invoke_closure_bound(&self, closure: &Rc<Closure>, bound: Vec<(String, Binding)>, address: &Address) -> Result<(Flow, Rc<Scope>), Stop> {
-        let child = closure.captured.child();
+        // Its body's scope reads its code's file: a closure a park rebuilt
+        // runs code of its own (crate::program `Parked`) over a scope the
+        // park shares with the rest of the run.
+        let child = closure.call_root().child_written_in(crate::program::file_of_path(&closure.code.path).0);
         // Its own name first, so a parameter of the same name shadows it.
         if let Some(name) = &closure.self_name {
             child.declare(name.clone(), Binding::Closure(closure.clone()));

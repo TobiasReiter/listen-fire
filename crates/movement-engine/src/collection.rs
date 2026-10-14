@@ -65,8 +65,13 @@ pub(crate) struct Function {
 }
 
 impl Function {
-    pub(crate) fn captured_scope(&self) -> &Rc<Scope> {
-        &self.captured
+    /// run.ts `closureScope(fn)`: the scope a member's scopes chain from —
+    /// a named closure's own, or a fresh one built from a snapshot.
+    pub(crate) fn call_root(&self) -> Rc<Scope> {
+        match &self.closure {
+            Some(closure) => closure.call_root(),
+            None => self.captured.fresh_copy(),
+        }
     }
 
     pub(crate) fn body_statements(&self) -> &[Statement] {
@@ -119,7 +124,7 @@ pub(crate) fn member_answer_export(run: &Run<'_>, answer: Option<&Js>) -> Result
     Ok(match answer {
         Some(value) => {
             let value = Binding::Value(ValueBinding { value: value.clone(), trail: Some(Trail::default()), many: false });
-            crate::env::object_of(vec![("kept", Js::Bool(true)), ("answer", crate::park::serialize_alone(run, &value)?)])
+            crate::env::object_of(vec![("kept", Js::Bool(true)), ("answer", crate::park::serialize_alone_plain(run, &value)?)])
         }
         None => crate::env::object_of(vec![("kept", Js::Bool(false))]),
     })
@@ -511,7 +516,7 @@ impl Run<'_> {
             }
             _ => vec![member],
         };
-        let at = run.function.captured.child();
+        let at = run.function.call_root().child_written_in(crate::program::file_of_path(&run.function.path).0);
         if let Some(name) = &run.function.self_name {
             at.declare(name.clone(), Binding::Closure(run.function.closure.clone().expect("a function with a name of its own is a closure")));
         }
@@ -549,8 +554,8 @@ impl Run<'_> {
                 let source = Binding::Value(ValueBinding { value: Js::array(run.members.clone()), trail: Some(run.source_trail.clone()), many: false });
                 let init = Binding::Value(ValueBinding { value: run.init.clone(), trail: Some(Trail::default()), many: false });
                 let state = crate::env::object_of(vec![
-                    ("source", crate::park::serialize_alone(self, &source).map_err(Stop::Thrown)?),
-                    ("init", crate::park::serialize_alone(self, &init).map_err(Stop::Thrown)?),
+                    ("source", crate::park::serialize_alone_plain(self, &source).map_err(Stop::Thrown)?),
+                    ("init", crate::park::serialize_alone_plain(self, &init).map_err(Stop::Thrown)?),
                 ]);
                 self.persist_branch_export(&frame, &frame, -1, &state).await?;
                 for (index, answer) in answers.iter().enumerate() {

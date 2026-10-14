@@ -239,10 +239,10 @@ impl Run<'_> {
                             let file = self.scope_of_file(&declared.file).ok_or_else(|| runtime("no file scope for a movement call".into()))?;
                             (file, Rc::new(declaration.body), body_path)
                         }
-                        Some(Binding::Closure(closure)) => (closure.captured.clone(), Rc::new(closure.code.ast.body.clone()), format!("{}/body", closure.code.path)),
+                        Some(Binding::Closure(closure)) => (closure.call_root(), Rc::new(closure.code.ast.body.clone()), format!("{}/body", closure.code.path)),
                         _ => return Err(malformed(&format!("'{callee}' is no longer a function in the calling scope"))),
                     };
-                    let callee_scope = root.child();
+                    let callee_scope = root.child_written_in(crate::program::file_of_path(&body_path).0);
                     let offset = root.chain_from_root().len();
                     self.rehydrate_into(chain.get(offset), &callee_scope, &park).await?;
                     let boundary = Boundary::Call { site: site.clone(), index: descent_index, next, callee: callee.clone() };
@@ -269,8 +269,13 @@ impl Run<'_> {
                 let (on_error, concurrency, initial) = crate::collection::settings(op.config.as_ref()).map_err(|problem| {
                     runtime(format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}"))
                 })?;
-                let member_scope = function.captured_scope().child();
-                self.rehydrate_into(chain.get(1), &member_scope, &park).await?;
+                // The member's scopes chain from the function's own, which a
+                // park writes ahead of them: one scope for a snapshot, the
+                // whole chain for a closure that holds its scope.
+                let root = function.call_root();
+                let member_scope = root.child_written_in(crate::program::file_of_path(function.body_path()).0);
+                let offset = root.chain_from_root().len();
+                self.rehydrate_into(chain.get(offset), &member_scope, &park).await?;
                 let body = Rc::new(function.body_statements().to_vec());
                 let body_path = function.body_path().to_string();
                 let run = CollectionRun {
@@ -290,7 +295,7 @@ impl Run<'_> {
                 spine.push(Spine::Member { caller, boundary, site, index: descent_index, next, member, run, scope: member_scope.clone() });
                 statements = body;
                 scope = member_scope;
-                chain_index = 2;
+                chain_index = offset + 1;
                 frame_address = call_address.iter(member);
                 path = body_path;
                 i += 3;
@@ -876,6 +881,10 @@ impl Run<'_> {
     /// `rehydrateScopeInto`: a scope's bindings declared into `scope`, the
     /// trigger's own live ones kept.
     async fn rehydrate_into(&self, serialized: Option<&Js>, scope: &Rc<Scope>, park: &ParkReader) -> Result<(), Stop> {
+        // The scope a parked closure names by number is this one, live.
+        if let Some(copy) = serialized {
+            park.register_live_scope(copy, scope);
+        }
         let Some(bindings) = serialized.and_then(|s| at(s, "bindings")) else { return Ok(()) };
         for (name, descriptor) in pairs(Some(bindings)) {
             let kind = text(at(descriptor, "kind")).unwrap_or("");
@@ -1054,16 +1063,63 @@ impl Run<'_> {
                     }
                     Binding::Tuple(Rc::new(slots))
                 }
+                // One that holds its scope by reference: the ONE scope every
+                // closure naming it holds.
+                Some("closure") if at(descriptor, "scope").is_some() => {
+                    let (code, written) = self.closure_code(at(descriptor, "closure"))?;
+                    let captured = self.scope_of(at(descriptor, "scope").unwrap_or(&Js::Undefined), &written, park).await?;
+                    Binding::Closure(Rc::new(Closure { code, captured, self_name: text(at(descriptor, "self")).map(String::from), file_name: None, by_reference: true }))
+                }
                 Some("closure") => {
                     let (code, written) = self.closure_code(at(descriptor, "closure"))?;
                     let captured = Scope::root_written_in(written);
                     for (name, entry) in pairs(at(descriptor, "captured")) {
                         captured.declare(name.clone(), self.rehydrate(entry, park).await?);
                     }
-                    Binding::Closure(Rc::new(Closure { code, captured, self_name: text(at(descriptor, "self")).map(String::from), file_name: None }))
+                    Binding::Closure(Rc::new(Closure { code, captured, self_name: text(at(descriptor, "self")).map(String::from), file_name: None, by_reference: false }))
                 }
                 other => return Err(runtime(format!("a parked binding of kind {} is not one this engine rebuilds", other.unwrap_or("undefined")))),
             })
+        })
+    }
+
+    /// `scopeOf`: the scope a parked closure holds — a file's, found in the
+    /// re-parsed program; or a numbered one: the live scope the resume read
+    /// a chain copy into, or one built here from its written copy, nested as
+    /// it was, and registered before its bindings are read, so a closure in
+    /// it that holds it gets it back. `written` is the file the closure's
+    /// code is, what a scope nested in none reads its code in.
+    fn scope_of<'s>(&'s self, link: &'s Js, written: &'s crate::program::DeclaringFile, park: &'s ParkReader) -> Pinned<'s, Rc<Scope>> {
+        Box::pin(async move {
+            if text(at(link, "kind")) == Some("file") {
+                let file = match text(at(link, "file")) {
+                    Some(path) => crate::program::DeclaringFile::Library(path.to_string()),
+                    None => crate::program::DeclaringFile::Root,
+                };
+                return self
+                    .scope_of_file(&file)
+                    .ok_or_else(|| runtime("resume: a parked closure names a file scope the re-parsed program has none of".into()));
+            }
+            let id = id_of(at(link, "id")).ok_or_else(|| runtime("the parked state holds a scope link without an id".into()))?;
+            if let Some(known) = park.scope(id) {
+                return Ok(known);
+            }
+            let copy = if text(at(link, "kind")) == Some("scope") { Some(link.clone()) } else { park.scope_descriptor(id) };
+            let copy = copy.ok_or_else(|| runtime(format!("the parked state refers to scope #{id} that it never wrote")))?;
+            let scope = match at(&copy, "parent") {
+                Some(parent) => self.scope_of(parent, written, park).await?.child(),
+                None => Scope::root_written_in(written.clone()),
+            };
+            // Building its parent may have built it (a closure the parent
+            // holds names it): that one is the scope.
+            if let Some(known) = park.scope(id) {
+                return Ok(known);
+            }
+            park.scope_registered(id, scope.clone());
+            for (name, entry) in pairs(at(&copy, "bindings")) {
+                scope.declare(name.clone(), self.rehydrate(entry, park).await?);
+            }
+            Ok(scope)
         })
     }
 
