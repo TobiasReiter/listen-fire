@@ -2412,11 +2412,31 @@ fn event_text(event: &Js, key: &str) -> Option<String> {
 fn spell_value_type(value: &ast::ValueType) -> String {
     match value {
         ast::ValueType::Name { name, .. } => name.clone(),
-        ast::ValueType::List { of, .. } => format!("{}[]", spell_value_type(of)),
+        ast::ValueType::List { of, .. } => match **of {
+            ast::ValueType::Closure { .. } => format!("<{}>[]", spell_value_type(of)),
+            _ => format!("{}[]", spell_value_type(of)),
+        },
         ast::ValueType::Record { keys, .. } => format!(
             "{{ {} }}",
             keys.iter().map(|k| format!("{}{}: {}", k.name, if k.optional == Some(true) { "?" } else { "" }, spell_value_type(&k.type_))).collect::<Vec<_>>().join(", ")
         ),
+        ast::ValueType::Closure { params, returns, .. } => format!(
+            "({}) => <{}>",
+            params
+                .iter()
+                .map(|p| format!("{}: <{}>", p.name, p.type_.as_ref().map_or_else(|| "?".to_string(), spell_param_type)))
+                .collect::<Vec<_>>()
+                .join(", "),
+            spell_param_type(returns)
+        ),
+    }
+}
+
+/// `spellParamType`: a parameter's written type in its surface spelling.
+fn spell_param_type(type_: &ast::ParamTypeRef) -> String {
+    match type_ {
+        ast::ParamTypeRef::Value(value) => spell_value_type(value),
+        ast::ParamTypeRef::Name(name) => format!("{}{}", name.graph, name.hops_raw.as_deref().unwrap_or("")),
     }
 }
 

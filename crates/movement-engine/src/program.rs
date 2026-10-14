@@ -124,6 +124,7 @@ pub(crate) fn slot_of(node: &Json) -> Option<ast::ExprSlot> {
         raw: raw.to_string(),
         span: ast::Span { start: loc(span.get("start")?)?, end: loc(span.get("end")?)? },
         eager: node.get("__slot").and_then(Json::as_bool).unwrap_or(false),
+        closures: node.get("closures").and_then(|c| serde_json::from_value(c.clone()).ok()).unwrap_or_default(),
     })
 }
 

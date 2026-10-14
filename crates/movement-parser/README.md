@@ -91,7 +91,7 @@ differ.
 | `parse_program_eager` | as `parse_program` | the same `Program`, each slot also carrying `tree` (its `MExpr`) or `error` (`{message, pos}`) |
 | `parse_expression` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
-| `lower_expression` | `(tree_ptr, tree_len, src_ptr, src_len, out_ptr_ptr, out_len_ptr) -> status` | the tree's JSON and its source text in; the `Expression`, or `{"error": {message, code?, class?}}` |
+| `lower_expression` | `(tree_ptr, tree_len, src_ptr, src_len, closures_ptr, closures_len, out_ptr_ptr, out_len_ptr) -> status` | the tree's JSON, its source text and the slot's list element closure offsets (a JSON array, empty for none) in; the `Expression`, or `{"error": {message, code?, class?}}` |
 | `lower_condition` | as `lower_expression` | the `MovementCondition` |
 | `catalog_query` | `(snapshot_ptr, snapshot_len, query_ptr, query_len, out_ptr_ptr, out_len_ptr) -> status` | one lookup (`{op: "instantiate" \| "adapter" \| "credential" \| "credentialNames" \| "plugin" \| "models" \| "constructionArgOptions", …}`) or helper call (`{op: "helper", name, args}`) against the snapshot; `{"value": …}`, `{}` for `undefined`, or `{"error": {message}}`; nothing is kept between calls |
 | `last_panic` | `(out_ptr_ptr, out_len_ptr)` | the last panic's message, in a static buffer (not freed) |

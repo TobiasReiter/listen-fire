@@ -307,7 +307,7 @@ impl Run<'_> {
         }
         let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.child(), calls, scope, bound: Cell::new(0) };
         let text = self.stage_tree(&tree, &staging).await?;
-        Ok(Some((ExprSlot { raw: text, span: slot.span, eager: false }, staging.scratch)))
+        Ok(Some((ExprSlot { raw: text, span: slot.span, eager: false, closures: Vec::new() }, staging.scratch)))
     }
 
     /// `stageTree`: `tree` with its nested calls run, in order.
@@ -406,7 +406,7 @@ impl Run<'_> {
     fn settled_binding<'s>(&'s self, expr: &'s MExpr, staging: &'s Staging<'s>) -> Settled<'s> {
         Box::pin(async move {
             let text = self.stage_tree(expr, staging).await?;
-            let slot = ExprSlot { raw: text, span: staging.slot.span, eager: false };
+            let slot = ExprSlot { raw: text, span: staging.slot.span, eager: false, closures: Vec::new() };
             self.bind_slot_binding(&slot, &staging.scratch).await
         })
     }
@@ -442,7 +442,7 @@ impl Run<'_> {
         }
         let units = Utf16::new(&slot.raw);
         for conjunct in conjuncts_of(&tree) {
-            let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false };
+            let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false, closures: Vec::new() };
             let held = match self.staged_part(slot, &part, conjunct.at().start, scope).await? {
                 Some((staged, scratch)) => Box::pin(self.condition(&staged, &scratch)).await?,
                 None => Box::pin(self.condition(&part, scope)).await?,

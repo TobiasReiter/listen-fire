@@ -3961,7 +3961,7 @@ impl Names<'_> {
         let mut value_holders = self.value_holders.clone();
         value_holders.extend(plan.names.iter().cloned());
         let inner = Names { values: &values, value_holders: &value_holders, instances: self.instances.clone(), ..*self };
-        let piece = |raw: &str| ExprSlot { raw: raw.to_string(), span: slot.span, eager: false };
+        let piece = |raw: &str| ExprSlot { raw: raw.to_string(), span: slot.span, eager: false, closures: Vec::new() };
         for bound in &plan.bound {
             inner.assigned(&piece(bound))?;
         }
@@ -4071,7 +4071,7 @@ impl Names<'_> {
             // its own, then read as a condition.
             let units = movement_parser::util::utf16::Utf16::new(&slot.raw);
             for conjunct in crate::nested::conjuncts_of(&tree) {
-                let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false };
+                let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false, closures: Vec::new() };
                 match self.with_nested(&part, &|names, staged| names.plain_condition(staged)) {
                     Some(admitted) => admitted?,
                     None => self.plain_condition(&part)?,
@@ -4724,7 +4724,7 @@ pub(crate) fn direct_slots(statement: &Statement) -> Vec<ExprSlot> {
                 if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
                     && let (Some(start), Some(end)) = (span.get("start").and_then(loc), span.get("end").and_then(loc))
                 {
-                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false });
+                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false, closures: Vec::new() });
                     return;
                 }
                 for (key, value) in object {

@@ -8,7 +8,7 @@ import { ExpressionSyntaxError } from '../expression/error';
 import { CURRENT_LANGUAGE_VERSION } from '../language_version';
 import { slotTrees } from '../expression/slot_trees';
 import { callParser } from '../wasm/loader';
-import type { ExprSlot, Loc, Program, RValue } from './ast';
+import type { ExprSlot, Loc, Program, RValue, SlotClosure } from './ast';
 import type { MExpr } from './expression/tree';
 
 /** A statement-grammar refusal: the base message (the caller's error class
@@ -59,7 +59,7 @@ export function rustParseExpression(source: string): MExpr {
 /**
  * Moves each slot's eager parse (`tree` or `error`, which the Rust parser
  * adds beside `raw` and `span`) into the bridge's slot cache, leaving the
- * slot exactly `{raw, span}`. A fresh object replaces the slot rather than
+ * slot exactly `{raw, span}` (and its list element `closures`, if any). A fresh object replaces the slot rather than
  * deleting the two keys, which would leave V8 a slow dictionary object.
  */
 function absorbSlotTrees(value: unknown): void {
@@ -83,9 +83,13 @@ function absorbSlotTrees(value: unknown): void {
  *  but lacks a slot's `raw`/`span` is a broken slot, not some other node. */
 function parsedSlot(record: unknown): ExprSlot | undefined {
   if (!isRecord(record) || (!('tree' in record) && !('error' in record))) return undefined;
-  const { raw, span, tree, error } = record;
+  const { raw, span, tree, error, closures } = record;
   if (typeof raw !== 'string' || !isSpan(span)) throw malformed('slot', record);
-  const slot: ExprSlot = { raw, span };
+  // A list element closure's body is statements, whose slots carry their
+  // parse too (language version 5).
+  if (closures !== undefined && !isSlotClosures(closures)) throw malformed('a slot\'s closures', closures);
+  if (closures !== undefined) absorbSlotTrees(closures);
+  const slot: ExprSlot = closures !== undefined ? { raw, span, closures } : { raw, span };
   if (tree !== undefined) {
     if (!isTree(tree)) throw malformed('a slot tree', tree);
     slotTrees.set(slot, tree);
@@ -133,6 +137,10 @@ function isProgram(value: unknown): value is Program {
 
 function isRValue(value: unknown): value is RValue {
   return isRecord(value) && typeof value.kind === 'string';
+}
+
+function isSlotClosures(value: unknown): value is SlotClosure[] {
+  return Array.isArray(value) && value.every(c => isRecord(c) && typeof c.at === 'number' && isRecord(c.closure));
 }
 
 function isTree(value: unknown): value is MExpr {

@@ -119,9 +119,10 @@ pub unsafe extern "C" fn parse_nested_call(
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
-/// `lowerExpression(tree, source)`: the tree's JSON and the text it was
-/// parsed from in, the `Expression` (status 0) or `{"error": {message,
-/// code?, class?}}` (status 1) out. Unlike the parses, the output keeps the
+/// `lowerExpression(tree, source, closures)`: the tree's JSON, the text it
+/// was parsed from, and the offsets of the slot's list element closures (a
+/// JSON array of numbers, language version 5) in, the `Expression` (status 0)
+/// or `{"error": {message, code?, class?}}` (status 1) out. Unlike the parses, the output keeps the
 /// TypeScript lowering's key order instead of sorting (`crate::lowering`).
 ///
 /// # Safety
@@ -132,10 +133,14 @@ pub unsafe extern "C" fn lower_expression(
     tree_len: u32,
     src_ptr: *const u8,
     src_len: u32,
+    closures_ptr: *const u8,
+    closures_len: u32,
     out_ptr_ptr: *mut usize,
     out_len_ptr: *mut usize,
 ) -> u32 {
-    unsafe { lower(Mode::Expression, (tree_ptr, tree_len), (src_ptr, src_len), out_ptr_ptr, out_len_ptr) }
+    unsafe {
+        lower(Mode::Expression, [(tree_ptr, tree_len), (src_ptr, src_len), (closures_ptr, closures_len)], out_ptr_ptr, out_len_ptr)
+    }
 }
 
 /// `lowerCondition(tree, source)`, as `lower_expression`.
@@ -148,23 +153,30 @@ pub unsafe extern "C" fn lower_condition(
     tree_len: u32,
     src_ptr: *const u8,
     src_len: u32,
+    closures_ptr: *const u8,
+    closures_len: u32,
     out_ptr_ptr: *mut usize,
     out_len_ptr: *mut usize,
 ) -> u32 {
-    unsafe { lower(Mode::Condition, (tree_ptr, tree_len), (src_ptr, src_len), out_ptr_ptr, out_len_ptr) }
+    unsafe {
+        lower(Mode::Condition, [(tree_ptr, tree_len), (src_ptr, src_len), (closures_ptr, closures_len)], out_ptr_ptr, out_len_ptr)
+    }
 }
 
-unsafe fn lower(
-    mode: Mode,
-    tree: (*const u8, u32),
-    src: (*const u8, u32),
-    out_ptr_ptr: *mut usize,
-    out_len_ptr: *mut usize,
-) -> u32 {
+unsafe fn lower(mode: Mode, [tree, src, closures]: [(*const u8, u32); 3], out_ptr_ptr: *mut usize, out_len_ptr: *mut usize) -> u32 {
     install_panic_hook();
-    let inputs = unsafe { utf8(tree.0, tree.1, "the tree") }.and_then(|tree| Ok((tree, unsafe { utf8(src.0, src.1, "source") }?)));
+    let inputs = unsafe { utf8(tree.0, tree.1, "the tree") }.and_then(|tree| {
+        let source = unsafe { utf8(src.0, src.1, "source") }?;
+        let closures = unsafe { utf8(closures.0, closures.1, "the closure offsets") }?;
+        let closures: Vec<usize> = if closures.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(closures).map_err(|e| json!({ "message": format!("the closure offsets are not a list of numbers: {e}") }))?
+        };
+        Ok((tree, source, closures))
+    });
     let (status, bytes) = match inputs {
-        Ok((tree, source)) => match lowering::lower_json_bytes(&form::read_json_text(tree), &form::form_of_text(source), mode) {
+        Ok((tree, source, closures)) => match lowering::lower_json_bytes(&form::read_json_text(tree), &form::form_of_text(source), &closures, mode) {
             Ok(bytes) => (OK, bytes),
             Err(bytes) => (ERROR, bytes),
         },
@@ -343,17 +355,23 @@ mod tests {
             (ptr, len)
         };
         let ((tree_ptr, tree_len), (src_ptr, src_len)) = (input(tree), input(source));
+        let (closures_ptr, closures_len) = (alloc(0), 0);
         let (mut out_ptr, mut out_len) = (0usize, 0usize);
         let status = unsafe {
             match mode {
-                Mode::Expression => lower_expression(tree_ptr, tree_len, src_ptr, src_len, &mut out_ptr, &mut out_len),
-                Mode::Condition => lower_condition(tree_ptr, tree_len, src_ptr, src_len, &mut out_ptr, &mut out_len),
+                Mode::Expression => {
+                    lower_expression(tree_ptr, tree_len, src_ptr, src_len, closures_ptr, closures_len, &mut out_ptr, &mut out_len)
+                }
+                Mode::Condition => {
+                    lower_condition(tree_ptr, tree_len, src_ptr, src_len, closures_ptr, closures_len, &mut out_ptr, &mut out_len)
+                }
             }
         };
         let out = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();
         unsafe {
             dealloc(tree_ptr, tree_len);
             dealloc(src_ptr, src_len);
+            dealloc(closures_ptr, closures_len);
             dealloc(out_ptr as *mut u8, u32::try_from(out_len).unwrap());
         }
         (status, String::from_utf8(out).unwrap())
@@ -432,7 +450,7 @@ mod tests {
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), tree, 3) };
         let src = alloc(0);
         let (mut out_ptr, mut out_len) = (0usize, 0usize);
-        let status = unsafe { lower_expression(tree, 3, src, 0, &mut out_ptr, &mut out_len) };
+        let status = unsafe { lower_expression(tree, 3, src, 0, src, 0, &mut out_ptr, &mut out_len) };
         let out = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();
         unsafe {
             dealloc(tree, 3);

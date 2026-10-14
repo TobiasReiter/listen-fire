@@ -98,13 +98,25 @@ fn refuse<T>(message: impl Into<String>) -> Lowered<T> {
 
 /// Lower one expression; `source` is the text `tree` was parsed from.
 pub fn lower_expression(tree: &MExpr, source: &str) -> Lowered<Expression> {
-    Lowering::new(source).lower(tree, TOP)
+    lower_slot_expression(tree, source, &[])
 }
 
 /// Lower one `if` condition into its top-level `AND` conjuncts, each an `IS`
 /// type guard or an expression.
 pub fn lower_condition(tree: &MExpr, source: &str) -> Lowered<MovementCondition> {
-    Lowering::new(source).condition(tree)
+    lower_slot_condition(tree, source, &[])
+}
+
+/// `lower_expression` for a slot whose list element closures the statement
+/// parse collected (`ExprSlot::closures`, language version 5): `closures` are
+/// their offsets, and each is read as the name `slot_closure_name(at)`.
+pub fn lower_slot_expression(tree: &MExpr, source: &str, closures: &[usize]) -> Lowered<Expression> {
+    Lowering::new(source, closures).lower(tree, TOP)
+}
+
+/// `lower_condition` for a slot with list element closures.
+pub fn lower_slot_condition(tree: &MExpr, source: &str, closures: &[usize]) -> Lowered<MovementCondition> {
+    Lowering::new(source, closures).condition(tree)
 }
 
 /// Which entry point a JSON call is for.
@@ -120,7 +132,7 @@ pub enum Mode {
 /// deserialise is the caller's fault, and says so with `class:
 /// "MalformedTree"`. A chain past `MAX_CHAIN` is refused before it is
 /// lowered, as the parser refuses it: the lowering recurses per level.
-pub fn lower_json_bytes(tree_json: &str, source: &str, mode: Mode) -> Result<Vec<u8>, Vec<u8>> {
+pub fn lower_json_bytes(tree_json: &str, source: &str, closures: &[usize], mode: Mode) -> Result<Vec<u8>, Vec<u8>> {
     let tree = match read::read_tree(tree_json) {
         Ok(tree) => tree,
         Err(reason) => {
@@ -134,8 +146,8 @@ pub fn lower_json_bytes(tree_json: &str, source: &str, mode: Mode) -> Result<Vec
         return Err(serde_json::to_vec(&ErrorEnvelope { error: refusal }).expect("a refusal always serialises"));
     }
     let written = match mode {
-        Mode::Expression => lower_expression(&tree, source).map(|e| serde_json::to_vec(&e)),
-        Mode::Condition => lower_condition(&tree, source).map(|c| serde_json::to_vec(&c)),
+        Mode::Expression => lower_slot_expression(&tree, source, closures).map(|e| serde_json::to_vec(&e)),
+        Mode::Condition => lower_slot_condition(&tree, source, closures).map(|c| serde_json::to_vec(&c)),
     };
     match written {
         Ok(bytes) => Ok(bytes.expect("a lowered value always serialises")),
@@ -161,7 +173,7 @@ pub fn lower_condition_json(tree: &Value, source: &str) -> Result<Value, Value> 
 fn lower_value(tree: &Value, source: &str, mode: Mode) -> Result<Value, Value> {
     let json = serde_json::to_string(tree).expect("a Value always serialises");
     let parse = |bytes: Vec<u8>| -> Value { serde_json::from_slice(&bytes).expect("the lowering writes JSON") };
-    match lower_json_bytes(&json, source, mode) {
+    match lower_json_bytes(&json, source, &[], mode) {
         Ok(bytes) => Ok(parse(bytes)),
         Err(bytes) => Err(parse(bytes)["error"].take()),
     }
@@ -390,11 +402,13 @@ fn is_bare_walk(expr: &MExpr) -> bool {
 /// units.
 struct Lowering {
     source: Utf16,
+    /// The offsets of the slot's list element closures (`ExprSlot::closures`).
+    closures: Vec<usize>,
 }
 
 impl Lowering {
-    fn new(source: &str) -> Self {
-        Self { source: Utf16::new(source) }
+    fn new(source: &str, closures: &[usize]) -> Self {
+        Self { source: Utf16::new(source), closures: closures.to_vec() }
     }
 
     fn slice(&self, start: usize, end: usize) -> String {
@@ -426,7 +440,13 @@ impl Lowering {
             MExpr::List { elements, .. } => Expression::List {
                 elements: elements
                     .iter()
-                    .map(|e| self.list_element(e, |x| self.lower(x, ctx)))
+                    .map(|e| match e {
+                        // The closure itself is the value, bound around the slot.
+                        crate::tree::ListElement::Expr(MExpr::Closure { at, .. }) if self.closures.contains(&at.start) => {
+                            Ok(ListElement::Expression(Expression::AliasRef { name: crate::ast::slot_closure_name(at.start) }))
+                        }
+                        _ => self.list_element(e, |x| self.lower(x, ctx)),
+                    })
                     .collect::<Lowered<_>>()?,
             },
             MExpr::Map { entries, .. } => Expression::Object {

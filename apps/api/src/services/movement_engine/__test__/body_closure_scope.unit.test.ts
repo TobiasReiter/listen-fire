@@ -198,7 +198,7 @@ function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>
 /** The join over `arms` under `version`: `parallel` before 5, the MAP that
  *  replaced it from 5. */
 const joined = (version: number, arms: string): string =>
-  version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (f) => f())` : `await parallel(${arms})`;
+  version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await parallel(${arms})`;
 
 async function start(source: string, parks: Sink) {
   const kg = makeKgFake();
@@ -694,7 +694,7 @@ describe('both engines: a body closure holds its scope by reference', () => {
         '      return a.body',
         '    }',
         '  })',
-        '  r = await parallel(fs)',
+        `  r = ${joined(version, 'fs')}`,
         '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
       ];
       for (const engine of ENGINES) {
@@ -868,7 +868,7 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
   for (const version of [4, 5]) {
     for (const [name, body] of Object.entries(cases)) {
       it(`v${version} ${name}: the same bytes and answer every way round`, async () => {
-        const end = await acrossEngines(program(body), { version });
+        const end = await acrossEngines(program(body.map((line) => line.replace(/await parallel\((.*)\)$/, (_, arms: string) => joined(version, arms)))), { version });
         expect(end.payload).toEqual(name.startsWith('scopeCycle') ? { v: 8 } : { done: 1 });
         const written = (end.creates as Array<{ fields?: Record<string, unknown> }>).flatMap((c) => (c.fields?.body !== undefined ? [c.fields.body as string] : []));
         if (expectedBodies[name] !== undefined) expect(written).toEqual(expectedBodies[name]);
@@ -942,12 +942,15 @@ describe('a closure whose scope reaches back to itself resumes', () => {
 });
 
 describe('both engines: a receipt of text-returning NAMED arms is a plain value (admit.rs receipt_holder)', () => {
-  const movementProgram = (combinator: string, sink: string): string =>
-    program([`  r = await ${combinator}([one, two])`, `  write graph-[:note]-> ${sink}`]).replace(
+  // `parallel` is retired under 5: the MAP that replaced it, calling each arm.
+  const join = (combinator: string, arms: string, version: number): string =>
+    combinator === 'parallel' && version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await ${combinator}(${arms})`;
+  const movementProgram = (combinator: string, sink: string, version: number): string =>
+    program([`  r = ${join(combinator, '[one, two]', version)}`, `  write graph-[:note]-> ${sink}`]).replace(
       'movement recap',
       'movement one() {\n  return "a"\n}\nmovement two() {\n  return "b"\n}\nmovement recap',
     );
-  const closureProgram = (combinator: string, sink: string): string =>
+  const closureProgram = (combinator: string, sink: string, version: number): string =>
     program([
       '  f = () => {',
       '    return "a"',
@@ -955,7 +958,7 @@ describe('both engines: a receipt of text-returning NAMED arms is a plain value 
       '  g = () => {',
       '    return "b"',
       '  }',
-      `  r = await ${combinator}([f, g])`,
+      `  r = ${join(combinator, '[f, g]', version)}`,
       `  write graph-[:note]-> ${sink}`,
     ]);
   // Race's winner is the first arm to finish: both finish at once, `f` first.
@@ -973,7 +976,7 @@ describe('both engines: a receipt of text-returning NAMED arms is a plain value 
             const wrote: Record<string, unknown> = {};
             for (const engine of ENGINES) {
               const kg = makeKgFake();
-              const result = await onEngine(engine, () => runMovement(inputOn(make(combinator, sink), makeParkSink(), kg, { version })));
+              const result = await onEngine(engine, () => runMovement(inputOn(make(combinator, sink, version), makeParkSink(), kg, { version })));
               expect(result.parked).toBeUndefined();
               expect(kg.creates.length).toBe(1);
               wrote[engine] = read[combinator](kg.creates[0]!);

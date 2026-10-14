@@ -56,6 +56,10 @@ const PARALLEL_BLOCK_RETIRED: &str = "the `parallel { … }` block was replaced 
 
 const RACE_BRANCHES_RETIRED: &str = "a race takes FUNCTIONS, not brace branches: `r = await race([q, () => { await sleep(4h) }])`. The value is one slot per arm, in the order written — the winner's slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.";
 
+/// Under language version 5 `parallel` is retired too, so the rewrite these
+/// refusals offer is the MAP that replaced it.
+const PARALLEL_AS_MAP: &str = "the parallel join is a MAP over its functions, calling each (language version 5): `r = MAP([() => { … }, () => { … }], { concurrency: 2 }, (f) => f())` — no `await`; one slot per function, in order. One that only acts needs no binding: `MAP([…], { concurrency: 2 }, (f) => f())`.";
+
 const ALL_RETIRED: &str =
     "`all` was replaced by `parallel` — parallel implies all, and all does not imply parallel: `r = await parallel([f, g])`.";
 
@@ -289,7 +293,13 @@ impl Parser {
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
         } else {
-            let callee = self.read_name("the name being called")?;
+            let mut callee = self.read_name("the name being called")?;
+            // `box.g()` (language version 5): the member a value holds under a
+            // key, called — the checker and the engine resolve the dotted callee.
+            if since(self.version, 5) && self.is('.') {
+                self.pos += 1;
+                callee = format!("{callee}.{}", self.read_name("the key being called")?);
+            }
             self.skip_inline_ws();
             self.expect("(", &format!("to open the call to '{callee}'"))?;
             let args = self.parse_call_args(&callee, start)?;
@@ -375,7 +385,7 @@ impl Parser {
     }
 
     fn slot(&self, raw: String, span: Span) -> ExprSlot {
-        ExprSlot { raw, span, eager: self.eager }
+        ExprSlot { raw, span, eager: self.eager, closures: Vec::new() }
     }
 
     fn fail<T>(&self, message: impl Into<String>) -> SResult<T> {
@@ -867,8 +877,35 @@ impl Parser {
         if content_end <= start {
             return self.fail_at(format!("Expected an expression {}", options.context), start);
         }
-        let slot = self.slot(self.text(start, content_end), self.span_between(start, content_end));
+        let mut slot = self.slot(self.text(start, content_end), self.span_between(start, content_end));
+        slot.closures = self.list_element_closures(&slot.raw, start)?;
         Ok((slot, stop))
+    }
+
+    /// A closure written as an element of a list literal (`[() => { … }, (x) =>
+    /// x + 1]`, language version 5 — TypeScript's array of functions), parsed
+    /// here by the statement grammar so its block body is statements. Before
+    /// version 5, and wherever the expression grammar cannot read the slot,
+    /// none is collected: the lowering then refuses the closure by name
+    /// (MOV_EXPR_CLOSURE_POSITION) or reports the syntax error, as it always has.
+    fn list_element_closures(&mut self, raw: &str, start: usize) -> SResult<Vec<SlotClosure>> {
+        if !since(self.version, 5) || !raw.contains("=>") {
+            return Ok(Vec::new());
+        }
+        let Ok(tree) = crate::expr::parse_expression(raw) else {
+            return Ok(Vec::new());
+        };
+        let resume = self.pos;
+        let closures = crate::tree::closures_in_lists(&tree)
+            .into_iter()
+            .map(|at| {
+                self.pos = start + at;
+                let closure = self.parse_closure(self.pos, ",]")?;
+                Ok(SlotClosure { at, closure })
+            })
+            .collect::<SResult<Vec<_>>>();
+        self.pos = resume;
+        closures
     }
 
     // ── Statements ──
@@ -1227,7 +1264,7 @@ impl Parser {
             self.pos += kind.word().len();
             self.skip_inline_ws();
             if self.is('{') {
-                return self.fail_at(PARALLEL_BLOCK_RETIRED, start);
+                return self.fail_at(self.parallel_block_retired(), start);
             }
             if self.is('(') {
                 return Ok(RValue::Combinator { combinator: self.parse_combinator(start, kind)? });
@@ -2854,7 +2891,7 @@ impl Parser {
         self.pos += kind.word().len();
         self.skip_inline_ws();
         if self.is('{') {
-            return self.fail_at(PARALLEL_BLOCK_RETIRED, start);
+            return self.fail_at(self.parallel_block_retired(), start);
         }
         if !self.is('(') {
             self.pos = save;
@@ -2873,9 +2910,19 @@ impl Parser {
         let is_call = self.is('(');
         self.pos = save;
         if is_call {
+            if since(self.version, 5) {
+                return self.fail_at(format!("`all` was retired: {PARALLEL_AS_MAP}"), start);
+            }
             return self.fail_at(ALL_RETIRED, start);
         }
         Ok(())
+    }
+
+    fn parallel_block_retired(&self) -> String {
+        if since(self.version, 5) {
+            return format!("the `parallel {{ … }}` block was retired: {PARALLEL_AS_MAP}");
+        }
+        PARALLEL_BLOCK_RETIRED.to_string()
     }
 
     /// `race(<arms>)` / `parallel(<arms>)`; `pos` is just past the keyword.
@@ -3179,7 +3226,7 @@ impl Parser {
         }
         let value = self.parse_rvalue()?;
         self.expect_statement_end()?;
-        Ok(ReturnStatement { value, span: self.span_from(start) })
+        Ok(ReturnStatement { value, span: self.span_from(start), concise: false })
     }
 
     /// Is this word immediately CALLED? Restores the position.
@@ -3237,13 +3284,75 @@ impl Parser {
         // `(x) => x * 2` is `(x) => { return x * 2 }` with the ceremony elided
         // (language version 3).
         if !self.is('{') && since(self.version, 3) {
+            // `(f) => f()` is `(f) => { return f() }` (language version 5): a body
+            // that is one call returns the call, so a callee that waits parks the
+            // run as a returned call does — inside an expression it could not.
+            // `() => await race([…])` is `() => { return await race([…]) }`
+            // (language version 5), as TypeScript's `async () => await x` is — so a
+            // retired `parallel` there is the form its rewrite reaches.
+            if since(self.version, 5) && self.peek_ident().as_deref() == Some("await") {
+                let await_start = self.pos;
+                self.pos += "await".len();
+                let awaited = self.parse_await(await_start)?;
+                let body = vec![Statement::Return(ReturnStatement {
+                    value: RValue::Await { r#await: awaited },
+                    span: self.span_from(await_start),
+                    concise: false,
+                })];
+                return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
+            }
+            if since(self.version, 5) {
+                if let Some((value, span)) = self.concise_body_call(stops)? {
+                    let body = vec![Statement::Return(ReturnStatement { value, span, concise: true })];
+                    return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
+                }
+            }
             let (slot, _) = self.read_expr_slot(Scan::new(stops, "for the closure body"))?;
             let span = slot.span;
-            let body = vec![Statement::Return(ReturnStatement { value: RValue::Expr { expr: slot }, span })];
+            let body = vec![Statement::Return(ReturnStatement { value: RValue::Expr { expr: slot }, span, concise: false })];
             return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
         }
         let body = self.parse_block_body("a closure body")?;
         Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) })
+    }
+
+    /// A concise closure body that is ONE call and nothing more, as the value a
+    /// `return` would hand back; `None` (consuming nothing) otherwise.
+    fn concise_body_call(&mut self, stops: &str) -> SResult<Option<(RValue, Span)>> {
+        let save = self.pos;
+        if let Some(call) = self.try_parse_invocation_call(stops)? {
+            let span = call.span;
+            return Ok(Some((RValue::Call { call }, span)));
+        }
+        // `f()` — no argument to tell a call from a construction, so it is
+        // recorded as `x = f()` is, and resolution decides.
+        if let Some((name, end)) = scan_name(self.src.units(), self.pos) {
+            if self.is('`') || !KEYWORDS.contains(&name.to_ascii_uppercase().as_str()) {
+                self.pos = end;
+                self.skip_inline_ws();
+                if self.is('(') {
+                    self.pos += 1;
+                    self.skip_all_ws();
+                    if self.is(')') {
+                        self.pos += 1;
+                        let span = self.span_from(save);
+                        let end = self.pos;
+                        self.skip_inline_ws();
+                        let at_stop = match self.peek() {
+                            None => true,
+                            Some(next) => in_set(next, stops),
+                        };
+                        if at_stop {
+                            self.pos = end;
+                            let construct = ConstructionCall { callee: name, args: Vec::new(), span };
+                            return Ok(Some((RValue::Construct { construct }, span)));
+                        }
+                    }
+                }
+            }
+        }
+        self.pos = save;
+        Ok(None)
     }
 
     /// `{ …statements… }.binding` — the RETIRED inline block; `start` is `{`.
@@ -3615,6 +3724,10 @@ impl Parser {
     /// out in full. Consumes nothing for a plain name or an address.
     fn try_read_value_type_marker(&mut self, param_name: &str) -> SResult<Option<ValueType>> {
         let start = self.pos;
+        if self.at_closure_type() {
+            let closure = self.read_closure_type(param_name)?;
+            return Ok(Some(self.read_list_suffix(closure, start)?));
+        }
         if !self.is('<') || !since(self.version, 3) {
             return Ok(None);
         }
@@ -3645,6 +3758,84 @@ impl Parser {
             }
             ValueType::List { of, .. } => Ok(Some(ValueType::List { of, span })),
             ValueType::Record { keys, .. } => Ok(Some(ValueType::Record { keys, span })),
+            ValueType::Closure { params, returns, .. } => Ok(Some(ValueType::Closure { params, returns, span })),
+        }
+    }
+
+    /// At `<(` — a closure type's opening?
+    fn at_closure_type(&self) -> bool {
+        if !self.is('<') {
+            return false;
+        }
+        let mut offset = 1;
+        while self.is_at(offset, ' ') || self.is_at(offset, '\t') {
+            offset += 1;
+        }
+        self.is_at(offset, '(')
+    }
+
+    /// `<(c: <Company>) => <text>>` — a closure type (language version 5),
+    /// TypeScript's `(c: Company) => string`. The parameters are a function's own
+    /// parameter list, every one typed; the return is written as a function's
+    /// return annotation is. A list of closures is `<() => <text>>[]` (the
+    /// caller reads the `[]`); a closure that returns a list is
+    /// `<() => <text[]>>`.
+    fn read_closure_type(&mut self, param_name: &str) -> SResult<ValueType> {
+        let start = self.pos;
+        if before(self.version, 5) {
+            return self.fail_at(
+                format!(
+                    "A closure type ('<(c: <Company>) => <text>>') is written from language version 5 (Dancing Wren); this movement is pinned to version {}, where a closure is not a value — move the movement up to version 5 to type '{param_name}' as a closure",
+                    self.version
+                ),
+                start,
+            );
+        }
+        self.pos += 1;
+        self.skip_inline_ws();
+        self.expect("(", "to open a closure type's parameter list")?;
+        let params = self.parse_param_list()?;
+        for param in &params {
+            if param.type_.is_none() {
+                return self.fail_at(
+                    format!(
+                        "A closure type's parameter '{0}' needs a type — a caller of the closure is checked against it: write '{0}: <text>' (or whatever it takes)",
+                        param.name
+                    ),
+                    start,
+                );
+            }
+        }
+        self.skip_inline_ws();
+        self.expect("=>", "between a closure type's parameters and its return type (e.g. '<(c: <Company>) => <text>>')")?;
+        self.skip_inline_ws();
+        if !self.is('<') {
+            return self.fail("Expected a closure type's return type after '=>', in angle brackets: '<() => <text>>'");
+        }
+        let returns = self.read_param_type(param_name, Some("for the return type of a closure type (e.g. '<() => <text>>')"))?;
+        self.skip_inline_ws();
+        if self.is('[') {
+            return self.fail(
+                "A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>', and a list of closures is '<() => <text>>[]'",
+            );
+        }
+        self.expect(">", &format!("to close the closure type of '{param_name}'"))?;
+        Ok(ValueType::Closure { params, returns: Box::new(returns), span: self.span_from(start) })
+    }
+
+    /// `<…>[]` — the written type as the element of a list, once per `[]`.
+    fn read_list_suffix(&mut self, of: ValueType, start: usize) -> SResult<ValueType> {
+        let mut member = of;
+        loop {
+            let save = self.pos;
+            self.skip_inline_ws();
+            if !self.try_consume("[") {
+                self.pos = save;
+                return Ok(member);
+            }
+            self.skip_inline_ws();
+            self.expect("]", "to close '[]' — a list of closures is written '<() => <text>>[]'")?;
+            member = ValueType::List { of: Box::new(member), span: self.span_from(start) };
         }
     }
 
@@ -3657,6 +3848,8 @@ impl Parser {
         let start = self.pos;
         let mut member = if self.is('{') {
             self.read_value_record_type(param_name)?
+        } else if self.at_closure_type() {
+            self.read_closure_type(param_name)?
         } else if self.is('<') {
             return self.fail(format!(
                 "Inside a type's angle brackets the members are bare type names — write '{param_name}: <{{ key: text }}>', not '<{{ key: <text> }}>'"

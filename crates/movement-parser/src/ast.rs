@@ -36,6 +36,34 @@ pub struct ExprSlot {
     pub span: Span,
     #[serde(rename = "__slot", default, skip_serializing_if = "std::ops::Not::not")]
     pub eager: bool,
+    /// The closures written as elements of a list literal in the slot
+    /// (`fs = [() => { … }, (x) => x + 1]`, language version 5), each parsed
+    /// by the statement grammar, since a block body is statements. The
+    /// lowering reads each as the name `slot_closure_name(at)`, which the
+    /// engine binds to the closure in a scope around the slot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closures: Vec<SlotClosure>,
+}
+
+impl ExprSlot {
+    /// A slot holding no list element closure: a piece of another slot's
+    /// text, or a slot built by the engine.
+    pub fn plain(raw: String, span: Span) -> Self {
+        ExprSlot { raw, span, eager: false, closures: Vec::new() }
+    }
+}
+
+/// One list element closure of a slot; `at` is its offset in `raw` (UTF-16).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlotClosure {
+    pub at: usize,
+    pub closure: ClosureExpression,
+}
+
+/// The name a list element closure is read by inside its slot — an identity
+/// compared, never parsed. `#` keeps it out of every author's namespace.
+pub fn slot_closure_name(at: usize) -> String {
+    format!("#closure@{at}")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,6 +164,11 @@ statements! {
 pub struct ReturnStatement {
     pub value: RValue,
     pub span: Span,
+    /// A concise closure body that is one call (`(f) => f()`, language
+    /// version 5): TypeScript's `() => g()`, which hands back what `g`
+    /// returns, and nothing when `g` returns nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub concise: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -835,6 +868,9 @@ pub enum ValueType {
     Name { name: String, span: Span },
     List { of: Box<ValueType>, span: Span },
     Record { keys: Vec<ValueTypeKey>, span: Span },
+    /// `<(c: <Company>) => <text>>` — a closure type (language version 5),
+    /// TypeScript's function type. Every parameter is typed.
+    Closure { params: Vec<MovementParam>, returns: Box<ParamTypeRef>, span: Span },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -496,6 +496,7 @@ impl Run<'_> {
                         raw: format!("{source}.{}", spell_name(name)),
                         span: spread.span,
                         eager: false,
+                        closures: Vec::new(),
                     },
                     semantics: spread.semantics,
                 });
@@ -907,7 +908,7 @@ impl Run<'_> {
             let mut all: Vec<(String, bool)> = Vec::new();
             let mut non_key: Vec<Expression> = Vec::new();
             for part in unique::split_conjuncts(&clause.predicate.raw) {
-                let slot = ast::ExprSlot { raw: part.raw.clone(), span: clause.predicate.span, eager: false };
+                let slot = ast::ExprSlot { raw: part.raw.clone(), span: clause.predicate.span, eager: false, closures: Vec::new() };
                 let expr = crate::run::lowered(&slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
                 for conjunct in unique::and_conjuncts(&expr) {
                     match unique::identity_key(conjunct) {

@@ -56,6 +56,11 @@ fn attach_slot_trees(value: &mut Value) {
                     }
                     None => {}
                 }
+                // A list element closure's body is statements whose slots
+                // are marked too.
+                if let Some(closures) = map.get_mut("closures") {
+                    attach_slot_trees(closures);
+                }
                 return;
             }
             map.values_mut().for_each(attach_slot_trees);

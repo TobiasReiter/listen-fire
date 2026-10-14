@@ -145,14 +145,20 @@ export function callParser(
 }
 
 /**
- * Calls one lowering export with the tree (as JSON) and the source text it
- * was parsed from, and returns the JSON it emits: the lowered value, or
+ * Calls one lowering export with the tree (as JSON), the source text it
+ * was parsed from and the offsets of the slot's list element closures
+ * (`ExprSlot.closures`, language version 5), and returns the JSON it emits: the lowered value, or
  * `{error: …}`.
  *
  * @internal Used by the lowering wrapper (parser/expression/lower.ts).
  */
-export function callLowering(fn: LoweringFunction, treeJson: string, source: string): { ok: boolean; json: unknown } {
-  return call(fn, [treeJson, source], []);
+export function callLowering(
+  fn: LoweringFunction,
+  treeJson: string,
+  source: string,
+  closures: readonly number[] = [],
+): { ok: boolean; json: unknown } {
+  return call(fn, [treeJson, source, closures.length > 0 ? JSON.stringify(closures) : ''], []);
 }
 
 /**
