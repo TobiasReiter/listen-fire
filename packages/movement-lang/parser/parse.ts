@@ -251,6 +251,11 @@ const PARALLEL_BLOCK_RETIRED =
 const RACE_BRANCHES_RETIRED =
   'a race takes FUNCTIONS, not brace branches: `r = await race([q, () => { await sleep(4h) }])`. The value is one slot per arm, in the order written — the winner\'s slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.';
 
+/** Under language version 5 `parallel` is retired too, so the rewrite these
+ *  refusals offer is the MAP that replaced it. */
+const PARALLEL_AS_MAP =
+  'the parallel join is a MAP over its functions, calling each (language version 5): `r = MAP([() => { … }, () => { … }], { concurrency: 2 }, (f) => f())` — no `await`; one slot per function, in order. One that only acts needs no binding: `MAP([…], { concurrency: 2 }, (f) => f())`.';
+
 // `all` is gone as a name: parallel implies all, all does not imply parallel.
 const ALL_RETIRED =
   '`all` was replaced by `parallel` — parallel implies all, and all does not imply parallel: `r = await parallel([f, g])`.';
@@ -1271,7 +1276,7 @@ class Parser {
       const save = this.pos;
       this.pos += word.length;
       this.skipInlineWs();
-      if (this.peekCh() === '{') this.error(PARALLEL_BLOCK_RETIRED, start);
+      if (this.peekCh() === '{') this.error(this.parallelBlockRetired(), start);
       if (this.peekCh() === '(') {
         return { kind: 'combinator', combinator: this.parseCombinator(start, word) };
       }
@@ -3045,7 +3050,7 @@ class Parser {
     const save = this.pos;
     this.pos += kind.length;
     this.skipInlineWs();
-    if (this.peekCh() === '{') this.error(PARALLEL_BLOCK_RETIRED, start);
+    if (this.peekCh() === '{') this.error(this.parallelBlockRetired(), start);
     if (this.peekCh() !== '(') {
       this.pos = save;
       return undefined;
@@ -3063,7 +3068,11 @@ class Parser {
     this.skipInlineWs();
     const isCall = this.peekCh() === '(';
     this.pos = save;
-    if (isCall) this.error(ALL_RETIRED, start);
+    if (isCall) this.error(since(this.languageVersion, 5) ? `\`all\` was retired: ${PARALLEL_AS_MAP}` : ALL_RETIRED, start);
+  }
+
+  private parallelBlockRetired(): string {
+    return since(this.languageVersion, 5) ? `the \`parallel { … }\` block was retired: ${PARALLEL_AS_MAP}` : PARALLEL_BLOCK_RETIRED;
   }
 
   /**
@@ -3506,6 +3515,13 @@ class Parser {
     // TypeScript's concise body is (language version 3) — so a function
     // written in place is a value like any other expression's.
     if (this.peekCh() !== '{' && since(this.languageVersion, 3)) {
+      // `(f) => f()` is `(f) => { return f() }` (language version 5): a body
+      // that is one call returns the call, so a callee that waits parks the
+      // run as a returned call does — inside an expression it could not.
+      const call = since(this.languageVersion, 5) ? this.conciseBodyCall(stops) : undefined;
+      if (call !== undefined) {
+        return { params, ...returns, body: [{ kind: 'return', value: call.value, span: call.span, concise: true }], span: this.spanFrom(start) };
+      }
       const { slot } = this.readExprSlot({ stops, context: 'for the closure body' });
       return {
         params,
@@ -3516,6 +3532,38 @@ class Parser {
     }
     const body = this.parseBlockBody('a closure body');
     return { params, ...returns, body, span: this.spanFrom(start) };
+  }
+
+  /** A concise closure body that is ONE call and nothing more, as the value a
+   *  `return` would hand back; undefined (consuming nothing) otherwise. */
+  private conciseBodyCall(stops: string): { value: RValue; span: Span } | undefined {
+    const save = this.pos;
+    const call = this.tryParseInvocationCall(stops);
+    if (call !== undefined) return { value: { kind: 'call', call }, span: call.span };
+    // `f()` — no argument to tell a call from a construction, so it is
+    // recorded as `x = f()` is, and resolution decides.
+    const scanned = scanName(this.src, this.pos);
+    if (scanned && (this.src[this.pos] === '`' || !KEYWORDS.has(scanned.name.toUpperCase()))) {
+      this.pos = scanned.end;
+      this.skipInlineWs();
+      if (this.peekCh() === '(') {
+        this.pos++;
+        this.skipAllWs();
+        if (this.peekCh() === ')') {
+          this.pos++;
+          const span = this.spanFrom(save);
+          const end = this.pos;
+          this.skipInlineWs();
+          const next = this.peekCh();
+          if (next === undefined || this.eof() || stops.includes(next)) {
+            this.pos = end;
+            return { value: { kind: 'construct', construct: { callee: scanned.name, args: [], span } }, span };
+          }
+        }
+      }
+    }
+    this.pos = save;
+    return undefined;
   }
 
   /**

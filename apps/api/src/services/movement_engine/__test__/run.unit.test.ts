@@ -1837,6 +1837,8 @@ describe('dispatch arity — a multi-parameter movement cannot be the entry', ()
 
 // ── 4b. parallel — env fork + join ──────────────────────────────────────────
 
+// `parallel` is retired under Dancing Wren (5): these pin its join under
+// Luminous Owl (4), and the MAP that replaces it runs its functions at once too.
 describe('parallel — env fork + join', () => {
   /** An n-arrival barrier: each arrival blocks until ALL n have arrived.
    *  Under sequential execution the first arrival never unblocks — the
@@ -1912,6 +1914,7 @@ describe('parallel — env fork + join', () => {
       event: webhookEvent('slack', { user: 'U123', text: 'hello' }),
       teamId: TEAM_ID,
       catalog,
+      languageVersion: 4,
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
     });
@@ -1937,6 +1940,33 @@ describe('parallel — env fork + join', () => {
         .map((w) => w.bindingName)
         .sort(),
     ).toEqual(['co', 'note']);
+  });
+
+  it('under 5, the MAP that replaces it runs its functions CONCURRENTLY too, and answers by slot', async () => {
+    const barrier = makeBarrier(2);
+    const attio = makeFakeAdapter('attio');
+    const slack = makeFakeAdapter('slack');
+    for (const fake of [attio, slack]) {
+      const base = fake.adapter.createRecord.bind(fake.adapter);
+      fake.adapter.createRecord = async (input) => {
+        await barrier.arrive();
+        return base(input);
+      };
+    }
+    const mapped = PARALLEL.replace('  r = await parallel([', '  r = MAP([').replace('  ])\n  write inbox', '  ], { concurrency: 2 }, (f) => f())\n  write inbox');
+    expect(mapped).not.toContain('parallel');
+    await runMovement({
+      source: mapped,
+      event: webhookEvent('slack', { user: 'U123', text: 'hello' }),
+      teamId: TEAM_ID,
+      catalog,
+      resolveCredentialId: (name) => CREDENTIAL_IDS[name],
+      resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
+    });
+    expect(slack.creates).toContainEqual({
+      recordType: 'message',
+      fields: { channel: '#after', text: 'co=ext-attio-1 note=ext-slack-1' },
+    });
   });
 
   it('arms read enclosing-scope bindings; what they return is read by slot after the join', async () => {
@@ -1981,6 +2011,7 @@ describe('parallel — env fork + join', () => {
       event: webhookEvent('slack', { user: 'U9' }),
       teamId: TEAM_ID,
       catalog,
+      languageVersion: 4,
       resolveCredentialId: (name) => CREDENTIAL_IDS[name],
       resolveAdapter: makeResolver({ attio: attio.adapter, slack: slack.adapter }),
     });

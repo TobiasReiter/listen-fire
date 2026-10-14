@@ -351,6 +351,7 @@ import {
   newParkReader,
   newParkWriter,
   registerLiveScope,
+  newParkReaderOf,
   rehydrateBinding,
   serializeBinding,
   serializeScopeChain,
@@ -1862,11 +1863,11 @@ function armCountOf(
 /** A finished member as its op's frame keeps it. */
 type MemberAnswerExport = { kept: true; answer: BindingDescriptor } | { kept: false };
 
-function serializeMemberAnswer(answer: MemberAnswer): MemberAnswerExport {
+function serializeMemberAnswer(answer: MemberAnswer, park?: ParkWriter): MemberAnswerExport {
   if (!answer.kept) return { kept: false };
   return {
     kept: true,
-    answer: serializeBinding(binding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE })),
+    answer: serializeBinding(binding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE }), park),
   };
 }
 
@@ -3460,7 +3461,7 @@ class Interpreter {
       frameAddress,
       branchAddress,
       branchIndex: frame.boundary.member,
-      exports: serializeMemberAnswer(answer),
+      exports: serializeMemberAnswer(answer, this.memberAnswerPark(op.event)),
     });
     const { closed } = await sink.decrementJoin({ frameAddress, branchAddress, leafAddress });
     if (!closed) return STOPPED;
@@ -3507,7 +3508,13 @@ class Interpreter {
         answers[row.branchIndex] = { kept: false };
         continue;
       }
-      const bound = await rehydrateBinding(row.exports.answer, ctx);
+      let reader: ReturnType<typeof newParkReaderOf> | undefined;
+      if (since(this.languageVersion, 5)) {
+        const live = newParkReaderOf(row.exports.answer);
+        this.liveAnswerChain(op.event).forEach((scope, id) => live.scopes.set(id, scope));
+        reader = live;
+      }
+      const bound = await rehydrateBinding(row.exports.answer, ctx, reader);
       answers[row.branchIndex] = { kept: true, value: bound.kind === 'value' ? bound.value : bound };
     }
     return {
@@ -4615,6 +4622,15 @@ class Interpreter {
       // right-hand side, evaluated the same way, into a name the grammar
       // cannot spell — which is what carries it across a park.
       case 'return': {
+        // `(f) => f()` (language version 5): the closure hands back what the
+        // call returns — and, when it returns nothing, nothing.
+        const concise = statement.concise === true ? this.conciseCall(statement.value, env) : undefined;
+        if (concise !== undefined) {
+          const value = await this.executeCall(concise, env, { ...body, address: stmtAddress });
+          if (value === undefined) return FELL_THROUGH;
+          env.declare(RETURN_SLOT, value);
+          return returnFrom(env);
+        }
         await this.declareAssign(RETURN_SLOT, statement.value, env, body, stmtAddress);
         return returnFrom(env);
       }
@@ -5032,7 +5048,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(childIter(run.address, index)),
           branchIndex: index,
-          exports: serializeMemberAnswer(answer),
+          exports: serializeMemberAnswer(answer, this.memberAnswerPark(run.event)),
         });
       }
       await sink.recordJoin({ frameAddress, parkedChildren: parkedMembers });
@@ -5199,6 +5215,11 @@ class Interpreter {
     env: Environment,
   ): Extract<Binding, { kind: 'closure' }> {
     if (fn.kind === 'closure') {
+      // From version 5 a function written in place holds the scope it is
+      // written in by REFERENCE, as every other closure does — so a closure
+      // its body returns chains up to the live scope, not to a flat copy
+      // that no park can tell from a file's.
+      if (since(this.languageVersion, 5)) return binding({ kind: 'closure', closure: fn.closure, captured: new Map(), env });
       return binding({ kind: 'closure', closure: fn.closure, captured: captureScope(env) });
     }
     const named = env.resolve(fn.name);
@@ -12090,6 +12111,46 @@ class Interpreter {
     if (name === undefined) return false;
     const binding = env.resolve(name);
     return binding?.kind === 'value' && binding.many === true;
+  }
+
+  /** A concise body's call, when its callee is a function — a movement, a
+   *  plugin or a closure; undefined for a construction or a built-in, which
+   *  the ordinary `return` evaluates. */
+  private conciseCall(value: RValue, env: Environment): CallStatement | undefined {
+    const call = value.kind === 'call' ? value.call : value.kind === 'construct' ? constructionAsCall(value.construct) : undefined;
+    if (call === undefined) return undefined;
+    const kind = env.resolve(this.calleeName(call.callee, env))?.kind;
+    return kind === 'movement' || kind === 'plugin' || kind === 'closure' ? call : undefined;
+  }
+
+  /**
+   * The live scopes a collection op's statement runs in, its file's left out
+   * (a file scope is found again by its file) — what a member's answer names
+   * rather than copies. A closure a member returns holds its scope by
+   * reference, so a park that copied the scopes around the op would hand the
+   * resumed run a closure that writes a copy of the movement's handle while
+   * the movement reads its own; numbered by their place in the chain, the
+   * same on the writing run and the resuming one, they come back as the live
+   * scopes themselves.
+   */
+  private liveAnswerChain(event: CallEvent): Environment[] {
+    const env = event.site?.env;
+    if (env === undefined) return [];
+    return env.chainFromRoot().filter((scope) => scope !== this.fileEnv && !this.libraryPaths.has(scope));
+  }
+
+  /** A park for one member's answer, naming the live chain (`liveAnswerChain`)
+   *  — from version 5, where a function written in place holds its scope by
+   *  reference (`collectionFunction`); before, the answer is written as it
+   *  always was. */
+  private memberAnswerPark(event: CallEvent): ParkWriter | undefined {
+    if (before(this.languageVersion, 5)) return undefined;
+    const park = this.newPark();
+    this.liveAnswerChain(event).forEach((scope, id) => {
+      park.scopeIds.set(scope, id);
+      park.chainScopes.add(scope);
+    });
+    return park;
   }
 
   /** Scopes `evaluateSlot` bound a slot's list element closures in. */

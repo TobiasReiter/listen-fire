@@ -13,6 +13,7 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
+import { applyFix } from '../fixes';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
 
@@ -70,12 +71,33 @@ const PRELUDE = [
   '}',
 ].join('\n');
 
-const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
-  const source = `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
+  checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
-};
+
+/**
+ * `parallel` is retired under 5 (MOV_PARALLEL_RETIRED), so under 5 each
+ * program here is checked as the checker's own fix rewrites it — the MAP over
+ * the arms — which must answer what the receipt did. Arms built at run time
+ * have no fix (their concurrency is the author's), and are rewritten the same
+ * way by hand.
+ */
+const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
+  checkUnder(version, rewrittenUnder(version, `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`));
+
+function rewrittenUnder(version: LanguageVersion, written: string): string {
+  let source = written;
+  if (version >= 5) {
+    source = source.replace(/await parallel\((\w+)\)/g, 'MAP($1, { concurrency: 2 }, (f) => f())');
+    for (let guard = 0; guard < 5; guard++) {
+      const retired = checkUnder(version, source).find(d => d.code === 'MOV_PARALLEL_RETIRED');
+      if (retired?.fix === undefined) break;
+      source = applyFix(source, retired.fix);
+    }
+  }
+  return source;
+}
 
 /** The receipt `r`, its first arm handing back a write handle, its second text. */
 const ARMS: Array<[string, string[]]> = [
@@ -118,7 +140,17 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
   };
 
   describe.each(ARMS)('%s', (_label, arms) => {
+    // Under 5 the receipt is the MAP's answer, a tuple of a record and text,
+    // which read whole is also the mixed list the literal `[made(), "x"]` is.
+    const mixed = version >= 5 && arms.some(line => line.includes('parallel'));
+
     it('the whole receipt into a written field', () => {
+      if (mixed) {
+        const codes = errorsUnder(version, [...arms, note('r')]).map(d => d.code).sort();
+        expect(codes).toEqual(['MOV_LIST_MIXED', 'MOV_WRITE_FIELD_TYPE']);
+        expect(errorsUnder(version, ['  r = [made(), "x"]', note('r')]).map(d => d.code).sort()).toEqual(codes);
+        return;
+      }
       refused([...arms, note('r')], 'MOV_WRITE_FIELD_TYPE', `'company[0]' is a crm.company handle — ${RECORD_NOT_A_VALUE}`);
     });
 
@@ -140,7 +172,8 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
     });
 
     it('a receipt mixing a record with a value stays refused as a graph entry, and the message offers the slot', () => {
-      const errors = errorsUnder(version, [...arms, '  g = graph { a: r }']);
+      const errors = errorsUnder(version, [...arms, '  g = graph { a: r }']).filter(d => !mixed || d.code !== 'MOV_LIST_MIXED');
+      if (mixed) expect(errorsUnder(version, ['  r = [made(), "x"]', '  g = graph { a: r }']).map(d => d.code)).toContain('MOV_LIST_MIXED');
       expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_ENTRY_RECORD']);
       expect(errors[0]!.message).toContain("'r[0]' is a crm.company handle");
       expect(errors[0]!.message).toContain("'a: AT(r, 0)'");
@@ -252,9 +285,7 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, an 
   const extract = (input: string): string[] => [`  d = extract from [${input}] {`, '    a: "the thing"', '  }'];
   const source = (body: string[]): Diagnostic[] => {
     const withFound = `${PRELUDE}\nfunction found() {\n  c = ONLY(crm-[:companies]->)\n  return c\n}\nmovement m() {\n${body.join('\n')}\n}`;
-    return checkProgram(parseProgram(withFound, { languageVersion: version }), catalog, { languageVersion: version }).filter(
-      d => (d.severity ?? 'error') === 'error',
-    );
+    return checkUnder(version, rewrittenUnder(version, withFound));
   };
 
   it('a found record in a slot is refused as an input', () => {

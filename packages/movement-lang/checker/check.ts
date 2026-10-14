@@ -850,6 +850,11 @@ export const DiagnosticCodes = {
   /** `race([…])` / `parallel([…])` outside `await` — a combinator composes a
    *  wait; only `await` parks. The message carries the rewrite. */
   COMBINATOR_NEEDS_AWAIT: 'MOV_COMBINATOR_NEEDS_AWAIT',
+  /** `parallel([…])` under language version 5: a MAP over the arms, calling
+   *  each (`MAP([f, g], { concurrency: 2 }, (f) => f())`), is the same join —
+   *  a list of what each returned, in the arms' order. The fix rewrites a
+   *  literal arm list; `race` is unchanged. */
+  PARALLEL_RETIRED: 'MOV_PARALLEL_RETIRED',
   /** An arm of `race`/`parallel` that is not a function — a name bound to a
    *  record, a value, an instance. The combinator's whole job is to CALL its
    *  arms, so there is nothing it could do with one. */
@@ -4666,9 +4671,29 @@ class Checker {
     };
   }
 
+  /** Is this concise body's call one whose callee is known to return nothing? */
+  private conciseCallReturnsNothing(value: RValue, scope: Scope): boolean {
+    const callee = value.kind === 'call' ? value.call.callee : value.kind === 'construct' ? value.construct.callee : undefined;
+    if (callee === undefined) return false;
+    const resolution = this.calleeResolution(callee, scope);
+    if (resolution.kind !== 'found') return false;
+    const { symbol } = resolution;
+    if (symbol.movement !== undefined) return !this.movementReturnType(symbol).returns;
+    const closure = this.calledClosure(symbol);
+    return closure !== undefined && !closure.returns.returns && !this.undeclaredSelves.has(symbol);
+  }
+
   /** `return <value>` — records what this body hands back, against the nearest
    *  enclosing body. */
   private checkReturn(statement: Extract<Statement, { kind: 'return' }>, scope: Scope): void {
+    // `(f) => f()` where `f` returns nothing is a closure that returns
+    // nothing, as TypeScript's `() => g()` is `void` when `g` is: the call is
+    // run as a statement, and there is no value to hand back.
+    if (statement.concise === true && this.conciseCallReturnsNothing(statement.value, scope)) {
+      const call = statement.value.kind === 'call' ? statement.value.call : statement.value.kind === 'construct' ? constructionAsCall(statement.value.construct) : undefined;
+      if (call !== undefined) this.checkCall(call, scope);
+      return;
+    }
     const shape = this.checkRValue(statement.value, scope, undefined, statement.span);
     const collector = this.returnStack[this.returnStack.length - 1];
     if (collector === undefined) {
@@ -5232,7 +5257,7 @@ class Checker {
         this.checkReturn(statement, scope);
         return;
       case 'combinator':
-        this.reportCombinatorNeedsAwait(statement.combinator);
+        if (!this.reportParallelRetired(statement.combinator, statement.combinator.span, scope)) this.reportCombinatorNeedsAwait(statement.combinator);
         this.checkCombinator(statement.combinator, scope, undefined);
         return;
       case 'collection':
@@ -5613,7 +5638,7 @@ class Checker {
         break;
       }
       case 'combinator': {
-        this.reportCombinatorNeedsAwait(value.combinator);
+        if (!this.reportParallelRetired(value.combinator, value.combinator.span, scope)) this.reportCombinatorNeedsAwait(value.combinator);
         const receipt = this.checkCombinator(value.combinator, scope, name);
         symbol = {
           ...symbol,
@@ -6784,6 +6809,7 @@ class Checker {
     // The combinators (core calculus v2 R5): `race`/`parallel` compose the
     // wait, and the `await` is what parks. The value is the positional receipt.
     if (source.kind === 'combinator') {
+      this.reportParallelRetired(source.combinator, awaitExpr.span, scope);
       const receipt = this.checkCombinator(source.combinator, scope, binding);
       return receipt !== undefined ? { fieldType: receipt } : {};
     }
@@ -7351,6 +7377,17 @@ class Checker {
       this.collectionMayHold.set(expr, expr.op === 'map' ? listOf(shape.mayHold, ordering) : shape.mayHold);
     }
 
+    // A MAP over a tuple of closures — functions written down, as
+    // `parallel([a, b])`'s arms were — is a tuple too (language version 5):
+    // one slot per member, each typed by what the function returns for THAT
+    // member, as the receipt was.
+    // So `MAP([a, b], (f) => f())` reads `AT(r, 0)` as exactly `a`'s answer.
+    const perSlot = expr.op === 'map' ? this.mapPerSlot(expr, spelling, scope, source.valueType) : undefined;
+    if (perSlot !== undefined) {
+      this.collectionMayHold.set(expr, perSlot.mayHold);
+      return perSlot.type;
+    }
+
     switch (expr.op) {
       case 'map':
         return returned !== undefined ? listOf(returned, ordering) : undefined;
@@ -7370,6 +7407,64 @@ class Checker {
         this.requireDictKeyIn(scope, expr.fn, returned, `filed under by '${spelling}'`);
         return element !== undefined ? { kind: 'dict', of: element } : undefined;
     }
+  }
+
+  /**
+   * A MAP over a tuple of closures, slot by slot: the function written in place, walked
+   * once more per member — type-only, so it says nothing it did not say where
+   * it is written — with that member's own type for its parameter. Undefined
+   * unless the source is a fixed-length tuple and the function a closure
+   * written in place (a named one's type is its declaration's, the same for
+   * every member).
+   */
+  private mapPerSlot(
+    expr: CollectionOpExpression,
+    spelling: string,
+    scope: Scope,
+    sourceType: FieldType | undefined,
+  ): { type: FieldType; mayHold: FieldType } | undefined {
+    if (before(this.languageVersion, 5) || expr.fn.kind !== 'closure' || sourceType === undefined) return undefined;
+    // The source as the value it is — a list written down is a tuple until a
+    // reader widens it, and the op's own read widened it. Type-only: the slot
+    // was checked, and said what it had to, above.
+    this.typeOnlyDepth++;
+    let exact: FieldType | undefined;
+    try {
+      exact = this.checkExprSlot(expr.source, scope, { holdsValue: true }).valueType;
+    } finally {
+      this.typeOnlyDepth--;
+    }
+    if (exact === undefined || isMaybeAbsent(exact)) return undefined;
+    const tuple = variantOf(exact);
+    if (tuple.kind !== 'tuple' || tuple.rest !== undefined || tuple.of.some(slot => slot === null)) return undefined;
+    // Only a list of FUNCTIONS — the join `parallel` was — whose every member
+    // is one known closure: calling member i calls exactly that closure, so
+    // its slot is exactly what that closure returns. Any other tuple is mapped
+    // as a list, as TypeScript's `Array.prototype.map` is.
+    if (!tuple.of.every(slot => slot !== null && !isMaybeAbsent(slot) && closuresOfValue(slot)?.length === 1)) return undefined;
+    const closure = expr.fn.closure;
+    const slots: Array<{ type: FieldType | null; held: FieldType | null }> = [];
+    this.typeOnlyDepth++;
+    try {
+      for (const member of tuple.of) {
+        const { returns } = this.checkClosure(closure, scope, {
+          label: `the function for '${spelling}'`,
+          suppliedParams: [{ fieldType: member! }],
+        });
+        if (!returns.returns) {
+          slots.push({ type: 'absent', held: 'absent' });
+          continue;
+        }
+        const type = valueOfReturn(returns) ?? null;
+        slots.push({ type, held: returns.mayHold ?? type });
+      }
+    } finally {
+      this.typeOnlyDepth--;
+    }
+    return {
+      type: { kind: 'tuple', of: slots.map(slot => slot.type) },
+      mayHold: { kind: 'tuple', of: slots.map(slot => slot.held) },
+    };
   }
 
   /** A settings record is read, not typed: every value in it is written down,
@@ -7623,6 +7718,53 @@ class Checker {
 
   // ── the concurrency combinators (core calculus v2 R5) ──
 
+  /**
+   * `parallel` is retired under language version 5: `MAP` over the arms,
+   * calling each, is the same join — every arm runs, at once with
+   * `concurrency` as many as there are arms, a park inside one parks the run
+   * as a member's does, and the answer is what each returned, in the arms'
+   * order. A MAP over a list written down is a tuple slot by slot
+   * (`mapPerSlot`), so `AT(r, i)` reads exactly what the receipt's slot did.
+   * No `await`: a MAP whose members wait parks the run without one.
+   *
+   * `written` is the form's own span — from `await` when it has one. The fix
+   * is exact for a literal arm list; arms built at run time are rewritten by
+   * hand (the concurrency is a number written down, and theirs is not known).
+   * True when it reported.
+   */
+  private reportParallelRetired(expr: CombinatorExpression, written: Span, scope: Scope): boolean {
+    if (expr.kind !== 'parallel' || before(this.languageVersion, 5)) return false;
+    // The MAP's parameter is a name nothing in scope binds, so the rewrite
+    // shadows nothing (`f`, else `fn`, `run`, then `f2`, `f3`, …).
+    const free = (name: string): boolean => scope.resolve(name).kind === 'unknown';
+    const param = ['f', 'fn', 'run'].find(free) ?? Array.from({ length: 100 }, (_, i) => `f${i + 2}`).find(free) ?? 'f';
+    const call = `(${param}) => ${param}()`;
+    const message = "'parallel' is retired — MAP over the functions, calling each, is the same join: every one runs, and the answer is what each returned, in their order";
+    if (expr.arms.kind === 'dynamic') {
+      const arms = expr.arms.expr.raw.trim();
+      this.report(
+        DiagnosticCodes.PARALLEL_RETIRED,
+        `${message}. Write 'MAP(${arms}, { concurrency: <how many at once> }, ${call})' — no 'await': a MAP whose members wait parks the run by itself`,
+        written,
+      );
+      return true;
+    }
+    const count = expr.arms.arms.length;
+    const tail = `, { concurrency: ${count} }, ${call})`;
+    this.reportWithFix({
+      code: DiagnosticCodes.PARALLEL_RETIRED,
+      message: `${message}. Write 'MAP([…]${tail}' — no 'await': a MAP whose members wait parks the run by itself, and 'AT(r, i)' reads slot i as the receipt did`,
+      span: written,
+      fix: {
+        edits: [
+          { span: { start: written.start, end: expr.arms.span.start }, text: 'MAP(' },
+          { span: { start: expr.arms.span.end, end: expr.arms.span.end }, text: tail.slice(0, -1) },
+        ],
+      },
+    });
+    return true;
+  }
+
   /** A combinator composes a wait; `await` is what parks. */
   private reportCombinatorNeedsAwait(expr: CombinatorExpression): void {
     this.report(
@@ -7731,7 +7873,11 @@ class Checker {
         const each = since(this.languageVersion, 5) ? closureOfValue(element) : undefined;
         const held = each !== undefined ? this.receiptMayHold(expr.kind, [each.returns]).of[0] : undefined;
         if (held !== undefined && held !== null && held !== 'absent') this.combinatorMayHold.set(expr, listOf(held, 'unknown'));
-        if (since(this.languageVersion, 5)) {
+        // `[]` holds no function, and nothing is called (TypeScript's `never[]`).
+        const empty = armsType !== undefined && variantOf(stripAbsent(armsType)).kind === 'tuple'
+          && (variantOf(stripAbsent(armsType)) as { of: unknown[]; rest?: unknown }).of.length === 0
+          && (variantOf(stripAbsent(armsType)) as { rest?: unknown }).rest === undefined;
+        if (since(this.languageVersion, 5) && !empty) {
           if (each === undefined) {
             // A value whose type does not say it is a closure is never run.
             this.report(

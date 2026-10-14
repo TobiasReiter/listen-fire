@@ -12,6 +12,7 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
+import { applyFix } from '../fixes';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
 import { fieldAssignable, fieldTypeCompatible, handleWithin, spellHeldSteps } from '../typing';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
@@ -74,10 +75,26 @@ const ORG = '  org = write crm-[:companies]-> { name: "Acme Inc." }';
 
 const program = (body: string[]): string => `${PRELUDE}\nmovement m() {\n${[ORG, ...body].join('\n')}\n}`;
 
-const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
+  checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
+
+/** `parallel` is retired under 5 (MOV_PARALLEL_RETIRED): there each program is
+ *  checked as the checker's fix rewrites it, the MAP over the arms (arms built
+ *  at run time by hand, as they have no fix), which must answer the same. */
+const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
+  let source = program(body);
+  if (version >= 5) {
+    source = source.replace(/await parallel\((\w+)\)/g, 'MAP($1, { concurrency: 2 }, (f) => f())');
+    for (let guard = 0; guard < 5; guard++) {
+      const retired = checkUnder(version, source).find(d => d.code === 'MOV_PARALLEL_RETIRED');
+      if (retired?.fix === undefined) break;
+      source = applyFix(source, retired.fix);
+    }
+  }
+  return checkUnder(version, source);
+};
 
 const note = (company: string): string[] => [`  write crm-[:notes]-> { title: "hello", company: ${company} }`];
 

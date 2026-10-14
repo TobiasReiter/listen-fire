@@ -202,6 +202,10 @@ export interface ReturnStatement {
   kind: 'return';
   value: RValue;
   span: Span;
+  /** A concise closure body that is one call (`(f) => f()`, language version
+   *  5): TypeScript's `() => g()`, which hands back what `g` returns — and,
+   *  when `g` returns nothing, nothing. */
+  concise?: true;
 }
 
 // ── Imports ──

@@ -139,6 +139,13 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
     expect(fieldTypeOf(body, 'u')).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
   });
 
+  it('from 5 a MAP over a tuple of closures is a tuple, slot by slot — the join parallel was', () => {
+    const body = '  u = MAP([() => { return e.`Subject` }, () => { return e.`Size` }], (f) => f())';
+    expect(codes(body)).toEqual([]);
+    expect(fieldTypeOf(body, 'u')).toEqual({ kind: 'tuple', of: ['text', 'number'] });
+    expect(fieldTypeOf(body, 'u', 4)).toBeUndefined();
+  });
+
   it('a non-literal index reads any member — the union, possibly absent', () => {
     const body = '  t = [e.`Subject`, e.`Size`]\n  i = e.`Size`\n  a = AT(t, i)';
     expect(fieldTypeOf(body, 'a')).toEqual({ kind: 'maybeAbsent', of: TEXT_OR_NUMBER });
@@ -172,7 +179,7 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
     expect(codes('  j = JOIN([e.`Subject`, e.`Payload`], " ")')).toContain('MOV_JSON_OPAQUE');
   });
 
-  it('a parallel receipt whose slots disagree reads as a list of their union', () => {
+  it('a parallel receipt whose slots disagree reads as a list of their union (parallel is retired under 5)', () => {
     const body = [
       '  r = await parallel([',
       '    () => { return e.`Subject` },',
@@ -180,8 +187,8 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
       '  ])',
       '  u = MAP(r, (x) => { return x })',
     ].join('\n');
-    expect(codes(body)).toEqual([]);
-    expect(fieldTypeOf(body, 'u')).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
+    expect(codes(body, 4)).toEqual([]);
+    expect(fieldTypeOf(body, 'u', 4)).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
   });
 
   it('a race receipt is the same union, each member possibly absent', () => {
@@ -192,7 +199,7 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
       '  ])',
       '  u = MAP(r, (x) => { return x })',
     ].join('\n');
-    expect(fieldTypeOf(body, 'u')).toEqual({
+    expect(fieldTypeOf(body, 'u', 4)).toEqual({
       kind: 'list',
       of: { kind: 'maybeAbsent', of: TEXT_OR_NUMBER },
     });

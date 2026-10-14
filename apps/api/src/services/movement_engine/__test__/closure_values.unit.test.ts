@@ -222,12 +222,12 @@ async function finalPayload(body: string[]): Promise<unknown> {
 }
 
 describe('a closure written as a list element', () => {
-  it('is a value: the list holds the closures, and a combinator runs them', async () => {
+  it('is a value: the list holds the closures, and a MAP calls them', async () => {
     expect(
       await finalPayload([
         '  k = 7',
         '  fs = [() => { return k }, () => { return k * 2 }]',
-        '  r = await parallel(fs)',
+        '  r = MAP(fs, (f) => f())',
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
     ).toEqual({ r: [7, 14] });
@@ -241,7 +241,7 @@ describe('a closure written as a list element', () => {
         '    await sleep(1h)',
         '    return k + 1',
         '  }, () => { return 10 }]',
-        '  r = await parallel(fs)',
+        '  r = MAP(fs, (f) => f())',
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
     ).toEqual({ r: [4, 10] });
@@ -249,7 +249,7 @@ describe('a closure written as a list element', () => {
 
   it('a parked list element closure names its scope; it carries no copy of it', async () => {
     const parks = makeParkSink();
-    await start(program(['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k', '  }]', '  r = await parallel(fs)']), parks);
+    await start(program(['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k', '  }]', '  r = MAP(fs, (f) => f())']), parks);
     const parked = JSON.stringify([...parks.parks.values()][0]!.state);
     expect(parked).toContain('"captured":{}');
     expect(parked).toMatch(/"scope":\{"kind":"scopeRef"/);
@@ -324,5 +324,65 @@ describe('a value that is a closure is called', () => {
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
     ).toEqual({ r: ['a', null] });
+  });
+});
+
+// `parallel` is retired under 5; its rewrite is a MAP over the arms, calling
+// each. It answers what the receipt did, slot by slot, and a park inside an
+// arm parks and resumes the run.
+describe('the MAP that replaces parallel', () => {
+  it('answers what parallel answered, in the arms\' order', async () => {
+    const arms = ['() => { return 1 }', '() => {\n    await sleep(1h)\n    return "two"\n  }', '() => 3'];
+    expect(
+      await finalPayload([`  r = MAP([${arms.join(', ')}], { concurrency: 3 }, (f) => f())`, '  write graph-[:note]-> { payload: { r: r, second: AT(r, 1) } }']),
+    ).toEqual({ r: [1, 'two', 3], second: 'two' });
+  });
+
+  it('every arm waiting, at once', async () => {
+    expect(
+      await finalPayload([
+        '  k = 2',
+        '  r = MAP([() => {',
+        '    await sleep(1h)',
+        '    return k',
+        '  }, () => {',
+        '    await sleep(2h)',
+        '    return k * 10',
+        '  }], { concurrency: 2 }, (f) => f())',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: [2, 20] });
+  });
+
+  it('run unbound, for the arms\' effects', async () => {
+    const parks = makeParkSink();
+    const { kg } = await start(program([
+      '  MAP([() => {',
+      '    write graph-[:note]-> { body: "a" }',
+      '  }, () => {',
+      '    write graph-[:note]-> { body: "b" }',
+      '  }], { concurrency: 2 }, (f) => f())',
+    ]), parks);
+    expect(kg.creates.map((c) => c.fields.body).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('a closure made in a MAP member that parked, called after the resume', () => {
+  // The member's function is written in place, so its scope is a flat capture
+  // of the movement's; a closure the member returns holds that by reference,
+  // and the answer kept across the member's park must carry it, not take it
+  // for the file's scope (which holds none of the movement's bindings).
+  it('reads the movement scope it was written under', async () => {
+    expect(
+      await finalPayload([
+        '  a = 3',
+        '  fs = MAP([1, 2], (n) => {',
+        '    await sleep(1h)',
+        '    return () => { return a + n }',
+        '  })',
+        '  r = MAP(fs, (f) => f())',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: [4, 5] });
   });
 });

@@ -44,7 +44,7 @@ export const LANGUAGE_VERSIONS: readonly LanguageVersionInfo[] = [
   {
     version: 5,
     name: 'Dancing Wren',
-    is: 'the language after v0.11.0: no engine-side store and no meta edges — no `write … bind` (a link lives in the system that holds it), no `#` hops (a plugin is a function you call), `delete` only where the system declares a type deletable, `_resources` only on an extraction\'s result (a record walks its system\'s file edge: `Attachments`, `Files`, `Resources`), and a file is never joined into text (its text is `READ(f)`)',
+    is: 'the language after v0.11.0: no engine-side store and no meta edges — no `write … bind` (a link lives in the system that holds it), no `#` hops (a plugin is a function you call), `delete` only where the system declares a type deletable, `_resources` only on an extraction\'s result (a record walks its system\'s file edge: `Attachments`, `Files`, `Resources`), a file is never joined into text (its text is `READ(f)`), a closure is a value (a list may hold closures, and a value that is one is called), and `parallel` is retired (`MAP` over the functions, calling each, is the join)',
   },
 ];
 

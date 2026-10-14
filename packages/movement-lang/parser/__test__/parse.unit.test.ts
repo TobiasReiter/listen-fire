@@ -759,14 +759,19 @@ describe('§E ordering and parallel', () => {
     expect(pred(w2.uniqueBy[0])).toBe('`name`');
   });
 
-  it('refuses the retired parallel BLOCK with the combinator rewrite', () => {
+  it('refuses the retired parallel BLOCK with the combinator rewrite (version 4)', () => {
     expect(() =>
-      parseProgram('parallel {\n  write team-[:message]-> { channel: "#d" }\n}'),
+      parseProgram('parallel {\n  write team-[:message]-> { channel: "#d" }\n}', { languageVersion: 4 }),
     ).toThrow(/await parallel\(\[/);
   });
 
-  it('refuses `all` by name, and says what replaced it', () => {
-    expect(() => parseProgram('r = await all([f, g])')).toThrow(/`all` was replaced by `parallel`/);
+  it('refuses `all` by name, and says what replaced it (version 4)', () => {
+    expect(() => parseProgram('r = await all([f, g])', { languageVersion: 4 })).toThrow(/`all` was replaced by `parallel`/);
+  });
+
+  it('under 5, where parallel is retired too, both point at the MAP that replaced it', () => {
+    expect(() => parseProgram('parallel {\n  write team-[:message]-> { channel: "#d" }\n}')).toThrow(/MAP\(\[/);
+    expect(() => parseProgram('r = await all([f, g])')).toThrow(/`all` was retired: .*MAP\(\[/);
   });
 });
 

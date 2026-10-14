@@ -43,16 +43,19 @@ ${body}
 }`;
 }
 
-function check(body: string): Diagnostic[] {
-  return checkProgram(parseProgram(source(body)), catalog).filter(
+function check(body: string, languageVersion?: number): Diagnostic[] {
+  const options = languageVersion !== undefined ? { languageVersion } : undefined;
+  return checkProgram(parseProgram(source(body), options), catalog, options).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
-const codes = (body: string): string[] => check(body).map((d) => d.code);
+const codes = (body: string, languageVersion?: number): string[] => check(body, languageVersion).map((d) => d.code);
 
-function fieldTypeOf(body: string, name: string): unknown {
-  const { recording } = checkProgramWithLink(parseProgram(source(body)), catalog, {
+function fieldTypeOf(body: string, name: string, languageVersion?: number): unknown {
+  const options = languageVersion !== undefined ? { languageVersion } : {};
+  const { recording } = checkProgramWithLink(parseProgram(source(body), options), catalog, {
     recordAnalysis: true,
+    ...options,
   });
   const symbols = (recording?.frames ?? []).flatMap((f) => [...f.scope.symbols.values()]);
   return symbols.find((s) => s.name === name)?.fieldType;
@@ -117,7 +120,15 @@ movement m(e: <inbox-[:message]->>) {
   });
 });
 
-describe('await parallel — every arm joins', () => {
+// `parallel` is retired under Dancing Wren (5) — parallel_retired.unit.test.ts
+// — so its own rules are pinned under Luminous Owl (4), each beside the MAP
+// that replaces it under 5, which answers the same.
+describe('await parallel — every arm joins (version 4), and the MAP that replaces it (5)', () => {
+  const MAPPED =
+    '  r = MAP([\n'
+    + '    () => { return e.`Subject` },\n'
+    + '    () => { return 2 },\n'
+    + '  ], { concurrency: 2 }, (f) => f())\n';
   const BOTH =
     '  r = await parallel([\n'
     + '    () => { return e.`Subject` },\n'
@@ -125,22 +136,30 @@ describe('await parallel — every arm joins', () => {
     + '  ])\n';
 
   it('every slot is present — parallel introduces no nulls', () => {
-    expect(codes(BOTH)).toEqual([]);
-    expect(fieldTypeOf(BOTH, 'r')).toEqual({ kind: 'tuple', of: ['text', 'number'] });
+    expect(codes(BOTH, 4)).toEqual([]);
+    expect(fieldTypeOf(BOTH, 'r', 4)).toEqual({ kind: 'tuple', of: ['text', 'number'] });
+    expect(codes(MAPPED)).toEqual([]);
+    expect(fieldTypeOf(MAPPED, 'r')).toEqual({ kind: 'tuple', of: ['text', 'number'] });
   });
 
   it('a present slot flows into a strict site with nothing to discharge', () => {
-    expect(codes(BOTH + '  write inbox-[:log]-> { note: AT(r, 0) }')).toEqual([]);
+    expect(codes(BOTH + '  write inbox-[:log]-> { note: AT(r, 0) }', 4)).toEqual([]);
+    expect(codes(MAPPED + '  write inbox-[:log]-> { note: AT(r, 0) }')).toEqual([]);
   });
 
   it('an arm that only acts is an always-null slot', () => {
     const body = '  r = await parallel([() => { await sleep(1d) }, () => { return "x" }])\n';
-    expect(fieldTypeOf(body, 'r')).toEqual({ kind: 'tuple', of: ['absent', 'text'] });
+    expect(fieldTypeOf(body, 'r', 4)).toEqual({ kind: 'tuple', of: ['absent', 'text'] });
+    const mapped = '  r = MAP([() => { await sleep(1d) }, () => { return "x" }], { concurrency: 2 }, (f) => f())\n';
+    expect(fieldTypeOf(mapped, 'r')).toEqual({ kind: 'tuple', of: ['absent', 'text'] });
   });
 
   it('effects-only concurrency needs no binding at all', () => {
     expect(
-      codes('  await parallel([() => { write inbox-[:log]-> { note: "a" } }, () => { await sleep(1d) }])'),
+      codes('  await parallel([() => { write inbox-[:log]-> { note: "a" } }, () => { await sleep(1d) }])', 4),
+    ).toEqual([]);
+    expect(
+      codes('  MAP([() => { write inbox-[:log]-> { note: "a" } }, () => { await sleep(1d) }], { concurrency: 2 }, (f) => f())'),
     ).toEqual([]);
   });
 });
@@ -162,9 +181,14 @@ describe('an arm is a function, and the combinator is what calls it', () => {
     expect(codes('  r = await race([() => { return "x" }, () => { return "y" }])')).toEqual([]);
   });
 
-  it('arms built at run time type as unknown rather than as a tuple', () => {
+  it('arms built at run time type as unknown rather than as a tuple (version 4)', () => {
     const body = '  arms = [1, 2]\n  r = await parallel(arms)\n';
-    expect(fieldTypeOf(body, 'r')).toBeUndefined();
+    expect(fieldTypeOf(body, 'r', 4)).toBeUndefined();
+  });
+
+  it('from 5 arms built at run time are typed by their element, and must be closures', () => {
+    expect(codes('  arms = [1, 2]\n  r = await race(arms)\n')).toEqual(['MOV_COMBINATOR_ARM_NOT_FUNCTION']);
+    expect(fieldTypeOf('  arms = [() => { return "a" }]\n  r = await race(arms)\n', 'r')).toEqual({ kind: 'list', of: { kind: 'maybeAbsent', of: 'text' } });
   });
 });
 
