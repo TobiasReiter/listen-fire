@@ -13,7 +13,9 @@ The first four changes share one idea: there is no engine-side store and there a
 - [5. `_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result)
 - [6. A file is never joined into text](#6-a-file-is-never-joined-into-text)
 - [7. A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return)
-- [8. Diagnostic code index](#8-diagnostic-code-index)
+- [8. A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter)
+- [9. A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself)
+- [10. Diagnostic code index](#10-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -119,17 +121,42 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 ## 7. A declared return takes what the body may return
 
 - Under Dancing Wren (5) a closure's declared return type that does not take what a return may hand back is `MOV_RETURN_TYPE` at the declaration: `c = (): <text> => COALESCE(org, "x")` (a record may come back where text was declared; TypeScript's `Org | string` is no `string`).
+- A named function's declaration is held to the same rule (`function f(): <text> { return COALESCE(org, "x") }`), and under 3 and 4 its call holds what the body may return, a call back into it from its own body carrying nothing for that edge.
 - Why: a call is typed by what it declares, so the declaration is the last place the record or file is seen. Versions 3 and 4 ran such a program while the call was unused or only compared, so the refusal is new under 5 only. Under 3 and 4 the declaration is clean, and the call still holds what the body may return: a use that reaches data (a graph entry, a written field, a plugin argument) is refused at the use, on every version.
 - Return a field off the record (`org.name`), or declare the type the body returns.
 
-## 8. Diagnostic code index
+## 8. A value that may be a record is no record parameter
+
+- Under Dancing Wren (5) a value that MAY be a record and may be something else, handed to a parameter that takes a record position, is `MOV_CALL_ARG_MAYBE_RECORD`: `v = COALESCE(org, "x")` then `hp(r: v)`, `hp(r: IF cond THEN org ELSE "x" END)`, or a function or closure whose returns are a record on one path and text on another.
+- Why: TypeScript's `Org | string` is no `Org`. The value that is not a record has nowhere to go, and the engine refuses it by name at run time, which a checked program could reach.
+- Narrow it to the record with `IS` before passing it, handle the case where it is not one, or fill the other arm with a record. A union of records alone (`COALESCE(org, other)`) is one record and passes. Versions 1 to 4 are unchanged.
+## 9. A record a combinator arm hands back reads as itself
+
+- Under Dancing Wren (5) a slot of a `parallel` / `race` receipt that holds the record an arm returned reads as that record: `AT(r, 0).name`, `h = AT(r, 0)` then `h.name`, and `AT(r, 0) == null` (false). It is the reading `AT([a, 2], 0)` already had on a list.
+- Why: the check accepted the field read, and the run read null. A program that checked clean silently read nothing.
+- Under Luminous Owl (4) and earlier the slot still reads null. A move up across 5 warns every read of a receipt one of whose arms returns a record (`MOV_RECEIPT_RECORD_SLOT`): if the program relied on the null, change it, then upgrade.
+
+```
+r = await parallel([
+  () => {
+    a = write crm-[:companies]-> { name: "Acme" }
+    return a
+  },
+  () => 2
+])
+write crm-[:notes]-> { title: AT(r, 0).name }   # 5: "Acme"; 4 and earlier: null
+```
+
+## 10. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
+| `MOV_CALL_ARG_MAYBE_RECORD` | [A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter) |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |
+| `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |

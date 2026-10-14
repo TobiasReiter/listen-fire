@@ -139,6 +139,10 @@ export interface ScopeSymbol {
    *  what it may hold, as the walk for an engine object reads it
    *  (`ExpressionTyping.mayHoldType`). A walk input, never a type. */
   mayHold?: FieldType;
+  /** For a combinator's receipt (`r = await parallel([…])`): an arm hands
+   *  back a record, which `AT(r, i)` reads as itself from version 5 and as
+   *  null before — what a move up across 5 warns a read of `r` about. */
+  receiptHoldsRecord?: true;
   /** The text reads through this binding that a guard in scope has proven
    *  not `""` (`x.F != ""`, `LENGTH(x) > 0`) — a narrowing, declared by the
    *  same shadowing move as a presence proof. `value` is the binding's own

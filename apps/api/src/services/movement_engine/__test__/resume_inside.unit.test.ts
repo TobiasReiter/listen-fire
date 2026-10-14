@@ -834,3 +834,268 @@ describe('two names for one handle or node in a completed branch’s export', ()
     expect(alone.kind).toBe('handle');
   });
 });
+
+// R1 (B7 regression): the movement scope rides on BOTH the leaf's chain and the
+// frame of a call the park is inside. The writer walks the leaf's chain first,
+// so a handle (or node) held there is written in full in the leaf's copy and as
+// a reference in the frame's — and the reader rebuilds the movement scope from
+// the frame's. The reader indexes every numbered descriptor in the whole state
+// before it resolves a reference, so it no longer matters which copy it walks.
+describe('a handle in the movement scope, parked inside a body closure call', () => {
+  const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
+  const handleProgram = (call: string[]): string =>
+    program(
+      '',
+      [
+        '  a = write graph-[:note]-> { body: "one" }',
+        ...closure,
+        ...call,
+        '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", a.body) } }',
+      ].join('\n'),
+    );
+
+  async function parkAndResume(h: Harness) {
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    const [address] = [...h.parks.parks.keys()];
+    const state = h.parks.parks.get(address!)!.state;
+    return { address: address!, state };
+  }
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    it(`version ${languageVersion}: resumes with the handle the movement scope held`, async () => {
+      const h: Harness = { source: handleProgram(['  y = f("q")']), parks: makeParkSink(), languageVersion };
+      const { address, state } = await parkAndResume(h);
+      // The shape that failed: the frame's copy of the movement scope names
+      // the handle the leaf's copy numbered.
+      expect(JSON.stringify(state.frames)).toContain('"kind":"handleRef"');
+      const { result, kg } = await resumeAt(h, address);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+    });
+
+    it(`version ${languageVersion}: a second name and a closure's capture of it come back as one handle`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  a = write graph-[:note]-> { body: "one" }',
+            '  b = a',
+            '  f = (x: <text>) => {',
+            '    await sleep(1h)',
+            '    return CONCAT(x, "/", b.body)',
+            '  }',
+            '  y = f("q")',
+            '  write a { body: "two" }',
+            '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", b.body) } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      const { address } = await parkAndResume(h);
+      const { result, kg } = await resumeAt(h, address);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one/two' });
+    });
+  }
+
+  it('a park inside the closure called inside a branch resumes', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  a = write graph-[:note]-> { body: "one" }',
+          ...closure,
+          '  if (a.body == "one") {',
+          '    y = f("q")',
+          '    write graph-[:note]-> { payload: { seen: CONCAT(y, "/", a.body) } }',
+          '  }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    const { address } = await parkAndResume(h);
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+
+  it('a run-built node in the movement scope resumes too', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  n = node { body: "one" }',
+          ...closure,
+          '  y = f("q")',
+          '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", n.body) } }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    const { address, state } = await parkAndResume(h);
+    expect(JSON.stringify(state.frames)).toContain('"kind":"nodeRef"');
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+
+  it('a park written before handles were numbered (each copy in full) still resumes', async () => {
+    const h: Harness = { source: handleProgram(['  y = f("q")']), parks: makeParkSink(), languageVersion: 4 };
+    const { address, state } = await parkAndResume(h);
+    // What the writer wrote before B7: every sighting of the handle in full,
+    // no `id`, no `handleRef`.
+    const numbered = new Map<number, unknown>();
+    const collect = (value: unknown): void => {
+      if (Array.isArray(value)) return value.forEach(collect);
+      if (value === null || typeof value !== 'object') return;
+      const object = value as Record<string, unknown>;
+      if (object.kind === 'handle' && typeof object.id === 'number') numbered.set(object.id, object);
+      Object.values(object).forEach(collect);
+    };
+    const unnumber = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(unnumber);
+      if (value === null || typeof value !== 'object') return value;
+      const object = value as Record<string, unknown>;
+      if (object.kind === 'handleRef') return unnumber(numbered.get(object.id as number));
+      const out: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(object)) if (!(object.kind === 'handle' && key === 'id')) out[key] = unnumber(entry);
+      return out;
+    };
+    collect(state);
+    const old = unnumber(state) as ParkedScopeState;
+    expect(JSON.stringify(old)).not.toContain('handleRef');
+    h.parks.parks.set(address, { kind: 'timer', state: old });
+    const { result, kg } = await resumeAt(h, address);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+  });
+});
+
+// B16: a `parallel` receipt's slot holding the record an arm handed back. From
+// version 5 `AT(r, i)` reads that record, as it does off a list literal; before
+// 5 it read null (the checker accepted the field read, the run read nothing),
+// and a program pinned there still does.
+describe("a combinator receipt's record slot", () => {
+  const source = program(
+    '',
+    [
+      '  r = await parallel([',
+      '    () => {',
+      '      a = write graph-[:note]-> { body: "arm 0" }',
+      '      return a',
+      '    },',
+      '    () => 2',
+      '  ])',
+      '  h = AT(r, 0)',
+      '  write graph-[:note]-> { payload: { at: AT(r, 0).body, named: h.body, missing: AT(r, 0) == null, second: AT(r, 1) } }',
+    ].join('\n'),
+  );
+  const expected = {
+    4: { at: null, named: null, missing: true, second: 2 },
+    5: { at: 'arm 0', named: 'arm 0', missing: false, second: 2 },
+  } as const;
+
+  for (const languageVersion of [4, 5] as const) {
+    it(`version ${languageVersion}, no park`, async () => {
+      const { result, kg } = await start({ source, parks: makeParkSink(), languageVersion });
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
+    });
+
+    it(`version ${languageVersion}, the arm parked before its return`, async () => {
+      const h: Harness = { source, parks: makeParkSink(), languageVersion };
+      const first = await start(h, ['s0.b0.s1']);
+      expect(first.result.parked).toBe(true);
+      const { result, kg } = await resumeAt(h, 's0.b0.s1');
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
+    });
+  }
+});
+
+// R-1: the reader's index follows each descriptor's structure, never a list of
+// key names. A scope's bindings, a closure's capture and an edge map are keyed
+// by the AUTHOR's names, so a variable named like a code-tree member of a
+// descriptor (`body`, `position`, `fields`, `head`, `op`, ...) still resumes.
+describe('a handle or node whose variable is named like a descriptor member', () => {
+  const names = ['op', 'body', 'closure', 'head', 'mapping', 'fields', 'fieldProvenance', 'position', 'declaration'];
+  const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    for (const name of names) {
+      it(`version ${languageVersion}: a handle named '${name}' resumes`, async () => {
+        const h: Harness = {
+          source: program(
+            '',
+            [
+              `  ${name} = write graph-[:note]-> { body: "one" }`,
+              ...closure,
+              '  y = f("q")',
+              `  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", ${name}.body) } }`,
+            ].join('\n'),
+          ),
+          parks: makeParkSink(),
+          languageVersion,
+        };
+        const first = await start(h);
+        expect(first.result.parked).toBe(true);
+        const [address] = [...h.parks.parks.keys()];
+        const { result, kg } = await resumeAt(h, address!);
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+      });
+
+      it(`version ${languageVersion}: a run-built node named '${name}' resumes`, async () => {
+        const h: Harness = {
+          source: program(
+            '',
+            [
+              `  ${name} = node { body: "one" }`,
+              ...closure,
+              '  y = f("q")',
+              `  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", ${name}.body) } }`,
+            ].join('\n'),
+          ),
+          parks: makeParkSink(),
+          languageVersion,
+        };
+        const first = await start(h);
+        expect(first.result.parked).toBe(true);
+        const [address] = [...h.parks.parks.keys()];
+        const { result, kg } = await resumeAt(h, address!);
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+      });
+    }
+
+    it(`version ${languageVersion}: a closure capturing a handle bound as 'body' resumes`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  body = write graph-[:note]-> { body: "one" }',
+            '  f = (x: <text>) => {',
+            '    await sleep(1h)',
+            '    return CONCAT(x, "/", body.body)',
+            '  }',
+            '  y = f("q")',
+            '  write body { body: "two" }',
+            '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", body.body) } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      const first = await start(h);
+      expect(first.result.parked).toBe(true);
+      const [address] = [...h.parks.parks.keys()];
+      const { result, kg } = await resumeAt(h, address!);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one/two' });
+    });
+  }
+});

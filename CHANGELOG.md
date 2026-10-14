@@ -43,6 +43,18 @@ guide](docs/language/dancing-wren-migration.md).
 - **A file is never joined into text** (`MOV_FILE_IN_TEXT`): `"Attached: ${f}"`, or a value that
   may be a file. Why: it joined as `[object Object]`. Its text is `READ(f)`
   (`"${COALESCE(READ(f), "")}"`); the file itself goes into a field that holds files.
+- **A value that may be a record, handed to a record parameter** (`MOV_CALL_ARG_MAYBE_RECORD`):
+  `v = COALESCE(org, "x")` then `hp(r: v)`, an `IF` of a record and text, or a function or closure
+  that returns either. Why: TypeScript's `Org | string` is no `Org`, and the engine refuses the
+  value at run time. Narrow it to the record with `IS`, handle the case where it is not one, or
+  fill the other arm with a record. A union of records alone is one record and still fits. A record with
+  `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
+  version, it passes as a position and enters a graph).
+- **A record a `parallel` / `race` arm hands back reads as that record.** `AT(r, 0).name`, or
+  `h = AT(r, 0)` then `h.name`, reads the record the arm returned, as `AT([a, 2], 0).name` on a
+  list does; `AT(r, 0) == null` is false. Under 4 and earlier that slot read null while the check
+  accepted the read, and a program pinned there still reads null. A move up across 5 warns a read
+  of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
 
 ### Language version 5, Dancing Wren: new
 
@@ -406,6 +418,12 @@ guide](docs/language/dancing-wren-migration.md).
   each enqueue POST a drain tick to every URL, so a door's work starts without waiting for the
   scheduled tick. `node build/scripts/drain_once.js` (new) drains until idle and exits, for a
   scheduled job with no HTTP. Nothing changes for a deployment that sets none of them.
+- A named function's declared return no longer hides what its body may hand back: under language
+  versions 3 and 4, `function f(): <text> { return COALESCE(org, "x") }` is a call whose use in a
+  graph entry, a spread, a written field or a plugin argument is refused at the use, as a closure's
+  call is (a use that reaches data cannot hold a record, on every version). A call back into a
+  function from its own body (declared recursion) carries nothing for that edge, so recursion is
+  no call cycle. The declaration itself is refused only from version 5.
 - Security: a Mailgun inbound attachment is fetched with the deployment's key only from an https
   storage URL under `MAILGUN_SENDING_DOMAIN` (`/v3/domains/<domain>/…` on a `mailgun.net` host);
   any other Mailgun URL is refused. Inbound-only deployments must now set `MAILGUN_SENDING_DOMAIN`
@@ -511,6 +529,11 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- A movement that holds a written record (or a built node) and then waits inside a function it
+  calls resumes again. Since the previous fix below, resuming it failed "the parked state refers to
+  write handle(s) #0 that it never wrote", because the resume read the movement's own names from
+  a copy that only pointed at the record. The resume now finds each record wherever the parked
+  state wrote it. Every language version; a parked state written before is unchanged and resumes.
 - Two names for one written record stay one across a wait (`b = a`, `b = write a { … }`, or a
   closure that captured it). After resuming, an in-place `write a { … }` or `refresh a` used to
   leave `b` reading the record as it was before the wait; it now reads what `a` does, as a run that

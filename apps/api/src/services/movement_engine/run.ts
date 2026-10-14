@@ -2940,7 +2940,7 @@ class Interpreter {
     ];
     // The whole state was written as one park, so it is read as one: a node
     // two of its scopes (or frames, or journals) held comes back as one node.
-    const park = newParkReader();
+    const park = newParkReader(state);
     let segment = 0;
     let nextFrame = 0;
     const takeFrame = (): SerializedFrame => {
