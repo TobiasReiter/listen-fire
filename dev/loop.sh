@@ -62,6 +62,7 @@ done
 STACK_NAME_DEFAULT="listenfire-$(basename "$REPO_ROOT")"
 POSTGRES_HOST_PORT_DEFAULT=9432
 REDIS_HOST_PORT_DEFAULT=6379
+MINIO_HOST_PORT_DEFAULT=9010
 case "$PROFILE" in
   default)
     API_BASE=3000; HARNESS_BASE=5555 ;;
@@ -70,6 +71,7 @@ case "$PROFILE" in
     STACK_NAME_DEFAULT="listen-fire-dev-agent"
     POSTGRES_HOST_PORT_DEFAULT=9434
     REDIS_HOST_PORT_DEFAULT=6381
+    MINIO_HOST_PORT_DEFAULT=9012
     ;;
   agent2)
     API_BASE=4000; HARNESS_BASE=6155 ;;
@@ -92,6 +94,19 @@ esac
 export LISTEN_FIRE_STACK="${LISTEN_FIRE_STACK:-$STACK_NAME_DEFAULT}"
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-$POSTGRES_HOST_PORT_DEFAULT}"
 export REDIS_HOST_PORT="${REDIS_HOST_PORT:-$REDIS_HOST_PORT_DEFAULT}"
+# MinIO (local S3): S3 API on MINIO_HOST_PORT, console on the next port up.
+# Not 9000/9001 — another project on this host holds those.
+export MINIO_HOST_PORT="${MINIO_HOST_PORT:-$MINIO_HOST_PORT_DEFAULT}"
+export MINIO_CONSOLE_HOST_PORT="${MINIO_CONSOLE_HOST_PORT:-$((MINIO_HOST_PORT + 1))}"
+
+# File storage: the API's S3 adapter pointed at this stack's MinIO (credentials
+# and bucket match dev/docker-compose.yml; plain local placeholders).
+export AWS_S3_ENDPOINT="${AWS_S3_ENDPOINT:-http://localhost:$MINIO_HOST_PORT}"
+export AWS_DOCUMENT_S3_BUCKET="${AWS_DOCUMENT_S3_BUCKET:-listenfire-dev}"
+export AWS_REGION="${AWS_REGION:-us-east-1}"
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-listenfire}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-localdevpassword}"
+export AWS_S3_FORCE_PATH_STYLE="${AWS_S3_FORCE_PATH_STYLE:-true}"
 
 # The API only uses Redis when it is named (there is no localhost default in the code), so the
 # dev loop names the container it runs, on this profile's port.
@@ -101,7 +116,7 @@ export MESSAGE_QUEUE_REDIS_PORT="${MESSAGE_QUEUE_REDIS_PORT:-$REDIS_HOST_PORT}"
 echo "[dev:loop] Repo: $REPO_ROOT"
 echo "[dev:loop] Profile: $PROFILE"
 echo "[dev:loop] Compose project: $LISTEN_FIRE_STACK"
-echo "[dev:loop] Postgres: localhost:$POSTGRES_HOST_PORT  Redis: localhost:$REDIS_HOST_PORT"
+echo "[dev:loop] Postgres: localhost:$POSTGRES_HOST_PORT  Redis: localhost:$REDIS_HOST_PORT  MinIO: localhost:$MINIO_HOST_PORT (console $MINIO_CONSOLE_HOST_PORT)"
 
 export PORT="${PORT:-$API_BASE}"
 # Nothing listens on APP_PORT since the legacy SPA was removed; it survives
@@ -135,8 +150,8 @@ export FAKE_REMOTE_ADAPTER_URL="${FAKE_REMOTE_ADAPTER_URL:-http://127.0.0.1:$FAK
 export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$API_BASE_URL}"
 export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-$API_BASE_URL}"
 
-# 1. Ensure docker (postgres + redis) is up
-echo "[dev:loop] Bringing up postgres + redis (idempotent)..."
+# 1. Ensure docker (postgres + redis + minio) is up
+echo "[dev:loop] Bringing up postgres + redis + minio (idempotent)..."
 docker compose -p "$LISTEN_FIRE_STACK" -f dev/docker-compose.yml up -d
 
 # 2. Wait for postgres
@@ -151,6 +166,22 @@ for i in $(seq 1 30); do
   if [ "$i" -eq 30 ]; then
     echo
     echo "[dev:loop] postgres did not become ready in 30s"
+    exit 1
+  fi
+done
+
+# 2a. Wait for MinIO (its entrypoint creates the dev bucket before serving).
+echo -n "[dev:loop] Waiting for minio on localhost:$MINIO_HOST_PORT"
+for i in $(seq 1 30); do
+  if curl -sf "http://localhost:$MINIO_HOST_PORT/minio/health/ready" >/dev/null 2>&1; then
+    echo " ready."
+    break
+  fi
+  echo -n "."
+  sleep 1
+  if [ "$i" -eq 30 ]; then
+    echo
+    echo "[dev:loop] minio did not become ready in 30s"
     exit 1
   fi
 done
