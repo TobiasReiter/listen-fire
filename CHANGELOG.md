@@ -496,10 +496,10 @@ guide](docs/language/dancing-wren-migration.md).
   each enqueue POST a drain tick to every URL, so a door's work starts without waiting for the
   scheduled tick. `node build/scripts/drain_once.js` (new) drains until idle and exits, for a
   scheduled job with no HTTP. Nothing changes for a deployment that sets none of them.
-- A dotted call of a function that is no built-in (`o.nope()`) is `MOV_FUNCTION_UNKNOWN` on every
-  language version. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
-  there was never such a function: the run always failed where it reached the call. A built-in in
-  a record's scope (`o.UPPER(name)`) and, before 5, a write field's own function are unchanged.
+- From language version 5, a dotted call of a function that is no built-in (`o.nope()`) is
+  `MOV_FUNCTION_UNKNOWN`. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
+  there was never such a function: the run always failed where it reached the call. Versions 1–4
+  are unchanged, as are a built-in in a record's scope (`o.UPPER(name)`) and a write field's own function.
 - The engine's unsupported-construct scan reads a movement as the language version it is pinned
   to, so a form version 5 reads differently is scanned as what it means under the pin.
 - A closure written in a movement body holds the scope it was written in by reference, as a
