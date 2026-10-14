@@ -1640,6 +1640,7 @@ engine runs the segment.
 | the reading | how it may differ | why it is kept |
 |---|---|---|
 | `CHUNKS(text, { entities: n })`'s cut and its trace's `expectedEntities` | the estimate reads `\p{L}`/`\p{N}` from the table Node's own answers wrote (crate::letter_number) and `\p{Lu}` from Rust's `Uppercase` narrowed to letters (the TypeScript's regex reads Unicode's `Lu`), so on text with an uncommon uppercase letter a proper-noun run may count differently and a piece boundary move by a line. The size mode, the links and the list items are exact | a regex dialect grown for one estimate was ruled out; tests/oracle/chunks.json holds the size mode on any text and the entities mode on ASCII text |
+| the order of edge names inside a stored copy plan (a parked closure's graph spread, `edges` in `{ fields, edges }`) | the TypeScript writes them in declaration order, this engine in sorted order (the wire does not carry the declaration order, program.rs `copy_plan_js`); the park is byte-equal across engines everywhere else | Henry's ruling, 2026-10-14: the order is not significant, a copy plan's edges are a set, so a state parked by either engine resumes on either |
 
 **Mid-run failures where the TypeScript engine carries on:**
 
