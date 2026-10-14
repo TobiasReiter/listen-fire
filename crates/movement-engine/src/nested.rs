@@ -389,7 +389,7 @@ impl Run<'_> {
         if calls.is_empty() {
             return Ok(None);
         }
-        let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.child(), calls, scope, bound: Cell::new(0) };
+        let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.expression_child(), calls, scope, bound: Cell::new(0) };
         let piece = self.stage_tree(&tree, &staging).await?;
         Ok(Some((carried(origin, offset, &staging.units, &piece, slot.span), staging.scratch)))
     }

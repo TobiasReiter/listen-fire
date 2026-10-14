@@ -655,7 +655,7 @@ impl Run<'_> {
             ArmExpression::Closure { closure, .. } => Ok(Function {
                 params: closure.params.clone(),
                 body: closure.body.clone(),
-                captured: if self.version() >= 5 { scope.clone() } else { scope.capture() },
+                captured: if self.version() >= 5 { scope.written_scope() } else { scope.capture() },
                 path: format!("{fn_path}/closure/body"),
                 named: None,
                 closure: None,

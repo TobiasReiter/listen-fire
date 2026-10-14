@@ -5154,7 +5154,9 @@ class Interpreter {
       // written in by REFERENCE, as every other closure does — so a closure
       // its body returns chains up to the live scope, not to a flat copy
       // that no park can tell from a file's.
-      if (since(this.languageVersion, 5)) return binding({ kind: 'closure', closure: fn.closure, captured: new Map(), env });
+      if (since(this.languageVersion, 5)) {
+        return binding({ kind: 'closure', closure: fn.closure, captured: new Map(), env: this.writtenScope(env) });
+      }
       return binding({ kind: 'closure', closure: fn.closure, captured: captureScope(env) });
     }
     const named = env.resolve(fn.name);
@@ -5693,9 +5695,11 @@ class Interpreter {
     const runs = hoistingMemberReads(tree, (call) => this.runsAsCall(call, env));
     if (!holdsNestedCall(tree, runs)) return undefined;
     const scope = this.callScope(env);
+    const scratch = env.child();
+    this.expressionScopes.add(scratch);
     const staging: NestedCallStaging = {
       slot,
-      scratch: env.child(),
+      scratch,
       runs,
       isCoalesce: (callee) => {
         const resolved = resolveCallee(callee, scope, this.languageVersion);
@@ -12234,6 +12238,27 @@ class Interpreter {
   /** Scopes `evaluateSlot` bound a slot's list element closures in. */
   private readonly closureEnvs = new WeakSet<Environment>();
 
+  /** Scopes the engine opens around one expression — its list element
+   *  closures', its nested calls' — holding only names no program can spell. */
+  private readonly expressionScopes = new WeakSet<Environment>();
+
+  /**
+   * The scope code at `env` is written in: `env` with the scopes the engine
+   * opened around the expression stepped out of. A function written in place
+   * inside an expression holds THIS scope, not the expression's own: a park
+   * names a member's scopes from its statement's, which a resume rebuilds,
+   * while an expression's scopes exist only for the one evaluation.
+   */
+  private writtenScope(env: Environment): Environment {
+    let scope = env;
+    while (this.expressionScopes.has(scope)) {
+      const outer = scope.outer();
+      if (outer === undefined) break;
+      scope = outer;
+    }
+    return scope;
+  }
+
   private async evaluateSlot(
     slot: ExprSlot,
     options: {
@@ -12253,6 +12278,7 @@ class Interpreter {
         around.declare(slotClosureName(at), binding({ kind: 'closure', closure, captured: new Map(), env: options.env }));
       }
       this.closureEnvs.add(around);
+      this.expressionScopes.add(around);
       return this.evaluateSlot(slot, { ...options, env: around });
     }
     const staged = await this.stageNestedCalls(slot, options.env);

@@ -433,6 +433,9 @@ pub struct Scope {
     /// closure's code says where it is written). What its slots' AST paths
     /// are read in.
     written_in: Option<crate::program::DeclaringFile>,
+    /// A scope the engine opens around one expression (its nested calls'
+    /// scratch), holding only names no program can spell.
+    expression: bool,
 }
 
 impl Scope {
@@ -452,6 +455,25 @@ impl Scope {
 
     pub fn child(self: &Rc<Self>) -> Rc<Scope> {
         Rc::new(Scope { parent: Some(self.clone()), ..Scope::default() })
+    }
+
+    /// A child the engine opens around one expression (`expression`).
+    pub fn expression_child(self: &Rc<Self>) -> Rc<Scope> {
+        Rc::new(Scope { parent: Some(self.clone()), expression: true, ..Scope::default() })
+    }
+
+    /// run.ts `writtenScope`: the scope code here is written in, with the
+    /// scopes the engine opened around the expression stepped out of. A
+    /// function written in place inside an expression holds THIS scope: a
+    /// park names a member's scopes from its statement's, which a resume
+    /// rebuilds, while an expression's scopes exist only for one evaluation.
+    pub fn written_scope(self: &Rc<Self>) -> Rc<Scope> {
+        let mut scope = self.clone();
+        while scope.expression {
+            let Some(outer) = scope.parent.clone() else { break };
+            scope = outer;
+        }
+        scope
     }
 
     /// A child for code written in `file` (a closure's body over its capture).
@@ -549,14 +571,14 @@ impl Scope {
     /// closure goes runs over its caller's scope).
     pub fn capture_written_in(self: &Rc<Self>, file: crate::program::DeclaringFile) -> Rc<Scope> {
         let captured = self.capture();
-        Rc::new(Scope { bindings: RefCell::new(captured.own_bindings()), parent: None, file_env: None, written_in: Some(file) })
+        Rc::new(Scope { bindings: RefCell::new(captured.own_bindings()), parent: None, file_env: None, written_in: Some(file), expression: false })
     }
 
     /// A fresh scope holding this one's own bindings (run.ts `closureScope`
     /// of a snapshot): each call of a function that holds a snapshot runs
     /// over a scope of its own, as the TypeScript builds one per call.
     pub fn fresh_copy(&self) -> Rc<Scope> {
-        Rc::new(Scope { bindings: RefCell::new(self.own_bindings()), parent: self.parent.clone(), file_env: None, written_in: self.written_in.clone() })
+        Rc::new(Scope { bindings: RefCell::new(self.own_bindings()), parent: self.parent.clone(), file_env: None, written_in: self.written_in.clone(), expression: self.expression })
     }
 
     /// The lexical chain, root first, this scope last (`chainFromRoot`).
