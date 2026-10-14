@@ -2058,8 +2058,19 @@ impl<'c> Bound<'c> {
         };
         let mut held = Holder::Free;
         for arm in arms {
-            let ArmExpression::Closure { closure, .. } = arm else { return Holder::Other };
-            if !matches!(self.returns_holder(&closure.body), Holder::Free | Holder::Record) {
+            let arm_held = match arm {
+                ArmExpression::Closure { closure, .. } => self.returns_holder(&closure.body),
+                // A closure by name: its body's returns; a movement by name:
+                // its returns (no arguments, so no values to hold).
+                ArmExpression::Ref { name, .. } if self.calls_closure(name) => self.closure_call_holder(name),
+                ArmExpression::Ref { name, .. } => match self.callees.and_then(|callees| Some((callees, callees.movement(name)?))) {
+                    Some((callees, movement)) if movement.params.iter().all(|p| callees.takes_value(p)) => {
+                        callees.returns(movement, &vec![Kind::Value; movement.params.len()], &[]).1
+                    }
+                    _ => return Holder::Other,
+                },
+            };
+            if !matches!(arm_held, Holder::Free | Holder::Record) {
                 held = Holder::Other;
             }
         }

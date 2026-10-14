@@ -926,3 +926,49 @@ describe('a closure whose scope reaches back to itself resumes', () => {
     }
   }
 });
+
+describe('both engines: a receipt of text-returning NAMED arms is a plain value (admit.rs receipt_holder)', () => {
+  const movementProgram = (combinator: string, sink: string): string =>
+    program([`  r = await ${combinator}([one, two])`, `  write graph-[:note]-> ${sink}`]).replace(
+      'movement recap',
+      'movement one() {\n  return "a"\n}\nmovement two() {\n  return "b"\n}\nmovement recap',
+    );
+  const closureProgram = (combinator: string, sink: string): string =>
+    program([
+      '  f = () => {',
+      '    return "a"',
+      '  }',
+      '  g = () => {',
+      '    return "b"',
+      '  }',
+      `  r = await ${combinator}([f, g])`,
+      `  write graph-[:note]-> ${sink}`,
+    ]);
+  // Race's winner is the first arm to finish: both finish at once, `f` first.
+  const sinks: Record<string, { sink: string; parallel: (c: WriteInput) => unknown; race: (c: WriteInput) => unknown }> = {
+    wholeIntoField: { sink: '{ payload: r }', parallel: (c) => c.fields.payload, race: (c) => c.fields.payload },
+    inRecord: { sink: '{ payload: { x: r } }', parallel: (c) => c.fields.payload, race: (c) => c.fields.payload },
+    atInRecord: { sink: '{ payload: { x: AT(r, 0) } }', parallel: (c) => c.fields.payload, race: (c) => c.fields.payload },
+    atIntoBody: { sink: '{ body: COALESCE(AT(r, 0), "z") }', parallel: (c) => c.fields.body, race: (c) => c.fields.body },
+  };
+  for (const version of [3, 4, 5]) {
+    for (const [kind, make] of [['closure', closureProgram], ['movement', movementProgram]] as const) {
+      for (const combinator of ['parallel', 'race'] as const) {
+        for (const [name, { sink, ...read }] of Object.entries(sinks)) {
+          it(`v${version} ${combinator} of named ${kind} arms, ${name}: Rust runs whole and equals the TypeScript`, async () => {
+            const wrote: Record<string, unknown> = {};
+            for (const engine of ENGINES) {
+              const kg = makeKgFake();
+              const result = await onEngine(engine, () => runMovement(inputOn(make(combinator, sink), makeParkSink(), kg, { version })));
+              expect(result.parked).toBeUndefined();
+              expect(kg.creates.length).toBe(1);
+              wrote[engine] = read[combinator](kg.creates[0]!);
+            }
+            expect(wrote.rust).toEqual(wrote.ts);
+            expect(wrote.ts).not.toBeUndefined();
+          }, 30_000);
+        }
+      }
+    }
+  }
+});
