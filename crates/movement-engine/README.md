@@ -6,7 +6,19 @@ own shapes (docs/contracts/host-families.md); `apps/api/src/services/movement_en
 rust_engine.ts` drives it, and `rust_host.ts` forwards each request to the
 run's `EngineHost`.
 
-Under `MOVEMENT_ENGINE=rust` the engine runs two things:
+Which runs reach it is `MOVEMENT_ENGINE`'s (`engineRoute` in rust_engine.ts).
+Under `by-version`, production's default, a run pinned to language version 5
+or later runs here and one pinned to 1–4 on the TypeScript engine; a version-5
+run this engine refuses or declines fails with the reason (no fallback), the
+emergency switch `MOVEMENT_ENGINE_V5_ON_TS=true` sends version-5 runs to the
+TypeScript engine instead, and a resume goes back to the engine that parked
+it (the run row's `engine`, handed in as `parkedOnEngine`) whatever the switch
+says. `rust` and `ts` force one engine for every version: the test harness's
+setting (jest defaults to `ts`), so the corpora, recordings and oracles can
+hold this engine to the TypeScript engine on any version.
+
+Under `MOVEMENT_ENGINE=rust` the engine runs two things (under `by-version`,
+the whole run only):
 
 - **an expression** over value bindings, which the TypeScript evaluator hands
   to `eval_expression` (slice 1, "The evaluator" below);
@@ -648,8 +660,8 @@ mutation — the TypeScript engine throws the same.
   its check, which no engine ran (`isCheckFailure`: MOVENG_LANGUAGE_VERSION,
   MOVENG_PARSE, MOVENG_CHECK; anything else the check throws is a
   `shim_fault`); `movement_engine_ts` when
-  `MOVEMENT_ENGINE` did not choose this engine). At info under
-  `MOVEMENT_ENGINE=rust`; at debug under `ts`.
+  the run's route did not choose this engine). At info for a run routed
+  here; at debug for one that was not.
 - **`rustRunStats`** (rust_stats.ts): `notAdmitted` by first reason,
   `allReasons` by each statement's first reason in a run not admitted (one
   count per run per reason; "What admission walks"), and `declined` by reason;
@@ -664,13 +676,16 @@ mutation — the TypeScript engine throws the same.
   ended as a run ends; `shimFaults`; `hostCalls` by `family.method`. The admission dry run
   runs nothing, so it has no such ending.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
-  `{engine, uptimeSeconds, since, runs, evaluator}`, this process's counters
+  `{engine, fallback, v5OnTs, uptimeSeconds, since, runs, evaluator}`, the
+  settings and this process's counters
   since it started.
 - **The admission dry run** (`rustRunStats.dryRun`, under `runs.dryRun` in
   engine-stats): every run, resume, race settlement and callback firing the
   TypeScript engine runs because
-  `MOVEMENT_ENGINE` did not choose this engine is also put to this engine's
-  admission, without running it. The shim builds the segment input a real
+  its route did not choose this engine is also put to this engine's
+  admission, without running it: under `by-version` only a version-5 one
+  (under the emergency switch, or one the TypeScript engine parked), since
+  versions 1–4 never reach this engine. The shim builds the segment input a real
   run would, calls the start entry, and reads the first step: a `refused`
   done is the verdict, and an admitted run's first step (`check.program`) is
   never answered; the segment is finished there. So the dry run makes no

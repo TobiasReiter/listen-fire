@@ -74,6 +74,17 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- **An automation runs on the engine its language version runs on.** `MOVEMENT_ENGINE` now defaults
+  to `by-version` (was `ts`): an automation pinned to version 5 runs on the Rust engine, one pinned
+  to 1 to 4 on the TypeScript engine, as before. A version-5 run the Rust engine refuses fails with
+  the reason rather than quietly running on TypeScript. A run keeps its engine for its whole life:
+  a parked run resumes on the engine its row's `engine` names. `MOVEMENT_ENGINE_V5_ON_TS` (new,
+  optional, `false`) is the emergency switch: `true` runs new version-5 runs on the TypeScript
+  engine (a run the Rust engine parked still resumes there). Why: version 5 is the Rust engine's
+  language, and the TypeScript engine goes once nothing is pinned below 5. `rust` and `ts` still
+  force one engine for every version, for testing. Boot now refuses `MOVEMENT_ENGINE_FALLBACK` set
+  beside anything but `MOVEMENT_ENGINE=rust`, and the switch beside `rust` or `ts`. The admission
+  dry run now counts only version-5 runs the TypeScript engine runs (every run under `ts`).
 - `MOVEMENT_ENGINE=rust` speaks language version 5 as the TypeScript engine does: a `_resources`
   walk off a system's record fails with the same error under 5 (versions 1 to 4 read it as before),
   the knowledge graph's `Resources` edge is walked by its reserved address on every version, and a
