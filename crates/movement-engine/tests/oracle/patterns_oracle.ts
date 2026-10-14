@@ -423,9 +423,20 @@ function routing(): { routes: Routes; reasons: string[] } {
   return { routes: 'whole', reasons: [] };
 }
 
+/** The unsupported-version refusal names the CURRENT language version
+ *  (`"Dancing Wren" (5)`), which changes every release: both engines' endings
+ *  are compared, and written to patterns.json, with that name and number
+ *  masked, the message's shape otherwise exact. */
+function maskCurrentVersion<T>(failure: T): T {
+  if (failure === null || typeof failure !== 'object') return failure;
+  const f = failure as { code?: string; message?: string };
+  if (f.code !== 'MOVENG_LANGUAGE_VERSION' || typeof f.message !== 'string') return failure;
+  return { ...f, message: f.message.replace(/"[A-Z][a-z]+ [A-Z][a-z]+" \(\d+\)/g, '"<current version name>" (<current version number>)') } as T;
+}
+
 /** How an entry ended, as the report keeps it. */
 function ending(recording: HostRecording): unknown {
-  if ('failure' in recording) return { failure: recording.failure };
+  if ('failure' in recording) return { failure: maskCurrentVersion(recording.failure) };
   return { result: recording.result };
 }
 
