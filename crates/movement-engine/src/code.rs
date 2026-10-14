@@ -16,6 +16,9 @@ pub(crate) enum Found<'p> {
     Bound(&'p str, &'p ClosureExpression),
     /// A node declaration written in a body.
     Shape(&'p movement_parser::ast::ShapeDeclaration),
+    /// A name bound to a call's value (`h = mk(2)`, `h = mk(a: 2)`), by
+    /// the callee as written.
+    CallBound(&'p str, &'p str),
 }
 
 /// The names of the node declarations a body writes, at any depth.
@@ -40,8 +43,17 @@ pub(crate) fn bound_closures(program: &Program) -> Vec<(&str, &ClosureExpression
     found
 }
 
-
-
+/// Every name the program binds to a call's value, anywhere, with the
+/// callee as written (`h = mk(2)`).
+pub(crate) fn call_bound(program: &Program) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    visit(&program.statements, &mut |node| {
+        if let Found::CallBound(name, callee) = node {
+            found.push((name, callee));
+        }
+    });
+    found
+}
 
 /// A state's `span` object, as the program's tree holds it.
 pub(crate) fn span_json(value: &Js) -> Option<(Span, Json)> {
@@ -57,8 +69,11 @@ fn visit<'p>(statements: &'p [Statement], f: &mut dyn FnMut(Found<'p>)) {
     for statement in statements {
         match statement {
             Statement::Assign(assign) => {
-                if let RValue::Closure { closure: c } = &assign.value {
-                    f(Found::Bound(&assign.name, c));
+                match &assign.value {
+                    RValue::Closure { closure: c } => f(Found::Bound(&assign.name, c)),
+                    RValue::Call { call } => f(Found::CallBound(&assign.name, &call.callee)),
+                    RValue::Construct { construct } => f(Found::CallBound(&assign.name, &construct.callee)),
+                    _ => {}
                 }
                 rvalue(&assign.value, f)
             }

@@ -468,10 +468,16 @@ async function onEngine<T>(engine: Engine, run: () => Promise<T>): Promise<T> {
 
 interface Pinned {
   version?: number;
+  /** Library files the program imports, by path. */
+  files?: Record<string, { source: string }>;
 }
 
 function inputOn(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>, pin: Pinned) {
-  return { ...runInput(source, parks, kg), ...(pin.version !== undefined ? { languageVersion: pin.version as never } : {}) };
+  return {
+    ...runInput(source, parks, kg),
+    ...(pin.version !== undefined ? { languageVersion: pin.version as never } : {}),
+    ...(pin.files !== undefined ? { catalog: { ...catalog, files: pin.files } } : {}),
+  };
 }
 
 async function startOn(engine: Engine, source: string, parks: Sink, pin: Pinned = {}) {
@@ -972,3 +978,133 @@ describe('both engines: a receipt of text-returning NAMED arms is a plain value 
     }
   }
 });
+
+describe('both engines: a closure bound from a call, then called by name (admit.rs Callees::closures_returned)', () => {
+  // `h = mk(2)` binds the closure `mk`'s call hands back; `h(1)` calls it in
+  // the scope it was written in (mk's call scope, by reference). `mk` is a
+  // body closure, a file-level closure, a `function`, a `movement` or a
+  // library's function; the closure is called with arguments, twice, in a
+  // MAP, from a further call's value; each parks inside the returned
+  // closure's call and resumes on either engine. The review found Rust
+  // refusing it (`function_call`) where TypeScript ran it (merge 11, item 4).
+  const atTop = (top: string[], body: string[]): string => program(body).replace('movement recap', `${top.join('\n')}\nmovement recap`);
+  const write = (fields: string): string => `  write graph-[:note]-> { payload: { ${fields} } }`;
+  const inner = (park: boolean): string[] =>
+    park ? ['    return (b: <number>) => {', '      await sleep(1h)', '      return a + b', '    }'] : ['    return (b: <number>) => a + b'];
+  const libraryMk = (park: boolean): Record<string, { source: string }> => ({
+    'lib/mk': { source: ['export function mk(a: <number>) {', ...inner(park).map((l) => l.slice(2)), '}'].join('\n') },
+  });
+  const shapes: Record<
+    string,
+    { source: (park: boolean) => string; payload: unknown; body?: string; parks?: boolean; files?: (park: boolean) => Record<string, { source: string }> }
+  > = {
+    fromClosure: {
+      source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    fileClosureDirect: {
+      source: () => atTop(['f = (b: <number>) => {', '  return b + 2', '}'], ['  r = f(1)', write('r: r')]),
+      payload: { r: 3 },
+      parks: false,
+    },
+    fromFileClosure: {
+      source: (park) => atTop(['mk = (a: <number>) => {', ...inner(park).map((l) => l.slice(2)), '}'], ['  h = mk(2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    fromMovement: {
+      source: (park) =>
+        atTop(['movement mk(a: <number>) {', ...inner(park).map((l) => l.slice(2)), '}'], ['  h = mk(a: 2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    fromFunction: {
+      source: (park) => atTop(['function mk(a: <number>) {', ...inner(park).map((l) => l.slice(2)), '}'], ['  h = mk(2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    fromLibraryFunction: {
+      source: () => program(['  h = mk(2)', '  r = h(1)', write('r: r')]).replace('runs = manual()', 'import { mk } from "lib/mk"\nruns = manual()'),
+      files: libraryMk,
+      payload: { r: 3 },
+    },
+    calleeInAnotherCase: {
+      source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = MK(2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    intoTextField: {
+      source: () => program(['  mk = (a: <number>) => {', '    return (b: <number>) => CONCAT("x", a, b)', '  }', '  h = mk(2)', '  write graph-[:note]-> { body: h(1), payload: { done: 1 } }']),
+      payload: { done: 1 },
+      body: 'x21',
+      parks: false,
+    },
+    returnsBoundName: {
+      source: (park) =>
+        program(['  mk = (a: <number>) => {', ...inner(park).map((l) => l.replace('return (b', 'g = (b')), '    return g', '  }', '  h = mk(2)', '  r = h(1)', write('r: r')]),
+      payload: { r: 3 },
+    },
+    chained: {
+      source: (park) =>
+        program([
+          '  mk = (a: <number>) => {',
+          '    return (b: <number>) => {',
+          ...inner(park).map((l) => `  ${l.replace('(b: <number>)', '(c: <number>)').replace('a + b', 'a + b + c')}`),
+          '    }',
+          '  }',
+          '  h = mk(1)',
+          '  k = h(2)',
+          '  r = k(3)',
+          write('r: r'),
+        ]),
+      payload: { r: 6 },
+    },
+    namedArgsAndTwice: {
+      source: (park) =>
+        program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  k = mk(a: 10)', '  r = h(b: 1)', '  s = h(5)', '  t = k(1)', write('r: r, s: s, t: t')]),
+      payload: { r: 3, s: 7, t: 11 },
+    },
+    inMap: {
+      source: (park) =>
+        program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  out = MAP([1, 2], (x) => {', '    return h(x)', '  })', write('out: out')]),
+      payload: { out: [3, 4] },
+    },
+    namedToMap: {
+      source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  out = MAP([1, 2], h)', write('out: out')]),
+      payload: { out: [3, 4] },
+    },
+    fromClosureInClosure: {
+      source: (park) =>
+        program([
+          '  outer = (c: <number>) => {',
+          '    mk = (a: <number>) => {',
+          ...inner(park).map((l) => `  ${l}`),
+          '    }',
+          '    h = mk(c)',
+          '    return h(1)',
+          '  }',
+          '  r = outer(2)',
+          write('r: r'),
+        ]),
+      payload: { r: 3 },
+    },
+  };
+  for (const version of [3, 4, 5]) {
+    for (const [name, shape] of Object.entries(shapes)) {
+      it(`v${version} ${name}: Rust runs whole and equals the TypeScript`, async () => {
+        const wrote: Record<string, WriteInput[]> = {};
+        for (const engine of ENGINES) {
+          const kg = makeKgFake();
+          const result = await onEngine(engine, () => runMovement(inputOn(shape.source(false), makeParkSink(), kg, { version, files: shape.files?.(false) })));
+          expect({ engine, parked: result.parked, error: (result as { error?: unknown }).error }).toEqual({ engine, parked: undefined, error: undefined });
+          wrote[engine] = kg.creates;
+        }
+        expect(payloadOf(wrote.ts!)).toEqual(shape.payload);
+        if (shape.body !== undefined) expect(wrote.ts![0]!.fields.body).toEqual(shape.body);
+        expect(wrote.rust).toEqual(wrote.ts);
+      }, 30_000);
+      if (shape.parks === false) continue;
+      it(`v${version} ${name}, parked inside the returned closure's call: the same bytes and answer every way round`, async () => {
+        const end = await acrossEngines(shape.source(true), { version, files: shape.files?.(true) });
+        expect(end.payload).toEqual(shape.payload);
+      }, 60_000);
+    }
+  }
+});
+

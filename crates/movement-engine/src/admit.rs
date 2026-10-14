@@ -916,7 +916,7 @@ struct Callees<'p> {
     /// The movements the file imports from libraries: callees too, walked
     /// in their own files.
     imported: Vec<Imported<'p>>,
-    plugin_binds: &'p BTreeMap<String, PluginBinds>,
+    plugin_binds: BTreeMap<String, PluginBinds>,
     /// The `type`s the file declares: a parameter typed by one takes a value.
     types: BTreeSet<String>,
     /// The names the file's scope binds (its imports, shapes, values,
@@ -936,10 +936,18 @@ struct Callees<'p> {
     closures: BTreeMap<String, Option<Vec<ast::MovementParam>>>,
     /// Every closure bound to each name, for what a call of one hands back.
     closure_bodies: BTreeMap<String, Vec<&'p ast::ClosureExpression>>,
+    /// The file's own statements: a closure written at file scope is read
+    /// in a walk of them (`outside_closure_holder`).
+    file_statements: &'p [Statement],
+    /// The closures `outside_closure_holder` is reading now (a cycle).
+    outside_walking: RefCell<Vec<ast::Span>>,
+    /// What a call of each closure a library's function hands back hands
+    /// back, read in the library's own file (`closures_returned`).
+    foreign_holders: RefCell<Vec<(*const ast::ClosureExpression, Holder)>>,
 }
 
 impl<'p> Callees<'p> {
-    fn of(program: &'p ast::Program, plugin_binds: &'p BTreeMap<String, PluginBinds>, language_version: u32, imported: Vec<Imported<'p>>) -> Callees<'p> {
+    fn of(program: &'p ast::Program, plugin_binds: &BTreeMap<String, PluginBinds>, language_version: u32, imported: Vec<Imported<'p>>) -> Callees<'p> {
         let mut movements = Vec::new();
         let mut types = BTreeSet::new();
         let mut file_scope = BTreeSet::new();
@@ -968,7 +976,7 @@ impl<'p> Callees<'p> {
         let mut callees = Callees {
             movements,
             imported,
-            plugin_binds,
+            plugin_binds: plugin_binds.clone(),
             types,
             file_scope,
             language_version,
@@ -977,6 +985,9 @@ impl<'p> Callees<'p> {
             file_holders,
             closures: BTreeMap::new(),
             closure_bodies: BTreeMap::new(),
+            file_statements: &program.statements,
+            outside_walking: RefCell::default(),
+            foreign_holders: RefCell::default(),
         };
         for (name, closure) in crate::code::bound_closures(program) {
             callees.closure_bodies.entry(name.to_string()).or_default().push(closure);
@@ -989,7 +1000,134 @@ impl<'p> Callees<'p> {
             let entry = same.then(|| closure.params.clone());
             callees.closures.insert(name.to_string(), entry);
         }
+        // A name bound to a call's value (`h = mk(2)`) is a closure where
+        // every `return` of the callee hands one back: `mk` a closure or a
+        // movement of this file, each return a closure literal or a name
+        // bound to closures. A call of it runs the closure the call made, in
+        // its scope (`executeClosureCall`), so its parameters are those
+        // closures' and its value what their returns hand back. Followed
+        // until no new name is learnt (`h2 = h(1)` where `h`'s returns are
+        // closures too).
+        let call_bound = crate::code::call_bound(program);
+        loop {
+            let mut learnt = false;
+            for (name, callee) in &call_bound {
+                let Some(returned) = callees.closures_returned(callee) else { continue };
+                let bodies = callees.closure_bodies.entry(name.to_string()).or_default();
+                let fresh: Vec<_> = returned.into_iter().filter(|c| !bodies.iter().any(|b| std::ptr::eq(*b, *c))).collect();
+                if fresh.is_empty() {
+                    continue;
+                }
+                learnt = true;
+                bodies.extend(fresh.iter().copied());
+                for closure in fresh {
+                    let takes = |params: &[ast::MovementParam]| params.iter().map(|p| (p.name.clone(), callees.takes_value(p))).collect::<Vec<_>>();
+                    let same = match callees.closures.get(*name) {
+                        None => true,
+                        Some(None) => false,
+                        Some(Some(seen)) => takes(seen) == takes(&closure.params),
+                    };
+                    let entry = same.then(|| closure.params.clone());
+                    callees.closures.insert(name.to_string(), entry);
+                }
+            }
+            if !learnt {
+                break;
+            }
+        }
         callees
+    }
+
+    /// What a call of `closure` hands back where the walk calling it did
+    /// not walk its body: a closure written at file scope, or in another
+    /// movement's body (one that movement's call handed back, `h = mk(2)`).
+    /// Its returns are read in the walk that holds its names: the file's
+    /// statements, or that movement's body under value arguments (one taking
+    /// a record, or a cycle, may hand back anything).
+    fn outside_closure_holder(&'p self, closure: &'p ast::ClosureExpression) -> Holder {
+        if let Some((_, held)) = self.foreign_holders.borrow().iter().find(|(c, _)| std::ptr::eq(*c, closure)) {
+            return *held;
+        }
+        if self.outside_walking.borrow().contains(&closure.span) {
+            return Holder::Other;
+        }
+        let at = |loc: ast::Loc| (loc.line, loc.col);
+        let within = |span: &ast::Span| at(span.start) <= at(closure.span.start) && at(closure.span.end) <= at(span.end);
+        self.outside_walking.borrow_mut().push(closure.span);
+        let held = match self.movements.iter().find(|m| within(&m.span)) {
+            Some(movement) if movement.params.iter().all(|p| self.takes_value(p)) => {
+                self.bound(movement, &vec![Kind::Value; movement.params.len()], Vec::new()).returned_values_holder(&closure.body)
+            }
+            Some(_) => Holder::Other,
+            None => {
+                let mut bound = Bound { plugin_binds: self.plugin_binds.clone(), callees: Some(self), ..Bound::default() };
+                for statement in self.file_statements.iter().filter(|s| matches!(s, Statement::Assign(_))) {
+                    bound.collect(std::slice::from_ref(statement), &[]);
+                }
+                bound.returned_values_holder(&closure.body)
+            }
+        };
+        self.outside_walking.borrow_mut().pop();
+        held
+    }
+
+    /// The closures a call of `callee` hands back, where every `return` of
+    /// it hands back a closure: a closure literal, or a name bound to
+    /// closures. `None` where any return is something else, or the callee
+    /// is no closure and no movement of this file (an import's closure is
+    /// its library's, walked there).
+    fn closures_returned(&self, callee: &str) -> Option<Vec<&'p ast::ClosureExpression>> {
+        if self.language_version < 3 {
+            return None;
+        }
+        let bodies: Vec<&'p [Statement]> = match self.callee(callee, false) {
+            // A library's function: its returns read in its own file, and
+            // what a call of each closure hands back with them.
+            Some(movement) if let Some(import) = self.imported_as(movement) => {
+                let library = Callees::of(import.library, &import.plugin_binds, self.language_version, import.nested.clone());
+                let returned = library.closures_returned(&movement.name)?;
+                for closure in &returned {
+                    if !self.foreign_holders.borrow().iter().any(|(c, _)| std::ptr::eq(*c, *closure)) {
+                        let held = library.outside_closure_holder(closure);
+                        self.foreign_holders.borrow_mut().push((*closure, held));
+                    }
+                }
+                return Some(returned);
+            }
+            Some(movement) => vec![&movement.body],
+            None => self.closure_bodies.get(self.closure_name(callee, false)?)?.iter().map(|c| c.body.as_slice()).collect(),
+        };
+        let mut returned = Vec::new();
+        for body in bodies {
+            if !self.returned_closures(body, &mut returned) {
+                return None;
+            }
+        }
+        (!returned.is_empty()).then_some(returned)
+    }
+
+    /// The closures a body's own `return`s hand back (`returns_of`: an
+    /// `if` arm's included; a block's iteration's and a nested closure's
+    /// are theirs): false where one hands back anything else.
+    fn returned_closures(&self, body: &'p [Statement], into: &mut Vec<&'p ast::ClosureExpression>) -> bool {
+        let mut returns = Vec::new();
+        returns_of(body, &mut returns);
+        returns.into_iter().all(|value| match value {
+            RValue::Closure { closure } => {
+                into.push(closure);
+                true
+            }
+            RValue::Expr { expr } => match lowered(&expr.raw) {
+                Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) => {
+                    self.closure_bodies.get(&name).is_some_and(|closures| {
+                        into.extend(closures.iter().copied());
+                        true
+                    })
+                }
+                _ => false,
+            },
+            _ => false,
+        })
     }
 
     /// The parameters of the closure a call names from version 3 (a
@@ -1684,17 +1822,30 @@ impl<'c> Bound<'c> {
     }
 
     /// What a call of the closure bound to `name` hands back: what the
-    /// `return`s of every closure of that name hand back, where this walk
-    /// collected each one's body (its names are this walk's); anything
-    /// else, or a recursion's cycle, may be anything.
+    /// `return`s of every closure of that name hand back — read in this walk
+    /// where it collected the body (its names are this walk's), else in the
+    /// walk that holds its names (`Callees::outside_closure_holder`: a
+    /// closure written at file scope, or handed back by another function's
+    /// call); a recursion's cycle may be anything.
     fn closure_call_holder(&self, name: &str) -> Holder {
-        let Some(name) = self.callees.and_then(|c| c.closure_name(name, self.binds_in_body(name))) else { return Holder::Other };
-        let Some(bodies) = self.callees.and_then(|c| c.closure_bodies.get(name)) else { return Holder::Other };
-        if bodies.iter().any(|closure| !self.closures_walked.contains(&closure.span)) || self.closures_returning.borrow().iter().any(|n| n == name) {
+        let Some(callees) = self.callees else { return Holder::Other };
+        let Some(name) = callees.closure_name(name, self.binds_in_body(name)) else { return Holder::Other };
+        let Some(bodies) = callees.closure_bodies.get(name) else { return Holder::Other };
+        if self.closures_returning.borrow().iter().any(|n| n == name) {
             return Holder::Other;
         }
         self.closures_returning.borrow_mut().push(name.to_string());
-        let held = bodies.iter().map(|closure| self.returned_values_holder(&closure.body)).reduce(returned_join).unwrap_or(Holder::Other);
+        let held = bodies
+            .iter()
+            .map(|closure| {
+                if self.closures_walked.contains(&closure.span) {
+                    self.returned_values_holder(&closure.body)
+                } else {
+                    callees.outside_closure_holder(closure)
+                }
+            })
+            .reduce(returned_join)
+            .unwrap_or(Holder::Other);
         self.closures_returning.borrow_mut().pop();
         held
     }
@@ -5489,6 +5640,42 @@ mod tests {
             let reasons = refusals(&program, &reachable(&program, Some("m"), 3), picked, 3, &Plugins(None), &libraries).reasons;
             assert_eq!(reasons, Vec::<String>::new(), "{call}");
         }
+    }
+
+    /// A closure bound from a call's value and called by name (merge 11
+    /// review, item 4): `mk` a body closure, a file-level one, a function or
+    /// a library's function, its returns closures (a literal or a name
+    /// bound to one), the call's value a value. A callee one of whose
+    /// returns is no closure leaves the name no closure (`function_call`).
+    #[test]
+    fn admits_a_closure_bound_from_a_call_and_called_by_name() {
+        let mk = "mk = (a: <number>) => {\n  return (b: <number>) => a + b\n}\n";
+        let use_h = "  h = mk(2)\n  r = h(1)\n  write crm-[:notes]-> { body: CONCAT(\"r\", r) }";
+        let reasons = |top: &str, body: &str, library: Option<&str>| {
+            let import = if library.is_some() { "import { mk } from \"lib/mk\"\n" } else { "" };
+            let source = format!("{PRELUDE}{import}{top}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, 5, false).expect("the program parses");
+            let libraries = Libraries(
+                library
+                    .map(|l| ("lib/mk".to_string(), movement_parser::stmt::parse_program(&format!("{PRELUDE}{l}"), 5, false).expect("the library parses")))
+                    .into_iter()
+                    .collect(),
+            );
+            let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+            let picked = entry_of(&declared, Some("m"), 5);
+            refusals(&program, &reachable(&program, Some("m"), 5), picked, 5, &Plugins(None), &libraries).reasons
+        };
+        let indented = mk.lines().map(|l| format!("  {l}\n")).collect::<String>();
+        let function = "function mk(a: <number>) {\n  return (b: <number>) => a + b\n}\n";
+        let named = "mk = (a: <number>) => {\n  g = (b: <number>) => a + b\n  return g\n}\n";
+        let none: Vec<String> = Vec::new();
+        assert_eq!(reasons("", &format!("{indented}{use_h}"), None), none, "a body closure");
+        assert_eq!(reasons(mk, use_h, None), none, "a file-level closure");
+        assert_eq!(reasons(function, use_h, None), none, "a function");
+        assert_eq!(reasons(named, use_h, None), none, "a returned name");
+        assert_eq!(reasons("", use_h, Some(&format!("export {function}"))), none, "a library's function");
+        let mixed = "mk = (a: <number>) => {\n  if (a > 1) {\n    return (b: <number>) => a + b\n  }\n  return a\n}\n";
+        assert_eq!(reasons(mixed, use_h, None), vec!["function_call".to_string()], "a return that is no closure");
     }
 
     /// B15: a value that may be a record and may be data (a COALESCE or an
