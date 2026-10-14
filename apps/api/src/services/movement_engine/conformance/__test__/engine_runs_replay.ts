@@ -250,7 +250,127 @@ const ENCODED_A_FIXED_BUG: Array<{
     },
     count: { v1: 1, v2: 1 },
   },
+  {
+    // The park format change: body closures hold their scope by reference.
+    // A closure parks with an empty `captured` and a `scope` link (here a
+    // `scopeRef` to its movement body's scope, which the chain now numbers:
+    // `id`, `parent`), where the recordings parked a flat `captured`
+    // snapshot. Matched on exactly that: every request before the park was
+    // served (the replay's and the recording's numbers agree), only
+    // `segment.close` follows it, and the replayed park request is the
+    // recorded one once each closure's capture is normalised — the recorded
+    // snapshot's every name resolves through the replayed link to the same
+    // descriptor, a name only the link holds is a closure bound later in that
+    // same scope, and every other byte is equal.
+    reason: 'a park writes a body closure\'s scope by reference, not as a captured snapshot',
+    // A run's own park only: a resume of a snapshot-form state re-parks it
+    // as it was handed (engine-runs v1 #11, v2 #11 replay identically).
+    is: (recording) => recording.entry === 'run' && recording.requests.some((request) => request.family.startsWith('park.') && closuresIn(request.args).some((closure) => isObject(closure.captured) && Object.keys(closure.captured).length > 0 && closure.scope === undefined)),
+    matches: (recording, divergence, verdict) => {
+      if (recording.entry !== 'run' || verdict.unmatched === undefined) return false;
+      const { path, args } = verdict.unmatched;
+      if (!path.startsWith('park.')) return false;
+      const numbers = /^request #(\d+) (\S+) .* the first unserved (\S+) recorded was #(\d+) /.exec(divergence);
+      if (numbers === null || numbers[1] !== numbers[4] || numbers[2] !== path || numbers[3] !== path) return false;
+      const index = Number(numbers[4]) - 1;
+      const recorded = recording.requests[index];
+      if (recorded === undefined || `${recorded.family}.${recorded.method}` !== path) return false;
+      const after = recording.requests.slice(index + 1).map((request) => `${request.family}.${request.method}`);
+      if (after.some((request) => request !== 'segment.close')) return false;
+      return capturesAgreeByReference(recorded.args, args);
+    },
+    count: { v1: 2, v2: 2 },
+  },
 ];
+
+/** The closure descriptors in a park request, outside any closure's capture,
+ *  in key order: the ones the two sides hold at the same places. */
+function closuresIn(root: unknown): Array<Record<string, unknown>> {
+  const found: Array<Record<string, unknown>> = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (!isObject(node)) return;
+    if (node.kind === 'closure') found.push(node);
+    for (const key of Object.keys(node).sort()) {
+      if (node.kind === 'closure' && (key === 'captured' || key === 'scope')) continue;
+      visit(node[key]);
+    }
+  };
+  visit(root);
+  return found;
+}
+
+/** A park request with every closure's capture masked (`captured`, `scope`)
+ *  and every scope's numbering (`id`, `parent` beside `bindings`). */
+function maskClosureCaptures(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(maskClosureCaptures);
+  if (!isObject(node)) return node;
+  const scopeEntry = node.kind === undefined && isObject(node.bindings);
+  return Object.fromEntries(
+    Object.entries(node)
+      .filter(([key]) => !(node.kind === 'closure' && (key === 'captured' || key === 'scope')) && !(scopeEntry && (key === 'id' || key === 'parent')))
+      .map(([key, value]) => [key, maskClosureCaptures(value)]),
+  );
+}
+
+/** The bindings a scope link names, outermost first and innermost winning,
+ *  resolved within the park request it is in; undefined when it names a
+ *  scope the request does not hold (a library's file scope included). */
+function resolveScopeLink(root: unknown, link: unknown): Record<string, unknown> | undefined {
+  const numbered = new Map<number, Record<string, unknown>>();
+  const collect = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(collect);
+    if (!isObject(node)) return;
+    if (typeof node.id === 'number' && isObject(node.bindings) && (node.kind === undefined || node.kind === 'scope')) numbered.set(node.id, node);
+    Object.values(node).forEach(collect);
+  };
+  collect(root);
+  const chain = isObject(root) && isObject(root.state) && Array.isArray(root.state.scopeChain) ? root.state.scopeChain : [];
+  const fileScope = isObject(chain[0]) && isObject(chain[0].bindings) ? chain[0].bindings : undefined;
+  const resolve = (at: unknown, depth: number): Record<string, unknown> | undefined => {
+    if (depth > 64 || !isObject(at)) return undefined;
+    if (at.kind === 'file') return at.file === undefined ? fileScope : undefined;
+    const scope = at.kind === 'scopeRef' && typeof at.id === 'number' ? numbered.get(at.id) : at.kind === 'scope' ? at : undefined;
+    if (scope === undefined || !isObject(scope.bindings)) return undefined;
+    const outer = scope.parent === undefined ? {} : resolve(scope.parent, depth + 1);
+    return outer === undefined ? undefined : { ...outer, ...scope.bindings };
+  };
+  return resolve(link, 0);
+}
+
+/** The recorded park request (closures as `captured` snapshots) and the
+ *  replayed one (closures by `scope` link) are the same park: equal once
+ *  captures are masked, and each recorded snapshot's every name resolves
+ *  through the replayed closure's link to the same descriptor, a name only
+ *  the link holds being a closure bound later in that same scope. */
+function capturesAgreeByReference(recordedArgs: unknown, replayedArgs: unknown): boolean {
+  if (canonicalJson(recordedArgs) === canonicalJson(replayedArgs)) return false;
+  if (canonicalJson(maskClosureCaptures(recordedArgs)) !== canonicalJson(maskClosureCaptures(replayedArgs))) return false;
+  const recorded = closuresIn(recordedArgs);
+  const replayed = closuresIn(replayedArgs);
+  if (recorded.length !== replayed.length) return false;
+  let changed = false;
+  for (const [i, before] of recorded.entries()) {
+    const after = replayed[i];
+    if (after === undefined || !isObject(before.captured) || !isObject(after.captured)) return false;
+    if (after.scope === undefined) {
+      if (canonicalJson(before) !== canonicalJson(after)) return false;
+      continue;
+    }
+    if (before.scope !== undefined || Object.keys(after.captured).length > 0) return false;
+    const resolved = resolveScopeLink(replayedArgs, after.scope);
+    if (resolved === undefined) return false;
+    for (const [name, descriptor] of Object.entries(before.captured)) {
+      if (!(name in resolved) || canonicalJson(maskClosureCaptures(descriptor)) !== canonicalJson(maskClosureCaptures(resolved[name]))) return false;
+    }
+    for (const [name, descriptor] of Object.entries(resolved)) {
+      if (name in before.captured) continue;
+      if (!isObject(descriptor) || descriptor.kind !== 'closure' || canonicalJson(descriptor.scope) !== canonicalJson(after.scope)) return false;
+    }
+    changed = true;
+  }
+  return changed;
+}
 
 /** A park state with its handle numbering masked: every descriptor loses its
  *  `id`, and every `handleRef` becomes the numbered descriptor it names. */
