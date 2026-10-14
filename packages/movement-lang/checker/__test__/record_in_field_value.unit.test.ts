@@ -239,25 +239,37 @@ describe('a spread that may be a record copies its fields either way', () => {
   });
 });
 
-describe('KNOWN GAP: a combinator receipt holding records is not typed from its arms', () => {
+describe('KNOWN GAP: a combinator receipt over arms only known at run time is not typed from its arms', () => {
   // The receipt is a list of what the arms returned (the engine's `parallel`),
-  // so arms returning a record put the engine's object into the field. The
-  // checker types a receipt over arms built at run time as untyped — a value
-  // it cannot see into — and a literal arm returning a record as an untyped
-  // slot. Both are accepted TODAY; the fix is to type a receipt from what its
-  // arms return, after which these become refusals.
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, arms built at run time: accepted today', version => {
+  // so arms returning a record put the engine's object into the field. Arms
+  // written down (a literal list, a name bound to one, a MAP of closures) are
+  // typed from their returns (receipt_record_in_field); a collection of
+  // functions filtered or joined at run time has no function type to read its
+  // returns through, so the receipt is untyped — accepted TODAY.
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a MAP of closures is refused', version => {
+    const errors = errorsUnder(version, [
+      '  arms = MAP([1, 2], (n) => { return () => { return org } })',
+      '  r = await parallel(arms)',
+      ...note('r'),
+    ]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+  });
+
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, filtered arms: accepted today', version => {
     expect(
       errorsUnder(version, [
-        '  arms = MAP([1, 2], (n) => { return () => { return org } })',
+        '  c = () => { return org }',
+        '  arms = FILTER([c], (a) => { return true })',
         '  r = await parallel(arms)',
         ...note('r'),
       ]),
     ).toEqual([]);
   });
 
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm: accepted today', version => {
-    expect(errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')])).toEqual([]);
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm returning a record is refused', version => {
+    const errors = errorsUnder(version, ['  r = await parallel([() => { return org }])', ...note('r')]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors[0]!.message).toContain(RECORD_NOT_A_VALUE);
   });
 });
 

@@ -139,6 +139,13 @@ export interface ScopeSymbol {
    *  what it may hold, as the walk for an engine object reads it
    *  (`ExpressionTyping.mayHoldType`). A walk input, never a type. */
   mayHold?: FieldType;
+  /** For a name bound to a list of functions written down (`arms = [made,
+   *  label]`): what each one returns, so `parallel(arms)` types its receipt
+   *  as a literal arm list does. Only when every element is a function. */
+  armReturns?: ReturnShape[];
+  /** For a name bound to a `MAP` whose function hands back a function
+   *  (`MAP(xs, (n) => () => made())`): what each of those returns. */
+  armsEachReturn?: ReturnShape;
   /** For a combinator's receipt (`r = await parallel([…])`): an arm hands
    *  back a record, which `AT(r, i)` reads as itself from version 5 and as
    *  null before — what a move up across 5 warns a read of `r` about. */

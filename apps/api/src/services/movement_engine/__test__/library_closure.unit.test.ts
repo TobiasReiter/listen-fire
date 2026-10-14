@@ -381,3 +381,59 @@ describe("a library closure parked before `IS` against the library's own declara
     expect(payloadOf(kg.creates)).toEqual({ x: true });
   });
 });
+
+// A park names the library its declarations belong to. Resumed against a
+// program that no longer links that library, it refuses rather than resuming
+// silently on the library's file scope (which is chain[0], never rehydrated).
+describe.each([4, 5])('a resume against a program that no longer links the parked library (v%i)', (version) => {
+  const unlinked = (h: Harness): Harness => ({
+    ...h,
+    source: root('', '  write graph-[:note]-> { payload: { x: 1 } }'),
+  });
+  const libraries: Record<string, string> = {
+    'a body closure capturing a library file closure': [
+      'double = (n: <number>) => n * 2',
+      'export function twice(n: <number>): <number> {',
+      '  k = (m: <number>) => double(m)',
+      '  await sleep(1h)',
+      '  return k(n) + 1',
+      '}',
+    ].join('\n'),
+    'a library shape': [
+      'export node Lead {',
+      '  name: <text>',
+      '}',
+      'export function twice(n: <number>): <number> {',
+      '  check = (who: <text>) => {',
+      '    await sleep(1h)',
+      '    return n * 2',
+      '  }',
+      '  m = node { name: "a" }',
+      '  if m IS <Lead> {',
+      '    check(who: "a")',
+      '  }',
+      '  return n',
+      '}',
+    ].join('\n'),
+  };
+  it.each(Object.keys(libraries))('refuses: %s', async (name) => {
+    const h: Harness = {
+      library: libraries[name]!,
+      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      parks: makeParkSink(),
+    };
+    const kg0 = makeKgFake();
+    const first = await runMovement({ ...runInput(h, kg0), languageVersion: version as never });
+    expect(first.parked).toBe(true);
+    const [address, park] = [...h.parks.parks.entries()][0]!;
+    h.parks.parks.delete(address);
+    await expect(
+      resumeMovement({
+        ...runInput(unlinked(h), makeKgFake()),
+        languageVersion: version as never,
+        state: park.state,
+        reenter: park.kind !== 'timer',
+      }),
+    ).rejects.toThrow('resume: the parked state names the library "lib/leads", which the re-parsed program does not link');
+  });
+});

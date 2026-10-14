@@ -2687,14 +2687,19 @@ export function recordsAlone(type: FieldType | undefined): Array<Extract<FieldTy
   if (type === undefined) return undefined;
   const variant = variantOf(stripAbsent(type));
   if (variant.kind === 'record') return [variant];
-  if (variant.kind !== 'union') return undefined;
+  // A tuple of record slots — a list literal's (`[made(), made()]`), a
+  // receipt's — is a list of records, an edge list: one record slot beside a
+  // value is not (a null slot, an arm that hands nothing back, is a value).
+  const members = variant.kind === 'union' ? variant.of : variant.kind === 'tuple' ? [...variant.of, variant.rest?.of] : undefined;
+  if (members === undefined) return undefined;
   const found: Array<Extract<FieldType, { kind: 'record' }>> = [];
-  for (const member of variant.of) {
-    const inner = recordsAlone(member);
+  for (const member of members) {
+    if (member === undefined && variant.kind === 'tuple') continue;
+    const inner = recordsAlone(member ?? undefined);
     if (inner === undefined) return undefined;
     found.push(...inner);
   }
-  return found;
+  return found.length > 0 ? found : undefined;
 }
 
 /** Does this type MIX a record with something that is not one — `COALESCE(org,
@@ -4634,8 +4639,14 @@ export class ExpressionTyping {
       // `AT` picks one member of what it reads — and reads a value that is no
       // collection as itself (index 0 or -1): what it picks is one level down
       // in its operand, or the operand itself, whatever the operand's type says.
-      case 'at':
-        return handleWithin(this.exactTypes.get(expr), walk) ?? this.handlePickedFrom(expr.expression, walk);
+      case 'at': {
+        const exact = handleWithin(this.exactTypes.get(expr), walk);
+        if (exact !== undefined) return exact;
+        // A literal index over what a tuple may hold (a receipt's arms) reads
+        // its own slot, not any member.
+        const slot = this.mayHoldTupleSlot(expr);
+        return slot !== undefined ? handleWithin(slot.type, walk) : this.handlePickedFrom(expr.expression, walk);
+      }
       // FIRST, LAST and ONLY pick one member, as AT at an index does — of a
       // list whose own type may say nothing (a MULTI of a record and a value,
       // a COALESCE of lists).
@@ -4742,8 +4753,24 @@ export class ExpressionTyping {
   private mayHoldPicked(expr: Expression, operand: Expression): FieldType | undefined {
     const exact = this.exactTypes.get(expr);
     if (exact !== undefined) return exact;
+    // A LITERAL index picks its own slot of what a tuple may hold (a receipt's
+    // arms, a list literal's members), as it does of the tuple's type.
+    const slot = expr.type === 'at' ? this.mayHoldTupleSlot(expr) : undefined;
+    if (slot !== undefined) return slot.type;
     const picked = this.multiMemberType(operand);
     return picked !== undefined ? armsUnion([picked, undefined]) : undefined;
+  }
+
+  /** `AT(x, <literal>)` over a name or value that may hold a TUPLE (a
+   *  receipt's arms, `ScopeSymbol.mayHold`): the slot it picks. Undefined
+   *  where the operand holds no tuple or the index is not written down. */
+  private mayHoldTupleSlot(expr: Extract<Expression, { type: 'at' }>): { type: FieldType | undefined } | undefined {
+    const index = literalIndex(expr.index);
+    if (index === undefined) return undefined;
+    const held = this.mayHoldType(expr.expression);
+    const variant = held !== undefined ? variantOf(stripAbsent(held)) : undefined;
+    if (variant?.kind !== 'tuple') return undefined;
+    return { type: tupleSlotType(variant, { index, languageVersion: this.options.languageVersion }) };
   }
 
   /** One `MULTI` argument's members: a list's, or the value itself. */
