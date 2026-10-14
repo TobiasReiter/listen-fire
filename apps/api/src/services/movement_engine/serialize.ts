@@ -62,6 +62,7 @@ import { bindValue, binding, bindingOf, isDictValue } from './expression';
 import { isFileRef, reviveFileRefs } from '../translation_graph/engine/files/retrieve';
 import type { Provenance } from './provenance';
 import { MovementEngineError } from './errors';
+import { neverAsAny } from '../../lib/utils/types';
 
 // ── The descriptor (plain JSON) ──────────────────────────────────────────────
 
@@ -436,10 +437,22 @@ export interface ParkReader {
 
 type NodeDescriptor = Extract<BindingDescriptor, { kind: 'nodePosition' }>;
 
-/** A reader of the park `state` was written as — a whole parked state, or one
- *  descriptor stored on its own. */
-export function newParkReader(state?: unknown): ParkReader {
-  const park: ParkReader = {
+/** A reader of the park `state` was written as — a whole parked state. */
+export function newParkReader(state?: ParkedScopeState): ParkReader {
+  const park = emptyParkReader();
+  if (state !== undefined) indexState(state, park);
+  return park;
+}
+
+/** A reader of a descriptor stored on its own. */
+function newParkReaderOf(descriptor: BindingDescriptor): ParkReader {
+  const park = emptyParkReader();
+  indexDescriptor(descriptor, park);
+  return park;
+}
+
+function emptyParkReader(): ParkReader {
+  return {
     nodes: new Map(),
     unfilled: new Set(),
     handles: new Map(),
@@ -447,80 +460,142 @@ export function newParkReader(state?: unknown): ParkReader {
     handleDescriptors: new Map(),
     nodeDescriptors: new Map(),
   };
-  if (state !== undefined) indexNumbered(state, park);
-  return park;
 }
 
-/** Descriptor kinds that hold nothing a park numbers: their payload is data
- *  (a value, a record's fields, an instance), never another descriptor. */
-const UNNUMBERED_KINDS = new Set([
-  'value',
-  'data',
-  'callback',
-  'shapePosition',
-  'sourcePosition',
-  'resource',
-  'extractRoot',
-  'extractPosition',
-  'instance',
-  'localShape',
-  'shape',
-  'movement',
-  'fileClosure',
-  'opaque',
-  'event',
-  'handleRef',
-  'nodeRef',
-]);
-
-/** Keys that hold code (an op, an arm body, a closure, a walk's head and
- *  mapping, a declaration) or a record's own data, never a descriptor. */
-const UNNUMBERED_KEYS = new Set([
-  'op',
-  'body',
-  'closure',
-  'head',
-  'mapping',
-  'fields',
-  'fieldProvenance',
-  'position',
-  'declaration',
-]);
+/*
+ * The index follows each descriptor's STRUCTURE, the shapes the reader reads —
+ * never a list of key names. A scope's `bindings`, a closure's `captured` and
+ * an edge map are keyed by the AUTHOR's names, so they are walked as maps of
+ * descriptors whatever the names are; a code-tree member (a closure's body, a
+ * walk's head, an arm's body) is skipped only on the descriptor that has it,
+ * by not being a member the walk visits.
+ */
 
 /** Every numbered handle and node descriptor anywhere in a parked state: its
- *  scopes, frames, journals and exports, never a value's own data. */
-function indexNumbered(value: unknown, park: ParkReader): void {
-  if (Array.isArray(value)) {
-    for (const item of value) indexNumbered(item, park);
-    return;
-  }
-  if (value === null || typeof value !== 'object') return;
-  const object = value as Record<string, unknown>;
-  const kind = object.kind;
-  if (kind === 'handle') {
-    const handle = object as HandleDescriptor;
-    if (typeof handle.id === 'number' && !park.handleDescriptors.has(handle.id)) {
-      park.handleDescriptors.set(handle.id, handle);
+ *  scopes, frames and journals. */
+function indexState(state: ParkedScopeState, park: ParkReader): void {
+  indexScopes(state.scopeChain, park);
+  indexJournal(state.journal, park);
+  for (const frame of state.frames ?? []) {
+    switch (frame.kind) {
+      case 'call':
+      case 'member':
+        indexScopes(frame.scopeChain, park);
+        indexJournal(frame.journal, park);
+        break;
+      // A run-time arm's `body` is code; its bindings ride on the chain.
+      case 'arm':
+        break;
+      default:
+        neverAsAny(frame);
     }
-    if (handle.old !== undefined) indexNumbered(handle.old, park);
-    return;
   }
-  if (kind === 'nodePosition') {
-    const node = object as NodeDescriptor;
-    if (typeof node.id === 'number' && !park.nodeDescriptors.has(node.id)) {
-      park.nodeDescriptors.set(node.id, node);
-    }
-    indexNumbered(node.edges, park);
-    return;
+}
+
+function indexScopes(chain: SerializedScope[], park: ParkReader): void {
+  for (const scope of chain) indexMap(scope.bindings, park);
+}
+
+function indexJournal(journal: SerializedCallEvent[] | undefined, park: ParkReader): void {
+  for (const event of journal ?? []) {
+    if (event.value !== null) indexDescriptor(event.value, park);
   }
-  // A value-plane map: its keys are the record's own, every entry a descriptor.
-  if (kind === 'map' && object.of !== null && typeof object.of === 'object' && !Array.isArray(object.of)) {
-    for (const entry of Object.values(object.of)) indexNumbered(entry, park);
-    return;
+}
+
+/** A map keyed by the author's names, every entry a descriptor. */
+function indexMap(entries: Record<string, BindingDescriptor>, park: ParkReader): void {
+  for (const entry of Object.values(entries)) indexDescriptor(entry, park);
+}
+
+function indexWalk(walk: DeferredWalkDescriptor, park: ParkReader): void {
+  // The walk's `head` and `mapping` are code.
+  indexMap(walk.captured, park);
+}
+
+function indexValue(value: ValueDescriptor, park: ParkReader): void {
+  switch (value.kind) {
+    case 'data':
+      return;
+    case 'record':
+      indexDescriptor(value.binding, park);
+      return;
+    case 'list':
+      for (const entry of value.of) indexValue(entry, park);
+      return;
+    case 'map':
+      for (const entry of Object.values(value.of)) indexValue(entry, park);
+      return;
+    default:
+      neverAsAny(value);
   }
-  if (typeof kind === 'string' && UNNUMBERED_KINDS.has(kind)) return;
-  for (const [key, entry] of Object.entries(object)) {
-    if (!UNNUMBERED_KEYS.has(key)) indexNumbered(entry, park);
+}
+
+function indexDescriptor(descriptor: BindingDescriptor, park: ParkReader): void {
+  switch (descriptor.kind) {
+    case 'handle':
+      if (typeof descriptor.id === 'number' && !park.handleDescriptors.has(descriptor.id)) {
+        park.handleDescriptors.set(descriptor.id, descriptor);
+      }
+      if (descriptor.old !== undefined) indexDescriptor(descriptor.old, park);
+      return;
+    case 'nodePosition':
+      if (typeof descriptor.id === 'number' && !park.nodeDescriptors.has(descriptor.id)) {
+        park.nodeDescriptors.set(descriptor.id, descriptor);
+      }
+      for (const edge of Object.values(descriptor.edges)) {
+        switch (edge.kind) {
+          case 'landed':
+            for (const landing of edge.landings) indexDescriptor(landing, park);
+            break;
+          case 'deferred':
+            indexWalk(edge.walk, park);
+            break;
+          default:
+            neverAsAny(edge);
+        }
+      }
+      return;
+    case 'blockMeta':
+      for (const landings of Object.values(descriptor.edges)) {
+        for (const landing of landings) indexDescriptor(landing, park);
+      }
+      return;
+    case 'positions':
+      for (const landing of descriptor.landings) indexDescriptor(landing, park);
+      return;
+    case 'tuple':
+      for (const slot of descriptor.slots) indexDescriptor(slot, park);
+      return;
+    // A closure's `closure` is code; its capture is a map of descriptors.
+    case 'closure':
+      indexMap(descriptor.captured, park);
+      return;
+    case 'recordValue':
+      indexValue(descriptor.value, park);
+      return;
+    case 'lazyWalk':
+      indexWalk(descriptor.walk, park);
+      return;
+    // Nothing a park numbers: their payload is data or code, never a descriptor.
+    case 'event':
+    case 'instance':
+    case 'handleRef':
+    case 'nodeRef':
+    case 'extractRoot':
+    case 'extractPosition':
+    case 'shapePosition':
+    case 'sourcePosition':
+    case 'resource':
+    case 'value':
+    case 'callback':
+    case 'shape':
+    case 'localShape':
+    case 'movement':
+    case 'fileClosure':
+    case 'opaque':
+      return;
+    default:
+      neverAsAny(descriptor);
   }
 }
 
@@ -909,7 +984,7 @@ export async function rehydrateBinding(
 ): Promise<Binding> {
   if (park !== undefined) return rehydrateInPark(descriptor, ctx, park);
   // A descriptor stored on its own is its own park.
-  const own = newParkReader(descriptor);
+  const own = newParkReaderOf(descriptor);
   const binding = await rehydrateInPark(descriptor, ctx, own);
   assertParkRead(own);
   return binding;

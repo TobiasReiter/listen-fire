@@ -1021,3 +1021,86 @@ describe("a combinator receipt's record slot", () => {
     });
   }
 });
+
+// R-1: the reader's index follows each descriptor's structure, never a list of
+// key names. A scope's bindings, a closure's capture and an edge map are keyed
+// by the AUTHOR's names, so a variable named like a code-tree member of a
+// descriptor (`body`, `position`, `fields`, `head`, `op`, ...) still resumes.
+describe('a handle or node whose variable is named like a descriptor member', () => {
+  const names = ['op', 'body', 'closure', 'head', 'mapping', 'fields', 'fieldProvenance', 'position', 'declaration'];
+  const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    for (const name of names) {
+      it(`version ${languageVersion}: a handle named '${name}' resumes`, async () => {
+        const h: Harness = {
+          source: program(
+            '',
+            [
+              `  ${name} = write graph-[:note]-> { body: "one" }`,
+              ...closure,
+              '  y = f("q")',
+              `  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", ${name}.body) } }`,
+            ].join('\n'),
+          ),
+          parks: makeParkSink(),
+          languageVersion,
+        };
+        const first = await start(h);
+        expect(first.result.parked).toBe(true);
+        const [address] = [...h.parks.parks.keys()];
+        const { result, kg } = await resumeAt(h, address!);
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+      });
+
+      it(`version ${languageVersion}: a run-built node named '${name}' resumes`, async () => {
+        const h: Harness = {
+          source: program(
+            '',
+            [
+              `  ${name} = node { body: "one" }`,
+              ...closure,
+              '  y = f("q")',
+              `  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", ${name}.body) } }`,
+            ].join('\n'),
+          ),
+          parks: makeParkSink(),
+          languageVersion,
+        };
+        const first = await start(h);
+        expect(first.result.parked).toBe(true);
+        const [address] = [...h.parks.parks.keys()];
+        const { result, kg } = await resumeAt(h, address!);
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
+      });
+    }
+
+    it(`version ${languageVersion}: a closure capturing a handle bound as 'body' resumes`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  body = write graph-[:note]-> { body: "one" }',
+            '  f = (x: <text>) => {',
+            '    await sleep(1h)',
+            '    return CONCAT(x, "/", body.body)',
+            '  }',
+            '  y = f("q")',
+            '  write body { body: "two" }',
+            '  write graph-[:note]-> { payload: { seen: CONCAT(y, "/", body.body) } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      const first = await start(h);
+      expect(first.result.parked).toBe(true);
+      const [address] = [...h.parks.parks.keys()];
+      const { result, kg } = await resumeAt(h, address!);
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one/two' });
+    });
+  }
+});
