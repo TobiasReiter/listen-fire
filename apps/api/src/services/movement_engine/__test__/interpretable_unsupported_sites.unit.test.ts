@@ -161,7 +161,7 @@ const SITES: Site[] = [
     cover: { by: 'uncovered', gap: "a movement that calls itself (calls.unit.test.ts proves the checker accepts it)" } },
   { file: "run.ts", construct: "a ${arg.kind} argument to the plugin '${statement.callee}'",
     cover: { by: 'uncovered', gap: "a node literal or write passed as a plugin argument; the checker checks plugin argument names only" } },
-  { file: "run.ts", construct: "passing ${describeBinding[binding.kind]} ('${arg.expr.raw.trim()}') as a movement argument",
+  { file: "run.ts", construct: "passing ${describeBinding[bound.kind]} ('${arg.expr.raw.trim()}') as a movement argument",
     cover: { by: 'uncovered', gap: "an argument whose binding is not a record (a value, a block's returned records) passed where a movement takes a position; the checker's fit check skips an unknown argument type" } },
   { file: "run.ts", construct: "callback(\u2026)",
     cover: { by: 'harness', seam: "callbackSink" } },

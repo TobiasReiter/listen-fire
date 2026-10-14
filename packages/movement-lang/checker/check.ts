@@ -11102,6 +11102,17 @@ class Checker {
         // parameters typed by the parameter's closure type where it leaves
         // them out (contextual typing), and it is held to that type.
         if (since(this.languageVersion, 5)) {
+          // A plugin's argument is never closure-typed: as in TypeScript, the
+          // mismatch is the error, not the implicit-any of the closure's
+          // parameters, so the closure is not checked against nothing.
+          if (plugin !== undefined) {
+            this.report(
+              DiagnosticCodes.CALL_ARG_TYPE,
+              `The argument${describeArgPlace(fit)} to '${callee}' is a function written in place, and a plugin takes a value, not a function`,
+              arg.span,
+            );
+            return;
+          }
           const expected = param?.type.fieldType !== undefined ? closureOfValue(param.type.fieldType) : undefined;
           const { params, returns, effects } = this.checkClosure(arg.closure, scope, {
             label: `the argument${describeArgPlace(fit)} to '${callee}'`,
