@@ -239,16 +239,27 @@ describe('a spread that may be a record copies its fields either way', () => {
   });
 });
 
-describe('KNOWN GAP: a combinator receipt over arms built at run time is not typed from its arms', () => {
+describe('KNOWN GAP: a combinator receipt over arms only known at run time is not typed from its arms', () => {
   // The receipt is a list of what the arms returned (the engine's `parallel`),
-  // so arms returning a record put the engine's object into the field. A
-  // collection of functions built at run time has no function type to read
-  // its returns through, so the receipt is untyped — accepted TODAY. Literal
-  // arms are typed from their returns (receipt_record_in_field).
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, arms built at run time: accepted today', version => {
+  // so arms returning a record put the engine's object into the field. Arms
+  // written down (a literal list, a name bound to one, a MAP of closures) are
+  // typed from their returns (receipt_record_in_field); a collection of
+  // functions filtered or joined at run time has no function type to read its
+  // returns through, so the receipt is untyped — accepted TODAY.
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a MAP of closures is refused', version => {
+    const errors = errorsUnder(version, [
+      '  arms = MAP([1, 2], (n) => { return () => { return org } })',
+      '  r = await parallel(arms)',
+      ...note('r'),
+    ]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+  });
+
+  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, filtered arms: accepted today', version => {
     expect(
       errorsUnder(version, [
-        '  arms = MAP([1, 2], (n) => { return () => { return org } })',
+        '  c = () => { return org }',
+        '  arms = FILTER([c], (a) => { return true })',
         '  r = await parallel(arms)',
         ...note('r'),
       ]),

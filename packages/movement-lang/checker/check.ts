@@ -5515,6 +5515,7 @@ class Checker {
           ...symbol,
           ...(result !== undefined ? { fieldType: result } : {}),
           ...(mayHold !== undefined ? { mayHold } : {}),
+          ...(this.collectionArmsReturn.get(value.collection) !== undefined ? { armsEachReturn: this.collectionArmsReturn.get(value.collection)! } : {}),
           bindingPlane: 'scalar',
         };
         break;
@@ -5633,11 +5634,13 @@ class Checker {
         // hold — `x = IF c THEN f ELSE org END` has no type, and `org` in it
         // must not reach a file field through `x`.
         const revealed = mayHold !== undefined && showsMoreHandles(mayHold, fieldType) ? mayHold : undefined;
+        const armReturns = this.armReturnsOfList(parsed, scope);
         symbol = {
           ...symbol,
           bindingPlane: 'scalar',
           ...(fieldType !== undefined ? { fieldType } : {}),
           ...(revealed !== undefined ? { mayHold: revealed } : {}),
+          ...(armReturns !== undefined ? { armReturns } : {}),
           ...(this.isManyValuedValue(value.expr, parsed, scope) ? { plural: true as const } : {}),
         };
         break;
@@ -7163,6 +7166,9 @@ class Checker {
   /** What a MAP or REDUCE's value may hold beyond its type — its function's
    *  returns' (`ReturnShape.mayHold`), read where the op is bound. */
   private readonly collectionMayHold = new WeakMap<CollectionOpExpression, FieldType>();
+  /** What the functions a MAP builds return, when its function hands back a
+   *  function — arms known from the closure written in the MAP. */
+  private readonly collectionArmsReturn = new WeakMap<CollectionOpExpression, ReturnShape>();
 
   private checkCollectionOp(expr: CollectionOpExpression, scope: Scope): FieldType | undefined {
     const spelling = COLLECTION_OP_SPELLING[expr.op];
@@ -7198,6 +7204,7 @@ class Checker {
     // that returns text — there is no second type for "a collection of
     // records" and no second rule for what an op does with one.
     const returned = valueOfReturn(shape);
+    if (expr.op === 'map' && shape.posType?.kind === 'closure') this.collectionArmsReturn.set(expr, shape.posType.returns);
     // What the function's returns may hold beyond that type travels with the
     // op's value, as a call's does: MAP's as members, REDUCE's as itself.
     if (shape.mayHold !== undefined && (expr.op === 'map' || expr.op === 'reduce')) {
@@ -7510,6 +7517,37 @@ class Checker {
    *  the receipt is bound. */
   private readonly combinatorMayHold = new WeakMap<CombinatorExpression, FieldType>();
 
+  private receiptMayHold(kind: string, slots: ReadonlyArray<ReturnShape>): Extract<FieldType, { kind: 'tuple' }> {
+    return {
+      kind: 'tuple',
+      of: slots.map(slot => {
+        if (!slot.returns) return 'absent';
+        const held = slot.mayHold
+          ?? slot.fieldType
+          ?? (slot.posType !== undefined && slot.posType.kind !== 'closure' ? recordOf(slot.posType) : undefined);
+        if (held === undefined) return null;
+        return (kind === 'race' ? maybeAbsent(held) : held) ?? null;
+      }),
+    };
+  }
+
+  /** What each element of a list of functions written down returns — undefined
+   *  unless every element is a function bound here. */
+  private armReturnsOfList(parsed: Expression | undefined, scope: Scope): ReturnShape[] | undefined {
+    if (parsed?.type !== 'list' || parsed.elements.length === 0) return undefined;
+    const shapes: ReturnShape[] = [];
+    for (const element of parsed.elements) {
+      const name = element.type === 'spread' ? undefined : bareName(element);
+      const resolved = name !== undefined ? scope.resolve(name) : undefined;
+      const symbol = resolved?.kind === 'found' ? resolved.symbol : undefined;
+      if (symbol === undefined) return undefined;
+      if (symbol.kind === 'movement') shapes.push(this.movementReturnType(symbol));
+      else if (symbol.posType?.kind === 'closure') shapes.push(symbol.posType.returns);
+      else return undefined;
+    }
+    return shapes;
+  }
+
   private checkCombinator(
     expr: CombinatorExpression,
     scope: Scope,
@@ -7529,7 +7567,22 @@ class Checker {
     this.effects?.flag('suspend');
 
     if (expr.arms.kind === 'dynamic') {
-      this.checkExprSlot(expr.arms.expr, scope);
+      const { parsed } = this.checkExprSlot(expr.arms.expr, scope);
+      // A name bound to a list of functions written down, or to a MAP that
+      // builds them from a closure, is as known as a literal arm list: what
+      // each arm returns types the receipt's slots. Arms known only at run
+      // time (a parameter, a call's value, a FILTER or a concatenation of
+      // lists) stay untyped.
+      const armName = BARE_IDENT.test(expr.arms.expr.raw.trim()) ? expr.arms.expr.raw.trim() : parsed !== undefined ? bareName(parsed) : undefined;
+      const resolved = armName !== undefined ? scope.resolve(armName) : undefined;
+      const armSymbol = resolved?.kind === 'found' ? resolved.symbol : undefined;
+      if (armSymbol?.armReturns !== undefined) {
+        this.combinatorMayHold.set(expr, this.receiptMayHold(expr.kind, armSymbol.armReturns));
+      } else if (armSymbol?.armsEachReturn !== undefined) {
+        const each = this.receiptMayHold(expr.kind, [armSymbol.armsEachReturn]);
+        const slot = each.kind === 'tuple' ? each.of[0] : undefined;
+        if (slot !== undefined && slot !== null && slot !== 'absent') this.combinatorMayHold.set(expr, listOf(slot, 'unknown'));
+      }
       // A collection built at run time holds functions, and a function is not a
       // value type here — so what its arms return cannot be seen from the
       // collection. Untyped, and the row says so; claiming a shape would be the
@@ -7547,17 +7600,7 @@ class Checker {
     // (`ReturnShape.mayHold`), and a record it hands back — which the tuple
     // cannot type — is one the receipt may hold, so a written field, a graph
     // entry, a plugin argument or an extraction input sees it.
-    this.combinatorMayHold.set(expr, {
-      kind: 'tuple',
-      of: slots.map(slot => {
-        if (!slot.returns) return 'absent';
-        const held = slot.mayHold
-          ?? slot.fieldType
-          ?? (slot.posType !== undefined && slot.posType.kind !== 'closure' ? recordOf(slot.posType) : undefined);
-        if (held === undefined) return null;
-        return (expr.kind === 'race' ? maybeAbsent(held) : held) ?? null;
-      }),
-    });
+    this.combinatorMayHold.set(expr, this.receiptMayHold(expr.kind, slots));
     return {
       kind: 'tuple',
       of: slots.map(slot => {
@@ -11408,7 +11451,9 @@ class Checker {
       // returns one of two) is ONE record, as `A | B` of two `Org`s is an
       // `Org`: an edge to whichever it is. Its position is the members' when
       // they agree, and unnamed when they do not.
-      const records = valueType === undefined ? recordsAlone(mayHold) : undefined;
+      // A receipt's tuple types a record slot as untyped, so its type
+      // shows no record while what it may hold is records alone.
+      const records = valueType === undefined || variantOf(stripAbsent(valueType)).kind === 'tuple' ? recordsAlone(mayHold) : undefined;
       // A connection is no record to point at (as a bare one is not).
       if (records === undefined || records.some(record => record.position?.kind === 'meta' || record.position?.kind === 'closure')) return undefined;
       const first = records[0]!.position;
@@ -11546,6 +11591,11 @@ class Checker {
     const written = entry.value.raw.trim();
     const position = heldRecordPosition(held);
     const place = placeInInput(written, held, describeFieldType(held.handle));
+    // The entry made the record alone holds it as a reference: the value
+    // itself when it is the record, or a slot of it — never the form already
+    // written.
+    const only = held.steps.length === 1 && held.steps[0]!.kind === 'slot' && BARE_IDENT.test(written) ? `AT(${written}, ${held.steps[0]!.index})` : held.steps.length === 0 ? 'r' : undefined;
+    const alone = only !== undefined && only !== written ? `, or make the entry the record alone ('${entry.name}: ${only}'), which holds it as a reference` : '';
     if (position?.kind === 'meta') {
       // A connection (`a: crm`) stands for a whole system: no field holds one,
       // and the engine fails reading it as a bare value. Refused on every version.
@@ -11558,7 +11608,7 @@ class Checker {
     }
     this.report(
       DiagnosticCodes.GRAPH_ENTRY_RECORD,
-      `'${entry.name}' is a field, and ${place} — a record, not a value a field holds. Write a field off the record ('${entry.name}: r.\`Name\`'), or make the entry the record alone ('${entry.name}: r'), which holds it as a reference`,
+      `'${entry.name}' is a field, and ${place} — a record, not a value a field holds. Write a field off the record ('${entry.name}: r.\`Name\`')${alone}`,
       entry.span,
     );
   }

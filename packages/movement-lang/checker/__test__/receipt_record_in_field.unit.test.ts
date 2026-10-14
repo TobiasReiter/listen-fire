@@ -139,9 +139,12 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
       refused([...arms, '  h = AT(r, 0)', note('{ x: h }')], 'MOV_WRITE_FIELD_TYPE', RECORD_NOT_A_VALUE);
     });
 
-    it('the whole receipt into a graph entry; the record slot alone is an edge, as a list literal\'s is', () => {
-      refused([...arms, '  g = graph { a: r }'], 'MOV_GRAPH_ENTRY_RECORD', "'a' is a field, and 'r[0]' is a crm.company handle");
-      expect(errorsUnder(version, [...arms, '  g = graph { a: AT(r, 0) }'])).toEqual([]);
+    it('a receipt mixing a record with a value stays refused as a graph entry, and the message offers the slot', () => {
+      const errors = errorsUnder(version, [...arms, '  g = graph { a: r }']);
+      expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_ENTRY_RECORD']);
+      expect(errors[0]!.message).toContain("'r[0]' is a crm.company handle");
+      expect(errors[0]!.message).toContain("'a: AT(r, 0)'");
+      expect(errors[0]!.message).not.toContain("'a: r'");
     });
 
     it('a literal index picks its own slot: the value slot is written', () => {
@@ -155,6 +158,65 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
 
     it('a field read off the record slot is a value, and is written', () => {
       expect(errorsUnder(version, [...arms, '  h = AT(r, 0)', note('{ x: h.name }')])).toEqual([]);
+    });
+  });
+
+  describe('records only', () => {
+    it('a receipt of record slots is an edge list at a graph entry, parallel and race', () => {
+      expect(errorsUnder(version, ['  r = await parallel([made, made])', '  g = graph { a: r }'])).toEqual([]);
+      expect(errorsUnder(version, ['  r = await race([made, made])', '  g = graph { a: r }'])).toEqual([]);
+      expect(errorsUnder(version, ['  g = graph { a: [made(), made()] }'])).toEqual([]);
+    });
+
+    it('but the same receipt in a field is still refused', () => {
+      const errors = errorsUnder(version, ['  r = await parallel([made, made])', note('r')]);
+      expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    });
+
+    it('AT of a record slot is an edge, not a field holding the handle', () => {
+      expect(errorsUnder(version, ['  r = await parallel([made, label])', '  g = graph { a: AT(r, 0) }'])).toEqual([]);
+      expect(errorsUnder(version, ['  r = await parallel([made, label])', '  h = AT(r, 0)', '  g = graph { a: h }'])).toEqual([]);
+    });
+  });
+
+  describe('arms known from a name or a MAP', () => {
+    const NAMED: Array<[string, string[]]> = [
+      ['a named list of movements', ['  arms = [made, label]', '  r = await parallel(arms)']],
+      ['a named list of closures', ['  c = () => { return made() }', '  t = () => { return "x" }', '  arms = [c, t]', '  r = await race(arms)']],
+    ];
+    const MAPPED: Array<[string, string[]]> = [
+      ['a MAP of closures', ['  arms = MAP([1, 2], (n) => { return () => { return made() } })', '  r = await parallel(arms)']],
+      ['a MAP of closures, race', ['  arms = MAP([1, 2], (n) => { return () => { return made() } })', '  r = await race(arms)']],
+    ];
+
+    it.each([...NAMED, ...MAPPED])('%s: a record slot reaching a field is refused', (_label, arms) => {
+      const errors = errorsUnder(version, [...arms, note('{ x: AT(r, 0) }')]);
+      expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+      expect(errors[0]!.message).toContain('crm.company handle');
+    });
+
+    it.each([...NAMED, ...MAPPED])('%s: and into a plugin argument', (_label, arms) => {
+      expect(errorsUnder(version, [...arms, '  s = summarise(data: { a: AT(r, 0) })']).map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
+    });
+
+    it('a named list that hands back values leaves the receipt plain data', () => {
+      for (const arms of [
+        ['  arms = [label, label]', '  r = await parallel(arms)'],
+        ['  arms = MAP([1, 2], (n) => { return () => { return "x" } })', '  r = await parallel(arms)'],
+      ]) {
+        expect(errorsUnder(version, [...arms, note('{ x: AT(r, 0) }')])).toEqual([]);
+      }
+    });
+
+    it('arms known only at run time stay untyped (a lower bound, pinned)', () => {
+      const errors = errorsUnder(version, [
+        '  arms = FILTER([made, label], (a) => { return true })',
+        '  r = await parallel(arms)',
+        note('{ x: AT(r, 0) }'),
+      ]);
+      // KNOWN GAP: no closure is written where the arms are built, so the receipt
+      // is untyped and the record slot reaches the field.
+      expect(errors).toEqual([]);
     });
   });
 

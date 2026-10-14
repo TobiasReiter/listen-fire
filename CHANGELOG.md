@@ -135,8 +135,20 @@ guide](docs/language/dancing-wren-migration.md).
   version. It used to validate, and the engine wrote its own handle object into the field
   (`{"kind":"handle",…}`). A bug fix, not a language version: return a field off the record. A
   literal index reads its own slot (`AT(r, 1)` of a text arm is written; `graph { a: AT(r, 0) }` is
-  an edge, as over `[a, "x"]`). Arms that return values leave the receipt plain data; arms built
-  at run time stay untyped.
+  an edge, as over `[a, "x"]`). Arms that return values leave the receipt plain data. A receipt
+  whose every slot is a record is an edge list at a graph entry (`graph { a: r }`), as
+  `graph { a: [made(), made()] }` is; one that mixes a record with a value stays refused, and the
+  message offers the record slot (`a: AT(r, 0)`). A record slot of a parallel/race receipt written
+  as a graph entry (`graph { a: AT(r, 0) }`, or `h = AT(r, 0)` then `graph { a: h }`) was stored as
+  the engine's own object; it is now an edge to that record (both engines), on every version, as a
+  bug fix under the no-record-inside-data rule, not a version change. On version 1, which does not
+  type a call's value (the documented B4 gap), a receipt is stricter than the list literal
+  `[made(), made()]`: it is refused where the literal is accepted, because accepting it leaks.
+  Arms known where they are written are typed too: a name bound to a list of functions
+  (`arms = [made, label]`), or to a `MAP` whose closure returns a closure
+  (`MAP(xs, (n) => () => made())`), type the receipt by what those return. Arms known only at run
+  time (a `FILTER` or concatenation of such lists, a list passed in or returned by a call) stay
+  untyped, so a checked program can still hand a record through them.
 - A union whose every member is a record (`COALESCE(a, b)` of two records, or a function returning
   one of two) is one record for the graph entry: `a: r` over it is an edge, as it is over one
   record, on every version. It was refused as a field holding a record. A union that mixes a record
