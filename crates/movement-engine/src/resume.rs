@@ -195,12 +195,11 @@ impl Run<'_> {
         // link would resolve silently: refuse it here, whatever the offset.
         for scope in chains.iter().flatten() {
             for (_, entry) in pairs(at(scope, "bindings")) {
-                if matches!(text(at(&entry, "kind")), Some("shape" | "movement" | "fileClosure")) {
-                    if let Some(path) = text(at(&entry, "file")) {
-                        if self.checked.file(&crate::program::DeclaringFile::Library(path.to_string())).is_none() {
-                            return Err(runtime(format!("resume: the parked state names the library \"{path}\", which the re-parsed program does not link")));
-                        }
-                    }
+                if matches!(text(at(entry, "kind")), Some("shape" | "movement" | "fileClosure"))
+                    && let Some(path) = text(at(entry, "file"))
+                    && self.checked.file(&crate::program::DeclaringFile::Library(path.to_string())).is_none()
+                {
+                    return Err(runtime(format!("resume: the parked state names the library \"{path}\", which the re-parsed program does not link")));
                 }
             }
         }
@@ -398,6 +397,7 @@ impl Run<'_> {
 
     /// `descendForResume`: one `i j` or `b k` step into its body, the address
     /// it lands on, and the body's AST path.
+    #[allow(clippy::too_many_arguments)]
     fn descend_for_resume(&self, container: &Statement, container_path: &str, step: char, index: usize, stmt_address: &Address, parked: &str, scope: &Rc<Scope>) -> Result<(Rc<Vec<Statement>>, Address, String), Stop> {
         if step == 'i' {
             let Some((block, block_path)) = fan_out_block_of(container, container_path) else {
