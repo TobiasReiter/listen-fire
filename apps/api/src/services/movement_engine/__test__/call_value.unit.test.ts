@@ -675,9 +675,14 @@ describe('a closure survives park → resume and is still callable', () => {
       .find(([name]) => name === 'ready')?.[1];
     if (stored?.kind !== 'closure') throw new Error('expected the closure to park');
     expect(stored.closure.body.map((s) => s.kind)).toEqual(['return']);
-    // The capture came with it — that is what makes `subject` readable a month
-    // later, in another process.
-    expect(stored.captured.subject).toEqual(
+    // The closure names the scope it was written in — that is what makes
+    // `subject` readable a month later, in another process — and the scope it
+    // names holds the value.
+    expect(stored.captured).toEqual({});
+    const link = stored.scope;
+    if (link?.kind !== 'scopeRef') throw new Error('expected the closure to name a parked scope');
+    const named = timerParks[0].state.scopeChain.find((scope) => scope.id === link.id);
+    expect(named?.bindings.subject).toEqual(
       expect.objectContaining({ kind: 'value', value: 'go' }),
     );
     // And the whole thing is durable data, not a live object.

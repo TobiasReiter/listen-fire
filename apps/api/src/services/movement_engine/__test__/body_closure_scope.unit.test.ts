@@ -357,6 +357,57 @@ describe('a body closure holds its scope by reference', () => {
   });
 });
 
+describe('a parked run sees what an unparked run sees', () => {
+  // A MAP member that parks returns closures that write the outer handle; run
+  // by `parallel`, they and the scope must hold ONE handle. Before, the park
+  // split it, and the scope's `a` read a stale record.
+  const body = (park: boolean): string[] => [
+    '  a = write graph-[:note]-> { body: "one" }',
+    '  fs = MAP([1, 2], (n) => {',
+    ...(park ? ['    await sleep(1h)'] : []),
+    '    return () => {',
+    '      write a { body: CONCAT("v", n) }',
+    '      return a.body',
+    '    }',
+    '  })',
+    '  r = await parallel(fs)',
+    '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
+  ];
+
+  for (const version of [4, 5]) {
+    it(`v${version}: the closures write the outer handle, and the parked run ends as the unparked one`, async () => {
+      const run = (source: string, parks: Sink) => {
+        const kg = makeKgFake();
+        return runMovement({ ...runInput(source, parks, kg), languageVersion: version as never }).then(() => kg);
+      };
+      const unparkedKg = await run(program(body(false)), makeParkSink());
+      const unparked = payloadOf(unparkedKg.creates);
+
+      const parks = makeParkSink();
+      const source = program(body(true));
+      const kg0 = await run(source, parks);
+      expect(parks.parks.size).toBeGreaterThan(0);
+      expect(kg0.creates.find((c) => c.fields.payload !== undefined)).toBeUndefined();
+      let last: Awaited<ReturnType<typeof resumeAt>> | undefined;
+      for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
+        const address = [...parks.parks.keys()].sort()[0]!;
+        const park = parks.parks.get(address)!;
+        parks.parks.delete(address);
+        const kg = makeKgFake();
+        const result = await resumeMovement({
+          ...runInput(source, parks, kg),
+          languageVersion: version as never,
+          state: park.state,
+          reenter: park.kind !== 'timer',
+        });
+        last = { result, kg };
+      }
+      expect(payloadOf(last!.kg.creates)).toEqual(unparked);
+      expect(unparked).toEqual({ r: ['v2', 'v2'], after: 'v2' });
+    });
+  }
+});
+
 describe('a park written before body closures held their scope (each with its full snapshot)', () => {
   const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<
     string,
