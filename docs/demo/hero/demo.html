@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Listen-Fire hero demo</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151d; --panel2: #171b25; --line: #252a37;
+    --text: #e8eaf0; --dim: #8b92a5; --faint: #5b6275;
+    --accent: #ff7a45; --accent2: #ffb38a; --green: #4ade80; --red: #f87171; --blue: #7aa2ff; --amber: #fbbf24;
+    --k: #c792ea; --s: #c3e88d; --n: #82aaff; --e: #ffcb6b; --f: #89ddff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); color: var(--text);
+    font-family: Inter, sans-serif; -webkit-font-smoothing: antialiased; }
+  .abs { position: absolute; }
+  .mono, #code, .schema, .chip .tool, .w .tgt { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+  .mono { font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace; }
+  #glow { position: absolute; inset: 0; background:
+    radial-gradient(900px 600px at 15% 10%, rgba(255,122,69,.10), transparent 60%),
+    radial-gradient(900px 700px at 90% 90%, rgba(122,162,255,.08), transparent 60%); }
+
+  /* title + closing */
+  .center { position: absolute; left: 0; right: 0; text-align: center; }
+  .h1 { font-family: 'Inter'; font-weight: 800; font-size: 84px; letter-spacing: -2.5px; }
+  .h2 { font-weight: 600; font-size: 52px; letter-spacing: -1.2px; color: var(--dim); }
+  .h2 b { color: var(--accent); font-weight: 700; }
+
+  /* stage */
+  #wordmark { left: 80px; top: 52px; font-weight: 700; font-size: 26px; letter-spacing: -.5px; }
+  #wordmark span { color: var(--accent); }
+  #footer { right: 80px; top: 60px; font-size: 17px; color: var(--faint); }
+  #caption { left: 0; right: 0; bottom: 46px; text-align: center; font-size: 34px; font-weight: 600; letter-spacing: -.4px; }
+  #caption em { font-style: normal; color: var(--accent2); }
+
+  #chat { left: 80px; top: 104px; width: 580px; }
+  .bubble { background: var(--panel2); border: 1px solid var(--line); border-radius: 18px; padding: 20px 24px;
+    font-size: 23px; line-height: 1.45; }
+  .who { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--faint); margin: 0 0 10px 4px; }
+  .user .bubble { background: #1d2230; }
+  .agent { margin-top: 26px; }
+  .chip { display: flex; align-items: center; gap: 12px; font-size: 19px; color: var(--dim); margin: 0 0 12px 4px; }
+  .chip .tool { font-family: 'JetBrains Mono'; color: var(--text); font-size: 18px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 4px 10px; }
+  .chip .st { width: 22px; text-align: center; font-weight: 700; }
+  .chip .note { font-size: 18px; }
+  .schema { margin: 0 0 16px 38px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px;
+    font-family: 'JetBrains Mono'; font-size: 15px; line-height: 1.6; color: var(--dim); }
+  .schema b { color: var(--e); font-weight: 500; }
+  .schema i { font-style: normal; color: var(--s); }
+  .spin { display: inline-block; width: 16px; height: 16px; border: 2.5px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; }
+  .agent .bubble { margin-top: 8px; }
+
+  #editor { position: absolute; left: 700px; top: 104px; width: 1140px; height: 878px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 16px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+  #edbar { height: 46px; border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 18px; gap: 9px; }
+  #edbar i { width: 12px; height: 12px; border-radius: 50%; background: #2c3242; display: inline-block; }
+  #edbar span { margin-left: 14px; font-family: 'JetBrains Mono'; font-size: 16px; color: var(--dim); }
+  #edstatus { margin-left: auto !important; font-family: Inter !important; font-weight: 600; font-size: 16px !important; }
+  #codeclip { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; overflow: hidden;
+    -webkit-mask-image: linear-gradient(transparent 0, #000 14px); mask-image: linear-gradient(transparent 0, #000 14px); }
+  #code { padding: 14px 0; will-change: transform; font-family: 'JetBrains Mono'; font-size: 16.5px; line-height: 23px; white-space: pre; }
+  .ln { display: flex; overflow: hidden; }
+  .ln .g { width: 56px; text-align: right; padding-right: 20px; color: #3a4153; flex: none; }
+  .ln.hl { background: rgba(248,113,113,.08); }
+  .ln.fixhl { background: rgba(74,222,128,.08); }
+  .tk-k { color: var(--k); } .tk-s { color: var(--s); } .tk-b { color: var(--e); } .tk-f { color: var(--f); }
+  .tk-e { color: var(--n); } .tk-c { color: var(--faint); } .tk-p { color: var(--dim); }
+  .squig { text-decoration: underline wavy var(--red); text-decoration-thickness: 2px; text-underline-offset: 5px; }
+  .caret { display: inline-block; width: 2px; height: 18px; background: var(--accent); vertical-align: -4px; }
+  .diag { margin: 4px 22px 6px 76px; border-left: 3px solid var(--red); background: rgba(248,113,113,.10); border-radius: 6px;
+    padding: 8px 14px; font-family: Inter; font-size: 17px; line-height: 1.45; white-space: normal; overflow: hidden; }
+  .diag .code { font-family: 'JetBrains Mono'; font-size: 14px; color: var(--red); font-weight: 700; letter-spacing: .5px; }
+  .info { margin: 0 22px 0 76px; font-family: Inter; font-size: 16px; color: var(--blue); white-space: normal; overflow: hidden; }
+
+  /* run stage */
+  #later { font-size: 30px; color: var(--dim); font-weight: 600; letter-spacing: 6px; text-transform: uppercase; top: 500px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px 26px; box-shadow: 0 24px 60px rgba(0,0,0,.4); }
+  .card .lbl { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.6px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 3px 12px; font-size: 15px; font-weight: 600; }
+  #email { left: 80px; top: 230px; width: 560px; }
+  #email .from { font-size: 22px; font-weight: 600; } #email .addr { color: var(--dim); font-size: 18px; margin-top: 2px; }
+  #email .subj { font-size: 24px; font-weight: 700; margin: 18px 0 12px; letter-spacing: -.3px; }
+  #email .body { font-size: 18px; color: var(--dim); line-height: 1.5; white-space: pre-wrap; }
+  #runbox { left: 690px; top: 230px; width: 480px; }
+  .w { display: flex; align-items: center; gap: 12px; font-size: 19px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .w:last-child { border-bottom: 0; }
+  .w .ok { color: var(--green); font-weight: 800; width: 20px; }
+  .w .tgt { font-family: 'JetBrains Mono'; font-size: 16px; color: var(--dim); margin-left: auto; }
+  #stats { margin-top: 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat { background: var(--panel2); border-radius: 10px; padding: 12px 10px; text-align: center; }
+  .stat b { display: block; white-space: nowrap; font-size: 26px; letter-spacing: -.5px; color: var(--text); }
+  .stat span { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  #results { left: 1220px; top: 230px; width: 620px; }
+  .res { margin-bottom: 18px; }
+  .kv { display: grid; grid-template-columns: 150px 1fr; row-gap: 8px; font-size: 19px; }
+  .kv span:nth-child(odd) { color: var(--dim); }
+  .sl { display: flex; gap: 14px; }
+  .sl .av { width: 40px; height: 40px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), #ff4d6d); flex: none; }
+  .sl .nm { font-weight: 700; font-size: 18px; } .sl .nm small { color: var(--faint); font-weight: 500; margin-left: 8px; }
+  .sl .tx { font-size: 19px; margin-top: 3px; line-height: 1.4; }
+
+  #closing .cols { position: absolute; left: 160px; right: 160px; top: 420px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; }
+  .col { border-top: 3px solid var(--accent); padding-top: 22px; }
+  .col h3 { font-size: 30px; letter-spacing: -.5px; margin-bottom: 10px; }
+  .col p { font-size: 22px; color: var(--dim); line-height: 1.45; }
+  #stat { top: 700px; font-size: 44px; font-weight: 700; letter-spacing: -.8px; }
+  #stat b { color: var(--accent); }
+  #statnote { top: 776px; font-size: 18px; color: var(--faint); }
+  #endmark { top: 430px; }
+  #endmark .h1 span { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="glow"></div>
+
+<!-- title -->
+<div id="title">
+  <div class="center h1" id="t1" style="top:400px">Your agent can do things.</div>
+  <div class="center h2" id="t2" style="top:510px"><b>Listen-Fire</b> lets it leave something running.</div>
+</div>
+
+<!-- authoring stage -->
+<div id="stage">
+  <div class="abs" id="wordmark">listen<span>-</span>fire</div>
+  <div id="chat" class="abs">
+    <div class="user"><div class="who">You</div><div class="bubble" id="ubub"></div></div>
+    <div class="agent" id="agent">
+      <div class="who" id="awho">Your agent · via MCP</div>
+      <div class="chip" id="c1"><span class="st"></span><span class="tool">getStarted</span><span class="note">Gmail · Attio · Slack connected</span></div>
+      <div class="chip" id="c2"><span class="st"></span><span class="tool">describeConnection</span><span class="note">attio</span></div>
+      <div class="schema" id="schema">Companies -[:<b>`VC Deal Flow`</b>]-><br>Stage <i>enum</i>(Sourced | Diligence | Term Sheet | Passed)</div>
+      <div class="chip" id="c3"><span class="st"></span><span class="tool">saveAutomation</span><span class="note"></span></div>
+      <div class="chip" id="c4"><span class="st"></span><span class="tool">saveAutomation</span><span class="note"></span></div>
+      <div class="bubble" id="abub"></div>
+    </div>
+  </div>
+  <div id="editor" class="abs">
+    <div id="edbar"><i></i><i></i><i></i><span>founder_intake.mvt</span><span id="edstatus"></span></div>
+    <div id="codeclip"><div id="code"></div></div>
+  </div>
+</div>
+
+<!-- run stage -->
+<div class="center" id="later">Later that day</div>
+<div id="runstage">
+  <div class="abs card" id="email">
+    <div class="lbl">Gmail · inbox <span class="pill" style="background:rgba(255,122,69,.18);color:var(--accent2)">Dealflow</span></div>
+    <div class="from" id="efrom"></div><div class="addr" id="eaddr"></div>
+    <div class="subj" id="esubj"></div><div class="body" id="ebody"></div>
+  </div>
+  <div class="abs card" id="runbox">
+    <div class="lbl"><span class="spin" id="rspin"></span><span id="rtitle">Founder Intake · running</span></div>
+    <div id="writes"></div>
+    <div id="stats"></div>
+  </div>
+  <div class="abs" id="results">
+    <div class="card res" id="r1"><div class="lbl">Attio · Companies</div><div class="kv" id="r1kv"></div></div>
+    <div class="card res" id="r2"><div class="lbl">Attio · Note on lumenlabs.io</div><div class="kv" id="r2kv"></div></div>
+    <div class="card res" id="r3"><div class="lbl">Slack · #dealflow</div>
+      <div class="sl"><div class="av"></div><div><div class="nm">Listen-Fire<small>APP</small></div><div class="tx" id="r3tx"></div></div></div></div>
+  </div>
+</div>
+
+<!-- closing -->
+<div id="closing">
+  <div class="center h1" style="top:220px; font-size:72px">Say it once. It happens every time.</div>
+  <div class="cols">
+    <div class="col" id="k1"><h3>Business-level</h3><p>Say what moves where. Adapters handle auth, rate limits and pagination.</p></div>
+    <div class="col" id="k2"><h3>Checked against reality</h3><p>Every field, stage and option is read from your live systems before anything runs.</p></div>
+    <div class="col" id="k3"><h3>Runs without the agent</h3><p>Deterministic on every event. AI only where the program asks for it, at a fraction of a cent.</p></div>
+  </div>
+  <div class="center" id="stat">From idea to working automation in <b>~30 seconds</b>.</div>
+</div>
+<div id="endmark" class="center"><div class="h1">listen<span>-</span>fire</div>
+  <div class="h2" style="margin-top:18px; font-size:40px">The automation language for agents.</div></div>
+
+<div class="abs" id="footer">Real run · Listen-Fire dev loop with stand-in Gmail, Attio &amp; Slack</div>
+<div class="abs" id="caption"></div>
+
+<script src="data.js"></script>
+<script src="timeline.js"></script>
+</body>
+</html>

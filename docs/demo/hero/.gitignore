@@ -1,0 +1,6 @@
+# generated: captures (and the minted API key), the data the page reads, fonts, output
+.work/
+data.js
+fonts/
+stills/
+*.mp4
