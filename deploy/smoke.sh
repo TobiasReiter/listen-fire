@@ -32,7 +32,7 @@ JAR=""
 # profile leaves its containers behind for the next shape to inherit, and the
 # external-database shape below adds a file — naming both here means one
 # teardown is correct after any shape, including a crashed one.
-ALL_PROFILES=(--profile postgres --profile redis --profile minio --profile admin --profile demo)
+ALL_PROFILES=(--profile postgres --profile redis --profile objectstore --profile admin --profile demo)
 teardown() {
   docker compose -f docker-compose.yml -f smoke-external-postgres.yml \
     "${ALL_PROFILES[@]}" down -v --remove-orphans >/dev/null 2>&1 || true

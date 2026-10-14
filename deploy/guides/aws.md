@@ -49,7 +49,7 @@ What breaks without Redis: core's in-flight MCP OAuth state (a connect that span
 
 Native, and this is the one place where being on AWS genuinely simplifies things.
 
-Set `AWS_DOCUMENT_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — all four or none. **Leave `AWS_S3_ENDPOINT` unset**; it exists to point the same adapter at R2, MinIO or Supabase Storage, and setting it on AWS only gives you a way to get it wrong. Leave `AWS_S3_FORCE_PATH_STYLE` unset too — it is compared to the literal lowercase `true`, and it exists for MinIO and Ceph.
+Set `AWS_DOCUMENT_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — all four or none. **Leave `AWS_S3_ENDPOINT` unset**; it exists to point the same adapter at R2, MinIO, SeaweedFS or Supabase Storage, and setting it on AWS only gives you a way to get it wrong. Leave `AWS_S3_FORCE_PATH_STYLE` unset too — it is compared to the literal lowercase `true`, and it exists for MinIO, SeaweedFS and Ceph.
 
 There is no local-filesystem storage driver, deliberately: serving a file to an unauthenticated third party is a signed byte-serving route, which is a build rather than a config switch. Without storage configured the process boots normally and only file-touching steps fail, naming the variables they wanted.
 

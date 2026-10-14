@@ -81,6 +81,7 @@ done
 STACK_NAME_DEFAULT="listenfire-$(basename "$REPO_ROOT")"
 POSTGRES_HOST_PORT_DEFAULT=9432
 REDIS_HOST_PORT_DEFAULT=6379
+S3_HOST_PORT_DEFAULT=9010
 case "$PROFILE" in
   default)
     API_BASE=3000; HARNESS_BASE=5555 ;;
@@ -89,6 +90,7 @@ case "$PROFILE" in
     STACK_NAME_DEFAULT="listen-fire-dev-agent"
     POSTGRES_HOST_PORT_DEFAULT=9434
     REDIS_HOST_PORT_DEFAULT=6381
+    S3_HOST_PORT_DEFAULT=9012
     ;;
   agent2)
     API_BASE=4000; HARNESS_BASE=6155 ;;
@@ -111,6 +113,18 @@ esac
 export LISTEN_FIRE_STACK="${LISTEN_FIRE_STACK:-$STACK_NAME_DEFAULT}"
 export POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-$POSTGRES_HOST_PORT_DEFAULT}"
 export REDIS_HOST_PORT="${REDIS_HOST_PORT:-$REDIS_HOST_PORT_DEFAULT}"
+# Local S3 (SeaweedFS, the `objectstore` service): its S3 API on S3_HOST_PORT.
+# Not 9000 — another project on this host holds it.
+export S3_HOST_PORT="${S3_HOST_PORT:-$S3_HOST_PORT_DEFAULT}"
+
+# File storage: the API's S3 adapter pointed at this stack's object store (credentials
+# and bucket match dev/docker-compose.yml; plain local placeholders).
+export AWS_S3_ENDPOINT="${AWS_S3_ENDPOINT:-http://localhost:$S3_HOST_PORT}"
+export AWS_DOCUMENT_S3_BUCKET="${AWS_DOCUMENT_S3_BUCKET:-listenfire-dev}"
+export AWS_REGION="${AWS_REGION:-us-east-1}"
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-listenfire}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-localdevpassword}"
+export AWS_S3_FORCE_PATH_STYLE="${AWS_S3_FORCE_PATH_STYLE:-true}"
 
 # The API only uses Redis when it is named (there is no localhost default in the code), so the
 # dev loop names the container it runs, on this profile's port.
@@ -129,7 +143,7 @@ echo "[dev:loop] Repo: $REPO_ROOT"
 echo "[dev:loop] Profile: $PROFILE"
 echo "[dev:loop] Shape: $SHAPE"
 echo "[dev:loop] Compose project: $LISTEN_FIRE_STACK"
-echo "[dev:loop] Postgres: localhost:$POSTGRES_HOST_PORT  Redis: localhost:$REDIS_HOST_PORT"
+echo "[dev:loop] Postgres: localhost:$POSTGRES_HOST_PORT  Redis: localhost:$REDIS_HOST_PORT  S3: localhost:$S3_HOST_PORT"
 
 export PORT="${PORT:-$API_BASE}"
 # Nothing listens on APP_PORT since the legacy SPA was removed; it survives
@@ -166,8 +180,8 @@ export FAKE_ISSUER_URL="${FAKE_ISSUER_URL:-http://127.0.0.1:$FAKE_ISSUER_PORT}"
 export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$API_BASE_URL}"
 export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-$API_BASE_URL}"
 
-# 1. Ensure docker (postgres + redis) is up
-echo "[dev:loop] Bringing up postgres + redis (idempotent)..."
+# 1. Ensure docker (postgres + redis + objectstore) is up
+echo "[dev:loop] Bringing up postgres + redis + objectstore (idempotent)..."
 docker compose -p "$LISTEN_FIRE_STACK" -f dev/docker-compose.yml up -d
 
 # 2. Wait for postgres
@@ -182,6 +196,22 @@ for i in $(seq 1 30); do
   if [ "$i" -eq 30 ]; then
     echo
     echo "[dev:loop] postgres did not become ready in 30s"
+    exit 1
+  fi
+done
+
+# 2a. Wait for the object store (it creates the dev bucket as it starts).
+echo -n "[dev:loop] Waiting for the object store on localhost:$S3_HOST_PORT"
+for i in $(seq 1 30); do
+  if curl -sf "http://localhost:$S3_HOST_PORT/healthz" >/dev/null 2>&1; then
+    echo " ready."
+    break
+  fi
+  echo -n "."
+  sleep 1
+  if [ "$i" -eq 30 ]; then
+    echo
+    echo "[dev:loop] the object store did not become ready in 30s"
     exit 1
   fi
 done

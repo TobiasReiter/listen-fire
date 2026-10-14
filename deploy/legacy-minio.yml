@@ -1,0 +1,82 @@
+# The bundled MinIO, for an installation that ran it before SeaweedFS replaced
+# it as the bundled object store. MinIO no longer publishes container images, so
+# this runs the copy ALREADY ON THIS MACHINE (`pull_policy: never`), on the
+# `miniodata` volume that holds every file the installation stored.
+#
+# It is an override, never part of a fresh installation. Use it for one of the
+# two upgrade paths in SELF_HOSTING.md, "Upgrading from the bundled MinIO":
+#
+#   (a) keep MinIO as your own store: add this file to COMPOSE_FILE in .env
+#       and point AWS_S3_ENDPOINT (+ the other AWS_* values) at http://minio:9000;
+#   (b) copy the bucket into the bundled SeaweedFS once, with the
+#       `copy-from-minio` service below, then drop this file.
+#
+#   docker compose -f docker-compose.yml -f legacy-minio.yml ...
+#
+# The volume is `external`, so no `down -v` — with or without this file — can
+# remove it. Removing it is a deliberate `docker volume rm`, by you, once the
+# files are somewhere else.
+
+services:
+  minio:
+    image: ${LEGACY_MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
+    pull_policy: never
+    environment:
+      MINIO_ROOT_USER: listenfire
+      # The password the installation minted for it, still in the config volume.
+      MINIO_ROOT_PASSWORD_FILE: /config/minio_password
+      MINIO_BROWSER: 'off'
+    entrypoint: ['sh', '-c', 'mkdir -p /data/listen-fire && exec minio server /data --address :9000']
+    volumes:
+      - miniodata:/data
+      - listen-fire-config:/config:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # One-shot: copies every object of the `listen-fire` bucket from the MinIO
+  # above into the bundled SeaweedFS, keys unchanged (the database stores
+  # `s3://listen-fire/<key>`, so every reference stays valid), Content-Type
+  # carried across, then checks the two sides match. It only ever WRITES to the
+  # new store; MinIO's volume is read and left exactly as it was. Safe to rerun:
+  # an object already copied is skipped.
+  #
+  #   docker compose -f docker-compose.yml -f legacy-minio.yml run --rm copy-from-minio
+  copy-from-minio:
+    profiles: ['copy-from-minio']
+    image: rclone/rclone:1.75.1
+    volumes:
+      - listen-fire-config:/config:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+      objectstore:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export
+        RCLONE_CONFIG_OLD_TYPE=s3 RCLONE_CONFIG_OLD_PROVIDER=Minio
+        RCLONE_CONFIG_OLD_ENDPOINT=http://minio:9000
+        RCLONE_CONFIG_OLD_ACCESS_KEY_ID=listenfire
+        RCLONE_CONFIG_OLD_SECRET_ACCESS_KEY="$$(cat /config/minio_password)"
+        RCLONE_CONFIG_NEW_TYPE=s3 RCLONE_CONFIG_NEW_PROVIDER=SeaweedFS
+        RCLONE_CONFIG_NEW_ENDPOINT=http://objectstore:8333
+        RCLONE_CONFIG_NEW_ACCESS_KEY_ID=listenfire
+        RCLONE_CONFIG_NEW_SECRET_ACCESS_KEY="$$(cat /config/objectstore_password)" &&
+        rclone copy old:listen-fire new:listen-fire --stats-one-line -v &&
+        rclone check old:listen-fire new:listen-fire --one-way --size-only &&
+        echo "copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store"
+
+volumes:
+  miniodata:
+    external: true
+    # The installation's own volume, `<compose project>_miniodata`.
+    name: ${LEGACY_MINIO_VOLUME:-listen-fire_miniodata}
