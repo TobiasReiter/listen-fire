@@ -41,7 +41,7 @@ inc = (v: <number>) => v + 1                   # an expression body; a closure b
 
 \`=\` binds a name (instance, handle, extract graph, a bound block, a call's value, a closure, a plain value). Statements run top-to-bottom; a handle must be written before it is read. A function may call itself, declaring what it returns (\`f(n: <number>): <number>\`). A listened automation takes exactly one parameter; a library automation takes any number.
 
-\`return\` is the one way a value leaves a body — an automation's, a block's, or a closure's — and a \`return\` inside an \`if\` arm belongs to the body around it. A body with no \`return\` hands nothing back, so it runs as a statement and cannot be bound. A closure is a value: hand it to \`callback\` or \`until\`.
+\`return\` is the one way a value leaves a body — an automation's, a block's, or a closure's — and a \`return\` inside an \`if\` arm belongs to the body around it. A body with no \`return\` hands nothing back, so it runs as a statement and cannot be bound. A closure is a value: hand it to \`callback\` or \`until\`, keep it in a list, or pass it to a parameter whose type is a closure type (\`<(c: <Company>) => <text>>\`).
 
 ### types-and-brackets
 

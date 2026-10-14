@@ -79,12 +79,22 @@ guide](docs/language/dancing-wren-migration.md).
   name does, and its body is checked where it is written. The list's element type is the union of
   its closures' types. Under 4 it stays `MOV_EXPR_CLOSURE_POSITION`.
 - **A value that is a closure is called**: `MAP(fs, (f) => f())`, `g = AT(fs, 0)` then `g()`, a
-  function returned by a function, or a function declared with a name read as a value
-  (`[made, label]`). The call's type is the union of what the closures may return, records
-  included, so the record-in-data rules see a record any of them hands back; it is held to every
-  closure's arity. A value that may not be a closure, or whose type nothing shows, is refused where
-  it is called (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call:
-  a callee that waits parks the run, and one that returns nothing makes the closure return nothing.
+  function declared with a name read as a value (`[made, label]`, `g = made`, `() => made`,
+  `return made`), a closure returned in place, `IF … THEN a ELSE b END` or `COALESCE(a, b)` over
+  closures (their union), a `race` slot holding one, or a closure-typed parameter. The call's
+  type is the union of what the closures may return, records included, so the record-in-data
+  rules see a record any of them hands back; it is held to every closure's arity. A value that
+  may not be a closure, or whose type nothing shows, is refused where it is called
+  (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call: a callee
+  that waits parks the run, and one that returns nothing makes the closure return nothing. A body
+  that awaits, `() => await race([…])`, is `() => { return await race([…]) }`.
+- **A closure's type is written `<(params) => <return>>`**, TypeScript's function type:
+  `handler: <(c: <Company>) => <text>>`, `arms: <() => <text>>[]`, a record key, a declared
+  return. A closure-typed parameter is called. A closure fits the type with contravariant
+  parameters (fewer is fine) and covariant returns (`MOV_CALL_ARG_TYPE` otherwise), and one
+  written in place is an argument, its parameters typed by the type. Under 4 it does not parse.
+- **A dotted call on a value calls the closure it holds**: `box.g()`, typed by it; a key the
+  value lacks, or a member that is no closure, is `MOV_CALL_NOT_MOVEMENT`.
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
   Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
   where they delete. No protocol version bump: the field is additive, but under language version
@@ -123,6 +133,12 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- A dotted call of a function that is no built-in (`o.nope()`) is `MOV_FUNCTION_UNKNOWN` on every
+  language version. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
+  there was never such a function: the run always failed where it reached the call. A built-in in
+  a record's scope (`o.UPPER(name)`) and, before 5, a write field's own function are unchanged.
+- The engine's unsupported-construct scan reads a movement as the language version it is pinned
+  to, so a form version 5 reads differently is scanned as what it means under the pin.
 - A closure written in a movement body holds the scope it was written in by reference, as a
   JavaScript closure does (and a file-level closure already did), rather than a copy of it. A wait
   writes each scope once and each closure as its code and the scope's number, so a parked state
