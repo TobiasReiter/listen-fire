@@ -1,0 +1,72 @@
+// Deterministic frame renderer: loads a page (demo.html by default), calls
+// window.seek(t) for each frame, screenshots it and pipes the PNGs into ffmpeg
+// (H.264, yuv420p).
+//   node scripts/render.cjs out.mp4 [fps]       → the whole video
+//   node scripts/render.cjs --stills 24 34 46   → stills/t<sec>.png
+//   --page operator.html (anywhere in the args) → listen-fire-operator.mp4,
+//                                                 stills-operator/t<sec>.png
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const HERE = path.join(__dirname, '..');
+const args = process.argv.slice(2);
+const pageAt = args.indexOf('--page');
+const PAGE = pageAt >= 0 ? args.splice(pageAt, 2)[1] : 'demo.html';
+const STEM = path.basename(PAGE, '.html');
+const STILLS = STEM === 'demo' ? 'stills' : `stills-${STEM}`;
+const DEFAULT_OUT = STEM === 'demo' ? 'listen-fire-hero.mp4' : `listen-fire-${STEM}.mp4`;
+const REPO = path.join(HERE, '..', '..', '..');
+const pnpmDir = path.join(REPO, 'node_modules', '.pnpm');
+const pw = fs.readdirSync(pnpmDir).find((d) => /^playwright@/.test(d));
+const { chromium } = require(path.join(pnpmDir, pw, 'node_modules', 'playwright'));
+
+// The cloud container ships a headless shell under /opt/pw-browsers; anywhere
+// else, Playwright's own browser is used (`npx playwright install chromium`).
+function headlessShell() {
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
+  if (!fs.existsSync(root)) return undefined;
+  const dir = fs.readdirSync(root).find((d) => d.startsWith('chromium_headless_shell-'));
+  const bin = dir && path.join(root, dir, 'chrome-linux', 'headless_shell');
+  return bin && fs.existsSync(bin) ? bin : undefined;
+}
+
+(async () => {
+  if (!fs.existsSync(path.join(HERE, 'data.js'))) {
+    console.error('no data.js: run ./scripts/capture.sh, then node scripts/build_data.cjs');
+    process.exit(1);
+  }
+  const browser = await chromium.launch({ executablePath: headlessShell() });
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  page.on('pageerror', (e) => console.error('page error:', e.message));
+  await page.goto('file://' + path.join(HERE, PAGE));
+  await page.evaluate(() => document.fonts.ready);
+
+  if (args[0] === '--stills') {
+    fs.mkdirSync(path.join(HERE, STILLS), { recursive: true });
+    for (const t of args.slice(1)) {
+      await page.evaluate((s) => window.seek(s), Number(t));
+      await page.screenshot({ path: path.join(HERE, STILLS, `t${t}.png`) });
+    }
+    await browser.close();
+    return;
+  }
+
+  const out = args[0] || path.join(HERE, DEFAULT_OUT);
+  const fps = Number(args[1] || 30);
+  const duration = await page.evaluate(() => window.DURATION);
+  const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-',
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out],
+    { stdio: ['pipe', 'inherit', 'inherit'] });
+  const frames = Math.round(duration * fps);
+  for (let i = 0; i < frames; i++) {
+    await page.evaluate((s) => window.seek(s), i / fps);
+    const buf = await page.screenshot({ type: 'png' });
+    if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
+    if (i % (fps * 10) === 0) process.stderr.write(`frame ${i}/${frames}\n`);
+  }
+  ff.stdin.end();
+  await new Promise((r) => ff.on('close', r));
+  await browser.close();
+  console.log(out);
+})();

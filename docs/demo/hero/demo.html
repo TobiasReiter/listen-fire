@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Listen-Fire hero demo</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<div id="glow"></div>
+
+<!-- title -->
+<div id="title">
+  <div class="center h1" id="t1" style="top:400px; font-size:76px">Your agent writes the automation once.</div>
+  <div class="center h2" id="t2" style="top:510px">It runs on every event after that, <b>without the agent</b>.</div>
+</div>
+
+<!-- authoring stage -->
+<div id="stage">
+  <div class="abs" id="wordmark">listen<span>-</span>fire</div>
+  <div id="chat" class="abs">
+    <div class="user"><div class="who">You</div><div class="bubble" id="ubub"></div></div>
+    <div class="agent" id="agent">
+      <div class="who" id="awho">Your agent · via MCP</div>
+      <div class="chip" id="c1"><span class="st"></span><span class="tool">getStarted</span><span class="note">Gmail · Attio · Slack connected</span></div>
+      <div class="chip" id="c2"><span class="st"></span><span class="tool">describeConnection</span><span class="note">attio</span></div>
+      <div class="schema" id="schema">Companies -[:<b>`VC Deal Flow`</b>]-><br>Stage <i>enum</i>(Sourced | Diligence | Term Sheet | Passed)</div>
+      <div class="chip" id="c3"><span class="st"></span><span class="tool">saveAutomation</span><span class="note"></span></div>
+      <div class="chip" id="c4"><span class="st"></span><span class="tool">saveAutomation</span><span class="note"></span></div>
+      <div class="bubble" id="abub"></div>
+    </div>
+  </div>
+  <div id="editor" class="abs">
+    <div id="edbar"><i></i><i></i><i></i><span>founder_intake.mvt</span><span id="edstatus"></span></div>
+    <div id="codeclip"><div id="code"></div></div>
+  </div>
+</div>
+
+<!-- run stage -->
+<div class="center" id="later">Later that day</div>
+<div id="runstage">
+  <div class="abs card" id="email">
+    <div class="lbl">Gmail · inbox <span class="pill" style="background:rgba(255,122,69,.18);color:var(--accent2)">Dealflow</span></div>
+    <div class="from" id="efrom"></div><div class="addr" id="eaddr"></div>
+    <div class="subj" id="esubj"></div><div class="body" id="ebody"></div>
+  </div>
+  <div class="abs card" id="runbox">
+    <div class="lbl"><span class="spin" id="rspin"></span><span id="rtitle">Founder Intake · running</span></div>
+    <div id="writes"></div>
+    <div id="stats"></div>
+  </div>
+  <div class="abs" id="results">
+    <div class="card res" id="r1"><div class="lbl">Attio · Companies</div><div class="kv" id="r1kv"></div></div>
+    <div class="card res" id="r2"><div class="lbl">Attio · Note on lumenlabs.io</div><div class="kv" id="r2kv"></div></div>
+    <div class="card res" id="r3"><div class="lbl">Slack · #dealflow</div>
+      <div class="sl"><div class="av"></div><div><div class="nm">Listen-Fire<small>APP</small></div><div class="tx" id="r3tx"></div></div></div></div>
+  </div>
+</div>
+
+<!-- closing -->
+<div id="closing">
+  <div class="center h1" style="top:150px; font-size:64px; line-height:1.15">Agents are fluent in code.<br>Give them code made for automations.</div>
+  <div class="cols">
+    <div class="col" id="k1"><h3>Business-level</h3><p>Say what moves where. Adapters handle auth, rate limits and pagination.</p></div>
+    <div class="col" id="k2"><h3>Checked against reality</h3><p>Every field, stage and option is read from your live systems before anything runs.</p></div>
+    <div class="col" id="k3"><h3>Runs without the agent</h3><p>Deterministic on every event. AI only where the program asks for it, at a fraction of a cent.</p></div>
+  </div>
+  <div class="center" id="stat">From idea to working automation in <b>~30 seconds</b>.</div>
+</div>
+<div id="endmark" class="center"><div class="h1">listen<span>-</span>fire</div>
+  <div class="h2" style="margin-top:18px; font-size:40px">The automation language for agents.</div></div>
+
+<div class="abs" id="footer">Real run · Listen-Fire dev loop with stand-in Gmail, Attio &amp; Slack</div>
+<div class="abs" id="caption"></div>
+
+<script src="data.js"></script>
+<script src="timeline.js"></script>
+</body>
+</html>

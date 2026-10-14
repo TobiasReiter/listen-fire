@@ -1,0 +1,39 @@
+import { gmail, attio, slack } from adapters
+import { `Dev Loop Gmail`, `Dev Loop Attio`, `Dev Loop Slack` } from credentials
+
+mail = gmail(credentials: `Dev Loop Gmail`)
+crm  = attio(credentials: `Dev Loop Attio`)
+chat = slack(credentials: `Dev Loop Slack`)
+
+node Pitch: "the startup pitching us in this email" {
+  company: <text> "the startup's name"
+  raise:   <text | null> "what they are raising, e.g. $3M seed"
+  summary: <text> "what the startup does, in one sentence"
+}
+
+function `Founder Intake`(msg: <mail-[:Message]->>) {
+  address = COALESCE(TEXT.REGEX_EXTRACT(msg.From, "<(.+)>", 1), msg.From)
+  founder = TRIM(TEXT.REGEX_EXTRACT(msg.From, "^([^<]+)<", 1))
+  domain  = TEXT.REGEX_EXTRACT(address, "@(.+)$", 1)
+  pitch   = extractOne([msg.Body], Pitch, { tier: 'quick' })
+  if pitch == null { ERROR("no pitch found in ${msg.Subject}") }
+  raise   = COALESCE(pitch.raise, "raise not stated")
+
+  company = write crm-[:Companies]-> {
+    Name:        pitch.company
+    Domains:     [domain]
+    Description: pitch.summary
+  }
+  write company-[:Team]-> {
+    Name:  founder
+    Email: address
+  }
+  write company-[:`VC Deal Flow`]-> { Stage: "Sourcing" }
+  write company-[:Notes]-> { Title: msg.Subject, Content: msg.`Plain Body` }
+
+  chat-[ch:Channels WHERE `Name` == "dealflow"]-> {
+    write ch-[:Messages]-> { Message: "New inbound: ${pitch.company}, ${raise}, from ${founder}" }
+  }
+}
+
+listen to mail { events: ["message_received"], labels: ["Dealflow"] } fire `Founder Intake`
