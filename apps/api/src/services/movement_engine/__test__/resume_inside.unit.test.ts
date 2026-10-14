@@ -979,3 +979,45 @@ describe('a handle in the movement scope, parked inside a body closure call', ()
     expect(payloadOf(kg.creates)).toEqual({ seen: 'q/one' });
   });
 });
+
+// B16: a `parallel` receipt's slot holding the record an arm handed back. From
+// version 5 `AT(r, i)` reads that record, as it does off a list literal; before
+// 5 it read null (the checker accepted the field read, the run read nothing),
+// and a program pinned there still does.
+describe("a combinator receipt's record slot", () => {
+  const source = program(
+    '',
+    [
+      '  r = await parallel([',
+      '    () => {',
+      '      a = write graph-[:note]-> { body: "arm 0" }',
+      '      return a',
+      '    },',
+      '    () => 2',
+      '  ])',
+      '  h = AT(r, 0)',
+      '  write graph-[:note]-> { payload: { at: AT(r, 0).body, named: h.body, missing: AT(r, 0) == null, second: AT(r, 1) } }',
+    ].join('\n'),
+  );
+  const expected = {
+    4: { at: null, named: null, missing: true, second: 2 },
+    5: { at: 'arm 0', named: 'arm 0', missing: false, second: 2 },
+  } as const;
+
+  for (const languageVersion of [4, 5] as const) {
+    it(`version ${languageVersion}, no park`, async () => {
+      const { result, kg } = await start({ source, parks: makeParkSink(), languageVersion });
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
+    });
+
+    it(`version ${languageVersion}, the arm parked before its return`, async () => {
+      const h: Harness = { source, parks: makeParkSink(), languageVersion };
+      const first = await start(h, ['s0.b0.s1']);
+      expect(first.result.parked).toBe(true);
+      const { result, kg } = await resumeAt(h, 's0.b0.s1');
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
+    });
+  }
+});

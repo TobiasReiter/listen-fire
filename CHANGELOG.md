@@ -50,6 +50,11 @@ guide](docs/language/dancing-wren-migration.md).
   fill the other arm with a record. A union of records alone is one record and still fits. A record with
   `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
   version, it passes as a position and enters a graph).
+- **A record a `parallel` / `race` arm hands back reads as that record.** `AT(r, 0).name`, or
+  `h = AT(r, 0)` then `h.name`, reads the record the arm returned, as `AT([a, 2], 0).name` on a
+  list does; `AT(r, 0) == null` is false. Under 4 and earlier that slot read null while the check
+  accepted the read, and a program pinned there still reads null. A move up across 5 warns a read
+  of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
 
 ### Language version 5, Dancing Wren: new
 

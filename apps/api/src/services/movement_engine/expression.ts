@@ -2071,13 +2071,15 @@ function readBareName(name: string, ctx: MovementExprContext): MovementEvalResul
     return { value: binding, provenance: { origins: bindingEntityOrigins(binding) } };
   }
   if (binding.kind === 'tuple') {
-    // The receipt read as a plain list — its slots' values, in order. That is
-    // what `AT(r, i)` indexes and what a null check on a slot compares. A slot
-    // holding a RECORD has no value view (a record is not data), so it reads
-    // null here; `AT(r, i)` bound to a name hands the record itself over
-    // (`aliasedNodeBinding`), which is where a record is meant to be read.
+    // The receipt read as a plain list — its slots, in order. That is what
+    // `AT(r, i)` indexes and what a null check on a slot compares. From
+    // version 5 a slot holding ONE RECORD reads as that record, as a list
+    // literal's member does (`AT([a, 2], 0).name`), so `AT(r, i).name` reads
+    // the record the arm handed back. Before 5 it read null — the checker
+    // accepted the field read, and the run silently read nothing.
+    const recordsAsThemselves = ctx.languageVersion !== undefined && since(ctx.languageVersion, 5);
     return {
-      value: binding.slots.map(slotValue),
+      value: binding.slots.map((slot) => (recordsAsThemselves && isOneRecord(slot) ? slot : slotValue(slot))),
       provenance: { origins: binding.slots.flatMap(bindingEntityOrigins) },
     };
   }
@@ -2135,7 +2137,7 @@ function memberPosition(
 }
 
 /** One combinator slot as DATA: a value binding's value, and null for anything
- *  that is a record rather than data. */
+ *  else (before version 5, a record too — see `readBareName`). */
 function slotValue(binding: Binding): unknown {
   return binding.kind === 'value' ? binding.value : null;
 }

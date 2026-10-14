@@ -172,6 +172,12 @@ export const TypedDiagnosticCodes = {
    *  the adapter handed back from the write (often nothing, and nothing on a
    *  no-op); from 4 it reads the record as the write found it. */
   HANDLE_READ_FOUND: 'MOV_HANDLE_READ_FOUND',
+  /** Warning, upgrade only: a read of a combinator's receipt (`AT(r, i)`, a
+   *  field of a slot, a null check) where an arm hands back a record, in a
+   *  program moving up across 5. Before 5 that slot read null; from 5 it reads
+   *  the record. The type is the same either way, so nothing else would tell
+   *  the author. */
+  RECEIPT_RECORD_SLOT: 'MOV_RECEIPT_RECORD_SLOT',
   /** A read or traversal through a handle NOTHING HAS DESCRIBED
    *  (`PositionSchema.undescribed`) — an unnarrowed event's `record` edge
    *  landing on the meta type, a type no describe answered for.
@@ -4092,6 +4098,9 @@ export class ExpressionTyping {
        *  and a record is a VALUE type now, so the difference decides whether
        *  reading the name yields `record` or nothing. */
       isRecordName?: (name: string) => boolean;
+      /** Is this name a combinator's receipt with an arm that hands back a
+       *  record (`ScopeSymbol.receiptHoldsRecord`)? */
+      isRecordReceipt?: (name: string) => boolean;
       /** Is this name bound to a whole traversal block's return — a
        *  COLLECTION, even though its position type is the one record a member
        *  of it carries (plurality lives in the traversal, never in a second
@@ -4185,6 +4194,21 @@ export class ExpressionTyping {
     );
   }
 
+  /**
+   * A read of a combinator's receipt one of whose arms hands back a record, in
+   * a program moving up across 5: before 5 that slot read null (`AT(r, i)`,
+   * a field off it, a null check), from 5 the record. Every read of the receipt
+   * reads its slots, so the name is what is reported.
+   */
+  private reportReceiptRecordSlot(name: string): void {
+    if (this.options.isRecordReceipt?.(name) !== true || !this.upgradeCrosses(5)) return;
+    this.report(
+      TypedDiagnosticCodes.RECEIPT_RECORD_SLOT,
+      `since ${describeLanguageVersion(5)} a record an arm hands back reads as that record through '${name}' (\`AT(${name}, i)\`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.`,
+      'upgrade',
+    );
+  }
+
   /** Hands the walk just finished to the recorder, if anyone asked for one. A
    *  stepless dot-chain (`co.\`Name\``) is not a walk and is left alone — the
    *  reference machinery already reads it. */
@@ -4224,6 +4248,7 @@ export class ExpressionTyping {
    * precedence every other read here keeps.
    */
   private bareNameType(name: string): FieldType | undefined {
+    this.reportReceiptRecordSlot(name);
     const scalar = this.scalarType(name);
     if (scalar !== undefined) return scalar;
     const record =

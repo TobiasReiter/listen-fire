@@ -3627,6 +3627,8 @@ class Checker {
    * accepting a live position it mistook for a declared one.
    */
   private readonly declaredShapeTokens = new WeakSet<object>();
+  /** Combinators with an arm that hands back a record (`ScopeSymbol.receiptHoldsRecord`). */
+  private readonly recordSlotCombinators = new WeakSet<CombinatorExpression>();
 
   /** Listens seen anywhere in the file (any listen suppresses LISTEN_MISSING). */
   private listenCount = 0;
@@ -3985,6 +3987,13 @@ class Checker {
     return resolution.symbol.bindingPlane === 'scalar' ? resolution.symbol.fieldType : undefined;
   }
 
+  /** Is the name a combinator's receipt with an arm that hands back a record
+   *  (`ScopeSymbol.receiptHoldsRecord`)? */
+  private isRecordReceipt(name: string, scope: Scope): boolean {
+    const resolution = scope.resolve(name);
+    return resolution.kind === 'found' && resolution.symbol.receiptHoldsRecord === true;
+  }
+
   /** What a bound name may hold beyond its type — `ScopeSymbol.mayHold`. */
   private symbolMayHold(scope: Scope, name: string): FieldType | undefined {
     const resolution = scope.resolve(name);
@@ -4026,6 +4035,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
+      isRecordReceipt: name => this.isRecordReceipt(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
     });
@@ -4047,6 +4057,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
+      isRecordReceipt: name => this.isRecordReceipt(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
       onEffect: (effect) => this.absorbExpressionEffect(effect),
@@ -5459,6 +5470,9 @@ class Checker {
           result.fieldType !== undefined || value.await.source.kind === 'combinator'
             ? { ...symbol, ...(result.fieldType !== undefined ? { fieldType: result.fieldType } : {}), bindingPlane: 'scalar' }
             : { ...symbol, ...(result.posType ? { posType: result.posType } : {}), bindingPlane: 'node' };
+        if (value.await.source.kind === 'combinator' && this.recordSlotCombinators.has(value.await.source.combinator)) {
+          symbol = { ...symbol, receiptHoldsRecord: true };
+        }
         break;
       }
       case 'combinator': {
@@ -5468,6 +5482,7 @@ class Checker {
           ...symbol,
           ...(receipt !== undefined ? { fieldType: receipt } : {}),
           bindingPlane: 'scalar',
+          ...(this.recordSlotCombinators.has(value.combinator) ? { receiptHoldsRecord: true as const } : {}),
         };
         break;
       }
@@ -7497,6 +7512,9 @@ class Checker {
     }
 
     const slots = expr.arms.arms.map(arm => this.checkArm(arm, expr.kind, scope, recorded));
+    if (slots.some(slot => slot.returns && (slot.posType !== undefined || holdsRecords(slot.fieldType)))) {
+      this.recordSlotCombinators.add(expr);
+    }
     return {
       kind: 'tuple',
       of: slots.map(slot => {
