@@ -312,9 +312,10 @@ describe('one write handle two names hold, across a park, on both engines (B7)',
 
   it('inside a branch that completes on the resume: its export is one park, #return first', async () => {
     // Arm 0 parks before its return; arm 1 completes. Arm 0 completing on
-    // the resume writes its whole scope as its export.
+    // the resume writes its whole scope as its export. `parallel` is retired
+    // from version 5: version 4 is the last that has it.
     const { resumed } = await parkAndResume({
-      languageVersion: 5,
+      languageVersion: 4,
       source: movement(
         '  r = await parallel([',
         '    () => {',
@@ -601,17 +602,18 @@ describe('a reference read before its descriptor, and names like a descriptor me
 
 // B16: a `parallel` receipt's slot holding the record an arm handed back. From
 // version 5 `AT(r, i)` reads that record, as it does off a list literal; before
-// 5 it read null, and a program pinned there still does.
+// 5 it read null, and a program pinned there still does. Version 5 retired
+// `parallel`: its form there is a concurrent MAP calling each closure.
 describe("a combinator receipt's record slot, on both engines (B16)", () => {
-  const arms = (park: boolean) => [
-    '  r = await parallel([',
+  const arms = (languageVersion: 4 | 5, park: boolean) => [
+    languageVersion === 4 ? '  r = await parallel([' : '  r = MAP([',
     '    () => {',
     '      a = write crm-[:companies]-> { name: "arm 0" }',
     ...(park ? ['      await sleep(1h)'] : []),
     '      return a',
     '    },',
     '    () => 2',
-    '  ])',
+    languageVersion === 4 ? '  ])' : '  ], { concurrency: 2 }, (f) => f())',
     '  h = AT(r, 0)',
     '  write crm-[:notes]-> { body: CONCAT(COALESCE(AT(r, 0).name, "none"), "/", COALESCE(h.name, "none"), "/", IF AT(r, 0) == null THEN "missing" ELSE "held" END, "/", AT(r, 1)) }',
   ];
@@ -619,12 +621,12 @@ describe("a combinator receipt's record slot, on both engines (B16)", () => {
 
   for (const languageVersion of [4, 5] as const) {
     it(`version ${languageVersion}, no park`, async () => {
-      const { ts } = await both({ languageVersion, source: movement(...arms(false)) });
+      const { ts } = await both({ languageVersion, source: movement(...arms(languageVersion, false)) });
       expect(JSON.stringify(ts.calls)).toContain(expected[languageVersion]);
     });
 
     it(`version ${languageVersion}, the arm parked before its return`, async () => {
-      const { resumed } = await parkAndResume({ languageVersion, source: movement(...arms(true)) });
+      const { resumed } = await parkAndResume({ languageVersion, source: movement(...arms(languageVersion, true)) });
       expect(JSON.stringify(resumed.calls)).toContain(expected[languageVersion]);
     });
   }

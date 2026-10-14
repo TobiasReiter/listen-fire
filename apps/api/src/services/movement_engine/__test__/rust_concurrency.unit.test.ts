@@ -315,6 +315,14 @@ async function agree(c: Case) {
   return agreeUnder(c);
 }
 
+/** A case written as versions before 5 (Dancing Wren) read it — `parallel`,
+ *  retired from 5; a race over an untyped empty list, which 5 refuses — compares
+ *  under version 3 and under version 4. */
+async function agreeThroughVersion4(c: Case) {
+  await agreeUnder({ ...c, languageVersion: 3 });
+  return agreeUnder({ ...c, languageVersion: 4 });
+}
+
 async function agreeUnder(c: Case) {
   const ts = await runOn('ts', c);
   resetRustEvalStats();
@@ -346,7 +354,7 @@ const bodies = (o: Outcome): unknown[] => o.bodies.map((b) => (b as { body?: unk
 
 describe('parallel and race in the Rust engine', () => {
   it('runs a parallel’s arms and binds its receipt, slot by arm', async () => {
-    const { rust } = await agree({
+    const { rust } = await agreeThroughVersion4({
       source: program(
         [
           '  r = await parallel([',
@@ -382,13 +390,13 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('binds an empty receipt for a parallel over nothing, and fails a race over nothing', async () => {
-    await agree({ source: program('  arms = []\n  r = await parallel(arms)\n  write graph-[:note]-> { payload: { n: COUNT(r) } }') });
-    const { rust } = await agree({ source: program('  arms = []\n  r = await race(arms)') });
+    await agreeThroughVersion4({ source: program('  arms = []\n  r = await parallel(arms)\n  write graph-[:note]-> { payload: { n: COUNT(r) } }') });
+    const { rust } = await agreeThroughVersion4({ source: program('  arms = []\n  r = await race(arms)') });
     expect(rust.error).toContain('a race over no arms can never settle');
   });
 
   it('runs arms built at run time, and named closures as arms', async () => {
-    await agree({
+    await agreeThroughVersion4({
       source: program(
         [
           '  arms = MAP([1, 2], (n) => {',
@@ -408,7 +416,7 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('fails with the earliest arm’s failure once every arm has stopped', async () => {
-    const { rust } = await agree({
+    const { rust } = await agreeThroughVersion4({
       source: program(
         [
           '  r = await parallel([',
@@ -423,7 +431,7 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('parks a parallel whose arms sleep, keeping the finished arm’s slot at the frame', async () => {
-    const { rust } = await agree({
+    const { rust } = await agreeThroughVersion4({
       source: program(
         [
           '  r = await parallel([',
@@ -578,7 +586,8 @@ describe('parks resumed across the engines', () => {
     const source = program(
       ['  r = await parallel([', '    () => { return "now" },', '    () => {', '      await sleep(1h)', '      return "later"', '    },', '  ])', '  write graph-[:note]-> { payload: { r: r } }'].join('\n'),
     );
-    const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p) })]);
+    // `parallel` is retired from version 5: version 4 is the last that has it.
+    const { last } = await parkThenResume({ source, languageVersion: 4 }, [(p) => ({ source, languageVersion: 4, resume: parkAt(p) })]);
     for (const o of last) expect(o.events.map(([method]) => method)).toContain('collectBranchExports');
   });
 
