@@ -21,12 +21,20 @@ node scripts/build_data.cjs             # .work/capture → data.js (refuses a f
 ./scripts/fetch_fonts.sh                # Inter + JetBrains Mono, local
 node scripts/render.cjs --stills 24 34 46 53   # check frames in stills/
 node scripts/render.cjs                 # listen-fire-hero.mp4, 1080p30, about 8 minutes
+node scripts/render.cjs --page operator.html   # listen-fire-operator.mp4, the plain English cut
 ```
+
+There are two cuts of the same run. `demo.html` shows the agent's tool calls and
+the program; `operator.html` is for non-technical viewers, with no code on screen.
+Both share `demo.css` and read the same `data.js`.
 
 On a Mac, skip `boot.sh`: run `pnpm dev:loop:agent`, then
 `pnpm dev:seed && pnpm dev:gmail setup`, with `ANTHROPIC_API_KEY` in
 `apps/api/.env`. The scripts need `jq` and `ffmpeg`, and rendering uses
 Playwright's Chromium (`npx playwright install chromium` if it is missing).
+Use the repository's Node (`.nvmrc`, 22.20) and its pinned pnpm (`corepack pnpm`):
+under an older Node the API fails to start, and a native module built under
+one Node version must be rebuilt for another.
 
 `boot.sh` is for a fresh Linux cloud container. It pulls the Postgres and
 Redis images through `mirror.gcr.io` (Docker Hub rate-limits these hosts),

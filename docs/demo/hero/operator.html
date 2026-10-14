@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Listen-Fire operator demo</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="demo.css">
+<style>
+  /* the business cut: one wide chat column, bigger type, no code on screen */
+  #chat { left: 330px; top: 116px; width: 1260px; }
+  .bubble { font-size: 27px; line-height: 1.45; padding: 22px 28px; }
+  .who { font-size: 16px; }
+  .agent { margin-top: 30px; }
+  .step { display: flex; align-items: center; gap: 14px; font-size: 25px; color: var(--dim); margin: 0 0 14px 4px; }
+  .step .st { width: 24px; text-align: center; font-weight: 700; }
+  .step .spin { width: 18px; height: 18px; }
+
+  #catch { margin: 6px 0 20px 0; border: 1px solid rgba(251,191,36,.35); background: rgba(251,191,36,.07);
+    border-radius: 16px; padding: 22px 28px; }
+  #catch .head { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.6px; color: var(--amber); margin-bottom: 12px; }
+  #catch .line { font-size: 27px; line-height: 1.4; }
+  #catch .opts { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 14px 0 0; font-size: 22px; color: var(--dim); }
+  #catch .opt { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 16px; color: var(--text); font-size: 22px; }
+  #catch .opt.pick { border-color: rgba(74,222,128,.6); background: rgba(74,222,128,.15); color: var(--green); font-weight: 700; }
+  #catch .use { font-size: 27px; margin-top: 14px; }
+  #catch .use b { color: var(--green); }
+
+  #codecard { margin-top: 18px; display: inline-flex; align-items: center; gap: 14px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 18px; font-size: 19px; color: var(--dim); }
+  #codecard .ic { font-family: 'JetBrains Mono'; font-size: 16px; color: var(--faint); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
+  #codecard b { color: var(--text); font-weight: 600; }
+  #codecard .view { color: var(--accent2); font-weight: 600; }
+
+  /* run stage */
+  #email { top: 200px; }
+  #done { left: 680px; top: 200px; width: 570px; }
+  .ck { display: flex; align-items: flex-start; gap: 14px; font-size: 22px; line-height: 1.35; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .ck:last-child { border-bottom: 0; }
+  .ck .ok { color: var(--green); font-weight: 800; width: 20px; flex: none; }
+  .ck b { font-weight: 700; }
+  #results { left: 1290px; top: 200px; width: 550px; }
+  #runstat { top: 880px; font-size: 40px; font-weight: 700; letter-spacing: -.6px; }
+  #runstat b { color: var(--accent); }
+
+  #closing .cols { top: 330px; }
+  .col h3 { font-size: 36px; }
+  .col p { font-size: 24px; }
+  #stat { top: 660px; }
+</style>
+</head>
+<body>
+<div id="glow"></div>
+
+<div id="title"><div class="center h1" id="t1" style="top:400px; font-size:76px">Your agent writes the automation once.</div><div class="center h2" style="top:510px">It runs on every event after that, <b>without the agent</b>.</div></div>
+
+<!-- ask -->
+<div id="stage">
+  <div class="abs" id="wordmark">listen<span>-</span>fire</div>
+  <div id="chat" class="abs">
+    <div class="user"><div class="who">You</div><div class="bubble" id="ubub"></div></div>
+    <div class="agent" id="agent">
+      <div class="who">Claude</div>
+      <div class="step" id="s1"><span class="st"></span><span class="tx"></span></div>
+      <div class="step" id="s2"><span class="st"></span><span class="tx"></span></div>
+      <div id="catch">
+        <div class="head">Caught before anything ran</div>
+        <div class="line" id="cline"></div>
+        <div class="opts" id="copts"></div>
+        <div class="use" id="cuse"></div>
+      </div>
+      <div class="bubble" id="abub"></div>
+      <div id="codecard"></div>
+    </div>
+  </div>
+</div>
+
+<!-- later -->
+<div class="center" id="later">Later that day</div>
+
+<!-- it happens -->
+<div id="runstage">
+  <div class="abs card" id="email">
+    <div class="lbl">Gmail · inbox <span class="pill" id="elabel" style="background:rgba(255,122,69,.18);color:var(--accent2)"></span></div>
+    <div class="from" id="efrom"></div><div class="addr" id="eaddr"></div>
+    <div class="subj" id="esubj"></div><div class="body" id="ebody"></div>
+  </div>
+  <div class="abs card" id="done">
+    <div class="lbl" id="dtitle"></div>
+    <div id="checks"></div>
+  </div>
+  <div class="abs" id="results">
+    <div class="card res" id="r1"><div class="lbl" id="r1lbl"></div><div class="kv" id="r1kv"></div></div>
+    <div class="card res" id="r3"><div class="lbl" id="r3lbl"></div>
+      <div class="sl"><div class="av"></div><div><div class="nm">Listen-Fire<small>APP</small></div><div class="tx" id="r3tx"></div></div></div></div>
+  </div>
+  <div class="center" id="runstat"></div>
+</div>
+
+<!-- closing -->
+<div id="closing">
+  <div class="cols">
+    <div class="col" id="k1"><h3>Just ask</h3><p>Describe what you want in plain English. Your AI assistant sets it up.</p></div>
+    <div class="col" id="k2"><h3>Catches mistakes first</h3><p>It checks against your real tools before anything runs.</p></div>
+    <div class="col" id="k3"><h3>Runs on its own</h3><p>Every time, without you or the AI in the loop.</p></div>
+  </div>
+  <div class="center" id="stat">From idea to working automation in <b>~30 seconds</b>.</div>
+</div>
+<div id="endmark" class="center"><div class="h1">listen<span>-</span>fire</div>
+  <div class="h2" style="margin-top:18px; font-size:40px">The automation language for agents.</div></div>
+
+<div class="abs" id="footer">Real run · Listen-Fire dev loop with stand-in Gmail, Attio &amp; Slack</div>
+<div class="abs" id="caption"></div>
+
+<script src="data.js"></script>
+<script src="operator_timeline.js"></script>
+</body>
+</html>
