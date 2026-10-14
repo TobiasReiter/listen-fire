@@ -182,7 +182,9 @@ const RAN_WHOLE_FLOOR = { v1: 1034, v2: 1271, v3: 2240, v4: 2273 };
 //     where it was measured.
 //
 // Reported and allowed: `endedAtCheck` (the run failed its check before a
-// segment opened).
+// segment opened: nothing ran). `failedCheckMidRun` (the run passed its check,
+// ran a segment, then failed `check.compatible`) is its own class, ceilinged
+// at its measured value per corpus.
 //
 // Measured at 47109a3733 (2026-10-12): refused v1 12, v2 21, v3 86 (every
 // reason 12 / 23 / 95); declined v3 3 (`expression_does_not_lower`);
@@ -241,6 +243,7 @@ const CEILINGS = {
     everyReason: {},
     declined: {},
     unreproduced: 0,
+    failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
     evaluatorNotAdmitted: 47,
@@ -251,6 +254,7 @@ const CEILINGS = {
     everyReason: {},
     declined: {},
     unreproduced: 0,
+    failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
     evaluatorNotAdmitted: 47,
@@ -261,6 +265,7 @@ const CEILINGS = {
     everyReason: {},
     declined: {},
     unreproduced: 0,
+    failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
     evaluatorNotAdmitted: 67,
@@ -271,6 +276,7 @@ const CEILINGS = {
     everyReason: {},
     declined: {},
     unreproduced: 0,
+    failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
     evaluatorNotAdmitted: 79,
@@ -317,7 +323,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.MOVEMENT_RUST_EVAL_STATS_DIR;
   if (process.env.MOVEMENT_ENGINE !== 'rust' || dir === undefined || !existsSync(dir)) return;
   const total = { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} };
-  const runs = { routed: 0, admitted: 0, ranWhole: 0, mirroredFailure: 0, unreproduced: 0, shimFaults: 0, endedAtCheck: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
+  const runs = { routed: 0, admitted: 0, ranWhole: 0, mirroredFailure: 0, unreproduced: 0, shimFaults: 0, endedAtCheck: 0, failedCheckMidRun: 0, notAdmitted: {}, allReasons: {}, declined: {}, hostCalls: {} };
   // The admission dry run asks only about runs MOVEMENT_ENGINE kept from
   // Rust: under rust, it must have asked about none.
   const dryRun = { firings: 0, sampled: 0 };
@@ -340,6 +346,7 @@ async function globalTeardown(globalConfig, projectConfig) {
       runs.mirroredFailure += stats.runs?.mirroredFailure ?? 0;
       runs.unreproduced += stats.runs?.unreproduced ?? 0;
       runs.endedAtCheck += stats.runs?.endedAtCheck ?? 0;
+      runs.failedCheckMidRun += stats.runs?.failedCheckMidRun ?? 0;
       if ((stats.runs?.ranWhole ?? 0) > 0 && stats.file) byFile[stats.file] = (byFile[stats.file] ?? 0) + stats.runs.ranWhole;
       add(runs.notAdmitted, stats.runs?.notAdmitted);
       add(runs.allReasons, stats.runs?.allReasons);
@@ -354,7 +361,7 @@ async function globalTeardown(globalConfig, projectConfig) {
   console.log(`\nRust evaluator: ${JSON.stringify(total)}`);
   // Routed: segments the Rust engine started, its own admission's refusals
   // among them. Admitted: those its admission let by.
-  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, mirroredFailure: runs.mirroredFailure, unreproduced: runs.unreproduced, shimFaults: runs.shimFaults, endedAtCheck: runs.endedAtCheck, declined: runs.declined, hostCalls: runs.hostCalls })}`);
+  console.log(`Rust runs: ${JSON.stringify({ runsRouted: runs.routed, runsAdmitted: runs.admitted, ranWhole: runs.ranWhole, mirroredFailure: runs.mirroredFailure, unreproduced: runs.unreproduced, shimFaults: runs.shimFaults, endedAtCheck: runs.endedAtCheck, failedCheckMidRun: runs.failedCheckMidRun, declined: runs.declined, hostCalls: runs.hostCalls })}`);
   // Every count with its denominator: each run the Rust route was entered
   // for ends in exactly one of these.
   console.log(`Rust runs, ${ranWholeOf(runs)}`);
@@ -413,8 +420,8 @@ const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
 function ranWholeOf(runs) {
   const refused = sum(runs.notAdmitted);
   const declined = sum(runs.declined);
-  const attempted = runs.ranWhole + refused + runs.mirroredFailure + runs.unreproduced + declined + runs.endedAtCheck + runs.shimFaults;
-  return `ran whole ${runs.ranWhole} of ${attempted} runs attempted (${refused} refused at admission by name, ${runs.mirroredFailure} ended in the TypeScript's own failure by name, mirrored, ${runs.unreproduced} unreproduced mid-run, ${declined} declined, ${runs.endedAtCheck} failed their check before a segment opened, ${runs.shimFaults} shim faults)`;
+  const attempted = runs.ranWhole + refused + runs.mirroredFailure + runs.unreproduced + declined + runs.endedAtCheck + runs.failedCheckMidRun + runs.shimFaults;
+  return `ran whole ${runs.ranWhole} of ${attempted} runs attempted (${refused} refused at admission by name, ${runs.mirroredFailure} ended in the TypeScript's own failure by name, mirrored, ${runs.unreproduced} unreproduced mid-run, ${declined} declined, ${runs.endedAtCheck} failed their check before a segment opened, ${runs.failedCheckMidRun} failed a check mid-run (check.compatible), ${runs.shimFaults} shim faults)`;
 }
 
 /** What the run's counts say of each ceilinged class (`CEILINGS`). */
@@ -424,6 +431,7 @@ function measured(total, runs) {
     everyReason: runs.allReasons,
     declined: runs.declined,
     unreproduced: runs.unreproduced,
+    failedCheckMidRun: runs.failedCheckMidRun,
     shimFaults: runs.shimFaults,
     handBacks: {
       'builtins.function': runs.hostCalls['builtins.function'] ?? 0,

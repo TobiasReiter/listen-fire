@@ -62,7 +62,7 @@ describe('the teardown', () => {
 
   /** The teardown of a v2 run narrowed to some files, over one file's stats. */
   function tearDownWith(
-    runs: { routed: number; admitted: number; ranWhole: number; mirroredFailure?: number; unreproduced?: number; endedAtCheck?: number },
+    runs: { routed: number; admitted: number; ranWhole: number; mirroredFailure?: number; unreproduced?: number; endedAtCheck?: number; failedCheckMidRun?: number },
     reasons: {
       evaluatorNotAdmitted?: number;
       notAdmitted?: Record<string, number>;
@@ -114,7 +114,7 @@ describe('the teardown', () => {
     ).catch(() => undefined);
     const lines = log.mock.calls.map(([line]) => String(line));
     expect(lines).toContain(
-      'Rust runs, ran whole 4 of 12 runs attempted (3 refused at admission by name, 2 ended in the TypeScript\'s own failure by name, mirrored, 1 unreproduced mid-run, 1 declined, 1 failed their check before a segment opened, 0 shim faults)',
+      'Rust runs, ran whole 4 of 12 runs attempted (3 refused at admission by name, 2 ended in the TypeScript\'s own failure by name, mirrored, 1 unreproduced mid-run, 1 declined, 1 failed their check before a segment opened, 0 failed a check mid-run (check.compatible), 0 shim faults)',
     );
   });
 
@@ -150,6 +150,10 @@ describe('the teardown', () => {
 
     it('fails any run that ended unreproduced: a divergence', async () => {
       await expect(tearDownWith({ routed: 2, admitted: 2, ranWhole: 1, unreproduced: 1 })).rejects.toThrow('unreproduced 1 > 0');
+    });
+
+    it('fails a run that failed a check mid-run, after a segment ran: its own class, apart from the check endings', async () => {
+      await expect(tearDownWith({ routed: 2, admitted: 2, ranWhole: 1, failedCheckMidRun: 1 })).rejects.toThrow('failedCheckMidRun 1 > 0');
     });
 
     it('allows mirrored failures up to their ceiling, and any check ending', async () => {

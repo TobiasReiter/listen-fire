@@ -245,7 +245,8 @@ async function segmentInRust(
     // the engine's own `check.program` ended it, counted as the run host's
     // check ending is, never as a run the engine ran.
     if (isCheckFailure(error)) {
-      endedAtItsCheck(input);
+      if (checked === undefined) endedAtItsCheck(input);
+      else failedCheckMidRun(input);
       throw error;
     }
     // Anything else ends in a `done` past admission.
@@ -350,6 +351,10 @@ const SHIM_FAULT = 'shim_fault';
  *  ended there, on either engine, and no engine ran it. */
 export const ENDED_AT_CHECK = 'ended_at_check';
 
+/** The reason a run that failed `check.compatible` after its segment ran is
+ *  logged with. */
+export const FAILED_CHECK_MID_RUN = 'failed_check_mid_run';
+
 /**
  * The Rust route's check (`check`: run.ts's own, `checkPinned`), made where
  * the TypeScript route makes it: before the segment opens, so a program that
@@ -375,6 +380,18 @@ export function checkBeforeRustSegment(input: Pick<RunMovementInput, 'runId' | '
 function endedAtItsCheck(input: Pick<RunMovementInput, 'runId' | 'dryRun'>): void {
   rustRunStats.endedAtCheck += 1;
   noteEngine(input, 'rust', ENDED_AT_CHECK);
+}
+
+/** A run the check had already passed (`checked`) that then failed a check
+ *  mid-run (`check.compatible`, an `IS <Decl>` test of a system's record),
+ *  after its segment opened and made host requests: not "ended at the check",
+ *  which means nothing ran. Counted apart, routed and admitted as any run
+ *  that ends in the failure it mirrors. */
+function failedCheckMidRun(input: Pick<RunMovementInput, 'runId' | 'dryRun'>): void {
+  rustRunStats.routed += 1;
+  rustRunStats.admitted += 1;
+  rustRunStats.failedCheckMidRun += 1;
+  noteEngine(input, 'rust', FAILED_CHECK_MID_RUN);
 }
 
 /** A run that never ran in Rust: counted by its first reason and under each

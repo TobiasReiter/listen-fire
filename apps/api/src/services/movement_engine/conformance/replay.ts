@@ -98,6 +98,7 @@ export const rustTarget: ReplayTarget = {
       unreproduced: rustRunStats.unreproduced,
       shimFaults: rustRunStats.shimFaults,
       endedAtCheck: rustRunStats.endedAtCheck,
+      failedCheckMidRun: rustRunStats.failedCheckMidRun,
       notAdmitted: { ...rustRunStats.notAdmitted },
       declined: { ...rustRunStats.declined },
     };
@@ -115,7 +116,8 @@ export const rustTarget: ReplayTarget = {
       rustRunStats.mirroredFailure > before.mirroredFailure ||
       rustRunStats.unreproduced > before.unreproduced ||
       rustRunStats.shimFaults > before.shimFaults ||
-      rustRunStats.endedAtCheck > before.endedAtCheck
+      rustRunStats.endedAtCheck > before.endedAtCheck ||
+      rustRunStats.failedCheckMidRun > before.failedCheckMidRun
     ) {
       return verdict;
     }

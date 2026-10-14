@@ -58,6 +58,10 @@ export function resetRustEvalStats(): void {
  *   `MOVENG_CHECK`, `MOVENG_LANGUAGE_VERSION`), which the Rust route checks
  *   before it opens a segment, as the TypeScript route does: never routed,
  *   and the same ending on either engine, with no host request made;
+ * - `failedCheckMidRun`: routed, admitted runs that passed their check, ran
+ *   a segment, and then failed a check mid-run (`check.compatible`, an
+ *   `IS <Decl>` test): the run ended in a check's failure after an effect
+ *   could have happened, so it is not `endedAtCheck`, which means nothing ran;
  * - `shimFaults`: routed runs that ended in a fault of the shim's own
  *   (`RustShimError`);
  * - `hostCalls`: the host calls segments made, by `family.method`.
@@ -78,6 +82,7 @@ export const rustRunStats: {
   unreproduced: number;
   shimFaults: number;
   endedAtCheck: number;
+  failedCheckMidRun: number;
   notAdmitted: Record<string, number>;
   allReasons: Record<string, number>;
   declined: Record<string, number>;
@@ -91,6 +96,7 @@ export const rustRunStats: {
   unreproduced: 0,
   shimFaults: 0,
   endedAtCheck: 0,
+  failedCheckMidRun: 0,
   notAdmitted: {},
   allReasons: {},
   declined: {},
@@ -106,6 +112,7 @@ export function resetRustRunStats(): void {
   rustRunStats.unreproduced = 0;
   rustRunStats.shimFaults = 0;
   rustRunStats.endedAtCheck = 0;
+  rustRunStats.failedCheckMidRun = 0;
   rustRunStats.notAdmitted = {};
   rustRunStats.allReasons = {};
   rustRunStats.declined = {};
