@@ -120,6 +120,7 @@ import {
   spreadSourceText,
   type ParamTypeRef,
   type ValueTypeMember,
+  type ClosureTypeRef,
 } from '../parser/ast';
 import { argumentBindings, isPositionalCall, isValueTypeRef, slotClosureName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
@@ -4490,9 +4491,34 @@ class Checker {
         const of = unifyValueTypes(Object.values(shape).map(t => stripAbsent(t))) ?? 'json';
         return { kind: 'dict', of, shape };
       }
+      case 'closure':
+        return this.writtenClosureType(member, scope, report);
       default:
         return neverAsAny(member);
     }
+  }
+
+  /**
+   * `<(c: <Company>) => <text>>` (language version 5) — the closure value a
+   * written closure type is: TypeScript's function type, its parameters and
+   * what it returns as written. What calling it DOES is not written, so its row
+   * is unknown, as a call nobody can see into is. Undefined when a parameter or
+   * the return names nothing (reported when `report` is set).
+   */
+  private writtenClosureType(member: ClosureTypeRef, scope: Scope, report: boolean): FieldType | undefined {
+    const plane = (type: ParamTypeRef, name: string, span: Span): PlaneType =>
+      report ? this.closureParamShape({ name, type, span }, scope) : this.planeTypeOf(type, scope);
+    const params: ClosureParam[] = [];
+    for (const param of member.params) {
+      if (param.type === undefined) return undefined; // the parser refuses it
+      const type = plane(param.type, param.name, param.span);
+      if (type.fieldType === undefined && type.posType === undefined) return undefined;
+      params.push({ name: param.name, ...type });
+    }
+    const returned = plane(member.returns, 'return', member.span);
+    if (returned.fieldType === undefined && returned.posType === undefined) return undefined;
+    const closure = closureType(params, { returns: true, ...returned }, UNKNOWN_ROW);
+    return recordOf({ ...closure, label: `a closure <${spellValueType(member)}>` } as PositionTypeRef);
   }
 
   /**
@@ -10980,6 +11006,29 @@ class Checker {
         return;
       }
       case 'closure':
+        // From version 5 a closure is a value, and one written in place is
+        // handed to a parameter that takes one, as TypeScript's is: its
+        // parameters typed by the parameter's closure type where it leaves
+        // them out (contextual typing), and it is held to that type.
+        if (since(this.languageVersion, 5)) {
+          const expected = param?.type.fieldType !== undefined ? closureOfValue(param.type.fieldType) : undefined;
+          const { params, returns, effects } = this.checkClosure(arg.closure, scope, {
+            label: `the argument${describeArgPlace(fit)} to '${callee}'`,
+            ...(expected !== undefined ? { suppliedParams: expected.params.map(({ name: _name, ...type }) => type) } : {}),
+          });
+          const value = recordOf(closureType(params, returns, effects));
+          if (param?.type.fieldType !== undefined) {
+            this.checkValueArgFit(fit, param.type.fieldType, value, { span: arg.span });
+          } else if (param?.type.posType !== undefined) {
+            this.report(
+              DiagnosticCodes.CALL_ARG_TYPE,
+              `'${callee}' expects ${describePosition(param.type.posType)}${describeArgPlace(fit)}, but this argument is a closure — a record parameter takes a record; declare the parameter as a closure type ('<() => <text>>') to pass a function`,
+              arg.span,
+            );
+          }
+          return;
+        }
+      // falls through: before 5 a function is not a value
       case 'type':
         // What `MAP` and `MEMBERS` take. A movement's parameter holds a value
         // or a record, and a function or a type is not yet a value.

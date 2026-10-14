@@ -1163,6 +1163,13 @@ export function displayNameOf(instance: InstanceRef, position: string): string {
   return instance.schema.positions[position]?.displayName ?? position;
 }
 
+function describeClosureReturn(shape: ReturnShape): string {
+  if (!shape.returns) return 'nothing';
+  const held = shape.mayHold ?? shape.fieldType;
+  if (held !== undefined) return describeFieldType(held);
+  return shape.posType !== undefined ? describePosition(shape.posType) : 'something nobody can type';
+}
+
 export function describePosition(type: PositionTypeRef): string {
   switch (type.kind) {
     case 'meta':
@@ -1186,7 +1193,9 @@ export function describePosition(type: PositionTypeRef): string {
         ? 'the extract result'
         : `the extracted node '${type.node.name}'`;
     case 'closure':
-      return type.label;
+      // An inferred closure says what calling it hands back, so a misfit
+      // against a closure type reads as one.
+      return type.label === 'a closure' ? `a closure returning ${describeClosureReturn(type.returns)}` : type.label;
     case 'local':
       return type.label;
     case 'maybeEmpty':
@@ -3307,6 +3316,20 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   source = stripAbsent(source);
   target = stripAbsent(target);
   if (fieldTypeEquals(source, target)) return true;
+  // A closure reads as a closure type when its parameters take what the
+  // type's do and it returns what the type's does — TypeScript's function
+  // assignability (language version 5).
+  const sourceClosure = closureOfRecord(source);
+  const targetClosure = closureOfRecord(target);
+  if (sourceClosure !== undefined && targetClosure !== undefined) return closureAssignable(sourceClosure, targetClosure);
+  // A list (or a tuple, widened) of closures reads as a list of a closure
+  // type member by member — `T[]` is assignable to `U[]` when `T` is to `U`.
+  const targetList = variantOf(target);
+  if (targetList.kind === 'list' && closureOfRecord(stripAbsent(targetList.of)) !== undefined) {
+    const sourceList = isTupleType(source) ? widenTuple(source, 'shared') : source;
+    const members = sourceList === undefined ? undefined : variantOf(sourceList);
+    if (members?.kind === 'list') return fieldAssignable(members.of, targetList.of);
+  }
   // A record or a file held anywhere inside a value, where the target holds
   // none — the write rule's own (`fieldTypeCompatible`), asked before a tuple widens.
   if (handleRefusedBy(source, target) !== undefined) return false;
@@ -3341,6 +3364,52 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   if (isEnumType(target)) return false;
   return comparisonCategory(source) === comparisonCategory(target)
     && comparisonCategory(source) !== 'structural';
+}
+
+type ClosurePosition = Extract<PositionTypeRef, { kind: 'closure' }>;
+
+function closureOfRecord(type: FieldType): ClosurePosition | undefined {
+  if (typeof type === 'string') return undefined;
+  const variant = variantOf(type);
+  return variant.kind === 'record' && variant.position?.kind === 'closure' ? variant.position : undefined;
+}
+
+/** A value or a position a closure's parameter or return is typed by. */
+function planeFits(source: PlaneType, target: PlaneType): boolean {
+  if (target.fieldType !== undefined) {
+    if (source.fieldType !== undefined) return fieldAssignable(source.fieldType, target.fieldType);
+    return source.posType === undefined || fieldAssignable(recordValueOf(source.posType)!, target.fieldType);
+  }
+  if (target.posType !== undefined) {
+    if (source.posType !== undefined) return positionsMatch(source.posType, target.posType) !== false;
+    return source.fieldType === undefined || isRecordType(source.fieldType);
+  }
+  return true;
+}
+
+/**
+ * TypeScript's function assignability: a closure stands where a closure type
+ * is expected when it takes no more parameters than the type supplies, each
+ * of its parameters accepts what the type's hands it (contravariance), and
+ * what it returns is what the type's returns (covariance) — what it may hold
+ * included. A type that returns nothing takes any closure's answer, as
+ * TypeScript's `() => void` does. What nobody could type says nothing.
+ */
+function closureAssignable(source: ClosurePosition, target: ClosurePosition): boolean {
+  if (source.params.length > target.params.length) return false;
+  if (!source.params.every((param, i) => planeFits(target.params[i]!, param))) return false;
+  if (!target.returns.returns) return true;
+  if (!source.returns.returns) return false;
+  const held = source.returns.mayHold;
+  const returned: PlaneType = held !== undefined ? { fieldType: held } : {
+    ...(source.returns.fieldType !== undefined ? { fieldType: source.returns.fieldType } : {}),
+    ...(source.returns.posType !== undefined ? { posType: source.returns.posType } : {}),
+  };
+  const expected: PlaneType = {
+    ...(target.returns.fieldType !== undefined ? { fieldType: target.returns.fieldType } : {}),
+    ...(target.returns.posType !== undefined ? { posType: target.returns.posType } : {}),
+  };
+  return planeFits(returned, expected);
 }
 
 function acceptsAnyNarrowing(

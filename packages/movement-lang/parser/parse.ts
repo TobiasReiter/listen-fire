@@ -4006,6 +4006,7 @@ class Parser {
    */
   private tryReadValueTypeMarker(paramName: string): ValueTypeRef | undefined {
     const start = this.pos;
+    if (this.atClosureType()) return this.readListSuffix(this.readClosureType(paramName), start);
     if (this.peekCh() !== '<' || !since(this.languageVersion, 3)) return undefined;
     this.pos++;
     this.skipInlineWs();
@@ -4042,6 +4043,8 @@ class Parser {
     let member: ValueTypeMember;
     if (this.peekCh() === '{') {
       member = this.readValueRecordType(paramName);
+    } else if (this.atClosureType()) {
+      member = this.readClosureType(paramName);
     } else if (this.peekCh() === '<') {
       this.error(
         `Inside a type's angle brackets the members are bare type names — write '${paramName}: <{ key: text }>', not '<{ key: <text> }>'`,
@@ -4062,6 +4065,75 @@ class Parser {
       member = { kind: 'list', of: member, span: this.spanFrom(start) };
     }
     return member;
+  }
+
+  /** At `<(` — a closure type's opening? */
+  private atClosureType(): boolean {
+    if (this.peekCh() !== '<') return false;
+    let at = this.pos + 1;
+    while (this.src[at] === ' ' || this.src[at] === '\t') at++;
+    return this.src[at] === '(';
+  }
+
+  /**
+   * `<(c: <Company>) => <text>>` — a closure type (language version 5),
+   * TypeScript's `(c: Company) => string`. The parameters are a function's own
+   * parameter list, every one typed; the return is written as a function's
+   * return annotation is. A list of closures is `<() => <text>>[]` (the
+   * caller reads the `[]`); a closure that returns a list is
+   * `<() => <text[]>>`.
+   */
+  private readClosureType(paramName: string): ValueTypeRef {
+    const start = this.pos;
+    if (before(this.languageVersion, 5)) {
+      this.error(
+        `A closure type ('<(c: <Company>) => <text>>') is written from language version 5 (Dancing Wren); this movement is pinned to version ${this.languageVersion}, where a closure is not a value — move the movement up to version 5 to type '${paramName}' as a closure`,
+        start,
+      );
+    }
+    this.pos++; // '<'
+    this.skipInlineWs();
+    this.expect('(', "to open a closure type's parameter list");
+    const params = this.parseParamList();
+    for (const param of params) {
+      if (param.type === undefined) {
+        this.error(
+          `A closure type's parameter '${param.name}' needs a type — a caller of the closure is checked against it: write '${param.name}: <text>' (or whatever it takes)`,
+          start,
+        );
+      }
+    }
+    this.skipInlineWs();
+    this.expect('=>', "between a closure type's parameters and its return type (e.g. '<(c: <Company>) => <text>>')");
+    this.skipInlineWs();
+    if (this.peekCh() !== '<') {
+      this.error(`Expected a closure type's return type after '=>', in angle brackets: '<() => <text>>'`);
+    }
+    const returns = this.readParamType(paramName, `for the return type of a closure type (e.g. '<() => <text>>')`);
+    this.skipInlineWs();
+    if (this.peekCh() === '[') {
+      this.error(
+        `A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>', and a list of closures is '<() => <text>>[]'`,
+      );
+    }
+    this.expect('>', `to close the closure type of '${paramName}'`);
+    return { kind: 'closure', params, returns, span: this.spanFrom(start) };
+  }
+
+  /** `<…>[]` — the written type as the element of a list, once per `[]`. */
+  private readListSuffix(type: ValueTypeRef, start: number): ValueTypeRef {
+    let member = type;
+    for (;;) {
+      const save = this.pos;
+      this.skipInlineWs();
+      if (!this.tryConsume('[')) {
+        this.pos = save;
+        return member;
+      }
+      this.skipInlineWs();
+      this.expect(']', `to close '[]' — a list of closures is written '<() => <text>>[]'`);
+      member = { kind: 'list', of: member, span: this.spanFrom(start) };
+    }
   }
 
   /** `{ mode: text, owner?: text }` — keys separated by ',', ';' or newlines. */

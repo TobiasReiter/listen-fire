@@ -406,3 +406,32 @@ describe('a closure\'s value flows through every value position, and a call thro
     expect(await payloadWith(body)).toEqual({ x: 'one' });
   });
 });
+
+describe('a parameter of closure type (<(params) => <return>>)', () => {
+  const FNS = [
+    'function callAll(fs: <() => <text>>[]) {',
+    '  return MAP(fs, (f) => f())',
+    '}',
+    'function run(h: <(n: <number>) => <number>>) {',
+    '  return h(20)',
+    '}',
+  ].join('\n');
+  async function payloadWith(body: string[]): Promise<unknown> {
+    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('movement recap', `${FNS}\nmovement recap`);
+    const parks = makeParkSink();
+    const { kg } = await start(source, parks);
+    return payloadOf(kg.creates);
+  }
+
+  it('a list of closures is passed, and each member is called', async () => {
+    expect(await payloadWith(['  k = "b"', '  x = callAll([() => "a", () => k])'])).toEqual({ x: ['a', 'b'] });
+  });
+
+  it('a closure written in place is the argument, holding its scope', async () => {
+    expect(await payloadWith(['  k = 2', '  x = run((n) => n + k)'])).toEqual({ x: 22 });
+  });
+
+  it('a closure taking fewer parameters than the type supplies is called, the extra argument dropped', async () => {
+    expect(await payloadWith(['  x = run(() => 5)'])).toEqual({ x: 5 });
+  });
+});

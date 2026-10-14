@@ -1360,7 +1360,23 @@ export interface MovementParam {
  */
 export type ValueTypeRef =
   | { kind: 'list'; of: ValueTypeMember; span: Span }
-  | { kind: 'record'; keys: ValueTypeKey[]; span: Span };
+  | { kind: 'record'; keys: ValueTypeKey[]; span: Span }
+  /**
+   * `<(c: <Company>) => <text>>` — a CLOSURE type (language version 5),
+   * TypeScript's function type: what each parameter takes and what calling it
+   * hands back. Written in its own angle brackets wherever it appears — a
+   * parameter, a return, a record key — and `<…>[]` is a list of them
+   * (`arms: <() => <text>>[]`). Every parameter is typed, as the caller of a
+   * value of this type is checked against them.
+   */
+  | ClosureTypeRef;
+
+export interface ClosureTypeRef {
+  kind: 'closure';
+  params: MovementParam[];
+  returns: ParamTypeRef;
+  span: Span;
+}
 
 /** What a written value type is built from: a type NAME (a scalar, or a
  *  declared refinement) or another written value type. */
@@ -1400,9 +1416,11 @@ export function spellValueType(type: ValueTypeMember): string {
     case 'name':
       return type.name;
     case 'list':
-      return `${spellValueType(type.of)}[]`;
+      return type.of.kind === 'closure' ? `<${spellValueType(type.of)}>[]` : `${spellValueType(type.of)}[]`;
     case 'record':
       return `{ ${type.keys.map(key => `${key.name}${key.optional ? '?' : ''}: ${spellValueType(key.type)}`).join(', ')} }`;
+    case 'closure':
+      return `(${type.params.map(param => `${param.name}: <${param.type !== undefined ? spellParamType(param.type) : '?'}>`).join(', ')}) => <${spellParamType(type.returns)}>`;
   }
 }
 

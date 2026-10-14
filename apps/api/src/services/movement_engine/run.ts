@@ -6073,6 +6073,14 @@ class Interpreter {
     event: CallEvent,
   ): Promise<Binding | undefined> {
     const params = new Map(closure.closure.params.map((param) => [param.name, param]));
+    // From version 5 a closure stands where a closure type is expected when it
+    // takes FEWER parameters than the type supplies (TypeScript's rule), so a
+    // call through the type may hand it more arguments than it declares: they
+    // are evaluated, in order, and dropped, as JavaScript drops them.
+    const extra = since(this.languageVersion, 5) && isPositionalCall(statement.args) && statement.args.length > params.size
+      ? statement.args.slice(params.size)
+      : [];
+    if (extra.length > 0) statement = { ...statement, args: statement.args.slice(0, params.size) };
     if (statement.args.length !== params.size) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -6089,8 +6097,13 @@ class Interpreter {
           `'${statement.callee}' has no parameter ${arg.name !== undefined ? `'${arg.name}'` : 'for this argument'} — the checker should have caught this`,
         );
       }
-      values[param] = await this.evaluateCallArg(arg, env, body, { takesValue: isValueParam(declared, types) });
+      // A parameter with no written type (language version 5) is typed by
+      // where the closure is handed — a closure type's parameter — and takes
+      // whatever the argument evaluates to, a record included.
+      const untyped = declared.type === undefined && since(this.languageVersion, 5);
+      values[param] = await this.evaluateCallArg(arg, env, body, { takesValue: untyped || isValueParam(declared, types) });
     }
+    for (const arg of extra) await this.evaluateCallArg(arg, env, body, { takesValue: true });
     let outcome: BodyOutcome = FELL_THROUGH;
     const calleeName = this.calleeName(statement.callee, env);
     try {
@@ -6240,6 +6253,12 @@ class Interpreter {
       // its value is what this argument passes on.
       return requireCallValue(arg.call.callee, await this.executeCall(arg.call, env, body));
     }
+    if (arg.kind === 'closure' && options.takesValue && since(this.languageVersion, 5)) {
+      // A closure is a value (language version 5): written in place as an
+      // argument it is (AST, scope), holding the scope it is written in by
+      // reference, as a list element closure does.
+      return binding({ kind: 'closure', closure: arg.closure, captured: new Map(), env });
+    }
     if (arg.kind === 'closure' || arg.kind === 'type') {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -6249,8 +6268,8 @@ class Interpreter {
     // A POSITION parameter takes the record the argument is bound to — the
     // binding `x = <argument>` would make, whatever path produced the record
     // (a name, a pick, a map field).
-    const binding = await this.bindSlotValue(arg.expr, env);
-    switch (binding.kind) {
+    const bound = await this.bindSlotValue(arg.expr, env);
+    switch (bound.kind) {
       case 'event':
       case 'handle':
       case 'shapePosition':
@@ -6260,10 +6279,10 @@ class Interpreter {
       case 'resource':
       case 'nodePosition':
       case 'lazyWalk':
-        return binding;
+        return bound;
       default:
         throw unsupported(
-          `passing ${describeBinding[binding.kind]} ('${arg.expr.raw.trim()}') as a movement argument`,
+          `passing ${describeBinding[bound.kind]} ('${arg.expr.raw.trim()}') as a movement argument`,
           'arguments are positions — pass the event, a write handle, or adapt with an inline shape-write',
         );
     }
