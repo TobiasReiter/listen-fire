@@ -32,7 +32,16 @@ interface ParkedScopeState {
   journal?: SerializedCallEvent[];   // added: the parked statement's finished calls, replayed on re-run
 }
 
-interface SerializedScope { bindings: Record<string, BindingDescriptor> }
+interface SerializedScope {
+  bindings: Record<string, BindingDescriptor>;
+  id?: number;                       // added: its number, when a closure holds it by reference
+  parent?: ScopeLink;                // added: with `id`, the scope it is nested in
+}
+
+type ScopeLink =                     // where a closure's scope is (body closures hold it by reference)
+  | { kind: 'scope'; id: number; parent?: ScopeLink; bindings: Record<string, BindingDescriptor> }
+  | { kind: 'scopeRef'; id: number }
+  | { kind: 'file'; file?: string };
 
 interface SerializedCallEvent {
   index: number;                     // the k-th call the statement made
