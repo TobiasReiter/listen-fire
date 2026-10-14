@@ -15,7 +15,8 @@ The first four changes share one idea: there is no engine-side store and there a
 - [7. A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return)
 - [8. A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter)
 - [9. A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself)
-- [10. Diagnostic code index](#10-diagnostic-code-index)
+- [10. A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file)
+- [11. Diagnostic code index](#11-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -43,7 +44,8 @@ write crm-[:Companies]-> { unique by (`Deal ID`), `Deal ID`: deal.id, Name: deal
 
 | Form | Under 5 | Write instead |
 | --- | --- | --- |
-| `-[:#name]->` | `MOV_META_HOP_RETIRED` | an edge the record has, or the plugin called as a function |
+| `-[:#name]->` | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file) |
+| `MOV_META_HOP_RETIRED` | an edge the record has, or the plugin called as a function |
 | `-[f:#resources]->` | `MOV_META_HOP_RETIRED` | `-[f:_resources]->` off an extraction's result, or the system's file edge ([section 5](#5-_resources-only-on-an-extractions-result)) |
 | `-[t:#transform { plugin: "…" }]->` | `MOV_TRANSFORM_HOP_RETIRED` (since 3) | the plugin imported and called |
 | `-[#linked …]->` | `MOV_LINKED_HOP_RETIRED` (since 3) | the write's handle, or a link stored in the system |
@@ -147,7 +149,22 @@ r = await parallel([
 write crm-[:notes]-> { title: AT(r, 0).name }   # 5: "Acme"; 4 and earlier: null
 ```
 
-## 10. Diagnostic code index
+## 10. A write handle's unsent file is not a file
+
+- Under Dancing Wren (5) a write handle's file field that the write did not send, used as a file, is `MOV_HANDLE_FILE_NOT_SENT`: `READ(h.doc)`, `ocr(doc: h.doc)`, or `h.doc` into another write's file field, after `h = write d-[:docs]-> { name: "a" }`.
+- Why: the system answers a write with its own description of the file, a dict, not a file the run can read. `READ` failed with "reads a file, and this is object" though the program had validated. A file field the write did send (`doc: f`) is the program's own file and stays usable.
+- Versions 1 to 4 keep the old behaviour. Read the record back through its edge to get the file, as a walk read does, or send the file in the write.
+
+```
+# before (refused under 5)
+h = write d-[:docs]-> { name: "a" }
+text = READ(h.doc)
+
+# after: the file off the record's edge
+text = READ(FIRST(h-[:Files]->).`File`)
+```
+
+## 11. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
