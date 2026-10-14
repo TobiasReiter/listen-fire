@@ -320,6 +320,7 @@ import {
   positionRefIn,
   positionsMatch,
   mixesRecordWithValue,
+  valuesBesideRecord,
   recordsAlone,
   sameStartingPoint,
   positionSchemaOfRef,
@@ -10678,7 +10679,7 @@ class Checker {
     if (mixed === undefined) return;
     this.report(
       DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
-      `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or something that is not, and \`Org | text\` is no \`Org\`, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
+      `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or ${[...new Set(valuesBesideRecord(mixed).map(describeFieldType))].join(' or ')}, and such a union is no record, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
       span,
     );
   }
@@ -14240,6 +14241,25 @@ class Checker {
                 position: condition.type.position,
               },
             });
+          }
+        }
+        // The same type guard on a VALUE that may be a record or may be something
+        // else (`v = COALESCE(org, "x")`): inside the arm it IS the record the
+        // test names — TypeScript's `Org | string` narrowed by an `instanceof`.
+        if (
+          narrowInto
+          && subjectSymbol !== undefined
+          && subjectSymbol.posType === undefined
+          && (mixesRecordWithValue(subjectSymbol.fieldType) || mixesRecordWithValue(subjectSymbol.mayHold))
+          && graphSymbol
+          && condition.type.position !== undefined
+          && condition.type.hopsRaw === undefined
+        ) {
+          const instance = isGraphSymbol(graphSymbol) ? instanceRefOf(graphSymbol) : undefined;
+          if (instance !== undefined) {
+            const narrowed: PositionTypeRef = { kind: 'position', instance, position: condition.type.position };
+            const { mayHold: _dropped, ...rest } = subjectSymbol;
+            narrowInto.declare({ ...rest, posType: narrowed, fieldType: recordOf(narrowed) });
           }
         }
         // An ADDRESS test — `e IS <at-[:`Record Change` WHERE `action` ==

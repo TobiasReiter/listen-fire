@@ -90,6 +90,28 @@ describe.each([1, 3, 4, 5] as const)('B15: a maybe-record into a position parame
     expect(check(version, [], ['  hp(r: IF 1 > 0 THEN org ELSE o2 END)'])).toEqual([]);
   });
 
+  it('IS narrows a value that may be a record to the record inside the arm (R1)', () => {
+    expect(check(version, [], ['  v = COALESCE(org, "x")', '  if v IS <crm-[:company]->> {', '    hp(r: v)', '  }'])).toEqual([]);
+    expect(check(version, [], ['  v = IF 1 > 0 THEN org ELSE "x" END', '  if v IS <crm-[:company]->> {', '    hp(r: v)', '  }'])).toEqual([]);
+    // Outside the arm the value is still the union.
+    const outside = check(version, [], ['  v = COALESCE(org, "x")', '  if v IS <crm-[:company]->> {', '    n = 1', '  }', '  hp(r: v)']);
+    expect(codes(outside)).toEqual(version >= 5 ? ['MOV_CALL_ARG_MAYBE_RECORD'] : []);
+  });
+
+  it('a record with null or absence is a maybe-absent record, which a position parameter takes (L1)', () => {
+    expect(check(version, [], ['  hp(r: COALESCE(org, NULL))'])).toEqual([]);
+    expect(check(version, [], ['  v = COALESCE(org, NULL)', '  hp(r: v)'])).toEqual([]);
+  });
+
+  it('the message names the actual other member (L2)', () => {
+    if (version < 5) return;
+    const text = check(version, [], ['  hp(r: COALESCE(org, "x"))']);
+    expect(text[0]!.message).toContain('a record or text');
+    const num = check(version, [], ['  hp(r: COALESCE(org, 3))']);
+    expect(num[0]!.message).toContain('a record or number');
+    expect(num[0]!.message).not.toContain('or text');
+  });
+
   if (version >= 3) {
     it('a closure or a function that returns either, called in place or bound', () => {
       refusedFrom5([], ['  c = () => COALESCE(org, "x")', '  hp(r: c())']);

@@ -47,7 +47,9 @@ guide](docs/language/dancing-wren-migration.md).
   `v = COALESCE(org, "x")` then `hp(r: v)`, an `IF` of a record and text, or a function or closure
   that returns either. Why: TypeScript's `Org | string` is no `Org`, and the engine refuses the
   value at run time. Narrow it to the record with `IS`, handle the case where it is not one, or
-  fill the other arm with a record. A union of records alone is one record and still fits.
+  fill the other arm with a record. A union of records alone is one record and still fits. A record with
+  `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
+  version, it passes as a position and enters a graph).
 
 ### Language version 5, Dancing Wren: new
 

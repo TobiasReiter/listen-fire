@@ -2690,7 +2690,16 @@ export function recordsAlone(type: FieldType | undefined): Array<Extract<FieldTy
  *  neither an `Org` nor a `string`. A union of records alone is one record
  *  (`recordsAlone`); a type with no record in it mixes nothing. */
 export function mixesRecordWithValue(type: FieldType | undefined): boolean {
-  if (type === undefined) return false;
+  return valuesBesideRecord(type).length > 0;
+}
+
+/** The members that are neither a record nor absence, when the type holds a
+ *  record beside them (`COALESCE(org, "x")` → `text`); empty when it mixes
+ *  nothing. An absent member (`COALESCE(org, NULL)`, a maybe-absent read) is
+ *  absence, not a value: a maybe-absent record is the record, as a position
+ *  parameter takes it. */
+export function valuesBesideRecord(type: FieldType | undefined): FieldType[] {
+  if (type === undefined) return [];
   const members: FieldType[] = [];
   const add = (member: FieldType): void => {
     const stripped = stripAbsent(member);
@@ -2699,8 +2708,9 @@ export function mixesRecordWithValue(type: FieldType | undefined): boolean {
     else members.push(stripped);
   };
   add(type);
-  const records = members.filter(member => variantOf(member).kind === 'record').length;
-  return records > 0 && records < members.length;
+  const present = members.filter(member => variantOf(member).kind !== 'absent');
+  const records = present.filter(member => variantOf(member).kind === 'record');
+  return records.length > 0 ? present.filter(member => variantOf(member).kind !== 'record') : [];
 }
 
 /** Where a walk off this VALUE starts, when the checker can name it. One record
