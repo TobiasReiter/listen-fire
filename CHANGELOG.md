@@ -69,6 +69,13 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- A closure written in a movement body holds the scope it was written in by reference, as a
+  JavaScript closure does (and a file-level closure already did), rather than a copy of it. A wait
+  writes each scope once and each closure as its code and the scope's number, so a parked state
+  grows by a few hundred bytes per closure: 14 unused closures in one body park at 8 KB, where
+  each copied every earlier one and the state doubled per closure (15 MB). Every language version:
+  names are never rebound, so every value a closure reads is the one it read before, and a run
+  parked before this resumes with its copies as it did.
 - A named function's declared return no longer hides what its body may hand back: under language
   versions 3 and 4, `function f(): <text> { return COALESCE(org, "x") }` is a call whose use in a
   graph entry, a spread, a written field or a plugin argument is refused at the use, as a closure's

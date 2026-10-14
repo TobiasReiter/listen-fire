@@ -1,0 +1,2588 @@
+{
+ "outerAndBlock": {
+  "s1.b0.s2.c0.s0": {
+   "kind": "timer",
+   "state": {
+    "version": 1,
+    "address": "s1.b0.s2.c0.s0",
+    "bindingName": null,
+    "scopeChain": [
+     {
+      "bindings": {
+       "recap": {
+        "kind": "movement",
+        "name": "recap"
+       },
+       "manual": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "manual"
+       },
+       "kg": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg"
+       },
+       "kg_cred": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg_cred"
+       },
+       "runs": {
+        "kind": "instance",
+        "instance": {
+         "name": "runs",
+         "adapterSlug": "manual"
+        }
+       },
+       "graph": {
+        "kind": "instance",
+        "instance": {
+         "name": "graph",
+         "adapterSlug": "kg",
+         "credentialName": "kg_cred"
+        }
+       },
+       "go": {
+        "kind": "event"
+       },
+       "a": {
+        "kind": "value",
+        "value": 10,
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 6,
+             "col": 7
+            },
+            "end": {
+             "line": 6,
+             "col": 9
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 6,
+            "col": 7
+           },
+           "end": {
+            "line": 6,
+            "col": 9
+           }
+          }
+         }
+        }
+       },
+       "b": {
+        "kind": "value",
+        "value": 3,
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 8,
+             "col": 9
+            },
+            "end": {
+             "line": 8,
+             "col": 10
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 8,
+            "col": 9
+           },
+           "end": {
+            "line": 8,
+            "col": 10
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     {
+      "bindings": {
+       "f": {
+        "kind": "closure",
+        "closure": {
+         "params": [
+          {
+           "name": "n",
+           "type": {
+            "graph": "number",
+            "span": {
+             "start": {
+              "line": 9,
+              "col": 13
+             },
+             "end": {
+              "line": 9,
+              "col": 21
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 9,
+             "col": 10
+            },
+            "end": {
+             "line": 9,
+             "col": 21
+            }
+           }
+          }
+         ],
+         "body": [
+          {
+           "kind": "await",
+           "await": {
+            "source": {
+             "kind": "sleep",
+             "duration": {
+              "raw": "1h",
+              "span": {
+               "start": {
+                "line": 10,
+                "col": 19
+               },
+               "end": {
+                "line": 10,
+                "col": 21
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 10,
+               "col": 13
+              },
+              "end": {
+               "line": 10,
+               "col": 22
+              }
+             }
+            },
+            "span": {
+             "start": {
+              "line": 10,
+              "col": 7
+             },
+             "end": {
+              "line": 10,
+              "col": 22
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 10,
+             "col": 7
+            },
+            "end": {
+             "line": 10,
+             "col": 22
+            }
+           }
+          },
+          {
+           "kind": "return",
+           "value": {
+            "kind": "expr",
+            "expr": {
+             "raw": "n + a + b",
+             "span": {
+              "start": {
+               "line": 11,
+               "col": 14
+              },
+              "end": {
+               "line": 11,
+               "col": 23
+              }
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 11,
+             "col": 7
+            },
+            "end": {
+             "line": 11,
+             "col": 23
+            }
+           }
+          }
+         ],
+         "span": {
+          "start": {
+           "line": 9,
+           "col": 9
+          },
+          "end": {
+           "line": 12,
+           "col": 6
+          }
+         }
+        },
+        "captured": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         },
+         "go": {
+          "kind": "event"
+         },
+         "a": {
+          "kind": "value",
+          "value": 10,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 9
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 9
+             }
+            }
+           }
+          }
+         },
+         "b": {
+          "kind": "value",
+          "value": 3,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 9
+              },
+              "end": {
+               "line": 8,
+               "col": 10
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 8,
+              "col": 9
+             },
+             "end": {
+              "line": 8,
+              "col": 10
+             }
+            }
+           }
+          }
+         }
+        },
+        "self": "f"
+       },
+       "n": {
+        "kind": "value",
+        "value": 1,
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 13,
+             "col": 11
+            },
+            "end": {
+             "line": 13,
+             "col": 12
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 13,
+            "col": 11
+           },
+           "end": {
+            "line": 13,
+            "col": 12
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    ],
+    "frames": [
+     {
+      "kind": "call",
+      "index": 0,
+      "next": 1,
+      "callee": "f",
+      "journal": [],
+      "scopeChain": [
+       {
+        "bindings": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         }
+        }
+       },
+       {
+        "bindings": {
+         "go": {
+          "kind": "event"
+         },
+         "a": {
+          "kind": "value",
+          "value": 10,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 9
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 9
+             }
+            }
+           }
+          }
+         }
+        }
+       },
+       {
+        "bindings": {
+         "b": {
+          "kind": "value",
+          "value": 3,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 9
+              },
+              "end": {
+               "line": 8,
+               "col": 10
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 8,
+              "col": 9
+             },
+             "end": {
+              "line": 8,
+              "col": 10
+             }
+            }
+           }
+          }
+         },
+         "f": {
+          "kind": "closure",
+          "closure": {
+           "params": [
+            {
+             "name": "n",
+             "type": {
+              "graph": "number",
+              "span": {
+               "start": {
+                "line": 9,
+                "col": 13
+               },
+               "end": {
+                "line": 9,
+                "col": 21
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 10
+              },
+              "end": {
+               "line": 9,
+               "col": 21
+              }
+             }
+            }
+           ],
+           "body": [
+            {
+             "kind": "await",
+             "await": {
+              "source": {
+               "kind": "sleep",
+               "duration": {
+                "raw": "1h",
+                "span": {
+                 "start": {
+                  "line": 10,
+                  "col": 19
+                 },
+                 "end": {
+                  "line": 10,
+                  "col": 21
+                 }
+                }
+               },
+               "span": {
+                "start": {
+                 "line": 10,
+                 "col": 13
+                },
+                "end": {
+                 "line": 10,
+                 "col": 22
+                }
+               }
+              },
+              "span": {
+               "start": {
+                "line": 10,
+                "col": 7
+               },
+               "end": {
+                "line": 10,
+                "col": 22
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 10,
+               "col": 7
+              },
+              "end": {
+               "line": 10,
+               "col": 22
+              }
+             }
+            },
+            {
+             "kind": "return",
+             "value": {
+              "kind": "expr",
+              "expr": {
+               "raw": "n + a + b",
+               "span": {
+                "start": {
+                 "line": 11,
+                 "col": 14
+                },
+                "end": {
+                 "line": 11,
+                 "col": 23
+                }
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 11,
+               "col": 7
+              },
+              "end": {
+               "line": 11,
+               "col": 23
+              }
+             }
+            }
+           ],
+           "span": {
+            "start": {
+             "line": 9,
+             "col": 9
+            },
+            "end": {
+             "line": 12,
+             "col": 6
+            }
+           }
+          },
+          "captured": {
+           "recap": {
+            "kind": "movement",
+            "name": "recap"
+           },
+           "manual": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "manual"
+           },
+           "kg": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg"
+           },
+           "kg_cred": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg_cred"
+           },
+           "runs": {
+            "kind": "instance",
+            "instance": {
+             "name": "runs",
+             "adapterSlug": "manual"
+            }
+           },
+           "graph": {
+            "kind": "instance",
+            "instance": {
+             "name": "graph",
+             "adapterSlug": "kg",
+             "credentialName": "kg_cred"
+            }
+           },
+           "go": {
+            "kind": "event"
+           },
+           "a": {
+            "kind": "value",
+            "value": 10,
+            "provenance": {
+             "origins": [
+              {
+               "kind": "literal",
+               "span": {
+                "start": {
+                 "line": 6,
+                 "col": 7
+                },
+                "end": {
+                 "line": 6,
+                 "col": 9
+                }
+               }
+              }
+             ],
+             "direct": {
+              "kind": "literal",
+              "span": {
+               "start": {
+                "line": 6,
+                "col": 7
+               },
+               "end": {
+                "line": 6,
+                "col": 9
+               }
+              }
+             }
+            }
+           },
+           "b": {
+            "kind": "value",
+            "value": 3,
+            "provenance": {
+             "origins": [
+              {
+               "kind": "literal",
+               "span": {
+                "start": {
+                 "line": 8,
+                 "col": 9
+                },
+                "end": {
+                 "line": 8,
+                 "col": 10
+                }
+               }
+              }
+             ],
+             "direct": {
+              "kind": "literal",
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 9
+               },
+               "end": {
+                "line": 8,
+                "col": 10
+               }
+              }
+             }
+            }
+           }
+          },
+          "self": "f"
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "map": {
+  "s2.c0.i0.s0": {
+   "kind": "timer",
+   "state": {
+    "version": 1,
+    "address": "s2.c0.i0.s0",
+    "bindingName": null,
+    "scopeChain": [
+     {
+      "bindings": {
+       "recap": {
+        "kind": "movement",
+        "name": "recap"
+       },
+       "manual": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "manual"
+       },
+       "kg": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg"
+       },
+       "kg_cred": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg_cred"
+       },
+       "runs": {
+        "kind": "instance",
+        "instance": {
+         "name": "runs",
+         "adapterSlug": "manual"
+        }
+       },
+       "graph": {
+        "kind": "instance",
+        "instance": {
+         "name": "graph",
+         "adapterSlug": "kg",
+         "credentialName": "kg_cred"
+        }
+       },
+       "go": {
+        "kind": "event"
+       },
+       "k": {
+        "kind": "value",
+        "value": 100,
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 6,
+             "col": 7
+            },
+            "end": {
+             "line": 6,
+             "col": 10
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 6,
+            "col": 7
+           },
+           "end": {
+            "line": 6,
+            "col": 10
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     {
+      "bindings": {
+       "f": {
+        "kind": "closure",
+        "closure": {
+         "params": [
+          {
+           "name": "n",
+           "type": {
+            "graph": "number",
+            "span": {
+             "start": {
+              "line": 7,
+              "col": 11
+             },
+             "end": {
+              "line": 7,
+              "col": 19
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 7,
+             "col": 8
+            },
+            "end": {
+             "line": 7,
+             "col": 19
+            }
+           }
+          }
+         ],
+         "body": [
+          {
+           "kind": "await",
+           "await": {
+            "source": {
+             "kind": "sleep",
+             "duration": {
+              "raw": "1h",
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 17
+               },
+               "end": {
+                "line": 8,
+                "col": 19
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 11
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            "span": {
+             "start": {
+              "line": 8,
+              "col": 5
+             },
+             "end": {
+              "line": 8,
+              "col": 20
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 8,
+             "col": 5
+            },
+            "end": {
+             "line": 8,
+             "col": 20
+            }
+           }
+          },
+          {
+           "kind": "return",
+           "value": {
+            "kind": "expr",
+            "expr": {
+             "raw": "n + k",
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 12
+              },
+              "end": {
+               "line": 9,
+               "col": 17
+              }
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 9,
+             "col": 5
+            },
+            "end": {
+             "line": 9,
+             "col": 17
+            }
+           }
+          }
+         ],
+         "span": {
+          "start": {
+           "line": 7,
+           "col": 7
+          },
+          "end": {
+           "line": 10,
+           "col": 4
+          }
+         }
+        },
+        "captured": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         },
+         "go": {
+          "kind": "event"
+         },
+         "k": {
+          "kind": "value",
+          "value": 100,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 10
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 10
+             }
+            }
+           }
+          }
+         }
+        },
+        "self": "f"
+       },
+       "n": {
+        "kind": "value",
+        "value": 1,
+        "provenance": {
+         "origins": []
+        }
+       }
+      }
+     }
+    ],
+    "frames": [
+     {
+      "kind": "member",
+      "index": 0,
+      "next": 1,
+      "member": 0,
+      "op": {
+       "op": "map",
+       "source": {
+        "raw": "[1, 2]",
+        "span": {
+         "start": {
+          "line": 11,
+          "col": 13
+         },
+         "end": {
+          "line": 11,
+          "col": 19
+         }
+        }
+       },
+       "fn": {
+        "kind": "ref",
+        "name": "f",
+        "span": {
+         "start": {
+          "line": 11,
+          "col": 21
+         },
+         "end": {
+          "line": 11,
+          "col": 22
+         }
+        }
+       },
+       "span": {
+        "start": {
+         "line": 11,
+         "col": 9
+        },
+        "end": {
+         "line": 11,
+         "col": 23
+        }
+       }
+      },
+      "journal": [],
+      "scopeChain": [
+       {
+        "bindings": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         }
+        }
+       },
+       {
+        "bindings": {
+         "go": {
+          "kind": "event"
+         },
+         "k": {
+          "kind": "value",
+          "value": 100,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 10
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 10
+             }
+            }
+           }
+          }
+         },
+         "f": {
+          "kind": "closure",
+          "closure": {
+           "params": [
+            {
+             "name": "n",
+             "type": {
+              "graph": "number",
+              "span": {
+               "start": {
+                "line": 7,
+                "col": 11
+               },
+               "end": {
+                "line": 7,
+                "col": 19
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 7,
+               "col": 8
+              },
+              "end": {
+               "line": 7,
+               "col": 19
+              }
+             }
+            }
+           ],
+           "body": [
+            {
+             "kind": "await",
+             "await": {
+              "source": {
+               "kind": "sleep",
+               "duration": {
+                "raw": "1h",
+                "span": {
+                 "start": {
+                  "line": 8,
+                  "col": 17
+                 },
+                 "end": {
+                  "line": 8,
+                  "col": 19
+                 }
+                }
+               },
+               "span": {
+                "start": {
+                 "line": 8,
+                 "col": 11
+                },
+                "end": {
+                 "line": 8,
+                 "col": 20
+                }
+               }
+              },
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 5
+               },
+               "end": {
+                "line": 8,
+                "col": 20
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 5
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            {
+             "kind": "return",
+             "value": {
+              "kind": "expr",
+              "expr": {
+               "raw": "n + k",
+               "span": {
+                "start": {
+                 "line": 9,
+                 "col": 12
+                },
+                "end": {
+                 "line": 9,
+                 "col": 17
+                }
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 5
+              },
+              "end": {
+               "line": 9,
+               "col": 17
+              }
+             }
+            }
+           ],
+           "span": {
+            "start": {
+             "line": 7,
+             "col": 7
+            },
+            "end": {
+             "line": 10,
+             "col": 4
+            }
+           }
+          },
+          "captured": {
+           "recap": {
+            "kind": "movement",
+            "name": "recap"
+           },
+           "manual": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "manual"
+           },
+           "kg": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg"
+           },
+           "kg_cred": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg_cred"
+           },
+           "runs": {
+            "kind": "instance",
+            "instance": {
+             "name": "runs",
+             "adapterSlug": "manual"
+            }
+           },
+           "graph": {
+            "kind": "instance",
+            "instance": {
+             "name": "graph",
+             "adapterSlug": "kg",
+             "credentialName": "kg_cred"
+            }
+           },
+           "go": {
+            "kind": "event"
+           },
+           "k": {
+            "kind": "value",
+            "value": 100,
+            "provenance": {
+             "origins": [
+              {
+               "kind": "literal",
+               "span": {
+                "start": {
+                 "line": 6,
+                 "col": 7
+                },
+                "end": {
+                 "line": 6,
+                 "col": 10
+                }
+               }
+              }
+             ],
+             "direct": {
+              "kind": "literal",
+              "span": {
+               "start": {
+                "line": 6,
+                "col": 7
+               },
+               "end": {
+                "line": 6,
+                "col": 10
+               }
+              }
+             }
+            }
+           }
+          },
+          "self": "f"
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "arm": {
+  "s2.b0.s0.c0.s0": {
+   "kind": "timer",
+   "state": {
+    "version": 1,
+    "address": "s2.b0.s0.c0.s0",
+    "bindingName": null,
+    "scopeChain": [
+     {
+      "bindings": {
+       "recap": {
+        "kind": "movement",
+        "name": "recap"
+       },
+       "manual": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "manual"
+       },
+       "kg": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg"
+       },
+       "kg_cred": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg_cred"
+       },
+       "runs": {
+        "kind": "instance",
+        "instance": {
+         "name": "runs",
+         "adapterSlug": "manual"
+        }
+       },
+       "graph": {
+        "kind": "instance",
+        "instance": {
+         "name": "graph",
+         "adapterSlug": "kg",
+         "credentialName": "kg_cred"
+        }
+       },
+       "go": {
+        "kind": "event"
+       },
+       "k": {
+        "kind": "value",
+        "value": 7,
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 6,
+             "col": 7
+            },
+            "end": {
+             "line": 6,
+             "col": 8
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 6,
+            "col": 7
+           },
+           "end": {
+            "line": 6,
+            "col": 8
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     {
+      "bindings": {
+       "f": {
+        "kind": "closure",
+        "closure": {
+         "params": [],
+         "body": [
+          {
+           "kind": "await",
+           "await": {
+            "source": {
+             "kind": "sleep",
+             "duration": {
+              "raw": "1h",
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 17
+               },
+               "end": {
+                "line": 8,
+                "col": 19
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 11
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            "span": {
+             "start": {
+              "line": 8,
+              "col": 5
+             },
+             "end": {
+              "line": 8,
+              "col": 20
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 8,
+             "col": 5
+            },
+            "end": {
+             "line": 8,
+             "col": 20
+            }
+           }
+          },
+          {
+           "kind": "return",
+           "value": {
+            "kind": "expr",
+            "expr": {
+             "raw": "k * 2",
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 12
+              },
+              "end": {
+               "line": 9,
+               "col": 17
+              }
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 9,
+             "col": 5
+            },
+            "end": {
+             "line": 9,
+             "col": 17
+            }
+           }
+          }
+         ],
+         "span": {
+          "start": {
+           "line": 7,
+           "col": 7
+          },
+          "end": {
+           "line": 10,
+           "col": 4
+          }
+         }
+        },
+        "captured": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         },
+         "go": {
+          "kind": "event"
+         },
+         "k": {
+          "kind": "value",
+          "value": 7,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 8
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 8
+             }
+            }
+           }
+          }
+         }
+        },
+        "self": "f"
+       }
+      }
+     }
+    ],
+    "frames": [
+     {
+      "kind": "call",
+      "index": 0,
+      "next": 1,
+      "callee": "f",
+      "journal": [],
+      "scopeChain": [
+       {
+        "bindings": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         }
+        }
+       },
+       {
+        "bindings": {
+         "go": {
+          "kind": "event"
+         },
+         "k": {
+          "kind": "value",
+          "value": 7,
+          "provenance": {
+           "origins": [
+            {
+             "kind": "literal",
+             "span": {
+              "start": {
+               "line": 6,
+               "col": 7
+              },
+              "end": {
+               "line": 6,
+               "col": 8
+              }
+             }
+            }
+           ],
+           "direct": {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 7
+             },
+             "end": {
+              "line": 6,
+              "col": 8
+             }
+            }
+           }
+          }
+         },
+         "f": {
+          "kind": "closure",
+          "closure": {
+           "params": [],
+           "body": [
+            {
+             "kind": "await",
+             "await": {
+              "source": {
+               "kind": "sleep",
+               "duration": {
+                "raw": "1h",
+                "span": {
+                 "start": {
+                  "line": 8,
+                  "col": 17
+                 },
+                 "end": {
+                  "line": 8,
+                  "col": 19
+                 }
+                }
+               },
+               "span": {
+                "start": {
+                 "line": 8,
+                 "col": 11
+                },
+                "end": {
+                 "line": 8,
+                 "col": 20
+                }
+               }
+              },
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 5
+               },
+               "end": {
+                "line": 8,
+                "col": 20
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 5
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            {
+             "kind": "return",
+             "value": {
+              "kind": "expr",
+              "expr": {
+               "raw": "k * 2",
+               "span": {
+                "start": {
+                 "line": 9,
+                 "col": 12
+                },
+                "end": {
+                 "line": 9,
+                 "col": 17
+                }
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 5
+              },
+              "end": {
+               "line": 9,
+               "col": 17
+              }
+             }
+            }
+           ],
+           "span": {
+            "start": {
+             "line": 7,
+             "col": 7
+            },
+            "end": {
+             "line": 10,
+             "col": 4
+            }
+           }
+          },
+          "captured": {
+           "recap": {
+            "kind": "movement",
+            "name": "recap"
+           },
+           "manual": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "manual"
+           },
+           "kg": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg"
+           },
+           "kg_cred": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg_cred"
+           },
+           "runs": {
+            "kind": "instance",
+            "instance": {
+             "name": "runs",
+             "adapterSlug": "manual"
+            }
+           },
+           "graph": {
+            "kind": "instance",
+            "instance": {
+             "name": "graph",
+             "adapterSlug": "kg",
+             "credentialName": "kg_cred"
+            }
+           },
+           "go": {
+            "kind": "event"
+           },
+           "k": {
+            "kind": "value",
+            "value": 7,
+            "provenance": {
+             "origins": [
+              {
+               "kind": "literal",
+               "span": {
+                "start": {
+                 "line": 6,
+                 "col": 7
+                },
+                "end": {
+                 "line": 6,
+                 "col": 8
+                }
+               }
+              }
+             ],
+             "direct": {
+              "kind": "literal",
+              "span": {
+               "start": {
+                "line": 6,
+                "col": 7
+               },
+               "end": {
+                "line": 6,
+                "col": 8
+               }
+              }
+             }
+            }
+           }
+          },
+          "self": "f"
+         }
+        }
+       },
+       {
+        "bindings": {}
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "handle": {
+  "s2.c0.s0": {
+   "kind": "timer",
+   "state": {
+    "version": 1,
+    "address": "s2.c0.s0",
+    "bindingName": null,
+    "scopeChain": [
+     {
+      "bindings": {
+       "recap": {
+        "kind": "movement",
+        "name": "recap"
+       },
+       "manual": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "manual"
+       },
+       "kg": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg"
+       },
+       "kg_cred": {
+        "kind": "opaque",
+        "what": "import",
+        "name": "kg_cred"
+       },
+       "runs": {
+        "kind": "instance",
+        "instance": {
+         "name": "runs",
+         "adapterSlug": "manual"
+        }
+       },
+       "graph": {
+        "kind": "instance",
+        "instance": {
+         "name": "graph",
+         "adapterSlug": "kg",
+         "credentialName": "kg_cred"
+        }
+       },
+       "go": {
+        "kind": "event"
+       },
+       "a": {
+        "kind": "handle",
+        "handle": {
+         "adapterType": "kg",
+         "recordType": "note",
+         "created": true,
+         "committed": true,
+         "externalId": "note-1",
+         "writtenValues": {
+          "body": "one"
+         },
+         "resultData": {},
+         "outcome": "create",
+         "provenance": {
+          "body": [
+           {
+            "kind": "literal",
+            "span": {
+             "start": {
+              "line": 6,
+              "col": 37
+             },
+             "end": {
+              "line": 6,
+              "col": 42
+             }
+            }
+           }
+          ]
+         },
+         "bindingName": "a",
+         "origin": {
+          "kind": "write",
+          "writeIndex": 0,
+          "externalId": "note-1"
+         }
+        },
+        "targetType": "note",
+        "graph": {
+         "kind": "instance",
+         "instance": {
+          "name": "graph",
+          "adapterSlug": "kg",
+          "credentialName": "kg_cred"
+         }
+        },
+        "id": 0
+       }
+      }
+     },
+     {
+      "bindings": {
+       "f": {
+        "kind": "closure",
+        "closure": {
+         "params": [
+          {
+           "name": "x",
+           "type": {
+            "graph": "text",
+            "span": {
+             "start": {
+              "line": 7,
+              "col": 11
+             },
+             "end": {
+              "line": 7,
+              "col": 17
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 7,
+             "col": 8
+            },
+            "end": {
+             "line": 7,
+             "col": 17
+            }
+           }
+          }
+         ],
+         "body": [
+          {
+           "kind": "await",
+           "await": {
+            "source": {
+             "kind": "sleep",
+             "duration": {
+              "raw": "1h",
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 17
+               },
+               "end": {
+                "line": 8,
+                "col": 19
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 11
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            "span": {
+             "start": {
+              "line": 8,
+              "col": 5
+             },
+             "end": {
+              "line": 8,
+              "col": 20
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 8,
+             "col": 5
+            },
+            "end": {
+             "line": 8,
+             "col": 20
+            }
+           }
+          },
+          {
+           "kind": "write",
+           "write": {
+            "target": {
+             "kind": "position",
+             "root": {
+              "kind": "name",
+              "name": "a"
+             },
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 11
+              },
+              "end": {
+               "line": 9,
+               "col": 12
+              }
+             }
+            },
+            "uniqueBy": [],
+            "fields": [
+             {
+              "name": "body",
+              "value": {
+               "raw": "x",
+               "span": {
+                "start": {
+                 "line": 9,
+                 "col": 21
+                },
+                "end": {
+                 "line": 9,
+                 "col": 22
+                }
+               }
+              },
+              "span": {
+               "start": {
+                "line": 9,
+                "col": 15
+               },
+               "end": {
+                "line": 9,
+                "col": 22
+               }
+              }
+             }
+            ],
+            "span": {
+             "start": {
+              "line": 9,
+              "col": 5
+             },
+             "end": {
+              "line": 9,
+              "col": 24
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 9,
+             "col": 5
+            },
+            "end": {
+             "line": 9,
+             "col": 24
+            }
+           }
+          },
+          {
+           "kind": "return",
+           "value": {
+            "kind": "expr",
+            "expr": {
+             "raw": "a.body",
+             "span": {
+              "start": {
+               "line": 10,
+               "col": 12
+              },
+              "end": {
+               "line": 10,
+               "col": 18
+              }
+             }
+            }
+           },
+           "span": {
+            "start": {
+             "line": 10,
+             "col": 5
+            },
+            "end": {
+             "line": 10,
+             "col": 18
+            }
+           }
+          }
+         ],
+         "span": {
+          "start": {
+           "line": 7,
+           "col": 7
+          },
+          "end": {
+           "line": 11,
+           "col": 4
+          }
+         }
+        },
+        "captured": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         },
+         "go": {
+          "kind": "event"
+         },
+         "a": {
+          "kind": "handleRef",
+          "id": 0
+         }
+        },
+        "self": "f"
+       },
+       "x": {
+        "kind": "value",
+        "value": "two",
+        "provenance": {
+         "origins": [
+          {
+           "kind": "literal",
+           "span": {
+            "start": {
+             "line": 12,
+             "col": 9
+            },
+            "end": {
+             "line": 12,
+             "col": 14
+            }
+           }
+          }
+         ],
+         "direct": {
+          "kind": "literal",
+          "span": {
+           "start": {
+            "line": 12,
+            "col": 9
+           },
+           "end": {
+            "line": 12,
+            "col": 14
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    ],
+    "frames": [
+     {
+      "kind": "call",
+      "index": 0,
+      "next": 1,
+      "callee": "f",
+      "journal": [],
+      "scopeChain": [
+       {
+        "bindings": {
+         "recap": {
+          "kind": "movement",
+          "name": "recap"
+         },
+         "manual": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "manual"
+         },
+         "kg": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg"
+         },
+         "kg_cred": {
+          "kind": "opaque",
+          "what": "import",
+          "name": "kg_cred"
+         },
+         "runs": {
+          "kind": "instance",
+          "instance": {
+           "name": "runs",
+           "adapterSlug": "manual"
+          }
+         },
+         "graph": {
+          "kind": "instance",
+          "instance": {
+           "name": "graph",
+           "adapterSlug": "kg",
+           "credentialName": "kg_cred"
+          }
+         }
+        }
+       },
+       {
+        "bindings": {
+         "go": {
+          "kind": "event"
+         },
+         "a": {
+          "kind": "handleRef",
+          "id": 0
+         },
+         "f": {
+          "kind": "closure",
+          "closure": {
+           "params": [
+            {
+             "name": "x",
+             "type": {
+              "graph": "text",
+              "span": {
+               "start": {
+                "line": 7,
+                "col": 11
+               },
+               "end": {
+                "line": 7,
+                "col": 17
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 7,
+               "col": 8
+              },
+              "end": {
+               "line": 7,
+               "col": 17
+              }
+             }
+            }
+           ],
+           "body": [
+            {
+             "kind": "await",
+             "await": {
+              "source": {
+               "kind": "sleep",
+               "duration": {
+                "raw": "1h",
+                "span": {
+                 "start": {
+                  "line": 8,
+                  "col": 17
+                 },
+                 "end": {
+                  "line": 8,
+                  "col": 19
+                 }
+                }
+               },
+               "span": {
+                "start": {
+                 "line": 8,
+                 "col": 11
+                },
+                "end": {
+                 "line": 8,
+                 "col": 20
+                }
+               }
+              },
+              "span": {
+               "start": {
+                "line": 8,
+                "col": 5
+               },
+               "end": {
+                "line": 8,
+                "col": 20
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 8,
+               "col": 5
+              },
+              "end": {
+               "line": 8,
+               "col": 20
+              }
+             }
+            },
+            {
+             "kind": "write",
+             "write": {
+              "target": {
+               "kind": "position",
+               "root": {
+                "kind": "name",
+                "name": "a"
+               },
+               "span": {
+                "start": {
+                 "line": 9,
+                 "col": 11
+                },
+                "end": {
+                 "line": 9,
+                 "col": 12
+                }
+               }
+              },
+              "uniqueBy": [],
+              "fields": [
+               {
+                "name": "body",
+                "value": {
+                 "raw": "x",
+                 "span": {
+                  "start": {
+                   "line": 9,
+                   "col": 21
+                  },
+                  "end": {
+                   "line": 9,
+                   "col": 22
+                  }
+                 }
+                },
+                "span": {
+                 "start": {
+                  "line": 9,
+                  "col": 15
+                 },
+                 "end": {
+                  "line": 9,
+                  "col": 22
+                 }
+                }
+               }
+              ],
+              "span": {
+               "start": {
+                "line": 9,
+                "col": 5
+               },
+               "end": {
+                "line": 9,
+                "col": 24
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 9,
+               "col": 5
+              },
+              "end": {
+               "line": 9,
+               "col": 24
+              }
+             }
+            },
+            {
+             "kind": "return",
+             "value": {
+              "kind": "expr",
+              "expr": {
+               "raw": "a.body",
+               "span": {
+                "start": {
+                 "line": 10,
+                 "col": 12
+                },
+                "end": {
+                 "line": 10,
+                 "col": 18
+                }
+               }
+              }
+             },
+             "span": {
+              "start": {
+               "line": 10,
+               "col": 5
+              },
+              "end": {
+               "line": 10,
+               "col": 18
+              }
+             }
+            }
+           ],
+           "span": {
+            "start": {
+             "line": 7,
+             "col": 7
+            },
+            "end": {
+             "line": 11,
+             "col": 4
+            }
+           }
+          },
+          "captured": {
+           "recap": {
+            "kind": "movement",
+            "name": "recap"
+           },
+           "manual": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "manual"
+           },
+           "kg": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg"
+           },
+           "kg_cred": {
+            "kind": "opaque",
+            "what": "import",
+            "name": "kg_cred"
+           },
+           "runs": {
+            "kind": "instance",
+            "instance": {
+             "name": "runs",
+             "adapterSlug": "manual"
+            }
+           },
+           "graph": {
+            "kind": "instance",
+            "instance": {
+             "name": "graph",
+             "adapterSlug": "kg",
+             "credentialName": "kg_cred"
+            }
+           },
+           "go": {
+            "kind": "event"
+           },
+           "a": {
+            "kind": "handleRef",
+            "id": 0
+           }
+          },
+          "self": "f"
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ }
+}
