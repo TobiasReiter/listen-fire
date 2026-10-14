@@ -85,6 +85,9 @@ guide](docs/language/dancing-wren-migration.md).
   force one engine for every version, for testing. Boot now refuses `MOVEMENT_ENGINE_FALLBACK` set
   beside anything but `MOVEMENT_ENGINE=rust`, and the switch beside `rust` or `ts`. The admission
   dry run now counts only version-5 runs the TypeScript engine runs (every run under `ts`).
+  Version-5 runs parked before this release were recorded as engine `ts` and finish on the
+  TypeScript engine, so operators will see some version-5 runs on TypeScript after the upgrade.
+  A version 1 to 4 run always resumes on TypeScript, which reads a Rust engine's parks.
 - `MOVEMENT_ENGINE=rust` speaks language version 5 as the TypeScript engine does: a `_resources`
   walk off a system's record fails with the same error under 5 (versions 1 to 4 read it as before),
   the knowledge graph's `Resources` edge is walked by its reserved address on every version, and a

@@ -27,6 +27,11 @@ jest.mock('../../logger', () => ({
   logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+const engineWrites = { pending: Promise.resolve() };
+jest.mock('../run_engine_record', () => ({
+  settleRunEngineRecord: () => engineWrites.pending,
+}));
+
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { takeRunLease } from '../run_lease';
 
@@ -116,5 +121,25 @@ describe('a held run lease', () => {
   it('a claim that finds the lease held answers null', async () => {
     answers.push(taken);
     expect(await takeRunLease(RUN, { ttlMs: TTL })).toBeNull();
+  });
+
+  it('releases only after the run\'s pending engine write has landed, so a queued resume reads it', async () => {
+    jest.useRealTimers();
+    answers.push(claimed);
+    let land!: () => void;
+    engineWrites.pending = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    const lease = await takeRunLease(RUN, { ttlMs: TTL });
+    let released = false;
+    const releasing = lease?.release().then(() => {
+      released = true;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(released).toBe(false);
+    land();
+    await releasing;
+    expect(released).toBe(true);
+    engineWrites.pending = Promise.resolve();
   });
 });

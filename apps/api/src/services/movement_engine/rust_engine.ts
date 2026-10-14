@@ -209,7 +209,9 @@ export function engineRoute(
       // A run on its pin's own engine has no other: a refusal fails it. With
       // the switch on, the TypeScript engine is where it may go.
       const fallback: EngineFallback = rustVersion && !switched ? 'none' : 'ts';
-      const engine: EngineChoice = run.parkedOn ?? (rustVersion && !switched ? 'rust' : 'ts');
+      // v1-4 run only on TypeScript, which reads Rust parks; only a v5+ run
+      // goes back to the engine that parked it.
+      const engine: EngineChoice = (rustVersion ? run.parkedOn : undefined) ?? (rustVersion && !switched ? 'rust' : 'ts');
       return { engine, fallback, dryRun: rustVersion, setting };
     }
     default:

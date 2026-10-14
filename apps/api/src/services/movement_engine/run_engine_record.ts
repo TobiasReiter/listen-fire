@@ -48,3 +48,11 @@ export function recordRunEnginesOnRows(): void {
 export async function settleRunEngineRecords(): Promise<void> {
   await Promise.all(pending.values());
 }
+
+/** Resolves once every decision recorded so far for this run is written (a
+ *  failed write is already logged by the write itself). The run lease's
+ *  release waits on it, so a resume claimed the moment the lease frees reads
+ *  the engine that parked the run. */
+export async function settleRunEngineRecord(runId: string): Promise<void> {
+  await pending.get(runId);
+}

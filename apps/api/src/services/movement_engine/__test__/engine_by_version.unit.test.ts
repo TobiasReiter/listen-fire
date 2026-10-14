@@ -164,6 +164,12 @@ describe('the route a segment takes', () => {
     expect(engineRoute({ languageVersion: 5, parkedOn: 'rust' }, { MOVEMENT_ENGINE_V5_ON_TS: 'true' })).toMatchObject({ engine: 'rust' });
   });
 
+  it('runs a version 1-4 run on TypeScript even when a forced-rust past wrote a Rust park', () => {
+    for (const languageVersion of [1, 4]) {
+      expect(engineRoute({ languageVersion, parkedOn: 'rust' }, {})).toMatchObject({ engine: 'ts', dryRun: false });
+    }
+  });
+
   it('forces one engine for every version, wherever the run parked, under rust or ts', () => {
     for (const languageVersion of [1, 4, 5]) {
       expect(engineRoute({ languageVersion, parkedOn: 'ts' }, { MOVEMENT_ENGINE: 'rust' })).toEqual({ engine: 'rust', fallback: 'ts', dryRun: false, setting: 'rust' });

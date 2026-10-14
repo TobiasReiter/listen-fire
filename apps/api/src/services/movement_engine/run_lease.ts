@@ -26,6 +26,7 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from '../logger';
 import { runLeasedTo } from './lease_fence';
+import { settleRunEngineRecord } from './run_engine_record';
 
 /** A segment beats every 5s (the recorder's live-trace tick) and a lease
  *  holder renews every third of this; a minute of silence is a dead process,
@@ -169,6 +170,9 @@ export async function takeRunLease(
   const release = async (): Promise<void> => {
     released = true;
     clearInterval(timer);
+    // The segment's engine decision is written fire-and-forget; it must land
+    // before the lease frees, or a queued resume could read no engine.
+    await settleRunEngineRecord(runId);
     try {
       await releaseRunLease(runId, token);
     } catch (error) {
