@@ -498,36 +498,33 @@ function parkedBytes(parks: Sink): string {
 }
 
 /** `source` started on each engine and, where it parks, resumed on each
- *  engine: the first parks are the same bytes, and every way round ends with
- *  the same writes. The TypeScript engine's end. */
+ *  engine (each way round from a fresh start, so the sink's joins are the
+ *  run's own): the first parks are the same bytes, and every way round ends
+ *  with the same writes and leaves the same parks. The TypeScript engine's
+ *  end. */
 async function acrossEngines(source: string): Promise<{ creates: WriteInput[]; parked: boolean }> {
   const firstParks: Record<string, string> = {};
   const ends: Record<string, { creates: WriteInput[]; left: string }> = {};
+  let parked = false;
   for (const parkOn of ENGINES) {
-    const parks = makeParkSink();
-    const first = await onEngine(parkOn, () => start(source, parks));
-    firstParks[parkOn] = parkedBytes(parks);
-    if (first.result.parked !== true) {
-      ends[parkOn] = { creates: first.kg.creates, left: firstParks[parkOn]! };
-      continue;
-    }
     for (const resumeOn of ENGINES) {
-      const again = makeParkSink();
-      for (const [address, park] of parks.parks) again.parks.set(address, JSON.parse(JSON.stringify(park)) as typeof park);
-      for (const [frame, rows] of parks.exports) again.exports.set(frame, new Map(rows));
+      const parks = makeParkSink();
+      const first = await onEngine(parkOn, () => start(source, parks));
+      firstParks[parkOn] = parkedBytes(parks);
+      parked = first.result.parked === true;
       const creates: WriteInput[] = [...first.kg.creates];
-      for (let guard = 0; again.parks.size > 0 && guard < 10; guard++) {
-        const address = [...again.parks.keys()].sort()[0]!;
-        const { kg } = await onEngine(resumeOn, () => resumeAt(source, again, address));
+      for (let guard = 0; parked && parks.parks.size > 0 && guard < 10; guard++) {
+        const address = [...parks.parks.keys()].sort()[0]!;
+        const { kg } = await onEngine(resumeOn, () => resumeAt(source, parks, address));
         creates.push(...kg.creates);
       }
-      ends[`${parkOn}→${resumeOn}`] = { creates, left: parkedBytes(again) };
+      ends[`${parkOn}→${resumeOn}`] = { creates, left: parkedBytes(parks) };
     }
   }
   expect(firstParks.rust).toEqual(firstParks.ts);
-  const reference = ends.ts ?? ends['ts→ts']!;
+  const reference = ends['ts→ts']!;
   for (const [way, end] of Object.entries(ends)) expect({ way, ...end }).toEqual({ way, ...reference });
-  return { creates: reference.creates, parked: ends.ts === undefined };
+  return { creates: reference.creates, parked };
 }
 
 describe('both engines: closures as values (version 5)', () => {
@@ -601,53 +598,14 @@ describe('both engines: closures as values (version 5)', () => {
       payload: { x: 'one' },
     },
   };
-  // Not yet mirrored on the Rust engine (map-parallel-review §5, main merge
-  // 15): admission refuses each with this reason, so the run fails cleanly
-  // rather than answering differently. Delete a case's entry when the Rust
-  // engine runs it; the test then holds it to the TypeScript's bytes.
-  const RUST_REFUSES: Record<string, string> = {
-    listElements: 'expression_closure',
-    listElementParks: 'expression_closure',
-    namedList: 'rvalue:construct',
-    inlineListWithArgument: 'expression_closure',
-    namedFunctionMember: 'function_call',
-    memberReadWithAt: 'expression_closure',
-    memberParksByReference: 'expression_closure',
-    raceOverFilter: 'expression_closure',
-    mapReplacesParallel: 'expression_closure',
-    everyArmWaiting: 'expression_closure',
-    closureFromParkedMember: 'rvalue:construct',
-    namedFunctionBound: 'function_call',
-    namedFunctionFromConcise: 'function_call',
-    namedFunctionReturned: 'function_call',
-    ifOverClosures: 'function_call',
-    coalesceOverClosures: 'function_call',
-    listOfClosuresPassed: 'rvalue:construct',
-    closureInPlaceArgument: 'function_call',
-    extraArgumentDropped: 'function_call',
-    dottedCall: 'traversal_terminal',
-    raceSlotHoldingClosure: 'function_call',
-    effectsOnly: 'expression_closure',
-  };
   CASES.effectsOnly = {
     body: ['  MAP([() => {', '    write graph-[:note]-> { body: "a" }', '  }, () => {', '    write graph-[:note]-> { body: "b" }', '  }], { concurrency: 2 }, (f) => f())', write('done: 1')],
     payload: { done: 1 },
   };
   for (const [name, { body, payload }] of Object.entries(CASES)) {
-    const refused = RUST_REFUSES[name];
-    if (refused === undefined) {
-      it(`${name}: the same writes, and the same parks, on both engines`, async () => {
-        const { creates } = await acrossEngines(withTop(body));
-        expect(payloadOf(creates)).toEqual(payload);
-      }, 30_000);
-    } else {
-      it(`${name}: runs on the TypeScript engine; the Rust engine refuses it (${refused}), not yet mirrored`, async () => {
-        const parks = makeParkSink();
-        const ts = await onEngine('ts', () => start(withTop(body), parks));
-        const creates = ts.result.parked === true ? [...ts.kg.creates, ...(await resumeAll(withTop(body), parks)).kg.creates] : ts.kg.creates;
-        expect(payloadOf(creates)).toEqual(payload);
-        await expect(onEngine('rust', () => start(withTop(body), makeParkSink()))).rejects.toThrow(`(${refused})`);
-      }, 30_000);
-    }
+    it(`${name}: the same writes, and the same parks, on both engines`, async () => {
+      const { creates } = await acrossEngines(withTop(body));
+      expect(payloadOf(creates)).toEqual(payload);
+    }, 30_000);
   }
 });
