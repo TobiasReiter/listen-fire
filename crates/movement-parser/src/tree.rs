@@ -500,13 +500,19 @@ impl MExpr {
 /// closure's own body is not looked into: a list inside it is that body's
 /// own slot's business.
 pub fn closures_in_lists(tree: &MExpr) -> Vec<usize> {
-    fn visit(expr: &MExpr, found: &mut Vec<usize>) {
+    closure_extents_in_lists(tree).into_iter().map(|at| at.start).collect()
+}
+
+/// `closures_in_lists`, each closure's whole extent: what an engine that
+/// stages a slot's text finds them again by.
+pub fn closure_extents_in_lists(tree: &MExpr) -> Vec<At> {
+    fn visit(expr: &MExpr, found: &mut Vec<At>) {
         match expr {
             MExpr::List { elements, .. } => {
                 for element in elements {
                     match element {
                         ListElement::Spread(spread) => visit(&spread.expr, found),
-                        ListElement::Expr(MExpr::Closure { at, .. }) => found.push(at.start),
+                        ListElement::Expr(MExpr::Closure { at, .. }) => found.push(*at),
                         ListElement::Expr(element) => visit(element, found),
                     }
                 }

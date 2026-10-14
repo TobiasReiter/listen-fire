@@ -689,7 +689,7 @@ impl Run<'_> {
         }
         let frame_address = run.address.encode();
         let branch_address = run.address.iter(*member).encode();
-        let exports = crate::collection::member_answer_export(self, answer.as_ref()).map_err(Stop::Thrown)?;
+        let exports = crate::collection::member_answer_export(self, answer.as_ref(), self.live_answer_chain(run).as_deref()).map_err(Stop::Thrown)?;
         self.persist_branch_export(&frame_address, &branch_address, *member as i64, &exports).await?;
         if !self.decrement_join(&frame_address, &branch_address, leaf_address).await? {
             return Ok(Completion::Stopped);
@@ -728,7 +728,20 @@ impl Run<'_> {
                 *slot = Some(None);
                 continue;
             }
-            let bound = self.rehydrate_alone(at(exports, "answer").unwrap_or(&Js::Undefined)).await?;
+            let descriptor = at(exports, "answer").unwrap_or(&Js::Undefined);
+            let bound = match self.live_answer_chain(run) {
+                // The live scopes its park named, by their place in the chain.
+                Some(chain) => {
+                    let park = crate::park::ParkReader::over_descriptor(descriptor);
+                    for (id, scope) in chain.into_iter().enumerate() {
+                        park.scope_registered(id as u64, scope);
+                    }
+                    let bound = self.rehydrate(descriptor, &park).await?;
+                    park.assert_read().map_err(runtime)?;
+                    bound
+                }
+                None => self.rehydrate_alone(descriptor).await?,
+            };
             *slot = Some(Some(match bound {
                 Binding::Value(value) => value.value,
                 other => crate::record::held(other),

@@ -681,6 +681,17 @@ impl Run<'_> {
 
     /// The program's AST at `path`, as a park writes it (crate::program
     /// `code_at`).
+    /// A closure's code as a park writes it: the closure's AST; for a
+    /// movement read as a value (language version 5), the closure the
+    /// TypeScript makes of its declaration, `{ params, body, span }`.
+    pub(crate) fn parked_closure_code(&self, path: &str) -> Result<Js, Failure> {
+        let code = self.program_code(path)?;
+        if !matches!(crate::unique::get(&code, "kind"), Js::String(kind) if kind == "movement") {
+            return Ok(code);
+        }
+        Ok(env::object_of(vec![("params", crate::unique::get(&code, "params")), ("body", crate::unique::get(&code, "body")), ("span", crate::unique::get(&code, "span"))]))
+    }
+
     pub(crate) fn program_code(&self, path: &str) -> Result<Js, Failure> {
         self.checked.code_at(path)
             .ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("the program holds no node at {path}, which a park writes")))
@@ -1295,6 +1306,20 @@ impl Run<'_> {
             // `return <value>`: the same right-hand side, bound into a slot
             // the grammar cannot spell, and the body ends.
             Statement::Return(ret) => {
+                // `(f) => f()` (language version 5): the closure hands back
+                // what the call returns — and, when it returns nothing,
+                // nothing (`conciseCall`).
+                if ret.concise
+                    && let Some((call, call_path)) = self.concise_call(&ret.value, scope, path)
+                {
+                    return match self.call(&call, scope, at, &call_path).await? {
+                        None => Ok(Flow::FellThrough),
+                        Some(value) => {
+                            scope.declare(RETURN_SLOT, value);
+                            Ok(Flow::Returned)
+                        }
+                    };
+                }
                 self.assign(RETURN_SLOT, &ret.value, scope, at, path).await?;
                 Ok(Flow::Returned)
             }
@@ -1460,6 +1485,27 @@ impl Run<'_> {
         Ok(())
     }
 
+    /// `conciseCall`: a concise body's call, when its callee is a function
+    /// (a movement, a plugin or a closure), with its AST path; `None` for a
+    /// construction or a built-in, which the ordinary `return` evaluates.
+    fn concise_call(&self, value: &RValue, scope: &Scope, path: &str) -> Option<(ast::CallStatement, String)> {
+        let (call, call_path) = match value {
+            RValue::Call { call } => (call.clone(), format!("{path}/value/call")),
+            RValue::Construct { construct } => (
+                ast::CallStatement {
+                    callee: construct.callee.clone(),
+                    args: construct.args.iter().map(|a| ast::CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect(),
+                    expression: None,
+                    span: construct.span,
+                },
+                format!("{path}/value/construct"),
+            ),
+            _ => return None,
+        };
+        let callable = matches!(scope.resolve(&self.callee_name(&call.callee, scope)), Some(Binding::Movement(_) | Binding::Plugin(_) | Binding::Closure(_)));
+        callable.then_some((call, call_path))
+    }
+
     /// `readCallIn`'s reading of a call of a collection op or `MEMBERS` (a
     /// built-in from version 3, when the program binds no such name).
     fn call_reading(&self, call: &ast::CallStatement, scope: &Scope) -> Result<Option<crate::collection::Reading>, Stop> {
@@ -1501,10 +1547,13 @@ impl Run<'_> {
     /// record it picks (`selectedPositionBinding`); anything else, the value
     /// it evaluates to.
     pub(crate) async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.bind_slot_binding(slot, &around)).await;
+        }
         if let Some((staged, scratch)) = self.staged(slot, scope).await? {
             return Box::pin(self.bind_slot_binding(&staged, &scratch)).await;
         }
-        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression")
             .map_err(Stop::Thrown)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
             && let Some(binding) = scope.resolve(name)
@@ -1544,6 +1593,9 @@ impl Run<'_> {
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.bind_slot(slot, &around)).await;
+        }
         // A file-level value holding a nested call: this engine binds the
         // file's values before anything else, and stages none there.
         if self.version() >= 3
@@ -1552,7 +1604,7 @@ impl Run<'_> {
         {
             return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
         }
-        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression")
             .map_err(Stop::Thrown)?;
         self.bind_evaluated(&expr, slot, scope).await
     }
@@ -1613,10 +1665,13 @@ impl Run<'_> {
     /// `evaluateCondition`: the condition's conjuncts, each an expression's
     /// truthiness.
     pub(crate) async fn condition(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<bool, Stop> {
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.condition(slot, &around)).await;
+        }
         if let Some(held) = self.staged_condition(slot, scope).await? {
             return Ok(held);
         }
-        let condition = lowered(slot, |tree| movement_parser::lowering::lower_condition(tree, &slot.raw), "condition")
+        let condition = lowered(slot, |tree| movement_parser::lowering::lower_slot_condition(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "condition")
             .map_err(Stop::Thrown)?;
         self.parsed_condition(&condition, scope, slot).await
     }

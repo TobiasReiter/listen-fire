@@ -196,6 +196,22 @@ pub(crate) fn serialize_alone_plain(run: &Run<'_>, binding: &Binding) -> Result<
     })
 }
 
+/// One member's answer from version 5 (run.ts `memberAnswerPark`): a park
+/// that names the live scopes the op's statement runs in (`chain`, its
+/// file's left out) by their place in it rather than copying them — a
+/// closure the member returns holds its scope by reference, so a copy
+/// would hand the resumed run a closure writing a copy of what the
+/// movement reads.
+pub(crate) fn serialize_naming_chain(run: &Run<'_>, binding: &Binding, chain: &[Rc<Scope>]) -> Result<Js, Failure> {
+    one_park(|park| {
+        for (id, scope) in chain.iter().enumerate() {
+            park.scope_ids.push((scope.clone(), id, None));
+        }
+        park.carries_chain(chain);
+        serialize_binding(run, "", binding, park)
+    })
+}
+
 /// A completed branch's exports (`serializeBranchExport`): one stored
 /// state, so ONE park writes every name — a handle or node two of them hold
 /// is written once and referenced after — the returned value first, as the
@@ -444,7 +460,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         // One written in a body holds its scope by reference: its code, an
         // empty capture, and a link to the scope (`scope`).
         Binding::Closure(closure) if closure.by_reference => {
-            let mut members = vec![kind("closure"), ("closure", run.program_code(&closure.code.path)?), ("captured", Js::object(JsObject::new()))];
+            let mut members = vec![kind("closure"), ("closure", run.parked_closure_code(&closure.code.path)?), ("captured", Js::object(JsObject::new()))];
             if let Some(name) = &closure.self_name {
                 members.push(("self", Js::str(name.clone())));
             }
@@ -452,7 +468,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             object_of(members)
         }
         Binding::Closure(closure) => {
-            let mut members = vec![kind("closure"), ("closure", run.program_code(&closure.code.path)?), ("captured", serialize_captured(run, &closure.captured, park)?)];
+            let mut members = vec![kind("closure"), ("closure", run.parked_closure_code(&closure.code.path)?), ("captured", serialize_captured(run, &closure.captured, park)?)];
             if let Some(name) = &closure.self_name {
                 members.push(("self", Js::str(name.clone())));
             }

@@ -62,6 +62,10 @@ pub(crate) struct Function {
     /// name of its own (`self`).
     closure: Option<Rc<crate::bindings::Closure>>,
     self_name: Option<String>,
+    /// A function written in place from version 5: `captured` is the scope
+    /// it is written in, held by REFERENCE, as every other closure holds
+    /// its scope.
+    by_reference: bool,
 }
 
 impl Function {
@@ -70,6 +74,7 @@ impl Function {
     pub(crate) fn call_root(&self) -> Rc<Scope> {
         match &self.closure {
             Some(closure) => closure.call_root(),
+            None if self.by_reference => self.captured.clone(),
             None => self.captured.fresh_copy(),
         }
     }
@@ -96,6 +101,7 @@ impl Function {
             named: self.named.clone(),
             closure: self.closure.clone(),
             self_name: self.self_name.clone(),
+            by_reference: self.by_reference,
         }
     }
 }
@@ -120,11 +126,17 @@ impl CollectionRun {
 }
 
 /// `serializeMemberAnswer`: a finished member as its op's frame keeps it.
-pub(crate) fn member_answer_export(run: &Run<'_>, answer: Option<&Js>) -> Result<Js, Failure> {
+/// From version 5 the park names `chain`, the op's live scopes
+/// (`memberAnswerPark`); before, the answer is written as it always was.
+pub(crate) fn member_answer_export(run: &Run<'_>, answer: Option<&Js>, chain: Option<&[Rc<Scope>]>) -> Result<Js, Failure> {
     Ok(match answer {
         Some(value) => {
             let value = Binding::Value(ValueBinding { value: value.clone(), trail: Some(Trail::default()), many: false });
-            crate::env::object_of(vec![("kept", Js::Bool(true)), ("answer", crate::park::serialize_alone_plain(run, &value)?)])
+            let written = match chain {
+                Some(chain) => crate::park::serialize_naming_chain(run, &value, chain)?,
+                None => crate::park::serialize_alone_plain(run, &value)?,
+            };
+            crate::env::object_of(vec![("kept", Js::Bool(true)), ("answer", written)])
         }
         None => crate::env::object_of(vec![("kept", Js::Bool(false))]),
     })
@@ -544,6 +556,19 @@ impl Run<'_> {
         }
     }
 
+    /// `liveAnswerChain`: from version 5, the live scopes the op's statement
+    /// runs in, its file's left out (a file scope is found again by its
+    /// file) — what a member's answer names rather than copies, numbered by
+    /// their place in the chain, the same on the writing run and the
+    /// resuming one.
+    pub(crate) fn live_answer_chain(&self, run: &CollectionRun) -> Option<Vec<Rc<Scope>>> {
+        if self.version() < 5 {
+            return None;
+        }
+        let Some(site) = &run.site else { return Some(Vec::new()) };
+        Some(site.scope.chain_from_root().into_iter().filter(|scope| !scope.is_file_scope()).collect())
+    }
+
     /// `parkCollectionOp`: some members parked; the op is a pending join at
     /// its own address, keeping what its resume needs (the members it reads,
     /// `REDUCE`'s start, each finished member's answer) at that frame.
@@ -560,7 +585,7 @@ impl Run<'_> {
                 self.persist_branch_export(&frame, &frame, -1, &state).await?;
                 for (index, answer) in answers.iter().enumerate() {
                     let Some(answer) = answer else { continue };
-                    let exports = member_answer_export(self, answer.as_ref()).map_err(Stop::Thrown)?;
+                    let exports = member_answer_export(self, answer.as_ref(), self.live_answer_chain(run).as_deref()).map_err(Stop::Thrown)?;
                     self.persist_branch_export(&frame, &run.address.iter(index).encode(), index as i64, &exports).await?;
                 }
             }
@@ -623,14 +648,19 @@ impl Run<'_> {
     /// it is written in, or a movement by name, capturing the caller's.
     pub(crate) fn collection_function(&self, function: &ArmExpression, spelling: &str, scope: &Rc<Scope>, fn_path: &str) -> Result<Function, Stop> {
         match function {
+            // From version 5 a function written in place holds the scope it
+            // is written in by REFERENCE, as every other closure does — so a
+            // closure its body returns chains up to the live scope, not to a
+            // flat copy that no park can tell from a file's.
             ArmExpression::Closure { closure, .. } => Ok(Function {
                 params: closure.params.clone(),
                 body: closure.body.clone(),
-                captured: scope.capture(),
+                captured: if self.version() >= 5 { scope.clone() } else { scope.capture() },
                 path: format!("{fn_path}/closure/body"),
                 named: None,
                 closure: None,
                 self_name: None,
+                by_reference: self.version() >= 5,
             }),
             ArmExpression::Ref { name, .. } => match scope.resolve(name) {
                 Some(Binding::Closure(closure)) => Ok(Function {
@@ -641,6 +671,7 @@ impl Run<'_> {
                     named: Some(name.clone()),
                     self_name: closure.self_name.clone(),
                     closure: Some(closure),
+                    by_reference: false,
                 }),
                 Some(Binding::Movement(declared)) => {
                     let (declaration, path) = self.declaration(&declared)?;
@@ -652,6 +683,7 @@ impl Run<'_> {
                         named: Some(name.clone()),
                         closure: None,
                         self_name: None,
+                        by_reference: false,
                     })
                 }
                 other => {

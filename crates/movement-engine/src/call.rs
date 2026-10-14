@@ -65,6 +65,7 @@ impl Run<'_> {
         match scope.resolve(&self.callee_name(written, scope)) {
             Some(Binding::Movement(_)) => true,
             Some(Binding::Closure(_)) => self.version() >= 3,
+            None => self.member_callee_object(written, scope),
             _ => false,
         }
     }
@@ -89,7 +90,14 @@ impl Run<'_> {
         Box::pin(async move {
             let name = self.callee_name(&call.callee, scope);
             let declared_file;
-            let declaration = match scope.resolve(&name) {
+            let callee = match scope.resolve(&name) {
+                None if self.member_callee_object(&call.callee, scope) => {
+                    let member = movement_parser::ast::ExprSlot::plain(call.callee.clone(), call.span);
+                    crate::record::binding_of(&self.evaluate_slot(&member, scope).await?.value)
+                }
+                resolved => resolved,
+            };
+            let declaration = match callee {
                 Some(Binding::Movement(declared)) => {
                     declared_file = declared.file.clone();
                     self.declaration(&declared)?
@@ -188,14 +196,22 @@ impl Run<'_> {
     ) -> Called<'s> {
         Box::pin(async move {
             let params = &closure.code.ast.params;
-            if call.args.len() != params.len() {
+            // From version 5 a closure stands where a closure type is
+            // expected when it takes FEWER parameters than the type supplies
+            // (TypeScript's rule), so a call through the type may hand it
+            // more arguments than it declares: they are evaluated, in order,
+            // and dropped, as JavaScript drops them.
+            let positional = call.args.first().is_some_and(|arg| arg.name().is_none());
+            let kept = if self.version() >= 5 && positional && call.args.len() > params.len() { params.len() } else { call.args.len() };
+            let (args, extra) = call.args.split_at(kept);
+            if args.len() != params.len() {
                 return Err(Stop::Thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!("'{}' takes {} argument(s), got {} — the checker should have caught this", call.callee, params.len(), call.args.len()),
                 )));
             }
             let mut bound: Vec<(String, Binding)> = Vec::new();
-            for (position, arg) in call.args.iter().enumerate() {
+            for (position, arg) in args.iter().enumerate() {
                 let param = arg.name().map(String::from).or_else(|| params.get(position).map(|p| p.name.clone()));
                 let Some(declared) = param.as_deref().and_then(|p| params.iter().find(|d| d.name == p)) else {
                     let which = arg.name().map_or_else(|| "for this argument".to_string(), |n| format!("'{n}'"));
@@ -204,12 +220,20 @@ impl Run<'_> {
                         format!("'{}' has no parameter {which} — the checker should have caught this", call.callee),
                     )));
                 };
-                let takes_value = self.takes_value(declared.type_.as_ref(), &scope.file_env());
+                // A parameter with no written type (language version 5) is
+                // typed by where the closure is handed — a closure type's
+                // parameter — and takes whatever the argument evaluates to,
+                // a record included.
+                let untyped = declared.type_.is_none() && self.version() >= 5;
+                let takes_value = untyped || self.takes_value(declared.type_.as_ref(), &scope.file_env());
                 let binding = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
                 match bound.iter_mut().find(|(p, _)| *p == declared.name) {
                     Some(slot) => slot.1 = binding,
                     None => bound.push((declared.name.clone(), binding)),
                 }
+            }
+            for (position, arg) in extra.iter().enumerate() {
+                self.call_arg(arg, scope, at, &format!("{path}/args/{}", kept + position), true).await?;
             }
             let name = self.callee_name(&call.callee, scope);
             let address = self.call_address(event, at);
@@ -372,6 +396,17 @@ impl Run<'_> {
                         self.call_value(&call.callee, value)
                     }
                 },
+                // A closure is a value (language version 5): written in
+                // place as an argument it is (AST, scope), holding the scope
+                // it is written in by reference, as a list element closure
+                // does.
+                CallArg::Closure { closure, .. } if takes_value && self.version() >= 5 => Ok(Binding::Closure(Rc::new(crate::bindings::Closure {
+                    code: crate::flow::Code { ast: Rc::new(closure.clone()), path: format!("{path}/closure") },
+                    captured: scope.clone(),
+                    self_name: None,
+                    file_name: None,
+                    by_reference: true,
+                }))),
                 CallArg::Closure { .. } => Err(Stop::Thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     "a function handed to a function's parameter — the checker should have caught this".into(),

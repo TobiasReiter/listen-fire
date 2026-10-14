@@ -119,7 +119,41 @@ impl Run<'_> {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: record::held(binding), prov });
         }
+        // A function is a value from version 5, as a JavaScript function is:
+        // a closure read bare is itself, (AST, scope), whoever holds it may
+        // call it; a function declared with a name is a closure over the
+        // file scope it was declared in — never the caller's — as a
+        // collection op's named function already is.
+        if self.version() >= 5 {
+            match &binding {
+                Binding::Closure(_) => return Ok(Evaluated { value: record::held(binding), prov: none() }),
+                Binding::Movement(declared) => return Ok(Evaluated { value: record::held(self.function_value(declared)?), prov: none() }),
+                _ => {}
+            }
+        }
         Err(unsupported(&format!("reading '{name}' ({}) as a bare value", record::describe(&binding))))
+    }
+
+    /// A movement read as a value (language version 5): its parameters and
+    /// body as a closure's, over a snapshot of its file's scope.
+    pub(crate) fn function_value(&self, declared: &crate::bindings::MovementRef) -> Result<Binding, Failure> {
+        let thrown = |stop: crate::run::Stop| match stop {
+            crate::run::Stop::Thrown(failure) => failure,
+            _ => Failure::engine("MOVENG_RUNTIME", format!("'{}' is not a movement this program declares", declared.name)),
+        };
+        let (declaration, body_path) = self.declaration(declared).map_err(thrown)?;
+        let file = self
+            .scope_of_file(&declared.file)
+            .ok_or_else(|| Failure::engine("MOVENG_RUNTIME", "no file scope for a movement read as a value".into()))?;
+        let ast = movement_parser::ast::ClosureExpression { params: declaration.params, return_type: None, body: declaration.body, span: declaration.span };
+        let path = body_path.strip_suffix("/body").unwrap_or(&body_path).to_string();
+        Ok(Binding::Closure(Rc::new(crate::bindings::Closure {
+            code: crate::flow::Code { ast: Rc::new(ast), path },
+            captured: file.capture(),
+            self_name: None,
+            file_name: None,
+            by_reference: false,
+        })))
     }
 
     /// `bindingEntityOrigins`: the origins a record cites, read in a list

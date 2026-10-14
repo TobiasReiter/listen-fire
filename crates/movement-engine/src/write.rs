@@ -812,7 +812,7 @@ impl Run<'_> {
                         Some((slot, scratch)) => (slot, scratch),
                         None => (&line.slot, scope),
                     };
-                    let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
+                    let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression").map_err(thrown)?;
                     let span = env::js_of_json(&serde_json::to_value(line.slot.span).expect("a span is JSON"));
                     let evaluated = self.evaluate_with(&expr, at, Some(span), None, Some(functions)).await?;
                     out_of(evaluated, at)
@@ -882,11 +882,14 @@ impl Run<'_> {
     /// A slot evaluated as `evaluateSlot` evaluates it: lowered, its literals
     /// citing the slot's span.
     pub(crate) async fn evaluate_slot(&self, slot: &ast::ExprSlot, scope: &Rc<Scope>) -> Result<Evaluated, Stop> {
+        if let Some(around) = self.around_slot(slot, scope) {
+            return Box::pin(self.evaluate_slot(slot, &around)).await;
+        }
         if let Some((staged, scratch)) = self.staged(slot, scope).await? {
             let evaluated = Box::pin(self.evaluate_slot(&staged, &scratch)).await?;
             return Ok(out_of(evaluated, &scratch));
         }
-        let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression").map_err(thrown)?;
+        let expr = crate::run::lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression").map_err(thrown)?;
         self.evaluate(&expr, scope, slot).await
     }
 
