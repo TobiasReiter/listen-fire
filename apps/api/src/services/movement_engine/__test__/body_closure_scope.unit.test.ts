@@ -408,11 +408,10 @@ describe('a parked run sees what an unparked run sees', () => {
         last = { result, kg };
       }
       expect(payloadOf(last!.kg.creates)).toEqual(unparked);
-      // On this engine the arms' effects are ordered (effect_locks.ts): each
-      // arm's write lands before its read, so each reads its own write; the
-      // outer read sees the last one. Main, whose arms interleave, reads
-      // ['v2', 'v2']. Either way the parked run ends as the unparked one.
-      expect(unparked).toEqual({ r: ['v1', 'v2'], after: 'v2' });
+      // Which arm's write each arm reads back depends on how the adapter's
+      // answers interleave (an extra await in the effect locks flips it), so
+      // only the outer read, after both arms, is pinned.
+      expect(unparked).toMatchObject({ after: 'v2' });
     });
   }
 });
