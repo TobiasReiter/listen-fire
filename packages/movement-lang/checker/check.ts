@@ -5758,9 +5758,13 @@ class Checker {
         // awaits) would check silently dark.
         const aliased = this.bareNodeSymbol(value.expr.raw, parsed, scope);
         if (aliased !== undefined) {
+          // A function declared with a name is a closure value from version 5
+          // (`functionAsValue`): `g = made` and `return made` carry its type,
+          // as TypeScript's `const g = made` does.
+          const aliasType = aliased.posType ?? this.functionAsValue(aliased);
           symbol = {
             ...symbol,
-            ...(aliased.posType !== undefined ? { posType: aliased.posType } : {}),
+            ...(aliasType !== undefined ? { posType: aliasType } : {}),
             bindingPlane: 'node',
           };
           break;
@@ -7910,7 +7914,12 @@ class Checker {
     }
 
     const slots = expr.arms.arms.map(arm => this.checkArm(arm, expr.kind, scope, recorded));
-    if (slots.some(slot => slot.returns && (slot.posType !== undefined || isRecordType(slot.fieldType)))) {
+    // An arm that hands back a closure (language version 5) fills its slot
+    // with that closure, typed as any closure value is — a function, not a
+    // record.
+    const closureSlot = (slot: ReturnShape): FieldType | undefined =>
+      since(this.languageVersion, 5) && slot.posType?.kind === 'closure' ? recordOf(slot.posType) : undefined;
+    if (slots.some(slot => slot.returns && ((slot.posType !== undefined && closureSlot(slot) === undefined) || isRecordType(slot.fieldType)))) {
       this.recordSlotCombinators.add(expr);
     }
     // What each slot may hold travels with the receipt as a list literal's
@@ -7926,8 +7935,9 @@ class Checker {
         // combinators — `parallel` introduces no nulls, but it cannot invent a
         // value the arm never produced.
         if (!slot.returns) return 'absent';
-        if (slot.fieldType === undefined) return null;
-        return (expr.kind === 'race' ? maybeAbsent(slot.fieldType) : slot.fieldType) ?? null;
+        const type = slot.fieldType ?? closureSlot(slot);
+        if (type === undefined) return null;
+        return (expr.kind === 'race' ? maybeAbsent(type) : type) ?? null;
       }),
     };
   }

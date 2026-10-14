@@ -1446,12 +1446,16 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  * answers, or what, so this manufactures neither a presence nor a kind
  * (unknown stays unknown, as in TS).
  */
-function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
+function coalesceType(args: Array<FieldType | undefined>, closuresAreValues = false): FieldType | undefined {
   if (args.some(type => type === undefined)) return undefined;
   const typed = args as FieldType[];
   const valued = typed.filter(type => type !== 'absent');
   // Every argument is the `null` literal — the value that is never there.
   if (valued.length === 0) return 'absent';
+  // Closures (language version 5) are TypeScript's `(() => A) ?? (() => B)`:
+  // the union of the closures, present when one argument always is.
+  const closures = closuresAreValues ? closureUnion(valued.map(stripAbsent)) : undefined;
+  if (closures !== undefined) return valued.some(type => !isMaybeAbsent(type)) ? closures : maybeAbsent(closures);
   const kinds = valued.map(stripAbsent);
   const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
@@ -4933,6 +4937,10 @@ export class ExpressionTyping {
         if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
           return thenType;
         }
+        // Closures (language version 5) are TypeScript's `c ? a : b` over
+        // functions: the union of the two, so a call through it is typed by
+        // what either returns.
+        if (since(this.options.languageVersion, 5)) return closureUnion([thenType, elseType]);
         return undefined;
       }
       case 'at': {
@@ -5116,7 +5124,7 @@ export class ExpressionTyping {
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
-        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
+        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, since(this.options.languageVersion, 5));
         if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {

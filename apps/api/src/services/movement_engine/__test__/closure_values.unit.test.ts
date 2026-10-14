@@ -386,3 +386,23 @@ describe('a closure made in a MAP member that parked, called after the resume', 
     ).toEqual({ r: [4, 5] });
   });
 });
+
+describe('a closure\'s value flows through every value position, and a call through it runs', () => {
+  const FNS = ['function one() {', '  return "one"', '}', 'function pickOne() {', '  return one', '}'].join('\n');
+  async function payloadWith(body: string[]): Promise<unknown> {
+    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('movement recap', `${FNS}\nmovement recap`);
+    const parks = makeParkSink();
+    const { kg } = await start(source, parks);
+    return payloadOf(kg.creates);
+  }
+
+  it.each<[string, string[]]>([
+    ['a named function bound to a name', ['  g = one', '  x = g()']],
+    ['a named function a concise closure returns', ['  mk = () => one', '  h = mk()', '  x = h()']],
+    ['a named function a declared function returns', ['  h = pickOne()', '  x = h()']],
+    ['IF … THEN … ELSE … END over closures', ['  a = () => "a"', '  c = TRUE', '  g = IF c THEN one ELSE a END', '  x = g()']],
+    ['COALESCE over closures', ['  a = () => "a"', '  g = COALESCE(one, a)', '  x = g()']],
+  ])('%s', async (_label, body) => {
+    expect(await payloadWith(body)).toEqual({ x: 'one' });
+  });
+});
