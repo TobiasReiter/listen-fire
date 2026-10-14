@@ -108,6 +108,24 @@ beforeEach(() => {
 });
 
 describe('a resumed run', () => {
+  it('reads back the engine that parked it, which its resume goes back to', async () => {
+    for (const engine of ['ts', 'rust'] as const) {
+      existingRow = { ops_run_id: null, started_at: new Date(), diagnostics: {}, engine };
+      const recorder = resumingRecorder();
+      expect(recorder.parkedOnEngine).toBeUndefined();
+      await recorder.adoptOpsRun();
+      expect(recorder.parkedOnEngine).toBe(engine);
+    }
+    // A row that names no engine (or one this release does not know) leaves
+    // the resume to be routed by the run's pin.
+    for (const engine of [null, 'wasm']) {
+      existingRow = { ops_run_id: null, started_at: new Date(), diagnostics: {}, engine };
+      const recorder = resumingRecorder();
+      await recorder.adoptOpsRun();
+      expect(recorder.parkedOnEngine).toBeUndefined();
+    }
+  });
+
   it('reads back what the run spent before it parked', async () => {
     existingRow = {
       ops_run_id: null,

@@ -168,6 +168,10 @@ export class TriggerRunRecorder {
    *  back by `adoptOpsRun()`: a branch woken by an ordinary event then holds
    *  the pause rather than running past it. */
   private pausedAtLimit = false;
+  /** The engine the run's last segment ran on (`trigger_run.engine`), read
+   *  back by `adoptOpsRun()`: a resume goes back to the engine that parked
+   *  it. Undefined when fresh, or when the row names none. */
+  private lastEngine: 'ts' | 'rust' | undefined;
 
   constructor(private readonly firing: TriggerRunFiring) {
     // Adopt the parked run's id on resume; otherwise mint a fresh one.
@@ -231,6 +235,12 @@ export class TriggerRunRecorder {
   /** Whether the run is paused at a limit right now. Call `adoptOpsRun()` first. */
   get limitPaused(): boolean {
     return this.pausedAtLimit;
+  }
+
+  /** The engine that parked the run (`trigger_run.engine`), or undefined
+   *  when the row names none. Call `adoptOpsRun()` first. */
+  get parkedOnEngine(): 'ts' | 'rust' | undefined {
+    return this.lastEngine;
   }
 
   /** The trigger that fired this run. */
@@ -390,7 +400,7 @@ export class TriggerRunRecorder {
     try {
       const row = await getAutomationsQb(['trigger_run'])
         .selectFrom('trigger_run')
-        .select(['ops_run_id', 'started_at', 'diagnostics', 'limit_pause', 'cost_cap_baseline_microdollars'])
+        .select(['ops_run_id', 'started_at', 'diagnostics', 'limit_pause', 'cost_cap_baseline_microdollars', 'engine'])
         .where('id', '=', this.id)
         .executeTakeFirst();
       this.opsRunId = row?.ops_run_id ?? null;
@@ -404,6 +414,8 @@ export class TriggerRunRecorder {
       // from what it had spent then.
       this.capBaseline = Number(row?.cost_cap_baseline_microdollars ?? 0);
       this.pausedAtLimit = row?.limit_pause !== null && row?.limit_pause !== undefined;
+      // And the engine it ran on, which its resume goes back to.
+      this.lastEngine = row?.engine === 'ts' || row?.engine === 'rust' ? row.engine : undefined;
       // The answer arrived, so it is working again rather than waiting.
       if (this.opsRunId) await unparkOpsRun(this.opsRunId).catch(() => {});
     } catch (readErr) {

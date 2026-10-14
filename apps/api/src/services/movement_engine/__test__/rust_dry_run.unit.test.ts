@@ -261,7 +261,7 @@ describe('the admission dry run, through the real artifact', () => {
 describe('a run the TypeScript engine runs', () => {
   it('runs as it would without the dry run, and the dry run counts it', async () => {
     const run = (source: string) =>
-      underEngine(undefined, () => runMovement(inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+      underEngine('ts', () => runMovement(inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
     process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY = '0';
     const withoutDryRun = await run(REFUSED);
     expect(rustRunStats.dryRun.sampled).toBe(0);

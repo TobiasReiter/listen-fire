@@ -14,7 +14,7 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { engineChoice, engineFallback } from '../../../services/movement_engine/rust_engine';
+import { engineChoice, engineFallback, v5OnTypeScript } from '../../../services/movement_engine/rust_engine';
 import { dryRunDurationSummary, rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
 import {
   requireSystemAction,
@@ -256,7 +256,8 @@ const drainAutomationsHandler: RequestHandler = async (req, res) => {
 };
 
 /** What the movement engines did in THIS process since it started: which
- *  engine `MOVEMENT_ENGINE` chose, and the Rust engine's counters (why each
+ *  engine setting `MOVEMENT_ENGINE` names (and the emergency switch,
+ *  `MOVEMENT_ENGINE_V5_ON_TS`), and the Rust engine's counters (why each
  *  run it did not run went to the TypeScript engine, by reason; what it ran,
  *  declined and asked its host; what the evaluator switch answered; and, in
  *  `runs.dryRun`, what its admission would have refused each run the
@@ -268,6 +269,7 @@ const engineStatsHandler: RequestHandler = (_req, res) => {
   return res.status(200).json({
     engine: engineChoice(),
     fallback: engineFallback(),
+    v5OnTs: v5OnTypeScript(),
     uptimeSeconds,
     since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
     // The recent dry runs' cost rides with their counts.

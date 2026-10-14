@@ -129,9 +129,9 @@ describe('the engine settings, checked at boot', () => {
 });
 
 describe('the engine a run records', () => {
-  it('records ts and the first reason Rust would refuse it for, under the default engine', async () => {
-    await underConfig({}, () => run(REFUSED, 'run-refused'));
-    await underConfig({}, () => run(ADMITTED, 'run-admitted'));
+  it('records ts and the first reason Rust would refuse it for, under MOVEMENT_ENGINE=ts', async () => {
+    await underConfig({ engine: 'ts' }, () => run(REFUSED, 'run-refused'));
+    await underConfig({ engine: 'ts' }, () => run(ADMITTED, 'run-admitted'));
     expect(recorded).toEqual([
       { runId: 'run-refused', engine: 'ts', reason: 'within_compare' },
       { runId: 'run-admitted', engine: 'ts', reason: 'admitted' },
@@ -150,7 +150,7 @@ describe('the engine a run records', () => {
   });
 
   it('records nothing for a run with no id', async () => {
-    await underConfig({}, () => runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+    await underConfig({ engine: 'ts' }, () => runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
     expect(recorded).toEqual([]);
   });
 });
@@ -201,7 +201,7 @@ describe('MOVEMENT_ENGINE_FALLBACK=none', () => {
 
   it('records no rehearsal', async () => {
     const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
-    await underConfig({}, () => runMovement({ ...inputOf(ADMITTED, host, 'run-rehearsal'), dryRun: true }));
+    await underConfig({ engine: 'ts' }, () => runMovement({ ...inputOf(ADMITTED, host, 'run-rehearsal'), dryRun: true }));
     expect(recorded).toEqual([]);
   });
 });

@@ -730,7 +730,8 @@ describe('a program that fails its check', () => {
 
   afterEach(() => {
     setRunEngineRecorder(undefined);
-    delete process.env.MOVEMENT_ENGINE;
+    // Back to the suites' default (test-env-defaults.ts): one engine forced.
+    process.env.MOVEMENT_ENGINE = 'ts';
   });
 
   it.each(['ts', 'rust'] as const)('makes no host request on the %s engine, segment.open included, and logs why on Rust', async (engine) => {

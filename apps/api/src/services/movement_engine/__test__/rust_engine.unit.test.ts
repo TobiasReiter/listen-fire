@@ -670,8 +670,9 @@ describe('a run that ends naming a construct (MOVENG_UNSUPPORTED)', () => {
 });
 
 describe('choosing the engine', () => {
-  it('reads MOVEMENT_ENGINE: unset or ts is the TypeScript engine, rust the Rust one, anything else refused', () => {
-    expect(engineChoice({})).toBe('ts');
+  it('reads MOVEMENT_ENGINE: unset or by-version follows the pin, ts and rust force one engine, anything else refused', () => {
+    expect(engineChoice({})).toBe('by-version');
+    expect(engineChoice({ MOVEMENT_ENGINE: 'by-version' })).toBe('by-version');
     expect(engineChoice({ MOVEMENT_ENGINE: 'ts' })).toBe('ts');
     expect(engineChoice({ MOVEMENT_ENGINE: 'rust' })).toBe('rust');
     expect(() => engineChoice({ MOVEMENT_ENGINE: 'Rust' })).toThrow('MOVEMENT_ENGINE is "Rust"');

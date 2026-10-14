@@ -115,6 +115,15 @@ export interface ResumeInput extends RunInput {
    *  result's `deferredRaceFrames` instead of settling inline; the host then
    *  settles each listed frame once, with every winner. */
   deferRaceSettlement?: boolean;
+  /**
+   * The engine that ran the run's last segment, as the host recorded it on
+   * the run (`trigger_run.engine`): the engine that parked it. Under
+   * `MOVEMENT_ENGINE=by-version` the resume goes back to it, whatever the
+   * emergency switch says now — a run's engine, like its pin, never moves
+   * mid-run. Absent ⇒ unknown: the resume is routed by the run's pin, as a
+   * new run is. A forced `MOVEMENT_ENGINE` ignores it.
+   */
+  parkedOnEngine?: 'ts' | 'rust';
 }
 
 /** A race settlement under batch resume: any completed branch's state from

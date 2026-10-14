@@ -42,6 +42,11 @@ if (!process.env.DATABASE_URL_TEST) {
 // for symmetry; integration tests don't use the readonly client today
 // but the prisma module requires the env var when NODE_ENV != 'test'.
 process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
+
+// The suites force one engine for every language version, as the unit
+// suites do (test-env-defaults.ts): the TypeScript engine unless the run
+// says `MOVEMENT_ENGINE=rust`. Production's default is `by-version`.
+process.env.MOVEMENT_ENGINE ??= 'ts';
 process.env.DATABASE_URL_READONLY =
   process.env.DATABASE_URL_TEST_READONLY ?? process.env.DATABASE_URL_TEST;
 

@@ -40,6 +40,7 @@ jest.mock('../../runs/trigger_run', () => ({
     adoptOpsRun: jest.fn(async () => undefined),
     triggerRunId: 'run-1',
     firedAt: new Date('2026-06-15T09:00:00.000Z'),
+    parkedOnEngine: 'rust',
   })),
 }));
 
@@ -485,6 +486,12 @@ describe('resumeMovementFiring', () => {
     resumeMovement.mockResolvedValue({ movementName: 'intake', writes: [], extractionSites: {}, trace: [] });
     await resumeMovementFiring({ ...resumeInput, answer: true });
     expect(resumeMovement).toHaveBeenCalledWith(expect.objectContaining({ languageVersion: 1 }));
+  });
+
+  it('resumes on the engine the run row says parked it', async () => {
+    resumeMovement.mockResolvedValue({ movementName: 'intake', writes: [], extractionSites: {}, trace: [] });
+    await resumeMovementFiring({ ...resumeInput, answer: true });
+    expect(resumeMovement).toHaveBeenCalledWith(expect.objectContaining({ parkedOnEngine: 'rust' }));
   });
 
   it('a resumed run that failed after writing records those writes too', async () => {

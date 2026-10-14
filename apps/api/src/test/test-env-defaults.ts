@@ -51,6 +51,10 @@ const defaults: Record<string, string> = {
   // would point every deployment at Listen-Fire — so the fixtures name the
   // deployment they were written against.
   INBOUND_EMAIL_ADDRESS: 'inbox@example.com',
+  // The suites force one engine for every language version (production's
+  // default is `by-version`): the TypeScript engine, the reference, unless a
+  // run says `MOVEMENT_ENGINE=rust` to compare the Rust engine against it.
+  MOVEMENT_ENGINE: 'ts',
 };
 
 for (const [key, value] of Object.entries(defaults)) {

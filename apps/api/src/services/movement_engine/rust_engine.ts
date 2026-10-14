@@ -7,22 +7,26 @@
 // it, in the shapes docs/contracts/host-families.md freezes, and the shim forwards each one
 // to the run's `EngineHost` (rust_host.ts).
 //
-// Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`),
-// and then by the Rust engine
+// Which engine runs a program is decided by `MOVEMENT_ENGINE` (`engineChoice`)
+// and, under its default `by-version`, by the run's pinned language version
+// (`engineRoute`: 5 and later the Rust engine, 1–4 the TypeScript engine; a
+// resume goes back to the engine that parked it), and then by the Rust engine
 // itself: its admission walks its own parse of the program before it asks for
 // anything (crates/movement-engine/src/admit.rs). What it refuses or declines
-// runs on the TypeScript engine. Each decision is logged once per run
-// (`noteEngine`) and counted (`rustRunStats`).
+// fails the run, or, where the route falls back, runs on the TypeScript
+// engine. Each decision is logged once per run (`noteEngine`) and counted
+// (`rustRunStats`).
 //
 // Below a whole program, one expression can already run in Rust: `evalInRust`
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, openEngineSegment } from 'movement-lang';
+import { callEvalExpression, openEngineSegment, since, type LanguageVersion } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
 import { RunCostCapExceeded } from '../../lib/run_cost';
+import { neverAsAny } from '../../lib/utils/types';
 import { extractionTierAssignments, runChatModels } from './ai_tiers';
 import { CallDepthExceeded, maxCallDepth } from './call_depth';
 import { logger } from '../logger';
@@ -80,15 +84,29 @@ export interface EngineProtocol {
   finish(): void;
 }
 
+/** An engine: the one a run's segment runs on. */
 export type EngineChoice = 'rust' | 'ts';
 
-/** The one place `MOVEMENT_ENGINE` is read. Unset is `ts`; anything other
- *  than `rust` or `ts` is refused rather than read as either. */
-export function engineChoice(env: Record<string, string | undefined> = process.env): EngineChoice {
+/**
+ * What `MOVEMENT_ENGINE` says: `by-version` (production's default) sends a
+ * run to the engine its pinned language version runs on — version 5 and
+ * later the Rust engine, versions 1–4 the TypeScript engine; `rust` or `ts`
+ * forces one engine for every version (the test harness's, so the reference
+ * comparisons can run either engine on any corpus).
+ */
+export type EngineSetting = EngineChoice | 'by-version';
+
+/** The first language version that runs on the Rust engine under
+ *  `by-version`; every earlier one runs on the TypeScript engine. */
+export const RUST_ENGINE_FROM_VERSION: LanguageVersion = 5;
+
+/** The one place `MOVEMENT_ENGINE` is read. Unset is `by-version`; anything
+ *  other than `by-version`, `rust` or `ts` is refused rather than read as one. */
+export function engineChoice(env: Record<string, string | undefined> = process.env): EngineSetting {
   const value = env.MOVEMENT_ENGINE;
-  if (value === undefined || value === '' || value === 'ts') return 'ts';
-  if (value === 'rust') return 'rust';
-  throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "rust" or "ts"`);
+  if (value === undefined || value === '' || value === 'by-version') return 'by-version';
+  if (value === 'rust' || value === 'ts') return value;
+  throw new Error(`MOVEMENT_ENGINE is "${value}": it must be "by-version", "rust" or "ts"`);
 }
 
 /** What happens to a run `MOVEMENT_ENGINE=rust` routes and the Rust engine
@@ -97,7 +115,8 @@ export function engineChoice(env: Record<string, string | undefined> = process.e
  *  refusal is an error and not a silent slow path). */
 export type EngineFallback = 'ts' | 'none';
 
-/** The one place `MOVEMENT_ENGINE_FALLBACK` is read. Unset is `ts`. */
+/** The one place `MOVEMENT_ENGINE_FALLBACK` is read. Unset is `ts`. It
+ *  applies only under `MOVEMENT_ENGINE=rust` (boot refuses it otherwise). */
 export function engineFallback(env: Record<string, string | undefined> = process.env): EngineFallback {
   const value = env.MOVEMENT_ENGINE_FALLBACK;
   if (value === undefined || value === '' || value === 'ts') return 'ts';
@@ -105,41 +124,126 @@ export function engineFallback(env: Record<string, string | undefined> = process
   throw new Error(`MOVEMENT_ENGINE_FALLBACK is "${value}": it must be "ts" or "none"`);
 }
 
-/** For a process's boot: a bad `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`
- *  or `MOVEMENT_ENGINE_DRY_RUN_EVERY` fails startup rather than every run (or,
+/**
+ * The one place `MOVEMENT_ENGINE_V5_ON_TS` is read: the emergency switch.
+ * `true` sends the runs `by-version` would send to the Rust engine (version 5
+ * and later) to the TypeScript engine instead — new runs, and resumes of runs
+ * the TypeScript engine parked (a run the Rust engine parked still resumes on
+ * it, `engineRoute`). Unset or `false` is off; anything else is refused.
+ */
+export function v5OnTypeScript(env: Record<string, string | undefined> = process.env): boolean {
+  const value = env.MOVEMENT_ENGINE_V5_ON_TS;
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error(`MOVEMENT_ENGINE_V5_ON_TS is "${value}": it must be "true" or "false"`);
+}
+
+/** For a process's boot: a bad `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`,
+ *  `MOVEMENT_ENGINE_V5_ON_TS` or `MOVEMENT_ENGINE_DRY_RUN_EVERY`, or a
+ *  combination that says nothing, fails startup rather than every run (or,
  *  for the dry run, every dry run, silently). */
 export function assertEngineChoiceConfigured(env: Record<string, string | undefined> = process.env): void {
   const choice = engineChoice(env);
-  // No fallback with no Rust engine would fail every run, whatever its program.
-  if (engineFallback(env) === 'none' && choice !== 'rust') {
-    throw new Error('MOVEMENT_ENGINE_FALLBACK is "none", which fails every run the Rust engine refuses: it needs MOVEMENT_ENGINE=rust');
+  const fallback = engineFallback(env);
+  // The fallback is what a forced Rust engine does with a run it refuses:
+  // `by-version` fails such a run (or, with the switch, never sends it), and
+  // `ts` never sends one. Set beside either, it would say something that
+  // does not happen.
+  if (env.MOVEMENT_ENGINE_FALLBACK !== undefined && env.MOVEMENT_ENGINE_FALLBACK !== '' && choice !== 'rust') {
+    throw new Error(
+      `MOVEMENT_ENGINE_FALLBACK is "${fallback}", which says what a run MOVEMENT_ENGINE=rust routes and the Rust engine refuses does next: it needs MOVEMENT_ENGINE=rust (MOVEMENT_ENGINE is ${choice})`,
+    );
+  }
+  const switched = v5OnTypeScript(env);
+  // A forced engine runs every version on it: the switch would not move one.
+  if (switched && choice !== 'by-version') {
+    throw new Error(
+      `MOVEMENT_ENGINE_V5_ON_TS is "true", which moves version-5 runs off the Rust engine under MOVEMENT_ENGINE=by-version: MOVEMENT_ENGINE=${choice} forces one engine for every version`,
+    );
+  }
+  if (switched) {
+    logger.warn('movement engine: MOVEMENT_ENGINE_V5_ON_TS=true: new version-5 runs, and the version-5 runs the TypeScript engine parked, run on the TypeScript engine');
   }
   admissionDryRunEvery(env);
 }
 
-/** The error a refused run fails with under `MOVEMENT_ENGINE_FALLBACK=none`. */
-function refusedWithoutFallback(reason: string): MovementEngineError {
-  return new MovementEngineError(
-    'MOVENG_UNSUPPORTED',
-    `the Rust engine does not run this movement (${reason}), and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it`,
-    { reason },
-  );
+/**
+ * Where a run's segment goes, and what a refusal there does: `engine`, the
+ * engine it starts on; `fallback`, whether a run the Rust engine refuses or
+ * declines then runs on the TypeScript engine (`ts`) or fails (`none`);
+ * `dryRun`, whether a segment the TypeScript engine runs is put to the Rust
+ * engine's admission (the dry run counts only the runs that would otherwise
+ * be the Rust engine's); `setting`, what decided it.
+ */
+export interface EngineRoute {
+  engine: EngineChoice;
+  fallback: EngineFallback;
+  dryRun: boolean;
+  setting: EngineSetting;
+}
+
+/**
+ * The route of one segment of a run pinned to `languageVersion`. Under
+ * `by-version` a run follows its pin (version 5 and later: the Rust engine,
+ * with no fallback, so a refusal fails loudly; 1–4: the TypeScript engine),
+ * the emergency switch (`v5OnTypeScript`) sends the pin's Rust runs to the
+ * TypeScript engine, and a resume (`parkedOn`, the engine the run's row says
+ * ran its last segment) goes back to the engine that parked it whatever the
+ * switch says now: the pin never moves mid-run, and neither does its engine.
+ * A forced `rust` or `ts` sends every segment of every version to that
+ * engine, as the reference comparisons need.
+ */
+export function engineRoute(
+  run: { languageVersion: LanguageVersion; parkedOn?: EngineChoice },
+  env: Record<string, string | undefined> = process.env,
+): EngineRoute {
+  const setting = engineChoice(env);
+  switch (setting) {
+    case 'ts':
+      return { engine: 'ts', fallback: 'ts', dryRun: true, setting };
+    case 'rust':
+      return { engine: 'rust', fallback: engineFallback(env), dryRun: false, setting };
+    case 'by-version': {
+      const rustVersion = since(run.languageVersion, RUST_ENGINE_FROM_VERSION);
+      const switched = v5OnTypeScript(env);
+      // A run on its pin's own engine has no other: a refusal fails it. With
+      // the switch on, the TypeScript engine is where it may go.
+      const fallback: EngineFallback = rustVersion && !switched ? 'none' : 'ts';
+      const engine: EngineChoice = run.parkedOn ?? (rustVersion && !switched ? 'rust' : 'ts');
+      return { engine, fallback, dryRun: rustVersion, setting };
+    }
+    default:
+      return neverAsAny(setting);
+  }
+}
+
+/** The error a refused run fails with when no other engine may run it. */
+function refusedWithoutFallback(reason: string, setting: EngineSetting): MovementEngineError {
+  const why =
+    setting === 'by-version'
+      ? `and under MOVEMENT_ENGINE=by-version its language version runs only on the Rust engine (MOVEMENT_ENGINE_V5_ON_TS=true runs it on the TypeScript engine)`
+      : 'and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it';
+  return new MovementEngineError('MOVENG_UNSUPPORTED', `the Rust engine does not run this movement (${reason}), ${why}`, { reason });
 }
 
 /** What a run the Rust engine did not take does next: the TypeScript engine
- *  runs it (`undefined`), or the run fails (`fallback=none`). */
-export function refusalOutcome(reason: string): MovementEngineError | undefined {
-  return engineFallback() === 'none' ? refusedWithoutFallback(reason) : undefined;
+ *  runs it (`undefined`), or the run fails (its route's fallback is `none`).
+ *  Absent a route, `MOVEMENT_ENGINE=rust`'s. */
+export function refusalOutcome(reason: string, route?: Pick<EngineRoute, 'fallback' | 'setting'>): MovementEngineError | undefined {
+  const { fallback, setting } = route ?? { fallback: engineFallback(), setting: 'rust' as const };
+  return fallback === 'none' ? refusedWithoutFallback(reason, setting) : undefined;
 }
 
 /** What a segment in the Rust engine runs: the run's input, the segment
  *  the run host opened, and the check the run host made before opening it
  *  (run.ts), which answers the engine's `check.program` (absent: the route
- *  checks). */
+ *  checks), and what a refusal does next (`fallback`; absent:
+ *  `MOVEMENT_ENGINE_FALLBACK`'s). */
 export interface RustSegment<Input extends RunMovementInput = RunMovementInput> {
   input: Input;
   context: RunContext;
   checked?: CheckedProgram;
+  fallback?: EngineFallback;
 }
 
 /** A segment of `input`'s run in the Rust engine: its result, or why the
@@ -211,7 +315,7 @@ interface Resumption {
 }
 
 async function segmentInRust(
-  { input, context, checked }: RustSegment,
+  { input, context, checked, fallback = engineFallback() }: RustSegment,
   resume: Resumption | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
@@ -223,9 +327,9 @@ async function segmentInRust(
   // answer) keeps the ids the engine names it back by.
   const wire = new WireOut({ whole: true });
   const localZone = processLocalZone();
-  if (localZone === undefined) return notAdmitted(input, LOCAL_ZONE_UNVERIFIED);
+  if (localZone === undefined) return notAdmitted(input, fallback, LOCAL_ZONE_UNVERIFIED);
   const start = segmentInput(input, context, { resume, localZone }, wire);
-  if (start === undefined) return notAdmitted(input, EVENT_DOES_NOT_CROSS);
+  if (start === undefined) return notAdmitted(input, fallback, EVENT_DOES_NOT_CROSS);
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
   let unreproduced = false;
@@ -274,11 +378,11 @@ async function segmentInRust(
     throw error;
   }
   rustRunStats.routed += 1;
-  if ('refused' in outcome) return notAdmitted(input, outcome.refused, outcome.reasons);
+  if ('refused' in outcome) return notAdmitted(input, fallback, outcome.refused, outcome.reasons);
   rustRunStats.admitted += 1;
   if ('declined' in outcome) {
     rustRunStats.declined[outcome.declined] = (rustRunStats.declined[outcome.declined] ?? 0) + 1;
-    noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', outcome.declined);
+    noteEngine(input, fallback === 'none' ? 'rust' : 'ts', outcome.declined);
     return outcome;
   }
   rustRunStats.ranWhole += 1;
@@ -396,10 +500,15 @@ function failedCheckMidRun(input: Pick<RunMovementInput, 'runId' | 'dryRun'>): v
 
 /** A run that never ran in Rust: counted by its first reason and under each
  *  of its reasons, and logged by its first. */
-function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string, reasons: readonly string[] = [reason]): { declined: string } {
+function notAdmitted(
+  input: Pick<RunMovementInput, 'runId'>,
+  fallback: EngineFallback,
+  reason: string,
+  reasons: readonly string[] = [reason],
+): { declined: string } {
   rustRunStats.notAdmitted[reason] = (rustRunStats.notAdmitted[reason] ?? 0) + 1;
   for (const each of new Set(reasons)) rustRunStats.allReasons[each] = (rustRunStats.allReasons[each] ?? 0) + 1;
-  noteEngine(input, engineFallback() === 'none' ? 'rust' : 'ts', reason);
+  noteEngine(input, fallback === 'none' ? 'rust' : 'ts', reason);
   return { declined: reason };
 }
 
@@ -407,8 +516,8 @@ function notAdmitted(input: Pick<RunMovementInput, 'runId'>, reason: string, rea
  * The one log line per run that says which engine ran it, and why: `admitted`
  * for a run the Rust engine ran (to its end or its own failure), else the
  * reason it ran on the TypeScript engine — the shim's input check, the Rust
- * engine's refusal or decline, or `movement_engine_ts` when the Rust engine
- * was not chosen. At info under `MOVEMENT_ENGINE=rust`, where it is the
+ * engine's refusal or decline, or `movement_engine_ts` when the run's route
+ * did not choose the Rust engine. At info under `MOVEMENT_ENGINE=rust`, where it is the
  * evidence of what the Rust engine takes; at debug otherwise.
  */
 export function noteEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine: EngineChoice, reason: string): void {
@@ -425,7 +534,7 @@ function recordEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, engine:
   if (input.runId !== undefined && input.dryRun !== true) recordRunEngine({ runId: input.runId, engine, reason });
 }
 
-/** A run `MOVEMENT_ENGINE` kept on the TypeScript engine, with the first
+/** A run its route kept on the TypeScript engine, with the first
  *  reason the Rust engine's admission gave for it, or `admitted` when it
  *  would take it (undefined reasons: the dry run was not asked or faulted,
  *  recorded as no reason). */
@@ -433,7 +542,8 @@ export function recordTypeScriptRun(input: Pick<RunMovementInput, 'runId' | 'dry
   recordEngine(input, 'ts', reasons === undefined ? null : (reasons[0] ?? ADMITTED));
 }
 
-/** Why the TypeScript engine runs a run that `MOVEMENT_ENGINE` did not route. */
+/** Why the TypeScript engine runs a run its route (`engineRoute`: the
+ *  setting, the run's pin, the engine that parked it) did not send to Rust. */
 export const ENGINE_CHOICE_TS = 'movement_engine_ts';
 
 // ── The admission dry run ─────────────────────────────────────────────────────

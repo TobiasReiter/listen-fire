@@ -80,6 +80,7 @@ const resumeInputSchema = runInputSchema.extend({
   answer: z.unknown().optional(),
   reenter: z.boolean().optional(),
   deferRaceSettlement: z.boolean().optional(),
+  parkedOnEngine: z.enum(['ts', 'rust']).optional(),
 });
 
 // Each schema names exactly its contract type's fields, so a field added to

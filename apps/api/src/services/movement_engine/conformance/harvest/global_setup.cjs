@@ -11,8 +11,8 @@ const rustStats = require('../../../../test/rust_eval_stats.global-setup.cjs');
 module.exports = async function globalSetup(globalConfig, projectConfig) {
   await rustStats(globalConfig, projectConfig);
   if (process.env.UPDATE_ENGINE_RUNS === '1') {
-    if (process.env.MOVEMENT_ENGINE === 'rust') {
-      throw new Error('UPDATE_ENGINE_RUNS records the TypeScript engine\'s conversations: run it without MOVEMENT_ENGINE=rust');
+    if (process.env.MOVEMENT_ENGINE === 'rust' || process.env.MOVEMENT_ENGINE === 'by-version') {
+      throw new Error('UPDATE_ENGINE_RUNS records the TypeScript engine\'s conversations: run it with MOVEMENT_ENGINE=ts (or unset)');
     }
     process.env.ENGINE_RUNS_HARVEST_DIR = mkdtempSync(path.join(os.tmpdir(), 'engine-runs-'));
   }

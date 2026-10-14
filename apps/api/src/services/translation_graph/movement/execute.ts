@@ -603,6 +603,9 @@ async function resumeMovementFiringInContext(
       // A run paused at its cost limit stays paused: a branch woken by its own
       // event takes it, then suspends before its next statement.
       limitPaused: recorder.limitPaused,
+      // The engine that parked it, read back with the rest: the resume goes
+      // back to it (`engineRoute`), whatever the emergency switch says now.
+      ...(recorder.parkedOnEngine !== undefined ? { parkedOnEngine: recorder.parkedOnEngine } : {}),
       catalog: teamCatalog.snapshot,
       credentialIds: teamCatalog.credentialIds,
       runId: input.runId,
@@ -828,6 +831,8 @@ async function fireCallbackFiringInContext(
         costCapMicrodollars: runCostCapFromEnv(),
         priorSpentMicrodollars: recorder.priorSpentMicrodollars,
         capBaselineMicrodollars: recorder.capBaselineMicrodollars,
+        // A body runs on the engine its run is on (see the resume path).
+        ...(recorder.parkedOnEngine !== undefined ? { parkedOnEngine: recorder.parkedOnEngine } : {}),
         catalog: teamCatalog.snapshot,
         credentialIds: teamCatalog.credentialIds,
         runId: input.runId,
