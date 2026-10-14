@@ -17,6 +17,7 @@ import {
   type FileValue,
   type NodeEdgeDescriptor,
   type ParkedScopeState,
+  type ScopeLink,
   type SerializedCallEvent,
   type SerializedFrame,
   type SerializedScope,
@@ -558,7 +559,35 @@ function bindingsFiles(bindings: unknown): unknown {
 }
 
 function scopesFiles(chain: SerializedScope[]): unknown {
-  return chain.map((scope) => (isPlainObject(scope) ? { ...scope, bindings: bindingsFiles(scope.bindings) } : scope));
+  return chain.map((scope) =>
+    isPlainObject(scope)
+      ? {
+          ...scope,
+          bindings: bindingsFiles(scope.bindings),
+          ...(scope.parent !== undefined ? { parent: scopeLinkFiles(scope.parent) } : {}),
+        }
+      : scope,
+  );
+}
+
+/** A scope link: a written `scope`'s bindings are a map of descriptors (and
+ *  its parent a link); a `scopeRef` or a `file` link holds nothing. */
+function scopeLinkFiles(link: ScopeLink): unknown {
+  if (!isPlainObject(link)) return link;
+  switch (link.kind) {
+    case 'scope':
+      return {
+        ...link,
+        bindings: bindingsFiles(link.bindings),
+        ...(link.parent !== undefined ? { parent: scopeLinkFiles(link.parent) } : {}),
+      };
+    case 'scopeRef':
+    case 'file':
+      return link;
+    default:
+      neverAsAny(link);
+      return link;
+  }
 }
 
 function journalFiles(journal: SerializedCallEvent[]): unknown {
@@ -647,9 +676,14 @@ function descriptorFiles(descriptor: BindingDescriptor): unknown {
       return { ...descriptor, landings: listFiles(descriptor.landings, descriptorFiles) };
     case 'tuple':
       return { ...descriptor, slots: listFiles(descriptor.slots, descriptorFiles) };
-    // A closure's `closure` is code; its capture is a map of descriptors.
+    // A closure's `closure` is code; its capture is a map of descriptors,
+    // and its scope a scope link.
     case 'closure':
-      return { ...descriptor, captured: bindingsFiles(descriptor.captured) };
+      return {
+        ...descriptor,
+        captured: bindingsFiles(descriptor.captured),
+        ...(descriptor.scope !== undefined ? { scope: scopeLinkFiles(descriptor.scope) } : {}),
+      };
     case 'recordValue':
       return { ...descriptor, value: valueFiles(descriptor.value) };
     case 'shapePosition':

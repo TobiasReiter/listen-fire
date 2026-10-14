@@ -132,9 +132,16 @@ export type BindingDescriptor =
   | {
       kind: 'closure';
       closure: ClosureExpression;
+      /** The flat snapshot a closure written before scopes were numbered
+       *  carries. Empty when `scope` is said. */
       captured: Record<string, BindingDescriptor>;
       /** The name its body calls itself by (`Binding` closure's `self`). */
       self?: string;
+      /** The scope it holds by reference — a body closure's: written in
+       *  full the first time the park reaches it, named by number after.
+       *  Absent = the `captured` snapshot is its scope, as on every park
+       *  written before it was said. */
+      scope?: ScopeLink;
     }
   | { kind: 'value'; value: unknown; provenance?: Provenance; many?: true }
   /**
@@ -304,7 +311,33 @@ export type ResourceDescriptor = Omit<Resource, 'fileRef'> & {
  */
 export interface SerializedScope {
   bindings: Record<string, BindingDescriptor>;
+  /** Its number, when a closure holds it (`ScopeLink`): every copy of the
+   *  scope says it, so the one a resume reads is the one the closure names.
+   *  Absent = no closure holds it by number, as on every park written before
+   *  scopes were numbered. */
+  id?: number;
+  /** With `id`: the scope it is nested in (absent: a file's own scope, or one
+   *  nested in none) — what lets a resume rebuild it from this copy when it
+   *  reads it nowhere else. */
+  parent?: ScopeLink;
 }
+
+/**
+ * Where a closure's scope is, and the scope a numbered scope is nested in.
+ *
+ *   - `scope`: a scope no chain of the park carries, written here, the first
+ *     time the park reaches it: its own bindings and the scope it is nested
+ *     in (absent: a scope of its own, a capture parked before scopes were
+ *     numbered and resumed since).
+ *   - `scopeRef`: a scope the park has numbered — written by a `scope`, or
+ *     one of the parked chains' scopes, which then carries the `id`.
+ *   - `file`: a file's top-level scope — the root program's, or the library
+ *     `file` — found again in the re-parsed program, never written.
+ */
+export type ScopeLink =
+  | { kind: 'scope'; id: number; parent?: ScopeLink; bindings: Record<string, BindingDescriptor> }
+  | { kind: 'scopeRef'; id: number }
+  | { kind: 'file'; file?: string };
 
 /**
  * A parked leaf's whole state, version 1: what a host's park sink stores and

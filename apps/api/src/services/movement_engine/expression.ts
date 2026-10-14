@@ -506,6 +506,14 @@ export type BindingShape =
        *  by that name and finds it again in the re-parsed file, as it does a
        *  movement: it is a declaration of the program, not run-time data. */
       file?: { name: string; env: Environment };
+      /** A closure written in a BODY: the scope it was written in, held by
+       *  REFERENCE as a JavaScript closure holds its enclosing scope — so it
+       *  reads that scope as it stands when it runs, the bindings made after
+       *  it too (names are never rebound, so nothing it read changes).
+       *  `captured` is then empty. A park writes the scope once, numbered,
+       *  and the closure as its code and that number. Absent on a closure
+       *  rehydrated from a park written before (its `captured` snapshot). */
+      env?: Environment;
     }
   /** `prompt = "…"` — a plain runtime value, carrying the trail of the
    *  expression that produced it so later reads keep propagating. `many`
@@ -848,6 +856,11 @@ export class Environment {
 
   child(): Environment {
     return new Environment(this);
+  }
+
+  /** The scope this one is nested in — none for a file's own scope. */
+  outer(): Environment | undefined {
+    return this.parent;
   }
 
   /** The bindings declared in THIS scope only (no parent walk) — the

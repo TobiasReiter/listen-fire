@@ -23,7 +23,8 @@
 //      name against the rehydration context's code resolver. `blockMeta` and
 //      `positions` are recursive (their contained bindings serialise per these
 //      rules). A `closure` carries its BODY as AST — it has no name to
-//      re-resolve by — plus its capture, recursively.
+//      re-resolve by — plus the scope it holds: numbered, and written once (a
+//      closure parked before scopes were numbered carries a flat capture).
 //
 // A node the run built is an object held by reference, so one park numbers
 // each such node the first time it writes it and writes a reference after
@@ -49,6 +50,7 @@ import type {
   ParkedScopeState,
   Resource,
   ResourceDescriptor,
+  ScopeLink,
   SerializedCallEvent,
   SerializedScope,
   ValueDescriptor,
@@ -57,12 +59,11 @@ import type { ExtractEmission } from './extraction';
 import type {
   Binding,
   DeferredWalk,
-  Environment,
   HandleGraph,
   NodeEdge,
   SourceRead,
 } from './expression';
-import { bindValue, binding, bindingOf, isDictValue } from './expression';
+import { Environment, bindValue, binding, bindingOf, isDictValue } from './expression';
 import { settledAll } from './fans';
 import { fileValueOf, isFileValue } from '../translation_graph/adapter';
 import { MovementEngineError } from './errors';
@@ -82,6 +83,7 @@ export type {
   NodeEdgeDescriptor,
   ParkedScopeState,
   ResourceDescriptor,
+  ScopeLink,
   SerializedCallEvent,
   SerializedFrame,
   SerializedScope,
@@ -148,6 +150,12 @@ export interface RehydrationContext {
    * program.
    */
   resolveCodeRef(name: string, file?: string): Binding | Promise<Binding>;
+  /**
+   * A file's top-level scope in the re-parsed program — the root program's,
+   * or the library `file`'s — live: the scope a parked body closure's scopes
+   * chain up to. Only a park holding such a closure needs it.
+   */
+  resolveFileScope?(file?: string): Promise<Environment>;
 }
 
 // ── One park's identity table ─────────────────────────────────────────────────
@@ -183,10 +191,92 @@ export interface ParkWriter {
    *  declared in a library says where it is found again. Undefined (or
    *  absent) = the root program's. */
   readonly fileOf?: (env: Environment) => string | undefined;
+  /** Whether a scope is a file's top-level scope (found again in the
+   *  re-parsed program, never written). Absent: any scope nested in none. */
+  readonly isFileScope?: (env: Environment) => boolean;
+  /** Each scope a closure held, by its number. A scope is numbered the
+   *  first time a closure reaches it, so a park holding none writes exactly
+   *  the bytes it always did. */
+  readonly scopeIds: Map<Environment, number>;
+  /** The copies of each scope the parked chains have written so far: each
+   *  carries the scope's number once it has one, so whichever copy a resume
+   *  reads names it. */
+  readonly scopeCopies: Map<Environment, SerializedScope[]>;
+  /** The scopes a parked chain carries, or will: a closure that holds one
+   *  names it, and never writes it a second time. */
+  readonly chainScopes: Set<Environment>;
 }
 
-export function newParkWriter(fileOf?: (env: Environment) => string | undefined): ParkWriter {
-  return { nodes: new Map(), handles: new Map(), handleIds: 0, ...(fileOf !== undefined ? { fileOf } : {}) };
+export function newParkWriter(
+  fileOf?: (env: Environment) => string | undefined,
+  isFileScope?: (env: Environment) => boolean,
+): ParkWriter {
+  return {
+    nodes: new Map(),
+    handles: new Map(),
+    handleIds: 0,
+    ...(fileOf !== undefined ? { fileOf } : {}),
+    ...(isFileScope !== undefined ? { isFileScope } : {}),
+    scopeIds: new Map(),
+    scopeCopies: new Map(),
+    chainScopes: new Set(),
+  };
+}
+
+/** Say that a chain the park will write carries these scopes — the frames',
+ *  written after the leaf's — so a closure reaching one first names it. */
+export function carriesChain(park: ParkWriter, chain: readonly Environment[]): void {
+  for (const env of chain) park.chainScopes.add(env);
+}
+
+function isFileScopeIn(park: ParkWriter, env: Environment): boolean {
+  return park.isFileScope !== undefined ? park.isFileScope(env) : env.outer() === undefined;
+}
+
+/** Where a numbered scope (or a closure's) is: by number, or a file's. */
+function scopeRefOf(park: ParkWriter, env: Environment): ScopeLink {
+  if (isFileScopeIn(park, env)) {
+    const file = park.fileOf?.(env);
+    return { kind: 'file', ...(file !== undefined ? { file } : {}) };
+  }
+  const id = park.scopeIds.get(env);
+  if (id === undefined) throw new MovementEngineError('MOVENG_RUNTIME', 'park: a scope was named before it was numbered');
+  return { kind: 'scopeRef', id };
+}
+
+/** A chain copy of a numbered scope says its number, and the scope it is
+ *  nested in, so a resume that reads it — or builds it — finds it. */
+function numberCopy(copy: SerializedScope, id: number, parent: ScopeLink | undefined): void {
+  copy.id = id;
+  if (parent !== undefined) copy.parent = parent;
+}
+
+/**
+ * The scope a closure holds, as the park writes it: by number when the park
+ * has numbered it or a chain carries it, a file's by its file, and otherwise
+ * written here, once. Numbering a scope numbers the scopes it is nested in,
+ * up to its file's, so a resume can rebuild the chain from any of them.
+ */
+function scopeLinkOf(park: ParkWriter, env: Environment): ScopeLink {
+  if (isFileScopeIn(park, env) || park.scopeIds.has(env)) return scopeRefOf(park, env);
+  const id = park.scopeIds.size;
+  park.scopeIds.set(env, id);
+  const outer = env.outer();
+  const parent = outer !== undefined ? scopeLinkOf(park, outer) : undefined;
+  // The copies say where it is nested by reference: the scope it is nested
+  // in is numbered now, and written once wherever it was.
+  const parentRef = outer !== undefined ? scopeRefOf(park, outer) : undefined;
+  const copies = park.scopeCopies.get(env);
+  for (const copy of copies ?? []) numberCopy(copy, id, parentRef);
+  if (copies !== undefined || park.chainScopes.has(env)) return { kind: 'scopeRef', id };
+  const written: Extract<ScopeLink, { kind: 'scope' }> = {
+    kind: 'scope',
+    id,
+    ...(parent !== undefined ? { parent } : {}),
+    bindings: {},
+  };
+  writeBindings(written.bindings, env, park);
+  return written;
 }
 
 /** The library a code ref is declared in, when it is one's: an imported
@@ -221,6 +311,13 @@ export interface ParkReader {
    *  from the frame's. */
   readonly handleDescriptors: Map<number, HandleDescriptor>;
   readonly nodeDescriptors: Map<number, NodeDescriptor>;
+  /** Each numbered scope, as the ONE scope every closure that names it
+   *  holds: the live scope a resume rebuilt from a chain copy, or one built
+   *  from the scope's written copy when no chain the resume reads holds it. */
+  readonly scopes: Map<number, Promise<Environment>>;
+  /** Every numbered scope's written copy anywhere in the state — a chain's,
+   *  or a closure's `scope` — indexed before anything is read. */
+  readonly scopeDescriptors: Map<number, { bindings: Record<string, BindingDescriptor>; parent?: ScopeLink }>;
 }
 
 type NodeDescriptor = Extract<BindingDescriptor, { kind: 'nodePosition' }>;
@@ -247,6 +344,8 @@ function emptyParkReader(): ParkReader {
     unfilledHandles: new Set(),
     handleDescriptors: new Map(),
     nodeDescriptors: new Map(),
+    scopes: new Map(),
+    scopeDescriptors: new Map(),
   };
 }
 
@@ -281,7 +380,28 @@ function indexState(state: ParkedScopeState, park: ParkReader): void {
 }
 
 function indexScopes(chain: SerializedScope[], park: ParkReader): void {
-  for (const scope of chain) indexMap(scope.bindings, park);
+  for (const scope of chain) {
+    if (typeof scope.id === 'number' && !park.scopeDescriptors.has(scope.id)) {
+      park.scopeDescriptors.set(scope.id, scope);
+    }
+    if (scope.parent !== undefined) indexScopeLink(scope.parent, park);
+    indexMap(scope.bindings, park);
+  }
+}
+
+function indexScopeLink(link: ScopeLink, park: ParkReader): void {
+  switch (link.kind) {
+    case 'scope':
+      if (!park.scopeDescriptors.has(link.id)) park.scopeDescriptors.set(link.id, link);
+      if (link.parent !== undefined) indexScopeLink(link.parent, park);
+      indexMap(link.bindings, park);
+      return;
+    case 'scopeRef':
+    case 'file':
+      return;
+    default:
+      neverAsAny(link);
+  }
 }
 
 function indexJournal(journal: SerializedCallEvent[] | undefined, park: ParkReader): void {
@@ -356,9 +476,11 @@ function indexDescriptor(descriptor: BindingDescriptor, park: ParkReader): void 
     case 'tuple':
       for (const slot of descriptor.slots) indexDescriptor(slot, park);
       return;
-    // A closure's `closure` is code; its capture is a map of descriptors.
+    // A closure's `closure` is code; its capture is a map of descriptors,
+    // and its scope a scope's.
     case 'closure':
       indexMap(descriptor.captured, park);
+      if (descriptor.scope !== undefined) indexScopeLink(descriptor.scope, park);
       return;
     case 'recordValue':
       indexValue(descriptor.value, park);
@@ -412,6 +534,44 @@ function nodeNumbered(park: ParkReader, id: number): NodePosition {
   park.nodes.set(id, node);
   park.unfilled.add(id);
   return node;
+}
+
+/**
+ * The scope a parked closure holds: a file's, found in the re-parsed
+ * program, or a numbered one — the live scope the resume rebuilt from a
+ * chain, or one built here from its written copy, nested as it was. A built
+ * scope is registered before its bindings are read, so a closure in it that
+ * holds it gets it back.
+ */
+async function scopeOf(link: ScopeLink, ctx: RehydrationContext, park: ParkReader): Promise<Environment> {
+  if (link.kind === 'file') {
+    if (ctx.resolveFileScope === undefined) {
+      throw new MovementEngineError('MOVENG_RUNTIME', 'resume: a parked closure holds a file scope, and this resume has no program to find it in');
+    }
+    return ctx.resolveFileScope(link.file);
+  }
+  const known = park.scopes.get(link.id);
+  if (known !== undefined) return known;
+  const written = link.kind === 'scope' ? link : park.scopeDescriptors.get(link.id);
+  if (written === undefined) {
+    throw new MovementEngineError('MOVENG_RUNTIME', `the parked state refers to scope #${link.id} that it never wrote`);
+  }
+  const made = (async () => {
+    const outer = written.parent !== undefined ? await scopeOf(written.parent, ctx, park) : undefined;
+    return outer !== undefined ? outer.child() : new Environment();
+  })();
+  park.scopes.set(link.id, made);
+  const env = await made;
+  for (const [name, entry] of Object.entries(written.bindings)) {
+    env.declare(name, await rehydrateInPark(entry, ctx, park));
+  }
+  return env;
+}
+
+/** A chain copy the resume read into `env`, live: when it is numbered, the
+ *  scope every closure naming that number holds. */
+export function registerLiveScope(park: ParkReader, scope: SerializedScope, env: Environment): void {
+  if (typeof scope.id === 'number' && !park.scopes.has(scope.id)) park.scopes.set(scope.id, Promise.resolve(env));
 }
 
 /**
@@ -655,6 +815,15 @@ export function serializeBinding(binding: Binding, park: ParkWriter = newParkWri
     case 'closure': {
       if (binding.file !== undefined) {
         return { kind: 'fileClosure', name: binding.file.name, ...declaringFile(park, undefined, binding.file.env) };
+      }
+      if (binding.env !== undefined) {
+        return {
+          kind: 'closure',
+          closure: binding.closure,
+          captured: {},
+          ...(binding.self !== undefined ? { self: binding.self } : {}),
+          scope: scopeLinkOf(park, binding.env),
+        };
       }
       const captured: Record<string, BindingDescriptor> = {};
       for (const [name, entry] of binding.captured) {
@@ -926,6 +1095,15 @@ async function rehydrateInPark(
         slots: await settledAll(descriptor.slots.map(rehydrate)),
       });
     case 'closure': {
+      if (descriptor.scope !== undefined) {
+        return binding({
+          kind: 'closure',
+          closure: descriptor.closure,
+          captured: new Map(),
+          env: await scopeOf(descriptor.scope, ctx, park),
+          ...(descriptor.self !== undefined ? { self: descriptor.self } : {}),
+        });
+      }
       const captured = new Map<string, Binding>();
       for (const [name, entry] of Object.entries(descriptor.captured)) {
         captured.set(name, await rehydrate(entry));
@@ -966,14 +1144,29 @@ async function rehydrateInPark(
  * env as it descends; this captures exactly what THIS scope added.
  */
 export function serializeScope(env: Environment, park: ParkWriter = newParkWriter()): SerializedScope {
-  const bindings: Record<string, BindingDescriptor> = {};
+  const scope: SerializedScope = { bindings: {} };
+  // Registered (and numbered, when a closure already holds it) before its
+  // bindings are written: a closure in it holds it, and names it.
+  if (!isFileScopeIn(park, env)) {
+    const id = park.scopeIds.get(env);
+    const outer = env.outer();
+    if (id !== undefined) numberCopy(scope, id, outer !== undefined ? scopeRefOf(park, outer) : undefined);
+    const copies = park.scopeCopies.get(env);
+    if (copies !== undefined) copies.push(scope);
+    else park.scopeCopies.set(env, [scope]);
+  }
+  writeBindings(scope.bindings, env, park);
+  return scope;
+}
+
+/** One scope's OWN bindings, written into `bindings`. */
+function writeBindings(bindings: Record<string, BindingDescriptor>, env: Environment, park: ParkWriter): void {
   for (const [name, binding] of env.ownBindings()) {
     const descriptor = serializeBinding(binding, park);
     // An opaque import's re-resolution tag is its slot NAME (it has no stored
     // declaration name); patch it in here where the name is known.
     bindings[name] = descriptor.kind === 'opaque' ? { ...descriptor, name } : descriptor;
   }
-  return { bindings };
 }
 
 /**
@@ -984,6 +1177,7 @@ export function serializeScope(env: Environment, park: ParkWriter = newParkWrite
  * frontier keys them by prefix instead, a superset of this single-branch shape.
  */
 export function serializeScopeChain(chain: Environment[], park: ParkWriter = newParkWriter()): SerializedScope[] {
+  carriesChain(park, chain);
   return chain.map((env) => serializeScope(env, park));
 }
 

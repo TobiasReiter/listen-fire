@@ -418,6 +418,16 @@ guide](docs/language/dancing-wren-migration.md).
   each enqueue POST a drain tick to every URL, so a door's work starts without waiting for the
   scheduled tick. `node build/scripts/drain_once.js` (new) drains until idle and exits, for a
   scheduled job with no HTTP. Nothing changes for a deployment that sets none of them.
+- A closure written in a movement body holds the scope it was written in by reference, as a
+  JavaScript closure does (and a file-level closure already did), rather than a copy of it. A wait
+  writes each scope once and each closure as its code and the scope's number, so a parked state
+  grows by a few hundred bytes per closure: 14 unused closures in one body park at 8 KB, where
+  each copied every earlier one and the state doubled per closure (15 MB). Every language version,
+  and a run parked before this resumes with its copies as it did. A parked run now sees what an
+  unparked run sees: under version 4 and later, a `MAP` member that parks and returns closures
+  which write an outer handle, run by `parallel`, ends with the handle all of them wrote (the outer
+  read `"v2"`, as unparked), where it split the handle across the park and the outer read a stale
+  `"one"`.
 - A named function's declared return no longer hides what its body may hand back: under language
   versions 3 and 4, `function f(): <text> { return COALESCE(org, "x") }` is a call whose use in a
   graph entry, a spread, a written field or a plugin argument is refused at the use, as a closure's

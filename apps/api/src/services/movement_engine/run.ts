@@ -322,8 +322,10 @@ import {
 import { EffectLocks, bindLock, edgeLock, identityLocks, recordLock, type LockRequest } from './effect_locks';
 import {
   assertParkRead,
+  carriesChain,
   newParkReader,
   newParkWriter,
+  registerLiveScope,
   rehydrateBinding,
   serializeBinding,
   serializeScopeChain,
@@ -1349,10 +1351,12 @@ function isClosureBinding(value: unknown): value is Extract<Binding, { kind: 'cl
   return bindingOf(value)?.kind === 'closure';
 }
 
-/** The bindings a closure brings into a scope it runs in: its capture, or a
- *  file-level closure's file scope as it stands now (as a movement arm's). */
+/** The bindings a closure brings into a scope it runs in: the scope it holds
+ *  (a file-level closure's file, a body closure's own) as it stands now, as a
+ *  movement arm's — or the capture of one parked before closures held theirs. */
 function closureCaptured(binding: Extract<Binding, { kind: 'closure' }>): Map<string, Binding> {
-  return binding.file !== undefined ? captureScope(binding.file.env) : binding.captured;
+  const env = binding.file?.env ?? binding.env;
+  return env !== undefined ? captureScope(env) : binding.captured;
 }
 
 /**
@@ -2041,10 +2045,13 @@ type ResumeLeaf =
   /** Settle a race whose arms completed in a batch (the leaf is the race). */
   | { kind: 'settleRace'; frameAddress: string };
 
-/** A closure's captured scope, as the root its body's scopes chain from. A
- *  file-level closure's is its file's own scope, live — as a movement's is. */
+/** A closure's scope, as the root its body's scopes chain from. A file-level
+ *  closure's is its file's own scope, live — as a movement's is — and a body
+ *  closure's the scope it was written in, live. One rehydrated from a park
+ *  written before holds a flat capture, rebuilt as a scope of its own. */
 function closureScope(binding: Extract<Binding, { kind: 'closure' }>): Environment {
   if (binding.file !== undefined) return binding.file.env;
+  if (binding.env !== undefined) return binding.env;
   const env = new Environment();
   for (const [name, captured] of binding.captured) env.declare(name, captured);
   return env;
@@ -3057,9 +3064,14 @@ class Interpreter {
             body: caller.body,
           },
         });
-        env = closureScope(fn).child();
-        await this.rehydrateScopeInto(chain, 1, env, park);
-        chainIndex = 2;
+        // The member's scopes chain from the function's own, which a park
+        // writes ahead of them: one scope for a flat capture, the whole
+        // chain for a closure that holds its scope.
+        const fnScope = closureScope(fn);
+        env = fnScope.child();
+        const fnOffset = fnScope.chainFromRoot().length;
+        await this.rehydrateScopeInto(chain, fnOffset, env, park);
+        chainIndex = fnOffset + 1;
         statements = fn.closure.body;
         frameAddress = childIter(callAddress, memberStep.index);
         i += 3;
@@ -3739,6 +3751,8 @@ class Interpreter {
   ): Promise<void> {
     const scope = chain[chainIndex];
     if (!scope) return;
+    // The scope a parked closure names by number is this one, live.
+    registerLiveScope(park, scope, env);
     const ctx = this.rehydrationContext();
     for (const [name, descriptor] of Object.entries(scope.bindings)) {
       // The trigger's event is bound live as the movement's parameter; one
@@ -3815,6 +3829,15 @@ class Interpreter {
         }
         return binding;
       },
+      // A body closure's scope chains up to its file's, which is the
+      // re-parsed program's (or library's), live.
+      resolveFileScope: async (file) => {
+        const scope = file === undefined ? this.fileEnv : await this.resumedLibraryEnv(file);
+        if (scope === undefined) {
+          throw new MovementEngineError('MOVENG_RUNTIME', 'resume: a parked closure names a file scope the re-parsed program has none of');
+        }
+        return scope;
+      },
     };
   }
 
@@ -3833,7 +3856,10 @@ class Interpreter {
 
   /** A park writer whose code refs say which library they are declared in. */
   private newPark(): ParkWriter {
-    return newParkWriter((env) => this.libraryPaths.get(env));
+    return newParkWriter(
+      (env) => this.libraryPaths.get(env),
+      (env) => env === this.fileEnv || this.libraryPaths.has(env),
+    );
   }
 
   /** Re-resolve an instance binding from its serialised identity — the catalog
@@ -4675,14 +4701,17 @@ class Interpreter {
         this.inlineBlockRetired(value.inlineBlock.binding);
         break;
       case 'closure':
-        // A closure is (AST, capture) and nothing else runs here: the body runs
-        // when it is CALLED. The capture is a flat snapshot of the lexical
-        // chain, exactly as a `lazy` walk's is — which is what lets both cross
-        // a park unchanged.
+        // A closure is (AST, scope) and nothing else runs here: the body runs
+        // when it is CALLED. It holds this scope by REFERENCE, as a JavaScript
+        // closure does: it sees the bindings made after it too, and a park
+        // writes the scope once and the closure as a reference to it — where
+        // a snapshot per closure held every earlier closure's snapshot, and
+        // doubled the parked state with each one.
         env.declare(name, binding({
           kind: 'closure',
           closure: value.closure,
-          captured: captureScope(env),
+          captured: new Map(),
+          env,
           // From version 3 its body may call it by this name (recursion).
           ...(since(this.languageVersion, 3) ? { self: name } : {}),
         }));
@@ -5479,8 +5508,13 @@ class Interpreter {
     // One table for the whole state: a node held both in a frame's scopes and
     // the leaf's is written once, and resumes as one.
     const park = this.newPark();
-    const state = write(park);
     const live = this.boundaries.getStore() ?? [];
+    // The frames' chains are written after the leaf's: a closure the leaf
+    // reaches that holds one of their scopes names it, rather than writing it.
+    for (const boundary of live) {
+      if (boundary.kind !== 'arm') carriesChain(park, boundary.site.env.chainFromRoot());
+    }
+    const state = write(park);
     if (live.length === 0) return state;
     return { ...state, frames: live.map((boundary) => serializeBoundary(boundary, park)) };
   }

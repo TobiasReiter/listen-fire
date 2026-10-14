@@ -63,8 +63,14 @@ describe('exposeFile', () => {
   });
 
   it('uploads under the isolation prefix and returns a Listen-Fire blob URL', async () => {
-    const prev = process.env.OAUTH_REDIRECT_BASE_URL;
+    // The URL's base comes from env; a developer's `.env` may set either
+    // variable, so the test pins both rather than inherit the machine's.
+    const prev = {
+      oauth: process.env.OAUTH_REDIRECT_BASE_URL,
+      pinned: process.env.EXPOSED_FILE_PUBLIC_BASE_URL,
+    };
     process.env.OAUTH_REDIRECT_BASE_URL = 'https://api.example.test';
+    delete process.env.EXPOSED_FILE_PUBLIC_BASE_URL;
     try {
       const result = await expose({
         stream: Readable.from('pdf-bytes'),
@@ -90,7 +96,13 @@ describe('exposeFile', () => {
       expect(insertedValues.expires_at).toBeInstanceOf(Date);
       expect(insertedValues.team_id).toBe('team-7');
     } finally {
-      process.env.OAUTH_REDIRECT_BASE_URL = prev;
+      for (const [key, value] of [
+        ['OAUTH_REDIRECT_BASE_URL', prev.oauth],
+        ['EXPOSED_FILE_PUBLIC_BASE_URL', prev.pinned],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 
