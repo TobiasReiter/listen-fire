@@ -3117,6 +3117,10 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
   const first = types[0];
   if (first === undefined || types.length === 0) return undefined;
   if (types.every(t => t !== undefined && fieldTypeEquals(t, first))) return first;
+  // Closures keep their types: TypeScript's `(() => A) | (() => B)`, so a
+  // member of a list of closures is called as any of them (`closureOfValue`).
+  const closures = closureUnion(types);
+  if (closures !== undefined) return closures;
   if (types.every(t => isRecordType(t))) return { kind: 'record' };
   // Dicts that hold the same thing under different written keys are still a
   // dict of that thing — only the keys stop being knowable, so the shape goes
@@ -3127,6 +3131,26 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
     return head;
   }
   return undefined;
+}
+
+/** Closure values alone, as their union — undefined unless every member is
+ *  a closure (or a union of them). */
+function closureUnion(types: Array<FieldType | undefined>): FieldType | undefined {
+  const members: FieldType[] = [];
+  let absent = false;
+  const add = (type: FieldType | undefined): boolean => {
+    if (type === undefined) return false;
+    if (isMaybeAbsent(type)) absent = true;
+    const present = stripAbsent(type);
+    const variant = variantOf(present);
+    if (variant.kind === 'union') return variant.of.every(add);
+    if (variant.kind !== 'record' || variant.position?.kind !== 'closure') return false;
+    if (!members.some(seen => variantOf(seen).kind === 'record' && (seen as { position?: unknown }).position === variant.position)) members.push(present);
+    return true;
+  };
+  if (!types.every(add) || members.length === 0) return undefined;
+  const union: FieldType = members.length === 1 ? members[0]! : { kind: 'union', of: members };
+  return absent ? maybeAbsent(union) : union;
 }
 
 /** A dict with its written keys forgotten — what it holds, looked up by data. */

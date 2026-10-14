@@ -208,15 +208,17 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
       }
     });
 
-    it('arms known only at run time stay untyped (a lower bound, pinned)', () => {
+    it('arms filtered at run time: untyped before 5 (a lower bound, pinned); typed from 5', () => {
       const errors = errorsUnder(version, [
         '  arms = FILTER([made, label], (a) => { return true })',
         '  r = await parallel(arms)',
         note('{ x: AT(r, 0) }'),
       ]);
-      // KNOWN GAP: no closure is written where the arms are built, so the receipt
-      // is untyped and the record slot reaches the field.
-      expect(errors).toEqual([]);
+      // Before 5 a function read as a value has no type, so the receipt is
+      // untyped and the record slot reaches the field (KNOWN GAP). From 5 a
+      // function is a closure value, and FILTER keeps its element type: the
+      // receipt may hold the record `made` returns.
+      expect(errors.map(d => d.code)).toEqual(version >= 5 ? ['MOV_WRITE_FIELD_TYPE'] : []);
     });
   });
 

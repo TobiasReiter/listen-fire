@@ -255,7 +255,7 @@ describe('KNOWN GAP: a combinator receipt over arms only known at run time is no
     expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
   });
 
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, filtered arms: accepted today', version => {
+  it.each(VERSIONS.filter(v => v >= 3 && v < 5))('under language version %i, filtered arms: accepted today', version => {
     expect(
       errorsUnder(version, [
         '  c = () => { return org }',
@@ -264,6 +264,17 @@ describe('KNOWN GAP: a combinator receipt over arms only known at run time is no
         ...note('r'),
       ]),
     ).toEqual([]);
+  });
+
+  // From 5 a closure's type is a value's, so FILTER keeps it and the gap closes.
+  it.each(VERSIONS.filter(v => v >= 5))('under language version %i, filtered arms are refused', version => {
+    const errors = errorsUnder(version, [
+      '  c = () => { return org }',
+      '  arms = FILTER([c], (a) => { return true })',
+      '  r = await parallel(arms)',
+      ...note('r'),
+    ]);
+    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
   });
 
   it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm returning a record is refused', version => {

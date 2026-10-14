@@ -255,3 +255,74 @@ describe('a closure written as a list element', () => {
     expect(parked).toMatch(/"scope":\{"kind":"scopeRef"/);
   });
 });
+
+describe('a value that is a closure is called', () => {
+  it('MAP(fs, (f) => f()) over a named list of closures', async () => {
+    expect(
+      await finalPayload([
+        '  a = () => { return 1 }',
+        '  b = () => { return 2 }',
+        '  fs = [a, b]',
+        '  out = MAP(fs, (f) => f())',
+        '  write graph-[:note]-> { payload: { out: out } }',
+      ]),
+    ).toEqual({ out: [1, 2] });
+  });
+
+  it('MAP over an inline list, with a block-bodied member and an argument', async () => {
+    expect(
+      await finalPayload([
+        '  k = 10',
+        '  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })',
+        '  write graph-[:note]-> { payload: { out: out } }',
+      ]),
+    ).toEqual({ out: [12, 20] });
+  });
+
+  it('a function declared with a name is a member like a closure', async () => {
+    const source = program(['  out = MAP([twice, twice], (f) => f(4))', '  write graph-[:note]-> { payload: { out: out } }'])
+      .replace('movement recap', 'function twice(n: <number>) {\n  return n * 2\n}\nmovement recap');
+    const parks = makeParkSink();
+    const { kg } = await start(source, parks);
+    expect(payloadOf(kg.creates)).toEqual({ out: [8, 8] });
+  });
+
+  it('a member read with AT is called', async () => {
+    expect(
+      await finalPayload([
+        '  fs = [() => { return "first" }, () => { return "second" }]',
+        '  g = AT(fs, 1)',
+        '  x = g()',
+        '  write graph-[:note]-> { payload: { x: x } }',
+      ]),
+    ).toEqual({ x: 'second' });
+  });
+
+  it('a park inside a member\'s call resumes, the closure\'s scope by reference', async () => {
+    expect(
+      await finalPayload([
+        '  k = 5',
+        '  fs = [() => {',
+        '    await sleep(1h)',
+        '    return k + 1',
+        '  }, () => { return k }]',
+        '  out = MAP(fs, (f) => { return f() })',
+        '  write graph-[:note]-> { payload: { out: out } }',
+      ]),
+    ).toEqual({ out: [6, 5] });
+  });
+
+  it('race over arms built at run time (FILTER keeps the closures)', async () => {
+    expect(
+      await finalPayload([
+        '  all = [() => { return "a" }, () => {',
+        '    await sleep(1h)',
+        '    return "b"',
+        '  }]',
+        '  arms = FILTER(all, (f) => TRUE)',
+        '  r = await race(arms)',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: ['a', null] });
+  });
+});

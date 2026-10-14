@@ -234,6 +234,7 @@ import {
   EffectFrame,
   EMPTY_ROW,
   rowFromDeclaration,
+  unionRows,
   UNKNOWN_ROW,
   type EffectRow,
 } from './effects';
@@ -3526,6 +3527,102 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
 }
 
 /** A body with no `return` at all. */
+/**
+ * The closure a VALUE is (language version 5): a record of closure type, or a
+ * union of them — TypeScript's `(() => A) | (() => B)`, which a list of
+ * closures' members are. Calling one is calling any of them, so its value is
+ * the union of what they return (`unionReturns`), its row the union of theirs,
+ * and its parameters the first's (`closureArities` keeps every arity, so a
+ * call is held to each). Undefined when the value may be something else, or
+ * absent: that is no function to call.
+ */
+export function closureOfValue(type: FieldType | undefined): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
+  const closures = closuresOfValue(type);
+  if (closures === undefined) return undefined;
+  if (closures.length === 1) return closures[0];
+  const merged: Extract<PositionTypeRef, { kind: 'closure' }> = {
+    kind: 'closure',
+    label: 'one of several closures',
+    params: closures[0]!.params,
+    returns: unionReturns(closures.map(closure => closure.returns)),
+    effects: unionRows(closures.map(closure => closure.effects)),
+  };
+  closureArities.set(merged, [...new Set(closures.map(closure => closure.params.length))]);
+  return merged;
+}
+
+/** The arities of the closures a merged closure stands for. */
+const closureArities = new WeakMap<object, number[]>();
+
+function closuresOfValue(type: FieldType | undefined): Array<Extract<PositionTypeRef, { kind: 'closure' }>> | undefined {
+  if (type === undefined || typeof type === 'string') return undefined;
+  const variant = variantOf(type);
+  if (variant.kind === 'record') return variant.position?.kind === 'closure' ? [variant.position] : undefined;
+  if (variant.kind !== 'union') return undefined;
+  const found: Array<Extract<PositionTypeRef, { kind: 'closure' }>> = [];
+  for (const member of variant.of) {
+    const inner = closuresOfValue(member);
+    if (inner === undefined) return undefined;
+    for (const closure of inner) if (!found.includes(closure)) found.push(closure);
+  }
+  return found.length > 0 ? found : undefined;
+}
+
+/** Does this type hold a closure beside something that is not one (or
+ *  beside absence)? */
+function mayNotBeAClosure(type: FieldType): boolean {
+  if (typeof type === 'string') return false;
+  if (closuresOfValue(stripAbsent(type)) !== undefined) return true;
+  const variant = variantOf(type);
+  return variant.kind === 'union' && variant.of.some(member => mayNotBeAClosure(member) || closuresOfValue(member) !== undefined);
+}
+
+/**
+ * What calling one of several closures hands back — TypeScript's union of
+ * their return types. A type all of them agree on is the call's type; records
+ * alone (closures among them) are their union, as `COALESCE(org, other)` is;
+ * anything else has no one type, and what it may hold travels as `mayHold`, as
+ * a body's disagreeing returns do — so a record any of them returns is seen
+ * wherever the call's value goes.
+ */
+export function unionReturns(shapes: ReadonlyArray<ReturnShape>): ReturnShape {
+  const returning = shapes.filter(shape => shape.returns);
+  if (returning.length === 0) return { returns: false };
+  const first = returning[0]!;
+  if (returning.every(shape => shape.fieldType === undefined && shape.mayHold === undefined && shape.posType !== undefined && shape.posType === first.posType)) {
+    return { returns: true, posType: first.posType! };
+  }
+  const arms: FieldType[] = [];
+  const addArm = (arm: FieldType): void => {
+    const variant = typeof arm === 'string' ? undefined : variantOf(arm);
+    if (variant?.kind === 'union') {
+      variant.of.forEach(addArm);
+      return;
+    }
+    if (!arms.some(seen => seen === arm || fieldTypeEquals(seen, arm))) arms.push(arm);
+  };
+  let unknown = false;
+  for (const shape of returning) {
+    const arm = shape.mayHold ?? shape.fieldType ?? recordValueOf(shape.posType);
+    if (arm === undefined) unknown = true;
+    else addArm(arm);
+  }
+  const union: FieldType | undefined = arms.length === 0 ? undefined : arms.length === 1 ? arms[0] : { kind: 'union', of: arms };
+  const typed = unknown || union === undefined
+    ? undefined
+    : arms.length === 1 || recordsAlone(union) !== undefined
+    ? union
+    : returning.every(shape => shape.fieldType !== undefined && fieldTypeEquals(shape.fieldType, first.fieldType!))
+    ? first.fieldType
+    : undefined;
+  const mayHold = union !== undefined && showsMoreHandles(union, typed) ? union : undefined;
+  return {
+    returns: true,
+    ...(typed !== undefined ? { fieldType: typed } : {}),
+    ...(mayHold !== undefined ? { mayHold } : {}),
+  };
+}
+
 const NO_RETURN: ReturnShape = { returns: false };
 
 /** We could not tell whether this returns — an unresolved callee, a cycle in
@@ -3937,8 +4034,27 @@ class Checker {
 
   /** A bound name's position type, where one is derivable. */
   private symbolPositionType(symbol: ScopeSymbol): PositionTypeRef | undefined {
-    return positionTypeOf(symbol);
+    return positionTypeOf(symbol) ?? this.functionAsValue(symbol);
   }
+
+  /**
+   * A function declared with a name, read as a VALUE (language version 5) —
+   * `[made, label]`, `FILTER(fs, …)` — is a closure like any other, as a
+   * TypeScript function declaration is: its parameters, what calling it
+   * returns and what it does. One type per declaration, so a union of them
+   * keeps each once.
+   */
+  private functionAsValue(symbol: ScopeSymbol): PositionTypeRef | undefined {
+    if (symbol.kind !== 'movement' || symbol.movement === undefined || before(this.languageVersion, 5)) return undefined;
+    const known = this.functionValues.get(symbol);
+    if (known !== undefined) return known;
+    const params = (this.movementParams(symbol) ?? []).map(param => ({ name: param.name, ...param.type }));
+    const type = closureType(params, this.movementReturnType(symbol), this.movementEffects(symbol));
+    if (symbol.movement.returnType?.done === true) this.functionValues.set(symbol, type);
+    return type;
+  }
+
+  private readonly functionValues = new WeakMap<ScopeSymbol, PositionTypeRef>();
 
   /** A typed expression walker that reports NOTHING — for a second pass over an
    *  expression the checker has already walked (presence narrowing), where
@@ -5779,7 +5895,26 @@ class Checker {
    *  before it, a name bound to a closure is passed, never called). */
   private calledClosure(callee: ScopeSymbol): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
     if (before(this.languageVersion, 3)) return undefined;
-    return callee.posType?.kind === 'closure' ? callee.posType : undefined;
+    if (callee.posType?.kind === 'closure') return callee.posType;
+    // From version 5 a closure is a value like any other, so a name whose
+    // VALUE is one — a collection op's member, a parameter, `AT(fs, 0)`, a
+    // call's answer — is called as TypeScript calls `f: (() => A) | (() => B)`.
+    if (before(this.languageVersion, 5) || callee.kind === 'movement' || callee.posType !== undefined) return undefined;
+    return closureOfValue(callee.fieldType);
+  }
+
+  /**
+   * Why calling a name that is a value is refused under version 5: it may not
+   * be a closure, or nothing says what it is. Undefined when it is one (or the
+   * name is not a value at all, which the older refusals name).
+   */
+  private notAClosureMessage(callee: ScopeSymbol, written: string): string | undefined {
+    if (before(this.languageVersion, 5) || (callee.kind !== 'binding' && callee.kind !== 'param')) return undefined;
+    if (callee.posType !== undefined || this.calledClosure(callee) !== undefined) return undefined;
+    const type = callee.fieldType;
+    return type === undefined
+      ? `'${written}' is called, and nothing says it is a function — its type is unknown here. Call a closure whose type the program shows: one bound to a name, written in a list, or a member of a list of closures ('MAP(fs, (f) => f())')`
+      : `'${written}' is called, and it is ${describeFieldType(type)}${mayNotBeAClosure(type) ? ' — it may not be a closure' : ', not a function'}. Only a closure is called: narrow it to one, or call one whose type the program shows`;
   }
 
   /** The name a callee was declared with (`written` when nothing declares it). */
@@ -5915,7 +6050,7 @@ class Checker {
       callee => resolveCallee(callee, callScope, this.languageVersion),
       declared => {
         const found = scope.resolve(declared);
-        return found.kind === 'found' && isFunctionSymbol(found.symbol);
+        return found.kind === 'found' && (isFunctionSymbol(found.symbol) || this.calledClosure(found.symbol) !== undefined);
       },
     );
   }
@@ -6195,8 +6330,13 @@ class Checker {
       case 'declared': {
         const found = at.scope.resolve(resolution.name);
         if (found.kind !== 'found') return; // reported where the name is read
-        if (isFunctionSymbol(found.symbol)) {
+        if (isFunctionSymbol(found.symbol) || this.calledClosure(found.symbol) !== undefined) {
           this.report(DiagnosticCodes.CALL_NESTED, nestedMessage(written), span);
+          return;
+        }
+        const notAClosure = this.notAClosureMessage(found.symbol, written);
+        if (notAClosure !== undefined) {
+          this.report(DiagnosticCodes.CALL_NOT_MOVEMENT, notAClosure, span);
           return;
         }
         this.report(
@@ -6474,7 +6614,7 @@ class Checker {
     const resolution = scope.resolve(name);
     if (resolution.kind !== 'found') return undefined;
     const { symbol } = resolution;
-    return symbol.posType !== undefined || symbol.bindingPlane === 'node' ? symbol : undefined;
+    return symbol.posType !== undefined || symbol.bindingPlane === 'node' || this.functionAsValue(symbol) !== undefined ? symbol : undefined;
   }
 
   /** A value that is many values under one value's type — a walk read for a
@@ -7567,7 +7707,7 @@ class Checker {
     this.effects?.flag('suspend');
 
     if (expr.arms.kind === 'dynamic') {
-      const { parsed } = this.checkExprSlot(expr.arms.expr, scope);
+      const { parsed, valueType: armsType } = this.checkExprSlot(expr.arms.expr, scope);
       // A name bound to a list of functions written down, or to a MAP that
       // builds them from a closure, is as known as a literal arm list: what
       // each arm returns types the receipt's slots. Arms known only at run
@@ -7582,6 +7722,38 @@ class Checker {
         const each = this.receiptMayHold(expr.kind, [armSymbol.armsEachReturn]);
         const slot = each.kind === 'tuple' ? each.of[0] : undefined;
         if (slot !== undefined && slot !== null && slot !== 'absent') this.combinatorMayHold.set(expr, listOf(slot, 'unknown'));
+      } else {
+        // From version 5 a closure's type is a value's type, so arms built at
+        // run time (`FILTER(all, …)`, a parameter) still have one: the union
+        // of the closures the collection may hold, whose returns the receipt's
+        // slots may hold.
+        const element = armsType !== undefined ? collectionElementOf(armsType) : undefined;
+        const each = since(this.languageVersion, 5) ? closureOfValue(element) : undefined;
+        const held = each !== undefined ? this.receiptMayHold(expr.kind, [each.returns]).of[0] : undefined;
+        if (held !== undefined && held !== null && held !== 'absent') this.combinatorMayHold.set(expr, listOf(held, 'unknown'));
+        if (since(this.languageVersion, 5)) {
+          if (each === undefined) {
+            // A value whose type does not say it is a closure is never run.
+            this.report(
+              DiagnosticCodes.COMBINATOR_ARM_NOT_FUNCTION,
+              `'${expr.kind}' calls each of its arms, and '${expr.arms.expr.raw.trim()}' ${armsType === undefined ? 'has no type this program shows' : `is ${describeFieldType(armsType)}`} — not a collection of closures. Give it a list of closures ('[() => { … }, f]'), or one built from one ('FILTER(fs, …)')`,
+              expr.arms.expr.span,
+            );
+          } else {
+            const arities = [...new Set((closureArities.get(each) ?? [each.params.length]))];
+            if (arities.some(arity => arity !== 0)) {
+              this.report(
+                DiagnosticCodes.COMBINATOR_ARM_TAKES_NOTHING,
+                `'${expr.kind}' calls each of its arms with nothing, and a closure in '${expr.arms.expr.raw.trim()}' takes ${arities.filter(arity => arity !== 0).join(' or ')} argument(s)`,
+                expr.arms.expr.span,
+              );
+            }
+            this.effects?.absorb(each.effects);
+            const slot = valueOfReturn(each.returns);
+            if (slot !== undefined) return listOf(expr.kind === 'race' ? maybeAbsent(slot)! : slot, 'unknown');
+            return undefined;
+          }
+        }
       }
       // A collection built at run time holds functions, and a function is not a
       // value type here — so what its arms return cannot be seen from the
@@ -7940,7 +8112,10 @@ class Checker {
     const resolution = this.calleeResolution(construct.callee, scope);
     if (resolution.kind !== 'found') return undefined;
     const kind = resolution.symbol.kind;
-    if (kind !== 'movement' && kind !== 'plugin' && this.calledClosure(resolution.symbol) === undefined) {
+    // From version 5 a value is never constructed: calling one is a call,
+    // refused there unless it is a closure.
+    const value = since(this.languageVersion, 5) && (kind === 'binding' || kind === 'param');
+    if (kind !== 'movement' && kind !== 'plugin' && !value && this.calledClosure(resolution.symbol) === undefined) {
       return undefined;
     }
     return constructionAsCall(construct);
@@ -10540,19 +10715,22 @@ class Checker {
         value = closure.returns;
         this.effects?.absorb(closure.effects);
         this.noteUndeclaredSelfCall(callee, statement.span);
-        if (statement.args.length !== closure.params.length) {
-          this.report(
-            DiagnosticCodes.CALL_ARITY,
-            `'${statement.callee}' takes ${closure.params.length} argument${closure.params.length === 1 ? '' : 's'}, got ${statement.args.length}`,
-            statement.span,
-          );
+        const arities = closureArities.get(closure) ?? [closure.params.length];
+        if (arities.some(arity => arity !== statement.args.length)) {
+          const arity = arities.length === 1
+            ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
+            : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
+          this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${statement.args.length}`, statement.span);
         }
         params = closure.params.map(({ name, ...type }) => ({ name, type }));
       } else {
         // Either an unlinked file import (a body nobody parsed) or a name that
         // is not callable at all. Both leave the row a lower bound.
         this.effects?.markPartial();
-        if (callee.kind !== 'fileImport') {
+        const notAClosure = this.notAClosureMessage(callee, statement.callee);
+        if (notAClosure !== undefined) {
+          this.report(DiagnosticCodes.CALL_NOT_MOVEMENT, notAClosure, statement.span);
+        } else if (callee.kind !== 'fileImport') {
           // A file import may be a movement — M3 resolves it; give it the benefit of the doubt.
           this.report(
             DiagnosticCodes.CALL_NOT_MOVEMENT,
