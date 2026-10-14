@@ -3629,6 +3629,8 @@ class Checker {
   private readonly declaredShapeTokens = new WeakSet<object>();
   /** Combinators with an arm that hands back a record (`ScopeSymbol.receiptHoldsRecord`). */
   private readonly recordSlotCombinators = new WeakSet<CombinatorExpression>();
+  /** Receipts already warned about (`MOV_RECEIPT_RECORD_SLOT`) — once per binding. */
+  private readonly reportedRecordReceipts = new WeakSet<ScopeSymbol>();
 
   /** Listens seen anywhere in the file (any listen suppresses LISTEN_MISSING). */
   private listenCount = 0;
@@ -3994,6 +3996,15 @@ class Checker {
     return resolution.kind === 'found' && resolution.symbol.receiptHoldsRecord === true;
   }
 
+  /** Marks the receipt `name` resolves to as reported; true only the first
+   *  time, so a receipt is warned once however many times it is read. */
+  private firstRecordReceiptReport(name: string, scope: Scope): boolean {
+    const resolution = scope.resolve(name);
+    if (resolution.kind !== 'found' || this.reportedRecordReceipts.has(resolution.symbol)) return false;
+    this.reportedRecordReceipts.add(resolution.symbol);
+    return true;
+  }
+
   /** What a bound name may hold beyond its type — `ScopeSymbol.mayHold`. */
   private symbolMayHold(scope: Scope, name: string): FieldType | undefined {
     const resolution = scope.resolve(name);
@@ -4036,6 +4047,7 @@ class Checker {
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
       isRecordReceipt: name => this.isRecordReceipt(name, scope),
+      firstRecordReceiptReport: name => this.firstRecordReceiptReport(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
     });
@@ -4058,6 +4070,7 @@ class Checker {
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
       isRecordReceipt: name => this.isRecordReceipt(name, scope),
+      firstRecordReceiptReport: name => this.firstRecordReceiptReport(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
       span,
       onEffect: (effect) => this.absorbExpressionEffect(effect),
@@ -7512,7 +7525,7 @@ class Checker {
     }
 
     const slots = expr.arms.arms.map(arm => this.checkArm(arm, expr.kind, scope, recorded));
-    if (slots.some(slot => slot.returns && (slot.posType !== undefined || holdsRecords(slot.fieldType)))) {
+    if (slots.some(slot => slot.returns && (slot.posType !== undefined || isRecordType(slot.fieldType)))) {
       this.recordSlotCombinators.add(expr);
     }
     return {

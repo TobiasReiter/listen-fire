@@ -4101,6 +4101,9 @@ export class ExpressionTyping {
       /** Is this name a combinator's receipt with an arm that hands back a
        *  record (`ScopeSymbol.receiptHoldsRecord`)? */
       isRecordReceipt?: (name: string) => boolean;
+      /** Marks that receipt reported; true only the first time it is asked
+       *  of, so the warning comes once per receipt, not once per read. */
+      firstRecordReceiptReport?: (name: string) => boolean;
       /** Is this name bound to a whole traversal block's return — a
        *  COLLECTION, even though its position type is the one record a member
        *  of it carries (plurality lives in the traversal, never in a second
@@ -4202,6 +4205,7 @@ export class ExpressionTyping {
    */
   private reportReceiptRecordSlot(name: string): void {
     if (this.options.isRecordReceipt?.(name) !== true || !this.upgradeCrosses(5)) return;
+    if (this.options.firstRecordReceiptReport?.(name) === false) return;
     this.report(
       TypedDiagnosticCodes.RECEIPT_RECORD_SLOT,
       `since ${describeLanguageVersion(5)} a record an arm hands back reads as that record through '${name}' (\`AT(${name}, i)\`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.`,

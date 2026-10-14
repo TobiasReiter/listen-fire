@@ -122,6 +122,23 @@ describe("a combinator receipt's record slot", () => {
     const values = ['  r = await parallel([', '    () => "one",', '    () => 2,', '  ])', '  n = AT(r, 0)'].join('\n');
     expect(crossing(4, 5, values)).toEqual([]);
   });
+  it('an arm that hands back a LIST of records reads the same on 4 and 5, so it is silent', () => {
+    const listed = [
+      '  r = await parallel([',
+      '    () => {',
+      '      a = write crm-[:companies]-> { unique by (`Name`), Name: "Acme" }',
+      '      return [a, a]',
+      '    },',
+      '    () => 2,',
+      '  ])',
+      '  n = AT(r, 0)',
+    ].join('\n');
+    expect(crossing(4, 5, listed)).toEqual([]);
+  });
+  it('is reported once per receipt, however many times it is read', () => {
+    const d = crossing(4, 5, [RECEIPT, '  n = AT(r, 0).Name', '  m = AT(r, 0) == null', '  k = AT(r, 1)'].join('\n'));
+    expect(d).toHaveLength(1);
+  });
   it('silent under 4 and 5 without a move up, and on a move up that does not cross 5', () => {
     const src = [RECEIPT, '  n = AT(r, 0).Name'].join('\n');
     for (const languageVersion of [4, 5]) {
