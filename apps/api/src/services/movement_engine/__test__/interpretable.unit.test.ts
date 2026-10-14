@@ -324,6 +324,19 @@ movement intake(m: <inbox-[:message]->>) {
     expect(listUnsupportedConstructs(inner, { languageVersion: 5 })).toEqual([]);
   });
 
+  it('a dotted call on a value is the call of the closure it holds (version 5), and scans as one', () => {
+    const source = `${PRELUDE}
+movement intake(m: <inbox-[:message]->>) {
+  shout = (t: <text>) => UPPER(t)
+  box = { g: shout }
+  v = LOWER(box.g(m.\`subject\`))
+  write crm-[:companies]-> { name: v }
+}
+`;
+    expect(listUnsupportedConstructs(source, { languageVersion: 5 })).toEqual([]);
+    expect(listUnsupportedConstructs(source, { languageVersion: 4 })).toEqual(['non-built-in function calls (G())']);
+  });
+
   it('a closure bound to a name is a function: its call nested in an expression runs (version 3)', () => {
     const source = `${PRELUDE}
 movement intake(m: <inbox-[:message]->>) {

@@ -435,3 +435,18 @@ describe('a parameter of closure type (<(params) => <return>>)', () => {
     expect(await payloadWith(['  x = run(() => 5)'])).toEqual({ x: 5 });
   });
 });
+
+describe('a dotted call on a value calls the closure it holds (box.g())', () => {
+  it('calls the member, as a nested call and bound', async () => {
+    expect(
+      await finalPayload([
+        '  k = "!"',
+        '  shout = (t: <text>) => "${UPPER(t)}${k}"',
+        '  box = { g: shout }',
+        '  a = box.g("hi")',
+        '  b = LOWER(box.g("yo"))',
+        '  write graph-[:note]-> { payload: { a: a, b: b } }',
+      ]),
+    ).toEqual({ a: 'HI!', b: 'yo!' });
+  });
+});

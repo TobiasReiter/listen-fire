@@ -5714,6 +5714,21 @@ class Interpreter {
     return this.suspendFlow();
   }
 
+  /**
+   * `box.g()` (language version 5): the member a value holds under a key, as
+   * the callee — read as `box.g` reads, and called when it is a closure (the
+   * checker's `memberCallee`). Undefined for any other callee.
+   */
+  private async memberCallee(
+    statement: Extract<Statement, { kind: 'call' }>,
+    env: Environment,
+  ): Promise<Binding | undefined> {
+    if (before(this.languageVersion, 5) || !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(statement.callee)) return undefined;
+    if (env.resolve(statement.callee.split('.')[0]!)?.kind !== 'value') return undefined;
+    const { value } = await this.evaluateSlot({ raw: statement.callee, span: statement.span }, { env });
+    return bindingOf(value);
+  }
+
   /** Whether a call in an expression is one this engine runs. */
   private runsAsCall(call: CallNode, env: Environment): boolean {
     const scope = this.callScope(env);
@@ -5724,6 +5739,9 @@ class Interpreter {
         const binding = env.resolve(declared);
         return binding !== undefined && isCallableBinding(binding);
       },
+      // `box.g()` (language version 5): a dotted call on a value calls the
+      // member it holds — run first, as any call in an expression is.
+      (object) => since(this.languageVersion, 5) && env.resolve(object)?.kind === 'value',
     );
   }
 
@@ -5952,7 +5970,7 @@ class Interpreter {
     event: CallEvent,
   ): Promise<Binding | undefined> {
     const calleeName = this.calleeName(statement.callee, env);
-    const callee = env.resolve(calleeName);
+    const callee = env.resolve(calleeName) ?? (await this.memberCallee(statement, env));
     if (callee?.kind !== 'movement') {
       // One function sort: a plugin is a function whose body isn't visible, so
       // a call on one is an ordinary call and its value is what the plugin
