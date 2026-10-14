@@ -486,6 +486,8 @@ describe('an engine suspension inside parallel / race arms', () => {
         ].join('\n'),
       ),
       parks: makeParkSink(),
+      // `parallel`'s own arm frames; it is retired under 5.
+      languageVersion: 4,
     };
     const first = await start(h, ['s0.b1.s0']);
     expect(bodies(first.kg.creates)).toEqual(['arm 0']);
@@ -511,12 +513,38 @@ describe('an engine suspension inside parallel / race arms', () => {
         ].join('\n'),
       ),
       parks: makeParkSink(),
+      languageVersion: 4,
     };
     const first = await start(h, ['s1.b1.s0']);
     expect(bodies(first.kg.creates)).toEqual(['arm 1']);
     const state = h.parks.parks.get('s1.b1.s0')!.state;
     expect(state.frames?.map((f) => f.kind)).toEqual(['arm']);
     const { kg } = await resumeAt(h, 's1.b1.s0');
+    expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['arm 2']);
+    expect(payloadOf(kg.creates)).toEqual({ r: [5, 10] });
+  });
+
+  it('under 5, a closure built at run time and called by the MAP that replaced parallel carries its body in the park', async () => {
+    const h: Harness = {
+      source: program(
+        '',
+        [
+          '  arms = MAP([1, 2], (n) => {',
+          '    return () => {',
+          '      write graph-[:note]-> { body: "arm ${n}" }',
+          '      return n * 5',
+          '    }',
+          '  })',
+          '  r = MAP(arms, { concurrency: 2 }, (f) => f())',
+          '  write graph-[:note]-> { payload: { r: r } }',
+        ].join('\n'),
+      ),
+      parks: makeParkSink(),
+      languageVersion: 5,
+    };
+    const first = await start(h, ['s1.c0.i1.s0.c0.s0']);
+    expect(bodies(first.kg.creates)).toEqual(['arm 1']);
+    const { kg } = await resumeAt(h, 's1.c0.i1.s0.c0.s0');
     expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['arm 2']);
     expect(payloadOf(kg.creates)).toEqual({ r: [5, 10] });
   });
@@ -802,7 +830,8 @@ describe('two names for one handle or node in a completed branch’s export', ()
         ].join('\n'),
       ),
       parks: makeParkSink(),
-      languageVersion: 5,
+      // A `parallel` join's branch exports; `parallel` is retired under 5.
+      languageVersion: 4,
     };
     // Arm 0 parks before its return; arm 1 completes. Arm 0 completing on
     // the resume writes its whole scope as its export.
@@ -999,18 +1028,29 @@ describe("a combinator receipt's record slot", () => {
     5: { at: 'arm 0', named: 'arm 0', missing: false, second: 2 },
   } as const;
 
+  // `parallel` is retired under 5: there the MAP that replaced it answers, and
+  // its slot reads the record as the receipt's did.
+  const mapped = source.replace('  r = await parallel([', '  r = MAP([').replace("    () => 2\n  ])", "    () => 2\n  ], { concurrency: 2 }, (f) => f())");
+  const sources = { 4: source, 5: mapped } as const;
+  /** Where the record arm parks before its return: the arm's statement 1. */
+  const beforeReturn = { 4: 's0.b0.s1', 5: 's0.c0.i0.s0.c0.s1' } as const;
+
+  it('under 5 the program is the MAP form', () => {
+    expect(mapped).not.toContain('parallel');
+  });
+
   for (const languageVersion of [4, 5] as const) {
     it(`version ${languageVersion}, no park`, async () => {
-      const { result, kg } = await start({ source, parks: makeParkSink(), languageVersion });
+      const { result, kg } = await start({ source: sources[languageVersion], parks: makeParkSink(), languageVersion });
       expect(result.parked).toBeUndefined();
       expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
     });
 
     it(`version ${languageVersion}, the arm parked before its return`, async () => {
-      const h: Harness = { source, parks: makeParkSink(), languageVersion };
-      const first = await start(h, ['s0.b0.s1']);
+      const h: Harness = { source: sources[languageVersion], parks: makeParkSink(), languageVersion };
+      const first = await start(h, [beforeReturn[languageVersion]]);
       expect(first.result.parked).toBe(true);
-      const { result, kg } = await resumeAt(h, 's0.b0.s1');
+      const { result, kg } = await resumeAt(h, beforeReturn[languageVersion]);
       expect(result.parked).toBeUndefined();
       expect(payloadOf(kg.creates)).toEqual(expected[languageVersion]);
     });
@@ -1107,6 +1147,14 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
     return [...h.parks.parks.keys()].sort();
   }
 
+  // `parallel` is retired under 5: there the join is the MAP that replaced
+  // it, whose members park one frame deeper (the MAP's own function calls the
+  // closure), and resume the same way.
+  const join = (version: LanguageVersion, arms: string): string =>
+    version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await parallel(${arms})`;
+  const at = (version: LanguageVersion, statement: number, arm: number): string =>
+    version >= 5 ? `s${statement}.c0.i${arm}.s0.c0.s0` : `s${statement}.b${arm}.s0`;
+
   for (const languageVersion of [4, 5] as LanguageVersion[]) {
     it(`version ${languageVersion}: one closure arm, beside a written-in-place one`, async () => {
       const h: Harness = {
@@ -1118,15 +1166,15 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    write graph-[:note]-> { body: "f woke" }',
             '    return 1',
             '  }',
-            '  r = await parallel([f, () => { return 2 }])',
+            `  r = ${join(languageVersion, '[f, () => { return 2 }]')}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
         parks: makeParkSink(),
         languageVersion,
       };
-      expect(await parked(h)).toEqual(['s1.b0.s0']);
-      const { result, kg } = await resumeAt(h, 's1.b0.s0');
+      expect(await parked(h)).toEqual([at(languageVersion, 1, 0)]);
+      const { result, kg } = await resumeAt(h, at(languageVersion, 1, 0));
       expect(result.parked).toBeUndefined();
       expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['f woke']);
       expect(payloadOf(kg.creates)).toEqual({ r: [1, 2] });
@@ -1145,18 +1193,18 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    await sleep(2h)',
             '    return "g"',
             '  }',
-            '  r = await parallel([f, g])',
+            `  r = ${join(languageVersion, '[f, g]')}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
         parks: makeParkSink(),
         languageVersion,
       };
-      expect(await parked(h)).toEqual(['s2.b0.s0', 's2.b1.s0']);
-      const one = await resumeAt(h, 's2.b1.s0');
+      expect(await parked(h)).toEqual([at(languageVersion, 2, 0), at(languageVersion, 2, 1)]);
+      const one = await resumeAt(h, at(languageVersion, 2, 1));
       expect(one.result.parked).toBeUndefined();
       expect(payloadOf(one.kg.creates)).toBeUndefined();
-      const two = await resumeAt(h, 's2.b0.s0');
+      const two = await resumeAt(h, at(languageVersion, 2, 0));
       expect(payloadOf(two.kg.creates)).toEqual({ r: ['f', 'g'] });
     });
 
@@ -1170,15 +1218,15 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    await sleep(1h)',
             '    return a.body',
             '  }',
-            '  r = await parallel([f])',
+            `  r = ${join(languageVersion, '[f]')}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
         parks: makeParkSink(),
         languageVersion,
       };
-      expect(await parked(h)).toEqual(['s2.b0.s0']);
-      const { result, kg } = await resumeAt(h, 's2.b0.s0');
+      expect(await parked(h)).toEqual([at(languageVersion, 2, 0)]);
+      const { result, kg } = await resumeAt(h, at(languageVersion, 2, 0));
       expect(result.parked).toBeUndefined();
       expect(payloadOf(kg.creates)).toEqual({ r: ['one'] });
     });

@@ -120,8 +120,9 @@ import {
   spreadSourceText,
   type ParamTypeRef,
   type ValueTypeMember,
+  type ClosureTypeRef,
 } from '../parser/ast';
-import { argumentBindings, isPositionalCall, isValueTypeRef, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
+import { argumentBindings, isPositionalCall, isValueTypeRef, slotClosureName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
 
 export type { ReturnShape } from './typing';
@@ -234,6 +235,7 @@ import {
   EffectFrame,
   EMPTY_ROW,
   rowFromDeclaration,
+  unionRows,
   UNKNOWN_ROW,
   type EffectRow,
 } from './effects';
@@ -849,6 +851,11 @@ export const DiagnosticCodes = {
   /** `race([…])` / `parallel([…])` outside `await` — a combinator composes a
    *  wait; only `await` parks. The message carries the rewrite. */
   COMBINATOR_NEEDS_AWAIT: 'MOV_COMBINATOR_NEEDS_AWAIT',
+  /** `parallel([…])` under language version 5: a MAP over the arms, calling
+   *  each (`MAP([f, g], { concurrency: 2 }, (f) => f())`), is the same join —
+   *  a list of what each returned, in the arms' order. The fix rewrites a
+   *  literal arm list; `race` is unchanged. */
+  PARALLEL_RETIRED: 'MOV_PARALLEL_RETIRED',
   /** An arm of `race`/`parallel` that is not a function — a name bound to a
    *  record, a value, an instance. The combinator's whole job is to CALL its
    *  arms, so there is nothing it could do with one. */
@@ -3525,7 +3532,109 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
   return undefined;
 }
 
+/** A name bound to a VALUE (the dot plane) — a binding or a parameter that
+ *  holds no record position. */
+function isValueSymbol(symbol: ScopeSymbol): boolean {
+  return (symbol.kind === 'binding' || symbol.kind === 'param') && symbol.posType === undefined && symbol.bindingPlane !== 'node';
+}
+
 /** A body with no `return` at all. */
+/**
+ * The closure a VALUE is (language version 5): a record of closure type, or a
+ * union of them — TypeScript's `(() => A) | (() => B)`, which a list of
+ * closures' members are. Calling one is calling any of them, so its value is
+ * the union of what they return (`unionReturns`), its row the union of theirs,
+ * and its parameters the first's (`closureArities` keeps every arity, so a
+ * call is held to each). Undefined when the value may be something else, or
+ * absent: that is no function to call.
+ */
+export function closureOfValue(type: FieldType | undefined): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
+  const closures = closuresOfValue(type);
+  if (closures === undefined) return undefined;
+  if (closures.length === 1) return closures[0];
+  const merged: Extract<PositionTypeRef, { kind: 'closure' }> = {
+    kind: 'closure',
+    label: 'one of several closures',
+    params: closures[0]!.params,
+    returns: unionReturns(closures.map(closure => closure.returns)),
+    effects: unionRows(closures.map(closure => closure.effects)),
+  };
+  closureArities.set(merged, [...new Set(closures.map(closure => closure.params.length))]);
+  return merged;
+}
+
+/** The arities of the closures a merged closure stands for. */
+const closureArities = new WeakMap<object, number[]>();
+
+function closuresOfValue(type: FieldType | undefined): Array<Extract<PositionTypeRef, { kind: 'closure' }>> | undefined {
+  if (type === undefined || typeof type === 'string') return undefined;
+  const variant = variantOf(type);
+  if (variant.kind === 'record') return variant.position?.kind === 'closure' ? [variant.position] : undefined;
+  if (variant.kind !== 'union') return undefined;
+  const found: Array<Extract<PositionTypeRef, { kind: 'closure' }>> = [];
+  for (const member of variant.of) {
+    const inner = closuresOfValue(member);
+    if (inner === undefined) return undefined;
+    for (const closure of inner) if (!found.includes(closure)) found.push(closure);
+  }
+  return found.length > 0 ? found : undefined;
+}
+
+/** Does this type hold a closure beside something that is not one (or
+ *  beside absence)? */
+function mayNotBeAClosure(type: FieldType): boolean {
+  if (typeof type === 'string') return false;
+  if (closuresOfValue(stripAbsent(type)) !== undefined) return true;
+  const variant = variantOf(type);
+  return variant.kind === 'union' && variant.of.some(member => mayNotBeAClosure(member) || closuresOfValue(member) !== undefined);
+}
+
+/**
+ * What calling one of several closures hands back — TypeScript's union of
+ * their return types. A type all of them agree on is the call's type; records
+ * alone (closures among them) are their union, as `COALESCE(org, other)` is;
+ * anything else has no one type, and what it may hold travels as `mayHold`, as
+ * a body's disagreeing returns do — so a record any of them returns is seen
+ * wherever the call's value goes.
+ */
+export function unionReturns(shapes: ReadonlyArray<ReturnShape>): ReturnShape {
+  const returning = shapes.filter(shape => shape.returns);
+  if (returning.length === 0) return { returns: false };
+  const first = returning[0]!;
+  if (returning.every(shape => shape.fieldType === undefined && shape.mayHold === undefined && shape.posType !== undefined && shape.posType === first.posType)) {
+    return { returns: true, posType: first.posType! };
+  }
+  const arms: FieldType[] = [];
+  const addArm = (arm: FieldType): void => {
+    const variant = typeof arm === 'string' ? undefined : variantOf(arm);
+    if (variant?.kind === 'union') {
+      variant.of.forEach(addArm);
+      return;
+    }
+    if (!arms.some(seen => seen === arm || fieldTypeEquals(seen, arm))) arms.push(arm);
+  };
+  let unknown = false;
+  for (const shape of returning) {
+    const arm = shape.mayHold ?? shape.fieldType ?? recordValueOf(shape.posType);
+    if (arm === undefined) unknown = true;
+    else addArm(arm);
+  }
+  const union: FieldType | undefined = arms.length === 0 ? undefined : arms.length === 1 ? arms[0] : { kind: 'union', of: arms };
+  const typed = unknown || union === undefined
+    ? undefined
+    : arms.length === 1 || recordsAlone(union) !== undefined
+    ? union
+    : returning.every(shape => shape.fieldType !== undefined && fieldTypeEquals(shape.fieldType, first.fieldType!))
+    ? first.fieldType
+    : undefined;
+  const mayHold = union !== undefined && showsMoreHandles(union, typed) ? union : undefined;
+  return {
+    returns: true,
+    ...(typed !== undefined ? { fieldType: typed } : {}),
+    ...(mayHold !== undefined ? { mayHold } : {}),
+  };
+}
+
 const NO_RETURN: ReturnShape = { returns: false };
 
 /** We could not tell whether this returns — an unresolved callee, a cycle in
@@ -3937,8 +4046,27 @@ class Checker {
 
   /** A bound name's position type, where one is derivable. */
   private symbolPositionType(symbol: ScopeSymbol): PositionTypeRef | undefined {
-    return positionTypeOf(symbol);
+    return positionTypeOf(symbol) ?? this.functionAsValue(symbol);
   }
+
+  /**
+   * A function declared with a name, read as a VALUE (language version 5) —
+   * `[made, label]`, `FILTER(fs, …)` — is a closure like any other, as a
+   * TypeScript function declaration is: its parameters, what calling it
+   * returns and what it does. One type per declaration, so a union of them
+   * keeps each once.
+   */
+  private functionAsValue(symbol: ScopeSymbol): PositionTypeRef | undefined {
+    if (symbol.kind !== 'movement' || symbol.movement === undefined || before(this.languageVersion, 5)) return undefined;
+    const known = this.functionValues.get(symbol);
+    if (known !== undefined) return known;
+    const params = (this.movementParams(symbol) ?? []).map(param => ({ name: param.name, ...param.type }));
+    const type = closureType(params, this.movementReturnType(symbol), this.movementEffects(symbol));
+    if (symbol.movement.returnType?.done === true) this.functionValues.set(symbol, type);
+    return type;
+  }
+
+  private readonly functionValues = new WeakMap<ScopeSymbol, PositionTypeRef>();
 
   /** A typed expression walker that reports NOTHING — for a second pass over an
    *  expression the checker has already walked (presence narrowing), where
@@ -4369,9 +4497,34 @@ class Checker {
         const of = unifyValueTypes(Object.values(shape).map(t => stripAbsent(t))) ?? 'json';
         return { kind: 'dict', of, shape };
       }
+      case 'closure':
+        return this.writtenClosureType(member, scope, report);
       default:
         return neverAsAny(member);
     }
+  }
+
+  /**
+   * `<(c: <Company>) => <text>>` (language version 5) — the closure value a
+   * written closure type is: TypeScript's function type, its parameters and
+   * what it returns as written. What calling it DOES is not written, so its row
+   * is unknown, as a call nobody can see into is. Undefined when a parameter or
+   * the return names nothing (reported when `report` is set).
+   */
+  private writtenClosureType(member: ClosureTypeRef, scope: Scope, report: boolean): FieldType | undefined {
+    const plane = (type: ParamTypeRef, name: string, span: Span): PlaneType =>
+      report ? this.closureParamShape({ name, type, span }, scope) : this.planeTypeOf(type, scope);
+    const params: ClosureParam[] = [];
+    for (const param of member.params) {
+      if (param.type === undefined) return undefined; // the parser refuses it
+      const type = plane(param.type, param.name, param.span);
+      if (type.fieldType === undefined && type.posType === undefined) return undefined;
+      params.push({ name: param.name, ...type });
+    }
+    const returned = plane(member.returns, 'return', member.span);
+    if (returned.fieldType === undefined && returned.posType === undefined) return undefined;
+    const closure = closureType(params, { returns: true, ...returned }, UNKNOWN_ROW);
+    return recordOf({ ...closure, label: `a closure <${spellValueType(member)}>` } as PositionTypeRef);
   }
 
   /**
@@ -4550,9 +4703,29 @@ class Checker {
     };
   }
 
+  /** Is this concise body's call one whose callee is known to return nothing? */
+  private conciseCallReturnsNothing(value: RValue, scope: Scope): boolean {
+    const callee = value.kind === 'call' ? value.call.callee : value.kind === 'construct' ? value.construct.callee : undefined;
+    if (callee === undefined) return false;
+    const resolution = this.calleeResolution(callee, scope);
+    if (resolution.kind !== 'found') return false;
+    const { symbol } = resolution;
+    if (symbol.movement !== undefined) return !this.movementReturnType(symbol).returns;
+    const closure = this.calledClosure(symbol);
+    return closure !== undefined && !closure.returns.returns && !this.undeclaredSelves.has(symbol);
+  }
+
   /** `return <value>` — records what this body hands back, against the nearest
    *  enclosing body. */
   private checkReturn(statement: Extract<Statement, { kind: 'return' }>, scope: Scope): void {
+    // `(f) => f()` where `f` returns nothing is a closure that returns
+    // nothing, as TypeScript's `() => g()` is `void` when `g` is: the call is
+    // run as a statement, and there is no value to hand back.
+    if (statement.concise === true && this.conciseCallReturnsNothing(statement.value, scope)) {
+      const call = statement.value.kind === 'call' ? statement.value.call : statement.value.kind === 'construct' ? constructionAsCall(statement.value.construct) : undefined;
+      if (call !== undefined) this.checkCall(call, scope);
+      return;
+    }
     const shape = this.checkRValue(statement.value, scope, undefined, statement.span);
     const collector = this.returnStack[this.returnStack.length - 1];
     if (collector === undefined) {
@@ -5116,7 +5289,7 @@ class Checker {
         this.checkReturn(statement, scope);
         return;
       case 'combinator':
-        this.reportCombinatorNeedsAwait(statement.combinator);
+        if (!this.reportParallelRetired(statement.combinator, statement.combinator.span, scope)) this.reportCombinatorNeedsAwait(statement.combinator);
         this.checkCombinator(statement.combinator, scope, undefined);
         return;
       case 'collection':
@@ -5497,7 +5670,7 @@ class Checker {
         break;
       }
       case 'combinator': {
-        this.reportCombinatorNeedsAwait(value.combinator);
+        if (!this.reportParallelRetired(value.combinator, value.combinator.span, scope)) this.reportCombinatorNeedsAwait(value.combinator);
         const receipt = this.checkCombinator(value.combinator, scope, name);
         symbol = {
           ...symbol,
@@ -5617,9 +5790,13 @@ class Checker {
         // awaits) would check silently dark.
         const aliased = this.bareNodeSymbol(value.expr.raw, parsed, scope);
         if (aliased !== undefined) {
+          // A function declared with a name is a closure value from version 5
+          // (`functionAsValue`): `g = made` and `return made` carry its type,
+          // as TypeScript's `const g = made` does.
+          const aliasType = aliased.posType ?? this.functionAsValue(aliased);
           symbol = {
             ...symbol,
-            ...(aliased.posType !== undefined ? { posType: aliased.posType } : {}),
+            ...(aliasType !== undefined ? { posType: aliasType } : {}),
             bindingPlane: 'node',
           };
           break;
@@ -5772,14 +5949,72 @@ class Checker {
   /** The scope's answer for a callee — under the name it was DECLARED with,
    *  which from version 3 may differ from the call's by letter case. */
   private calleeResolution(written: string, scope: Scope): Resolution {
+    const member = this.memberCallee(written, scope);
+    if (member !== undefined) return member;
     return scope.resolve(this.calleeName(written, scope));
   }
+
+  /**
+   * `box.g()` (language version 5): a dotted call on a VALUE calls the member
+   * the value holds under that key, as TypeScript's `box.g()` does — so the
+   * callee is that member, a value like any other, called only when its type
+   * says it is a closure (`calledClosure`) and refused otherwise
+   * (`notAClosureMessage`). Undefined unless `written` is `name.key` and the
+   * name is bound to a value (a record node's dotted call is its own form).
+   */
+  private memberCallee(written: string, scope: Scope): Resolution | undefined {
+    if (before(this.languageVersion, 5)) return undefined;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(written);
+    if (match === null) return undefined;
+    const [, object, key] = match as unknown as [string, string, string];
+    const found = scope.resolve(object);
+    if (found.kind !== 'found') return found.kind === 'unknown' ? undefined : found;
+    if (!isValueSymbol(found.symbol)) return undefined;
+    const holder = found.symbol.fieldType !== undefined ? stripAbsent(found.symbol.fieldType) : undefined;
+    const shape = holder !== undefined && isDictType(holder) ? holder.shape : undefined;
+    const memberType = shape !== undefined && Object.hasOwn(shape, key) ? shape[key] ?? undefined : undefined;
+    const symbol: ScopeSymbol = {
+      name: written,
+      kind: 'binding',
+      span: found.symbol.span,
+      bindingPlane: 'scalar',
+      ...(memberType !== undefined ? { fieldType: memberType } : {}),
+    };
+    if (shape !== undefined && !Object.hasOwn(shape, key)) this.missingMembers.add(symbol);
+    return { kind: 'found', symbol };
+  }
+
+  /** Member callees (`memberCallee`) whose value has no such key. */
+  private readonly missingMembers = new WeakSet<ScopeSymbol>();
 
   /** The closure a callee names, when it names one (language version 3 —
    *  before it, a name bound to a closure is passed, never called). */
   private calledClosure(callee: ScopeSymbol): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
     if (before(this.languageVersion, 3)) return undefined;
-    return callee.posType?.kind === 'closure' ? callee.posType : undefined;
+    if (callee.posType?.kind === 'closure') return callee.posType;
+    // From version 5 a closure is a value like any other, so a name whose
+    // VALUE is one — a collection op's member, a parameter, `AT(fs, 0)`, a
+    // call's answer — is called as TypeScript calls `f: (() => A) | (() => B)`.
+    if (before(this.languageVersion, 5) || callee.kind === 'movement' || callee.posType !== undefined) return undefined;
+    return closureOfValue(callee.fieldType);
+  }
+
+  /**
+   * Why calling a name that is a value is refused under version 5: it may not
+   * be a closure, or nothing says what it is. Undefined when it is one (or the
+   * name is not a value at all, which the older refusals name).
+   */
+  private notAClosureMessage(callee: ScopeSymbol, written: string): string | undefined {
+    if (before(this.languageVersion, 5) || (callee.kind !== 'binding' && callee.kind !== 'param')) return undefined;
+    if (callee.posType !== undefined || this.calledClosure(callee) !== undefined) return undefined;
+    const type = callee.fieldType;
+    if (this.missingMembers.has(callee)) {
+      const [object, key] = written.split('.') as [string, string];
+      return `'${written}' is called, and '${object}' has no '${key}' — a dotted call calls the closure a value holds under that key, as TypeScript's does. Call a key it has, or a function by name ('${key}(…)')`;
+    }
+    return type === undefined
+      ? `'${written}' is called, and nothing says it is a function — its type is unknown here. Call a closure whose type the program shows: one bound to a name, written in a list, or a member of a list of closures ('MAP(fs, (f) => f())')`
+      : `'${written}' is called, and it is ${describeFieldType(type)}${mayNotBeAClosure(type) ? ' — it may not be a closure' : ', not a function'}. Only a closure is called: narrow it to one, or call one whose type the program shows`;
   }
 
   /** The name a callee was declared with (`written` when nothing declares it). */
@@ -5915,7 +6150,12 @@ class Checker {
       callee => resolveCallee(callee, callScope, this.languageVersion),
       declared => {
         const found = scope.resolve(declared);
-        return found.kind === 'found' && isFunctionSymbol(found.symbol);
+        return found.kind === 'found' && (isFunctionSymbol(found.symbol) || this.calledClosure(found.symbol) !== undefined);
+      },
+      object => {
+        if (before(this.languageVersion, 5)) return false;
+        const found = scope.resolve(object);
+        return found.kind === 'found' && isValueSymbol(found.symbol);
       },
     );
   }
@@ -5940,12 +6180,25 @@ class Checker {
    *     `@resource.…`.
    */
   private checkSlotExpression(slot: ExprSlot, scope: Scope, options?: { writeField?: true }): void {
-    if (before(this.languageVersion, 3)) return;
     let tree: MExpr;
     try {
       tree = treeOfSlot(slot);
     } catch {
       return; // the syntax error is reported where the slot is read
+    }
+    if (before(this.languageVersion, 3)) {
+      // Only the dotted call that never ran is said before 3 (`checkDottedCall`).
+      const visit = (expr: MExpr): void => {
+        if (expr.kind === 'call' && expr.callee.kind === 'member' && expr.callee.object.kind === 'name') {
+          this.checkDottedCall(expr.callee.object.name.text, expr.callee.property.text, spanWithin(slot, expr.at.start), {
+            scope,
+            writeField: options?.writeField === true,
+          });
+        }
+        expressionChildren(expr).forEach(visit);
+      };
+      visit(tree);
+      return;
     }
     this.checkExpressionTree(tree, {
       spanOf: (at) => spanWithin(slot, at.start),
@@ -5991,6 +6244,9 @@ class Checker {
           return;
         }
         this.checkCallInExpression(expr, written, at);
+      }
+      if (expr.kind === 'call' && expr.callee.kind === 'member' && expr.callee.object.kind === 'name') {
+        this.checkDottedCall(expr.callee.object.name.text, expr.callee.property.text, at.spanOf(expr.at), at);
       }
       const key = expr.kind === 'call' ? sortKeyOf(expr) : undefined;
       // A resource hop's WHERE reads the resource's own fields by bare name.
@@ -6154,6 +6410,31 @@ class Checker {
     }
   }
 
+  /**
+   * `o.f(…)` where `f` is no built-in, outside a write field. Before version 5
+   * the engine reads it as `f` run in `o`'s scope, and a function that is no
+   * built-in has nothing to run outside a write field (whose target may
+   * advertise its own) — the run always failed where it reached it, so it is
+   * refused on every version. From 5 a dotted call on a VALUE calls the member
+   * it holds (`memberCallee`), checked where it is hoisted; this says the rest.
+   * A built-in in `o`'s scope (`o.UPPER(name)`) and a stdlib family
+   * (`TEXT.SERIALISE(…)`) are what they always were.
+   */
+  private checkDottedCall(object: string, key: string, span: Span, at: { scope: Scope; writeField: boolean }): void {
+    if (at.writeField) return;
+    const found = at.scope.resolve(object);
+    if (found.kind !== 'found') return; // a stdlib family, or reported where the name is read
+    if (since(this.languageVersion, 5) && isValueSymbol(found.symbol)) return;
+    // The standard library by name, whatever the version: the engine runs a
+    // built-in however the program is pinned.
+    if (lookupBuiltin(key) !== undefined) return;
+    this.report(
+      DiagnosticCodes.FUNCTION_UNKNOWN,
+      `'${object}.${key}(…)' runs '${key}' in '${object}', and '${key}' is no built-in — there is nothing to run there, and the run would fail where it reached it. Call a function by name ('${key}(${object})')${since(this.languageVersion, 5) ? '' : ', or, from language version 5, call a closure a value holds (\'box.g()\')'}`,
+      span,
+    );
+  }
+
   private checkCallInExpression(
     call: Extract<MExpr, { kind: 'call' }>,
     written: string,
@@ -6195,8 +6476,13 @@ class Checker {
       case 'declared': {
         const found = at.scope.resolve(resolution.name);
         if (found.kind !== 'found') return; // reported where the name is read
-        if (isFunctionSymbol(found.symbol)) {
+        if (isFunctionSymbol(found.symbol) || this.calledClosure(found.symbol) !== undefined) {
           this.report(DiagnosticCodes.CALL_NESTED, nestedMessage(written), span);
+          return;
+        }
+        const notAClosure = this.notAClosureMessage(found.symbol, written);
+        if (notAClosure !== undefined) {
+          this.report(DiagnosticCodes.CALL_NOT_MOVEMENT, notAClosure, span);
           return;
         }
         this.report(
@@ -6474,7 +6760,7 @@ class Checker {
     const resolution = scope.resolve(name);
     if (resolution.kind !== 'found') return undefined;
     const { symbol } = resolution;
-    return symbol.posType !== undefined || symbol.bindingPlane === 'node' ? symbol : undefined;
+    return symbol.posType !== undefined || symbol.bindingPlane === 'node' || this.functionAsValue(symbol) !== undefined ? symbol : undefined;
   }
 
   /** A value that is many values under one value's type — a walk read for a
@@ -6644,6 +6930,7 @@ class Checker {
     // The combinators (core calculus v2 R5): `race`/`parallel` compose the
     // wait, and the `await` is what parks. The value is the positional receipt.
     if (source.kind === 'combinator') {
+      this.reportParallelRetired(source.combinator, awaitExpr.span, scope);
       const receipt = this.checkCombinator(source.combinator, scope, binding);
       return receipt !== undefined ? { fieldType: receipt } : {};
     }
@@ -7211,6 +7498,17 @@ class Checker {
       this.collectionMayHold.set(expr, expr.op === 'map' ? listOf(shape.mayHold, ordering) : shape.mayHold);
     }
 
+    // A MAP over a tuple of closures — functions written down, as
+    // `parallel([a, b])`'s arms were — is a tuple too (language version 5):
+    // one slot per member, each typed by what the function returns for THAT
+    // member, as the receipt was.
+    // So `MAP([a, b], (f) => f())` reads `AT(r, 0)` as exactly `a`'s answer.
+    const perSlot = expr.op === 'map' ? this.mapPerSlot(expr, spelling, scope, source.valueType) : undefined;
+    if (perSlot !== undefined) {
+      this.collectionMayHold.set(expr, perSlot.mayHold);
+      return perSlot.type;
+    }
+
     switch (expr.op) {
       case 'map':
         return returned !== undefined ? listOf(returned, ordering) : undefined;
@@ -7230,6 +7528,64 @@ class Checker {
         this.requireDictKeyIn(scope, expr.fn, returned, `filed under by '${spelling}'`);
         return element !== undefined ? { kind: 'dict', of: element } : undefined;
     }
+  }
+
+  /**
+   * A MAP over a tuple of closures, slot by slot: the function written in place, walked
+   * once more per member — type-only, so it says nothing it did not say where
+   * it is written — with that member's own type for its parameter. Undefined
+   * unless the source is a fixed-length tuple and the function a closure
+   * written in place (a named one's type is its declaration's, the same for
+   * every member).
+   */
+  private mapPerSlot(
+    expr: CollectionOpExpression,
+    spelling: string,
+    scope: Scope,
+    sourceType: FieldType | undefined,
+  ): { type: FieldType; mayHold: FieldType } | undefined {
+    if (before(this.languageVersion, 5) || expr.fn.kind !== 'closure' || sourceType === undefined) return undefined;
+    // The source as the value it is — a list written down is a tuple until a
+    // reader widens it, and the op's own read widened it. Type-only: the slot
+    // was checked, and said what it had to, above.
+    this.typeOnlyDepth++;
+    let exact: FieldType | undefined;
+    try {
+      exact = this.checkExprSlot(expr.source, scope, { holdsValue: true }).valueType;
+    } finally {
+      this.typeOnlyDepth--;
+    }
+    if (exact === undefined || isMaybeAbsent(exact)) return undefined;
+    const tuple = variantOf(exact);
+    if (tuple.kind !== 'tuple' || tuple.rest !== undefined || tuple.of.some(slot => slot === null)) return undefined;
+    // Only a list of FUNCTIONS — the join `parallel` was — whose every member
+    // is one known closure: calling member i calls exactly that closure, so
+    // its slot is exactly what that closure returns. Any other tuple is mapped
+    // as a list, as TypeScript's `Array.prototype.map` is.
+    if (!tuple.of.every(slot => slot !== null && !isMaybeAbsent(slot) && closuresOfValue(slot)?.length === 1)) return undefined;
+    const closure = expr.fn.closure;
+    const slots: Array<{ type: FieldType | null; held: FieldType | null }> = [];
+    this.typeOnlyDepth++;
+    try {
+      for (const member of tuple.of) {
+        const { returns } = this.checkClosure(closure, scope, {
+          label: `the function for '${spelling}'`,
+          suppliedParams: [{ fieldType: member! }],
+        });
+        if (!returns.returns) {
+          slots.push({ type: 'absent', held: 'absent' });
+          continue;
+        }
+        const type = valueOfReturn(returns) ?? null;
+        slots.push({ type, held: returns.mayHold ?? type });
+      }
+    } finally {
+      this.typeOnlyDepth--;
+    }
+    return {
+      type: { kind: 'tuple', of: slots.map(slot => slot.type) },
+      mayHold: { kind: 'tuple', of: slots.map(slot => slot.held) },
+    };
   }
 
   /** A settings record is read, not typed: every value in it is written down,
@@ -7483,6 +7839,53 @@ class Checker {
 
   // ── the concurrency combinators (core calculus v2 R5) ──
 
+  /**
+   * `parallel` is retired under language version 5: `MAP` over the arms,
+   * calling each, is the same join — every arm runs, at once with
+   * `concurrency` as many as there are arms, a park inside one parks the run
+   * as a member's does, and the answer is what each returned, in the arms'
+   * order. A MAP over a list written down is a tuple slot by slot
+   * (`mapPerSlot`), so `AT(r, i)` reads exactly what the receipt's slot did.
+   * No `await`: a MAP whose members wait parks the run without one.
+   *
+   * `written` is the form's own span — from `await` when it has one. The fix
+   * is exact for a literal arm list; arms built at run time are rewritten by
+   * hand (the concurrency is a number written down, and theirs is not known).
+   * True when it reported.
+   */
+  private reportParallelRetired(expr: CombinatorExpression, written: Span, scope: Scope): boolean {
+    if (expr.kind !== 'parallel' || before(this.languageVersion, 5)) return false;
+    // The MAP's parameter is a name nothing in scope binds, so the rewrite
+    // shadows nothing (`f`, else `fn`, `run`, then `f2`, `f3`, …).
+    const free = (name: string): boolean => scope.resolve(name).kind === 'unknown';
+    const param = ['f', 'fn', 'run'].find(free) ?? Array.from({ length: 100 }, (_, i) => `f${i + 2}`).find(free) ?? 'f';
+    const call = `(${param}) => ${param}()`;
+    const message = "'parallel' is retired — MAP over the functions, calling each, is the same join: every one runs, and the answer is what each returned, in their order";
+    if (expr.arms.kind === 'dynamic') {
+      const arms = expr.arms.expr.raw.trim();
+      this.report(
+        DiagnosticCodes.PARALLEL_RETIRED,
+        `${message}. Write 'MAP(${arms}, { concurrency: <how many at once> }, ${call})' — no 'await': a MAP whose members wait parks the run by itself`,
+        written,
+      );
+      return true;
+    }
+    const count = expr.arms.arms.length;
+    const tail = `, { concurrency: ${count} }, ${call})`;
+    this.reportWithFix({
+      code: DiagnosticCodes.PARALLEL_RETIRED,
+      message: `${message}. Write 'MAP([…]${tail}' — no 'await': a MAP whose members wait parks the run by itself, and 'AT(r, i)' reads slot i as the receipt did`,
+      span: written,
+      fix: {
+        edits: [
+          { span: { start: written.start, end: expr.arms.span.start }, text: 'MAP(' },
+          { span: { start: expr.arms.span.end, end: expr.arms.span.end }, text: tail.slice(0, -1) },
+        ],
+      },
+    });
+    return true;
+  }
+
   /** A combinator composes a wait; `await` is what parks. */
   private reportCombinatorNeedsAwait(expr: CombinatorExpression): void {
     this.report(
@@ -7567,7 +7970,7 @@ class Checker {
     this.effects?.flag('suspend');
 
     if (expr.arms.kind === 'dynamic') {
-      const { parsed } = this.checkExprSlot(expr.arms.expr, scope);
+      const { parsed, valueType: armsType } = this.checkExprSlot(expr.arms.expr, scope);
       // A name bound to a list of functions written down, or to a MAP that
       // builds them from a closure, is as known as a literal arm list: what
       // each arm returns types the receipt's slots. Arms known only at run
@@ -7582,6 +7985,42 @@ class Checker {
         const each = this.receiptMayHold(expr.kind, [armSymbol.armsEachReturn]);
         const slot = each.kind === 'tuple' ? each.of[0] : undefined;
         if (slot !== undefined && slot !== null && slot !== 'absent') this.combinatorMayHold.set(expr, listOf(slot, 'unknown'));
+      } else {
+        // From version 5 a closure's type is a value's type, so arms built at
+        // run time (`FILTER(all, …)`, a parameter) still have one: the union
+        // of the closures the collection may hold, whose returns the receipt's
+        // slots may hold.
+        const element = armsType !== undefined ? collectionElementOf(armsType) : undefined;
+        const each = since(this.languageVersion, 5) ? closureOfValue(element) : undefined;
+        const held = each !== undefined ? this.receiptMayHold(expr.kind, [each.returns]).of[0] : undefined;
+        if (held !== undefined && held !== null && held !== 'absent') this.combinatorMayHold.set(expr, listOf(held, 'unknown'));
+        // `[]` holds no function, and nothing is called (TypeScript's `never[]`).
+        const empty = armsType !== undefined && variantOf(stripAbsent(armsType)).kind === 'tuple'
+          && (variantOf(stripAbsent(armsType)) as { of: unknown[]; rest?: unknown }).of.length === 0
+          && (variantOf(stripAbsent(armsType)) as { rest?: unknown }).rest === undefined;
+        if (since(this.languageVersion, 5) && !empty) {
+          if (each === undefined) {
+            // A value whose type does not say it is a closure is never run.
+            this.report(
+              DiagnosticCodes.COMBINATOR_ARM_NOT_FUNCTION,
+              `'${expr.kind}' calls each of its arms, and '${expr.arms.expr.raw.trim()}' ${armsType === undefined ? 'has no type this program shows' : `is ${describeFieldType(armsType)}`} — not a collection of closures. Give it a list of closures ('[() => { … }, f]'), or one built from one ('FILTER(fs, …)')`,
+              expr.arms.expr.span,
+            );
+          } else {
+            const arities = [...new Set((closureArities.get(each) ?? [each.params.length]))];
+            if (arities.some(arity => arity !== 0)) {
+              this.report(
+                DiagnosticCodes.COMBINATOR_ARM_TAKES_NOTHING,
+                `'${expr.kind}' calls each of its arms with nothing, and a closure in '${expr.arms.expr.raw.trim()}' takes ${arities.filter(arity => arity !== 0).join(' or ')} argument(s)`,
+                expr.arms.expr.span,
+              );
+            }
+            this.effects?.absorb(each.effects);
+            const slot = valueOfReturn(each.returns);
+            if (slot !== undefined) return listOf(expr.kind === 'race' ? maybeAbsent(slot)! : slot, 'unknown');
+            return undefined;
+          }
+        }
       }
       // A collection built at run time holds functions, and a function is not a
       // value type here — so what its arms return cannot be seen from the
@@ -7592,7 +8031,12 @@ class Checker {
     }
 
     const slots = expr.arms.arms.map(arm => this.checkArm(arm, expr.kind, scope, recorded));
-    if (slots.some(slot => slot.returns && (slot.posType !== undefined || isRecordType(slot.fieldType)))) {
+    // An arm that hands back a closure (language version 5) fills its slot
+    // with that closure, typed as any closure value is — a function, not a
+    // record.
+    const closureSlot = (slot: ReturnShape): FieldType | undefined =>
+      since(this.languageVersion, 5) && slot.posType?.kind === 'closure' ? recordOf(slot.posType) : undefined;
+    if (slots.some(slot => slot.returns && ((slot.posType !== undefined && closureSlot(slot) === undefined) || isRecordType(slot.fieldType)))) {
       this.recordSlotCombinators.add(expr);
     }
     // What each slot may hold travels with the receipt as a list literal's
@@ -7608,8 +8052,9 @@ class Checker {
         // combinators — `parallel` introduces no nulls, but it cannot invent a
         // value the arm never produced.
         if (!slot.returns) return 'absent';
-        if (slot.fieldType === undefined) return null;
-        return (expr.kind === 'race' ? maybeAbsent(slot.fieldType) : slot.fieldType) ?? null;
+        const type = slot.fieldType ?? closureSlot(slot);
+        if (type === undefined) return null;
+        return (expr.kind === 'race' ? maybeAbsent(type) : type) ?? null;
       }),
     };
   }
@@ -7940,7 +8385,10 @@ class Checker {
     const resolution = this.calleeResolution(construct.callee, scope);
     if (resolution.kind !== 'found') return undefined;
     const kind = resolution.symbol.kind;
-    if (kind !== 'movement' && kind !== 'plugin' && this.calledClosure(resolution.symbol) === undefined) {
+    // From version 5 a value is never constructed: calling one is a call,
+    // refused there unless it is a closure.
+    const value = since(this.languageVersion, 5) && (kind === 'binding' || kind === 'param');
+    if (kind !== 'movement' && kind !== 'plugin' && !value && this.calledClosure(resolution.symbol) === undefined) {
       return undefined;
     }
     return constructionAsCall(construct);
@@ -10540,19 +10988,22 @@ class Checker {
         value = closure.returns;
         this.effects?.absorb(closure.effects);
         this.noteUndeclaredSelfCall(callee, statement.span);
-        if (statement.args.length !== closure.params.length) {
-          this.report(
-            DiagnosticCodes.CALL_ARITY,
-            `'${statement.callee}' takes ${closure.params.length} argument${closure.params.length === 1 ? '' : 's'}, got ${statement.args.length}`,
-            statement.span,
-          );
+        const arities = closureArities.get(closure) ?? [closure.params.length];
+        if (arities.some(arity => arity !== statement.args.length)) {
+          const arity = arities.length === 1
+            ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
+            : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
+          this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${statement.args.length}`, statement.span);
         }
         params = closure.params.map(({ name, ...type }) => ({ name, type }));
       } else {
         // Either an unlinked file import (a body nobody parsed) or a name that
         // is not callable at all. Both leave the row a lower bound.
         this.effects?.markPartial();
-        if (callee.kind !== 'fileImport') {
+        const notAClosure = this.notAClosureMessage(callee, statement.callee);
+        if (notAClosure !== undefined) {
+          this.report(DiagnosticCodes.CALL_NOT_MOVEMENT, notAClosure, statement.span);
+        } else if (callee.kind !== 'fileImport') {
           // A file import may be a movement — M3 resolves it; give it the benefit of the doubt.
           this.report(
             DiagnosticCodes.CALL_NOT_MOVEMENT,
@@ -10646,6 +11097,40 @@ class Checker {
         return;
       }
       case 'closure':
+        // From version 5 a closure is a value, and one written in place is
+        // handed to a parameter that takes one, as TypeScript's is: its
+        // parameters typed by the parameter's closure type where it leaves
+        // them out (contextual typing), and it is held to that type.
+        if (since(this.languageVersion, 5)) {
+          // A plugin's argument is never closure-typed: as in TypeScript, the
+          // mismatch is the error, not the implicit-any of the closure's
+          // parameters, so the closure is not checked against nothing.
+          if (plugin !== undefined) {
+            this.report(
+              DiagnosticCodes.CALL_ARG_TYPE,
+              `The argument${describeArgPlace(fit)} to '${callee}' is a function written in place, and a plugin takes a value, not a function`,
+              arg.span,
+            );
+            return;
+          }
+          const expected = param?.type.fieldType !== undefined ? closureOfValue(param.type.fieldType) : undefined;
+          const { params, returns, effects } = this.checkClosure(arg.closure, scope, {
+            label: `the argument${describeArgPlace(fit)} to '${callee}'`,
+            ...(expected !== undefined ? { suppliedParams: expected.params.map(({ name: _name, ...type }) => type) } : {}),
+          });
+          const value = recordOf(closureType(params, returns, effects));
+          if (param?.type.fieldType !== undefined) {
+            this.checkValueArgFit(fit, param.type.fieldType, value, { span: arg.span });
+          } else if (param?.type.posType !== undefined) {
+            this.report(
+              DiagnosticCodes.CALL_ARG_TYPE,
+              `'${callee}' expects ${describePosition(param.type.posType)}${describeArgPlace(fit)}, but this argument is a closure — a record parameter takes a record; declare the parameter as a closure type ('<() => <text>>') to pass a function`,
+              arg.span,
+            );
+          }
+          return;
+        }
+      // falls through: before 5 a function is not a value
       case 'type':
         // What `MAP` and `MEMBERS` take. A movement's parameter holds a value
         // or a record, and a function or a type is not yet a value.
@@ -14178,6 +14663,33 @@ class Checker {
    * Returns the slot's shallow value type when inferable — write-field
    * compatibility (check 2) consumes it.
    */
+  /**
+   * The scope a slot's list element closures are bound in (language version
+   * 5): each closure checked where it is written — its body a child of the
+   * slot's scope, as a closure bound to a name is — and bound under the name
+   * the lowering reads it by, so it is a value like any other: in a list it
+   * is a record of closure type, and the list's element type is the union of
+   * its closures'.
+   */
+  private slotClosureScope(closures: NonNullable<ExprSlot['closures']>, scope: Scope): Scope {
+    const around = new Scope('branch', scope);
+    for (const { at, closure } of closures) {
+      const { params, returns, effects } = this.checkClosure(closure, scope, { label: 'this closure' });
+      around.declare({
+        name: slotClosureName(at),
+        kind: 'binding',
+        span: closure.span,
+        posType: closureType(params, returns, effects),
+        bindingPlane: 'node',
+      });
+    }
+    this.closureScopes.add(around);
+    return around;
+  }
+
+  /** Scopes `slotClosureScope` made — a slot checked in one is not wrapped again. */
+  private readonly closureScopes = new WeakSet<Scope>();
+
   private checkExprSlot(
     slot: ExprSlot,
     scope: Scope,
@@ -14209,6 +14721,9 @@ class Checker {
         ...(held !== undefined ? { held } : {}),
         ...(mayHold !== undefined ? { mayHold } : {}),
       };
+    }
+    if (slot.closures !== undefined && !this.closureScopes.has(scope)) {
+      return this.checkExprSlot(slot, this.slotClosureScope(slot.closures, scope), options);
     }
     const hoisted = this.hoistNestedCalls(slot, scope);
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);

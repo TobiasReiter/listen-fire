@@ -396,6 +396,8 @@ export type Binding = Bound & BindingShape;
  * mark — in the type as well as at run time — which is what lets `bindingOf`
  * tell an engine object from data by the mark alone.
  */
+const bindingFrom = <S extends BindingShape>(shape: S): S & Bound => binding(shape);
+
 export function binding<S extends BindingShape>(shape: S): S & Bound {
   return Object.assign(new Bound(), shape);
 }
@@ -1936,6 +1938,24 @@ function readBareName(name: string, ctx: MovementExprContext): MovementEvalResul
       value: binding.slots.map((slot) => (recordsAsThemselves && isOneRecord(slot) ? slot : slotValue(slot))),
       provenance: { origins: binding.slots.flatMap(bindingEntityOrigins) },
     };
+  }
+  if (binding.kind === 'movement' && ctx.languageVersion !== undefined && since(ctx.languageVersion, 5)) {
+    // A function declared with a name is a closure value too (language
+    // version 5), as a collection op's named function already is: its
+    // declaration, over the file scope it was declared in — never the caller's.
+    const fileEnv = binding.fileEnv ?? ctx.env.chainFromRoot()[0] ?? ctx.env;
+    const captured = new Map<string, Binding>();
+    for (const scope of fileEnv.chainFromRoot()) {
+      for (const [name, bound] of scope.ownBindings()) captured.set(name, bound);
+    }
+    const { params, body, span } = binding.declaration;
+    return { value: bindingFrom({ kind: 'closure', closure: { params, body, span }, captured }), provenance: NO_PROVENANCE };
+  }
+  if (binding.kind === 'closure' && ctx.languageVersion !== undefined && since(ctx.languageVersion, 5)) {
+    // A closure is a value (language version 5), as a JavaScript function is:
+    // read bare — a list member, a call's argument, a MAP's member — it is
+    // itself, (AST, scope), and whoever holds it may call it.
+    return { value: binding, provenance: NO_PROVENANCE };
   }
   throw unsupported(
     `reading '${name}' (${describeBinding[binding.kind]}) as a bare value`,

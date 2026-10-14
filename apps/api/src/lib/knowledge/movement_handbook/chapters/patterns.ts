@@ -37,16 +37,16 @@ if ops == null { ERROR("no #ops channel") }
 write ops-[:Messages]-> { Message: "Logged to the CRM: \${record.externalId}" }
 \`\`\`
 
-For writes that genuinely don't depend on each other, \`parallel\` runs them at once:
+For writes that genuinely don't depend on each other, \`MAP\` over them as functions and call each, all at once:
 
 \`\`\`
-await parallel([
+MAP([
   () => { write crm-[:Companies]-> { unique by (FUZZY \`Name\`), Name: msg.\`Subject\` } },
   () => { write sheet-[:Rows]->    { unique by (\`Company\`),    Company: msg.\`Subject\` } },
-])
+], { concurrency: 2 }, (f) => f())
 \`\`\`
 
-Each arm is a **function** — \`() => { … }\` written where it stands, or the name of one declared elsewhere — and \`await\` is what waits, here until every arm has finished. An arm reads anything bound before the \`parallel\` and never another arm's bindings. Work that has to come back out is \`return\`ed: the value is a receipt with one slot per arm in the order written, and \`AT(r, 0)\` reads the first arm's slot. Arms that only act need no binding at all, as here.
+Each one is a **function** — \`() => { … }\` written where it stands, or the name of one declared elsewhere — and \`concurrency\` says how many run at once (here every one; without it they run one after another). The MAP finishes when every function has; one that waits parks the run, so there is no \`await\`. A function reads anything bound before the list and never another's bindings. Work that has to come back out is \`return\`ed: the answer has one slot per function in the order written, and \`AT(r, 0)\` reads what the first returned. Functions that only act need no binding at all, as here.
 
 ### compose-a-report
 
@@ -280,7 +280,7 @@ function \`Attachment Report\`(m: <inbox-[:Email]->>) {
 `,
     },
     {
-      construct: 'the parallel combinator over closure arms (independent writes, concurrent, no binding)',
+      construct: 'MAP over a list of closures, calling each at once (independent writes, concurrent, no binding)',
       status: 'runs',
       probe: `
 import { email, attio } from adapters
@@ -290,7 +290,7 @@ inbox = email()
 crm   = attio(credentials: acme)
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  await parallel([
+  MAP([
     () => {
       write crm-[:Companies]-> {
         unique by (FUZZY \`Name\`)
@@ -304,7 +304,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
         Email: m.\`From\`
       }
     },
-  ])
+  ], { concurrency: 2 }, (f) => f())
 }
 `,
     },

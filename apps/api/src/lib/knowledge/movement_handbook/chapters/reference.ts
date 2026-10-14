@@ -41,7 +41,7 @@ inc = (v: <number>) => v + 1                   # an expression body; a closure b
 
 \`=\` binds a name (instance, handle, extract graph, a bound block, a call's value, a closure, a plain value). Statements run top-to-bottom; a handle must be written before it is read. A function may call itself, declaring what it returns (\`f(n: <number>): <number>\`). A listened automation takes exactly one parameter; a library automation takes any number.
 
-\`return\` is the one way a value leaves a body — an automation's, a block's, or a closure's — and a \`return\` inside an \`if\` arm belongs to the body around it. A body with no \`return\` hands nothing back, so it runs as a statement and cannot be bound. A closure is a value: hand it to \`callback\` or \`until\`.
+\`return\` is the one way a value leaves a body — an automation's, a block's, or a closure's — and a \`return\` inside an \`if\` arm belongs to the body around it. A body with no \`return\` hands nothing back, so it runs as a statement and cannot be bound. A closure is a value: hand it to \`callback\` or \`until\`, keep it in a list, or pass it to a parameter whose type is a closure type (\`<(c: <Company>) => <text>>\`).
 
 ### types-and-brackets
 
@@ -199,12 +199,12 @@ r = await race([
 if AT(r, 0) == null { … }             # nobody answered — the safe default path
 if AT(r, 0) == TRUE { … }             # approved
 
-r2 = await parallel([f, () => { … }]) # every arm runs to the end, every slot filled
+r2 = MAP([f, () => { … }], { concurrency: 2 }, (fn) => fn()) # all at once, every slot filled
 \`\`\`
 
 The answer is readable only **after** \`await FIRST(q-[:Response]->)\`. Durations: \`30s\` \`90m\` \`4h\` \`1d\` \`1h30m\`. Interpolate \${q.Url} into the delivery message or nobody can answer. \`Response\` is an ordinary writable edge, so anything that can write can answer it — including an in-chat button: mint a \`callback\` per answer and carry its \`id\` on the control (which field on a control holds it is that system's own, and its chapter names it); see \`in-chat-answers\` in the reviews chapter for the full shape. An \`await\` on its own waits forever — race it against \`sleep\` for an unattended run.
 
-\`await\` is the wait; \`race([…])\` and \`parallel([…])\` only say how several things being waited on combine (the first / every one), so neither stands without an \`await\` in front. An arm is a **function** — \`() => { … }\` in place, or the name of one declared elsewhere — taking no parameters and capturing everything in scope where it is written. The value is a receipt of one slot per arm in the order written, read with \`AT(r, <index>)\` and holding what that arm \`return\`ed: under \`race\` only the arm that settled first has its slot filled, so a null test on a slot is the branch (arms settling in the same moment all land, and arms still parked are dropped where they stand — what they had already done stays done); under \`parallel\` every slot is filled. An arm that hands nothing back has an always-null slot either way.
+\`await\` is the wait; \`race([…])\` only says how several things being waited on combine (the first one), so it does not stand without an \`await\` in front. An arm is a **function** — \`() => { … }\` in place, or the name of one declared elsewhere — taking no parameters and capturing everything in scope where it is written. The value is a receipt of one slot per arm in the order written, read with \`AT(r, <index>)\` and holding what that arm \`return\`ed: only the arm that settled first has its slot filled, so a null test on a slot is the branch (arms settling in the same moment all land, and arms still parked are dropped where they stand — what they had already done stays done). To wait for **every** one, \`MAP\` over the functions and call each: \`r = MAP([f, g], { concurrency: 2 }, (fn) => fn())\` runs them at once, needs no \`await\` (a member that waits parks the run), and \`AT(r, i)\` is what function \`i\` returned, every slot filled. A function that hands nothing back has an always-null slot either way.
 
 \`\`\`
 cb = callback({ … })                      # id + url; one use, dies with the run
@@ -250,12 +250,14 @@ Content is a list (shared content first, record-specific content last, so repeat
 - **Listening to an adapter type instead of an instance.** Construct first; listen to the instance.
 - **Reading a review's answer before it exists.** The answer binds only after \`await FIRST(q-[:Response]->)\`, and once resolved.
 - **Writing \`await\` in front of a bare walk.** The wait is the \`FIRST\` read, held until there is something to read: \`await FIRST(q-[:Response]->)\`, never \`await q-[:Response]->\`.
-- **Writing \`race([…])\` or \`parallel([…])\` with no \`await\`.** They compose what is being waited on; \`await\` is what waits. \`await race([…])\`.
-- **Handing a combinator anything but functions.** An arm is \`() => { … }\` or the name of a declaration; a plain value or a bare block is refused when you save.
+- **Writing \`race([…])\` with no \`await\`.** It composes what is being waited on; \`await\` is what waits. \`await race([…])\`.
+- **Writing \`parallel([…])\`.** It is retired: the join is \`MAP([f, g], { concurrency: 2 }, (fn) => fn())\`, with no \`await\`.
+- **Handing a combinator anything but functions.** An arm is \`() => { … }\` or the name of a declaration; a plain value, a bare block, or a list nothing shows is a list of functions is refused when you save.
 - **Leaving an unattended review with no timeout.** An \`await\` on its own waits forever; race it against \`() => { await sleep(2d) }\` so a default takes over when time runs out.
 - **Expecting one extraction per piece from a list.** \`extract(pieces, Shape)\` reads them all as a single job; \`MAP(pieces, (p) => extract([p], Shape))\` is the per-piece form.
 - **Verifying from the target system only.** The run record shows what was sent and why; read provenance before editing the automation.
 - **Using a maybe-absent value unguarded.** A write/traversal target, a link end, a dot-plane field read, or an ordered comparison off a \`FIRST\`/\`LAST\`/\`MIN\`/\`MAX\`/\`at\` result or a named \`match\` is refused until narrowed — guard with \`if x == null { ERROR(…) }\` (or an \`else\` arm), \`EXISTS(x)\`, or \`?:\` on the write field.
 - **Binding a field just to test it.** \`EXISTS(x.\`Field\`)\` and \`ISNULL(x.\`Field\`)\` read the field directly; no intermediate binding.
-- **Writing a closure where an argument or field value goes.** \`(n) => { … }\` only parses in an assignment, a return, a MAP/FILTER/REDUCE slot, a race/parallel arm, or a callback's subject — bind it to a name there and pass the name instead.`,
+- **Writing a closure where an argument or field value goes.** \`(n) => { … }\` is written in an assignment, a return, a list (\`[() => { … }, f]\`), a MAP/FILTER/REDUCE slot, a race arm, or a callback's subject — bind it to a name there and pass the name instead.
+- **Calling something that may not be a function.** A name, a list member or a slot is called when its type shows it is a closure (\`MAP(fs, (f) => f())\`); a value that may be something else is refused when you save.`,
 };

@@ -1163,6 +1163,13 @@ export function displayNameOf(instance: InstanceRef, position: string): string {
   return instance.schema.positions[position]?.displayName ?? position;
 }
 
+function describeClosureReturn(shape: ReturnShape): string {
+  if (!shape.returns) return 'nothing';
+  const held = shape.mayHold ?? shape.fieldType;
+  if (held !== undefined) return describeFieldType(held);
+  return shape.posType !== undefined ? describePosition(shape.posType) : 'something nobody can type';
+}
+
 export function describePosition(type: PositionTypeRef): string {
   switch (type.kind) {
     case 'meta':
@@ -1186,7 +1193,9 @@ export function describePosition(type: PositionTypeRef): string {
         ? 'the extract result'
         : `the extracted node '${type.node.name}'`;
     case 'closure':
-      return type.label;
+      // An inferred closure says what calling it hands back, so a misfit
+      // against a closure type reads as one.
+      return type.label === 'a closure' ? `a closure returning ${describeClosureReturn(type.returns)}` : type.label;
     case 'local':
       return type.label;
     case 'maybeEmpty':
@@ -1446,12 +1455,16 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  * answers, or what, so this manufactures neither a presence nor a kind
  * (unknown stays unknown, as in TS).
  */
-function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
+function coalesceType(args: Array<FieldType | undefined>, closuresAreValues = false): FieldType | undefined {
   if (args.some(type => type === undefined)) return undefined;
   const typed = args as FieldType[];
   const valued = typed.filter(type => type !== 'absent');
   // Every argument is the `null` literal — the value that is never there.
   if (valued.length === 0) return 'absent';
+  // Closures (language version 5) are TypeScript's `(() => A) ?? (() => B)`:
+  // the union of the closures, present when one argument always is.
+  const closures = closuresAreValues ? closureUnion(valued.map(stripAbsent)) : undefined;
+  if (closures !== undefined) return valued.some(type => !isMaybeAbsent(type)) ? closures : maybeAbsent(closures);
   const kinds = valued.map(stripAbsent);
   const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
@@ -3117,6 +3130,10 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
   const first = types[0];
   if (first === undefined || types.length === 0) return undefined;
   if (types.every(t => t !== undefined && fieldTypeEquals(t, first))) return first;
+  // Closures keep their types: TypeScript's `(() => A) | (() => B)`, so a
+  // member of a list of closures is called as any of them (`closureOfValue`).
+  const closures = closureUnion(types);
+  if (closures !== undefined) return closures;
   if (types.every(t => isRecordType(t))) return { kind: 'record' };
   // Dicts that hold the same thing under different written keys are still a
   // dict of that thing — only the keys stop being knowable, so the shape goes
@@ -3127,6 +3144,26 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
     return head;
   }
   return undefined;
+}
+
+/** Closure values alone, as their union — undefined unless every member is
+ *  a closure (or a union of them). */
+function closureUnion(types: Array<FieldType | undefined>): FieldType | undefined {
+  const members: FieldType[] = [];
+  let absent = false;
+  const add = (type: FieldType | undefined): boolean => {
+    if (type === undefined) return false;
+    if (isMaybeAbsent(type)) absent = true;
+    const present = stripAbsent(type);
+    const variant = variantOf(present);
+    if (variant.kind === 'union') return variant.of.every(add);
+    if (variant.kind !== 'record' || variant.position?.kind !== 'closure') return false;
+    if (!members.some(seen => variantOf(seen).kind === 'record' && (seen as { position?: unknown }).position === variant.position)) members.push(present);
+    return true;
+  };
+  if (!types.every(add) || members.length === 0) return undefined;
+  const union: FieldType = members.length === 1 ? members[0]! : { kind: 'union', of: members };
+  return absent ? maybeAbsent(union) : union;
 }
 
 /** A dict with its written keys forgotten — what it holds, looked up by data. */
@@ -3279,6 +3316,20 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   source = stripAbsent(source);
   target = stripAbsent(target);
   if (fieldTypeEquals(source, target)) return true;
+  // A closure reads as a closure type when its parameters take what the
+  // type's do and it returns what the type's does — TypeScript's function
+  // assignability (language version 5).
+  const sourceClosure = closureOfRecord(source);
+  const targetClosure = closureOfRecord(target);
+  if (sourceClosure !== undefined && targetClosure !== undefined) return closureAssignable(sourceClosure, targetClosure);
+  // A list (or a tuple, widened) of closures reads as a list of a closure
+  // type member by member — `T[]` is assignable to `U[]` when `T` is to `U`.
+  const targetList = variantOf(target);
+  if (targetList.kind === 'list' && closureOfRecord(stripAbsent(targetList.of)) !== undefined) {
+    const sourceList = isTupleType(source) ? widenTuple(source, 'shared') : source;
+    const members = sourceList === undefined ? undefined : variantOf(sourceList);
+    if (members?.kind === 'list') return fieldAssignable(members.of, targetList.of);
+  }
   // A record or a file held anywhere inside a value, where the target holds
   // none — the write rule's own (`fieldTypeCompatible`), asked before a tuple widens.
   if (handleRefusedBy(source, target) !== undefined) return false;
@@ -3313,6 +3364,52 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   if (isEnumType(target)) return false;
   return comparisonCategory(source) === comparisonCategory(target)
     && comparisonCategory(source) !== 'structural';
+}
+
+type ClosurePosition = Extract<PositionTypeRef, { kind: 'closure' }>;
+
+function closureOfRecord(type: FieldType): ClosurePosition | undefined {
+  if (typeof type === 'string') return undefined;
+  const variant = variantOf(type);
+  return variant.kind === 'record' && variant.position?.kind === 'closure' ? variant.position : undefined;
+}
+
+/** A value or a position a closure's parameter or return is typed by. */
+function planeFits(source: PlaneType, target: PlaneType): boolean {
+  if (target.fieldType !== undefined) {
+    if (source.fieldType !== undefined) return fieldAssignable(source.fieldType, target.fieldType);
+    return source.posType === undefined || fieldAssignable(recordValueOf(source.posType)!, target.fieldType);
+  }
+  if (target.posType !== undefined) {
+    if (source.posType !== undefined) return positionsMatch(source.posType, target.posType) !== false;
+    return source.fieldType === undefined || isRecordType(source.fieldType);
+  }
+  return true;
+}
+
+/**
+ * TypeScript's function assignability: a closure stands where a closure type
+ * is expected when it takes no more parameters than the type supplies, each
+ * of its parameters accepts what the type's hands it (contravariance), and
+ * what it returns is what the type's returns (covariance) — what it may hold
+ * included. A type that returns nothing takes any closure's answer, as
+ * TypeScript's `() => void` does. What nobody could type says nothing.
+ */
+function closureAssignable(source: ClosurePosition, target: ClosurePosition): boolean {
+  if (source.params.length > target.params.length) return false;
+  if (!source.params.every((param, i) => planeFits(target.params[i]!, param))) return false;
+  if (!target.returns.returns) return true;
+  if (!source.returns.returns) return false;
+  const held = source.returns.mayHold;
+  const returned: PlaneType = held !== undefined ? { fieldType: held } : {
+    ...(source.returns.fieldType !== undefined ? { fieldType: source.returns.fieldType } : {}),
+    ...(source.returns.posType !== undefined ? { posType: source.returns.posType } : {}),
+  };
+  const expected: PlaneType = {
+    ...(target.returns.fieldType !== undefined ? { fieldType: target.returns.fieldType } : {}),
+    ...(target.returns.posType !== undefined ? { posType: target.returns.posType } : {}),
+  };
+  return planeFits(returned, expected);
 }
 
 function acceptsAnyNarrowing(
@@ -4909,6 +5006,10 @@ export class ExpressionTyping {
         if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
           return thenType;
         }
+        // Closures (language version 5) are TypeScript's `c ? a : b` over
+        // functions: the union of the two, so a call through it is typed by
+        // what either returns.
+        if (since(this.options.languageVersion, 5)) return closureUnion([thenType, elseType]);
         return undefined;
       }
       case 'at': {
@@ -5092,7 +5193,7 @@ export class ExpressionTyping {
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
-        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
+        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, since(this.options.languageVersion, 5));
         if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {

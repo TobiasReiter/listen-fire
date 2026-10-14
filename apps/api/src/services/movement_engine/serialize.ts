@@ -330,7 +330,7 @@ export function newParkReader(state?: ParkedScopeState): ParkReader {
 }
 
 /** A reader of a descriptor stored on its own. */
-function newParkReaderOf(descriptor: BindingDescriptor): ParkReader {
+export function newParkReaderOf(descriptor: BindingDescriptor): ParkReader {
   const park = emptyParkReader();
   indexDescriptor(descriptor, park);
   return park;

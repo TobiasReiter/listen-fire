@@ -105,13 +105,13 @@ describe('an inner scope may not reuse an enclosing name', () => {
     ).not.toContain(C.SHADOWED_NAME);
   });
 
-  it("a combinator arm's own bindings live in the arm, so they shadow nothing", () => {
+  it("a closure's own bindings live in the closure, so they shadow nothing", () => {
     expect(
       codes(
         inMovement(
           [
             '  one = c.`Name`',
-            '  r = await parallel([() => { return c.`Name` }, () => { return c.`Name` }])',
+            '  r = MAP([() => { return c.`Name` }, () => { return c.`Name` }], { concurrency: 2 }, (f) => f())',
           ].join('\n'),
         ),
       ),

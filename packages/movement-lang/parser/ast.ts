@@ -30,6 +30,27 @@ export interface Span {
 export interface ExprSlot {
   raw: string;
   span: Span;
+  /**
+   * The closures written as elements of a list literal in the slot
+   * (`fs = [() => { … }, (x) => x + 1]`, language version 5), each parsed by
+   * the statement grammar — a block body is statements, which the expression
+   * grammar keeps only as text. `at` is the closure's offset in `raw`. The
+   * lowering reads each as the name `slotClosureName(at)`, which the checker
+   * and the engine bind to the closure in a scope around the slot: the
+   * closure itself is the value, capturing the slot's scope by reference.
+   */
+  closures?: ReadonlyArray<SlotClosure>;
+}
+
+export interface SlotClosure {
+  at: number;
+  closure: ClosureExpression;
+}
+
+/** The name a list element closure is read by inside its slot — an identity
+ *  compared, never parsed. `#` keeps it out of every author's namespace. */
+export function slotClosureName(at: number): string {
+  return `#closure@${at}`;
 }
 
 // ── Names and references ──
@@ -181,6 +202,10 @@ export interface ReturnStatement {
   kind: 'return';
   value: RValue;
   span: Span;
+  /** A concise closure body that is one call (`(f) => f()`, language version
+   *  5): TypeScript's `() => g()`, which hands back what `g` returns — and,
+   *  when `g` returns nothing, nothing. */
+  concise?: true;
 }
 
 // ── Imports ──
@@ -1335,7 +1360,23 @@ export interface MovementParam {
  */
 export type ValueTypeRef =
   | { kind: 'list'; of: ValueTypeMember; span: Span }
-  | { kind: 'record'; keys: ValueTypeKey[]; span: Span };
+  | { kind: 'record'; keys: ValueTypeKey[]; span: Span }
+  /**
+   * `<(c: <Company>) => <text>>` — a CLOSURE type (language version 5),
+   * TypeScript's function type: what each parameter takes and what calling it
+   * hands back. Written in its own angle brackets wherever it appears — a
+   * parameter, a return, a record key — and `<…>[]` is a list of them
+   * (`arms: <() => <text>>[]`). Every parameter is typed, as the caller of a
+   * value of this type is checked against them.
+   */
+  | ClosureTypeRef;
+
+export interface ClosureTypeRef {
+  kind: 'closure';
+  params: MovementParam[];
+  returns: ParamTypeRef;
+  span: Span;
+}
 
 /** What a written value type is built from: a type NAME (a scalar, or a
  *  declared refinement) or another written value type. */
@@ -1375,9 +1416,11 @@ export function spellValueType(type: ValueTypeMember): string {
     case 'name':
       return type.name;
     case 'list':
-      return `${spellValueType(type.of)}[]`;
+      return type.of.kind === 'closure' ? `<${spellValueType(type.of)}>[]` : `${spellValueType(type.of)}[]`;
     case 'record':
       return `{ ${type.keys.map(key => `${key.name}${key.optional ? '?' : ''}: ${spellValueType(key.type)}`).join(', ')} }`;
+    case 'closure':
+      return `(${type.params.map(param => `${param.name}: <${param.type !== undefined ? spellParamType(param.type) : '?'}>`).join(', ')}) => <${spellParamType(type.returns)}>`;
   }
 }
 

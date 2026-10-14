@@ -211,6 +211,8 @@ function harness(source: string) {
       park: { sink: parks.sink },
     }),
     dryRun: false,
+    // `parallel` is retired under 5; a program that joins with it runs under 4.
+    ...(source.includes('await parallel') ? { languageVersion: 4 as const } : {}),
   });
   const record = (result: MovementRunResult): MovementRunResult => {
     spent = result.runSpentMicrodollars ?? spent;
@@ -542,7 +544,7 @@ describe('the call depth after a resume', () => {
     });
   });
 
-  describe('inside a parallel arm that names a function', () => {
+  describe('inside a parallel arm that names a function (version 4)', () => {
     // The arm is `deep`, one call deep; crawl(3) is two, crawl(0) five.
     const source = [
       CRAWL,

@@ -422,7 +422,9 @@ describe('members writing different keys write at once; the same key, one at a t
   });
 });
 
-describe('the arms of parallel and race are isolated as members are', () => {
+// `parallel` is retired under Dancing Wren (5); the MAP that replaced it runs
+// its functions at once, each isolated as a member is.
+describe('the functions a MAP runs at once, and race arms, are isolated as members are', () => {
   const FETCH_ONE = [
     'node Link {',
     '  url: <text>',
@@ -435,10 +437,10 @@ describe('the arms of parallel and race are isolated as members are', () => {
     '',
   ];
 
-  it('two arms calling the same movement at once are not a recursion; the trace reads in arm order', async () => {
+  it('two functions calling the same movement at once are not a recursion; the trace reads in list order', async () => {
     const { result } = await run(
       [
-        '  r = await parallel([',
+        '  r = MAP([',
         '    () => {',
         '      got = fetch_one(l: node { url: "40" })',
         '      return got',
@@ -447,7 +449,7 @@ describe('the arms of parallel and race are isolated as members are', () => {
         '      got = fetch_one(l: node { url: "5" })',
         '      return got',
         '    },',
-        '  ])',
+        '  ], { concurrency: 2 }, (f) => f())',
         '  write crm-[:companies]-> { name: "${AT(r, 0)}/${AT(r, 1)}" }',
       ],
       makeCrm(),
@@ -458,13 +460,13 @@ describe('the arms of parallel and race are isolated as members are', () => {
     expect(result.writes[0]?.writtenValues.name).toBe('got-40/got-5');
   });
 
-  it('arms writing one key at once make one record', async () => {
+  it('functions writing one key at once make one record', async () => {
     const { crm } = await run([
-      '  await parallel([',
+      '  MAP([',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "left" } },',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "right" } },',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "third" } },',
-      '  ])',
+      '  ], { concurrency: 3 }, (f) => f())',
     ]);
     expect(crm.creates).toHaveLength(1);
     expect(crm.updates).toHaveLength(2);

@@ -66,9 +66,9 @@ movement main(e: <inbox-[:message]->>) {
     expect(codes(source)).toContain(C.COMPARE_TYPE_MISMATCH);
   });
 
-  it("a combinator ARM returns like any other body — an arm IS a closure", () => {
+  it("a closure in a list returns like any other body", () => {
     const source = inMovement(
-      '  r = await parallel([() => { return e.`Subject` }, () => { await sleep(2d) }])',
+      '  r = MAP([() => { return e.`Subject` }, () => { await sleep(2d) }], { concurrency: 2 }, (f) => f())',
     );
     expect(codes(source)).not.toContain(C.RETURN_OUTSIDE_BODY);
   });

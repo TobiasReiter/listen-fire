@@ -29,6 +29,7 @@ import {
   pathRootName,
   typeNameOf,
   CURRENT_LANGUAGE_VERSION,
+  since,
   programCallScope,
   readCall,
   resolveCallee,
@@ -140,8 +141,11 @@ const EXPRESSION_KIND_LABEL: Partial<Record<Expression['type'], string>> = {
  */
 export function listUnsupportedConstructs(
   source: string,
-  options: { languageVersion?: LanguageVersion; resolveFile?: ResolveFile } = {},
+  options: { resolveFile?: ResolveFile; languageVersion?: LanguageVersion } = {},
 ): string[] {
+  // The program is read as the version it is pinned to says — a form a later
+  // version reads differently (`(v) => f(v)`, a concise call from 5) is
+  // scanned as what it means under the pin.
   const languageVersion = options.languageVersion ?? CURRENT_LANGUAGE_VERSION;
   let program: Program;
   try {
@@ -686,6 +690,12 @@ class InterpretabilityScan {
           (callee) => resolveCallee(callee, this.callScope, this.languageVersion),
           // The file call scope binds only functions.
           () => true,
+          // `box.g()` (language version 5) calls the member a value holds; the
+          // checker refuses one on anything else, so it scans as the call it is.
+          (object, key) =>
+            since(this.languageVersion, 5)
+            && !isMovementBuiltinFunction(key.toLowerCase())
+            && resolveCallee(`${object}.${key}`, this.callScope, this.languageVersion).kind !== 'builtin',
         ),
       ),
     );

@@ -17,12 +17,16 @@ const SYSTEM_IS_ITS_ADDRESS =
 
 const RECEIPT_RECORD = "pinned as accepted a `parallel` receipt whose literal arm returns a record, written into a json field — the engine's own handle object written as data (`{\"kind\":\"handle\",…}` on TypeScript, null under 3 and 4). Since the receipt-records fix a receipt holds what its arms return, as `[a(), b()]` does, and the field rule refuses it on every language version (a bug fix: the form always leaked an engine object). The current tree's record_in_field_value and receipt_record_in_field tests pin the refusal; arms built at run time stay accepted, pinned by the same block. The same block's 'arms built at run time' example is a MAP of closures, which the follow-up fix (a named arm list or a MAP of closures types the receipt) now refuses too";
 
+const PARALLEL_RETIRED_ROW =
+  "a table over the current release's versions, and its version 5 row writes `await parallel(arms)`: `parallel` is retired under Dancing Wren (5) (MOV_PARALLEL_RETIRED — MAP over the functions, calling each, is the join), a version 5 rule, not a version 4 behaviour. Its rows under 3 and 4 still check clean, pinned by the current tree's record_in_field_value test, which checks the version 5 row as the retirement's rewrite (`MAP(arms, { concurrency: 2 }, (f) => f())`) and finds it clean too";
+
 exports.triage = [
   { file: VERSIONS, test: 'names each integer once; the current version is the newest and supported', reason: RELEASE_TABLE },
   { file: VERSIONS, test: 'the default release is this one', reason: RELEASE_TABLE },
   { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i, a literal arm: accepted today', reason: RECEIPT_RECORD },
   { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i, arms built at run time: accepted today', reason: RECEIPT_RECORD },
   { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: 'KNOWN GAP: under language version %i, a file the field rule does not reach', reason: FILE_RULE_B5 },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i, an awaited one writes under a key', reason: PARALLEL_RETIRED_ROW },
   { file: 'checker/__test__/check_typed.unit.test.ts', test: 'MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'the entry IS the graph token the type checker compares by, not the spelling', reason: SYSTEM_IS_ITS_ADDRESS },

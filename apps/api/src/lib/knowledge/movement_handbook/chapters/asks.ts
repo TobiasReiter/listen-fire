@@ -121,11 +121,11 @@ if decision == TRUE {
 }
 \`\`\`
 
-- \`await\` is what waits, always: it holds the run until the thing in front of it is satisfied, and what comes back has the not-yet dropped from it. \`race\` and \`parallel\` say only how several things being waited on **combine** — \`race\` settles on the first of them, \`parallel\` on every one. Neither waits for anything on its own, so both are written under an \`await\`.
+- \`await\` is what waits, always: it holds the run until the thing in front of it is satisfied, and what comes back has the not-yet dropped from it. \`race\` says only how several things being waited on **combine** — it settles on the first of them. It does not wait for anything on its own, so it is written under an \`await\`.
 - Each arm is a **function**: \`() => { … }\` written where it stands, or the name of one declared elsewhere. An arm takes no parameters — it already sees everything in scope where you wrote it — and it starts the moment the combinator does.
 - The value is a **receipt**: one slot per arm, in the order written, holding whatever that arm \`return\`ed. \`AT(r, 0)\` reads the first arm's slot, \`AT(r, 1)\` the second. An arm that hands nothing back has an always-null slot.
 - Under \`race\`, only the arm that settled first has its slot filled and every other slot is null — so **a null test on a slot is the branch**, as \`decision == null\` is here. Arms still parked when one settles are dropped where they stand: their waiting stops, and whatever they had already done stays done. Arms that settle in the same moment all land.
-- Under \`parallel\` every arm runs to the end and every slot is filled.
+- To wait for **every** one instead, \`MAP\` over the functions and call each (below): every one runs to the end and every slot is filled.
 - Arms run at once. Arms writing the same \`unique by\` key take turns, so the record is made once.
 - Durations are bare unit-suffixed literals: \`30s\`, \`90m\`, \`6h\`, \`2d\`, \`1h30m\`.
 - To wait on a *condition* instead — "until this record is marked done" — hand \`until\` the condition and the cadence to re-check it on:
@@ -202,10 +202,10 @@ if first != null {
 - The slot already says which arm settled — \`AT(r, 0)\` is the first one written. Handing the identity back is for when it has to travel further: into a message, a write field, a comparison later on.
 - Return a dict to hand back more than one thing at once; its entries read by name afterwards (\`first.channel\`).
 
-Wait on **different** things at once by giving each its own arm, and take every answer rather than the first by reaching for \`parallel\`:
+Wait on **different** things at once by giving each its own function, and take every answer rather than the first by mapping over them, calling each at once:
 
 \`\`\`
-r = await parallel([
+r = MAP([
   () => {
     b = await FIRST(budget-[:Response]->)
     return b.Answer
@@ -214,13 +214,13 @@ r = await parallel([
     l = await FIRST(legal-[:Response]->)
     return l.Answer
   },
-])
+], { concurrency: 2 }, (f) => f())
 
 if AT(r, 0) AND AT(r, 1) { … }
 \`\`\`
 
 - Which field on a control carries the \`id\` is that system's own business, and its chapter says. Reach for a written question instead when you need what one gives you — a page, and an entry in somebody's queue (see \`when-a-question-and-when-a-callback\`).
-- Nothing under \`parallel\` is dropped, so every slot is filled and none of them needs a null test.
+- Nothing a MAP runs is dropped, so every slot is filled and none of them needs a null test. There is no \`await\` in front: a function that waits parks the run, and the MAP finishes when every one has.
 
 ### in-chat-answers
 
@@ -441,7 +441,7 @@ listen to runs {} fire \`Which Place Answered\`
 `,
     },
     {
-      construct: 'await parallel over two awaiting arms — every slot filled, both answers combined',
+      construct: 'MAP over two awaiting closures, calling each at once — every slot filled, both answers combined',
       status: 'runs',
       probe: `
 import { slack, ask, manual } from adapters
@@ -461,7 +461,7 @@ function \`Both Must Agree\`(go: <runs-[:Invocation]->>) {
     Message: "Budget: \${budget.Url}\\nLegal: \${legal.Url}"
   }
 
-  r = await parallel([
+  r = MAP([
     () => {
       b = await FIRST(budget-[:Response]->)
       return b.Answer
@@ -470,7 +470,7 @@ function \`Both Must Agree\`(go: <runs-[:Invocation]->>) {
       l = await FIRST(legal-[:Response]->)
       return l.Answer
     },
-  ])
+  ], { concurrency: 2 }, (f) => f())
 
   if AT(r, 0) AND AT(r, 1) {
     general = ONLY(team-[g:Channels WHERE \`Name\` == "general"]->)

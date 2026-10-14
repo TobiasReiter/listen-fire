@@ -70,6 +70,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BridgeError,
+  slotClosureName,
+  DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
   SEQUENTIAL_COLLECTION_SETTINGS,
@@ -326,6 +328,7 @@ import {
   newParkReader,
   newParkWriter,
   registerLiveScope,
+  newParkReaderOf,
   rehydrateBinding,
   serializeBinding,
   serializeScopeChain,
@@ -1817,11 +1820,11 @@ function armCountOf(
 /** A finished member as its op's frame keeps it. */
 type MemberAnswerExport = { kept: true; answer: BindingDescriptor } | { kept: false };
 
-function serializeMemberAnswer(answer: MemberAnswer): MemberAnswerExport {
+function serializeMemberAnswer(answer: MemberAnswer, park?: ParkWriter): MemberAnswerExport {
   if (!answer.kept) return { kept: false };
   return {
     kept: true,
-    answer: serializeBinding(binding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE })),
+    answer: serializeBinding(binding({ kind: 'value', value: answer.value, provenance: NO_PROVENANCE }), park),
   };
 }
 
@@ -3469,7 +3472,7 @@ class Interpreter {
       frameAddress,
       branchAddress,
       branchIndex: frame.boundary.member,
-      exports: serializeMemberAnswer(answer),
+      exports: serializeMemberAnswer(answer, this.memberAnswerPark(op.event)),
     });
     const { closed } = await sink.decrementJoin({ frameAddress, branchAddress, leafAddress });
     if (!closed) return STOPPED;
@@ -3516,7 +3519,13 @@ class Interpreter {
         answers[row.branchIndex] = { kept: false };
         continue;
       }
-      const bound = await rehydrateBinding(row.exports.answer, ctx);
+      let reader: ReturnType<typeof newParkReaderOf> | undefined;
+      if (since(this.languageVersion, 5)) {
+        const live = newParkReaderOf(row.exports.answer);
+        this.liveAnswerChain(op.event).forEach((scope, id) => live.scopes.set(id, scope));
+        reader = live;
+      }
+      const bound = await rehydrateBinding(row.exports.answer, ctx, reader);
       answers[row.branchIndex] = { kept: true, value: bound.kind === 'value' ? bound.value : bound };
     }
     return {
@@ -4556,6 +4565,15 @@ class Interpreter {
       // right-hand side, evaluated the same way, into a name the grammar
       // cannot spell — which is what carries it across a park.
       case 'return': {
+        // `(f) => f()` (language version 5): the closure hands back what the
+        // call returns — and, when it returns nothing, nothing.
+        const concise = statement.concise === true ? this.conciseCall(statement.value, env) : undefined;
+        if (concise !== undefined) {
+          const value = await this.executeCall(concise, env, { ...body, address: stmtAddress });
+          if (value === undefined) return FELL_THROUGH;
+          env.declare(RETURN_SLOT, value);
+          return returnFrom(env);
+        }
         await this.declareAssign(RETURN_SLOT, statement.value, env, body, stmtAddress);
         return returnFrom(env);
       }
@@ -4963,7 +4981,7 @@ class Interpreter {
           frameAddress,
           branchAddress: encodeAddress(childIter(run.address, index)),
           branchIndex: index,
-          exports: serializeMemberAnswer(answer),
+          exports: serializeMemberAnswer(answer, this.memberAnswerPark(run.event)),
         });
       }
       await sink.recordJoin({ frameAddress, parkedChildren: parkedMembers });
@@ -5132,6 +5150,11 @@ class Interpreter {
     env: Environment,
   ): Extract<Binding, { kind: 'closure' }> {
     if (fn.kind === 'closure') {
+      // From version 5 a function written in place holds the scope it is
+      // written in by REFERENCE, as every other closure does — so a closure
+      // its body returns chains up to the live scope, not to a flat copy
+      // that no park can tell from a file's.
+      if (since(this.languageVersion, 5)) return binding({ kind: 'closure', closure: fn.closure, captured: new Map(), env });
       return binding({ kind: 'closure', closure: fn.closure, captured: captureScope(env) });
     }
     const named = env.resolve(fn.name);
@@ -5620,6 +5643,21 @@ class Interpreter {
     return this.suspendFlow();
   }
 
+  /**
+   * `box.g()` (language version 5): the member a value holds under a key, as
+   * the callee — read as `box.g` reads, and called when it is a closure (the
+   * checker's `memberCallee`). Undefined for any other callee.
+   */
+  private async memberCallee(
+    statement: Extract<Statement, { kind: 'call' }>,
+    env: Environment,
+  ): Promise<Binding | undefined> {
+    if (before(this.languageVersion, 5) || !/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(statement.callee)) return undefined;
+    if (env.resolve(statement.callee.split('.')[0]!)?.kind !== 'value') return undefined;
+    const { value } = await this.evaluateSlot({ raw: statement.callee, span: statement.span }, { env });
+    return bindingOf(value);
+  }
+
   /** Whether a call in an expression is one this engine runs. */
   private runsAsCall(call: CallNode, env: Environment): boolean {
     const scope = this.callScope(env);
@@ -5630,6 +5668,9 @@ class Interpreter {
         const binding = env.resolve(declared);
         return binding !== undefined && isCallableBinding(binding);
       },
+      // `box.g()` (language version 5): a dotted call on a value calls the
+      // member it holds — run first, as any call in an expression is.
+      (object) => since(this.languageVersion, 5) && env.resolve(object)?.kind === 'value',
     );
   }
 
@@ -5858,7 +5899,7 @@ class Interpreter {
     event: CallEvent,
   ): Promise<Binding | undefined> {
     const calleeName = this.calleeName(statement.callee, env);
-    const callee = env.resolve(calleeName);
+    const callee = env.resolve(calleeName) ?? (await this.memberCallee(statement, env));
     if (callee?.kind !== 'movement') {
       // One function sort: a plugin is a function whose body isn't visible, so
       // a call on one is an ordinary call and its value is what the plugin
@@ -5979,6 +6020,14 @@ class Interpreter {
     event: CallEvent,
   ): Promise<Binding | undefined> {
     const params = new Map(closure.closure.params.map((param) => [param.name, param]));
+    // From version 5 a closure stands where a closure type is expected when it
+    // takes FEWER parameters than the type supplies (TypeScript's rule), so a
+    // call through the type may hand it more arguments than it declares: they
+    // are evaluated, in order, and dropped, as JavaScript drops them.
+    const extra = since(this.languageVersion, 5) && isPositionalCall(statement.args) && statement.args.length > params.size
+      ? statement.args.slice(params.size)
+      : [];
+    if (extra.length > 0) statement = { ...statement, args: statement.args.slice(0, params.size) };
     if (statement.args.length !== params.size) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -5995,8 +6044,13 @@ class Interpreter {
           `'${statement.callee}' has no parameter ${arg.name !== undefined ? `'${arg.name}'` : 'for this argument'} — the checker should have caught this`,
         );
       }
-      values[param] = await this.evaluateCallArg(arg, env, body, { takesValue: isValueParam(declared, types) });
+      // A parameter with no written type (language version 5) is typed by
+      // where the closure is handed — a closure type's parameter — and takes
+      // whatever the argument evaluates to, a record included.
+      const untyped = declared.type === undefined && since(this.languageVersion, 5);
+      values[param] = await this.evaluateCallArg(arg, env, body, { takesValue: untyped || isValueParam(declared, types) });
     }
+    for (const arg of extra) await this.evaluateCallArg(arg, env, body, { takesValue: true });
     let outcome: BodyOutcome = FELL_THROUGH;
     const calleeName = this.calleeName(statement.callee, env);
     try {
@@ -6148,6 +6202,12 @@ class Interpreter {
       // its value is what this argument passes on.
       return requireCallValue(arg.call.callee, await this.executeCall(arg.call, env, body));
     }
+    if (arg.kind === 'closure' && options.takesValue && since(this.languageVersion, 5)) {
+      // A closure is a value (language version 5): written in place as an
+      // argument it is (AST, scope), holding the scope it is written in by
+      // reference, as a list element closure does.
+      return binding({ kind: 'closure', closure: arg.closure, captured: new Map(), env });
+    }
     if (arg.kind === 'closure' || arg.kind === 'type') {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
@@ -6157,8 +6217,8 @@ class Interpreter {
     // A POSITION parameter takes the record the argument is bound to — the
     // binding `x = <argument>` would make, whatever path produced the record
     // (a name, a pick, a map field).
-    const binding = await this.bindSlotValue(arg.expr, env);
-    switch (binding.kind) {
+    const bound = await this.bindSlotValue(arg.expr, env);
+    switch (bound.kind) {
       case 'event':
       case 'handle':
       case 'shapePosition':
@@ -6168,10 +6228,10 @@ class Interpreter {
       case 'resource':
       case 'nodePosition':
       case 'lazyWalk':
-        return binding;
+        return bound;
       default:
         throw unsupported(
-          `passing ${describeBinding[binding.kind]} ('${arg.expr.raw.trim()}') as a movement argument`,
+          `passing ${describeBinding[bound.kind]} ('${arg.expr.raw.trim()}') as a movement argument`,
           'arguments are positions — pass the event, a write handle, or adapt with an inline shape-write',
         );
     }
@@ -12131,6 +12191,49 @@ class Interpreter {
     return binding?.kind === 'value' && binding.many === true;
   }
 
+  /** A concise body's call, when its callee is a function — a movement, a
+   *  plugin or a closure; undefined for a construction or a built-in, which
+   *  the ordinary `return` evaluates. */
+  private conciseCall(value: RValue, env: Environment): CallStatement | undefined {
+    const call = value.kind === 'call' ? value.call : value.kind === 'construct' ? constructionAsCall(value.construct) : undefined;
+    if (call === undefined) return undefined;
+    const kind = env.resolve(this.calleeName(call.callee, env))?.kind;
+    return kind === 'movement' || kind === 'plugin' || kind === 'closure' ? call : undefined;
+  }
+
+  /**
+   * The live scopes a collection op's statement runs in, its file's left out
+   * (a file scope is found again by its file) — what a member's answer names
+   * rather than copies. A closure a member returns holds its scope by
+   * reference, so a park that copied the scopes around the op would hand the
+   * resumed run a closure that writes a copy of the movement's handle while
+   * the movement reads its own; numbered by their place in the chain, the
+   * same on the writing run and the resuming one, they come back as the live
+   * scopes themselves.
+   */
+  private liveAnswerChain(event: CallEvent): Environment[] {
+    const env = event.site?.env;
+    if (env === undefined) return [];
+    return env.chainFromRoot().filter((scope) => scope !== this.fileEnv && !this.libraryPaths.has(scope));
+  }
+
+  /** A park for one member's answer, naming the live chain (`liveAnswerChain`)
+   *  — from version 5, where a function written in place holds its scope by
+   *  reference (`collectionFunction`); before, the answer is written as it
+   *  always was. */
+  private memberAnswerPark(event: CallEvent): ParkWriter | undefined {
+    if (before(this.languageVersion, 5)) return undefined;
+    const park = this.newPark();
+    this.liveAnswerChain(event).forEach((scope, id) => {
+      park.scopeIds.set(scope, id);
+      park.chainScopes.add(scope);
+    });
+    return park;
+  }
+
+  /** Scopes `evaluateSlot` bound a slot's list element closures in. */
+  private readonly closureEnvs = new WeakSet<Environment>();
+
   private async evaluateSlot(
     slot: ExprSlot,
     options: {
@@ -12140,6 +12243,18 @@ class Interpreter {
       fieldFunctions?: MovementExprContext['fieldFunctions'];
     },
   ): Promise<MovementEvalResult> {
+    // A closure written as a list element (language version 5) is a value:
+    // (AST, scope), holding the scope it is written in by REFERENCE, as a
+    // closure bound to a name does. It is bound around the slot under the
+    // name the lowering reads it by.
+    if (slot.closures !== undefined && !this.closureEnvs.has(options.env)) {
+      const around = options.env.child();
+      for (const { at, closure } of slot.closures) {
+        around.declare(slotClosureName(at), binding({ kind: 'closure', closure, captured: new Map(), env: options.env }));
+      }
+      this.closureEnvs.add(around);
+      return this.evaluateSlot(slot, { ...options, env: around });
+    }
     const staged = await this.stageNestedCalls(slot, options.env);
     if (staged !== undefined) return this.evaluateSlot(staged.slot, { ...options, env: staged.env });
     let expr: Expression;

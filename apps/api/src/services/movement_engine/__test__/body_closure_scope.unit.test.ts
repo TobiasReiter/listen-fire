@@ -189,8 +189,16 @@ function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>
       park: { sink: parks.sink },
     }),
     dryRun: false,
+    // `parallel` is retired under 5: a program that joins with it runs under 4,
+    // where it still does (the version loops below pass their own).
+    ...(source.includes('await parallel') ? { languageVersion: 4 as const } : {}),
   };
 }
+
+/** The join over `arms` under `version`: `parallel` before 5, the MAP that
+ *  replaced it from 5. */
+const joined = (version: number, arms: string): string =>
+  version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (f) => f())` : `await parallel(${arms})`;
 
 async function start(source: string, parks: Sink) {
   const kg = makeKgFake();
@@ -366,7 +374,7 @@ describe('a parked run sees what an unparked run sees', () => {
   // A MAP member that parks returns closures that write the outer handle; run
   // by `parallel`, they and the scope must hold ONE handle. Before, the park
   // split it, and the scope's `a` read a stale record.
-  const body = (park: boolean): string[] => [
+  const body = (park: boolean, version: number): string[] => [
     '  a = write graph-[:note]-> { body: "one" }',
     '  fs = MAP([1, 2], (n) => {',
     ...(park ? ['    await sleep(1h)'] : []),
@@ -375,7 +383,7 @@ describe('a parked run sees what an unparked run sees', () => {
     '      return a.body',
     '    }',
     '  })',
-    '  r = await parallel(fs)',
+    `  r = ${joined(version, 'fs')}`,
     '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
   ];
 
@@ -385,11 +393,11 @@ describe('a parked run sees what an unparked run sees', () => {
         const kg = makeKgFake();
         return runMovement({ ...runInput(source, parks, kg), languageVersion: version as never }).then(() => kg);
       };
-      const unparkedKg = await run(program(body(false)), makeParkSink());
+      const unparkedKg = await run(program(body(false, version)), makeParkSink());
       const unparked = payloadOf(unparkedKg.creates);
 
       const parks = makeParkSink();
-      const source = program(body(true));
+      const source = program(body(true, version));
       const kg0 = await run(source, parks);
       expect(parks.parks.size).toBeGreaterThan(0);
       expect(kg0.creates.find((c) => c.fields.payload !== undefined)).toBeUndefined();
@@ -873,7 +881,7 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
 describe('a closure whose scope reaches back to itself resumes', () => {
   // The closure `g` returns is written in a scope whose parent holds `g`: the
   // scopes form a cycle, and building one must not await the other.
-  const cycles: Record<string, string[]> = {
+  const cycles = (version: number): Record<string, string[]> => ({
     twoScopes: [
       '  k = 7',
       '  fs = MAP([1], (n) => {',
@@ -884,7 +892,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
       '    return g',
       '  })',
       '  await sleep(1h)',
-      '  r = await parallel(fs)',
+      `  r = ${joined(version, 'fs')}`,
       '  write graph-[:note]-> { payload: { r: r } }',
     ],
     threeScopes: [
@@ -901,12 +909,12 @@ describe('a closure whose scope reaches back to itself resumes', () => {
       '    return g',
       '  })',
       '  await sleep(1h)',
-      '  r = await parallel(fs)',
+      `  r = ${joined(version, 'fs')}`,
       '  write graph-[:note]-> { payload: { r: r } }',
     ],
-  };
+  });
   for (const version of [3, 4, 5]) {
-    for (const [name, body] of Object.entries(cycles)) {
+    for (const [name, body] of Object.entries(cycles(version))) {
       it(`v${version} ${name}: the resume settles with the answer`, async () => {
         const parks = makeParkSink();
         const source = program(body);

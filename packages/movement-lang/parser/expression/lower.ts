@@ -51,8 +51,11 @@ export type MovementCondition =
     }
   | { kind: 'expr'; expr: Expression };
 
-/** Lower one expression; `source` is the text `tree` was parsed from. */
-export function lowerExpression(tree: MExpr, source: string): Expression {
+/** Lower one expression; `source` is the text `tree` was parsed from.
+ *  `closures`: the offsets of the list element closures the slot's statement
+ *  parse collected (`ExprSlot.closures`, language version 5), each read as the
+ *  name `slotClosureName(at)`. */
+export function lowerExpression(tree: MExpr, source: string, closures?: ReadonlySet<number>): Expression {
   const { ok, json } = callLowering('lower_expression', JSON.stringify(tree), source);
   if (!ok) throw loweringRefusal(json);
   if (!isLoweredExpression(json)) throw malformedLowering('expression', json);
@@ -61,7 +64,7 @@ export function lowerExpression(tree: MExpr, source: string): Expression {
 
 /** Lower one `if` condition into its top-level
  *  `AND` conjuncts, each an `IS` type guard or an expression. */
-export function lowerCondition(tree: MExpr, source: string): MovementCondition {
+export function lowerCondition(tree: MExpr, source: string, closures?: ReadonlySet<number>): MovementCondition {
   const { ok, json } = callLowering('lower_condition', JSON.stringify(tree), source);
   if (!ok) throw loweringRefusal(json);
   if (!isLoweredCondition(json)) throw malformedLowering('condition', json);

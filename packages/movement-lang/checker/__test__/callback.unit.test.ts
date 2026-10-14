@@ -212,14 +212,14 @@ describe('the body is checked, in the enclosing scope', () => {
     ].join('\n'))).toContain('MOV_USE_BEFORE_BIND');
   });
 
-  it("a combinator ARM captures what IT can see, and nothing a sibling arm bound", () => {
+  it("a closure in a list captures what IT can see, and nothing a sibling bound", () => {
     // Arms are separate closures, so an arm cannot read a name another arm
     // bound — structurally, with no sibling rule to write down.
     expect(codes([
-      '  await parallel([',
+      '  MAP([',
       '    () => { a = write inbox-[:note]-> { text: "a" } },',
       '    () => { cb = callback({ write inbox-[:note]-> { text: a.`text` } }) },',
-      '  ])',
+      '  ], { concurrency: 2 }, (f) => f())',
     ].join('\n'))).toContain('MOV_NAME_UNRESOLVED');
   });
 

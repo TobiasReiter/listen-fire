@@ -260,6 +260,9 @@ interface RunAdapters {
   dropbox?: Adapter;
   callbacks?: { sink: CallbackSink };
   parkSink?: ParkSink;
+  /** The run's language version, where a test pins one (`parallel` is
+   *  retired under 5, so its own rules run under 4). */
+  languageVersion?: 4;
 }
 
 function run(source: string, payload: Record<string, unknown>, adapters: RunAdapters):
@@ -284,6 +287,7 @@ function run(source: string, payload: Record<string, unknown>, adapters: RunAdap
         ...(adapters.parkSink ? { sink: adapters.parkSink } : {}),
       },
     }),
+    ...(adapters.languageVersion !== undefined ? { languageVersion: adapters.languageVersion } : {}),
   });
 }
 
@@ -1806,17 +1810,20 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
     expect(attio.creates[0]?.fields.summary).toBe('first/second');
   });
 
-  it('an arm that hands nothing back is a null slot, whichever combinator ran', async () => {
+  it.each([
+    ['parallel (version 4)', '  r = await parallel([', '  ])', 4 as const],
+    ['the MAP that replaces it (version 5)', '  r = MAP([', '  ], { concurrency: 2 }, (f) => f())', undefined],
+  ])('an arm that hands nothing back is a null slot: %s', async (_label, open, close, languageVersion) => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
     await run(
       [
         'movement intake(msg: <inbox-[:message]->>) {',
         '  crm = attio(credentials: acme_main)',
-        '  r = await parallel([',
+        open,
         '    () => { return "value" },',
         '    () => { done = "acted" },',
-        '  ])',
+        close,
         '  write crm-[:companies]-> {',
         '    name: "done"',
         '    summary: COALESCE(AT(r, 1), "empty")',
@@ -1825,13 +1832,13 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
         '}',
       ].join('\n'),
       {},
-      { email: email.adapter, attio: attio.adapter },
+      { email: email.adapter, attio: attio.adapter, ...(languageVersion !== undefined ? { languageVersion } : {}) },
     );
     expect(attio.creates[0]?.fields.summary).toBe('empty');
     expect(attio.creates[0]?.fields.domains).toBe('value');
   });
 
-  it('a race over no arms can never settle, and says so at run time', async () => {
+  it('a race over no arms can never settle, and says so at run time (version 4)', async () => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
     await expect(
@@ -1844,12 +1851,14 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
           '}',
         ].join('\n'),
         {},
-        { email: email.adapter, attio: attio.adapter },
+        // Under 5 the checker refuses arms it cannot see are closures, so
+        // the run-time refusal is pinned where it can still be reached.
+        { email: email.adapter, attio: attio.adapter, languageVersion: 4 },
       ),
     ).rejects.toThrow(/can never settle/);
   });
 
-  it('a parallel over no arms ran nothing, and the run proceeds', async () => {
+  it('a parallel over no arms ran nothing, and the run proceeds (version 4)', async () => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
     await run(
@@ -1862,7 +1871,7 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
         '}',
       ].join('\n'),
       {},
-      { email: email.adapter, attio: attio.adapter },
+      { email: email.adapter, attio: attio.adapter, languageVersion: 4 },
     );
     expect(attio.creates.map((w) => w.fields.name)).toEqual(['after']);
   });
