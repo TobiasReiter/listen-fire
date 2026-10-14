@@ -679,7 +679,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'plugin_call_form',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a plugin's argument that calls a function the program declares (a movement, a closure, a plugin) runs, its value held to what the callee's returns hold (a value, or one record handed over as its fields); every other argument form runs since chunk 7A Task 6 (a built-in's call, a node as its fields, a write or a function as the TypeScript's unsupported, a positional first argument as the run's failure). A value only COALESCE hides a record in stays refused (group G)",
+    note: "closed in PLAN-08A Task 2: a plugin's argument that calls a function the program declares (a movement, a closure, a plugin) runs, its value held to what the callee's returns hold (a value, or one record handed over as its fields); every other argument form runs since chunk 7A Task 6 (a built-in's call, a node as its fields, a write or a function as the TypeScript's unsupported, a positional first argument as the run's failure). A value only COALESCE hides a record in runs since PLAN-08B (B15): admission holds each record operand, and the value is handed over as the TypeScript hands it",
     programs: [
       () => ({ file: `import { fetch_url } from plugins\nmovement shout(t: <text>) {\n  return UPPER(t)\n}\n${m('  page = fetch_url(url: shout(t: msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}`, movementName: 'm' }),
       () => ({ file: `import { fetch_url } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.`text`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
@@ -689,7 +689,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ file: `import { summarise } from plugins\n${m('  said = summarise(data: write crm-[:notes]-> { body: "x" })')}`, checks: false, routes: 'unreached' }),
       () => ({ file: `import { fetch_url, echo } from plugins\n${m('  page = fetch_url(url: echo(q: msg.`subject`))\n  write crm-[:notes]-> { body: COALESCE(page, "none") }')}` }),
       (pick) => ({ file: `import { summarise } from plugins\nmovement pick(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return co\n}\n${m(`  said = summarise(data: pick(n: "${pick(NAMES)}"))\n  write crm-[:notes]-> { body: said }`)}`, movementName: 'm' }),
-      () => ({ file: `import { summarise } from plugins\nmovement hide(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return COALESCE(co, n)\n}\n${m('  said = summarise(data: hide(n: "Acme"))\n  write crm-[:notes]-> { body: said }')}`, movementName: 'm', routes: 'refused' }),
+      () => ({ file: `import { summarise } from plugins\nmovement hide(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return COALESCE(co, n)\n}\n${m('  said = summarise(data: hide(n: "Acme"))\n  write crm-[:notes]-> { body: said }')}`, movementName: 'm', routes: 'whole' }),
     ],
   },
   {
