@@ -163,7 +163,8 @@ doubled = MAP(counts, (x) => x * 2)
 - Bind a closure to a name and **call it like any function**: \`inc(2)\`, \`double(inc(x)) + 1\`, or \`note(m.Subject)\` on its own line. Its parameters check the arguments, and the call is typed by what the body returns.
 - Calling it does what its body does: a model call or a write in the body counts towards the function that calls it. Binding it does nothing.
 - The name is a function's name, so it is case-insensitive (\`INC(2)\`) and cannot be a built-in's name (\`upper = (t) => t\` is refused) or another function's in a different case. A name holding a plain value is still not callable.
-- A closure that may wait is called on its own line, as a function that waits is, and can be an arm of \`await race([…])\` or \`await parallel([…])\`.
+- A closure that may wait is called on its own line, as a function that waits is, and can be an arm of \`await race([…])\` or a member of a list a \`MAP\` calls (\`MAP([f, g], { concurrency: 2 }, (fn) => fn())\`).
+- **A closure is a value.** Write it in a list (\`[() => { … }, (x: <number>) => x + 1]\`), read it back (\`AT(fs, 0)\`), filter the list, and call whatever holds one: \`MAP(fs, (f) => f())\`, \`g = AT(fs, 0)\` then \`g()\`. The call is typed by what any of the closures may return, so a record one of them returns is refused where data goes. Something that may not be a closure is not called.
 - A closure is also what \`MAP\`, \`FILTER\` and the rest take: pass it inline or by name (\`MAP(xs, inc)\`).
 
 ### calls-inside-expressions
@@ -191,7 +192,7 @@ inline  = [m.\`Body\`, ...m-[a:Attachments]->.\`File\`]
 - **A list literal is a tuple**, one slot per member, as in TypeScript: \`[m.Subject, file]\` is a text then a file. \`AT(t, 0)\` reads the first slot exactly, always present. With a spread the tuple is open-ended: \`[text, ...files]\`.
 - **Where a list is expected** (\`MAP\`, \`FILTER\`, \`JOIN\`, a list-typed field or parameter) a tuple reads as a list of the union of its members, as TypeScript reads \`[string, number]\` as \`(string | number)[]\`. \`JOIN([name, amount], " ")\` validates, and \`[name, amount]\` written into a list of numbers is refused.
 - A literal holding both records and plain values (\`[company, "label"]\`) is accepted as a tuple, but it is refused wherever it is read as a list, such as \`MAP(both, …)\` or a write into a list field.
-- **Unions follow the same way.** \`await parallel([…])\` and \`await race([…])\` with arms whose results differ read as a list of the union of those results, so each slot carries the type of any arm, and a \`race\` slot may still be absent.
+- **Unions follow the same way.** \`await race([…])\` with arms whose results differ reads as a list of the union of those results, so each slot carries the type of any arm, and may still be absent. A \`MAP\` over a list of closures written down keeps each slot's own type: \`AT(r, 1)\` is what the second returned.
 
 ### a-table-you-declare-once
 
@@ -251,7 +252,7 @@ A separate and stronger thing is a value typed as *possibly not there at all* �
 - **an aggregate that can come up empty.** \`ONLY\`, \`FIRST\`, \`LAST\`, \`MIN\`, \`MAX\`, and \`AT\` all answer null when there's nothing to aggregate over, so \`ONLY(msg-[:Attachments]->.\`Name\`)\` may be absent exactly when there are no attachments. Over a *bare* traversal (no field on the end) they bind the whole record, not one of its fields — \`channel = ONLY(chat-[ch:Channels WHERE …]->)\` — see *looking-up-existing-records* in the writes chapter for that idiom;
 - **a named \`match\`.** \`existing = match crm-[:Companies]-> { … }\` is the record or absent; test \`existing == null\` (the \`else\` arm sees it present) or \`!= null\` before reading a field off it or linking it;
 - **a landing that can resolve empty** — awaiting an answer that was cancelled rather than given yields nothing to read;
-- **a \`race\` slot** — \`AT(r, 0)\` reads what the first arm of a \`race\` returned, and only the arm that settled first has its slot filled, so every slot off a \`race\` may be absent. (\`parallel\` waits for every arm, so its slots are not.)
+- **a \`race\` slot** — \`AT(r, 0)\` reads what the first arm of a \`race\` returned, and only the arm that settled first has its slot filled, so every slot off a \`race\` may be absent. (A \`MAP\` over a list of functions runs every one, so its slots are not.)
 - **a field read off a record that may not be there.** \`details = extractOne(…)\` may have found nothing, so \`details.summary\` is \`text | absent\`, as TypeScript types \`details?.summary\`. Test \`details != null\` first, or \`COALESCE\` the field. A graph literal's required field refuses such a value too: declare the field \`<text | null>\`, or fall back.
 - **a typed extracted field, and a lookup by a computed key.** A \`<number>\`, \`<date>\`, \`<boolean>\` or set-of-values field of an \`extract\` is something the model was asked for and may not have found, so reading one is \`T | absent\` — a write field takes it with the \`?:\` fill rather than plainly. A text field is never absent: one the model did not find reads as \`""\`, so test it with \`!= ""\` — a null test on it is refused. Annotate it \`<text | null>\` to have a missing one arrive null instead: it is then \`text | absent\` like the rest, and a null test narrows it. \`AT(dict, key)\` with a key worked out at run time is the same: a key that is not there reads nothing.
 

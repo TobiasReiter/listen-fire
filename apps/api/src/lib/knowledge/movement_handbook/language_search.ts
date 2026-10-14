@@ -83,10 +83,10 @@ export const CONTROL_FORMS: readonly ControlForm[] = [
   },
   {
     name: 'parallel',
-    signature: 'await parallel([() => { … }, …]) → receipt; AT(r, i) is arm i\'s returned value',
+    signature: 'MAP([() => { … }, …], { concurrency: n }, (f) => f()) → one slot per function; AT(r, i) is what function i returned (`parallel` is retired)',
     purpose: 'run several independent pieces of work at once and wait for all of them',
     example: {
-      body: 'r = await parallel([\n  () => { return UPPER(m.Subject) },\n  () => { return LOWER(m.Subject) },\n])\nboth = "${AT(r, 0)} / ${AT(r, 1)}"',
+      body: 'r = MAP([\n  () => { return UPPER(m.Subject) },\n  () => { return LOWER(m.Subject) },\n], { concurrency: 2 }, (f) => f())\nboth = "${AT(r, 0)} / ${AT(r, 1)}"',
     },
     anchor: 'front#runs',
   },

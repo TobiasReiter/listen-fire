@@ -55,14 +55,36 @@ guide](docs/language/dancing-wren-migration.md).
   fill the other arm with a record. A union of records alone is one record and still fits. A record with
   `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
   version, it passes as a position and enters a graph).
-- **A record a `parallel` / `race` arm hands back reads as that record.** `AT(r, 0).name`, or
-  `h = AT(r, 0)` then `h.name`, reads the record the arm returned, as `AT([a, 2], 0).name` on a
-  list does; `AT(r, 0) == null` is false. Under 4 and earlier that slot read null while the check
-  accepted the read, and a program pinned there still reads null. A move up across 5 warns a read
-  of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
+- **A record a `race` arm hands back reads as that record** (and so does the slot of the `MAP`
+  that replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
+  the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4
+  and earlier that slot read null while the check accepted the read, and a program pinned there
+  still reads null. A move up across 5 warns a read of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
+- **`parallel` is retired** (`MOV_PARALLEL_RETIRED`). A `MAP` over the functions, calling each, is
+  the same join: `r = await parallel([a, b])` is `r = MAP([a, b], { concurrency: 2 }, (f) => f())`,
+  which the diagnostic applies for a literal list. No `await`: a `MAP` whose members wait parks the
+  run. A MAP over a list of closures is a tuple, slot by slot, so a later `AT(r, i)` reads what the
+  receipt's slot did. Arms built at run time are rewritten by hand (the concurrency is a number
+  written down). Why: with closures as values, `parallel` was a second spelling of a MAP. `race`
+  is unchanged. The `parallel { … }` block and `all` refusals point at the MAP form under 5.
+- **Arms built at run time must be closures** (`MOV_COMBINATOR_ARM_NOT_FUNCTION`): `race(arms)`
+  where nothing shows `arms` holds closures is refused. Why: a value whose type is unknown is never
+  called silently. Arms whose type is known now type the receipt, so `arms = FILTER(fs, …)` with a
+  closure that returns a record is refused where a slot reaches a field (that gap is closed).
 
 ### Language version 5, Dancing Wren: new
 
+- **A closure may be written in a list**: `fs = [() => { … }, (x: <number>) => x + 1]`, as
+  TypeScript allows. It holds the scope it is written in by reference, as a closure bound to a
+  name does, and its body is checked where it is written. The list's element type is the union of
+  its closures' types. Under 4 it stays `MOV_EXPR_CLOSURE_POSITION`.
+- **A value that is a closure is called**: `MAP(fs, (f) => f())`, `g = AT(fs, 0)` then `g()`, a
+  function returned by a function, or a function declared with a name read as a value
+  (`[made, label]`). The call's type is the union of what the closures may return, records
+  included, so the record-in-data rules see a record any of them hands back; it is held to every
+  closure's arity. A value that may not be a closure, or whose type nothing shows, is refused where
+  it is called (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call:
+  a callee that waits parks the run, and one that returns nothing makes the closure return nothing.
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
   Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
   where they delete. No protocol version bump: the field is additive, but under language version
