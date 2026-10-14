@@ -341,18 +341,30 @@ describe('two processes fire one run at once', () => {
       .executeTakeFirstOrThrow();
     expect(lease.lease_token).toBeNull();
 
-    // The deferral backed the row off; make it due now, as the clock would.
-    await getAutomationsQb(['work'])
-      .updateTable('work')
-      .set({ due_at: new Date(Date.now() - 1_000) })
-      .where('kind', '=', 'fire_callback')
-      .where('team_id', '=', teamId)
-      .execute();
-    const freed = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
-    // Both calls' rows: the waiting body runs; the one that already ran finds
-    // its body started and does nothing.
-    expect(freed).toMatchObject({ claimed: 2, failed: 0, deferred: 0 });
-    expect(freed.ran + freed.recovered).toBe(2);
+    // The deferral backed the waiting row off; make it due now, as the clock
+    // would. The two rows are drained one pass each, the waiting one first: in
+    // one pass they run concurrently and contend for the run's lease, so
+    // whether the second finds it free or held would be down to scheduling
+    // (and a held one defers), not to anything this test is about.
+    const ranIndex = bodies[0];
+    const waitingIndex = 1 - ranIndex;
+    const makeDue = (callIndex: number) =>
+      getAutomationsQb(['work'])
+        .updateTable('work')
+        .set({ due_at: new Date(Date.now() - 1_000) })
+        .where('key', '=', `fire_callback:${callbackId}:${callIndex}`)
+        .execute();
+    await makeDue(waitingIndex);
+    const waiting = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(waiting).toMatchObject({ claimed: 1, failed: 0, deferred: 0 });
+    expect(waiting.ran + waiting.recovered).toBe(1);
+    // The waiting body ran, at its own call's frame.
+    expect(bodies).toEqual([ranIndex, waitingIndex]);
+    // The row of the call that already ran finds its body started and does nothing.
+    await makeDue(ranIndex);
+    const spent = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
+    expect(spent).toMatchObject({ claimed: 1, failed: 0, deferred: 0 });
+    expect(spent.ran + spent.recovered).toBe(1);
     // Two calls on the ledger, two bodies, each at its own call's frame.
     expect((await getCallback(callbackId))?.calls).toHaveLength(2);
     expect([...bodies].sort()).toEqual([0, 1]);
