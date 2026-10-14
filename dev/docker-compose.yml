@@ -1,14 +1,14 @@
 version: "3.6"
 # Container names are parameterized on $LISTEN_FIRE_STACK so two checkouts on
 # the same machine (a fork, a second clone) never collide on the same
-# Postgres/Redis/MinIO containers. dev/loop.sh exports it, and also passes it as
+# Postgres/Redis/object-store containers. dev/loop.sh exports it, and also passes it as
 # `docker compose -p`, before every `docker compose` call — defaulting to
 # `listenfire-<repo dir basename>` (the compose project name itself must come
 # from `-p` on the command line rather than a top-level `name:` field here:
 # older Docker Compose does not interpolate `${VAR}` in that field, so it
 # would render literally instead of varying per checkout). Set
 # $LISTEN_FIRE_STACK yourself if you drive this file directly. Host ports
-# come from $POSTGRES_HOST_PORT / $REDIS_HOST_PORT / $MINIO_HOST_PORT (defaulting to 9432/6379,
+# come from $POSTGRES_HOST_PORT / $REDIS_HOST_PORT / $S3_HOST_PORT (defaulting to 9432/6379/9010,
 # the developer stack's fixed ports) so a profile that wants its own isolated
 # datastore — the `agent` profile, see dev/loop.sh — can claim different ones
 # instead of fighting the developer's stack, or an unrelated compose project
@@ -36,32 +36,41 @@ services:
       - "${REDIS_HOST_PORT:-6379}:6379"
     command: redis-server --save 60 1 --loglevel warning
 
-  # Local S3-compatible file store (the same image the production composition
-  # bundles). S3 API on $MINIO_HOST_PORT (default 9010), web console on
-  # $MINIO_CONSOLE_HOST_PORT (default 9011) — deliberately not 9000/9001.
-  minio:
-    container_name: ${LISTEN_FIRE_STACK}-minio
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
-    # MinIO creates no bucket on its own, and on its single-drive backend a
-    # directory in the data root IS a bucket (same trick as deploy/'s minio) —
-    # so creating the dev bucket is an idempotent mkdir before the server starts.
-    entrypoint: ['sh', '-c', 'mkdir -p /data/listenfire-dev && exec minio server /data --console-address :9001']
+  # Local S3-compatible file store: SeaweedFS (the same image the self-host
+  # composition bundles), its all-in-one `weed mini` mode. S3 API on
+  # $S3_HOST_PORT (default 9010) — deliberately not 9000. Static credentials are
+  # the AWS_* env `weed mini` reads; `-bucket` creates the dev bucket at start
+  # when it is missing (idempotent). `-ip=127.0.0.1` keeps the components
+  # talking over loopback, so a recreated container on a new network address
+  # still finds its own data; `-ip.bind` keeps the S3 port reachable. WebDAV,
+  # the admin UI and the Iceberg/Lance catalog ports are off — only S3 is used.
+  objectstore:
+    container_name: ${LISTEN_FIRE_STACK}-objectstore
+    image: chrislusf/seaweedfs:4.48
+    command:
+      - mini
+      - -ip=127.0.0.1
+      - -ip.bind=0.0.0.0
+      - -bucket=listenfire-dev
+      - -webdav=false
+      - -admin.ui=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
     environment:
-      MINIO_ROOT_USER: listenfire
-      MINIO_ROOT_PASSWORD: localdevpassword
+      AWS_ACCESS_KEY_ID: listenfire
+      AWS_SECRET_ACCESS_KEY: localdevpassword
     volumes:
-      - listenfire-minio:/data
+      - listenfire-objectstore:/data
     ports:
-      - "${MINIO_HOST_PORT:-9010}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9011}:9001"
+      - "${S3_HOST_PORT:-9010}:8333"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/ready"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8333/healthz"]
       interval: 2s
       timeout: 3s
       retries: 30
 
 volumes:
   listenfire-postgres:
-  listenfire-minio:
+  listenfire-objectstore:
   redis:
     driver: local

@@ -56,7 +56,7 @@ tail -F .dev-loop/loop.log            # API logs (loop.sh tees them here)
 | Surface | Mode | Notes |
 |---|---|---|
 | Postgres, Redis | **real** | docker compose, ports 9432 / 6379 (agent profile: its own project, 9434 / 6381) |
-| S3 | **real (local MinIO)** | the stack's own MinIO container, bucket `listenfire-dev`; the loop exports `AWS_S3_ENDPOINT`/`AWS_DOCUMENT_S3_BUCKET`/`AWS_*` for it unless you already set them. Browse it at the console port (default http://localhost:9011, agent http://localhost:9013; login `listenfire` / `localdevpassword`) |
+| S3 | **real (local SeaweedFS)** | the stack's own `objectstore` container (SeaweedFS `weed mini`, S3 API only), bucket `listenfire-dev`, credentials `listenfire` / `localdevpassword`; the loop exports `AWS_S3_ENDPOINT`/`AWS_DOCUMENT_S3_BUCKET`/`AWS_*` for it unless you already set them. Browse it with any S3 client, e.g. `AWS_ACCESS_KEY_ID=listenfire AWS_SECRET_ACCESS_KEY=localdevpassword aws --endpoint-url http://localhost:9010 s3 ls s3://listenfire-dev --recursive` (agent: port 9012) |
 | Anthropic, OpenAI (incl. whisper transcription), Google DocumentAI | **real** | hits live APIs; spends real tokens (a voice-note e2e costs well under 1p) |
 | Slack, Attio, Email (Mailgun), WhatsApp (Meta Cloud API — send + inbound media), Telegram (Bot API — send + getFile/media), Affinity, Airtable, Sheets, Granola (meeting-notes poll API), Evertrace (signal poll API), Dealroom (Premium search API), Gmail (users.messages / history / send, plus a Google sign-in to connect a mailbox against) | **fake** | persistent SQLite-backed via `apps/fake-channels` (port 5556 default; 6056 / 6156 / 6256 under agent / agent2 / agent3) |
 | Valuations | **in-process** | Same monorepo — the local API IS the Valuations service (`/api/v1/valuations/...`). Not faked, just self-hosted. |
@@ -110,7 +110,7 @@ What this does:
 | fake CRM (`acme_crm`) | 5557 | 6057 | 6157  | 6257   |
 | postgres      | 9432 (shared: default, agent2, agent3) | 9434 (own project) | 9432 | 9432 |
 | redis         | 6379 (shared: default, agent2, agent3) | 6381 (own project) | 6379 | 6379 |
-| minio (S3 API / console) | 9010 / 9011 (shared: default, agent2, agent3) | 9012 / 9013 (own project) | 9010 / 9011 | 9010 / 9011 |
+| objectstore (S3 API, `S3_HOST_PORT`) | 9010 (shared: default, agent2, agent3) | 9012 (own project) | 9010 | 9010 |
 
 Reads `apps/api/.env` for `TEST_HARNESS_TEAM_ID`. That team id is what
 makes `lib/recording.ts` rewrite Attio/Slack/Affinity/etc. credentials to
