@@ -93,6 +93,7 @@ function step(el, t, [a, b], text, end) {
 
 function seek(t) {
   show($('t1'), win(t, ...T.title), 24);
+  show($('t2'), win(t, 1.4, 2.1, T.title[2], T.title[3]), 24);
 
   // ask
   const so = win(t, ...T.stage);
