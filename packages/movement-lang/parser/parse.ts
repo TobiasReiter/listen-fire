@@ -3524,6 +3524,20 @@ class Parser {
       // `(f) => f()` is `(f) => { return f() }` (language version 5): a body
       // that is one call returns the call, so a callee that waits parks the
       // run as a returned call does — inside an expression it could not.
+      // `() => await race([…])` is `() => { return await race([…]) }`
+      // (language version 5), as TypeScript's `async () => await x` is — so a
+      // retired `parallel` there is the form its rewrite reaches.
+      if (since(this.languageVersion, 5) && this.peekIdent() === 'await') {
+        const awaitStart = this.pos;
+        this.pos += 'await'.length;
+        const awaited = this.parseAwait(awaitStart);
+        return {
+          params,
+          ...returns,
+          body: [{ kind: 'return', value: { kind: 'await', await: awaited }, span: this.spanFrom(awaitStart) }],
+          span: this.spanFrom(start),
+        };
+      }
       const call = since(this.languageVersion, 5) ? this.conciseBodyCall(stops) : undefined;
       if (call !== undefined) {
         return { params, ...returns, body: [{ kind: 'return', value: call.value, span: call.span, concise: true }], span: this.spanFrom(start) };

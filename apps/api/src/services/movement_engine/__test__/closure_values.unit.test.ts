@@ -450,3 +450,11 @@ describe('a dotted call on a value calls the closure it holds (box.g())', () => 
     ).toEqual({ a: 'HI!', b: 'yo!' });
   });
 });
+
+describe('an arrow body that awaits (language version 5)', () => {
+  it('is `{ return await … }`: the race runs, and the closure hands back its receipt', async () => {
+    expect(
+      await finalPayload(['  g = () => await race([() => "first"])', '  r = g()', '  write graph-[:note]-> { payload: { r: r } }']),
+    ).toEqual({ r: ['first'] });
+  });
+});

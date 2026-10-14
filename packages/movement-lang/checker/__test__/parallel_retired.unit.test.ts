@@ -152,6 +152,22 @@ describe('parallel under Dancing Wren (5)', () => {
     expect(check(5, rewritten)).toEqual([]);
   });
 
+  it('an arrow body that awaits it gets the fix too', () => {
+    const body = ['  g = () => await parallel([label, made])', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }'];
+    const errors = check(5, sourceOf(body));
+    expect(errors.map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
+    expect(errors[0]!.fix).toBeDefined();
+    const rewritten = fixed(sourceOf(body));
+    expect(rewritten).toBe(sourceOf(['  g = () => MAP([label, made], { concurrency: 2 }, (f) => f())', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }']));
+    expect(check(5, rewritten)).toEqual([]);
+  });
+
+  it('an arrow body may await (from 5, as an async arrow does in TypeScript); before it, it does not parse', () => {
+    const body = ['  g = () => await race([label, () => "x"])', '  v = g()'];
+    expect(check(5, sourceOf(body))).toEqual([]);
+    expect(check(4, sourceOf(body)).map(d => d.code)).toEqual(['MOV_EXPR_PARSE']);
+  });
+
   it('race is unchanged', () => {
     expect(check(5, sourceOf(['  r = await race([label, () => { await sleep(1h) }])']))).toEqual([]);
   });
