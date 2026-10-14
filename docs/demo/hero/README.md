@@ -23,6 +23,11 @@ node scripts/render.cjs --stills 24 34 46 53   # check frames in stills/
 node scripts/render.cjs                 # listen-fire-hero.mp4, 1080p30, about 8 minutes
 ```
 
+On a Mac, skip `boot.sh`: run `pnpm dev:loop:agent`, then
+`pnpm dev:seed && pnpm dev:gmail setup`, with `ANTHROPIC_API_KEY` in
+`apps/api/.env`. The scripts need `jq` and `ffmpeg`, and rendering uses
+Playwright's Chromium (`npx playwright install chromium` if it is missing).
+
 `boot.sh` is for a fresh Linux cloud container. It pulls the Postgres and
 Redis images through `mirror.gcr.io` (Docker Hub rate-limits these hosts),
 shims `script` for `dev/loop.sh`, generates the Prisma client, and starts the

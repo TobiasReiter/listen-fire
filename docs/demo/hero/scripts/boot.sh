@@ -8,6 +8,11 @@
 #   - dev/loop.sh calls BSD `script`: a shim translates it for util-linux;
 #   - a fresh clone has no generated Prisma client.
 set -euo pipefail
+if [ "$(uname)" != "Linux" ]; then
+  echo "boot.sh is for a fresh Linux cloud container. On a Mac: pnpm dev:loop:agent, then" >&2
+  echo "pnpm dev:seed && pnpm dev:gmail setup, with ANTHROPIC_API_KEY in apps/api/.env." >&2
+  exit 1
+fi
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 WORK="$HERE/.work"

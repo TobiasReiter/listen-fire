@@ -12,13 +12,21 @@ const pnpmDir = path.join(REPO, 'node_modules', '.pnpm');
 const pw = fs.readdirSync(pnpmDir).find((d) => /^playwright@/.test(d));
 const { chromium } = require(path.join(pnpmDir, pw, 'node_modules', 'playwright'));
 
+// The cloud container ships a headless shell under /opt/pw-browsers; anywhere
+// else, Playwright's own browser is used (`npx playwright install chromium`).
 function headlessShell() {
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
+  if (!fs.existsSync(root)) return undefined;
   const dir = fs.readdirSync(root).find((d) => d.startsWith('chromium_headless_shell-'));
-  return dir ? path.join(root, dir, 'chrome-linux', 'headless_shell') : undefined;
+  const bin = dir && path.join(root, dir, 'chrome-linux', 'headless_shell');
+  return bin && fs.existsSync(bin) ? bin : undefined;
 }
 
 (async () => {
+  if (!fs.existsSync(path.join(HERE, 'data.js'))) {
+    console.error('no data.js: run ./scripts/capture.sh, then node scripts/build_data.cjs');
+    process.exit(1);
+  }
   const browser = await chromium.launch({ executablePath: headlessShell() });
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   page.on('pageerror', (e) => console.error('page error:', e.message));
