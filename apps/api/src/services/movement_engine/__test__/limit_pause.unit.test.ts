@@ -109,8 +109,19 @@ const DELAY_MS: Record<string, number> = { a: 30, b: 5, c: 20, d: 1, e: 10 };
 
 /** A `fetch_url` that costs one dollar: refused first if the run has spent its
  *  cap, then charged. Shared across segments, so `charged` is the whole run. */
-function pricedInvoker() {
+function pricedInvoker(options: { holdAAndCUntilPaused?: boolean } = {}) {
   const charged: string[] = [];
+  // Wall-clock delays only ORDER the fetches when the machine is idle: under
+  // load b's landing can slip past c's 20ms (c lands second and writes got-c
+  // instead of d), or a and c can land before e has met the cap and so write
+  // when the scenario says they stop. The order the scenario needs is causal,
+  // so when asked, a and c (already fetching) land only once the run has been
+  // marked paused, which happens after d wrote and e met the cap. No timing
+  // decides it.
+  let runPaused!: () => void;
+  const runPausedPromise = new Promise<void>((resolve) => {
+    runPaused = resolve;
+  });
   const invoker: MovementTransformInvoker = {
     declaredOutput: (plugin) => {
       const impl = getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
@@ -120,19 +131,20 @@ function pricedInvoker() {
       const url = String(config.url);
       assertRunBudget();
       await wait(DELAY_MS[url] ?? 0);
+      if (options.holdAAndCUntilPaused === true && (url === 'a' || url === 'c')) await runPausedPromise;
       reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: DOLLAR });
       charged.push(url);
       return { text: `got-${url}` };
     },
   };
-  return { invoker, charged };
+  return { invoker, charged, runPaused };
 }
 
 type ParkKind = 'timer' | 'await' | 'suspension';
 
 /** An in-memory park sink with the durable join semantics of the real one —
  *  the same shape `resume_inside.unit.test.ts` drives — plus the pause. */
-function makeParkSink() {
+function makeParkSink(onPause: () => void = () => {}) {
   const parks = new Map<string, { kind: ParkKind; state: ParkedScopeState }>();
   const joins = new Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>();
   const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
@@ -161,6 +173,7 @@ function makeParkSink() {
     },
     async commitLimitPause(pause) {
       pauses.push(pause);
+      onPause();
     },
     async decrementJoin(input) {
       const frame = joins.get(input.frameAddress);
@@ -201,11 +214,11 @@ function webhookEvent(): TriggerEvent {
 }
 
 /** One run: what it wrote is collected across every segment of it. */
-function harness(source: string, options: { parkSink?: boolean } = {}) {
+function harness(source: string, options: { parkSink?: boolean; holdAAndCUntilPaused?: boolean } = {}) {
   const email = makeFakeAdapter('email');
   const attio = makeFakeAdapter('attio');
-  const plugin = pricedInvoker();
-  const parks = makeParkSink();
+  const plugin = pricedInvoker({ holdAAndCUntilPaused: options.holdAAndCUntilPaused === true });
+  const parks = makeParkSink(() => plugin.runPaused());
   /** The run's whole spend so far — what the host reads back off the run row. */
   let spent = 0;
   const input = () => ({
@@ -287,7 +300,7 @@ describe('the cap met inside a MAP member running three at a time', () => {
   // fetching: each finishes its fetch, then stops before its write.
 
   it('suspends the member that met the cap before its priced statement, and the others after their current one', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdAAndCUntilPaused: true });
     const result = await h.start();
 
     expect(result.parked).toBe(true);
@@ -304,7 +317,7 @@ describe('the cap met inside a MAP member running three at a time', () => {
   });
 
   it('resuming the run resumes every member with its usage reset: right answer, nothing twice', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdAAndCUntilPaused: true });
     await h.start();
     const results = await h.resumeRun();
 
@@ -321,7 +334,7 @@ describe('the cap met inside a MAP member running three at a time', () => {
   });
 
   it('without the reset the resumed run would meet the cap again at once', async () => {
-    const h = harness(source);
+    const h = harness(source, { holdAAndCUntilPaused: true });
     await h.start();
     const first = [...h.parks.parks.keys()].sort()[2]!; // e, before its fetch
     const again = await h.resumeLeaf(first);
