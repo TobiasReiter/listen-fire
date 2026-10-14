@@ -316,7 +316,7 @@ impl Run<'_> {
                     arm_boundary = Some(Boundary::Arm { arm: descent_index, body: code.clone() });
                     (Rc::new(code.ast.body.clone()), stmt_address.branch(descent_index), format!("{}/body", code.path))
                 }
-                _ => self.descend_for_resume(&container, &container_path, descent, descent_index, &stmt_address, &state_address)?,
+                _ => self.descend_for_resume(&container, &container_path, descent, descent_index, &stmt_address, &state_address, &scope)?,
             };
             let arm_name = match &combinator {
                 Some((expr, _)) if descent == 'b' => match &expr.arms {
@@ -384,7 +384,7 @@ impl Run<'_> {
 
     /// `descendForResume`: one `i j` or `b k` step into its body, the address
     /// it lands on, and the body's AST path.
-    fn descend_for_resume(&self, container: &Statement, container_path: &str, step: char, index: usize, stmt_address: &Address, parked: &str) -> Result<(Rc<Vec<Statement>>, Address, String), Stop> {
+    fn descend_for_resume(&self, container: &Statement, container_path: &str, step: char, index: usize, stmt_address: &Address, parked: &str, scope: &Rc<Scope>) -> Result<(Rc<Vec<Statement>>, Address, String), Stop> {
         if step == 'i' {
             let Some((block, block_path)) = fan_out_block_of(container, container_path) else {
                 return Err(runtime(format!("resume: address descends 'iter' into a non-fan-out statement (parked '{parked}')")));
@@ -403,12 +403,14 @@ impl Run<'_> {
             return Ok((Rc::new(body), stmt_address.branch(index), body_path));
         }
         if let Some((combinator, combinator_path)) = combinator_of(container, container_path) {
-            // `armBodyAt`: a closure written in place, or a movement by name.
+            // `armBodyAt`: a closure written in place, or a name resolved in
+            // the scope around the combinator — a movement, or a body closure.
             let body = match &combinator.arms {
                 CombinatorArms::Literal { arms, .. } => match arms.get(index) {
                     Some(movement_parser::ast::ArmExpression::Closure { closure, .. }) => Some((closure.body.clone(), format!("{combinator_path}/arms/arms/{index}/closure/body"))),
-                    Some(movement_parser::ast::ArmExpression::Ref { name, .. }) => match self.file_scope.borrow().as_ref().and_then(|file| file.resolve(name)) {
+                    Some(movement_parser::ast::ArmExpression::Ref { name, .. }) => match scope.resolve(name) {
                         Some(Binding::Movement(declared)) => self.declaration(&declared).ok().map(|(d, path)| (d.body, path)),
+                        Some(Binding::Closure(closure)) => Some((closure.code.ast.body.clone(), format!("{}/body", closure.code.path))),
                         _ => None,
                     },
                     None => None,

@@ -486,6 +486,7 @@ async function startOn(engine: Engine, source: string, parks: Sink, pin: Pinned 
 async function resumeAllOn(engine: Engine, source: string, parks: Sink, pin: Pinned = {}) {
   let last: { result: MovementRunResult; kg: ReturnType<typeof makeKgFake> } | undefined;
   const updates: Array<{ externalId: string; fields: Record<string, unknown> }> = [];
+  const creates: unknown[] = [];
   const resumed: string[] = [];
   for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
     const address = [...parks.parks.keys()].sort()[0]!;
@@ -497,10 +498,11 @@ async function resumeAllOn(engine: Engine, source: string, parks: Sink, pin: Pin
       resumeMovement({ ...inputOn(source, parks, kg, pin), state: park.state, reenter: park.kind !== 'timer' }),
     );
     updates.push(...kg.updates);
+    creates.push(...kg.creates);
     last = { result, kg };
   }
   if (last === undefined) throw new Error('test: nothing parked');
-  return { ...last, updates, resumed };
+  return { ...last, updates, creates, resumed };
 }
 
 /** Everything a run parked: each leaf's state and each branch's export. */
@@ -518,7 +520,7 @@ function parkedBytes(parks: Sink): string {
  *  way round ends with the same writes. */
 async function acrossEngines(source: string, pin: Pinned = {}) {
   const firstParks: Record<string, string> = {};
-  const ends: Record<string, { payload: unknown; updates: unknown; resumed: string[]; left: string }> = {};
+  const ends: Record<string, { payload: unknown; updates: unknown; creates: unknown; resumed: string[]; left: string }> = {};
   for (const parkOn of ENGINES) {
     for (const resumeOn of ENGINES) {
       const parks = makeParkSink();
@@ -527,7 +529,7 @@ async function acrossEngines(source: string, pin: Pinned = {}) {
       firstParks[parkOn] = parkedBytes(parks);
       const end = await resumeAllOn(resumeOn, source, parks, pin);
       expect(end.result.parked).toBeUndefined();
-      ends[`${parkOn}→${resumeOn}`] = { payload: payloadOf(end.kg.creates), updates: end.updates, resumed: end.resumed, left: parkedBytes(parks) };
+      ends[`${parkOn}→${resumeOn}`] = { payload: payloadOf(end.kg.creates), updates: end.updates, creates: end.creates, resumed: end.resumed, left: parkedBytes(parks) };
     }
   }
   expect(firstParks.rust).toEqual(firstParks.ts);
@@ -751,6 +753,115 @@ describe('both engines: a park written before body closures held their scope', (
       }
       expect(ends[1]).toEqual(ends[0]);
     });
+  }
+});
+
+describe('both engines: a parallel / race arm that names a body closure, and a scope cycle', () => {
+  // The Rust engine does not admit a join's receipt written into a field when
+  // an arm is a NAME (admit.rs receipt_holder), so the arms write their own
+  // answers and the program ends with a marker; every create is compared.
+  const done = '  write graph-[:note]-> { payload: { done: 1 } }';
+  const cases: Record<string, string[]> = {
+    closureBesideInline: [
+      '  f = () => {',
+      '    await sleep(1h)',
+      '    write graph-[:note]-> { body: "f woke" }',
+      '    return 1',
+      '  }',
+      '  await parallel([f, () => { return 2 }])',
+      done,
+    ],
+    twoClosureArms: [
+      '  f = () => {',
+      '    await sleep(1h)',
+      '    write graph-[:note]-> { body: "f" }',
+      '    return 1',
+      '  }',
+      '  g = () => {',
+      '    await sleep(2h)',
+      '    write graph-[:note]-> { body: "g" }',
+      '    return 2',
+      '  }',
+      '  await parallel([f, g])',
+      done,
+    ],
+    closureArmCapturingHandle: [
+      '  a = write graph-[:note]-> { body: "one" }',
+      '  f = () => {',
+      '    await sleep(1h)',
+      '    write graph-[:note]-> { body: a.body }',
+      '    return 1',
+      '  }',
+      '  await parallel([f])',
+      done,
+    ],
+    raceOfClosures: [
+      '  f = () => {',
+      '    await sleep(1h)',
+      '    write graph-[:note]-> { body: "f" }',
+      '    return 1',
+      '  }',
+      '  g = () => {',
+      '    await sleep(2h)',
+      '    write graph-[:note]-> { body: "g" }',
+      '    return 2',
+      '  }',
+      '  await race([f, g])',
+      done,
+    ],
+    scopeCycleTwo: [
+      '  k = 7',
+      '  fs = MAP([1], (n) => {',
+      '    mk = () => {',
+      '      return () => {',
+      '        write graph-[:note]-> { payload: { v: n + k } }',
+      '        return 0',
+      '      }',
+      '    }',
+      '    g = mk()',
+      '    return g',
+      '  })',
+      '  await sleep(1h)',
+      '  await parallel(fs)',
+      done,
+    ],
+    scopeCycleThree: [
+      '  k = 7',
+      '  fs = MAP([1], (n) => {',
+      '    mk = () => {',
+      '      mk2 = () => {',
+      '        return () => {',
+      '          write graph-[:note]-> { payload: { v: n + k } }',
+      '          return 0',
+      '        }',
+      '      }',
+      '      h = mk2()',
+      '      return h',
+      '    }',
+      '    g = mk()',
+      '    return g',
+      '  })',
+      '  await sleep(1h)',
+      '  await parallel(fs)',
+      done,
+    ],
+  };
+  const expectedBodies: Record<string, string[]> = {
+    closureBesideInline: ['f woke'],
+    twoClosureArms: ['f', 'g'],
+    closureArmCapturingHandle: ['one'],
+    raceOfClosures: ['f'],
+  };
+  for (const version of [4, 5]) {
+    for (const [name, body] of Object.entries(cases)) {
+      it(`v${version} ${name}: the same bytes and answer every way round`, async () => {
+        const end = await acrossEngines(program(body), { version });
+        expect(end.payload).toEqual(name.startsWith('scopeCycle') ? { v: 8 } : { done: 1 });
+        const written = (end.creates as Array<{ fields?: Record<string, unknown> }>).flatMap((c) => (c.fields?.body !== undefined ? [c.fields.body as string] : []));
+        if (expectedBodies[name] !== undefined) expect(written).toEqual(expectedBodies[name]);
+        else expect((end.creates as unknown[]).length).toBeGreaterThan(1);
+      }, 30_000);
+    }
   }
 });
 
