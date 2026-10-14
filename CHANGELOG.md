@@ -150,6 +150,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- A `parallel` or `race` arm that names a closure written in the movement body (`f = () => { … }`
+  then `parallel([f, g])` or `race([f, g])`) and waits inside it resumes. It used to fail "resume:
+  no body for arm 0", because the resume looked an arm's name up only as a movement. It now finds
+  the closure by its name in the scope around the combinator, as the run did, and its arm resumes
+  with the scope it brought in. Every language version; a parked state is unchanged.
 - A movement that holds a written record (or a built node) and then waits inside a function it
   calls resumes again. Since the previous fix below, resuming it failed "the parked state refers to
   write handle(s) #0 that it never wrote", because the resume read the movement's own names from

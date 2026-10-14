@@ -1104,3 +1104,115 @@ describe('a handle or node whose variable is named like a descriptor member', ()
     });
   }
 });
+
+describe('a parallel / race arm that names a body closure parks and resumes (B18)', () => {
+  async function parked(h: Harness): Promise<string[]> {
+    const first = await start(h);
+    expect(first.result.parked).toBe(true);
+    return [...h.parks.parks.keys()].sort();
+  }
+
+  for (const languageVersion of [4, 5] as LanguageVersion[]) {
+    it(`version ${languageVersion}: one closure arm, beside a written-in-place one`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  f = () => {',
+            '    await sleep(1h)',
+            '    write graph-[:note]-> { body: "f woke" }',
+            '    return 1',
+            '  }',
+            '  r = await parallel([f, () => { return 2 }])',
+            '  write graph-[:note]-> { payload: { r: r } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      expect(await parked(h)).toEqual(['s1.b0.s0']);
+      const { result, kg } = await resumeAt(h, 's1.b0.s0');
+      expect(result.parked).toBeUndefined();
+      expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['f woke']);
+      expect(payloadOf(kg.creates)).toEqual({ r: [1, 2] });
+    });
+
+    it(`version ${languageVersion}: two closure arms, each parked, close the join in either order`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  f = () => {',
+            '    await sleep(1h)',
+            '    return "f"',
+            '  }',
+            '  g = () => {',
+            '    await sleep(2h)',
+            '    return "g"',
+            '  }',
+            '  r = await parallel([f, g])',
+            '  write graph-[:note]-> { payload: { r: r } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      expect(await parked(h)).toEqual(['s2.b0.s0', 's2.b1.s0']);
+      const one = await resumeAt(h, 's2.b1.s0');
+      expect(one.result.parked).toBeUndefined();
+      expect(payloadOf(one.kg.creates)).toBeUndefined();
+      const two = await resumeAt(h, 's2.b0.s0');
+      expect(payloadOf(two.kg.creates)).toEqual({ r: ['f', 'g'] });
+    });
+
+    it(`version ${languageVersion}: a closure arm capturing a handle reads it after the resume`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  a = write graph-[:note]-> { body: "one" }',
+            '  f = () => {',
+            '    await sleep(1h)',
+            '    return a.body',
+            '  }',
+            '  r = await parallel([f])',
+            '  write graph-[:note]-> { payload: { r: r } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      expect(await parked(h)).toEqual(['s2.b0.s0']);
+      const { result, kg } = await resumeAt(h, 's2.b0.s0');
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ r: ['one'] });
+    });
+
+    it(`version ${languageVersion}: race([f, g]) — the closure arm that wakes first wins`, async () => {
+      const h: Harness = {
+        source: program(
+          '',
+          [
+            '  f = () => {',
+            '    await sleep(1h)',
+            '    return "f"',
+            '  }',
+            '  g = () => {',
+            '    await sleep(2h)',
+            '    return "g"',
+            '  }',
+            '  r = await race([f, g])',
+            '  write graph-[:note]-> { payload: { won: r } }',
+          ].join('\n'),
+        ),
+        parks: makeParkSink(),
+        languageVersion,
+      };
+      expect(await parked(h)).toEqual(['s2.b0.s0', 's2.b1.s0']);
+      const { result, kg } = await resumeAt(h, 's2.b0.s0');
+      expect(result.parked).toBeUndefined();
+      expect(payloadOf(kg.creates)).toEqual({ won: ['f', null] });
+      expect([...h.parks.parks.keys()]).toEqual([]);
+    });
+  }
+});
