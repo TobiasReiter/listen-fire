@@ -646,6 +646,7 @@ impl<'c> Checker<'c> {
 
     fn check_write(&mut self, write: &WriteExpression, scope: ScopeId) {
         self.check_target(&write.target, scope);
+        self.check_absent_target_root(&write.target, "write", scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind
             && self.version < 5
@@ -664,6 +665,7 @@ impl<'c> Checker<'c> {
 
     fn check_match(&mut self, matched: &MatchExpression, scope: ScopeId) {
         self.check_target(&matched.target, scope);
+        self.check_absent_target_root(&matched.target, "match", scope);
         for field in &matched.fields {
             self.check_expr_slot(&field.value, scope);
         }

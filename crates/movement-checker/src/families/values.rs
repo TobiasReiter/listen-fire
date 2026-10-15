@@ -1210,3 +1210,34 @@ impl crate::checker::Checker<'_> {
         }
     }
 }
+
+// ── Required records ──
+
+impl crate::checker::Checker<'_> {
+    /// `checkLinkedPath`, the require-present half: a write or a match off a
+    /// record that may not be there can't be guaranteed to happen, and nothing
+    /// in the statement says it might be skipped.
+    pub fn check_absent_target_root(&mut self, target: &movement_parser::ast::WriteTarget, purpose: &str, scope: crate::scope::ScopeId) {
+        use movement_parser::ast::WriteTarget;
+        let paths: Vec<(&movement_parser::ast::PathHead, movement_parser::ast::Span)> = match target {
+            WriteTarget::Linked { path, span, .. } => vec![(path, *span)],
+            WriteTarget::Tuple { paths, .. } => paths.iter().map(|p| (p, p.span)).collect(),
+            WriteTarget::Position { .. } => return,
+        };
+        for (path, span) in paths {
+            let Some(movement_parser::ast::PathRoot::Name { name }) = &path.root else { continue };
+            let Some((Some(Position::MaybeEmpty(of)), steps)) = self.head_walk(path, scope) else { continue };
+            if steps.is_empty() {
+                continue;
+            }
+            self.report(
+                codes::ABSENT_REQUIRED,
+                format!(
+                    "'{name}' is {} that may not be there, so a {purpose} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('if {name} == null {{ ERROR(\"…\") }}', or 'if EXISTS({name})'), or gate on it with a traversal block ('{name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.",
+                    crate::types::position::describe_position(&of)
+                ),
+                span,
+            );
+        }
+    }
+}
