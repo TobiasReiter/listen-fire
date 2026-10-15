@@ -41,9 +41,9 @@ pub fn is_boolean_literal(raw: &str) -> bool {
 /// What a constructed instance carries on its symbol: the adapter, the
 /// credential it was built with, the schema that pair instantiates, and its
 /// other arguments raw (the entry position rides there).
-// TODO(type-core): instance identity (`addressToken`) and the instance
-// reference positions are typed against belong to the type core; this holds
-// only what the listen and construction rules read.
+// The instance positions are typed against, with its identity (the system
+// address, `addressToken`), is the type core's; this holds only what the
+// listen and construction rules read.
 #[derive(Debug, Default)]
 pub struct Instance {
     pub adapter: Option<String>,

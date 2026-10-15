@@ -841,9 +841,6 @@ fn empty_local(label: &str) -> Position {
     Position::Local(LocalNode { label: label.to_string(), reads: IndexMap::new(), edges: None, run_built: None, extracted: None })
 }
 
-/// `shapeExtractGraph`: one node of a declaration, read as the extract node
-/// it describes; `key` is its position in the declaration's schema.
-
 /// `structuralMisfit`: what a supplied record lacks that the required
 /// position (or every variant of a required union) declares.
 pub fn structural_misfit(supplied: &Position, required: &Position) -> Option<String> {
