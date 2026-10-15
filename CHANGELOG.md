@@ -55,49 +55,54 @@ guide](docs/language/dancing-wren-migration.md).
   fill the other arm with a record. A union of records alone is one record and still fits. A record with
   `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
   version, it passes as a position and enters a graph).
-- **A record a `race` arm hands back reads as that record** (and so does the slot of the `MAP`
-  that replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
+- **A record a `race` arm hands back reads as that record** (and so does a slot of `all`, which
+  replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
   the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4
   and earlier that slot read null while the check accepted the read, and a program pinned there
   still reads null. A move up across 5 warns a read of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
-- **`parallel` is retired** (`MOV_PARALLEL_RETIRED`). A `MAP` over the functions, calling each, is
-  the same join: `r = await parallel([a, b])` is `r = MAP([a, b], { concurrency: 2 }, (f) => f())`,
-  which the diagnostic applies for a literal list. No `await`: a `MAP` whose members wait parks the
-  run. A MAP over a list of closures is a tuple, slot by slot, so a later `AT(r, i)` reads what the
-  receipt's slot did. Arms built at run time are rewritten by hand (the concurrency is a number
-  written down). Why: with closures as values, `parallel` was a second spelling of a MAP. `race`
-  is unchanged. The `parallel { … }` block and `all` refusals point at the MAP form under 5.
-- **Arms built at run time must be closures** (`MOV_COMBINATOR_ARM_NOT_FUNCTION`): `race(arms)`
-  where nothing shows `arms` holds closures is refused. Why: a value whose type is unknown is never
-  called silently. Arms whose type is known now type the receipt, so `arms = FILTER(fs, …)` with a
-  closure that returns a record is refused where a slot reaches a field (that gap is closed).
+- **`parallel` is retired for `all`** (`MOV_PARALLEL_RETIRED`). `all` is the same join with its
+  functions passed as arguments, as TypeScript's `Promise.all` takes its promises:
+  `r = await parallel([a, b])` is `r = all(a, b)`, which the diagnostic applies for arms written
+  down. The answer is the list of what each arm returned, in argument order, so `AT(r, i)` reads
+  what the receipt's slot did. It takes `MAP`'s `concurrency` and `onError` as a settings record
+  written last (`all(a, b, { concurrency: 2 })`); every arm runs at once without one, and an arm
+  whose failure `onError` forgives leaves its slot null. Arms built at run time are rewritten by
+  hand, naming each function. The `parallel { … }` block refusal points at `all` under 5.
+- **`race` and `all` take their arms as arguments** (`MOV_COMBINATOR_ARMS_ARE_ARGUMENTS`):
+  `race([q, t])` is `race(q, t)`, which the diagnostic applies. Why: a closure is not data, so there
+  is no list of them to pass. A name that is not a function is refused where it is passed
+  (`MOV_COMBINATOR_ARM_NOT_FUNCTION`).
+- **No `await` on `race` or `all`** (`MOV_COMBINATOR_NO_AWAIT`): `r = await race(q, t)` is
+  `r = race(q, t)`, which the diagnostic applies. Why: `await` marks only where the run itself
+  parks (a sleep, an until, an answer read with `await FIRST(…)`), and a combinator does not park
+  by itself; its arms may, and the run parks where they do. Versions 1 to 4 keep `await race([…])`
+  and `await parallel([…])` exactly.
 
 ### Language version 5, Dancing Wren: new
 
-- **A closure may be written in a list**: `fs = [() => { … }, (x: <number>) => x + 1]`, as
-  TypeScript allows. It holds the scope it is written in by reference, as a closure bound to a
-  name does, and its body is checked where it is written. The list's element type is the union of
-  its closures' types. Under 4 it stays `MOV_EXPR_CLOSURE_POSITION`.
-- **A value that is a closure is called**: `MAP(fs, (f) => f())`, `g = AT(fs, 0)` then `g()`, a
-  function declared with a name read as a value (`[made, label]`, `g = made`, `() => made`,
-  `return made`), a closure returned in place, `IF … THEN a ELSE b END` or `COALESCE(a, b)` over
-  closures (their union), a `race` slot holding one (`g = AT(r, 0)`), or a closure-typed parameter. The call's
-  type is the union of what the closures may return, records included, so the record-in-data
-  rules see a record any of them hands back; it is held to every closure's arity. A value that
-  may not be a closure, or whose type nothing shows, is refused where it is called
-  (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call: a callee
-  that waits parks the run, and one that returns nothing makes the closure return nothing. A body
-  that awaits, `() => await race([…])`, is `() => { return await race([…]) }`.
+- **A closure is not data** (`MOV_CLOSURE_NOT_DATA`). A closure lives in a variable (`g = label`,
+  a call that answers one, `IF` or `COALESCE` choosing between closures), in a parameter, or is
+  passed as an argument where it is written (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`).
+  Refused: a closure as a list's element, a record or map's value (`{ g: label }`), a field
+  written, a spread, a `MAP` whose function returns one, `GROUPBY` or `KEYBY` over closures, a
+  `race` or `all` arm that returns one, and a type whose list element or record key is a closure
+  (`<() => <text>>[]`, `<{ run: <() => <text>> }>`). There are no methods: a dot on a record or
+  map always reads a field, and `box.g()` is `MOV_FUNCTION_UNKNOWN`, as `o.nope()` is. Under 4 a
+  closure is no value at all, and a closure written in a list stays `MOV_EXPR_CLOSURE_POSITION`.
+- **A value that is a closure is called**: a bound closure (`g = () => …` then `g()`), a function
+  declared with a name read as a value (`g = made`, `() => made`, `return made`), a closure a call
+  returns, `IF … THEN a ELSE b END` or `COALESCE(a, b)` over closures (their union), or a
+  closure-typed parameter. The call's type is the union of what the closures may return, records
+  included, so the record-in-data rules see a record any of them hands back; it is held to every
+  closure's arity. A value that may not be a closure, or whose type nothing shows, is refused where
+  it is called (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call:
+  a callee that waits parks the run, and one that returns nothing makes the closure return
+  nothing. A body that is a combinator, `() => all(f, g)`, returns its answer.
 - **A closure's type is written `<(params) => <return>>`**, TypeScript's function type:
-  `handler: <(c: <Company>) => <text>>`, `arms: <() => <text>>[]`, a declared return (never a
-  record type's key). A closure-typed parameter is called. A closure fits the type with contravariant
-  parameters (fewer is fine) and covariant returns (`MOV_CALL_ARG_TYPE` otherwise), and one
-  written in place is an argument, its parameters typed by the type. Under 4 it does not parse.
-- **No methods: a closure is never held under a key** (`MOV_CLOSURE_UNDER_KEY`). A closure lives in
-  a variable or a list; a dot on a record or map always reads a field. Refused: a closure (or a
-  value that may be one) as a record or map value, however the map is built (`{ g: label }`, a map
-  a function or MAP returns, `KEYBY` over closures), and a record type's key typed as a closure. A
-  list of closures under a key stays. `box.g()` is `MOV_FUNCTION_UNKNOWN`, as `o.nope()` is.
+  `handler: <(c: <Company>) => <text>>`, or a declared return. A closure-typed parameter is called.
+  A closure fits the type with contravariant parameters (fewer is fine) and covariant returns
+  (`MOV_CALL_ARG_TYPE` otherwise), and one written in place is an argument, its parameters typed by
+  the type. Under 4 it does not parse.
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
   Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
   where they delete. No protocol version bump: the field is additive, but under language version

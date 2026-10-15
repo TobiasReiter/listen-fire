@@ -16,10 +16,10 @@ The first four changes share one idea: there is no engine-side store and there a
 - [8. A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter)
 - [9. A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself)
 - [10. A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file)
-- [11. A closure may be written in a list](#11-a-closure-may-be-written-in-a-list)
+- [11. A closure is not data](#11-a-closure-is-not-data)
 - [12. A value that is a closure is called](#12-a-value-that-is-a-closure-is-called)
 - [13. A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return)
-- [14. `parallel` is retired; a MAP over the functions is the join](#14-parallel-is-retired-a-map-over-the-functions-is-the-join)
+- [14. `parallel` is retired for `all`; combinators take arguments and no `await`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
 - [15. Diagnostic code index](#15-diagnostic-code-index)
 
 ## 1. How the pin moves
@@ -138,7 +138,7 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 
 ## 9. A record a combinator arm hands back reads as itself
 
-- Under Dancing Wren (5) a slot of a `race` receipt that holds the record an arm returned reads as that record: `AT(r, 0).name`, `h = AT(r, 0)` then `h.name`, and `AT(r, 0) == null` (false). It is the reading `AT([a, 2], 0)` already had on a list. `parallel` is retired under 5 ([section 14](#14-parallel-is-retired-a-map-over-the-functions-is-the-join)); the MAP that replaces it reads its slots the same way.
+- Under Dancing Wren (5) a slot of a `race` receipt that holds the record an arm returned reads as that record: `AT(r, 0).name`, `h = AT(r, 0)` then `h.name`, and `AT(r, 0) == null` (false). It is the reading `AT([a, 2], 0)` already had on a list. `parallel` is retired under 5 ([section 14](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)); the `all` that replaces it reads its slots the same way.
 - Why: the check accepted the field read, and the run read null. A program that checked clean silently read nothing.
 - Under Luminous Owl (4) and earlier the slot still reads null. A move up across 5 warns every read of a receipt one of whose arms returns a record (`MOV_RECEIPT_RECORD_SLOT`): if the program relied on the null, change it, then upgrade.
 
@@ -153,7 +153,7 @@ r = await parallel([
 write crm-[:notes]-> { title: AT(r, 0).name }   # 4 and earlier: null
 ```
 
-Under 5 the same join is `r = MAP([…], { concurrency: 2 }, (f) => f())`, and `AT(r, 0).name` reads "Acme".
+Under 5 the same join is `r = all(() => { … }, () => 2)`, and `AT(r, 0).name` reads "Acme".
 
 ## 10. A write handle's unsent file is not a file
 
@@ -170,64 +170,53 @@ text = READ(h.doc)
 text = READ(FIRST(h-[:Files]->).`File`)
 ```
 
-## 11. A closure may be written in a list
+## 11. A closure is not data
 
-- Under Dancing Wren (5) a closure is a value in a list literal, as TypeScript allows: `fs = [() => { … }, (x: <number>) => x + 1]`, or in place as a collection op's source, `MAP([() => { … }, f], …)`. Under 4 and earlier it is `MOV_EXPR_CLOSURE_POSITION` (bind it to a name first).
-- It is a closure like one bound to a name: its body is checked where it is written, it holds the scope it is written in by reference (it sees the bindings around the list, a park inside it resumes), and a parameter nothing supplies needs a type (`MOV_PARAM_NEEDS_TYPE`), as TypeScript's `noImplicitAny` asks.
-- The list's element type is the union of its closures' types (TypeScript's `(() => A) | ((x: number) => number)`), and a list of named functions (`[made, label]`) is the same: from 5 a function declared with a name, read as a value, is a closure of its signature.
-- A closure written as a call's argument is passed to a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)). Anywhere else inside an expression (`IF … THEN () => … END`, a concise body that is itself a closure `(n) => () => …`) it is still refused by name: bind it to a name first. A value in a record literal is never a closure, written in place or bound ([no methods](#no-methods-a-closure-is-never-held-under-a-key)).
+- Under Dancing Wren (5) a closure is a value, as TypeScript's functions are, but it is never data. It lives in exactly three places:
+  - a variable: `g = label`, `g = () => { … }`, a call that answers one (`h = mk()`), or `IF`/`COALESCE` choosing between closures;
+  - a parameter, including one typed as a closure (`handler: <(c: <Company>) => <text>>`, [section 13](#13-a-closures-type-is-written-params--return));
+  - an argument written in a call: `MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, `run(label)`.
+- Anywhere a value would be kept as data it is `MOV_CLOSURE_NOT_DATA`: a list's element (`[label]`, `[() => { … }]`), a record or map's value (`{ g: label }`, `{ g: () => 1 }`), a field written, a spread, a `MAP` whose function returns a closure, `GROUPBY` or `KEYBY` over closures, a `race` or `all` arm that returns a closure, and a type whose list element or record key is a closure (`<() => <text>>[]`, `<{ run: <() => <text>> }>`).
+- Why: a closure stored as data is a function that outlives the scope that made it, travels through records and lists, and has to be called back through whatever holds it. Kept in a variable or passed as an argument, every call of it is visible where it is written.
+- Under Luminous Owl (4) and earlier a closure is no value at all: written in a list it stays `MOV_EXPR_CLOSURE_POSITION` (bind it to a name first).
 
 ```
-# version 4: each closure bound to a name first
-a = () => { return 1 }
-b = () => { return "x" }
-fs = [a, b]
+# refused under 5: closures kept as data
+fs = [label, () => { return "x" }]   # MOV_CLOSURE_NOT_DATA
+box = { g: label }                   # MOV_CLOSURE_NOT_DATA
 
-# version 5: the same list, written in place
-fs = [() => { return 1 }, () => { return "x" }]
+# instead: a variable, or arguments
+g = label
+v = g()
+r = all(label, () => { return "x" })
 ```
 
 ## 12. A value that is a closure is called
 
-- Under Dancing Wren (5) a name whose VALUE is a closure is called as TypeScript calls one. The value may come from anywhere a value goes:
-  - a collection op's member (`MAP(fs, (f) => f())`) or a slot (`g = AT(fs, 0)` then `g()`);
+- Under Dancing Wren (5) a name whose VALUE is a closure is called as TypeScript calls one. The value may come from anywhere a closure may be ([section 11](#11-a-closure-is-not-data)):
+  - a bound closure (`g = () => { … }` then `g()`);
   - a function declared with a name, read as a value: bound (`g = made` then `g()`) or handed back (`() => made`, `return made`, a function that returns one, then `h = mk()` and `h()`);
   - a closure a closure returns in place (`mk = () => { return () => { … } }`);
   - `IF c THEN a ELSE b END` and `COALESCE(a, b)` over closures, which are their union (TypeScript's `A | B`);
-  - a `race` receipt's slot whose arm returned a closure (`g = AT(r, 0)`, narrowed);
   - a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)).
 
   Under 4 such a call is refused (`MOV_CONSTRUCT_NOT_ADAPTER` / `MOV_CALL_NOT_MOVEMENT`).
-- A closure's type flows through every value position: a list keeps its closures' union, `FILTER` keeps it, `AT` reads a slot's exactly (a literal index on a list written down) or the union, a MAP whose function returns a closure holds that closure, and a call hands back what its callee returns.
 - The call's type is the union of what the closures may return, records included, so the rules for a record in data (a written field, a graph entry, a plugin argument) see a record any of them hands back. The call is held to every closure's arity (`MOV_CALL_ARITY` names them all).
-- A value that may not be a closure (`COALESCE(c, 2)`, a list of numbers), or whose type nothing shows, is refused where it is called (`MOV_CALL_NOT_MOVEMENT`), never run on the chance. The same holds for `race` arms built at run time: `race(arms)` where nothing shows `arms` holds closures is `MOV_COMBINATOR_ARM_NOT_FUNCTION`, and arms whose type is known type the receipt (`arms = FILTER(fs, …)` included, which was untyped before).
-- A body that is one call, `(f) => f()`, returns the call, as `(f) => { return f() }` does: a callee that waits parks the run where the call is, and a callee that returns nothing makes the closure return nothing (TypeScript's `() => g()` when `g` returns `void`). A body that awaits, `() => await race([…])`, is `() => { return await race([…]) }`, as an async arrow is in TypeScript (before 5 it does not parse).
+- A value that may not be a closure (`COALESCE(c, 2)`), or whose type nothing shows, is refused where it is called (`MOV_CALL_NOT_MOVEMENT`), never run on the chance.
+- A body that is one call, `(f) => f()`, returns the call, as `(f) => { return f() }` does: a callee that waits parks the run where the call is, and a callee that returns nothing makes the closure return nothing (TypeScript's `() => g()` when `g` returns `void`). A body that is a combinator, `() => all(f, g)`, returns its answer.
 
 ```
-fs = [() => { return made() }, () => { return "x" }]
-r = MAP(fs, (f) => f())
-write crm-[:notes]-> { title: COALESCE(AT(r, 1), "") }   # text: written
-write crm-[:notes]-> { title: COALESCE(AT(r, 0), "") }   # may be a record: MOV_WRITE_FIELD_TYPE
-```
-
-### No methods: a closure is never held under a key
-
-- Under Dancing Wren (5) a closure lives in a variable or a list, never under a key of a record or map. There are no methods: a dot on a record or map always reads a field. Why: a closure under a key made `box.g()` a second way to call a function, and `box.g` mean two things.
-- A closure (or a value that may be one) put under a key is `MOV_CLOSURE_UNDER_KEY`, however the map is built: a literal (`{ g: label }`, `{ g: f }`, `{ g: FIRST(fs) }`), a map a function or a MAP returns, a map inside a list, or `KEYBY` over closures. A closure written in place under a key (`{ g: () => … }`) stays `MOV_EXPR_CLOSURE_POSITION`.
-- A list of closures under a key is a list, and stays: `{ arms: [a, b] }`, and `GROUPBY` over closures.
-- `race` receipts are lists, so a slot whose arm returned a closure is read with `AT(r, 0)` and called (`g = AT(r, 0)`, narrowed, then `g()`).
-- Under Dancing Wren (5), a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Versions 1–4 are unchanged (a saved movement never breaks). Two forms are unchanged on every version: a built-in in a record's scope (`o.UPPER(name)`), and a function inside a write field, which the target may advertise.
-
-```
-# refused under 5: a closure under a key
-box = { g: label }        # MOV_CLOSURE_UNDER_KEY
-v = box.g()               # MOV_FUNCTION_UNKNOWN
-
-# instead: a variable, or a list
-g = label
+a = () => { return made() }
+b = () => { return "x" }
+g = IF c THEN a ELSE b END
 v = g()
-r = MAP([label, made], { concurrency: 2 }, (f) => f())
+write crm-[:notes]-> { title: v }   # may be a record: MOV_WRITE_FIELD_TYPE
 ```
+
+### No methods
+
+- There are no methods: a dot on a record or map always reads a field, and a closure is never under a key ([section 11](#11-a-closure-is-not-data)). Why: a closure under a key made `box.g()` a second way to call a function, and `box.g` mean two things.
+- Under Dancing Wren (5), a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Versions 1–4 are unchanged (a saved movement never breaks). Two forms are unchanged on every version: a built-in in a record's scope (`o.UPPER(name)`), and a function inside a write field, which the target may advertise.
 
 ## 13. A closure's type is written `<(params) => <return>>`
 
@@ -235,38 +224,35 @@ r = MAP([label, made], { concurrency: 2 }, (f) => f())
 
 ```
 function run(handler: <(c: <crm-[:company]->>) => <text>>) { … }   # a parameter
-function all(arms: <() => <text>>[]) { … }                          # a list of closures
 function pick(): <() => <text>> { … }                               # a declared return
 ```
 
-- A record type's key is never a closure type (`<{ run: <() => <text>> }>` is `MOV_CLOSURE_UNDER_KEY`, see [no methods](#no-methods-a-closure-is-never-held-under-a-key)); a key may be a list of closures (`<{ arms: <() => <text>>[] }>`).
-- `<…>[]` is a list of closures. A closure that returns a list is `<() => <text[]>>`; `<() => <text>[]>` is ambiguous and refused, with both spellings in the message. Every parameter needs a type: a caller of the closure is checked against it.
+- A closure type is never a list's element or a record type's key (`<() => <text>>[]` and `<{ run: <() => <text>> }>` are `MOV_CLOSURE_NOT_DATA`): a closure is not data.
+- A closure that returns a list is `<() => <text[]>>`; `<() => <text>[]>` is ambiguous and refused. Every parameter needs a type: a caller of the closure is checked against it.
 - A parameter of closure type is called (`handler(c)`), typed by its return and held to its parameters (`MOV_CALL_ARITY`).
 - A closure fits a closure type as TypeScript's assignability says. Parameters are contravariant: each of the closure's parameters takes what the type's hands it. Returns are covariant: what the closure returns, what it may hold included, is what the type's returns. A closure that takes fewer parameters fits, and the extra arguments are dropped; one that takes more does not. A misfit is `MOV_CALL_ARG_TYPE` (or `MOV_RETURN_TYPE` for a declared return), naming what the closure returns.
-- A list of closures is passed as a list of the type when each member fits: `all([label, () => "x"])`.
 - A closure written in place is an argument to a closure-typed parameter: `run((c) => c.name)`. Its untyped parameters are typed by the closure type (contextual typing).
 - Under Quiet Heron (1) to Luminous Owl (4) the syntax is a parse error that names version 5, because a closure is not a value there.
 
-## 14. `parallel` is retired; a MAP over the functions is the join
+## 14. `parallel` is retired for `all`; combinators take arguments and no `await`
 
-- Under Dancing Wren (5) every `parallel` form is `MOV_PARALLEL_RETIRED`. Why: with closures as values ([sections 11](#11-a-closure-may-be-written-in-a-list) and [12](#12-a-value-that-is-a-closure-is-called)) a MAP over the functions, calling each, is the same join, so `parallel` was a second spelling of it. `race` is unchanged.
-- For a literal list of functions the diagnostic carries the exact rewrite, which a tool applies:
+- Under Dancing Wren (5) every `parallel` form is `MOV_PARALLEL_RETIRED`. `all(f, g, …)` is the same join, as TypeScript's `Promise.all` is: every arm runs, at once, and the answer is the list of what each returned, in argument order. Why: a closure is not data ([section 11](#11-a-closure-is-not-data)), so the arms are passed as arguments, not in a list.
+- For arms written down the diagnostic carries the exact rewrite, which a tool applies:
 
 ```
 # before
 r = await parallel([a, () => { … }])
 
 # after
-r = MAP([a, () => { … }], { concurrency: 2 }, (f) => f())
+r = all(a, () => { … })
 ```
 
-- `concurrency` is the number of functions, so every one runs at once, as the arms did. The default MAP runs one member at a time.
-- No `await`: a MAP whose members wait parks the run by itself (`await MAP(…)` does not parse). Run unbound for the functions' effects, `await parallel([…])` becomes `MAP([…], { concurrency: n }, (f) => f())`.
-- The parameter is a name nothing in scope binds (`f`, else `fn`, `run`, `f2`, …), so the rewrite shadows nothing.
-- Later reads stay clean: a MAP over a list of closures is a tuple, slot by slot, so `AT(r, i)` reads exactly what slot `i` of the receipt did: a value arm's value (present, so no `COALESCE` is needed where none was), a record arm's record (`AT(r, 0).name`), and an arm that returns nothing reads absent, as its slot did. A read the receipt refused (a record slot into a field) is refused the same way. Nothing in the fix adds a `COALESCE`: none is needed that was not needed before.
-- Arms built at run time (`parallel(fs)`) have no fix, because the concurrency is a number written down and theirs is not known: write `MAP(fs, { concurrency: <how many at once> }, (f) => f())`. Such a MAP is a list of the union of what the closures return, so a slot read where a value is required needs a `COALESCE`, as any list's member does.
-- An arrow body that awaits it, `g = () => await parallel([…])`, gets the same fix: `g = () => MAP([…], { concurrency: n }, (f) => f())`.
-- The refusals of the `parallel { … }` block and of `all` point at the MAP form under 5.
+- Later reads stay clean: the answer is a tuple, slot by slot, so `AT(r, i)` reads exactly what slot `i` of the receipt did: a value arm's value, a record arm's record (`AT(r, 0).name`), and an arm that returns nothing reads absent.
+- `all` takes `MAP`'s settings where they mean something for a join, as a record written last: `all(a, b, { concurrency: 2, onError: "warn" })`. `concurrency` is how many arms run at once (all of them without it); an arm that parks is waiting, not running, so it frees its place for the next. `onError: "warn"` or `"ignore"` leaves the slot of an arm that fails null (and its slot type may be absent), `"warn"` saying so on the trace; the default fails the run, as before. `initialConcurrency` is refused.
+- `race` takes its arms as arguments too: `race([q, t])` is `MOV_COMBINATOR_ARMS_ARE_ARGUMENTS` (`all([…])` as well), and the fix drops the brackets: `race(q, t)`. `race` takes no settings.
+- No `await` on `race` or `all`: `await` marks only the suspension itself, where the run parks (`await sleep(…)`, `await until(…)`, reading an answer with `await FIRST(q-[:Response]->)`). A combinator does not park by itself; its arms may, and the run parks where they do. `await race(…)` and `await all(…)` are `MOV_COMBINATOR_NO_AWAIT`, and the fix removes the `await`. An arrow body that awaits one, `g = () => await parallel([…])`, gets the same fixes: `g = () => all(…)`.
+- Arms built at run time (`parallel(fs)`) have no fix: name each function as an argument, `all(f, g)`.
+- The refusal of the `parallel { … }` block points at `all` under 5. Under 4 and earlier `await race([…])` and `await parallel([…])` are unchanged, and `all` is still a retired name.
 
 ## 15. Diagnostic code index
 
@@ -276,16 +262,18 @@ r = MAP([a, () => { … }], { concurrency: 2 }, (f) => f())
 | `MOV_CALL_ARITY` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a call of one of several closures names every arity) |
 | `MOV_CALL_ARG_TYPE` | [A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return) (a closure that does not fit a closure type) |
 | `MOV_CALL_NOT_MOVEMENT` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a value that may not be a closure, or whose type nothing shows) |
-| `MOV_CLOSURE_UNDER_KEY` | [No methods: a closure is never held under a key](#no-methods-a-closure-is-never-held-under-a-key) (a closure as a record or map value, or a record type's key typed as one; since 5) |
-| `MOV_COMBINATOR_ARM_NOT_FUNCTION` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (`race` arms built at run time that are not closures; since 5) |
+| `MOV_CLOSURE_NOT_DATA` | [A closure is not data](#11-a-closure-is-not-data) (a closure as a list element, a record or map value, a field, an op's or a combinator's answer, or a type's list element or key; since 5) |
+| `MOV_COMBINATOR_ARM_NOT_FUNCTION` | [`all` and `race`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (an argument that is no function) |
+| `MOV_COMBINATOR_ARMS_ARE_ARGUMENTS` | [`all` and `race`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (arms in a list; the fix drops the brackets; since 5) |
+| `MOV_COMBINATOR_NO_AWAIT` | [`all` and `race`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (`await race(…)`, `await all(…)`; the fix drops the `await`; since 5) |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
-| `MOV_EXPR_CLOSURE_POSITION` | [A closure may be written in a list](#11-a-closure-may-be-written-in-a-list) (no longer for a list element under 5) |
-| `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods-a-closure-is-never-held-under-a-key) (a dotted call of no built-in, `box.g()` included; version 5) |
+| `MOV_EXPR_CLOSURE_POSITION` | [A closure is not data](#11-a-closure-is-not-data) (under 4 and earlier; under 5 a closure written in a list or map is `MOV_CLOSURE_NOT_DATA`) |
+| `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods) (a dotted call of no built-in, `box.g()` included; version 5) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |
-| `MOV_PARALLEL_RETIRED` | [`parallel` is retired](#14-parallel-is-retired-a-map-over-the-functions-is-the-join) (with the MAP rewrite for a literal list) |
+| `MOV_PARALLEL_RETIRED` | [`parallel` is retired for `all`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (with the `all` rewrite for arms written down) |
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result) |
