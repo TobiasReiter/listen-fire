@@ -71,7 +71,22 @@ impl Checker<'_> {
             }
             _ => return SymbolTypes::default(),
         };
-        let args: Args = construct.args.iter().map(|a| (a.name.clone(), a.value.raw.clone())).collect();
+        // A credential imported under an alias names its connection by the imported name.
+        let credential = self.catalog.adapter(&adapter).and_then(movement_parser::catalog::helpers::credential_arg_of).map(|a| a.name.clone());
+        let args: Args = construct
+            .args
+            .iter()
+            .map(|a| {
+                let aliased = (Some(&a.name) == credential.as_ref())
+                    .then(|| movement_parser::catalog::helpers::unwrap_credential_arg(a.value.raw.trim()))
+                    .flatten()
+                    .and_then(|name| match self.scopes.resolve(scope, &name) {
+                        Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Credential => self.scopes.symbol(id).imported_name.clone(),
+                        _ => None,
+                    });
+                (a.name.clone(), aliased.unwrap_or_else(|| a.value.raw.clone()))
+            })
+            .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
         let instance = Rc::new(Instance { name: name.to_string(), schema });
