@@ -387,6 +387,10 @@ export const DiagnosticCodes = {
   CONSTRUCT_UNKNOWN_OPTION: 'MOV_CONSTRUCT_UNKNOWN_OPTION',
   CONSTRUCT_MISSING_CRED: 'MOV_CONSTRUCT_MISSING_CRED',
   CRED_WRONG_ADAPTER: 'MOV_CRED_WRONG_ADAPTER',
+  /** A credential name read anywhere but an integration construction's
+   *  `credentials:` argument. Every version: it is a security boundary, and
+   *  every such read already failed at run time. */
+  CREDENTIAL_NOT_A_VALUE: 'MOV_CREDENTIAL_NOT_A_VALUE',
   DUPLICATE_DECL: 'MOV_DUPLICATE_DECL',
   /** An authored binding reuses a name an ENCLOSING scope already binds. The
    *  same-scope half of this is DUPLICATE_DECL; this is the cross-scope half,
@@ -12856,7 +12860,7 @@ class Checker {
       return;
     }
 
-    const instanceSymbol = this.resolveName(statement.instance, statement.span, scope);
+    const instanceSymbol = this.resolveReference(statement.instance, statement.span, scope);
 
     // Recorded here, where the listened name has resolved and before any of the
     // config checks can return early: a listen that fires nothing is still a
@@ -13224,7 +13228,7 @@ class Checker {
       }
     }
 
-    const movementSymbol = this.resolveName(this.calleeName(statement.movement, scope), statement.span, scope);
+    const movementSymbol = this.resolveReference(this.calleeName(statement.movement, scope), statement.span, scope);
     if (!movementSymbol) return;
     if (movementSymbol.kind === 'fileImport') return; // may be a movement — M3 resolves it
     if (movementSymbol.kind !== 'movement') {
@@ -15110,7 +15114,25 @@ class Checker {
     this.resolveName(name, span, scope);
   }
 
+  /** Every name a program uses comes through here — a read, a type's graph —
+   *  except the construction's `credentials:` argument (`checkCredentialArg`
+   *  resolves it itself) and a listen, which refuses a credential by its own
+   *  rule. So this is the one place a credential used as a value is refused. */
   private resolveName(name: string, span: Span, scope: Scope): ScopeSymbol | undefined {
+    const symbol = this.resolveReference(name, span, scope);
+    if (symbol?.kind !== 'credential') return symbol;
+    this.report(
+      DiagnosticCodes.CREDENTIAL_NOT_A_VALUE,
+      `'${name}' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there`,
+      span,
+    );
+    return undefined;
+  }
+
+  /** A name resolved for a listen — what it listens to and what it fires —
+   *  whose own rules (MOV_LISTEN_NOT_INSTANCE, a fired name that is no
+   *  function) already refuse a credential there, more precisely. */
+  private resolveReference(name: string, span: Span, scope: Scope): ScopeSymbol | undefined {
     const resolution = scope.resolve(name);
     if (resolution.kind === 'found') return resolution.symbol;
     this.reportResolutionFailure(name, span, resolution);
