@@ -23,7 +23,7 @@ jest.mock('../../logger', () => ({
 import { resumeMovement, runMovement, runFailureCause, type MovementRunResult, type ParkSink } from '../run';
 import type { ParkedScopeState } from '../serialize';
 import { CallDepthExceeded, parseMaxCallDepth } from '../call_depth';
-import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from 'movement-engine/lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';

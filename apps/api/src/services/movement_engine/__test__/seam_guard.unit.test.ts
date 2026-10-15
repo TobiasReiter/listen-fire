@@ -133,7 +133,7 @@ const HOST_SIDE_FILES = [
 
 /** The host-side modules that turn a file descriptor into bytes, or bytes
  *  into a URL. */
-const BYTE_READERS = ['retrieve', 'expose', 'fetch-stream'];
+const BYTE_READERS = ['retrieve', 'redeem', 'expose', 'fetch-stream'];
 
 /** Module paths are relative to apps/api/src, without extension. */
 const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }> = [
@@ -474,7 +474,7 @@ describe('the engine/host seam', () => {
         rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')),
       ),
     ).toBe(true);
-    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../../lib/run_spend')))).toBe(
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, 'movement-engine/lib/run_spend')))).toBe(
       true,
     );
     expect(

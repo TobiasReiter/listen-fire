@@ -10,4 +10,4 @@ movement welcome(company: <crm-[:Company]->>) {
   write crm-[:Company]-> { Name: "Follow up ${company.Name}" }
 }
 
-listen to crm {} fire welcome
+listen to crm { events: ["company.created"] } fire welcome

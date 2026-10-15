@@ -9,17 +9,18 @@
 // source in the wire's spelling. `exposeFile` is mocked so the test needs no S3
 // / Postgres; the document store is in memory.
 
+import { hostedDocumentStore } from '../../../engine/files/retrieve';
 import http from 'node:http';
 
 import type { Readable } from 'node:stream';
 import type { AddressInfo } from 'node:net';
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import type { RemoteAdapterConfig } from '../index';
+import type { RemoteAdapterConfig } from 'movement-engine/services/translation_graph/adapters/remote';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
-import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from '../index';
+import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
 import { fileValue } from 'movement-engine/services/translation_graph/adapter';
 
 const EXPOSED_URL = 'https://example.test/api/files/blob/xyz';
@@ -109,7 +110,7 @@ describe('RemoteAdapter write with a FileRef exposes bytes to a URL (over real H
       credentialsId: 'test',
     };
     const manifest = await fetchRemoteManifest(config, SECRET);
-    remote = createRemoteAdapter({ config, secret: SECRET, cacheScopeId: 'file-write', manifest });
+    remote = createRemoteAdapter({ documents: hostedDocumentStore, config, secret: SECRET, cacheScopeId: 'file-write', manifest });
   });
 
   afterAll(async () => {

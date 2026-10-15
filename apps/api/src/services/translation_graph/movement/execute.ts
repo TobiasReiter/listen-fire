@@ -37,7 +37,7 @@ import {
 import { makeDbCancelGate } from '../../movement_engine/cancel_gate';
 import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';
-import { runCostCapFromEnv } from '../../../lib/run_spend';
+import { runCostCapFromEnv } from 'movement-engine/lib/run_spend';
 import { noteFirstFiringLeaseLost, TriggerRunRecorder, type TriggerRunTriggerType } from '../runs/trigger_run';
 import { runCatalogSnapshotForTeam } from './catalog';
 import { getMovementRow, recordValidityOutcome, type MovementRow } from './store';

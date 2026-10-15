@@ -30,7 +30,7 @@ jest.mock('movement-engine/services/logger', () => ({
 import { resumeMovement, runMovement, runFailureCause, MovementRunFailed, type MovementRunResult, type ParkSink, type RunLimitPause } from 'movement-engine/services/movement_engine/run';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
-import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from 'movement-engine/lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { type Adapter, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';

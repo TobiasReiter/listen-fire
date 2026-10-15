@@ -8,8 +8,10 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { localIdentity } from '../host';
+import type { FileRef } from 'engine-contracts';
+import { redeemFileRef } from 'movement-engine/services/translation_graph/engine/files/redeem';
+import { localDocumentStore } from '../documents';
 import { localFileText } from '../files';
 import { loadProject, initProject } from '../project';
 import { loadSecrets, refreshCredential, type Credential } from '../secrets';
@@ -253,39 +255,37 @@ test('READ of a FILE() artifact reads the stored text through resolveFileText', 
   assert.match(state, /"Name": "hello Vireo Robotics"/);
 });
 
-test('resolveFileText: text and json are read; a real PDF, a path outside the folder, an external\'s file and a missing file are not', async () => {
+test('resolveFileText: text and json are read; a real PDF, a handle out of the folder, an external\'s file and a missing file are not', async () => {
   const dir = project();
-  const project_ = loadProject(dir);
-  const files = join(dir, '.lf/files');
-  mkdirSync(files, { recursive: true });
-  const stored = (name: string, bytes: string | Buffer, contentType?: string) => {
-    writeFileSync(join(files, name), bytes);
-    return { __brand: 'FileRef' as const, name, ...(contentType !== undefined ? { contentType } : {}), source: { store: 'document' as const, objectUri: `file://${join(files, name)}` } };
-  };
-  assert.deepEqual(await localFileText(project_, stored('a.txt', 'hi', 'text/plain')), { text: 'hi' });
-  assert.deepEqual(await localFileText(project_, stored('a.json', '{"a":1}', 'application/json')), { text: '{"a":1}' });
-  assert.deepEqual(await localFileText(project_, stored('a.csv', 'x,y')), { text: 'x,y' });
+  const documents = localDocumentStore(join(dir, '.lf'));
+  const read = (file: FileRef) => localFileText({ file, redeem: () => redeemFileRef(file, { tenantId: 'local', documents }) });
+  const stored = (name: string, bytes: string | Buffer, contentType?: string) =>
+    documents.put({ tenantId: 'local', bytes: Buffer.from(bytes), name, contentType: contentType ?? '' });
+  assert.deepEqual(await read(await stored('a.txt', 'hi', 'text/plain')), { text: 'hi' });
+  assert.deepEqual(await read(await stored('a.json', '{"a":1}', 'application/json')), { text: '{"a":1}' });
+  assert.deepEqual(await read(await stored('a.csv', 'x,y')), { text: 'x,y' });
   // `files.render` stores a "pdf" as its text.
-  assert.deepEqual(await localFileText(project_, stored('r.pdf', 'plain', 'application/pdf')), { text: 'plain' });
-  assert.deepEqual(await localFileText(project_, stored('real.pdf', Buffer.from('%PDF-1.7\n…'), 'application/pdf')), {
+  assert.deepEqual(await read(await stored('r.pdf', 'plain', 'application/pdf')), { text: 'plain' });
+  assert.deepEqual(await read(await stored('real.pdf', Buffer.from('%PDF-1.7\n…'), 'application/pdf')), {
     unreadable: 'unsupported_type',
     detail: 'lf cannot extract text from a PDF yet',
   });
-  assert.equal('unreadable' in (await localFileText(project_, stored('p.png', 'x', 'image/png'))), true);
+  assert.equal('unreadable' in (await read(await stored('p.png', 'x', 'image/png'))), true);
 
-  const outside = join(dir, 'secret.txt');
-  writeFileSync(outside, 'nope');
-  const refused = await localFileText(project_, { __brand: 'FileRef', source: { store: 'document', objectUri: `file://${join(files, '..', '..', 'secret.txt')}` } });
-  assert.match(JSON.stringify(refused), /outside the files folder/);
-  assert.match(JSON.stringify(refused), /bytes_unavailable/);
+  writeFileSync(join(dir, 'secret.txt'), 'nope');
+  const outside = await read({ __brand: 'FileRef', name: 'secret.txt', source: { store: 'document', objectUri: 'lf-files:../../secret.txt' } });
+  assert.equal((outside as { unreadable?: string }).unreadable, 'bytes_unavailable');
 
-  assert.deepEqual(await localFileText(project_, { __brand: 'FileRef', source: { adapterType: 'acme_crm', handle: 'h' } }), {
-    unreadable: 'bytes_unavailable',
-    detail: 'lf has no file transport for externals yet',
-  });
-  const gone = stored('gone.txt', 'x', 'text/plain');
-  rmSync(fileURLToPath(gone.source.objectUri));
-  assert.equal((await localFileText(project_, gone) as { unreadable?: string }).unreadable, 'bytes_unavailable');
+  // An external's file is redeemed from the external that owns it; none is reachable here.
+  const external = await read({ __brand: 'FileRef', name: 'x.txt', source: { adapterType: 'acme_crm', handle: 'h' } });
+  assert.equal((external as { unreadable?: string }).unreadable, 'bytes_unavailable');
+
+  const gone = await stored('gone.txt', 'x', 'text/plain');
+  const goneSource = gone.source;
+  assert.ok(goneSource !== undefined && 'objectUri' in goneSource);
+  rmSync(join(dir, '.lf/files', goneSource.objectUri.replace(/^lf-files:/, '')));
+  assert.equal((await read(gone) as { unreadable?: string }).unreadable, 'bytes_unavailable');
+  await documents.close();
 });
 
 test('loadSecrets: environment names are matched lowercased and malformed ones are refused', () => {

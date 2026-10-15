@@ -47,7 +47,7 @@ import { transcribe } from '../../../lib/models/transcription';
 import { getXlsxContent } from '../../../lib/utils/excel';
 import { getPptxText } from '../../../lib/utils/powerpoint';
 import { logger } from 'movement-engine/services/logger';
-import { FileOutsideTeamError } from '../engine/files/file_outside_team';
+import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
 import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 
 

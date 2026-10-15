@@ -12,7 +12,7 @@ import type { ParentAssociation, ParentLink, WriteInput } from 'movement-engine/
 import { valueType, locationFieldValue } from '../../../../adapters/affinity/apiClient';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { logger } from 'movement-engine/services/logger';
-import { isAdapterCallCeilingExceeded } from '../../segment_scope';
+import { isAdapterCallCeilingExceeded } from 'movement-engine/services/translation_graph/segment_scope';
 import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
 import {
   decodedFixedType,

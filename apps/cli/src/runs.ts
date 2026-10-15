@@ -13,13 +13,12 @@ import { eventMatchesTriggerScope } from 'movement-engine/services/translation_g
 import { triggerEventOf } from 'movement-engine/services/translation_graph/triggers/trigger_event';
 import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import { METHODS } from 'engine-contracts';
-import { parseWireResult } from 'movement-engine/services/translation_graph/protocol/client';
 import { verifyRemoteSignature } from 'movement-engine/services/webhook_sync/remote_inbound';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import { localDocumentStore, type LocalDocumentStore } from './documents';
 import {
   credentialFor,
   describeExternal,
-  rpc,
   scanExternals,
   startExternals,
   type External,
@@ -29,6 +28,7 @@ import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { LOCAL_TENANT, localHost, tenant } from './host';
 import { enqueueAwaitWake, timerWorkKey } from './parks';
 import type { Project } from './project';
+import { remoteAdapterOf } from './remote';
 import { loadSecrets, requireCredentials, type Credential } from './secrets';
 import { catalogOf, collectListens, scanMovements, type Listen, type MovementFile } from './sources';
 import { LEASE_TTL_MS, State, type ClaimedWork, type ParkRow } from './state';
@@ -48,6 +48,7 @@ export interface Session {
   credentials: Map<string, Credential>;
   externals: External[];
   running: Map<string, RunningExternal>;
+  documents: LocalDocumentStore;
   files: MovementFile[];
   catalog: CatalogSnapshot;
   listens: Listen[];
@@ -82,24 +83,26 @@ export async function openSession(
     ? await startExternals({ project, externals, credentials, tenant: LOCAL_TENANT, ...(options.hostUrl !== undefined ? { hostUrl: options.hostUrl } : {}) })
     : new Map<string, RunningExternal>();
   const state = State.open(project, { ephemeral: options.ephemeral, dueClockOffsetMs: dueClockOffset(process.env) });
+  const documents = localDocumentStore(project.lfDir);
   const close = () => {
     for (const r of running.values()) r.stop();
+    void documents.close();
     state.close();
   };
   try {
     const schemas = new Map<string, InstanceSchema>();
     for (const [name, r] of running) {
-      schemas.set(name, await describeExternal({ running: r, credential: credentialFor(credentials, name), tenant: LOCAL_TENANT }));
+      schemas.set(name, await describeExternal(remoteAdapterOf({ running: r, credential: credentialFor(credentials, name), documents, tenant: LOCAL_TENANT })));
     }
     const files = scanMovements(project);
-    const credentialed = new Set(externals.filter((e) => e.manifest.auth !== undefined).map((e) => e.manifest.name));
-    const catalog = catalogOf({ schemas, credentials, credentialed, files });
+    const catalog = catalogOf({ running, schemas, credentials, files });
     return {
       project,
       state,
       credentials,
       externals,
       running,
+      documents,
       files,
       catalog,
       listens: collectListens(files, project.languageVersion),
@@ -123,6 +126,8 @@ export interface RunOutcome {
   movement: string;
   status: 'completed' | 'parked' | 'failed';
   writes: number;
+  /** A dry run's writes, captured instead of made. */
+  captured?: CapturedWrite[];
   traceEntries: number;
   error?: string;
 }
@@ -137,7 +142,10 @@ const RunFacts = z.object({
 });
 
 /** Route one event to every listen it matches, and run each. */
-export async function fireEvent(session: Session, input: { external: string; event: DiscriminableEvent }): Promise<RunOutcome[]> {
+export async function fireEvent(
+  session: Session,
+  input: { external: string; event: DiscriminableEvent; dryRun?: boolean },
+): Promise<RunOutcome[]> {
   const eventTypes = await eventTypesOf(session, input.external);
   const matching = session.listens.filter(
     (l) => l.listener.adapter === input.external && eventMatchesTriggerScope(input.event, l.listener.config),
@@ -153,7 +161,7 @@ export async function fireEvent(session: Session, input: { external: string; eve
       eventTypes,
       now: new Date(),
     });
-    outcomes.push(await runListen(session, { runId, listen, event: triggerEvent }));
+    outcomes.push(await runListen(session, { runId, listen, event: triggerEvent, dryRun: input.dryRun === true }));
   }
   return outcomes;
 }
@@ -161,11 +169,14 @@ export async function fireEvent(session: Session, input: { external: string; eve
 async function eventTypesOf(session: Session, external: string): Promise<EventType[]> {
   const running = session.running.get(external);
   if (running === undefined || !running.methods.includes('listEventTypes')) return [];
-  const raw = await rpc({ running, credential: credentialFor(session.credentials, external), method: 'listEventTypes', params: {}, tenant: LOCAL_TENANT });
-  return parseWireResult(METHODS.listEventTypes.result, raw, { method: 'listEventTypes', adapter: external });
+  const adapter = remoteAdapterOf({ running, credential: credentialFor(session.credentials, external), documents: session.documents, tenant: LOCAL_TENANT });
+  return adapter.listEventTypes !== undefined ? adapter.listEventTypes() : [];
 }
 
-async function runListen(session: Session, input: { runId: string; listen: Listen; event: TriggerEvent }): Promise<RunOutcome> {
+async function runListen(
+  session: Session,
+  input: { runId: string; listen: Listen; event: TriggerEvent; dryRun: boolean },
+): Promise<RunOutcome> {
   const { project, state } = session;
   const firedAt = new Date().toISOString();
   const facts: z.infer<typeof RunFacts> = {
@@ -176,8 +187,15 @@ async function runListen(session: Session, input: { runId: string; listen: Liste
     firedAt,
   };
   state.startRun({ id: input.runId, file: input.listen.file.name, movement: facts.movementName, started_at: firedAt, input: JSON.stringify(facts) });
-  const host = localHost({ ...sessionParts(session), runId: input.runId });
-  return settle(session, { runId: input.runId, file: input.listen.file.name, movement: facts.movementName }, () =>
+  // A dry run's writes are captured by the rehearsed instances, never made,
+  // and it never parks: it has no wall clock to wait on.
+  const captured: CapturedWrite[] = [];
+  const host = localHost({
+    ...sessionParts(session),
+    runId: input.runId,
+    ...(input.dryRun ? { writeSink: (write: CapturedWrite) => captured.push(write) } : {}),
+  });
+  const outcome = await settle(session, { runId: input.runId, file: input.listen.file.name, movement: facts.movementName }, () =>
     runMovement({
       source: facts.source,
       languageVersion: project.languageVersion,
@@ -188,9 +206,11 @@ async function runListen(session: Session, input: { runId: string; listen: Liste
       credentialIds: credentialIdsOf(session.catalog),
       firedAt,
       runId: input.runId,
+      ...(input.dryRun ? { dryRun: true } : {}),
       host,
     }),
   );
+  return input.dryRun ? { ...outcome, captured } : outcome;
 }
 
 /** A fresh firing, run under its run's lease. */
@@ -423,6 +443,7 @@ function sessionParts(session: Session) {
     state: session.state,
     externals: session.running,
     credentials: session.credentials,
+    documents: session.documents,
     engine: 'rust' as const,
   };
 }
@@ -462,24 +483,19 @@ export async function receiveWebhook(
   } catch {
     throw new WebhookRefused(400, 'body is not JSON');
   }
-  const parsed = parseWireResult(
-    METHODS.preprocessInbound.result,
-    await rpc({ running, credential, method: 'preprocessInbound', params: { raw }, tenant: LOCAL_TENANT }),
-    { method: 'preprocessInbound', adapter: input.external },
-  );
+  const adapter = remoteAdapterOf({ running, credential, documents: session.documents, tenant: LOCAL_TENANT });
+  if (adapter.preprocessInbound === undefined) throw new WebhookRefused(404, `external "${input.external}" parses no inbound events`);
+  const parsed = await adapter.preprocessInbound({ raw });
   // The keys this delivery resolves, independent of any listen: a comment on
   // a thread wakes the awaits parked on it whether or not a movement listens
   // for comments.
-  if (running.methods.includes('wakeKeys')) {
-    const keys = parseWireResult(
-      METHODS.wakeKeys.result,
-      await rpc({ running, credential, method: 'wakeKeys', params: { raw }, tenant: LOCAL_TENANT }),
-      { method: 'wakeKeys', adapter: input.external },
-    );
-    for (const correlationKey of keys) enqueueAwaitWake(session.state, { adapterType: input.external, correlationKey });
+  if (adapter.wakeKeys !== undefined) {
+    for (const correlationKey of await adapter.wakeKeys({ raw })) {
+      enqueueAwaitWake(session.state, { adapterType: input.external, correlationKey });
+    }
   }
   const outcomes: RunOutcome[] = [];
-  for (const event of parsed.events) outcomes.push(...(await fireEvent(session, { external: input.external, event: event as DiscriminableEvent })));
+  for (const event of parsed.events) outcomes.push(...(await fireEvent(session, { external: input.external, event })));
   return outcomes;
 }
 

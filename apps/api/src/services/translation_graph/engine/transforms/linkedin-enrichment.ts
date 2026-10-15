@@ -26,7 +26,7 @@ import type { TransformSignature } from 'movement-engine/services/translation_gr
 
 import { services } from '../../../../adapters/registry';
 import { anthropicChat } from '../../../../lib/anthropic';
-import { parseJson } from '../../../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { runFields } from '../../../../lib/llm_usage';
 import { logger } from 'movement-engine/services/logger';
 import { WebSearchService, resolveWebSearchProvider } from '../../../web_search';

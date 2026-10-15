@@ -31,12 +31,13 @@ import {
   resolveAdapterSlug,
 } from './registry';
 import { getRemoteAdapter, rowToManifest } from './remote/store';
+import { hostedDocumentStore } from '../engine/files/retrieve';
 import { RemoteAdapterCredentialPayload } from './remote/manifest';
 import {
   createRemoteAdapter,
   type RemoteAdapterConfig,
   type RemoteManifest,
-} from './remote/index';
+} from 'movement-engine/services/translation_graph/adapters/remote';
 
 /**
  * Resolve an adapter for the given type. Local-first (static registry, no DB),
@@ -120,7 +121,7 @@ export async function resolveAdapter(input: {
   // of work, and a new evaluation gets a fresh scope.
   const cacheScopeId = randomUUID();
 
-  return createRemoteAdapter({ config, secret, cacheScopeId, manifest });
+  return createRemoteAdapter({ config, secret, cacheScopeId, manifest, documents: hostedDocumentStore });
 }
 
 /**

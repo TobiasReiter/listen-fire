@@ -4,7 +4,7 @@ import { formatISO, sub } from 'date-fns';
 import { AttioAPIClient, AttioRecord } from './apiClient';
 import { AttioAttribute, attributeConfigValidator } from './interface';
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from '../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { logger } from 'movement-engine/services/logger';
 import { nullishBoolean } from '../../lib/utils/nullish_boolean';
 import { notNull } from '../../lib/utils/nullability';

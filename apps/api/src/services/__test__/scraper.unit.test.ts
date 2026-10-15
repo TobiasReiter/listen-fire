@@ -23,7 +23,7 @@ jest.mock('../../lib/slack', () => ({ sendSlackNotification }));
 
 import { ScraperService, looksLikeSpaShell } from '../scraper';
 import { BudgetExhausted, NO_BUDGET_LIMIT } from 'movement-engine/lib/run_cost';
-import { withSpendMeter } from '../../lib/run_spend';
+import { withSpendMeter } from 'movement-engine/lib/run_spend';
 import { logger } from 'movement-engine/services/logger';
 
 const fetchMock = jest.fn();

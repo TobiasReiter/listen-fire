@@ -5,105 +5,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-
-const LF = resolve(__dirname, '../../bin/lf.cjs');
-const EXAMPLE = resolve(__dirname, '../../../../examples/lf-acme');
-
-/** The example project; with a fixture, its movements replaced by the
- *  fixture's folder (movements/<name>). */
-function project(fixture?: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'lf-example-'));
-  cpSync(EXAMPLE, dir, { recursive: true, filter: (src) => !src.includes(`${EXAMPLE}/.lf`) });
-  mkdirSync(join(dir, '.lf'), { recursive: true });
-  cpSync(join(dir, 'secrets.example.yaml'), join(dir, '.lf', 'secrets.yaml'));
-  if (fixture !== undefined) {
-    rmSync(join(dir, 'movements'), { recursive: true });
-    cpSync(resolve(__dirname, 'movements', fixture), join(dir, 'movements'), { recursive: true });
-  }
-  return dir;
-}
-
-function lf(dir: string, ...args: string[]): { code: number; out: string } {
-  const run = spawnSync(process.execPath, [LF, ...args], {
-    cwd: dir,
-    encoding: 'utf8',
-    env: { ...process.env, NODE_NO_WARNINGS: '1' },
-  });
-  return { code: run.status ?? -1, out: `${run.stdout}${run.stderr}` };
-}
-
-interface Served {
-  port: number;
-  lines: string[];
-  /** Resolves with the first output line matching, or rejects after `ms`. */
-  waitFor(pattern: RegExp, ms?: number): Promise<string>;
-  stop(): Promise<void>;
-}
-
-/** `lf serve` on a free port, its output collected. */
-async function served(dir: string, args: string[] = [], env: Record<string, string> = {}): Promise<Served> {
-  const server = spawn(process.execPath, [LF, 'serve', '--port', '0', ...args], {
-    cwd: dir,
-    env: { ...process.env, NODE_NO_WARNINGS: '1', ...env },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-  const lines: string[] = [];
-  const waiters: Array<{ pattern: RegExp; resolve: (line: string) => void }> = [];
-  createInterface({ input: server.stdout! }).on('line', (line) => {
-    lines.push(line);
-    for (const w of [...waiters]) {
-      if (w.pattern.test(line)) {
-        waiters.splice(waiters.indexOf(w), 1);
-        w.resolve(line);
-      }
-    }
-  });
-  const waitFor = (pattern: RegExp, ms = 20_000) =>
-    new Promise<string>((resolveLine, reject) => {
-      const seen = lines.find((l) => pattern.test(l));
-      if (seen !== undefined) return resolveLine(seen);
-      const timer = setTimeout(() => reject(new Error(`no line matching ${pattern} in ${ms}ms; saw:\n${lines.join('\n')}`)), ms);
-      waiters.push({ pattern, resolve: (line) => (clearTimeout(timer), resolveLine(line)) });
-    });
-  const exited = new Promise<void>((resolveExit) => server.once('exit', () => resolveExit()));
-  const line = await Promise.race([
-    waitFor(/serving on http:\/\/127\.0\.0\.1:(\d+)/),
-    exited.then(() => {
-      throw new Error(`lf serve exited:\n${lines.join('\n')}`);
-    }),
-  ]);
-  const port = Number(/:(\d+)\//.exec(line)?.[1]);
-  return {
-    port,
-    lines,
-    waitFor,
-    stop: async () => {
-      server.kill('SIGTERM');
-      await exited;
-    },
-  };
-}
-
-/** The port the started external listens on, read from its own state. */
-function externalPort(dir: string): number {
-  return Number(readFileSync(join(dir, '.lf/externals/acme_crm/port'), 'utf8'));
-}
-
-function crmCompanies(dir: string): Array<{ externalId: string; fields: { Name: string } }> {
-  const file = join(dir, '.lf/externals/acme_crm/state.json');
-  if (!existsSync(file)) return [];
-  return (JSON.parse(readFileSync(file, 'utf8')) as { companies: Array<{ externalId: string; fields: { Name: string } }> }).companies;
-}
-
-function companies(dir: string): string[] {
-  return crmCompanies(dir).map((c) => c.fields.Name);
-}
+import { LF, companies, crmCompanies, externalPort, lf, project, served } from './example';
 
 test('lf check: the example is clean', () => {
   const dir = project();

@@ -12,7 +12,7 @@ import {
   type AffinityOrganisation,
 } from './common';
 import { anthropicChat, anthropicChatStructured } from '../../lib/anthropic';
-import { parseJson } from '../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../lib/slack';
 import { notNull } from '../../lib/utils/nullability';

@@ -4,7 +4,7 @@ import { backOff } from 'exponential-backoff';
 import { parseJsonResponse } from '../../lib/utils/fetch';
 import { MINUTE, SECOND } from '../../constants';
 import { logger } from 'movement-engine/services/logger';
-import { Queue } from '../../lib/utils/queue';
+import { Queue } from 'movement-engine/lib/utils/queue';
 import { AirtableConfigurer } from './interface';
 import { services } from '../registry';
 import { encryptToken } from '../../lib/credentials';

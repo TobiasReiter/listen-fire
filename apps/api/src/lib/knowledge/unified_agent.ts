@@ -49,7 +49,7 @@ import {
   adapterRequiredCredentialType,
 } from '../../services/translation_graph/adapters/registry';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import { parseJson } from '../utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { getLibraryShelf, readBook } from './library';
 import { getMovementDoctrine } from './movement_handbook';
 import { executeCypher, getSchema, stripCypherComments, ParseError, TranspileError } from './cypher';

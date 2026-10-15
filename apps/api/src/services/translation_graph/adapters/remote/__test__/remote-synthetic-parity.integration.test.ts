@@ -9,6 +9,7 @@
 // trip the guard on each of them. The edge is named "Employer" and lands on
 // "Company", so an edge name confused with its target type fails too.
 
+import { hostedDocumentStore } from '../../../engine/files/retrieve';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
@@ -36,13 +37,13 @@ import type { FieldEvidence } from 'movement-engine/services/translation_graph/a
 import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type { Expression } from '#shared/expression/types';
-import type { RemoteAdapter, RemoteAdapterConfig } from '../index';
+import type { RemoteAdapter, RemoteAdapterConfig } from 'movement-engine/services/translation_graph/adapters/remote';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { BaseAdapter } from '../../base';
 import { naturalName } from '../../name_resolution';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
-import { createRemoteAdapter, fetchRemoteManifest } from '../index';
+import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
 import { unsupportedAssociation, writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
 
 /** The team the adapter's calls are made for (sent as `x-listen-fire-team`). */
@@ -345,7 +346,7 @@ beforeAll(async () => {
     credentialsId: randomUUID(),
   };
   const manifest = await fetchRemoteManifest(config, SECRET);
-  remote = createRemoteAdapter({ config, secret: SECRET, cacheScopeId: randomUUID(), manifest });
+  remote = createRemoteAdapter({ documents: hostedDocumentStore, config, secret: SECRET, cacheScopeId: randomUUID(), manifest });
 });
 
 afterAll(async () => {

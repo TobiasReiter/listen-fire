@@ -42,7 +42,7 @@ import {
   type Budget,
   type CostLine,
   type RunCostReport,
-} from 'movement-engine/lib/run_cost';
+} from './run_cost';
 
 /** The cap in microdollars, or undefined for no cap. Throws on a value that is
  *  set but is not a positive number — a typo here must not read as "no cap". */

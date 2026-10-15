@@ -157,6 +157,16 @@ The manifest file registers your server with a team:
 - Optional fields: `handbookSection` (`{ title, content }`, prose the authoring
   handbook shows about your system), `vocabulary` (an icon and event phrasing),
   `webhookEventTypeId`.
+- What a listen on your adapter may say, also optional:
+  - `subscribableEvents`: the values of a listen's `events: [...]`
+    (`listen to crm { events: ["company.created"] } fire welcome`). An event
+    is routed to that listen only when its `eventType` is one of them.
+  - `defaultSubscribedEvents`: what a listen with no `events` receives
+    (absent means every subscribable event).
+  - `listenConfig`: further keys, as `[{ key, required?, format? }]`, where
+    `format` is `cron`, `timezone`, `fields` or `strings`.
+  Declare them and the checker refuses any other key or event. Declare none
+  and a listen's config goes unchecked.
 
 Install it on the **Adapters** page, pasting the manifest and the secret
 together. An agent can instead give the user a link to enter the secret
@@ -190,8 +200,9 @@ Each example shows `params` → `result` (the `result` inside `ok: true`).
 }
 ```
 
-Listen-Fire reads only `protocolVersion` from it (see
-[installing](#the-manifest-and-installing)).
+The hosted product reads only `protocolVersion` from it (see
+[installing](#the-manifest-and-installing)). `lf`, which has no manifest file,
+reads every declaration from it, the listen declarations included.
 
 `webhookEventTypeId` (a string) is optional.
 

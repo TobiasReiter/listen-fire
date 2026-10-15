@@ -2,7 +2,7 @@
 //
 //   lf init [dir]
 //   lf check
-//   lf run --event <file.json>
+//   lf run --event <file.json> [--dry-run]
 //   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]…
 //   lf resume [<run-id>]
 //   lf serve [--port N]
@@ -22,7 +22,7 @@ import { checkFile } from './sources';
 const USAGE = `usage: lf <init|check|run|resume|serve|runs> [options]
   lf init [dir]
   lf check
-  lf run --event <file.json>
+  lf run --event <file.json> [--dry-run]
   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
   lf resume [<run-id>]
   lf serve [--port N]
@@ -36,6 +36,7 @@ async function main(argv: string[]): Promise<number> {
     options: {
       dir: { type: 'string', default: process.cwd() },
       ephemeral: { type: 'boolean', default: false },
+      'dry-run': { type: 'boolean', default: false },
       event: { type: 'string' },
       webhook: { type: 'string' },
       body: { type: 'string' },
@@ -89,7 +90,11 @@ async function main(argv: string[]): Promise<number> {
         let outcomes: RunOutcome[];
         if (values.event !== undefined) {
           const file = EventFile.parse(JSON.parse(readFileSync(values.event, 'utf8')));
-          outcomes = await fireEvent(session, { external: file.external, event: file.event as DiscriminableEvent });
+          outcomes = await fireEvent(session, {
+            external: file.external,
+            event: file.event as DiscriminableEvent,
+            dryRun: values['dry-run'],
+          });
         } else if (values.webhook !== undefined && values.body !== undefined) {
           outcomes = await receiveWebhook(session, {
             external: values.webhook,
@@ -167,6 +172,9 @@ function report(outcomes: RunOutcome[]): number {
     process.stdout.write(
       `run ${o.runId} ${o.file}:${o.movement} ${o.status} — ${o.writes} write(s), ${o.traceEntries} trace entr${o.traceEntries === 1 ? 'y' : 'ies'}${o.error ? `\n  ${o.error}` : ''}\n`,
     );
+    for (const w of o.captured ?? []) {
+      process.stdout.write(`  dry run, not written: ${JSON.stringify(w)}\n`);
+    }
   }
   return outcomes.some((o) => o.status === 'failed') ? 1 : 0;
 }

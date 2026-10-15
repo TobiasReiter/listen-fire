@@ -17,7 +17,7 @@ import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { services } from '../../../../../adapters/registry';
 import { storeKey } from '../../../../../adapters/document/interface';
-import { teamDocumentKeyPrefix } from '../document_store';
+import { teamDocumentKeyPrefix } from 'movement-engine/services/translation_graph/engine/files/document_store';
 import { useDocumentOwnership } from '../retrieve';
 
 export interface MemoryDocumentStore {

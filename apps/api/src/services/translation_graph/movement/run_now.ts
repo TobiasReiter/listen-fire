@@ -38,7 +38,7 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { teamDocumentKeyPrefix } from '../engine/files/document_store';
+import { teamDocumentKeyPrefix } from 'movement-engine/services/translation_graph/engine/files/document_store';
 import { services } from '../../../adapters/registry';
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { costMicrodollarsToUsd, runCostSummaries } from '../../../lib/llm_usage';

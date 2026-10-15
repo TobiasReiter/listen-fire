@@ -45,7 +45,7 @@ import { naturalName } from '../name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { isExposedFileUrl } from '../../engine/files/expose';
-import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
+import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
 import { streamFileRef } from '../../engine/files/retrieve';
 import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { uniformWalk } from '../hop';

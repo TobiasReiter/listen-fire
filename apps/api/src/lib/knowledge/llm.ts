@@ -15,14 +15,14 @@
 import { z } from 'zod';
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { ChatProvider } from '../models/chat';
+import type { ChatProvider } from 'movement-engine/lib/models/chat';
 import type { Provider, Resolved } from 'movement-engine/lib/models/map';
 import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { missingGoogleServiceAccountVars } from 'movement-engine/lib/google_cloud';
 import { chatCallFor } from '../models/chat';
 import { providerCredentialsPresent, resolveModel } from 'movement-engine/lib/models/map';
-import { anthropicKeyedChatProvider } from '../models/providers/anthropic';
+import { anthropicKeyedChatProvider } from 'movement-engine/lib/models/providers/anthropic';
 import { parseChatModelName } from 'movement-engine/lib/models/registry';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { logger } from 'movement-engine/services/logger';
@@ -89,7 +89,7 @@ function knowledgeLlmClient(env: NodeJS.ProcessEnv): { client: ChatProvider; res
   if (resolved.provider === 'anthropic') {
     const apiKey = knowledgeLlmKey(env);
     if (!apiKey) throw new KnowledgeLlmUnavailable();
-    return { client: anthropicKeyedChatProvider(apiKey), resolved };
+    return { client: anthropicKeyedChatProvider({ apiKey }), resolved };
   }
   if (!providerCredentialsPresent(resolved.provider, env)) {
     throw new KnowledgeLlmUnavailable(credentialsToSet(resolved.provider, env));

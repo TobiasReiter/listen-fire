@@ -3,7 +3,7 @@ import { backOff } from 'exponential-backoff';
 import uniq from 'lodash/uniq';
 
 import { parseJsonResponse } from '../../lib/utils/fetch';
-import { Queue } from '../../lib/utils/queue';
+import { Queue } from 'movement-engine/lib/utils/queue';
 import { logger } from 'movement-engine/services/logger';
 import { SECOND } from '../../constants';
 import { currentContext } from '../../services/context';
@@ -14,7 +14,7 @@ import {
   forgetMemoisedReadsUnder,
   isAdapterCallCeilingExceeded,
   memoisedRead,
-} from '../../services/translation_graph/segment_scope';
+} from 'movement-engine/services/translation_graph/segment_scope';
 import { sendSlackNotification } from '../../lib/slack';
 
 const RETRY_LIMIT = 5;

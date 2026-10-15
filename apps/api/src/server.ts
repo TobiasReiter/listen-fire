@@ -38,7 +38,7 @@ import { requireEnv } from './lib/utils/environment';
 import { assertModelMapConfigured, modelKeyWarning, providerCredentialsPresent, resolveModel } from 'movement-engine/lib/models/map';
 import { assertKnowledgeLlmModelConfigured, isKnowledgeLlmConfigured, knowledgeLlmModel } from './lib/knowledge/llm';
 import { assertJevConfigured } from './lib/jev/client';
-import { assertRunCostCapConfigured } from './lib/run_spend';
+import { assertRunCostCapConfigured } from 'movement-engine/lib/run_spend';
 import { assertExtractionTiersConfigured } from 'movement-engine/services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from 'movement-engine/services/movement_engine/call_depth';
 import { assertWriteLockTimeoutConfigured } from 'movement-engine/services/write_locks/write_locks';

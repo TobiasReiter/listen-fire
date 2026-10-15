@@ -11,12 +11,10 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import type { ExtractCallLlmClient } from 'movement-engine/services/movement_engine/extraction_call';
 import type {
-  Costed,
   EngineHost,
   HostExtractCallClient,
   HostLlmClient,
   HostTransformInvoker,
-  PricedAnswer,
   ResolveFileText,
 } from 'movement-engine/services/movement_engine/host';
 import type { CancelGate } from 'movement-engine/services/movement_engine/run';
@@ -28,8 +26,6 @@ import type { TriggerRunRecorder } from '../runs/trigger_run';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
-import { isBudgetExhausted, type Budget, type CostLine } from 'movement-engine/lib/run_cost';
-import { withSpendMeter } from '../../../lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import {
@@ -56,7 +52,8 @@ import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { resolveAdapter } from '../adapters/resolve';
 import { meteredArbitration } from '../engine/entity_match';
 import { adapterTable, type LiveAdapterResolver } from 'movement-engine/services/translation_graph/engine/adapter_table';
-import { hostSegments, segmentScopedCalls } from '../segment_scope';
+import { hostSegments, segmentScopedCalls } from 'movement-engine/services/translation_graph/segment_scope';
+import { metered, refusingPastBudget } from 'movement-engine/services/translation_graph/movement/metered';
 import { renderFileArtifactFor } from './file_render';
 import { withFileOwners } from '../engine/files/retrieve';
 import { teamOfTenant } from './tenant';
@@ -208,33 +205,6 @@ function usageScope(input: {
   if (triggerRunId === undefined) return (call) => call();
   return (call) =>
     new LlmUsageContext({ teamId: input.teamId, triggerRunId, cancelGate: input.cancel }).runAsync(call);
-}
-
-/** Serve one priced call under its request's budget; the answer comes back
- *  with every line spent — the meter's, and any the call reported of its own
- *  (a plugin's cost envelope). */
-async function metered<Request extends { budget: Budget }, Output extends object>(
-  request: Request,
-  call: (request: Request) => Promise<Costed<Output>>,
-): Promise<PricedAnswer<Output>> {
-  return refusingPastBudget(async () => {
-    const { value, cost } = await withSpendMeter(request.budget, () => call(request));
-    const lines: CostLine[] = [...cost, ...(value.cost ?? [])];
-    return { ...value, cost: lines };
-  });
-}
-
-/** A priced call refused past its budget answers the refusal, with what it
- *  spent first, rather than throwing it across the boundary. */
-async function refusingPastBudget<Output extends object>(
-  call: () => Promise<Costed<Output>>,
-): Promise<PricedAnswer<Output>> {
-  try {
-    return await call();
-  } catch (error) {
-    if (!isBudgetExhausted(error)) throw error;
-    return { error: { kind: 'budget', message: error.message }, cost: error.cost };
-  }
 }
 
 function billedLlmClient(client: LlmClient, usage: UsageScope): HostLlmClient {

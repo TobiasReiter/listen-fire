@@ -2,7 +2,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-import type { ChatProvider } from '../chat';
+import type { ChatProvider } from 'movement-engine/lib/models/chat';
 
 import { getEnvVar } from '../../utils/environment';
 
@@ -22,18 +22,4 @@ export function anthropicChatProvider(env: NodeJS.ProcessEnv = process.env): Cha
         because: 'it is the key for every model name that resolves to the anthropic provider',
       }),
   }));
-}
-
-// One per key rather than one per process: a unit that pays with its own key
-// (knowledge's `KNOWLEDGE_LLM_API_KEY`) must not share the platform's client.
-const keyedClients = new Map<string, Anthropic>();
-
-/** Anthropic's own API on a key the caller holds, rather than the platform's. */
-export function anthropicKeyedChatProvider(apiKey: string): ChatProvider {
-  let keyed = keyedClients.get(apiKey);
-  if (!keyed) {
-    keyed = new Anthropic({ apiKey });
-    keyedClients.set(apiKey, keyed);
-  }
-  return keyed;
 }

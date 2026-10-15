@@ -22,7 +22,7 @@ import type { CapturedWrite } from 'movement-engine/services/translation_graph/e
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { anthropicChat } from '../../../lib/anthropic';
-import { runCostCapFromEnv } from '../../../lib/run_spend';
+import { runCostCapFromEnv } from 'movement-engine/lib/run_spend';
 import { logger } from 'movement-engine/services/logger';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { resolveAdapterSlug } from '../adapters/registry';

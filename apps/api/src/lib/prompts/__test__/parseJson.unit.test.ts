@@ -1,7 +1,7 @@
 jest.mock('../../anthropic', () => ({}));
 jest.mock('movement-engine/services/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
-import { parseJson } from '../../utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { parseJsonReply } from '../execute';
 
 describe('parseJson', () => {

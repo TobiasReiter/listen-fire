@@ -10,7 +10,7 @@ jest.mock('../file_text', () => ({
     resolverStores.push(store);
     return async () => {
       if (fileTextSpends) {
-        const spend = jest.requireActual('../../../../lib/run_spend');
+        const spend = jest.requireActual('movement-engine/lib/run_spend');
         spend.reportRunCost({ source: { kind: 'model', name: 'whisper' }, microdollars: 700 });
         spend.assertRunBudget();
       }

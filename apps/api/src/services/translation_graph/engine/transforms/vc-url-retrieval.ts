@@ -21,7 +21,7 @@ import type { TransformSignature } from 'movement-engine/services/translation_gr
 
 import { anthropicChat } from '../../../../lib/anthropic';
 import { runFields } from '../../../../lib/llm_usage';
-import { parseJson } from '../../../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { logger } from 'movement-engine/services/logger';
 import { emissionOf, fetchWithTimeout } from './fetch_resource';
 import { VC_URL_RETRIEVAL_HANDBOOK_SECTION } from './vc_url_retrieval_handbook_section';

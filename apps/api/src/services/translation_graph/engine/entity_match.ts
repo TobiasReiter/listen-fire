@@ -26,7 +26,7 @@ import {
   type JevNoulQuestion,
 } from '../../../lib/jev/client';
 import { isBudgetExhausted } from 'movement-engine/lib/run_cost';
-import { withSpendMeter } from '../../../lib/run_spend';
+import { withSpendMeter } from 'movement-engine/lib/run_spend';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { logger } from 'movement-engine/services/logger';
 import { arbitrateWithoutJudge, type UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
