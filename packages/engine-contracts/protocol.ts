@@ -555,7 +555,34 @@ export const WireInvokeFieldFunctionInput = z.object({
   }),
 });
 
+/**
+ * What a listen on this adapter may say — declared, so the checker can refuse a
+ * listen config the adapter would never route, and type a config-less listen.
+ * The same three declarations a built-in adapter's manifest makes:
+ *   - `subscribableEvents`: the values of a listen's `events: [...]` (an event's
+ *     `eventType` is matched against them when routing);
+ *   - `defaultSubscribedEvents`: what a listen with no `events` receives
+ *     (absent ⇒ every subscribable event);
+ *   - `listenConfig`: further keys, whether a listen must carry each, and a
+ *     static value format the checker validates.
+ * All optional: an adapter declaring none leaves its listen config unchecked.
+ */
+export const WireListenDeclarations = z.object({
+  subscribableEvents: z.array(z.string().min(1)).optional(),
+  defaultSubscribedEvents: z.array(z.string().min(1)).optional(),
+  listenConfig: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        required: z.boolean().optional(),
+        format: z.enum(['cron', 'timezone', 'fields', 'strings']).optional(),
+      }),
+    )
+    .optional(),
+});
+
 export const WireManifestResult = z.object({
+  ...WireListenDeclarations.shape,
   protocolVersion: WireManifestProtocolVersion,
   adapterType: z.string(),
   supportedTriggers: z.array(z.string()),

@@ -12,7 +12,7 @@
 // Registration
 
 import { z } from 'zod';
-import { WireManifestProtocolVersion } from 'engine-contracts';
+import { WireListenDeclarations, WireManifestProtocolVersion } from 'engine-contracts';
 
 import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
@@ -84,6 +84,10 @@ export const RemoteAdapterManifestFile = z.object({
    *  to "needs connecting"; `resolveAdapter` errors until it is set. */
   credentialsId: z.string().uuid().optional(),
   supportedTriggers: z.array(z.string()),
+  /** What a listen on it may say (`events: [...]` and further keys) — the same
+   *  declarations a built-in's manifest makes, so the checker refuses a listen
+   *  config this adapter would never route. */
+  ...WireListenDeclarations.shape,
   /** Whole-adapter capability (mirrors `Adapter.runtimeCapabilities()`):
    *  incoming-edge traversal, edge properties, resources. Per-edge / per-field
    *  capability rides `describe()`, not here. */
@@ -150,6 +154,11 @@ export function remoteAdapterManifest(file: RemoteAdapterManifestFile): AdapterM
       : {}),
     ...(file.vocabulary !== undefined ? { vocabulary: file.vocabulary } : {}),
     supportedTriggers: file.supportedTriggers as readonly TriggerType[],
+    ...(file.subscribableEvents !== undefined ? { subscribableEvents: file.subscribableEvents } : {}),
+    ...(file.defaultSubscribedEvents !== undefined
+      ? { defaultSubscribedEvents: file.defaultSubscribedEvents }
+      : {}),
+    ...(file.listenConfig !== undefined ? { listenConfig: file.listenConfig } : {}),
     methods: file.methods,
     introspectedSchema: true,
   };

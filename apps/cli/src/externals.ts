@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { METHODS, WireManifestProtocolVersion } from 'engine-contracts';
+import { METHODS, WireListenDeclarations, WireManifestProtocolVersion } from 'engine-contracts';
 import { authHeader, parseWireResult, postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import {
@@ -76,6 +76,9 @@ export interface RunningExternal {
   supportedTriggers: string[];
   runtimeCapabilities: z.infer<typeof METHODS.manifest.result>['runtimeCapabilities'];
   webhookEventTypeId?: string;
+  /** What a listen on it may say, from its manifest answer — the declarations
+   *  the hosted product reads from the install's manifest file. */
+  listen: z.infer<typeof WireListenDeclarations>;
   stop(): void;
 }
 
@@ -129,6 +132,7 @@ export async function startExternals(input: {
         methods: [],
         supportedTriggers: [],
         runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
+        listen: {},
         stop,
       };
       running.set(external.manifest.name, shell);
@@ -148,6 +152,7 @@ export async function startExternals(input: {
       shell.methods = manifest.methods;
       shell.supportedTriggers = manifest.supportedTriggers;
       shell.runtimeCapabilities = manifest.runtimeCapabilities;
+      shell.listen = WireListenDeclarations.parse(manifest);
       if (manifest.webhookEventTypeId !== undefined) shell.webhookEventTypeId = manifest.webhookEventTypeId;
     }
   } catch (error) {
