@@ -8,17 +8,22 @@
 
 use std::rc::Rc;
 
-use movement_parser::ast::{ClosureExpression, ConstructionCall, ExprSlot, ParamTypeRef, RValue, TypeRef, ValueType};
+use movement_parser::ast::{ClosureExpression, ConstructionCall, ExprSlot, ParamTypeRef, PathHead, PathRoot, RValue, TypeRef, ValueType};
 use movement_parser::catalog::snapshot::Args;
-use movement_parser::lowering::expression::Expression;
+use movement_parser::lowering::expression::{Expression, TraversalStep};
 
 use crate::checker::Checker;
 use crate::scope::{Resolution, ScopeId, SymbolKind};
 use crate::slots::expression_of_slot;
-use crate::types::field::{Ty, maybe_absent, strip_absent, unify_value_types};
+use crate::types::field::{Ty, maybe_absent, record_head_position, strip_absent, unify_value_types, widen_tuples};
 use crate::types::position::{ClosureParam, ClosureType, Instance, PlaneType, Position, ReturnShape, position_ref_in};
 use crate::types::scope_env::{ScopeEnv, SymbolTypes};
 use crate::types::Typing;
+use crate::types::field::is_maybe_absent;
+use crate::types::narrowing::{PresenceProof, negative_presence_proofs, presence_proofs};
+use crate::types::position::{narrow_present, narrow_present_node};
+use crate::slots::condition_of_slot;
+use movement_parser::lowering::condition::MovementCondition;
 
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
@@ -35,6 +40,115 @@ impl Checker<'_> {
         let ty = typing.infer(&expr);
         let may_hold = typing.may_hold_type(&expr);
         Some((expr, ty, may_hold))
+    }
+
+    /// `checkPathHead`, the typing half: where a walk's root starts (a name
+    /// on the arrow plane, or one holding a record) and its parsed steps.
+    pub fn head_walk(&self, head: &PathHead, scope: ScopeId) -> (Option<Position>, Option<Vec<TraversalStep>>) {
+        let root_type = match &head.root {
+            Some(PathRoot::Name { name }) => match self.scopes.resolve(scope, name) {
+                Resolution::Found(id) => {
+                    let types = &self.scopes.symbol(id).types;
+                    types.pos.clone().or_else(|| record_head_position(widen_tuples(types.field.clone(), self.version).as_ref()))
+                }
+                _ => None,
+            },
+            Some(PathRoot::Expression { expr }) => self.type_of_slot(expr, scope).and_then(|(_, ty, _)| record_head_position(ty.as_ref())),
+            None => None,
+        };
+        let root = match &head.root {
+            None => String::new(),
+            Some(PathRoot::Name { name }) => crate::families::names::spell_name(name),
+            Some(PathRoot::Expression { .. }) => "__movement_expression_root__".to_string(),
+        };
+        let steps = match crate::slots::expression_of_text(&format!("{root}{}.`__movement_head_probe__`", head.hops_raw)) {
+            Ok(Expression::Traverse { steps, .. }) => Some(steps),
+            _ => None,
+        };
+        (root_type, steps)
+    }
+
+    /// What an `if` statement proves (`checkIf`'s presence narrowing):
+    /// each arm's condition holds inside it; every arm's condition failed
+    /// inside the `else`; and past the statement, an arm that always leaves
+    /// proves its condition false (while every earlier arm leaves too), and
+    /// the one arm that falls through beside a leaving `else` proves its
+    /// condition true. `IS` narrowing is not modelled here.
+    pub fn narrow_arm(&mut self, condition: &ExprSlot, scope: ScopeId, arm: ScopeId) {
+        let span = condition.span;
+        let Ok(condition) = condition_of_slot(condition) else { return };
+        self.narrow_holds(&condition, scope, arm, span);
+    }
+
+    /// `narrowConditionNegation`: a top-level conjunction proves nothing false.
+    pub fn narrow_fails(&mut self, slot: &ExprSlot, scope: ScopeId, into: ScopeId) {
+        let Ok(MovementCondition::Expr { expr }) = condition_of_slot(slot) else { return };
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            negative_presence_proofs(&expr, &mut |operand| typing.infer(operand))
+        };
+        self.declare_presence(&proofs, scope, into);
+    }
+
+    /// `narrowConditionHolds`: each conjunct of the condition, proved true.
+    pub fn narrow_holds_slot(&mut self, slot: &ExprSlot, scope: ScopeId, into: ScopeId) {
+        let Ok(condition) = condition_of_slot(slot) else { return };
+        self.narrow_holds(&condition, scope, into, slot.span);
+    }
+
+    fn narrow_holds(&mut self, condition: &MovementCondition, scope: ScopeId, into: ScopeId, span: movement_parser::ast::Span) {
+        match condition {
+            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.narrow_holds(c, into, into, span)),
+            MovementCondition::IsTest { .. } => {}
+            MovementCondition::Expr { expr } => {
+                let proofs = {
+                    let env = self.typing_env(scope);
+                    let mut typing = Typing::new(&env, self.version, span);
+                    presence_proofs(expr, &mut |operand| typing.infer(operand))
+                };
+                self.declare_presence(&proofs, scope, into);
+            }
+        }
+    }
+
+    /// `declarePresence`: each proven name shadowed by its narrowed self.
+    fn declare_presence(&mut self, proofs: &[PresenceProof], scope: ScopeId, into: ScopeId) {
+        for proof in proofs {
+            let Resolution::Found(id) = self.scopes.resolve(scope, proof.root()) else { continue };
+            let symbol = self.scopes.symbol(id).clone();
+            let mut narrowed = symbol.clone();
+            match proof {
+                PresenceProof::NonBlank { property, .. } => {
+                    if !matches!(symbol.kind, SymbolKind::Param | SymbolKind::Alias | SymbolKind::Binding) {
+                        continue;
+                    }
+                    match property {
+                        None => narrowed.types.non_blank = true,
+                        Some(property) => {
+                            narrowed.types.non_blank_fields.insert(property.clone());
+                        }
+                    }
+                }
+                PresenceProof::Field { property, .. } => {
+                    let Some(position) = symbol_position(&symbol.types) else { continue };
+                    let Some(position) = narrow_present(&position, property) else { continue };
+                    narrowed.types.pos = Some(position);
+                }
+                PresenceProof::Binding { .. } => {
+                    if symbol.types.pos.is_none() && symbol.types.field.is_some() {
+                        let Some(field) = symbol.types.field.as_ref().filter(|f| is_maybe_absent(Some(f))) else { continue };
+                        narrowed.types.field = Some(strip_absent(field).clone());
+                    } else {
+                        let Some(position) = symbol_position(&symbol.types) else { continue };
+                        let Some(position) = narrow_present_node(&position) else { continue };
+                        narrowed.types.pos = Some(position);
+                    }
+                }
+            }
+            let narrowed = self.scopes.add_symbol(narrowed);
+            self.scopes.declare(into, narrowed);
+        }
     }
 
     /// Gives `name`, bound in `scope` itself, its types.
@@ -71,20 +185,15 @@ impl Checker<'_> {
             }
             _ => return SymbolTypes::default(),
         };
-        // A credential imported under an alias names its connection by the imported name.
-        let credential = self.catalog.adapter(&adapter).and_then(movement_parser::catalog::helpers::credential_arg_of).map(|a| a.name.clone());
+        let credential_arg = self.catalog.adapter(&adapter).and_then(movement_parser::catalog::helpers::credential_arg_of).map(|a| a.name.clone());
         let args: Args = construct
             .args
             .iter()
+            .filter(|a| a.name != "dry_run")
             .map(|a| {
-                let aliased = (Some(&a.name) == credential.as_ref())
-                    .then(|| movement_parser::catalog::helpers::unwrap_credential_arg(a.value.raw.trim()))
-                    .flatten()
-                    .and_then(|name| match self.scopes.resolve(scope, &name) {
-                        Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Credential => self.scopes.symbol(id).imported_name.clone(),
-                        _ => None,
-                    });
-                (a.name.clone(), aliased.unwrap_or_else(|| a.value.raw.clone()))
+                let raw = a.value.raw.trim().to_string();
+                let raw = if credential_arg.as_ref() == Some(&a.name) { self.imported_credential_name(&raw, scope) } else { raw };
+                (a.name.clone(), raw)
             })
             .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
@@ -133,9 +242,9 @@ impl Checker<'_> {
         }
     }
 
-    /// `positionFromTypeRef`, the part without hops: `<crm.Company>` is a
-    /// position (or a union) of the instance `crm`, `<crm>` the instance
-    /// itself, and a type written with hops names an event address.
+    /// `positionFromTypeRef`: `<crm.Company>` is a position (or a union) of
+    /// the instance `crm`, `<crm>` the instance itself, and `<crm-[:E]->>`
+    /// the position the event address names.
     pub fn position_from_type_ref(&self, reference: &TypeRef, scope: ScopeId) -> Option<Position> {
         let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph) else { return None };
         let Some(Position::Meta { instance }) = &self.scopes.symbol(id).types.pos else { return None };
@@ -201,6 +310,14 @@ impl Checker<'_> {
         };
         Some(ClosureType { label: "a closure".to_string(), params, returns })
     }
+}
+
+/// `positionTypeOf`: the record a name holds on the arrow plane, or as a value.
+fn symbol_position(types: &SymbolTypes) -> Option<Position> {
+    types.pos.clone().or_else(|| match &types.field {
+        Some(Ty::Record(Some(position))) => Some((**position).clone()),
+        _ => None,
+    })
 }
 
 /// `spellValueType`: a written value type as the author wrote it.

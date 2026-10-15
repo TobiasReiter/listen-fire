@@ -199,7 +199,7 @@ impl Checker<'_> {
     }
 
     /// `importedCredentialName`: the catalog's name for a credential named locally.
-    fn imported_credential_name(&self, local: &str, scope: ScopeId) -> String {
+    pub(crate) fn imported_credential_name(&self, local: &str, scope: ScopeId) -> String {
         let name = unwrap_credential_arg(local).unwrap_or_else(|| local.to_string());
         match self.scopes.resolve(scope, &name) {
             Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Credential => {

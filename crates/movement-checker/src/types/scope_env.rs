@@ -19,6 +19,10 @@ pub struct SymbolTypes {
     pub plural: Option<CollectionOrder>,
     /// Holds a record nobody can name.
     pub is_record: bool,
+    /// A guard in scope proved the value itself not blank (`nonBlank.value`).
+    pub non_blank: bool,
+    /// …or these fields read off it (`nonBlank.fields`).
+    pub non_blank_fields: std::collections::BTreeSet<String>,
 }
 
 pub struct ScopeEnv<'s> {
