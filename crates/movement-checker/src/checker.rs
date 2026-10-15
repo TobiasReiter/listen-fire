@@ -7,16 +7,18 @@
 use movement_parser::ast::{
     ArmExpression, AwaitExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CollectionOpExpression,
     CombinatorArms, CombinatorExpression, ConstructionCall, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
-    LinkTarget, MatchExpression, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
+    LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
 use movement_parser::catalog::helpers::credential_arg_of;
 use movement_parser::catalog::types::CatalogSnapshot;
 
-use crate::diagnostic::{Diagnostic, Severity};
+use crate::diagnostic::Diagnostic;
 use crate::families::names::spell_name;
-use crate::scope::{Resolution, ScopeId, ScopeKind, Scopes, Symbol, SymbolKind};
-use crate::slots::{collect_expression_names, expression_of_slot, expression_of_text, extract_hop_aliases, is_bare_ident, is_literal_word};
+use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
+use movement_parser::lowering::condition::MovementCondition;
+
+use crate::slots::{collect_expression_names, condition_of_slot, expression_of_slot, expression_of_text, extract_hop_aliases, is_bare_ident, is_literal_word};
 
 /// `EXPRESSION_ROOT_PROBE`: what an expression root is spelled as in a probe.
 const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
@@ -27,7 +29,6 @@ const SCALAR_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datet
 pub struct Checker<'c> {
     pub catalog: &'c CatalogSnapshot,
     pub version: u32,
-    pub upgrading_from: Option<u32>,
     /// Whether file imports resolve (the snapshot carries files).
     pub resolves_files: bool,
     pub scopes: Scopes,
@@ -42,11 +43,13 @@ pub struct Bound {
     pub is_closure: bool,
     /// A construction bound to a name is an instance, not a plain binding.
     pub is_instance: bool,
+    /// For an instance: the adapter that constructed it.
+    pub adapter: Option<String>,
 }
 
 impl<'c> Checker<'c> {
-    pub fn new(catalog: &'c CatalogSnapshot, version: u32, upgrading_from: Option<u32>, resolves_files: bool) -> Self {
-        Checker { catalog, version, upgrading_from, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0 }
+    pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0 }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -59,14 +62,8 @@ impl<'c> Checker<'c> {
         self.push(Diagnostic::error(code, message, span));
     }
 
-    pub fn report_with(&mut self, code: &str, message: impl Into<String>, span: Span, severity: Severity) {
-        let mut diagnostic = Diagnostic::error(code, message, span);
-        diagnostic.severity = Some(severity);
-        self.push(diagnostic);
-    }
-
     pub fn run(&mut self, statements: &[Statement]) -> ScopeId {
-        let file = self.scopes.open(ScopeKind::File, None);
+        let file = self.scopes.open(None);
         self.check_statement_list(statements, file);
         file
     }
@@ -133,6 +130,7 @@ impl<'c> Checker<'c> {
                 if !self.scopes.has_own(scope, &shape.name) {
                     self.declare_authored(scope, Symbol::new(&shape.name, SymbolKind::Shape, shape.span), shape.span);
                 }
+                self.check_shape_descriptions(&shape.root, scope);
                 if let Some(base) = &shape.extends {
                     match self.scopes.resolve(scope, &base.name) {
                         Resolution::Found(_) => {}
@@ -142,14 +140,11 @@ impl<'c> Checker<'c> {
             }
             Statement::Movement(movement) => self.check_movement(movement, scope),
             Statement::Listen(listen) => {
-                if let Some(construct) = &listen.construct {
-                    self.check_construction(construct, scope);
-                } else {
-                    self.resolve_reference(&listen.instance, listen.span, scope);
-                }
-                for arg in &listen.config {
-                    self.check_expr_slot(&arg.value, scope);
-                }
+                let adapter = match &listen.construct {
+                    Some(construct) => self.check_construction(construct, scope),
+                    None => self.resolve_reference(&listen.instance, listen.span, scope).and_then(|id| self.scopes.symbol(id).adapter.clone()),
+                };
+                self.check_listen_config(listen, adapter.as_deref(), scope);
                 let callee = self.callee_name(&listen.movement, scope);
                 self.resolve_reference(&callee, listen.span, scope);
             }
@@ -174,12 +169,12 @@ impl<'c> Checker<'c> {
             }
             Statement::If(statement) => {
                 for arm in &statement.arms {
-                    self.check_expr_slot(&arm.condition, scope);
-                    let arm_scope = self.scopes.open(ScopeKind::Branch, Some(scope));
+                    self.check_condition_slot(&arm.condition, scope);
+                    let arm_scope = self.scopes.open(Some(scope));
                     self.check_statement_list(&arm.body, arm_scope);
                 }
                 if let Some(else_arm) = &statement.else_arm {
-                    let else_scope = self.scopes.open(ScopeKind::Branch, Some(scope));
+                    let else_scope = self.scopes.open(Some(scope));
                     self.check_statement_list(&else_arm.body, else_scope);
                 }
             }
@@ -197,8 +192,8 @@ impl<'c> Checker<'c> {
     pub fn check_rvalue(&mut self, value: &RValue, scope: ScopeId, name: Option<&str>) -> Bound {
         match value {
             RValue::Construct { construct } => {
-                self.check_construction(construct, scope);
-                return Bound { is_closure: false, is_instance: name.is_some() };
+                let adapter = self.check_construction(construct, scope);
+                return Bound { is_closure: false, is_instance: name.is_some(), adapter };
             }
             RValue::Call { call } => self.check_call(call, scope),
             RValue::Write { write } => self.check_write(write, scope),
@@ -224,17 +219,14 @@ impl<'c> Checker<'c> {
             RValue::Collection { collection } => self.check_collection_op(collection, scope),
             RValue::Members { .. } => {}
             RValue::InlineBlock { inline_block } => {
-                let block_scope = self.scopes.open(ScopeKind::Branch, Some(scope));
+                let block_scope = self.scopes.open(Some(scope));
                 self.check_statement_list(&inline_block.body, block_scope);
             }
             RValue::Callback { callback } => {
                 match &callback.subject {
                     CallbackSubject::Inline { closure, .. } => self.check_closure(closure, scope, None),
-                    CallbackSubject::Named { movement, args, span, .. } => {
-                        let callee = self.callee_name(movement, scope);
-                        self.resolve_reference(&callee, *span, scope);
-                        self.check_call_args(args, scope);
-                    }
+                    // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
+                    CallbackSubject::Named { args, .. } => self.check_call_args(args, scope),
                 }
                 for arg in &callback.config {
                     self.check_expr_slot(&arg.value, scope);
@@ -242,7 +234,7 @@ impl<'c> Checker<'c> {
             }
             RValue::Closure { closure } => {
                 self.check_closure(closure, scope, name);
-                return Bound { is_closure: true, is_instance: false };
+                return Bound { is_closure: true, ..Bound::default() };
             }
             RValue::Node { node } => self.check_node_literal(node, scope),
             RValue::Lazy { lazy } => {
@@ -285,9 +277,79 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_construction(&mut self, construct: &ConstructionCall, scope: ScopeId) {
+    /// The config slots `checkListen` reads as expressions: every key the
+    /// listener accepts, except a type reference and a `fields` list (bare
+    /// property names, not names in scope).
+    fn check_listen_config(&mut self, listen: &movement_parser::ast::ListenDeclaration, adapter: Option<&str>, scope: ScopeId) {
+        let spec = adapter.and_then(|a| self.catalog.adapter(a));
+        for arg in &listen.config {
+            if let Some(spec) = spec
+                && !spec.trigger_config.as_ref().is_some_and(|accepted| accepted.contains(&arg.name))
+            {
+                continue;
+            }
+            if arg.is_type == Some(true) {
+                continue;
+            }
+            let format = spec.and_then(|s| s.trigger_config_formats.as_ref()).and_then(|f| f.0.get(&arg.name));
+            if format == Some(&movement_parser::catalog::types::TriggerConfigFormat::Fields) {
+                continue;
+            }
+            self.check_expr_slot(&arg.value, scope);
+        }
+    }
+
+    /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
+    /// tests name a subject and a type.
+    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        let Ok(condition) = condition_of_slot(slot) else { return };
+        self.check_condition(&condition, slot, scope);
+    }
+
+    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId) {
+        match condition {
+            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope)),
+            MovementCondition::IsTest { subject_raw, type_ } => {
+                let subject = subject_raw.trim();
+                if is_bare_ident(subject) {
+                    self.resolve_name(subject, slot.span, scope);
+                } else {
+                    self.check_expr_slot(&ExprSlot::plain(subject_raw.clone(), slot.span), scope);
+                }
+                self.resolve_name(&type_.graph, slot.span, scope);
+            }
+            MovementCondition::Expr { expr } => {
+                let names = collect_expression_names(expr);
+                for name in names.distinct_refs() {
+                    if !names.aliases.contains(name) {
+                        self.resolve_name(name, slot.span, scope);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `checkConstruction`, the name half; the adapter it constructs, when its callee is one.
+    fn check_construction(&mut self, construct: &ConstructionCall, scope: ScopeId) -> Option<String> {
         match self.scopes.resolve(scope, &construct.callee) {
-            Resolution::Found(_) => {}
+            Resolution::Found(id) => {
+                let callee = self.scopes.symbol(id);
+                if callee.kind != SymbolKind::Adapter {
+                    return None; // MOV_CONSTRUCT_NOT_ADAPTER: the systems family's.
+                }
+                let adapter = callee.imported_name.clone().unwrap_or_else(|| construct.callee.clone());
+                let Some(credential) = self.catalog.adapter(&adapter).and_then(credential_arg_of).map(|a| a.name.clone()) else {
+                    return Some(adapter);
+                };
+                for arg in construct.args.iter().filter(|a| a.name == credential) {
+                    // An argument that is no name is MOV_CRED_WRONG_ADAPTER: the systems family's.
+                    let Some(name) = movement_parser::catalog::helpers::unwrap_credential_arg(arg.value.raw.trim()) else { continue };
+                    if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) = self.scopes.resolve(scope, &name) {
+                        self.report_resolution_failure(&name, arg.value.span, failure);
+                    }
+                }
+                return Some(adapter);
+            }
             Resolution::Unknown if self.catalog.adapter(&construct.callee).is_some() => {
                 let credential = self.catalog.adapter(&construct.callee).and_then(credential_arg_of).map(|a| a.name.clone());
                 let slot = credential.and_then(|name| construct.args.iter().find(|a| a.name == name)).map(|a| &a.value);
@@ -295,6 +357,7 @@ impl<'c> Checker<'c> {
             }
             failure => self.report_resolution_failure(&construct.callee, construct.span, failure),
         }
+        None
     }
 
     fn check_movement(&mut self, movement: &MovementDeclaration, scope: ScopeId) {
@@ -302,19 +365,22 @@ impl<'c> Checker<'c> {
             self.check_function_name(&movement.name, movement.span, scope);
             self.declare_authored(scope, Symbol::new(&movement.name, SymbolKind::Movement, movement.span), movement.span);
         }
-        let body = self.scopes.open(ScopeKind::Movement, Some(scope));
+        let body = self.scopes.open(Some(scope));
         for param in &movement.params {
             let Some(type_) = &param.type_ else { continue };
             self.check_param_type(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
         }
         self.check_statement_list(&movement.body, body);
+        if let Some(returns) = &movement.return_type {
+            self.check_param_type(returns, scope);
+        }
     }
 
     /// A parameter's type: a graph's name resolves; a value type names nothing.
     fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) {
         let ParamTypeRef::Name(reference) = type_ else { return };
-        if reference.position.is_none() && reference.hops_raw.is_none() {
+        if reference.position.is_none() && reference.hops_raw.is_none() && self.version >= 3 {
             if SCALAR_TYPE_NAMES.contains(&reference.graph.as_str()) {
                 return;
             }
@@ -328,7 +394,7 @@ impl<'c> Checker<'c> {
     }
 
     pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, _self_name: Option<&str>) {
-        let body = self.scopes.open(ScopeKind::Branch, Some(scope));
+        let body = self.scopes.open(Some(scope));
         for param in &closure.params {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
@@ -340,6 +406,18 @@ impl<'c> Checker<'c> {
         if let Some(expression) = &call.expression {
             self.check_expr_slot(expression, scope);
             return;
+        }
+        if !crate::families::names::is_builtin_name(&call.callee) {
+            let callee = self.callee_name(&call.callee, scope);
+            match self.scopes.resolve(scope, &callee) {
+                Resolution::Found(_) => {}
+                Resolution::Unknown
+                    if self.version >= 3 && self.catalog.adapter(&callee).is_none() && self.catalog.plugin(&callee).is_none() =>
+                {
+                    // MOV_FUNCTION_UNKNOWN: the calls family's.
+                }
+                failure => self.report_resolution_failure(&callee, call.span, failure),
+            }
         }
         self.check_call_args(&call.args, scope);
     }
@@ -378,8 +456,12 @@ impl<'c> Checker<'c> {
 
     fn check_write(&mut self, write: &WriteExpression, scope: ScopeId) {
         self.check_target(&write.target, scope);
-        for clause in &write.unique_by {
-            self.check_expr_slot(&clause.predicate, scope);
+        // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
+        if let Some(bind) = &write.bind
+            && self.version < 5
+            && let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) = self.scopes.resolve(scope, &bind.name)
+        {
+            self.report_resolution_failure(&bind.name, bind.span, failure);
         }
         for field in &write.fields {
             self.check_expr_slot(&field.value, scope);
@@ -392,9 +474,6 @@ impl<'c> Checker<'c> {
 
     fn check_match(&mut self, matched: &MatchExpression, scope: ScopeId) {
         self.check_target(&matched.target, scope);
-        for clause in &matched.unique_by {
-            self.check_expr_slot(&clause.predicate, scope);
-        }
         for field in &matched.fields {
             self.check_expr_slot(&field.value, scope);
         }
@@ -422,16 +501,50 @@ impl<'c> Checker<'c> {
             for call in stage.through.iter().flatten() {
                 self.resolve_name(&call.plugin, call.span, scope);
             }
+            for field in &stage.fields {
+                self.check_expr_slot(&field.description, scope);
+            }
             for child in &stage.children {
                 match child {
-                    ExtractNode::Declared(node) => self.check_extract_stages(&node.stages, scope),
-                    ExtractNode::Inline(node) => self.check_extract_stages(&node.stages, scope),
+                    ExtractNode::Declared(node) => {
+                        if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) =
+                            self.scopes.resolve(scope, &node.declared.type_)
+                        {
+                            self.report_resolution_failure(&node.declared.type_, node.declared.span, failure);
+                        }
+                        if let Some(description) = &node.description {
+                            self.check_expr_slot(description, scope);
+                        }
+                        self.check_extract_stages(&node.stages, scope)
+                    }
+                    ExtractNode::Inline(node) => {
+                        self.check_expr_slot(&node.description, scope);
+                        self.check_extract_stages(&node.stages, scope)
+                    }
                 }
             }
         }
     }
 
+    /// `checkShapeDescriptions`: a node declaration's words may interpolate names.
+    fn check_shape_descriptions(&mut self, node: &ShapeNode, scope: ScopeId) {
+        if let Some(description) = &node.description {
+            self.check_expr_slot(description, scope);
+        }
+        for field in &node.fields {
+            if let Some(description) = &field.description {
+                self.check_expr_slot(description, scope);
+            }
+        }
+        for child in &node.children {
+            self.check_shape_descriptions(child, scope);
+        }
+    }
+
     fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) {
+        if let Some(shape) = node.graph.as_ref().and_then(|g| g.shape.as_ref()) {
+            self.resolve_name(&shape.name, shape.span, scope);
+        }
         for entry in &node.entries {
             match entry {
                 NodeEntry::Value { value, .. } => self.check_expr_slot(value, scope),
@@ -458,7 +571,7 @@ impl<'c> Checker<'c> {
 
     /// `landingScope`: the scope a walk's tail is read in, holding its hop aliases.
     fn open_landing(&mut self, scope: ScopeId, aliases: &[String], span: Span) -> ScopeId {
-        let landing = self.scopes.open(ScopeKind::Traversal, Some(scope));
+        let landing = self.scopes.open(Some(scope));
         for alias in aliases {
             self.declare_authored(landing, Symbol::new(alias, SymbolKind::Alias, span), span);
         }

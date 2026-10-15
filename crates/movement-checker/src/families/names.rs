@@ -34,6 +34,12 @@ const FLAT_BUILTINS: &[&str] = &[
     "FILTER", "REDUCE", "GROUPBY", "KEYBY", "MEMBERS", "EXTRACT", "EXTRACTONE",
 ];
 
+/// Whether `name` calls a built-in: a flat one in any letter case, or a
+/// namespaced one (`TEXT.SLUG`).
+pub fn is_builtin_name(name: &str) -> bool {
+    name.contains('.') || FLAT_BUILTINS.contains(&name.to_uppercase().as_str())
+}
+
 /// `spellName`: a name as source text, backticked when it is not bare.
 pub fn spell_name(name: &str) -> String {
     if is_bare_ident(name) { name.to_string() } else { format!("`{name}`") }
@@ -287,6 +293,7 @@ impl Checker<'_> {
         let kind = if bound.is_instance { SymbolKind::Instance } else { SymbolKind::Binding };
         let mut symbol = Symbol::new(name, kind, span);
         symbol.is_closure = bound.is_closure;
+        symbol.adapter = bound.adapter.clone();
         if symbol.is_function() {
             self.check_function_name(name, span, scope);
         }

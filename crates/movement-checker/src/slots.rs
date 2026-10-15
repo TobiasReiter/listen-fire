@@ -22,6 +22,12 @@ pub fn expression_of_slot(slot: &ExprSlot) -> Result<Expression, SlotError> {
     expression_of_text(&slot.raw)
 }
 
+/// `conditionOfSlot`: the slot as an `if` condition.
+pub fn condition_of_slot(slot: &ExprSlot) -> Result<movement_parser::lowering::condition::MovementCondition, SlotError> {
+    let tree = parse_expression(&slot.raw).map_err(|e| SlotError { message: e.message.clone(), code: None })?;
+    movement_parser::lowering::lower_condition(&tree, &slot.raw).map_err(|e| SlotError { message: e.message.clone(), code: e.code.clone() })
+}
+
 /// `parseMovementExpression`: a text that is not a slot.
 pub fn expression_of_text(raw: &str) -> Result<Expression, SlotError> {
     let tree = parse_expression(raw).map_err(|e| SlotError { message: e.message.clone(), code: None })?;

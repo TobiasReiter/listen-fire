@@ -112,12 +112,12 @@ fn main() {
                     format!("MISSING v{version} {} {}", d["span"], d["message"])
                 }
             };
-            push_sample(&mut samples, code(d), sample, source);
+            push_sample(&mut samples, code(d), sample, source, &d["span"]);
         }
         for r in left.into_iter().flatten() {
             same_set = false;
             codes.get_mut(&code(r)).unwrap().extra += 1;
-            push_sample(&mut samples, code(r), format!("EXTRA v{version} {} {}", r["span"], r["message"]), source);
+            push_sample(&mut samples, code(r), format!("EXTRA v{version} {} {}", r["span"], r["message"]), source, &r["span"]);
         }
         if same_set {
             corpus.same_set += 1;
@@ -135,11 +135,13 @@ fn code(d: &Value) -> String {
     d["code"].as_str().unwrap_or("?").to_string()
 }
 
-fn push_sample(samples: &mut BTreeMap<String, Vec<String>>, code: String, sample: String, source: &str) {
+/// Up to 12 per code, each with the source line its span starts on.
+fn push_sample(samples: &mut BTreeMap<String, Vec<String>>, code: String, sample: String, source: &str, span: &Value) {
     let list = samples.entry(code).or_default();
-    if list.len() < 6 {
-        let head: String = source.chars().take(600).collect();
-        list.push(format!("{sample}\n  source: {head:?}"));
+    if list.len() < 12 {
+        let line = span["start"]["line"].as_u64().unwrap_or(1) as usize;
+        let text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
+        list.push(format!("{sample}\n  line {line}: {}", text.trim()));
     }
 }
 

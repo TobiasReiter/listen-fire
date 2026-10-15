@@ -74,17 +74,8 @@ pub struct ScopeId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScopeKind {
-    File,
-    Movement,
-    Traversal,
-    Branch,
-}
-
 #[derive(Debug)]
 pub struct Scope {
-    pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
     /// The last binding of each name, in first-declaration order (a `Map`'s).
     pub symbols: IndexMap<String, SymbolId>,
@@ -113,8 +104,10 @@ pub struct Scopes {
 }
 
 impl Scopes {
-    pub fn open(&mut self, kind: ScopeKind, parent: Option<ScopeId>) -> ScopeId {
-        self.scopes.push(Scope { kind, parent, symbols: IndexMap::new(), pending: HashSet::new(), escaped: IndexMap::new() });
+    /// A new scope under `parent`: the file's (none), a movement's or a
+    /// closure's body, a traversal block's, or an `if` arm's.
+    pub fn open(&mut self, parent: Option<ScopeId>) -> ScopeId {
+        self.scopes.push(Scope { parent, symbols: IndexMap::new(), pending: HashSet::new(), escaped: IndexMap::new() });
         ScopeId(self.scopes.len() - 1)
     }
 
@@ -149,10 +142,6 @@ impl Scopes {
 
     pub fn has_own(&self, scope: ScopeId, name: &str) -> bool {
         self.scopes[scope.0].symbols.contains_key(name)
-    }
-
-    pub fn own(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
-        self.scopes[scope.0].symbols.get(name).copied()
     }
 
     /// What an authored binding of `name` in `scope` would hide.

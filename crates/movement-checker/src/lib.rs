@@ -10,7 +10,7 @@ pub mod codes;
 mod diagnostic;
 pub mod families;
 mod scope;
-mod slots;
+pub mod slots;
 mod version;
 
 pub use diagnostic::{Diagnostic, Severity};
@@ -31,7 +31,7 @@ pub struct CheckOptions {
 /// `checkProgram`: the diagnostics for `program` under `options`.
 pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: CheckOptions) -> Vec<Diagnostic> {
     let resolves_files = catalog.files.is_some();
-    let mut checker = checker::Checker::new(catalog, options.language_version, options.upgrading_from, resolves_files);
+    let mut checker = checker::Checker::new(catalog, options.language_version, resolves_files);
     checker.run(&program.statements);
     version::standing_diagnostic(options.language_version)
         .into_iter()
