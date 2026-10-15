@@ -622,8 +622,9 @@ export type BindingShape =
        *  fields beyond `At`. */
       params: CallbackParamSpec[];
     }
-  /** Imports. */
-  | { kind: 'opaque'; what: string };
+  /** Imports. A credential import is marked: it is never a value in any
+   *  sense, so no read short-cuts past the refusal every other read gets. */
+  | { kind: 'opaque'; what: string; credential?: true };
 
 /**
  * The BINDING a runtime value IS, where it is one. A collection op hands each
@@ -1889,7 +1890,7 @@ async function presenceCompare(
           : undefined
       : undefined;
   const binding = name !== undefined ? ctx.env.resolve(name) : undefined;
-  if (binding !== undefined && binding.kind !== 'value') {
+  if (binding !== undefined && binding.kind !== 'value' && !(binding.kind === 'opaque' && binding.credential === true)) {
     return { value: compareToNull(op, true), provenance: NO_PROVENANCE };
   }
   const result = await evalMovementExpr(subject, ctx);

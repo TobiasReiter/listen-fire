@@ -4138,7 +4138,14 @@ class Interpreter {
           // below). The checker rejects a bare import used as a position
           // source or `listen to`, so the runtime never needs the old lazy
           // binding (spec plans/2026-06-24-required-instantiation/0_spec.md).
-          env.declare(alias ?? name, binding({ kind: 'opaque', what: 'import' }));
+          env.declare(
+            alias ?? name,
+            binding(
+              statement.source.namespace === 'credentials'
+                ? { kind: 'opaque', what: 'a credential', credential: true }
+                : { kind: 'opaque', what: 'import' },
+            ),
+          );
         }
         return;
       case 'assign': {

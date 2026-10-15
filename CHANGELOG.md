@@ -131,6 +131,15 @@ guide](docs/language/dancing-wren-migration.md).
 - The bundled store's credential is a new file in the config volume, `objectstore_password`;
   `minio_password` is left where it is for option (a) and the copy.
 
+### Security
+
+- A credential is never a value, on every language version (`MOV_CREDENTIAL_NOT_A_VALUE`). Its name
+  is allowed only as the `credentials:` argument where an integration is set up; the host resolves
+  it there. Every other use is refused when you save: bound to a name, read with a dot, put in a
+  string or a prompt, compared (with a null test too), passed to a function or a plugin, returned,
+  or written into a field. Why: it is a security boundary, and every such use already failed at
+  run time. The engine also stops answering a null test on a credential without reading it.
+
 ### Changed
 
 - **An automation runs on the engine its language version runs on.** `MOVEMENT_ENGINE` now defaults
@@ -649,6 +658,11 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
+  the credential the adapter was installed with, saying the remote install serves only its own. It
+  used to be ignored: two accounts on one remote adapter silently reached the install's account, so
+  writes landed in the wrong workspace. Naming the install's own credential, or none, is unchanged.
+  Per-run credentials for remote adapters are still to come.
 - A `parallel` or `race` arm that names a closure written in the movement body (`f = () => { … }`
   then `parallel([f, g])` or `race([f, g])`) and waits inside it resumes. It used to fail "resume:
   no body for arm 0", because the resume looked an arm's name up only as a movement. It now finds
