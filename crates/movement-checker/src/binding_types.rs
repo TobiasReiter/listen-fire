@@ -85,6 +85,10 @@ impl Checker<'_> {
     /// record (`bareNodeSymbol`), and anything else binds the value as written
     /// (`holdsValue`: a list literal stays the tuple it is).
     fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<SymbolTypes> {
+        // The slot as it was checked: each call it runs already hoisted to a name.
+        if let Some((_, hoisted)) = self.nested_call_rewrite(slot, scope) {
+            return self.type_of_bound_slot(&hoisted, scope);
+        }
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
         let mut typing = Typing::new(&env, self.version, slot.span);

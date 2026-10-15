@@ -3,18 +3,18 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **153 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14214 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 10437 of 11435.
-- Rust side: 2.6s; 0 records the Rust parser or catalog refused; 0 panics.
+- Diagnostics matched: 14220 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 10443 of 11435.
+- Rust side: 2.3s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2049 | 2050 |
+| checks under v5 | 2360 | 2052 | 2053 |
 | checks v1 | 1535 | 1373 | 1374 |
 | checks v2 | 1956 | 1743 | 1744 |
-| checks v3 | 2403 | 2091 | 2092 |
+| checks v3 | 2403 | 2094 | 2095 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -34,7 +34,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 25 | 0 | 314 | 32 | 282 | 0 | 0 |
 | records | 3 | 0 | 59 | 8 | 51 | 0 | 0 |
 | systems | 8 | 8 | 100 | 100 | 0 | 0 | 0 |
-| values | 22 | 8 | 1156 | 900 | 256 | 0 | 0 |
+| values | 22 | 8 | 1156 | 906 | 250 | 0 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
 | walks | 19 | 12 | 745 | 552 | 193 | 0 | 0 |
 | writes | 45 | 41 | 713 | 605 | 108 | 0 | 0 |
@@ -43,7 +43,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | code | family | TS | matched | missing in Rust | extra in Rust | message differs | parity |
 |---|---|---|---|---|---|---|---|
-| MOV_ABSENT_REQUIRED | values | 514 | 409 | 105 | 0 | 0 |  |
+| MOV_ABSENT_REQUIRED | values | 514 | 415 | 99 | 0 | 0 |  |
 | MOV_ADAPTER_NOT_CONSTRUCTED | systems | 28 | 28 | 0 | 0 | 0 | yes |
 | MOV_AI_TIER_LEGACY | systems | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_AMBIGUOUS_PROPERTY | walks | 4 | 4 | 0 | 0 | 0 | yes |

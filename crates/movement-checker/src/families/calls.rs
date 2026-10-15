@@ -498,24 +498,9 @@ impl Checker<'_> {
     /// spells, and the slot comes back reading those names in the calls'
     /// places. None when the slot holds no such call.
     pub fn hoist_nested_calls(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<ExprSlot> {
-        if !since(self.version, 3) {
-            return None;
-        }
-        let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
-        let mut read = Vec::new();
-        member_read_calls(&tree, &mut read);
-        let mut calls = Vec::new();
-        nested_calls(&tree, &|call| read.contains(&call.at()) || self.runs_as_call(call, scope), &mut calls);
-        if calls.is_empty() {
-            return None;
-        }
+        let (calls, rewritten) = self.nested_call_rewrite(slot, scope)?;
         let units: Vec<u16> = slot.raw.encode_utf16().collect();
-        let mut rewritten: Vec<u16> = Vec::with_capacity(units.len());
-        let mut from = 0;
-        for call in calls {
-            let at = call.at();
-            let span = span_of_extent(slot, at);
-            let name = nested_call_name(span);
+        for (at, span, name) in calls {
             let head = String::from_utf16_lossy(&units[..at.end]);
             let parsed = movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start);
             match &parsed {
@@ -545,9 +530,35 @@ impl Checker<'_> {
             if let Ok(value) = &parsed {
                 self.type_assigned(&name, value, scope);
             }
+        }
+        Some(rewritten)
+    }
+
+    /// `hoistNestedCalls`, the rewrite: each call an expression runs (in
+    /// source order), where it is and the name it is hoisted to, and the slot
+    /// with each call replaced by its name — padded to the call's length so
+    /// every later offset into the text is the original's.
+    pub fn nested_call_rewrite(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Vec<(At, Span, String)>, ExprSlot)> {
+        if !since(self.version, 3) {
+            return None;
+        }
+        let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
+        let mut read = Vec::new();
+        member_read_calls(&tree, &mut read);
+        let mut calls = Vec::new();
+        nested_calls(&tree, &|call| read.contains(&call.at()) || self.runs_as_call(call, scope), &mut calls);
+        if calls.is_empty() {
+            return None;
+        }
+        let units: Vec<u16> = slot.raw.encode_utf16().collect();
+        let mut rewritten: Vec<u16> = Vec::with_capacity(units.len());
+        let mut from = 0;
+        let mut hoisted = Vec::new();
+        for call in calls {
+            let at = call.at();
+            let span = span_of_extent(slot, at);
+            let name = nested_call_name(span);
             rewritten.extend_from_slice(&units[from..at.start]);
-            // The name in the call's place, padded to the call's length so
-            // every later offset into the text is the original's.
             let spelled: Vec<u16> = format!("`{name}`").encode_utf16().collect();
             let extent = &units[at.start..at.end];
             rewritten.extend_from_slice(&spelled);
@@ -555,9 +566,10 @@ impl Checker<'_> {
                 rewritten.push(if *unit == u16::from(b'\n') { *unit } else { u16::from(b' ') });
             }
             from = at.end;
+            hoisted.push((at, span, name));
         }
         rewritten.extend_from_slice(&units[from..]);
-        Some(ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span))
+        Some((hoisted, ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span)))
     }
 }
 
