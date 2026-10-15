@@ -110,8 +110,10 @@ impl<'c> Checker<'c> {
             if let Some(existing) = self.declare_authored(scope, Symbol::new(name, kind, span), span) {
                 self.report_duplicate_declaration(name, existing, span);
             }
-            if let Statement::Movement(movement) = statement {
-                self.note_movement(scope, movement);
+            match statement {
+                Statement::Movement(movement) => self.note_movement(scope, movement),
+                Statement::Shape(shape) => self.note_shape(scope, shape),
+                _ => {}
             }
         }
     }
@@ -144,6 +146,7 @@ impl<'c> Checker<'c> {
             Statement::Shape(shape) => {
                 if !self.scopes.has_own(scope, &shape.name) {
                     self.declare_authored(scope, Symbol::new(&shape.name, SymbolKind::Shape, shape.span), shape.span);
+                    self.note_shape(scope, shape);
                 }
                 self.check_shape_descriptions(&shape.root, scope);
                 if let Some(base) = &shape.extends {
