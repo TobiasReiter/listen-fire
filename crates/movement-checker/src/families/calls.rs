@@ -500,7 +500,7 @@ impl Checker<'_> {
     pub fn hoist_nested_calls(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<ExprSlot> {
         let (calls, rewritten) = self.nested_call_rewrite(slot, scope)?;
         let units: Vec<u16> = slot.raw.encode_utf16().collect();
-        for (at, span, name) in calls {
+        for HoistedCall { at, span, name } in calls {
             let head = String::from_utf16_lossy(&units[..at.end]);
             let parsed = movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start);
             match &parsed {
@@ -538,7 +538,7 @@ impl Checker<'_> {
     /// source order), where it is and the name it is hoisted to, and the slot
     /// with each call replaced by its name — padded to the call's length so
     /// every later offset into the text is the original's.
-    pub fn nested_call_rewrite(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Vec<(At, Span, String)>, ExprSlot)> {
+    pub fn nested_call_rewrite(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Vec<HoistedCall>, ExprSlot)> {
         if !since(self.version, 3) {
             return None;
         }
@@ -566,11 +566,18 @@ impl Checker<'_> {
                 rewritten.push(if *unit == u16::from(b'\n') { *unit } else { u16::from(b' ') });
             }
             from = at.end;
-            hoisted.push((at, span, name));
+            hoisted.push(HoistedCall { at, span, name });
         }
         rewritten.extend_from_slice(&units[from..]);
         Some((hoisted, ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span)))
     }
+}
+
+/// A call hoisted out of an expression: where it is, and the name it gets.
+pub struct HoistedCall {
+    pub at: At,
+    pub span: Span,
+    pub name: String,
 }
 
 /// `closureOfValue`: a value that is a closure (every member of a union one).
