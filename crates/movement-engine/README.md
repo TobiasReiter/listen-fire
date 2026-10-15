@@ -205,7 +205,7 @@ eval_expression(expr, bindings) → {value, provenance} | {error: {class, code?,
   text with no offset is read in (the shim's process zone; absent, UTC).
 - Synchronous, on the parser's long-lived instance: no segment.
 - The switch is one guarded line in `evalMovementExpr`
-  (apps/api/src/services/movement_engine/expression.ts). The shim
+  (packages/movement-engine/services/movement_engine/expression.ts). The shim
   (`evalInRust` in rust_engine.ts) sends an expression when `rustCanEval`
   admits it (kinds and function names, the allow-list) and every name it
   reads is a value binding whose value crosses as itself.

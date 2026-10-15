@@ -14,8 +14,8 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { engineChoice, engineFallback, v5OnTypeScript } from '../../../services/movement_engine/rust_engine';
-import { dryRunDurationSummary, rustEvalStats, rustRunStats } from '../../../services/movement_engine/rust_stats';
+import { engineChoice, engineFallback, v5OnTypeScript } from 'movement-engine/services/movement_engine/rust_engine';
+import { dryRunDurationSummary, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import {
   requireSystemAction,
   requireSystemCaller,

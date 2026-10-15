@@ -26,7 +26,7 @@ jest.mock('../../../lib/kysely', () => ({
   getAutomationsQb: jest.fn(() => chain()),
   getQb: jest.fn(() => chain()),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../translation_graph/storage/tg_table', () => ({

@@ -12,11 +12,11 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { ChatModelName } from '../lib/models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { calculateCostMicrodollars } from '../lib/llm_usage';
 import { chatCallFor } from '../lib/models/chat';
-import { parseChatModelName } from '../lib/models/registry';
+import { parseChatModelName } from 'movement-engine/lib/models/registry';
 import { parseJson } from '../lib/utils/parse_json';
 
 // ---------------------------------------------------------------------------

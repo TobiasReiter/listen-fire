@@ -10,7 +10,7 @@ import { AddressInfo } from 'node:net';
 import express from 'express';
 
 import type { Server } from 'node:http';
-import type { AdapterManifest } from '../../../services/translation_graph/adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 const ATTIO_MANIFEST: AdapterManifest = {
   adapterType: 'attio',

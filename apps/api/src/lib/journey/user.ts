@@ -4,7 +4,7 @@ import type { UserId } from '../../generated/kysely/core/User';
 import type { NewUserJourney, UserJourneyUpdate, UserJourneyUserId } from '../../generated/kysely/public/UserJourney';
 
 import { getCoreQb, getQb } from '../kysely';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { emitOpsEventSafely } from './emit';
 import { JOURNEY_LAUNCH_AT } from './cohort';
 import OpsEventType from '../../generated/kysely/public/OpsEventType';

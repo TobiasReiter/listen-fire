@@ -13,7 +13,7 @@ import type { WorkHandler } from '../work/kinds';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { MINUTE } from '../../constants';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { services } from '../../adapters/registry';
 import { registerWorkKinds } from '../work/drain';
 

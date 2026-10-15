@@ -17,10 +17,10 @@ import ts from 'typescript';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { MovementTraceEntry } from '../expression';
-import type { ParkedScopeState } from '../serialize';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import {
   iterateRelatedPages,
@@ -30,15 +30,15 @@ import {
   type GetRelatedInput,
   type RelatedPage,
   type RelatedResult,
-} from '../../translation_graph/adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import { createEmailAdapter } from '../../translation_graph/adapters/email';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { adapterErrorOf } from '../../translation_graph/engine/adapter_table';
+import { adapterErrorOf } from 'movement-engine/services/translation_graph/engine/adapter_table';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { productionEngineHost } from '../../translation_graph/movement/engine_host';
 import { inMemoryRawTextStore } from '../../translation_graph/movement/raw_text_store';
-import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import { InMemoryWriteLocks } from '../../write_locks/write_locks';
+import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { InMemoryWriteLocks } from 'movement-engine/services/write_locks/write_locks';
 import {
   HOST_FAMILIES,
   hostMethodPaths,
@@ -47,8 +47,8 @@ import {
   type EngineHost,
   type RenderFile,
   type ResolveFileText,
-} from '../host';
-import type { QueuedWake } from '../host_kit';
+} from 'movement-engine/services/movement_engine/host';
+import type { QueuedWake } from 'movement-engine/services/movement_engine/host_kit';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -57,8 +57,8 @@ import {
   type ResumeMovementInput,
   type RunLimitPause,
   type RunMovementInput,
-} from '../run';
-import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
+} from 'movement-engine/services/movement_engine/run';
+import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
@@ -66,6 +66,16 @@ import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 const ENGINE_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(__dirname, '../../..');
+/** The engine package: the pure engine and the kit every host builds on
+ *  (host_kit, test_host), its paths mirroring apps/api/src. */
+const PKG_DIR = path.resolve(SRC_DIR, '../../../packages/movement-engine');
+const PKG_ENGINE_DIR = path.join(PKG_DIR, 'services/movement_engine');
+
+/** A movement_engine file where it lives: the package, or this app's host side. */
+function engineFile(file: string): string {
+  const inPackage = path.join(PKG_ENGINE_DIR, file);
+  return fs.existsSync(inPackage) ? inPackage : path.join(ENGINE_DIR, file);
+}
 
 /** Engine files that must import no host code. */
 const PURE_FILES = [
@@ -197,13 +207,13 @@ const ALLOWED: Array<(module: string) => boolean> = [
 
 /** Shared helpers on the engine's path that live outside this directory:
  *  held to the same no-clock, no-mint rule as the pure files. */
-const PURE_HELPERS = [path.join(SRC_DIR, 'services/translation_graph/engine/files/resources.ts')];
+const PURE_HELPERS = [path.join(PKG_DIR, 'services/translation_graph/engine/files/resources.ts')];
 
 /** The one clock read the engine keeps: an expression evaluated outside any
  *  run (an editor preview, a lone expression's test) has no run instant to
  *  answer from, so it reads the wall clock. Inside a run the instant is the
  *  segment's (`RunContext.pinnedNow`). */
-const OUT_OF_RUN_CLOCK = { file: path.join(ENGINE_DIR, 'expression.ts'), fn: 'pinnedNow' };
+const OUT_OF_RUN_CLOCK = { file: engineFile('expression.ts'), fn: 'pinnedNow' };
 
 /** `a.b.c` for a chain of property reads off an identifier; undefined for
  *  anything else (a call, an element access). */
@@ -288,10 +298,13 @@ function under(prefix: string): (module: string) => boolean {
   return (m) => m === prefix || m.startsWith(`${prefix}/`);
 }
 
-/** A relative specifier becomes a path under apps/api/src; a bare one stays. */
+/** A relative specifier becomes a path under apps/api/src (or the engine
+ *  package, which mirrors it); a bare one stays, but the package's own. */
 function moduleOf(fromFile: string, specifier: string): string {
+  if (specifier.startsWith('movement-engine/')) return specifier.slice('movement-engine/'.length);
   if (!specifier.startsWith('.')) return specifier;
-  const resolved = path.relative(SRC_DIR, path.resolve(path.dirname(fromFile), specifier));
+  const root = fromFile.startsWith(PKG_DIR + path.sep) ? PKG_DIR : SRC_DIR;
+  const resolved = path.relative(root, path.resolve(path.dirname(fromFile), specifier));
   return resolved
     .split(path.sep)
     .join('/')
@@ -361,8 +374,8 @@ function isLoaderCall(node: ts.CallExpression): boolean {
 
 describe('the engine/host seam', () => {
   it('classifies every movement_engine file as pure or host side, exactly once', () => {
-    const onDisk = fs
-      .readdirSync(ENGINE_DIR)
+    const onDisk = [ENGINE_DIR, PKG_ENGINE_DIR]
+      .flatMap((dir) => fs.readdirSync(dir))
       .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
       .sort();
     const listed = [...PURE_FILES, ...HOST_SIDE_FILES].sort();
@@ -370,10 +383,14 @@ describe('the engine/host seam', () => {
     expect(listed).toEqual(onDisk);
   });
 
+  it('keeps every pure engine file in the engine package, so no shell needs this app to run one', () => {
+    expect(PURE_FILES.filter((f) => !fs.existsSync(path.join(PKG_ENGINE_DIR, f)))).toEqual([]);
+  });
+
   it('pure engine files import no host code', () => {
     const violations: string[] = [];
     for (const file of PURE_FILES) {
-      const filePath = path.join(ENGINE_DIR, file);
+      const filePath = engineFile(file);
       for (const specifier of valueImports(filePath)) {
         const module = moduleOf(filePath, specifier);
         const forbidden = FORBIDDEN.find((rule) => rule.matches(module));
@@ -390,7 +407,7 @@ describe('the engine/host seam', () => {
   });
 
   it('pure engine files read no clock and mint no id of their own', () => {
-    const violations = [...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)), ...PURE_HELPERS].flatMap((file) =>
+    const violations = [...PURE_FILES.map(engineFile), ...PURE_HELPERS].flatMap((file) =>
       entropyReads(file).map((read) => `${path.relative(SRC_DIR, file)}:${read}`),
     );
     expect(violations).toEqual([]);
@@ -479,8 +496,8 @@ const CONTRACTS_DIR = path.join(REPO_DIR, 'packages/engine-contracts');
 
 /** The roots an embedder imports. */
 const EMBEDDABLE_ROOTS = [
-  ...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)),
-  path.join(ENGINE_DIR, 'test_host.ts'),
+  ...PURE_FILES.map(engineFile),
+  engineFile('test_host.ts'),
   path.join(SRC_DIR, 'services/translation_graph/protocol/server.ts'),
   path.join(CONTRACTS_DIR, 'index.ts'),
 ];
@@ -563,7 +580,7 @@ function contractFiles(): string[] {
 describe('generated database code stays out of what an embedder imports', () => {
   it('no pure engine file and no contract file imports database code, not even a type', () => {
     const violations: string[] = [];
-    for (const file of [...PURE_FILES.map((f) => path.join(ENGINE_DIR, f)), ...contractFiles()]) {
+    for (const file of [...PURE_FILES.map(engineFile), ...contractFiles()]) {
       for (const specifier of allImports(file)) {
         const target = resolved(specifier, file);
         if (isDatabaseCode(specifier) || (target !== undefined && isDatabaseCode(target))) {

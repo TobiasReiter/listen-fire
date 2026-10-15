@@ -20,7 +20,7 @@ jest.mock('../../../../movement_engine/await_wake', () => ({
 jest.mock('../../../../work/drain', () => ({
   notifyWork: () => notifyWorkMock(),
 }));
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     error: (...a: unknown[]) => loggerErrorMock(...a),
     warn: (...a: unknown[]) => loggerWarnMock(...a),

@@ -4,7 +4,7 @@
 
 import { mockCatalogSnapshot } from 'movement-lang';
 
-import { checkedProgram } from '../rust_host';
+import { checkedProgram } from 'movement-engine/services/movement_engine/rust_host';
 
 const SOURCE = [
   'import { email } from adapters',

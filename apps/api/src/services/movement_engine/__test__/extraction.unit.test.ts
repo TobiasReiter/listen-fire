@@ -25,7 +25,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -52,7 +52,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -116,18 +116,18 @@ import {
   type InstanceSchema,
   type Span,
 } from 'movement-lang';
-import { MovementRunFailed, runFailureCause, runMovement } from '../run';
-import { MovementEngineError, type MovementTraceEntry } from '../expression';
-import { logger } from '../../logger';
+import { MovementRunFailed, runFailureCause, runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError, type MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import { logger } from 'movement-engine/services/logger';
 import {
   ROOT_EXTRACT_DESCRIPTION,
   STAGE_FAN_OUT,
   buildExtractSpec,
   materializeExtract,
   type MovementTransformInvoker,
-} from '../extraction';
+} from 'movement-engine/services/movement_engine/extraction';
 import { registryTransformInvoker } from '../../translation_graph/movement/transform_invoker';
-import { NO_PROVENANCE } from '../provenance';
+import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
 import { getTransform } from '../../translation_graph/engine/transforms/registry';
 import { registerBundledTransforms } from '../../translation_graph/engine/transforms/register-bundled';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
@@ -135,19 +135,19 @@ import type {
   LlmCallInput,
   LlmCallResult,
 } from '../../translation_graph/engine/batched_extraction';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
   RuntimeCapabilities,
   ExternalRecordRef,
-} from '../../translation_graph/adapter';
-import { containerAssociation, isFileValue } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { MutationContext } from '../../translation_graph/mutation_context';
-import { positionData } from '../../translation_graph/types';
-import { candidateIsAllExact } from '../../translation_graph/uniqueness';
+} from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation, isFileValue } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import { candidateIsAllExact } from 'movement-engine/services/translation_graph/uniqueness';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 
@@ -2514,8 +2514,8 @@ const carryFileSchema = (): { catalog: CatalogSnapshot } => {
 };
 
 /** An attio fake that captures the FULL WriteInput (fields + resources). */
-function makeCapturingAttio(): { adapter: Adapter; creates: import('../../translation_graph/adapter').WriteInput[] } {
-  const creates: import('../../translation_graph/adapter').WriteInput[] = [];
+function makeCapturingAttio(): { adapter: Adapter; creates: import('movement-engine/services/translation_graph/adapter').WriteInput[] } {
+  const creates: import('movement-engine/services/translation_graph/adapter').WriteInput[] = [];
   const base = makeFakeAdapter('attio');
   const adapter: Adapter = {
     ...base.adapter,

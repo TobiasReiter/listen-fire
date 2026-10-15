@@ -4,7 +4,7 @@ import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient'
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
 
 import { anthropicChat } from '../../../../lib/anthropic';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { StaleLinkedObjectError } from './types';
 
 function createAirtableV3Adapter(client: AirtableAPIClient): V3Adapter {

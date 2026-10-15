@@ -31,7 +31,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { PipelineInputId } from '../../generated/kysely/public/PipelineInput';
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { getKnowledgeQb, getQb } from '../../lib/kysely';
 import { normalizeAdapterType } from '../knowledge_pipeline/output_v3/linked_objects';
 

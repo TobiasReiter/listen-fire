@@ -20,7 +20,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -47,7 +47,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -87,22 +87,22 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { runFailureCause, runMovement } from '../run';
+import { runFailureCause, runMovement } from 'movement-engine/services/movement_engine/run';
 
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import { MovementEngineError } from '../expression';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   RESOURCES_REFERENCE_FIELD_ID,
   type Adapter,
   type RuntimeCapabilities,
   type Resource,
-} from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { makeUnstablePosition, positionData } from '../../translation_graph/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 /**
  * The error a rejected run really died of. A failure raised once the

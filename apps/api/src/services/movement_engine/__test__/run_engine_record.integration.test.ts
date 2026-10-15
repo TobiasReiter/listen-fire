@@ -8,7 +8,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { getTgRun, listTgRuns } from '../../system_debug';
 import { recordRunEnginesOnRows, settleRunEngineRecords } from '../run_engine_record';
-import { recordRunEngine, setRunEngineRecorder } from '../rust_stats';
+import { recordRunEngine, setRunEngineRecorder } from 'movement-engine/services/movement_engine/rust_stats';
 
 const TEAM_ID = randomUUID() as TeamId;
 const runs: TriggerRunId[] = [];

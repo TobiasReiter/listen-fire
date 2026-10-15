@@ -13,11 +13,11 @@
 //     batcher with canned answers.
 
 import type { z } from 'zod';
-import type { EphemeralNode, ExpressionType, SourcePosition } from '../../types';
-import type { FieldEvidence } from '../../adapter';
+import type { EphemeralNode, ExpressionType, SourcePosition } from 'movement-engine/services/translation_graph/types';
+import type { FieldEvidence } from 'movement-engine/services/translation_graph/adapter';
 import type { FieldShape } from '../batched_extraction/schema_synthesis';
 
-import { makeEphemeralPosition } from '../../types';
+import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
 
 /**
  * What `registerExtractValue` resolves to — the typed scalar plus the

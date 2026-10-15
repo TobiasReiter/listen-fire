@@ -15,10 +15,10 @@ import {
   type TenantId,
 } from 'engine-contracts';
 
-import { runMovement, type MovementRunResult } from '../../../apps/api/src/services/movement_engine/run';
-import { makeFakeParkSink, makeTestHost } from '../../../apps/api/src/services/movement_engine/test_host';
+import { runMovement, type MovementRunResult } from '../../../packages/movement-engine/services/movement_engine/run';
+import { makeFakeParkSink, makeTestHost } from '../../../packages/movement-engine/services/movement_engine/test_host';
 import { createAdapterProtocolHandler } from '../../../apps/api/src/services/translation_graph/protocol/server';
-import type { Adapter } from '../../../apps/api/src/services/translation_graph/adapter';
+import type { Adapter } from '../../../packages/movement-engine/services/translation_graph/adapter';
 
 const tenant: TenantId = tenantIdOf('an-embedders-own-tenant');
 

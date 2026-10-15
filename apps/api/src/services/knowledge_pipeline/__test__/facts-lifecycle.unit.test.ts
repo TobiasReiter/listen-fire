@@ -43,11 +43,11 @@ jest.mock('../../../lib/kysely', () => ({
   })),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn() },
 }));
 
-import type { Resource, Fact } from '../../translation_graph/adapter';
+import type { Resource, Fact } from 'movement-engine/services/translation_graph/adapter';
 
 import {
   extractFactsForResource,

@@ -44,23 +44,23 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import type {
   AwaitableCapability,
   AwaitPoint,
   AwaitResolution,
-} from '../../awaitable';
+} from 'movement-engine/services/translation_graph/awaitable';
 
-import { singleParentLink, unsupportedAssociation } from '../../adapter';
+import { singleParentLink, unsupportedAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { UPDATE_NOT_FOUND } from '../not_found';
-import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { uniformWalk } from '../hop';
 import {

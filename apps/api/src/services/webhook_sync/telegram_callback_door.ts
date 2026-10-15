@@ -31,7 +31,7 @@
 
 import { z } from 'zod';
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { answerAskByToken, type AskDoorOutcome } from '../translation_graph/adapters/ask/answer_door';
 import { parseAskLink } from '../translation_graph/adapters/ask/answer_link';
 import { isCallbackId } from '../movement_engine/callback_store';

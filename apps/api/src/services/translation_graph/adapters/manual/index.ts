@@ -42,23 +42,23 @@ import type {
   RelatedResult,
   ResolveFileRefResult,
   EdgesFromResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { streamFileRef } from '../../engine/files/retrieve';
-import { fileHandle, ownedFileSource } from '../../adapter';
+import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
 import { uniformWalk } from '../hop';
 import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
 import {
   META_RECORD_TYPE,
   makeUnstablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 
 /** Stable adapter identifier — the trigger `kind` of manual-derived rows. */

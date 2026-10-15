@@ -30,7 +30,7 @@ import { unauthorisedGetUserById } from '../../lib/middleware/authentication/ide
 import { getCookieAuthUser } from '../../lib/middleware/authentication/token';
 import { resolveActingTeam } from '../../lib/middleware/authentication/resolve_acting_team';
 import { API_KEY_PREFIX, ApiKeyService } from '../api_key';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { accessFor, listTeamsFor, resolveTeamFor } from './core_teams';
 
 /** A session-authenticated request carries the user's whole surface; only an

@@ -16,7 +16,7 @@
 // normalizers; the client-backed reads live on the adapter.
 
 import type { EdgeCapability } from '#shared/expression/types';
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 export const SLACK_CHANNEL_TYPE_ID = 'slack:channel';
 

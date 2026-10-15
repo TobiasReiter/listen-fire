@@ -35,7 +35,7 @@ jest.mock('../../../services/work/store', () => ({
   awaitTeamWorkSettled: (input: unknown) => awaitTeamWorkSettled(input),
 }));
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

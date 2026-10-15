@@ -10,7 +10,7 @@
 //   5. Otherwise → null.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { ActorCandidate } from '../adapter';
+import type { ActorCandidate } from 'movement-engine/services/translation_graph/adapter';
 
 // DB mock: each `where` chain ends in `executeTakeFirst` returning the next
 // queued row. Tests queue rows in the order the resolver looks them up.

@@ -18,7 +18,7 @@ import type { OpsEventId } from '../../generated/kysely/public/OpsEvent';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { OpsEventType, OpsSeverity } from '../../lib/ops/types';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   OTHER_REASONS,
   REASONS_KEPT,
@@ -29,7 +29,7 @@ import {
   tallyVerdict,
   type AdmissionTally,
   type AdmissionVerdict,
-} from './rust_stats';
+} from 'movement-engine/services/movement_engine/rust_stats';
 
 /** What a roll-up row's `detail` says it is. */
 export const ADMISSION_ROLLUP_KIND = 'engine_admission_dry_run';

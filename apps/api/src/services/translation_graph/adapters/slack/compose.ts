@@ -11,7 +11,7 @@
 // where the channel — and thus the roster — is known. This compose step is
 // therefore deliberately roster-free and channel-blind.
 
-import type { FieldFunctionDescriptor } from '../../types';
+import type { FieldFunctionDescriptor } from 'movement-engine/services/translation_graph/types';
 
 /** Advertised on the message `text` fields (post-message + thread-reply). */
 export const SLACK_MESSAGE_FUNCTION: FieldFunctionDescriptor = {

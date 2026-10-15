@@ -1,4 +1,4 @@
-import type { FieldMapping } from '../schemas';
+import type { FieldMapping } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 
 interface IdentityField {
   targetField: string;

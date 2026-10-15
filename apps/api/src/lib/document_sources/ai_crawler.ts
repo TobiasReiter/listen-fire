@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 
 import { chatCallFor } from '../models/chat';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { recordLlmUsage } from '../llm_usage';
 import { Screenshot } from '../../services/crawler';
 import { sendSlackNotification } from '../slack';

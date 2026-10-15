@@ -18,7 +18,7 @@
  */
 import './_profile_loader';
 import { anthropicWebChat } from '../../lib/anthropic';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { ScraperService } from '../../services/scraper';
 
 import type { PageFetchResult } from '../../lib/anthropic';

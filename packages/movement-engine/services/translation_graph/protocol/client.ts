@@ -9,7 +9,6 @@
 import { z } from 'zod';
 import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { RpcErrorShape } from 'engine-contracts';
 
 /**
@@ -115,8 +114,9 @@ export function authHeader(strategy: AuthStrategy, secret: string): Record<strin
 export async function postRpc(opts: {
   baseUrl: string;
   auth: Record<string, string>;
-  /** The team whose install is calling, sent as `x-listen-fire-team`. */
-  teamId: TeamId;
+  /** The team whose install is calling, sent as `x-listen-fire-team`: the
+   *  host's own tenant identifier, opaque here. */
+  teamId: string;
   method: string;
   cacheScopeId: string;
   params: unknown;

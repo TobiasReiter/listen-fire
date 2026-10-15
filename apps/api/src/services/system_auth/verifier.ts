@@ -10,7 +10,7 @@
 // level, filled at boot, read per request. Verifiers are asked in the order they
 // were registered, and the first that accepts decides the caller.
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 
 /** What an accepted caller may do on the system surface. */
 type SystemAction = 'drain';

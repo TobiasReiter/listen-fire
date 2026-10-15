@@ -7,23 +7,23 @@ jest.mock('../../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
   encryptToken: async () => '',
 }));
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { MutationContext } from '../../../mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 import type { Expression } from '#shared/expression/types';
 
-import { logger } from '../../../../logger';
-import { updateRecordSucceeded } from '../../../adapter';
+import { logger } from 'movement-engine/services/logger';
+import { updateRecordSucceeded } from 'movement-engine/services/translation_graph/adapter';
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
   makeStablePosition,
   makeUnstablePosition,
   positionData,
-} from '../../../types';
+} from 'movement-engine/services/translation_graph/types';
 import {
   EvertraceApiError,
   type EvertraceApiClient,
@@ -37,7 +37,7 @@ import {
 import { EvertraceAdapter, EVERTRACE_MANIFEST, createEvertraceAdapter } from '../index';
 import { EvertracePollSource } from '../poll';
 import { signalFilterFromWhere, lookupSearchTerm } from '../filter';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import {
   EVERTRACE_COMPANY_TYPE_ID,
   EVERTRACE_EDUCATION_TYPE_ID,

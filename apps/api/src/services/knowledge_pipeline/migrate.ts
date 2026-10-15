@@ -14,7 +14,7 @@ import { promptDef } from '../../lib/prompts/definition';
 import { anthropicChat } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
 import { searchFacts } from './facts';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { recordChange, ChangeSource, ChangeKind, propertyToChangeValue, changeValuesEqual } from '../../lib/knowledge/changes';

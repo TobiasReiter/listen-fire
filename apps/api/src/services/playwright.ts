@@ -2,7 +2,7 @@ import type { Page, Browser, BrowserContextOptions } from 'playwright';
 
 import { Queue } from '../lib/utils/queue';
 import { MINUTE } from '../constants';
-import { logger } from './logger';
+import { logger } from 'movement-engine/services/logger';
 
 // Each withPage call spawns a full Chromium process — limit concurrency
 const playwrightQueue = new Queue<unknown>({ concurrency: 2 });

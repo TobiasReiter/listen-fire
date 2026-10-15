@@ -8,8 +8,8 @@
 // nobody sees, or an LLM call burned comparing two unrelated companies that
 // happen to both be AI.
 
-import { binding, type Binding } from '../expression';
-import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
+import { binding, type Binding } from 'movement-engine/services/movement_engine/expression';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 import {
   LOCAL_ADAPTER_TYPE,
   LOCAL_CANDIDATE_CAP,
@@ -18,8 +18,8 @@ import {
   localEdgeAdapter,
   localRecordLock,
   sharesDistinctiveToken,
-} from '../local_edge_adapter';
-import { EffectLocks } from '../effect_locks';
+} from 'movement-engine/services/movement_engine/local_edge_adapter';
+import { EffectLocks } from 'movement-engine/services/movement_engine/effect_locks';
 
 const MUTATION_CONTEXT = { source: { adapterType: 'local' } } as never;
 

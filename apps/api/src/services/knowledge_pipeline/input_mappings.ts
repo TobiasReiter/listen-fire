@@ -20,7 +20,7 @@ import type {
 
 import { execute } from '../../lib/prompts/execute';
 import { promptDef } from '../../lib/prompts/definition';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import EvidenceType from '../../generated/kysely/knowledge/EvidenceType';
 import { inputPropertyMappingSchema } from '../../adapters/pipeline/inbound/metadata';
 

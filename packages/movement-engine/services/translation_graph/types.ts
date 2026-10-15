@@ -932,8 +932,8 @@ export function parseRowBodyLenient(value: unknown): TranslationGraphRowBody | n
   }));
   console.warn(
     '[parseRowBodyLenient] translationGraphRowBodySchema rejected row body — returning null. ' +
-      'See apps/api/src/services/translation_graph/types.ts (translationGraphRowBodySchema) ' +
-      'and apps/api/src/services/knowledge_pipeline/output_v3/expression.ts (expressionSchema).',
+      'See packages/movement-engine/services/translation_graph/types.ts (translationGraphRowBodySchema) ' +
+      'and packages/movement-engine/services/knowledge_pipeline/output_v3/expression.ts (expressionSchema).',
     {
       issueCount: parsed.error.issues.length,
       firstIssues: issues,

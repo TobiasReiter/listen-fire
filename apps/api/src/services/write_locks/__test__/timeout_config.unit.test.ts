@@ -1,4 +1,4 @@
-import { DEFAULT_WRITE_LOCK_TIMEOUT_MS, parseWriteLockTimeoutMs } from '../write_locks';
+import { DEFAULT_WRITE_LOCK_TIMEOUT_MS, parseWriteLockTimeoutMs } from 'movement-engine/services/write_locks/write_locks';
 
 describe('MOVEMENT_WRITE_LOCK_TIMEOUT_MS', () => {
   it('defaults when unset or blank', () => {

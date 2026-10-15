@@ -8,12 +8,12 @@ jest.mock('../../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
   encryptToken: async () => '',
 }));
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { FileRef, ParentLink, WriteInput } from '../../../adapter';
+import type { FileRef, ParentLink, WriteInput } from 'movement-engine/services/translation_graph/adapter';
 import type { GmailApiClient } from '../client';
 
 import { GmailApiError } from '../../../../../adapters/gmail/apiClient';

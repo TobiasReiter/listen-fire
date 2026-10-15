@@ -16,9 +16,9 @@
 //     `sortByOrderKey`, so V8's TimSort over a comparator no total order
 //     agrees with): the order the items land in.
 
-import type { FileRef } from '../../../../apps/api/src/services/translation_graph/adapter';
-import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
-import { boundFileText, maxFileChars } from '../../../../apps/api/src/services/movement_engine/extraction';
+import type { FileRef } from '../../../../packages/movement-engine/services/translation_graph/adapter';
+import { applyMovementFunction } from '../../../../packages/movement-engine/services/movement_engine/builtins';
+import { boundFileText, maxFileChars } from '../../../../packages/movement-engine/services/movement_engine/extraction';
 import { sortByOrderKey } from '../../../../packages/shared/expression/order_limit';
 
 type Rand = () => number;

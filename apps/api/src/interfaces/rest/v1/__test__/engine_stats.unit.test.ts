@@ -14,7 +14,7 @@ jest.mock('../../../../lib/knowledge/orchestrator', () => ({ runConversationTurn
 jest.mock('../../../../lib/llm_usage', () => ({ LlmUsageContext: jest.fn() }));
 jest.mock('principal', () => ({ currentPrincipal: jest.fn() }));
 
-import { recordDryRunDuration, resetRustEvalStats, resetRustRunStats, rustRunStats } from '../../../../services/movement_engine/rust_stats';
+import { recordDryRunDuration, resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { systemRouter } from '../system';
 
 let server: Server;

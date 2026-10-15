@@ -14,7 +14,7 @@
 // delivery (a 500, so the sender retries) only after its events are queued.
 // Fully mocked — no DB, no adapters, no engine.
 
-import type { DiscriminableEvent } from '../../translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 
 interface Harness {
   handleInboundWebhook: typeof import('../handler').handleInboundWebhook;
@@ -126,7 +126,7 @@ async function loadHandler(options: {
   );
   const knowledgeQb = chainableQb({}, []);
 
-  jest.doMock('../../logger', () => ({
+  jest.doMock('movement-engine/services/logger', () => ({
     logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   }));
   jest.doMock('../../../lib/kysely', () => ({

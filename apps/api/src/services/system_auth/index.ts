@@ -11,7 +11,7 @@
 
 import type { Request, RequestHandler, Response } from 'express';
 
-import { neverAsAny } from '../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { apiKeyVerifier } from './api_key';
 import { createOidcVerifier } from './oidc';
 import {

@@ -18,14 +18,14 @@
 
 import { unionKey } from 'movement-lang';
 
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 import {
   credentialImportNames,
   fieldTypeFromDescriptor,
   importIdentifier,
   instanceSchemaFromDescriptors,
-} from '../schema_projection';
+} from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { registeredPluginSpecs } from '../catalog';
 import {
   adapterNameResolver,

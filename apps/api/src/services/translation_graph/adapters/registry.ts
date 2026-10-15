@@ -2,12 +2,12 @@
 // implementation. Per Layer 3e (3e_adapters.md §Registration).
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Adapter, AdapterManifest, BrandIcon } from '../adapter';
+import type { Adapter, AdapterManifest, BrandIcon } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource, PollSourceFactory } from '../poll_source';
-import type { ConfigBlock, TextBlock } from '../triggerConfig';
+import type { ConfigBlock, TextBlock } from 'movement-engine/services/translation_graph/triggerConfig';
 
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import { WRITE_METHODS } from '../adapter';
+import { WRITE_METHODS } from 'movement-engine/services/translation_graph/adapter';
 import { credentialTypeOf } from './credential_type';
 import { KG_ADAPTER_TYPE, KG_MANIFEST, createKnowledgeGraphAdapter } from './knowledge_graph';
 import { ATTIO_ADAPTER_TYPE, ATTIO_MANIFEST, createAttioAdapter } from './attio';

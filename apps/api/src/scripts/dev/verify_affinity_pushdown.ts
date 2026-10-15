@@ -14,7 +14,7 @@ import type { Expression } from '#shared/expression/types';
 
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
-import { makeMetaPosition } from '../../services/translation_graph/types';
+import { makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6199/affinity';
 

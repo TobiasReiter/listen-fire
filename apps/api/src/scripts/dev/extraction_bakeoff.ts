@@ -53,17 +53,17 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ExtractExpression } from 'movement-lang';
-import type { ChatModelName } from '../../lib/models/registry';
-import type { MovementTraceEntry } from '../../services/movement_engine/expression';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import type {
   LlmCallInput,
   LlmClient,
 } from '../../services/translation_graph/engine/batched_extraction';
 
-import { BARE_HOST } from '../../services/movement_engine/host_kit';
+import { BARE_HOST } from 'movement-engine/services/movement_engine/host_kit';
 import { anthropicChatDetailed } from '../../lib/anthropic';
 import { parseJsonReply } from '../../lib/prompts/execute';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
 import {
   buildExtractSpec,
@@ -72,13 +72,13 @@ import {
   type ExtractNodeSpec,
   type ExtractSpecOptions,
   type MovementTransformInvoker,
-} from '../../services/movement_engine/extraction';
-import { NO_PROVENANCE } from '../../services/movement_engine/provenance';
+} from 'movement-engine/services/movement_engine/extraction';
+import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
 import {
   claudeModelId,
   extractionSettings,
   type TierCallSettings,
-} from '../../services/movement_engine/ai_tiers';
+} from 'movement-engine/services/movement_engine/ai_tiers';
 import {
   FIXTURES,
   resolveDeclaredType,

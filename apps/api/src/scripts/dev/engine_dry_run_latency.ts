@@ -18,10 +18,10 @@ import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
 import type { HostRecording } from 'engine-contracts/conformance';
 
-import { openRunContext } from '../../services/movement_engine/run_context';
-import { dryAdmitResume, dryAdmitRun } from '../../services/movement_engine/rust_engine';
-import { resetRustRunStats, rustRunStats } from '../../services/movement_engine/rust_stats';
-import { makeTestHost } from '../../services/movement_engine/test_host';
+import { openRunContext } from 'movement-engine/services/movement_engine/run_context';
+import { dryAdmitResume, dryAdmitRun } from 'movement-engine/services/movement_engine/rust_engine';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const FIXTURES = path.resolve(__dirname, '../../services/movement_engine/conformance/__fixtures__');
 

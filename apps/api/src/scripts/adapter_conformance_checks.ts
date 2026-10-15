@@ -8,12 +8,12 @@ import { fileDescriptorOf, PROTOCOL_VERSION } from 'engine-contracts';
 import { canonicalJson } from 'engine-contracts/conformance';
 
 import type { TeamId } from '../generated/kysely/core/Team';
-import type { MutationContext } from '../services/translation_graph/mutation_context';
-import type { RelatedResult } from '../services/translation_graph/adapter';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
+import type { RelatedResult } from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
-} from '../services/translation_graph/types';
+} from 'movement-engine/services/translation_graph/types';
 
 import {
   ADAPTER_TEAM_HEADER,
@@ -22,7 +22,7 @@ import {
   authHeader,
   postRpc,
   type AuthStrategy,
-} from '../services/translation_graph/protocol/client';
+} from 'movement-engine/services/translation_graph/protocol/client';
 import {
   createRemoteAdapter,
   fetchRemoteManifest,
@@ -30,7 +30,7 @@ import {
   type RemoteAdapterConfig,
   type RemoteManifest,
 } from '../services/translation_graph/adapters/remote';
-import { makeMetaPosition } from '../services/translation_graph/types';
+import { makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 import { isUuid, startHostDouble, type HostDouble } from './adapter_conformance_host';
 
 export type CheckStatus = 'PASS' | 'FAIL' | 'SKIP';

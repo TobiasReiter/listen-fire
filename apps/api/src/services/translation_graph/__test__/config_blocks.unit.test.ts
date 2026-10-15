@@ -10,7 +10,7 @@ import {
   isValueBlock,
   TRIGGER_SLUG_PATTERN,
   type ConfigBlock,
-} from '../triggerConfig';
+} from 'movement-engine/services/translation_graph/triggerConfig';
 import { EMAIL_MANIFEST } from '../adapters/email';
 
 describe('zodFromConfigBlocks', () => {

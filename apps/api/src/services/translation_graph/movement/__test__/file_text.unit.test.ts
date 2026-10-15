@@ -18,7 +18,7 @@ const rawText = { getOrCreateId: (content: string) => getOrCreateRawTextIdMock(c
 /** The team the file's bytes are redeemed for (the byte reader is mocked). */
 const FILE_BYTES = { teamId: 'team-1' as TeamId };
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -36,13 +36,13 @@ import { Readable } from 'node:stream';
 import { jsPDF } from 'jspdf';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { FileRef } from '../../adapter';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 import { makeFileTextResolver } from '../file_text';
 import { services } from '../../../../adapters/registry';
 import { LlmUsageContext } from '../../../../lib/llm_usage';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 const ocrMock = jest.fn();
 

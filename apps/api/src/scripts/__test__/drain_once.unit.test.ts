@@ -26,7 +26,7 @@ jest.mock('../../services/exposed_file/worker', () => ({
       .requireActual('../../services/work/drain')
       .registerWorkKinds([{ kind: 'exposed_file_sweep', handler: { run: sweep }, intervalMs: 300_000 }]),
 }));
-jest.mock('../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

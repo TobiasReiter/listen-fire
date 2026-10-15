@@ -17,15 +17,15 @@
 
 import type { TransformImpl, TransformOutput, EphemeralEmission } from './registry';
 import type { PluginManifest } from './registry';
-import type { TransformSignature } from '../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { anthropicChat } from '../../../../lib/anthropic';
 import { runFields } from '../../../../lib/llm_usage';
 import { parseJson } from '../../../../lib/utils/parse_json';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { emissionOf, fetchWithTimeout } from './fetch_resource';
 import { VC_URL_RETRIEVAL_HANDBOOK_SECTION } from './vc_url_retrieval_handbook_section';
-import { importIdentifier } from '../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

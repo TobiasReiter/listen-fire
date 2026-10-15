@@ -3,7 +3,7 @@ import {
   claudeModelId,
   extractionCallSettings,
   parseExtractionTiers,
-} from '../ai_tiers';
+} from 'movement-engine/services/movement_engine/ai_tiers';
 
 const tiers = (entries: Record<string, unknown>) => JSON.stringify(entries);
 

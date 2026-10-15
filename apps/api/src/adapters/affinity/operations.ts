@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { sub } from 'date-fns';
 
-import type { ParentAssociation } from '../../services/translation_graph/adapter';
+import type { ParentAssociation } from 'movement-engine/services/translation_graph/adapter';
 
 import { AffinityAPIClient, fieldsValidator, locationFieldValue, valueType } from './apiClient';
 import {
@@ -13,7 +13,7 @@ import {
 } from './common';
 import { anthropicChat, anthropicChatStructured } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../lib/slack';
 import { notNull } from '../../lib/utils/nullability';
 import { Tracer } from '../../services/tracer';

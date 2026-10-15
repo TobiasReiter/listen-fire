@@ -26,7 +26,7 @@
 
 import type { z } from 'zod';
 
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 export type ParsedConfig<T> =
   | { ok: true; config: T }

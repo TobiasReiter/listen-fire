@@ -19,7 +19,7 @@
 // resolves it, which is what the shim sends (`Asia/Kolkata` resolves to ICU's
 // canonical `Asia/Calcutta`).
 
-import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
+import { applyMovementFunction } from '../../../../packages/movement-engine/services/movement_engine/builtins';
 import { applyStdlib, stdlibFunctionById } from '../../../../packages/movement-lang/expression/stdlib';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 

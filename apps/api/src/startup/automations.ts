@@ -12,7 +12,7 @@ import { performance } from 'node:perf_hooks';
 
 import type { WorkerRegistry } from './registry';
 
-import { neverAsAny } from '../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
 import {
@@ -30,9 +30,9 @@ import {
 } from '../services/work/drain';
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
 import { flushAdmissionRollupOnPass } from '../services/movement_engine/admission_rollup';
-import { assertEngineChoiceConfigured } from '../services/movement_engine/rust_engine';
+import { assertEngineChoiceConfigured } from 'movement-engine/services/movement_engine/rust_engine';
 import { recordRunEnginesOnRows } from '../services/movement_engine/run_engine_record';
-import { setDryRunClock } from '../services/movement_engine/rust_stats';
+import { setDryRunClock } from 'movement-engine/services/movement_engine/rust_stats';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';

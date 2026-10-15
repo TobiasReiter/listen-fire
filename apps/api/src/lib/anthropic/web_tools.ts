@@ -25,9 +25,9 @@
 // one reader for both.
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { Provider } from '../models/map';
+import type { Provider } from 'movement-engine/lib/models/map';
 
-import { neverAsAny } from '../utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 /** The tool versions that filter results before they reach the context
  *  window. No beta header: they are generally available. */

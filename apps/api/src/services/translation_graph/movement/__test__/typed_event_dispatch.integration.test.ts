@@ -31,9 +31,9 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
-import type { Adapter, RuntimeCapabilities } from '../../adapter';
+import type { Adapter, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
-import type { TriggerEvent } from '../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
@@ -48,8 +48,8 @@ import { resolveAdapter } from '../../adapters/resolve';
 import {
   makeStablePosition,
   positionData,
-} from '../../types';
-import { containerAssociation } from '../../adapter';
+} from 'movement-engine/services/translation_graph/types';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;

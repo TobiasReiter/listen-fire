@@ -11,21 +11,21 @@
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
-import type { Adapter } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { MovementTraceEntry } from '../expression';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 
-import { logger } from '../../logger';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { openRunContext } from '../run_context';
-import { credentialIdsFor, makeTestHost, endedInRust, type TestHostOverrides } from '../test_host';
-import { AdapterCallFailed } from '../host_adapter';
-import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { MovementEngineError, isCheckFailure } from '../errors';
-import { ENDED_AT_CHECK, LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from '../rust_engine';
-import { checkPinned } from '../program_check';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from '../rust_stats';
+import { logger } from 'movement-engine/services/logger';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { openRunContext } from 'movement-engine/services/movement_engine/run_context';
+import { credentialIdsFor, makeTestHost, endedInRust, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
+import { AdapterCallFailed } from 'movement-engine/services/movement_engine/host_adapter';
+import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError, isCheckFailure } from 'movement-engine/services/movement_engine/errors';
+import { ENDED_AT_CHECK, LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRust } from 'movement-engine/services/movement_engine/rust_engine';
+import { checkPinned } from 'movement-engine/services/movement_engine/program_check';
+import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from 'movement-engine/services/movement_engine/rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000a1');
 

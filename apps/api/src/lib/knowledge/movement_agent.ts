@@ -25,7 +25,7 @@ import { anthropicToolLoop, type TurnEvent } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
 import { mq } from '../message_queue';
-import { splitChapterRoute } from '../handbook_section';
+import { splitChapterRoute } from 'movement-engine/lib/handbook_section';
 import {
   buildMovementFrontMatter,
   getMovementChapter,

@@ -6,7 +6,7 @@
 // (a fixture matching one adapter's shape cannot tell derived from
 // hardcoded).
 
-import type { ListenConfigKey } from '../../adapter';
+import type { ListenConfigKey } from 'movement-engine/services/translation_graph/adapter';
 
 import {
   addressHops,

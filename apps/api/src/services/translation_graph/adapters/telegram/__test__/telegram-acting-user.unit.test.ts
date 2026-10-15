@@ -14,9 +14,9 @@
 // rather than asserting it abstractly.
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { TriggerEvent } from '../../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

@@ -30,7 +30,7 @@ import { parseJson } from '../../lib/utils/parse_json';
 import { promptDef } from '../../lib/prompts/definition';
 import { PromptFragment } from '../../lib/prompts/fragments';
 import { anthropicChat } from '../../lib/anthropic';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../lib/slack';
 import {
   buildRelationshipContextFromSubgraph,

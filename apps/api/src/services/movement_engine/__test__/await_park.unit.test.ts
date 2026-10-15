@@ -4,13 +4,13 @@
 // the host's `park.wake` when it already resolved. Nothing but data crosses.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AwaitResolution } from '../../translation_graph/awaitable';
+import type { AwaitResolution } from 'movement-engine/services/translation_graph/awaitable';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { runFailureCause, type ParkSink } from '../run';
+import { runFailureCause, type ParkSink } from 'movement-engine/services/movement_engine/run';
 import { RunLeaseLost } from '../run_lease';
-import type { QueuedWake } from '../host_kit';
-import { makeFakeParkSink } from '../test_host';
-import { logger } from '../../logger';
+import type { QueuedWake } from 'movement-engine/services/movement_engine/host_kit';
+import { makeFakeParkSink } from 'movement-engine/services/movement_engine/test_host';
+import { logger } from 'movement-engine/services/logger';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 

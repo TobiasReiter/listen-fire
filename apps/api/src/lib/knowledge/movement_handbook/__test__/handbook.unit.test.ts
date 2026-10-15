@@ -24,7 +24,7 @@ import {
 import adapterSchemas from './adapter_schemas.fixture.json';
 import { registeredPluginSpecs } from '../../../../services/translation_graph/movement/catalog';
 import { proseViolations } from './prose_rules';
-import { chapterRoute } from '../../../handbook_section';
+import { chapterRoute } from 'movement-engine/lib/handbook_section';
 import { frontPageClaims } from '../front_page';
 import { controlFormClaims } from '../language_search';
 import {
@@ -485,7 +485,7 @@ function askHost(): AskHostModules {
   return {
     AskAdapter: require('../../../../services/translation_graph/adapters/ask').AskAdapter,
     instanceSchemaFromDescriptors:
-      require('../../../../services/translation_graph/movement/schema_projection')
+      require('movement-engine/services/translation_graph/movement/schema_projection')
         .instanceSchemaFromDescriptors,
     graftGenericLandings:
       require('../../../../services/translation_graph/movement/generic_landings')

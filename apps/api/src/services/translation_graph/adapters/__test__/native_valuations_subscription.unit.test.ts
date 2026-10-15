@@ -7,7 +7,7 @@
 // register/deregister helper with correct change-handling.
 
 // logger → services/context → casl crashes at module load; stub it.
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

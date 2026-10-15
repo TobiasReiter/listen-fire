@@ -17,12 +17,12 @@
 //     that explores is the string an author writes in a movement.
 
 import type { FieldType } from 'movement-lang';
-import type { EdgesFromResult, EdgeTargetNode } from '../adapter';
-import type { SchemaFieldDescriptor, SchemaReferenceDescriptor, SchemaTypeDescriptor } from '../types';
-import type { UniquenessConstraints } from '../uniqueness';
+import type { EdgesFromResult, EdgeTargetNode } from 'movement-engine/services/translation_graph/adapter';
+import type { SchemaFieldDescriptor, SchemaReferenceDescriptor, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 
-import { positionLabelEntry, referenceTargetTypeIds } from '../types';
-import { fieldTypeFromDescriptor } from './schema_projection';
+import { positionLabelEntry, referenceTargetTypeIds } from 'movement-engine/services/translation_graph/types';
+import { fieldTypeFromDescriptor } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { narrowByOf } from './narrowing';
 
 export interface WalkedProperty {

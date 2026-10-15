@@ -5,7 +5,7 @@
 // adapter carries its own behavioral reference.
 
 import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient';
-import type { UniquenessConstraints } from '../../uniqueness';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 import type {
   ResolveEntityInput,
   ResolveEntityResult,
@@ -23,11 +23,11 @@ import type {
   DeleteInput,
   DeleteResult,
   LinkedObjectCandidate,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { exposeFile } from '../../engine/files/expose';
 import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
 import {
@@ -36,7 +36,7 @@ import {
   positionData,
   positionRecordId,
   type SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import {
   AIRTABLE_ADAPTER_TYPE,
   LINK_FIELD_TYPE,

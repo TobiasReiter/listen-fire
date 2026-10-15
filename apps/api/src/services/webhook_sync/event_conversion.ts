@@ -10,7 +10,7 @@
 // it, and adapters importing the handler would cycle.
 
 import type { WebhookEvent } from './providers/interface';
-import type { DiscriminableEvent } from '../translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 
 export function mapEventTypeToChangeType(
   eventType: string,

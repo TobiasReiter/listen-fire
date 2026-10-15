@@ -11,7 +11,7 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { SlackAdapter, SLACK_MESSAGE_TYPE_ID } from '../adapters/slack';
-import { makeUnstablePosition } from '../types';
+import { makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 
 const TEAM_ID = 'team-1' as TeamId;
 

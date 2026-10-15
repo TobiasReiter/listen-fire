@@ -14,7 +14,7 @@
 // what makes a cached answer go away: an explicit refresh for the shape, and
 // the run's own writes for the records.
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../lib/slack', () => ({ sendSlackNotification: jest.fn() }));

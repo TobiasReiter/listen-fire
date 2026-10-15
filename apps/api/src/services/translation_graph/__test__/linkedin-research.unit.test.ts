@@ -27,7 +27,7 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../../lib/prompts/execute', () => ({
   parseJson: (raw: string) => JSON.parse(raw),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: (...args: unknown[]) => mockLogInfo(...args), warn: jest.fn() },
 }));
 // The document store reaches Playwright, the crawler and the prompt library;
@@ -53,14 +53,14 @@ jest.mock('../engine/transforms/fetch_resource', () => ({
 // ── Module imports (after mocks) ──────────────────────────────────────────
 
 import type { ContextDependentInput } from '../engine/transforms';
-import type { SourcePosition } from '../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import {
   linkedinResearchImpl,
   LINKEDIN_RESEARCH_PLUGIN_MANIFEST,
 } from '../engine/transforms/linkedin-research';
 import { services } from '../../../adapters/registry';
-import { makeStablePosition } from '../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

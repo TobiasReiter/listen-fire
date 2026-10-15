@@ -9,7 +9,7 @@
 // kill healthy runs).
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import type { CancelGate } from './run';
+import type { CancelGate } from 'movement-engine/services/movement_engine/run';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { RunLeaseLost, type HeldRunLease } from './run_lease';

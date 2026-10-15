@@ -6,7 +6,7 @@
 
 // logger → services/context → casl crashes at module load; stub it (mirrors
 // the sibling tests).
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // Credentials load hits the DB + decrypt; stub the two seams so requireCreds
@@ -28,13 +28,13 @@ jest.mock('../../../../lib/credentials', () => ({
 }));
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MutationContext } from '../../mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   createNativeValuationsAdapter,
 } from '../native_valuations';
-import { makeStablePosition } from '../../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 const adapter = () =>
   createNativeValuationsAdapter({ teamId: 'team-1' as TeamId, credentialsId: 'cred-1' });

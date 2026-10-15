@@ -25,7 +25,7 @@ import type { ReactNode } from 'react';
 
 /**
  * Static value type of a property. Mirrors F2's `ExpressionType` (the
- * canonical type in `apps/api/src/services/translation_graph/types.ts`
+ * canonical type in `packages/movement-engine/services/translation_graph/types.ts`
  * — kept in sync via the drift-detector test in `__test__/`).
  *
  * The `file` arm renders with a distinct icon — it's a typed binary

@@ -26,7 +26,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type AutomationsSchema from '../../generated/kysely/automations/AutomationsSchema';
-import type { ParkedScopeState } from './serialize';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { apiBaseUrl } from '../../lib/api_base_url';

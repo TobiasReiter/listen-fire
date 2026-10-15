@@ -3,15 +3,15 @@
 // (`ExtractCallLlmClient`), both on the Anthropic chat wrapper, with the output
 // ceiling and the truncation rule they share.
 
-import type { ExtractCallLlmClient } from '../../movement_engine/extraction_call';
-import type { CancelGate } from '../../movement_engine/run';
+import type { ExtractCallLlmClient } from 'movement-engine/services/movement_engine/extraction_call';
+import type { CancelGate } from 'movement-engine/services/movement_engine/run';
 import type { LlmCallInput, LlmClient } from '../engine/batched_extraction';
 
 import { anthropicChatDetailed, MAX_CHAT_CONTINUATIONS, type ChatReply } from '../../../lib/anthropic';
 import { parseJsonReply } from '../../../lib/prompts/execute';
-import { logger } from '../../logger';
-import { claudeModelId } from '../../movement_engine/ai_tiers';
-import { RunCancelledSignal } from '../../movement_engine/errors';
+import { logger } from 'movement-engine/services/logger';
+import { claudeModelId } from 'movement-engine/services/movement_engine/ai_tiers';
+import { RunCancelledSignal } from 'movement-engine/services/movement_engine/errors';
 
 export interface ModelClientOptions {
   /** The run's cancel gate, checked before every call: `AI()` reaches a model

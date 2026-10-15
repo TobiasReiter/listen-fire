@@ -1,10 +1,10 @@
 import { backOff } from 'exponential-backoff';
 import { htmlToText } from 'html-to-text';
 
-import type { CostSource } from '../lib/run_cost';
+import type { CostSource } from 'movement-engine/lib/run_cost';
 
 import { SECOND } from '../constants';
-import { logger } from './logger';
+import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../lib/slack';
 import { Queue } from '../lib/utils/queue';
 import { getEnvVar } from '../lib/utils/environment';

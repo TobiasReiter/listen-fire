@@ -17,7 +17,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type { ChatProvider } from '../chat';
 
 import { getEnvVar } from '../../utils/environment';
-import { neverAsAny } from '../../utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 type OpenAiRequest = OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 type OpenAiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;

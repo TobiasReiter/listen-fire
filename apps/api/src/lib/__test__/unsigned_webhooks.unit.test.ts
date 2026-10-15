@@ -4,7 +4,7 @@
 
 const warn = jest.fn();
 
-jest.mock('../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: (...args: unknown[]) => warn(...args), error: jest.fn() },
 }));
 

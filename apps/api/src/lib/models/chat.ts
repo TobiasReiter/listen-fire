@@ -6,12 +6,12 @@
 // wander onto an endpoint (batches, files) that only one vendor has.
 
 import type Anthropic from '@anthropic-ai/sdk';
-import type { Provider, Resolved } from './map';
-import type { ChatModelName } from './registry';
+import type { Provider, Resolved } from 'movement-engine/lib/models/map';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { assertRunBudget } from '../run_spend';
-import { neverAsAny } from '../utils/types';
-import { assertCallable, resolveModel } from './map';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
 import { anthropicChatProvider } from './providers/anthropic';
 import { geminiChatProvider } from './providers/gemini';
 import { openAiChatProvider } from './providers/openai';

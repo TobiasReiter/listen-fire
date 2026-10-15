@@ -29,7 +29,7 @@ jest.mock('../../../lib/credentials', () => ({
 
 // Logger pulls in services/context, which loads casl extensions and crashes
 // at module-load. Stub it.
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -59,7 +59,7 @@ jest.mock('../../../adapters/attio/apiClient', () => ({
 // `translation_graph/types.ts` transitively loads the same broken zod
 // chain via `knowledge_pipeline/output_v3/schemas`. Stub at the leaf —
 // types.ts only consumes the shape at type-level.
-jest.mock('../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -151,20 +151,20 @@ jest.mock('../../../lib/kysely', () => {
 import { Readable } from 'node:stream';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SourcePosition } from '../types';
-import type { FileRef, WriteInput } from '../adapter';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
+import type { FileRef, WriteInput } from 'movement-engine/services/translation_graph/adapter';
 
-import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from '../types';
+import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from 'movement-engine/services/translation_graph/types';
 import {
   AttioAdapter,
   ATTIO_LIST_ENTRY_TYPE_ID,
   ATTIO_LISTS_EDGE,
   ATTIO_WEBHOOK_EVENT_TYPE_ID,
 } from '../adapters/attio';
-import { fileValue, RESOURCES_REFERENCE_FIELD_ID, type FileValue } from '../adapter';
+import { fileValue, RESOURCES_REFERENCE_FIELD_ID, type FileValue } from 'movement-engine/services/translation_graph/adapter';
 import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
-import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
-import { logger } from '../../logger';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { logger } from 'movement-engine/services/logger';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1075,7 +1075,7 @@ describe('AttioAdapter.listEventTypes', () => {
   it('its union discriminates a real inbound Attio webhook payload', async () => {
     const adapter = makeAdapter('team-eventtypes-2');
     const types = await adapter.listEventTypes();
-    const { discriminateEvent } = await import('../engine/inbound/discriminate');
+    const { discriminateEvent } = await import('movement-engine/services/translation_graph/engine/inbound/discriminate');
     const result = discriminateEvent({
       adapterType: 'attio',
       event: {

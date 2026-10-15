@@ -11,13 +11,13 @@
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
-import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import type { ParkedScopeState } from '../serialize';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
 

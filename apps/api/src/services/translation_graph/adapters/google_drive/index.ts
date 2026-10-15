@@ -36,25 +36,25 @@ import type {
   WriteInput,
   WriteResult,
   EdgesFromResult,
-} from '../../adapter';
-import type { TriggerType } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import type { DriveItem } from '../../../../adapters/google/driveClient';
 
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { listGrantedItems, DRIVE_FOLDER_MIME } from '../../../credentials/granted_items';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { services } from '../../../../adapters/registry';
 import { GoogleDriveClient } from '../../../../adapters/google/driveClient';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { fileHandle, ownedFileSource } from '../../adapter';
-import { META_RECORD_TYPE, makeStablePosition, positionData } from '../../types';
+import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import {

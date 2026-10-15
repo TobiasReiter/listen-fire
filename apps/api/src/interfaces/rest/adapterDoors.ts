@@ -23,9 +23,9 @@ import {
   wakeAdapterKeys,
   type AdapterDoorCaller,
 } from '../../services/webhook_sync/adapter_doors';
-import { ADAPTER_TEAM_HEADER } from '../../services/translation_graph/protocol/client';
-import { neverAsAny } from '../../lib/utils/types';
-import { logger } from '../../services/logger';
+import { ADAPTER_TEAM_HEADER } from 'movement-engine/services/translation_graph/protocol/client';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
 
 const adapterDoorsRouter: ReturnType<typeof Router> = Router();
 

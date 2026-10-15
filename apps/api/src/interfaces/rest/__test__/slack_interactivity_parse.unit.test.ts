@@ -10,7 +10,7 @@
 // (src/types/actions/block-action.ts) since @slack/web-api ships no
 // interactivity-payload types of its own.
 
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   blockActionValue,
   parseAskAction,

@@ -85,7 +85,7 @@ jest.mock('../../../../lib/kysely', () => ({
   })),
 }));
 
-import type { BindingEndpoint } from '../../../movement_engine/host';
+import type { BindingEndpoint } from 'movement-engine/services/movement_engine/host';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import {

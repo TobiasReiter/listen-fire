@@ -3,7 +3,7 @@
 
 import type { GeneratedImage, ImageRequest } from './index';
 
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { geminiClient } from '../providers/gemini';
 
 /** What Gemini draws: the square, 1K picture image generation on Google has

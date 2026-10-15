@@ -30,24 +30,24 @@ import type {
   ResolveFileRefResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { parseWhatsappEvents } from '../../../webhook_sync/providers/whatsapp';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
-import { fileHandle, isFileValue, ownedFileSource, singleParentLink } from '../../adapter';
+import { fileHandle, isFileValue, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import { naturalName } from '../name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { isExposedFileUrl } from '../../engine/files/expose';
 import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
 import { streamFileRef } from '../../engine/files/retrieve';
-import { META_RECORD_TYPE, makeUnstablePosition, positionData } from '../../types';
+import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { uniformWalk } from '../hop';
 import { BaseAdapter } from '../base';
 import { normalizeWhatsappPhone } from '../acting_user/phone';

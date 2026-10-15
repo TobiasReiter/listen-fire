@@ -6,11 +6,11 @@ import {
   webhookGraphOutputConfigSchema,
   webhookGraphOutputConfigInputSchema,
   type WebhookGraphOutputConfig,
-} from '../../webhook/configSchema';
+} from 'movement-engine/adapters/webhook/configSchema';
 import {
   outputV3ConfigSchema,
   type OutputV3Config,
-} from '../../../services/knowledge_pipeline/output_v3/schemas';
+} from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 
 // Re-export config types for convenience
 export { webhookGraphOutputConfigSchema, webhookGraphOutputConfigInputSchema };

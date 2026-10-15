@@ -3,7 +3,7 @@
 // checkpoint, emits one event per note (tagged `granola:note`), and returns the
 // new high-water checkpoint. Shares the API client with the read-side Adapter.
 
-import type { DiscriminableEvent } from '../../adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 

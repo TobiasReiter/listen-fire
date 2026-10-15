@@ -4,14 +4,14 @@ import { sql } from 'kysely';
 
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { Adapter, DiscriminableEvent, EventType } from '../translation_graph/adapter';
+import type { Adapter, DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
 import type { WebhookProvider } from './providers';
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { getWebhookProvider } from './providers';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';
 import {
   captureDiscriminableEvent,
@@ -19,7 +19,7 @@ import {
   readReceiptGroupOutcomes,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
-import { channelScopeMatches, eventConfigList } from '../translation_graph/triggers/listen_config';
+import { channelScopeMatches, eventConfigList, eventMatchesTriggerScope } from 'movement-engine/services/translation_graph/triggers/listen_config';
 import { ATTIO_ADAPTER_TYPE } from '../translation_graph/adapters/attio';
 import { TELEGRAM_ADAPTER_TYPE, TelegramAdapter } from '../translation_graph/adapters/telegram';
 import { handleTelegramCallbackQuery, ownsCallbackQuery } from './telegram_callback_door';
@@ -39,7 +39,7 @@ import {
 import { hasAdapter, resolveAdapterSlug } from '../translation_graph/adapters/registry';
 import { resolveAdapter } from '../translation_graph/adapters/resolve';
 import { isTestHarnessTeam } from '../../lib/recording';
-import { verifyRemoteSignature } from './remote_inbound';
+import { verifyRemoteSignature } from 'movement-engine/services/webhook_sync/remote_inbound';
 import { webhookProviderKey } from './urls';
 import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
@@ -468,32 +468,6 @@ async function readWakeKeys(
     });
     return { ok: false, error };
   }
-}
-
-/**
- * Does this event clear a trigger's `listen` scope? Two gates, both from the
- * trigger's `config`:
- *   • `events: [...]` — the chosen change types (`record.created`, …). The
- *     authored selection that the source registration already narrowed to;
- *     re-checked here so two listens sharing one webhook each see only theirs.
- *   • `table: "tbl…"` — Airtable's per-table scope. The webhook is per-base, so
- *     a delivery for base B reaches every trigger on B's credential; this keeps
- *     a table-T listen from firing on table-U changes (no cross-leak, no wasted
- *     run). The event names its table in `recordType`.
- */
-function eventMatchesTriggerScope(event: DiscriminableEvent, config: unknown): boolean {
-  const c = config as { events?: unknown; table?: unknown } | null;
-
-  const events = eventConfigList(c?.events);
-  if (events.length > 0) {
-    if (event.eventType === undefined || !events.includes(event.eventType)) return false;
-  }
-
-  if (typeof c?.table === 'string' && c.table.length > 0) {
-    if (event.recordType !== undefined && event.recordType !== c.table) return false;
-  }
-
-  return true;
 }
 
 /**

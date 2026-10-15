@@ -3,7 +3,7 @@
 // JS-render retry. These tests exercise that retry decision and the shell
 // detection it's built on; ScraperAPI always renders and is untouched by it.
 
-jest.mock('../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -22,9 +22,9 @@ const sendSlackNotification = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../lib/slack', () => ({ sendSlackNotification }));
 
 import { ScraperService, looksLikeSpaShell } from '../scraper';
-import { BudgetExhausted, NO_BUDGET_LIMIT } from '../../lib/run_cost';
+import { BudgetExhausted, NO_BUDGET_LIMIT } from 'movement-engine/lib/run_cost';
 import { withSpendMeter } from '../../lib/run_spend';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as never;

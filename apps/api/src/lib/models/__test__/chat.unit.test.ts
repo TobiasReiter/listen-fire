@@ -21,8 +21,8 @@ jest.mock('@anthropic-ai/vertex-sdk', () => ({
 }));
 
 const googleAuth = jest.fn().mockReturnValue({ auth: 'google' });
-jest.mock('../../google_cloud', () => ({
-  ...jest.requireActual('../../google_cloud'),
+jest.mock('movement-engine/lib/google_cloud', () => ({
+  ...jest.requireActual('movement-engine/lib/google_cloud'),
   googleAuth: (...args: unknown[]) => googleAuth(...args),
 }));
 

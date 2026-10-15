@@ -1,6 +1,6 @@
 // Agent tool suite
 
-import type { FieldMapping, TraversalStep, FilterExpression, OutputV3Config, Expression } from '../schemas';
+import type { FieldMapping, TraversalStep, FilterExpression, OutputV3Config, Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import type {
   OntologySummary,
   AdapterMetadataProvider,

@@ -15,7 +15,7 @@
 // checkpoint as pending and is re-checked on later ticks, so a slow index
 // delays a message rather than losing it.
 
-import type { DiscriminableEvent } from '../../adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 

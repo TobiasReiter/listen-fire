@@ -62,7 +62,7 @@ import {
   resetWorkHandlersForTests,
   setWorkNotifier,
 } from '../../../services/work/drain';
-import { signRemoteDelivery, REMOTE_SIGNATURE_HEADER } from '../../../services/webhook_sync/remote_inbound';
+import { signRemoteDelivery, REMOTE_SIGNATURE_HEADER } from 'movement-engine/services/webhook_sync/remote_inbound';
 import { webhookSyncRouter } from '../webhookSync';
 import { adapterDoorsRouter } from '../adapterDoors';
 

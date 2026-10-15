@@ -9,7 +9,7 @@
 // so the walk is asserted on the REQUESTS made (the page token is carried
 // forward) as well as on the concatenated result.
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

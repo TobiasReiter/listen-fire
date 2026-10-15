@@ -5,8 +5,8 @@
 // stdlib.ts alone is enough, and that ${NUMBER.FORMAT(x, "compact")} renders
 // inside a string interpolation.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { listUnsupportedConstructs } from '../interpretable';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {

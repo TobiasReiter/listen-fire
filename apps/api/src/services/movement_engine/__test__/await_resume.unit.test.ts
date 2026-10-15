@@ -107,7 +107,7 @@ jest.mock('../../../lib/kysely', () => ({
   getAutomationsQb: () => makeQb()(),
 }));
 jest.mock('../../../lib/worker', () => ({ worker: jest.fn() }));
-jest.mock('../../logger', () => ({ logger: { error: (...a: unknown[]) => loggerErrorMock(...a), info: jest.fn(), warn: jest.fn() } }));
+jest.mock('movement-engine/services/logger', () => ({ logger: { error: (...a: unknown[]) => loggerErrorMock(...a), info: jest.fn(), warn: jest.fn() } }));
 jest.mock('../../interaction/run_failure', () => ({
   settleCancelledRun: (...a: unknown[]) => settleCancelledRunMock(...a),
 }));
@@ -137,7 +137,7 @@ jest.mock('../../translation_graph/movement/execute', () => ({
 jest.mock('../../translation_graph/storage/tg_table', () => ({
   loadTriggerById: (...a: unknown[]) => loadTriggerByIdMock(...a),
 }));
-jest.mock('../../translation_graph/triggers/types', () => ({
+jest.mock('movement-engine/services/translation_graph/triggers/types', () => ({
   triggerEventSchema: { parse: (x: unknown) => x },
 }));
 

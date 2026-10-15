@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/node';
 
 import { HEALTH_CHECK_ENDPOINT, isProd } from '../../constants';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 const environment = process.env.NODE_ENV ?? 'development';
 const isDev = environment === 'development';

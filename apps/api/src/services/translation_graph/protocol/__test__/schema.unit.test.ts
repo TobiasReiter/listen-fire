@@ -20,9 +20,9 @@ import {
 } from 'engine-contracts';
 
 import type { AddressInfo } from 'node:net';
-import type { Adapter } from '../../adapter';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 
-import { BASE_RUNTIME_CAPABILITIES } from '../../adapter';
+import { BASE_RUNTIME_CAPABILITIES } from 'movement-engine/services/translation_graph/adapter';
 import { createAdapterProtocolHandler } from '../server';
 
 // A representative source position — the wire mirror of `SourcePosition`.

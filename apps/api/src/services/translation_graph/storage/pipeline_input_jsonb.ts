@@ -10,7 +10,7 @@ import type { Insertable } from 'kysely';
 import type { PipelineInputId } from '../../../generated/kysely/public/PipelineInput';
 
 import { getQb } from '../../../lib/kysely';
-import { parsePipelineEventBodyLenient, type PipelineEventBody } from '../types';
+import { parsePipelineEventBodyLenient, type PipelineEventBody } from 'movement-engine/services/translation_graph/types';
 
 /**
  * Read the consumer-level event-mode body — the shared NodeMappings +

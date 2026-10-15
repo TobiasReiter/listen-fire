@@ -11,7 +11,7 @@
 import { Readable } from 'node:stream';
 
 import type { DocumentProvider } from '../../../../../adapters/document/interface';
-import type { FileRef } from '../../../adapter';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 

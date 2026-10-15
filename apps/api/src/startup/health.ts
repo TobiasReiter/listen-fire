@@ -20,7 +20,7 @@
 import type { RegisteredWorker, WorkerRegistry } from './registry';
 
 import { LISTEN_FIRE_VERSION } from '../constants';
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { workerTick } from '../lib/worker';
 import { mounts, mountedProducts, type Product, type Unit } from '../products';
 import { asksWorkers } from './asks';

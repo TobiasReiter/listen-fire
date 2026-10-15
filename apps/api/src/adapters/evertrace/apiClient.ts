@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 export const EVERTRACE_DEFAULT_BASE_URL = 'https://api.evertrace.ai';
 

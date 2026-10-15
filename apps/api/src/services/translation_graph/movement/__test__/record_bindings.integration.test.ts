@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { BindingEndpoint } from '../../../movement_engine/host';
+import type { BindingEndpoint } from 'movement-engine/services/movement_engine/host';
 
 import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
 import {

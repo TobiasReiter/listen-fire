@@ -24,12 +24,12 @@ import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/route
 import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
-import { positionData } from '../../translation_graph/types';
-import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import type { Adapter, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { registerTimerWork, resumeTimerParkedRun, settleCancelledTimersHandler, timerWorkKey } from '../timer_resume';

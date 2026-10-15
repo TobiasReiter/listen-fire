@@ -2,7 +2,7 @@
 // writes a flat ops event, with the feed title, team attribution and
 // suppressed-type handling exercised here.
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

@@ -18,7 +18,7 @@ import KnowledgeSchema from '../generated/kysely/knowledge/KnowledgeSchema';
 import PublicSchema from '../generated/kysely/public/PublicSchema';
 import ValuationsSchema from '../generated/kysely/valuations/ValuationsSchema';
 import { getDatabaseUrl } from '../prisma';
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { unsafeCurrentContext } from '../services/context';
 
 const { Pool } = Pg;

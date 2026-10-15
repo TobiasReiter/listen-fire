@@ -21,7 +21,7 @@ import { LlmUsageContext } from '../../../../lib/llm_usage';
 import { sendSlackNotification } from '../../../../lib/slack';
 import { getKnowledgeQb } from '../../../../lib/kysely';
 import { checkUsage, recordEvent, checkAndAlert, USAGE_EXHAUSTED_MESSAGES } from '../../../../services/usage';
-import { logger } from '../../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import NodeTypeCategory from '../../../../generated/kysely/knowledge/NodeTypeCategory';
 import { userProcedure as sharedUserProcedure } from '../../procedures';
 

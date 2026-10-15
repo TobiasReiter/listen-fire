@@ -25,7 +25,7 @@
 
 import { z } from 'zod';
 
-import type { DiscriminableEvent } from '../../adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 
 const deliverySchema = z
   .object({

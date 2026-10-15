@@ -16,15 +16,15 @@
  */
 
 import type { ExtractExpression, Span } from 'movement-lang';
-import type { MovementTraceEntry } from '../../services/movement_engine/expression';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 
-import { BARE_HOST } from '../../services/movement_engine/host_kit';
+import { BARE_HOST } from 'movement-engine/services/movement_engine/host_kit';
 import {
   ROOT_EXTRACT_DESCRIPTION,
   materializeExtract,
   type ExtractNodeSpec,
-} from '../../services/movement_engine/extraction';
-import { NO_PROVENANCE } from '../../services/movement_engine/provenance';
+} from 'movement-engine/services/movement_engine/extraction';
+import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
 import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
 
 const span: Span = { start: { line: 1, col: 1 }, end: { line: 1, col: 1 } };

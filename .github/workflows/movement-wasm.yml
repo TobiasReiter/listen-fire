@@ -36,6 +36,7 @@ on:
       # The TypeScript side of the oracle: the engine and its shim, the
       # corpora, and what runs them.
       - "apps/api/src/services/movement_engine/**"
+      - "packages/movement-engine/**"
       # Imported by the oracle generator.
       - "apps/api/src/lib/run_cost.ts"
       - "apps/api/src/services/translation_graph/engine/batched_extraction/model_choice.ts"
@@ -64,6 +65,7 @@ on:
       # The TypeScript side of the oracle: the engine and its shim, the
       # corpora, and what runs them.
       - "apps/api/src/services/movement_engine/**"
+      - "packages/movement-engine/**"
       # Imported by the oracle generator.
       - "apps/api/src/lib/run_cost.ts"
       - "apps/api/src/services/translation_graph/engine/batched_extraction/model_choice.ts"

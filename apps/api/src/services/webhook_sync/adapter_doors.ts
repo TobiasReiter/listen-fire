@@ -19,18 +19,18 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 import type { IncomingHttpHeaders } from 'node:http';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
+import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 
 import { teamIdSchema } from '../../lib/team_id';
 import { loadRemoteAdapterSecret, resolveAdapter } from '../translation_graph/adapters/resolve';
 import { RemoteAdapterManifestFile } from '../translation_graph/adapters/remote/manifest';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
 import { listRemoteAdaptersOfType, type RemoteAdapterRow } from '../translation_graph/adapters/remote/store';
-import { ADAPTER_TEAM_HEADER, authHeader } from '../translation_graph/protocol/client';
+import { ADAPTER_TEAM_HEADER, authHeader } from 'movement-engine/services/translation_graph/protocol/client';
 import { enqueueCapturedEvents, type CapturedTriggerEvent } from '../translation_graph/triggers/dispatch_event';
 import { enqueueAwaitWakes } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { captureProviderTriggerEvents } from './handler';
 import { webhookProviderKey } from './urls';
 

@@ -8,18 +8,18 @@
 describe('the engine modules', () => {
   it('load with the evaluator first, and the evaluator never loads run.ts', () => {
     jest.isolateModules(() => {
-      jest.doMock('../run', () => {
+      jest.doMock('movement-engine/services/movement_engine/run', () => {
         throw new Error('run.ts was loaded on the evaluator’s import path');
       });
-      expect(() => require('../expression')).not.toThrow();
+      expect(() => require('movement-engine/services/movement_engine/expression')).not.toThrow();
     });
-    jest.dontMock('../run');
+    jest.dontMock('movement-engine/services/movement_engine/run');
   });
 
   it('load with the evaluator first, run.ts included', () => {
     jest.isolateModules(() => {
-      expect(() => require('../expression')).not.toThrow();
-      expect(() => require('../run')).not.toThrow();
+      expect(() => require('movement-engine/services/movement_engine/expression')).not.toThrow();
+      expect(() => require('movement-engine/services/movement_engine/run')).not.toThrow();
     });
   });
 });

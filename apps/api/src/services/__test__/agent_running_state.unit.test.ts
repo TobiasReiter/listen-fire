@@ -73,7 +73,7 @@ jest.mock('../context', () => ({
   }),
 }));
 
-jest.mock('../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
@@ -591,7 +591,7 @@ describe('buildRecentThoughtsPrefix (M4)', () => {
 describe('checkTokenBudget (M4)', () => {
   it('does not warn when total context is well under threshold', () => {
     const warnSpy = jest.fn();
-    const { logger } = jest.requireMock('../logger');
+    const { logger } = jest.requireMock('movement-engine/services/logger');
     logger.warn = warnSpy;
     checkTokenBudget({
       systemPrompt: 'short',
@@ -603,7 +603,7 @@ describe('checkTokenBudget (M4)', () => {
 
   it('warns when total estimated context crosses the threshold', () => {
     const warnSpy = jest.fn();
-    const { logger } = jest.requireMock('../logger');
+    const { logger } = jest.requireMock('movement-engine/services/logger');
     logger.warn = warnSpy;
     // 50K tokens ≈ 200K chars. Build a synthetic over-budget input.
     const giant = 'x'.repeat(250_000);

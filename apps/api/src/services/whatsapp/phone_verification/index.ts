@@ -8,7 +8,7 @@ import type { UserId } from '../../../generated/kysely/core/User';
 import type { PhoneVerificationId } from '../../../generated/kysely/automations/PhoneVerification';
 
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { sendVerificationCode } from '../metaApi';
 import { maskPhoneNumber, whatsappLinkVerification } from './link_verification';
 import {

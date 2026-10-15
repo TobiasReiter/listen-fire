@@ -15,7 +15,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -42,7 +42,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -83,15 +83,15 @@ jest.mock('../../../lib/prompts/execute', () => ({
 }));
 
 import { execute } from '../../../lib/prompts/execute';
-import { runMovement } from '../run';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { meteredArbitration } from '../../translation_graph/engine/entity_match';
 
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { containerAssociation, type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData } from '../../translation_graph/types';
+import { containerAssociation, type Adapter, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 const mockExecute = execute as jest.MockedFunction<typeof execute>;

@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import type { ParkedScopeState } from '../serialize';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import { sql } from 'kysely';
 

@@ -41,10 +41,10 @@ import { refinementKey } from 'movement-lang';
 
 import type { InstanceChain, InstanceSchema, PositionSchema } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
-import type { SchemaTypeDescriptor } from '../types';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 import { decidableConjuncts, narrowByOf, selectMember } from './narrowing';
-import { instanceSchemaFromDescriptors } from './schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 export interface RefinableInstance {
   adapterType: string;

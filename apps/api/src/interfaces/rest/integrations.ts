@@ -24,9 +24,9 @@ import {
   WRITE_METHODS,
   type BrandIcon,
   type IntegrationCategory,
-} from '../../services/translation_graph/adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import { sendSlackNotification } from '../../lib/slack';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 /** Methods that let a movement read data back out of a system. */
 const READ_METHODS = ['readRecord', 'getFieldValue', 'getRelated'] as const;

@@ -6,7 +6,7 @@
 // a record renders the record as its fields at that key. Text stays text.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -14,7 +14,7 @@ process.env.DATABASE_URL_TEST ??= 'postgresql://unit:unit@localhost:5432/unit-te
 process.env.DATABASE_URL_TEST_READONLY ??= 'postgresql://unit:unit@localhost:5432/unit-test-unused';
 process.env.SCRAPER_API_KEY ??= 'unit-test-unused';
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -23,15 +23,15 @@ jest.mock('../../context', () => ({
 }));
 
 import type { ExtractExpression, Span } from 'movement-lang';
-import { binding, type Binding } from '../expression';
-import { buildExtractSpec, materializeExtract } from '../extraction';
-import { NO_PROVENANCE } from '../provenance';
+import { binding, type Binding } from 'movement-engine/services/movement_engine/expression';
+import { buildExtractSpec, materializeExtract } from 'movement-engine/services/movement_engine/extraction';
+import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
 import type {
   LlmCallInput,
   LlmCallResult,
 } from '../../translation_graph/engine/batched_extraction';
-import type { WriteRecord } from '../expression';
-import { fileValue } from '../../translation_graph/adapter';
+import type { WriteRecord } from 'movement-engine/services/movement_engine/expression';
+import { fileValue } from 'movement-engine/services/translation_graph/adapter';
 
 const span: Span = { start: { line: 1, col: 1 }, end: { line: 1, col: 1 } };
 

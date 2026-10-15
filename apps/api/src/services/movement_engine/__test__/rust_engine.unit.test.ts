@@ -8,16 +8,16 @@ import { EMPTY_CATALOG_SNAPSHOT, mockCatalogSnapshot, type CatalogSnapshot } fro
 
 import { fileValue, isFileValue, tenantIdOf } from 'engine-contracts';
 
-import { RunCostCapExceeded } from '../../../lib/run_cost';
-import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
-import { hostMethodPaths } from '../host';
-import { AdapterCallFailed } from '../host_adapter';
-import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { openRunContext, RunLedger } from '../run_context';
-import { ENGINE_OWN_ROUTES, shimRoutePaths } from '../rust_host';
-import { resetRustRunStats, rustRunStats } from '../rust_stats';
-import { WireOut } from '../rust_wire';
-import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
+import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
+import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
+import { hostMethodPaths } from 'movement-engine/services/movement_engine/host';
+import { AdapterCallFailed } from 'movement-engine/services/movement_engine/host_adapter';
+import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { openRunContext, RunLedger } from 'movement-engine/services/movement_engine/run_context';
+import { ENGINE_OWN_ROUTES, shimRoutePaths } from 'movement-engine/services/movement_engine/rust_host';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { WireOut } from 'movement-engine/services/movement_engine/rust_wire';
+import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import {
   assertEngineChoiceConfigured,
   driveEngine,
@@ -31,7 +31,7 @@ import {
   type EngineStep,
   type HostAnswer,
   type HostRequest,
-} from '../rust_engine';
+} from 'movement-engine/services/movement_engine/rust_engine';
 
 const TEAM = tenantIdOf('team-1');
 

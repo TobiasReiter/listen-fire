@@ -8,7 +8,7 @@
 //! `filter`), which the TypeScript evaluator calls synchronously through
 //! `abi::eval_expression` for an expression over value bindings; and a whole
 //! run, the `segment` entry (`run`), for the programs `admit` admits
-//! (apps/api/src/services/movement_engine/rust_engine.ts drives it). JavaScript's value
+//! (packages/movement-engine/services/movement_engine/rust_engine.ts drives it). JavaScript's value
 //! semantics are `js`'s, and values cross on `env`'s wire.
 
 // A list's cells are a `RefCell`; a borrow held across an await would let a

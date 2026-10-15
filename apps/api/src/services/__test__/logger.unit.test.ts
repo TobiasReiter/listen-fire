@@ -9,7 +9,7 @@ import { Writable } from "node:stream";
 
 import winston from 'winston';
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 
 // Captures through a transport on the real logger rather than spying on
 // process.stdout: winston's Console transport writes via `console._stdout`,

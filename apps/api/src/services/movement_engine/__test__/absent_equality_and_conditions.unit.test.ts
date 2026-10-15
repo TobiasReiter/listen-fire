@@ -8,7 +8,7 @@
 // the author cannot tell them apart. (Two reads of DIFFERENT absent spellings
 // still compare strictly — `shared_filter`'s "undefined is NOT null there".)
 
-import { binding, Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
 import { CURRENT_LANGUAGE_VERSION, parseMovementCondition, parseMovementExpression } from 'movement-lang';
 import { evaluatePredicate } from '#shared/expression/filter';
 

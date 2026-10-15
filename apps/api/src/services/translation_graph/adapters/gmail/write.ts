@@ -15,10 +15,10 @@
 // produces a message that lands outside the thread it was meant for.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { FileRef, ParentLink, WriteResult } from '../../adapter';
+import type { FileRef, ParentLink, WriteResult } from 'movement-engine/services/translation_graph/adapter';
 import type { GmailApiClient } from './client';
 
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   GmailApiError,

@@ -10,7 +10,7 @@
 // `?answer=` link idiom is no longer taught; the door still recognises it while
 // live automations are re-authored.
 
-import type { HandbookSection } from '../../../../lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/lib/handbook_section';
 
 export const TELEGRAM_HANDBOOK_SECTION: HandbookSection = {
   title: 'Telegram — bot chats, keyboards, and acting in the chat',

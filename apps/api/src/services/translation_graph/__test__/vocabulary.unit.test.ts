@@ -5,7 +5,7 @@
  *
  */
 
-import type { AdapterEventPhraseVocabulary } from '../adapter';
+import type { AdapterEventPhraseVocabulary } from 'movement-engine/services/translation_graph/adapter';
 
 import { resolveEventPhrase } from '../vocabulary';
 

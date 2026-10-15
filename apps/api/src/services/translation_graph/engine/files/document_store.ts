@@ -4,7 +4,7 @@
 // store itself (`services.document`, no per-team credentials); the host
 // redeems it by `objectUri` (`streamFileRef`).
 
-import type { FileRef } from '../../adapter';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 /**
  * The key prefix of the documents a team's movements store themselves (a

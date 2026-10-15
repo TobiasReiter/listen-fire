@@ -2,17 +2,17 @@
 // the engine: the TG transform registry, and the document store a plugin's
 // fetched files land in.
 
-import type { TransformInvocationResult, TransformInvokeInput } from '../../movement_engine/extraction';
-import type { Costed, Priced } from '../../movement_engine/host';
-import type { FileRef } from '../adapter';
+import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/services/movement_engine/extraction';
+import type { Costed, Priced } from 'movement-engine/services/movement_engine/host';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { runFields } from '../../../lib/llm_usage';
-import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from '../../../lib/run_cost';
+import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from 'movement-engine/lib/run_cost';
 import { DocumentService } from '../../document';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { documentStoreFileRef } from '../engine/files/document_store';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
-import { makeEphemeralPosition } from '../types';
+import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
 
 /** A plugin by either spelling: movement identifiers can't carry dashes, so a
  *  program writes `vc_url_retrieval` for a transform registered as

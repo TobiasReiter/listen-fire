@@ -12,9 +12,9 @@
 // re-added.
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { UpdateInput, UpdateResult, WriteInput, WriteResult } from '../../adapter';
+import type { UpdateInput, UpdateResult, WriteInput, WriteResult } from 'movement-engine/services/translation_graph/adapter';
 
-import { containerAssociation, singleParentLink } from '../../adapter';
+import { containerAssociation, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE, type DecodedTypeId } from './types';
 import { createNoopTracer, writeCustomFieldValues } from './shared';
 import { AFFINITY_LIST_NAME_FIELD } from './schema_catalog';

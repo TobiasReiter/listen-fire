@@ -33,7 +33,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from '../../../../../lib/models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 import type { PageFetchResult, WebSearchResult, WebToolEvent } from '../../../../../lib/anthropic';
 import type { SearchHit } from '../search_hygiene';
 import type { ProfileRead } from './profile_read';
@@ -54,8 +54,8 @@ import {
   meterAnthropicUsage,
 } from '../../../../../lib/anthropic';
 import { runFields } from '../../../../../lib/llm_usage';
-import { resolveModel } from '../../../../../lib/models/map';
-import { logger } from '../../../../logger';
+import { resolveModel } from 'movement-engine/lib/models/map';
+import { logger } from 'movement-engine/services/logger';
 import { missingBrightDataVars, ScraperService } from '../../../../scraper';
 import { WebSearchService } from '../../../../web_search';
 import { describeError } from '../fetch_resource';

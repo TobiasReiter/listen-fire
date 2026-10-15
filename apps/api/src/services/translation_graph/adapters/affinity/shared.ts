@@ -7,13 +7,13 @@
 
 import type { AffinityAPIClient } from '../../../../adapters/affinity/apiClient';
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { ParentAssociation, ParentLink, WriteInput } from '../../adapter';
+import type { ParentAssociation, ParentLink, WriteInput } from 'movement-engine/services/translation_graph/adapter';
 
 import { valueType, locationFieldValue } from '../../../../adapters/affinity/apiClient';
 import { anthropicChat } from '../../../../lib/anthropic';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { isAdapterCallCeilingExceeded } from '../../segment_scope';
-import { writeParentLinks } from '../../adapter';
+import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
 import {
   decodedFixedType,
   isReferenceValueType,

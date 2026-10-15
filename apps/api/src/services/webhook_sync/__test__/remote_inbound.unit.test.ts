@@ -3,7 +3,7 @@
 
 import { createHmac } from 'node:crypto';
 
-import { UNREGISTERED_SECRET, verifyRemoteSignature } from '../remote_inbound';
+import { UNREGISTERED_SECRET, verifyRemoteSignature } from 'movement-engine/services/webhook_sync/remote_inbound';
 
 const BODY = Buffer.from('{"companies":[{"id":"co-1","Name":"Acme"}]}');
 const sign = (secret: string, body: Buffer = BODY) => createHmac('sha256', secret).update(body).digest('hex');

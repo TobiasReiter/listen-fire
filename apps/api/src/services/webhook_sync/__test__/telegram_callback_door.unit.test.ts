@@ -16,7 +16,7 @@
 // with Telegram, and the adapter's own credential resolution is tested with the
 // adapter (adapters/telegram/__test__/telegram.unit.test.ts).
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -35,7 +35,7 @@ jest.mock('../../movement_engine/callback_fire', () => ({
 
 import type { CallbackRecord } from '../../movement_engine/callback_store';
 
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   callbackQueryOf,
   handleTelegramCallbackQuery,

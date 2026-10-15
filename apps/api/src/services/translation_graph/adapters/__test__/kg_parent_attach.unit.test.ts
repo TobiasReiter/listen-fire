@@ -9,7 +9,7 @@
 // reports which of the two things happened.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MutationContext } from '../../mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 import type { WireOntology } from '../kg_client';
 
 // The graph's HTTP surface, faked whole: every call this file makes is a

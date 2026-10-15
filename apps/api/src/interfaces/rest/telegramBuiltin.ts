@@ -30,7 +30,7 @@ import {
   handleSharedBotInbound,
   type SharedBotDelivery,
 } from '../../services/webhook_sync/telegram_builtin';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { notifyWork } from '../../services/work/drain';
 import { runHarnessDelivery } from '../../services/work/harness';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';

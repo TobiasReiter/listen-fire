@@ -8,17 +8,17 @@
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { MovementTransformInvoker } from '../extraction';
-import type { ExtractCallLlmInput, ExtractCallLlmResult } from '../extraction_call';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { MovementTransformInvoker } from 'movement-engine/services/movement_engine/extraction';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { makeTestHost } from '../test_host';
-import { runFailureCause, runMovement, type MovementRunResult } from '../run';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
+import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c3');
 

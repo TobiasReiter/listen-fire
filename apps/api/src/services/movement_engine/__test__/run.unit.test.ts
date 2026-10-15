@@ -39,7 +39,7 @@
 // Order-sensitive cycle: pre-require schemas.ts so `expressionSchema`
 // resolves before any ES import pulls it transitively.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 // lib/credentials derives its DEK at module load; the attio adapter pulls
 // it in through the registry. Synthetic keys — nothing here encrypts.
@@ -78,7 +78,7 @@ jest.mock('../../../lib/kysely', () => ({
 
 // services/logger pulls services/context → prisma → DATABASE_URL_* env
 // requirements at import time.
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -131,8 +131,8 @@ import {
   runFailureCause,
   runMovement,
   resumeMovement,
-} from '../run';
-import type { ParkSink } from '../run';
+} from 'movement-engine/services/movement_engine/run';
+import type { ParkSink } from 'movement-engine/services/movement_engine/run';
 import {
   rehydrateBinding,
   serializeBinding,
@@ -140,27 +140,27 @@ import {
   type InstanceIdentityDescriptor,
   type ParkedScopeState,
   type RehydrationContext,
-} from '../serialize';
+} from 'movement-engine/services/movement_engine/serialize';
 import { createSingleFlight } from '../single_flight';
-import type { Binding, SourceRead } from '../expression';
-import { binding, Environment, MovementEngineError, evalMovementExpr } from '../expression';
+import type { Binding, SourceRead } from 'movement-engine/services/movement_engine/expression';
+import { binding, Environment, MovementEngineError, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
   RuntimeCapabilities,
   ExternalRecordRef,
-} from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { LlmClient } from '../../translation_graph/engine/batched_extraction';
-import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
-import type { SchemaTypeDescriptor } from '../../translation_graph/types';
+import { makeStablePosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf, type ActingPrincipal } from 'engine-contracts';
-import type { EngineHost } from '../host';
-import { credentialIdsFor, makeTestHost, TEST_HOST_NOW } from '../test_host';
-import type { ActingUserLookup } from '../host_kit';
-import type { ActingUser } from '../../translation_graph/adapter';
+import type { EngineHost } from 'movement-engine/services/movement_engine/host';
+import { credentialIdsFor, makeTestHost, TEST_HOST_NOW } from 'movement-engine/services/movement_engine/test_host';
+import type { ActingUserLookup } from 'movement-engine/services/movement_engine/host_kit';
+import type { ActingUser } from 'movement-engine/services/translation_graph/adapter';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 

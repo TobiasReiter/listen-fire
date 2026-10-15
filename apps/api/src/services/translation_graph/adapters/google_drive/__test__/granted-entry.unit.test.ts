@@ -13,7 +13,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -35,7 +35,7 @@ jest.mock('../../../../../adapters/registry', () => ({
   services: { google: undefined },
 }));
 
-jest.mock('../../../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -68,12 +68,12 @@ jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
 });
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { GetRelatedInput } from '../../../adapter';
+import type { GetRelatedInput } from 'movement-engine/services/translation_graph/adapter';
 
 import { GoogleDriveAdapter } from '../index';
 import { DISPLAY_NAME_BY_KIND, GOOGLE_DRIVE_ADAPTER_TYPE } from '../types';
 import { DRIVE_FILES_COLLECTION, DRIVE_FILE_TYPE, DRIVE_FOLDERS_COLLECTION } from '../schema_catalog';
-import { META_RECORD_TYPE, makeStablePosition } from '../../../types';
+import { META_RECORD_TYPE, makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import * as grantedItems from '../../../../credentials/granted_items';
 import { DRIVE_FOLDER_MIME } from '../../../../credentials/granted_items';
 

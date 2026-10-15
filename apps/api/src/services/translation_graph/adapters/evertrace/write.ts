@@ -13,15 +13,15 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 import {
   EvertraceApiError,
   type EvertraceApiClient,
   type EvertraceSearchFilterRow,
 } from '../../../../adapters/evertrace/apiClient';
-import { writeParentLinks, containerAssociation } from '../../adapter';
-import { neverAsAny } from '../../../../lib/utils/types';
+import { writeParentLinks, containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { UPDATE_NOT_FOUND } from '../not_found';
 import {
   EVERTRACE_ADAPTER_TYPE,

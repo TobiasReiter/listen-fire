@@ -1,5 +1,5 @@
 //! The pure expression evaluator: `evalMovementExpr`
-//! (apps/api/src/services/movement_engine/expression.ts) over the kinds that
+//! (packages/movement-engine/services/movement_engine/expression.ts) over the kinds that
 //! need no host — literals, value-binding reads, `AT`, lists, maps,
 //! interpolation, conditionals, comparisons, logic, arithmetic and the
 //! built-in functions — with the same values, the same provenance and the

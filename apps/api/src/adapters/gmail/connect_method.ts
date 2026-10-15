@@ -13,7 +13,7 @@
 // offered, which credential shape is stored, whether an unset allowlist is safe
 // — reads the method from here rather than re-deriving it.
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 
 export const GMAIL_CONNECT_METHODS = ['oauth', 'delegated'] as const;
 export type GmailConnectMethod = (typeof GMAIL_CONNECT_METHODS)[number];

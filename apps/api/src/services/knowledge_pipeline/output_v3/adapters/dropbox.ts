@@ -2,7 +2,7 @@ import type { DropboxClient } from '../../../../adapters/dropbox/apiClient';
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
 
 import { services } from '../../../../adapters/registry';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { buildLLMContext, resolvePreserveTags } from '../resolve';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';

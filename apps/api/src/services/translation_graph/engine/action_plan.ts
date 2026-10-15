@@ -4,10 +4,10 @@
 //   (b) the agent can request a "dry run" that returns plans without
 //       applying them.
 
-import type { FieldMappingSemantics } from '../types';
-import type { MutationContext } from '../mutation_context';
-import type { UniquenessConstraints } from '../uniqueness';
-import type { FieldEvidence, Resource } from '../adapter';
+import type { FieldMappingSemantics } from 'movement-engine/services/translation_graph/types';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
+import type { FieldEvidence, Resource } from 'movement-engine/services/translation_graph/adapter';
 
 export interface ActionPlan {
   /** Translation-graph node `id` that produced this plan. */

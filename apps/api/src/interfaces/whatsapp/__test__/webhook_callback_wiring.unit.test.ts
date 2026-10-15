@@ -8,7 +8,7 @@
 // file only pins that `interfaces/whatsapp/webhook.ts` actually calls it, with
 // the real door logic (only the router and the Meta send client are mocked).
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../lib/slack', () => ({ sendSlackNotification: jest.fn(async () => {}) }));
@@ -220,7 +220,7 @@ describe('a signature that does not verify', () => {
   const { whatsappProvider } = jest.requireMock('../../../services/webhook_sync/providers/whatsapp') as {
     whatsappProvider: { verifySignature: jest.Mock };
   };
-  const { logger } = jest.requireMock('../../../services/logger') as {
+  const { logger } = jest.requireMock('movement-engine/services/logger') as {
     logger: { warn: jest.Mock };
   };
 

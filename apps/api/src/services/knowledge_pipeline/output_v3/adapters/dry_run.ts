@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
 
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 /**
  * Wraps a real V3Adapter for dry-run mode. Write-mode actions are forced into

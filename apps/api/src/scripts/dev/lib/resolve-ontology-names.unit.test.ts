@@ -1,8 +1,8 @@
 import type {
   ActionNode,
   TranslationGraphRowBody,
-} from '../../../services/translation_graph/types';
-import type { Expression } from '../../../services/knowledge_pipeline/output_v3/expression';
+} from 'movement-engine/services/translation_graph/types';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
 
 import {
   resolveOntologyNamesInBody,
@@ -230,7 +230,7 @@ describe('resolveOntologyNamesInBody', () => {
             type: 'reference',
             edgeName: 'participants',
             direction: 'inbound',
-          } as unknown as import('../../../services/translation_graph/types').NodeRelationship,
+          } as unknown as import('movement-engine/services/translation_graph/types').NodeRelationship,
         },
       ],
     };

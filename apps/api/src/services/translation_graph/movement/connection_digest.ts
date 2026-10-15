@@ -17,7 +17,7 @@ import { spellName, type AdapterSpec, type FieldType, type InstanceSchema } from
 
 import type { WalkedDescribedNode, WalkedEdge, WalkedNode, WalkedProperty } from './walk';
 
-import { neverAsAny } from '../../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 /** One system's block in getStarted, in characters (about a quarter as many
  *  tokens). Sized so a CRM's main record types keep their fields. */

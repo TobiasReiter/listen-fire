@@ -10,7 +10,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import { getKnowledgeQb } from '../../lib/kysely';
 import { createKnowledgeGraphAdapter } from '../../services/translation_graph/adapters/knowledge_graph';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
-import { userEditContext } from '../../services/translation_graph/mutation_context';
+import { userEditContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 async function main() {
   const [nodeId, newName] = process.argv.slice(2);

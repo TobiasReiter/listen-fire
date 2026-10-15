@@ -17,7 +17,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -53,7 +53,7 @@ jest.mock('../../../../../lib/anthropic', () => ({
 
 // types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
 // the leaf — the adapter consumes it only at type level.
-jest.mock('../../../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -94,14 +94,14 @@ import {
 } from 'movement-lang';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { ResolveEntityInput } from '../../../adapter';
+import type { ResolveEntityInput } from 'movement-engine/services/translation_graph/adapter';
 import type { Expression } from '#shared/expression/types';
-import type { SourcePosition } from '../../../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AffinityAdapter, AFFINITY_MANIFEST } from '../index';
 import { decodedFixedType, listScopedFieldDisplayNames } from '../types';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { refineInstanceSchema } from '../../../movement/refinements';
 import {
   isStablePosition,
@@ -110,7 +110,7 @@ import {
   positionData,
   positionLabel,
   positionRecordId,
-} from '../../../types';
+} from 'movement-engine/services/translation_graph/types';
 
 
 // ---------------------------------------------------------------------------

@@ -33,12 +33,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { EngineHost, SegmentOpening } from '../movement_engine/host';
+import type { EngineHost, SegmentOpening } from 'movement-engine/services/movement_engine/host';
 
-import { NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
+import { NO_BUDGET_LIMIT, type CostLine } from 'movement-engine/lib/run_cost';
 import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
-import { logger } from '../logger';
-import { adapterErrorOf, type ClassifyHostError } from './engine/adapter_table';
+import { logger } from 'movement-engine/services/logger';
+import { adapterErrorOf, type ClassifyHostError } from 'movement-engine/services/translation_graph/engine/adapter_table';
 import { teamOfTenant, tenantOfTeam } from './movement/tenant';
 
 /** The systems that count against a ceiling. One entry per system that has its

@@ -3589,7 +3589,7 @@ export type ExprType =
   /**
    * File — a typed binary handle. Mirrors `ExpressionType { kind: 'file' }`
    * on the API side (see
-   * `apps/api/src/services/translation_graph/types.ts`). Produced by
+   * `packages/movement-engine/services/translation_graph/types.ts`). Produced by
    * reading a property whose `valueType === 'file'` — i.e., an
    * adapter-declared file field like the Email attachment's `data` slot
    * or the Slack file's `data` slot.

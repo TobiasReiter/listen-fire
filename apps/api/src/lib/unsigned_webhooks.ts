@@ -1,4 +1,4 @@
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 /**
  * What every inbound webhook door does when it has NO secret to verify against.

@@ -1,4 +1,4 @@
-import type { MovementTraceEntry } from '../../../../services/movement_engine/expression';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 
 import { runRecordOf } from '../run_record';
 

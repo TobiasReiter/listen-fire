@@ -12,8 +12,8 @@ import type { EphemeralEmission } from './registry';
 
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
-import { isBudgetExhausted } from '../../../../lib/run_cost';
-import { logger } from '../../../logger';
+import { isBudgetExhausted } from 'movement-engine/lib/run_cost';
+import { logger } from 'movement-engine/services/logger';
 import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
 import { ScraperService } from '../../../scraper';

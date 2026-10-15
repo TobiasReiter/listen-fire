@@ -17,10 +17,10 @@
  *   pnpm dev:probe-thinking
  *   pnpm dev:probe-thinking --models claude-opus-5,claude-sonnet-5
  */
-import type { ChatModelName } from '../../lib/models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { chatCallFor } from '../../lib/models/chat';
-import { parseChatModelName } from '../../lib/models/registry';
+import { parseChatModelName } from 'movement-engine/lib/models/registry';
 
 /** Every model the Claude 5 move has to decide about, plus the two already on
  *  5 that the claim says behave differently. */

@@ -96,7 +96,7 @@ jest.mock('../../../../../lib/slack', () => ({
   },
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     warn: (message: string) => state.warnings.push(message),
     error: (message: string) => state.warnings.push(message),

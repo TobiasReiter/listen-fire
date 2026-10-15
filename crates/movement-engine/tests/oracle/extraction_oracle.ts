@@ -52,12 +52,12 @@ import {
   type DeclaredNodeShape,
   type ExtractNodeSpec,
   type PluginSpecs,
-} from '../../../../apps/api/src/services/movement_engine/extraction';
-import { shapeChain, type ShapeBinding } from '../../../../apps/api/src/services/movement_engine/run';
-import { pricedCalls, RunLedger } from '../../../../apps/api/src/services/movement_engine/run_context';
-import type { EngineHost } from '../../../../apps/api/src/services/movement_engine/host';
-import { binding } from '../../../../apps/api/src/services/movement_engine/expression';
-import { REFUSED, WireOut } from '../../../../apps/api/src/services/movement_engine/rust_wire';
+} from '../../../../packages/movement-engine/services/movement_engine/extraction';
+import { shapeChain, type ShapeBinding } from '../../../../packages/movement-engine/services/movement_engine/run';
+import { pricedCalls, RunLedger } from '../../../../packages/movement-engine/services/movement_engine/run_context';
+import type { EngineHost } from '../../../../packages/movement-engine/services/movement_engine/host';
+import { binding } from '../../../../packages/movement-engine/services/movement_engine/expression';
+import { REFUSED, WireOut } from '../../../../packages/movement-engine/services/movement_engine/rust_wire';
 import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 
 type Rand = () => number;

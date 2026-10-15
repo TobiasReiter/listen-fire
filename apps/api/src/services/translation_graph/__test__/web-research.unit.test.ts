@@ -21,7 +21,7 @@ const mockLogInfo = jest.fn();
 jest.mock('../../../lib/anthropic', () => ({
   anthropicChatStructured: (...args: unknown[]) => mockAnthropicChatStructured(...args),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: (...args: unknown[]) => mockLogInfo(...args), warn: jest.fn() },
 }));
 jest.mock('../../web_search', () => ({
@@ -42,10 +42,10 @@ jest.mock('../engine/transforms/fetch_resource', () => ({
 // ── Module imports (after mocks) ──────────────────────────────────────────
 
 import type { ContextDependentInput } from '../engine/transforms';
-import type { SourcePosition } from '../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import { webResearchImpl, WEB_RESEARCH_PLUGIN_MANIFEST } from '../engine/transforms/web-research';
-import { makeStablePosition } from '../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

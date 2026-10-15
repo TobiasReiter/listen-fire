@@ -36,7 +36,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
-import type { TriggerEvent } from '../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { teamDocumentKeyPrefix } from '../engine/files/document_store';
 import { services } from '../../../adapters/registry';
@@ -44,13 +44,13 @@ import { getQb, getAutomationsQb } from '../../../lib/kysely';
 import { costMicrodollarsToUsd, runCostSummaries } from '../../../lib/llm_usage';
 import { describeLimitPause, readLimitPause } from '../../movement_engine/limit_pause';
 import { handleError } from '../../../lib/errors';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { flattenTriggerRunPlans, parseTriggerRunSteps } from '../runs/trigger_run_read';
 import {
   dispatchTriggerByIdEvent,
   type TriggerIdDispatchResult,
 } from '../triggers/router';
-import { neverAsAny } from '../../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { reportedFailureReason, TriggerRunRecorder } from '../runs/trigger_run';
 import { movementForTrigger } from './execute';
 import { loadTriggerById } from '../storage/tg_table';
@@ -68,7 +68,7 @@ import {
   type AwaitDescription,
 } from '../../movement_engine/await_description';
 import { callbackUrl, listRunCallbacks } from '../../movement_engine/callback_store';
-import { isWriteEffect } from '../../movement_engine/expression';
+import { isWriteEffect } from 'movement-engine/services/movement_engine/expression';
 import {
   describeExecutedVersion,
   type ExecutedMovementVersion,

@@ -32,7 +32,7 @@ jest.mock('../../../lib/anthropic', () => ({
 jest.mock('../../../lib/prompts/execute', () => ({
   parseJson: (raw: string) => JSON.parse(raw),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn() },
 }));
 jest.mock('../../web_search', () => ({
@@ -83,11 +83,11 @@ import { fetchUrlImpl, FETCH_URL_PLUGIN_MANIFEST } from '../engine/transforms/fe
 import { linkedinEnrichmentImpl } from '../engine/transforms/linkedin-enrichment';
 
 import type { ContextDependentInput, PreExtractionInput } from '../engine/transforms';
-import type { SourcePosition } from '../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
-import { makeStablePosition } from '../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import { services } from '../../../adapters/registry';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ import type {
   SchemaFieldKind,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 
 import {
   AFFINITY_ADAPTER_TYPE,

@@ -16,21 +16,21 @@ process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
 process.env.DATABASE_URL_TEST ??= 'postgresql://unit:unit@localhost:5432/unit-test-unused';
 process.env.DATABASE_URL_TEST_READONLY ??= 'postgresql://unit:unit@localhost:5432/unit-test-unused';
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { resumeMovement, runMovement, runFailureCause, type MovementRunResult, type ParkSink } from '../run';
-import type { ParkedScopeState } from '../serialize';
-import { CallDepthExceeded, parseMaxCallDepth } from '../call_depth';
+import { resumeMovement, runMovement, runFailureCause, type MovementRunResult, type ParkSink } from 'movement-engine/services/movement_engine/run';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { CallDepthExceeded, parseMaxCallDepth } from 'movement-engine/services/movement_engine/call_depth';
 import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData } from '../../translation_graph/types';
+import { type Adapter, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
-import type { HostTransformInvoker } from '../host';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import type { HostTransformInvoker } from 'movement-engine/services/movement_engine/host';
+import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000077');
 const COST_ENV = 'MOVEMENT_MAX_RUN_COST_USD';

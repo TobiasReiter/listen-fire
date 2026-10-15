@@ -19,7 +19,7 @@
 //       on_person_change) fires and writes to the fake attio.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -46,7 +46,7 @@ jest.mock('../../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../context', () => ({
@@ -138,14 +138,14 @@ import { tenantIdOf } from 'engine-contracts';
 import type {
   Adapter,
   RuntimeCapabilities,
-} from '../../adapter';
-import type { MutationContext } from '../../mutation_context';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 import type { RecordMutationEvent } from '../record_mutation_event';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
 
 import { dispatchMutationEvent } from '../mutation_dispatch';
-import { containerAssociation } from '../../adapter';
-import { makeStablePosition, positionRecordId } from '../../types';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, positionRecordId } from 'movement-engine/services/translation_graph/types';
 import { teamOfTenant } from '../../movement/tenant';
 
 const { findTriggersByKind } = jest.requireMock('../../storage/tg_table') as {

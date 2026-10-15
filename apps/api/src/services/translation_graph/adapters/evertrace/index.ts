@@ -23,8 +23,8 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { Expression } from '#shared/expression/types';
 
 import {
@@ -33,7 +33,7 @@ import {
   makeStablePosition,
   makeUnstablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { BaseAdapter } from '../base';
 import { uniformWalk } from '../hop';

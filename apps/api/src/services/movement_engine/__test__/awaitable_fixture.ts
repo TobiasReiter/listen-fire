@@ -4,19 +4,19 @@
 // without a real ask store or Slack.
 
 import type { InstanceSchema } from 'movement-lang';
-import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
-import type { AwaitResolution } from '../../translation_graph/awaitable';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { AwaitResolution } from 'movement-engine/services/translation_graph/awaitable';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TenantId } from 'engine-contracts';
-import type { AwaitWakeRequest, EngineHost, Scoped } from '../host';
-import type { QueuedWake } from '../host_kit';
+import type { AwaitWakeRequest, EngineHost, Scoped } from 'movement-engine/services/movement_engine/host';
+import type { QueuedWake } from 'movement-engine/services/movement_engine/host_kit';
 
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { positionData } from '../../translation_graph/types';
-import { makeTestHost } from '../test_host';
-import { runMovement, type ParkSink } from '../run';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { runMovement, type ParkSink } from 'movement-engine/services/movement_engine/run';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const AWAITING = 'ask';

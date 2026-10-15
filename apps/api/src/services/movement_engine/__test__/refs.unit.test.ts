@@ -24,7 +24,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -51,7 +51,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -91,31 +91,31 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 import { catalogSnapshotOf, type Catalog } from 'movement-lang';
-import { runMovement } from '../run';
-import { MovementEngineError } from '../expression';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
 import type {
   Adapter,
   ParentLink,
   ResolveEntityInput,
   WriteInput,
-} from '../../translation_graph/adapter';
-import { singleParentLink } from '../../translation_graph/adapter';
+} from 'movement-engine/services/translation_graph/adapter';
+import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
-} from '../../translation_graph/types';
-import { positionData, makeStablePosition, META_RECORD_TYPE } from '../../translation_graph/types';
+} from 'movement-engine/services/translation_graph/types';
+import { positionData, makeStablePosition, META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
 import {
   adapterNameResolver,
   naturalName,
   AdapterNameDriftError,
   type AdapterIntrospection,
 } from '../../translation_graph/adapters/name_resolution';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { instanceSchemaFromDescriptors } from '../../translation_graph/movement/schema_projection';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const KG_ADAPTER_TYPE = 'kg';

@@ -18,7 +18,7 @@
 // one. Silent 401s on old attachments is exactly what the old
 // `endsWith('mailgun.net')` special-case produced when anything else appeared.
 
-import type { ResolveFileRefResult } from '../../adapter';
+import type { ResolveFileRefResult } from 'movement-engine/services/translation_graph/adapter';
 
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';

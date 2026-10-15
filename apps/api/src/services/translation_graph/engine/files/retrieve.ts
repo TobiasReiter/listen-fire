@@ -18,13 +18,13 @@
 
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from '../../adapter';
+import type { Adapter, EarlierFileSource, FileRef, FileSource, ResolveFileRefResult } from 'movement-engine/services/translation_graph/adapter';
 
 import { DOCUMENT_STORE_OWNER, teamDocumentKeyPrefix } from './document_store';
 import { FileOutsideTeamError } from './file_outside_team';
-import { fileOwnersScope } from './file_owners';
+import { fileOwnersScope } from 'movement-engine/services/translation_graph/engine/files/file_owners';
 
-export { withFileOwners, type FileOwners } from './file_owners';
+export { withFileOwners, type FileOwners } from 'movement-engine/services/translation_graph/engine/files/file_owners';
 
 export { FileOutsideTeamError } from './file_outside_team';
 

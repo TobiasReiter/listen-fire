@@ -34,7 +34,7 @@ import {
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   automationUrl,
   automationsUrl,

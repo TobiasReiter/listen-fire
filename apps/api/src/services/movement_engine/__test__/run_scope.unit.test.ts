@@ -10,8 +10,8 @@
 // under test too.
 
 import { tenantIdOf } from 'engine-contracts';
-import type { Adapter } from '../../translation_graph/adapter';
-import { adapterTable } from '../../translation_graph/engine/adapter_table';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import { adapterTable } from 'movement-engine/services/translation_graph/engine/adapter_table';
 import {
   AdapterCallCeilingExceeded,
   bindAdapterCallCounter,

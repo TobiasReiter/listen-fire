@@ -75,7 +75,7 @@ import {
   summariseAdmissionRollups,
   type AdmissionRollup,
 } from '../admission_rollup';
-import { OTHER_REASONS, REASONS_KEPT, admissionVerdicts, holdAdmissionVerdict, resetRustRunStats } from '../rust_stats';
+import { OTHER_REASONS, REASONS_KEPT, admissionVerdicts, holdAdmissionVerdict, resetRustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const RUN_A = '00000000-0000-0000-0000-00000000000a';
 const RUN_B = '00000000-0000-0000-0000-00000000000b';

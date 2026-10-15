@@ -51,7 +51,7 @@ import {
   firstTriggerConfigError,
   isValueBlock,
   type ConfigBlock,
-} from '../../../services/translation_graph/triggerConfig';
+} from 'movement-engine/services/translation_graph/triggerConfig';
 import { findSiblingTriggerByConfigValue } from '../../../services/translation_graph/storage/tg_table';
 import {
   listTriggerEvents,

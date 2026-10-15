@@ -2,7 +2,7 @@
 // auto vs manual registration
 // actor capture
 
-import type { Actor } from '../../translation_graph/mutation_context';
+import type { Actor } from 'movement-engine/services/translation_graph/mutation_context';
 
 export interface WebhookEvent {
   eventType: string;

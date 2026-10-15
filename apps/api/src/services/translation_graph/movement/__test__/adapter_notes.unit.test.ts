@@ -1,4 +1,4 @@
-import type { AdapterManifest } from '../../adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { deriveCapabilityNote, deriveIdentityNote } from '../adapter_notes';

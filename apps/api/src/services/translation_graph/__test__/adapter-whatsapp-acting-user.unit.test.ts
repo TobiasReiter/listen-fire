@@ -14,7 +14,7 @@
 // whether the number maps to a Listen-Fire user.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { TriggerEvent } from '../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 
 // DB mock: each `where` chain ends in an `executeTakeFirst` that returns

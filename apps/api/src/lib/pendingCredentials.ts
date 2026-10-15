@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { encryptToken, decryptToken } from './credentials';
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 const TTL_MS = 15 * 60 * 1000;
 

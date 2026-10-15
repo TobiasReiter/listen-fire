@@ -4,12 +4,12 @@
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { PropertyTypeId } from '../../../generated/kysely/knowledge/PropertyType';
 import type { FieldConstraints, ResourceContext } from './adapters/types';
-import type { Selection, ResourceFilter } from './schemas';
+import type { Selection, ResourceFilter } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import type {
   Expression,
   AggregateExpr,
   FunctionExpr,
-} from './expression';
+} from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
 import type { OutputExecutionContext, ResolvedEdge } from './resolve';
 import type { runKgQuery as RunKgQueryFn } from './kg_query_runner';
 
@@ -23,7 +23,7 @@ import {
   selectResourceField,
 } from './resolve';
 import { evaluateCondition } from './filter';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 import { compareOrderValues } from '#shared/expression/order_limit';
 

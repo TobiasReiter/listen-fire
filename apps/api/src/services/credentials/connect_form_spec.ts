@@ -28,7 +28,7 @@ import {
   validateGmailMailbox,
 } from '../../adapters/gmail/apiClient';
 import { gmailConnectMethod } from '../../adapters/gmail/connect_method';
-import { neverAsAny } from '../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { RemoteAdapterCredentialPayload } from '../translation_graph/adapters/remote/manifest';
 
 /** Stored Granola credential — the API key the user pastes. */

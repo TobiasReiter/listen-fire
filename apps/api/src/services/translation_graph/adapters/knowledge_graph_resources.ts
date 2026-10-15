@@ -20,7 +20,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
-import type { Resource } from '../adapter';
+import type { Resource } from 'movement-engine/services/translation_graph/adapter';
 import type { WriteConnection } from './knowledge_graph_writes';
 
 import { getKnowledgeQb } from '../../../lib/kysely';

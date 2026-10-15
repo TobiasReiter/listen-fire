@@ -21,7 +21,7 @@ import {
   delegatedGoogleAuth,
   gmailMailboxAllowlist,
   googleAuth,
-} from '../google_cloud';
+} from 'movement-engine/lib/google_cloud';
 
 const ACCOUNT_ENV = {
   GOOGLE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nline\\n-----END PRIVATE KEY-----',

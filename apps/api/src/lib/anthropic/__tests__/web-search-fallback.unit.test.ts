@@ -8,7 +8,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-import type { Provider } from '../../models/map';
+import type { Provider } from 'movement-engine/lib/models/map';
 
 const finalMessage = jest.fn();
 const stream = jest.fn(
@@ -29,7 +29,7 @@ jest.mock('../../llm_usage', () => ({
   runFields: jest.fn().mockReturnValue({}),
 }));
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

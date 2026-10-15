@@ -9,8 +9,8 @@
 // under delegation nothing has.
 
 const delegatedAuth = jest.fn((_input: unknown) => ({ __stub: 'delegated-auth' }));
-jest.mock('../../../../../lib/google_cloud', () => {
-  const actual = jest.requireActual('../../../../../lib/google_cloud');
+jest.mock('movement-engine/lib/google_cloud', () => {
+  const actual = jest.requireActual('movement-engine/lib/google_cloud');
   return { ...actual, delegatedGoogleAuth: (input: unknown) => delegatedAuth(input) };
 });
 
@@ -61,7 +61,7 @@ jest.mock('../../../../../lib/kysely', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 import { resolveGmailClient } from '../client';
 
 const TEAM = 'team-1' as TeamId;

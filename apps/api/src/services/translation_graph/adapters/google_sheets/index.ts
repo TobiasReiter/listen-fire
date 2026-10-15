@@ -35,27 +35,27 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { TriggerType } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import type { Expression } from '#shared/expression/types';
 
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { writeParentLinks, unsupportedAssociation } from '../../adapter';
+import { writeParentLinks, unsupportedAssociation } from 'movement-engine/services/translation_graph/adapter';
 import {
   META_RECORD_TYPE,
   makeStablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { targetStubs } from '../hop';
 import {
@@ -843,7 +843,7 @@ export class GoogleSheetsAdapter extends BaseAdapter {
 
   /** Read a record back (no-op detection): a granted spreadsheet by id, or a
    *  table row by row address. */
-  async readRecord(input: import('../../adapter').ReadInput): Promise<Record<string, unknown> | null> {
+  async readRecord(input: import('movement-engine/services/translation_graph/adapter').ReadInput): Promise<Record<string, unknown> | null> {
     if (input.recordType === SPREADSHEET_META_TYPE) {
       const grants = await listGrantedSpreadsheets(this.credentialsId);
       const grant = grants.find((g) => g.spreadsheetId === input.externalId);

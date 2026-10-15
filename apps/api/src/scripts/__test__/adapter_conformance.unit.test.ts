@@ -7,7 +7,7 @@ import http from 'node:http';
 
 import { z } from 'zod';
 
-import { BASE_RUNTIME_CAPABILITIES } from '../../services/translation_graph/adapter';
+import { BASE_RUNTIME_CAPABILITIES } from 'movement-engine/services/translation_graph/adapter';
 import {
   FAKE_CRM_COMPANY_TYPE,
   startFakeCrmServer,

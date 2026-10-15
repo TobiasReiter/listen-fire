@@ -41,8 +41,8 @@
 //     keeps whichever it iterated last for that name — undefined behaviour we
 //     don't paper over).
 
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 
 /**
  * A name in the program's NATURAL vocabulary — the adapter's `displayName`

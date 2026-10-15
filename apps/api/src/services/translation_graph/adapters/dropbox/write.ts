@@ -32,12 +32,12 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
 
-import { logger } from '../../../logger';
-import { singleParentLink } from '../../adapter';
+import { logger } from 'movement-engine/services/logger';
+import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import {
   DROPBOX_ADAPTER_TYPE,

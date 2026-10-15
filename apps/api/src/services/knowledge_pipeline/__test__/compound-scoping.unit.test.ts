@@ -15,7 +15,7 @@
 jest.mock('../../../lib/kysely', () => ({
   getKnowledgeQb: jest.fn(),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // The transitive `output_v3/schemas` import pulls in the
@@ -23,7 +23,7 @@ jest.mock('../../logger', () => ({
 // breaks under jest's transform (zod schema chain & runtime extension
 // import). Stub the schema source so the module under test loads in
 // isolation.
-jest.mock('../output_v3/expression', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/expression', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const z = require('zod');
   return { expressionSchema: z.any() };

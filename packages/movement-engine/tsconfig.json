@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "lib": ["es2022", "DOM", "ESNext.Promise", "ESNext.String"],
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "exclude": ["node_modules"]
+}

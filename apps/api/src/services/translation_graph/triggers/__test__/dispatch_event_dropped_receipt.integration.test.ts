@@ -27,8 +27,8 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
-import type { Adapter, DiscriminableEvent } from '../../adapter';
-import type { TriggerEvent } from '../types';
+import type { Adapter, DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';

@@ -11,7 +11,7 @@ import {
   WebsiteUrlOutput,
 } from './types';
 import { handleError } from '../../errors';
-import { neverAsAny } from '../../utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 const URL_REGEX = /^https?:\/\/\S+$/;
 

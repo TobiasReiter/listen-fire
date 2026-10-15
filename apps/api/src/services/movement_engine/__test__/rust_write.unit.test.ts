@@ -11,16 +11,16 @@ import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, type InstanceSchema, typ
 import { tenantIdOf } from 'engine-contracts';
 import { hostRecordingSchema, type HostRecording } from 'engine-contracts/conformance';
 
-import { RunCostCapExceeded } from '../../../lib/run_cost';
-import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
+import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import type { MovementTraceEntry } from '../expression';
-import type { SchemaTypeDescriptor } from '../../translation_graph/types';
-import { makeStablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, endedInRust, type TestHostOverrides } from '../test_host';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, endedInRust, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -31,10 +31,10 @@ import {
   type ResumeMovementInput,
   type RunLimitPause,
   type RunMovementInput,
-} from '../run';
-import { MovementEngineError, isCheckFailure } from '../errors';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import type { ParkedScopeState } from '../serialize';
+} from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError, isCheckFailure } from 'movement-engine/services/movement_engine/errors';
+import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { recordEntry } from '../conformance/recorder';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b2');

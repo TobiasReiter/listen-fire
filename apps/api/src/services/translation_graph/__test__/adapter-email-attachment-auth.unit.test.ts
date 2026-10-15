@@ -18,7 +18,7 @@
  */
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { FileRef } from '../adapter';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { EmailAdapter } from '../adapters/email';
 

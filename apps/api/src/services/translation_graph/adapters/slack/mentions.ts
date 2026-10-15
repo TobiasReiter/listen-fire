@@ -17,7 +17,7 @@
 
 import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
 
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 type SlackClient = ReturnType<typeof getSlackClient>;
 

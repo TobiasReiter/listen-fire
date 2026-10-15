@@ -1,4 +1,4 @@
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { OutboundWhatsAppMessager, SendArgs } from './interface';
 
 const FAKE_CHANNELS_URL = process.env.FAKE_CHANNELS_URL || 'http://localhost:5556';

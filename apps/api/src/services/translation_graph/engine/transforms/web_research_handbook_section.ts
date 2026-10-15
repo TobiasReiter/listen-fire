@@ -4,7 +4,7 @@
 // Its own module so the prose imports nothing: the plugin pulls in the search
 // index and the scraper chain, and the handbook must not.
 
-import type { HandbookSection } from '../../../../lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/lib/handbook_section';
 
 export const WEB_RESEARCH_HANDBOOK_SECTION: HandbookSection = {
   title: 'Find the website — the record that arrived with no link',

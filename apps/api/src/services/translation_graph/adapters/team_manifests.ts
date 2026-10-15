@@ -4,7 +4,7 @@
 // the same kind of thing to both.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AdapterManifest } from '../adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 import { listAdapterManifests } from './registry';
 import { listRemoteAdapters } from './remote/store';

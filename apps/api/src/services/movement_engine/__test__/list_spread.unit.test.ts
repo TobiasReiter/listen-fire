@@ -3,8 +3,8 @@
 // evaluator), and is not flagged by the interpretability gate that blocks a
 // save (`listUnsupportedConstructs`).
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { listUnsupportedConstructs } from '../interpretable';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 import { evaluatePredicate } from '#shared/expression/filter';
 

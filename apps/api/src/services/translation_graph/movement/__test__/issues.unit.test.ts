@@ -52,7 +52,7 @@ jest.mock('../../../../lib/kysely', () => {
 });
 
 jest.mock('../../../../lib/slack', () => ({ sendSlackNotification: jest.fn(async () => {}) }));
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

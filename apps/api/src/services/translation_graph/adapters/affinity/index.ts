@@ -33,19 +33,19 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { TriggerType } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import type { Expression } from '#shared/expression/types';
 
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { isAdapterCallCeilingExceeded } from '../../segment_scope';
 import {
   AffinityAPIClient,
@@ -56,14 +56,14 @@ import { AffinityOperations } from '../../../../adapters/affinity/operations';
 import { AFFINITY_HANDBOOK_SECTION } from './handbook_section';
 import { AFFINITY_SUBSCRIBABLE_EVENTS, parseAffinityEvents } from './inbound';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { singleParentLink } from '../../adapter';
+import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import {
   META_RECORD_TYPE,
   isStablePosition,
   makeStablePosition,
   positionData,
   positionRecordId,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { targetStubs, typeAddressedPositions } from '../hop';
 import { naturalName } from '../name_resolution';
@@ -256,7 +256,7 @@ export class AffinityAdapter extends BaseAdapter {
   async preprocessInbound(input: {
     raw: unknown;
     checkpoint?: unknown;
-  }): Promise<{ events: import('../../adapter').DiscriminableEvent[] }> {
+  }): Promise<{ events: import('movement-engine/services/translation_graph/adapter').DiscriminableEvent[] }> {
     // `parseAffinityEvents` is the PURE map (no credential); it types list-entry
     // events as the generic `List Entry`. But the generic publishes no parent
     // up-hop (layer 11 — a polymorphic type's surface is the intersection of its
@@ -273,8 +273,8 @@ export class AffinityAdapter extends BaseAdapter {
    *  <list>`), so its landed position publishes the one correct parent up-hop.
    *  Non-list-entry events pass through untouched. */
   private async narrowListEntryEvent(
-    event: import('../../adapter').DiscriminableEvent,
-  ): Promise<import('../../adapter').DiscriminableEvent> {
+    event: import('movement-engine/services/translation_graph/adapter').DiscriminableEvent,
+  ): Promise<import('movement-engine/services/translation_graph/adapter').DiscriminableEvent> {
     if (event.recordType !== ENTITY_DISPLAY_NAMES['list-entry']) return event;
     const listId = await this.listIdForEvent(event);
     if (listId == null) return event;
@@ -288,7 +288,7 @@ export class AffinityAdapter extends BaseAdapter {
    *  fields are list-scoped. Returns null when the list can't be determined
    *  (e.g. an opportunity-list field value, or an uncatalogued list). */
   private async listIdForEvent(
-    event: import('../../adapter').DiscriminableEvent,
+    event: import('movement-engine/services/translation_graph/adapter').DiscriminableEvent,
   ): Promise<number | null> {
     const body = (event.payload ?? {}) as Record<string, unknown>;
     if (typeof body.list_id === 'number') return body.list_id;
@@ -315,8 +315,8 @@ export class AffinityAdapter extends BaseAdapter {
    *  back: Affinity's HMAC key is account-level (the profile API tab), not
    *  issued per subscription. */
   async ensureEventSubscription(
-    input: import('../../adapter').EnsureEventSubscriptionInput,
-  ): Promise<import('../../adapter').EventSubscriptionRegistration | undefined> {
+    input: import('movement-engine/services/translation_graph/adapter').EnsureEventSubscriptionInput,
+  ): Promise<import('movement-engine/services/translation_graph/adapter').EventSubscriptionRegistration | undefined> {
     const client = await this.getApiClient();
     if (input.current?.externalId !== undefined) {
       const unchanged =
@@ -337,7 +337,7 @@ export class AffinityAdapter extends BaseAdapter {
   }
 
   async removeEventSubscription(
-    input: import('../../adapter').RemoveEventSubscriptionInput,
+    input: import('movement-engine/services/translation_graph/adapter').RemoveEventSubscriptionInput,
   ): Promise<void> {
     if (input.externalId === undefined) return;
     const client = await this.getApiClient();

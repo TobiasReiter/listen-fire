@@ -64,10 +64,10 @@ import { z } from 'zod';
 
 import { anthropicChat, anthropicChatStructured, anthropicToolLoop } from '../../lib/anthropic';
 import { embed } from '../../lib/models/embedding';
-import { embeddingDestinations } from '../../lib/models/embedding/destinations';
+import { embeddingDestinations } from 'movement-engine/lib/models/embedding/destinations';
 import { generateImage } from '../../lib/models/image';
-import { assertModelMapConfigured, resolveModel } from '../../lib/models/map';
-import { parseChatModelName } from '../../lib/models/registry';
+import { assertModelMapConfigured, resolveModel } from 'movement-engine/lib/models/map';
+import { parseChatModelName } from 'movement-engine/lib/models/registry';
 
 import type {
   ChatModelName,
@@ -75,7 +75,7 @@ import type {
   ImageModelName,
   ModelName,
   TranscriptionModelName,
-} from '../../lib/models/registry';
+} from 'movement-engine/lib/models/registry';
 
 import { transcribe } from '../../lib/models/transcription';
 

@@ -1,5 +1,5 @@
 import { DocumentService } from '../../../services/document';
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { RawTextService } from '../../../services/raw_text';
 import { DocumentWithContentOutput, EmptyOutput, Tool } from './types';
 import { getPptxText } from '../../utils/powerpoint';

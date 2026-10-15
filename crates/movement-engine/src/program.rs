@@ -10,7 +10,7 @@
 //! `Program` object through the keys and indices of the program's JSON as the
 //! parser emits it (`/statements/2/body/0/write/spreads/1`), with `file`
 //! naming the library file for a stamp outside the program run
-//! (apps/api/src/services/movement_engine/program_check.ts writes them). A
+//! (packages/movement-engine/services/movement_engine/program_check.ts writes them). A
 //! re-parse of the pinned source is the same tree, so the pointer names the
 //! same node; each is checked to land on a node of the stamped kind.
 //!

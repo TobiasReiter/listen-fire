@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 const attioTokenResponseSchema = z.object({
   access_token: z.string(),

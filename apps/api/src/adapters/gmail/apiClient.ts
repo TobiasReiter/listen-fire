@@ -29,8 +29,8 @@ import {
   delegatedGoogleAuth,
   gmailMailboxAllowlist,
   isGoogleServiceAccountConfigured,
-} from '../../lib/google_cloud';
-import { neverAsAny } from '../../lib/utils/types';
+} from 'movement-engine/lib/google_cloud';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import {
   GMAIL_REFRESH_TOKEN_REFUSED_MESSAGE,
   GmailRefreshTokenError,

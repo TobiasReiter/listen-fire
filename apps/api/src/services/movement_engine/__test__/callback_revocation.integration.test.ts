@@ -12,8 +12,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { ParkedScopeState } from '../serialize';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import { getCoreQb } from '../../../lib/kysely';
 import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';

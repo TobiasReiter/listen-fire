@@ -4,7 +4,7 @@
 // poll-source trigger. DB / registry / dispatch / event-store / work store are
 // mocked; the test asserts the orchestration.
 
-import type { DiscriminableEvent } from '../../translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource } from '../../translation_graph/poll_source';
 
 // ── DB: a filtering select + a capturing update ──────────────────────────
@@ -81,7 +81,7 @@ jest.mock('../../work/store', () => ({
 jest.mock('../../work/drain', () => ({
   registerWorkHandler: jest.fn(),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

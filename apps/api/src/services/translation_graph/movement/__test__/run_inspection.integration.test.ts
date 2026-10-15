@@ -13,8 +13,8 @@ import type { TriggerId } from '../../../../generated/kysely/automations/Trigger
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
 import type { PipelineConfigurationId } from '../../../../generated/kysely/public/PipelineConfiguration';
-import type { MovementRunResult } from '../../../movement_engine/run';
-import type { TriggerEvent } from '../../triggers/types';
+import type { MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { TriggerRunRecorder } from '../../runs/trigger_run';
 import { cleanupTeam } from '../../../../test/harness/cleanup';

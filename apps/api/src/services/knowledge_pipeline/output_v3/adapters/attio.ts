@@ -4,7 +4,7 @@ import type { AttioOperations } from '../../../../adapters/attio/operations';
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints } from './types';
 
 import { services } from '../../../../adapters/registry';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';
 import { resolveConfigField, StaleLinkedObjectError } from './types';

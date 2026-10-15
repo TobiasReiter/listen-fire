@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { WriteInput } from '../../../adapter';
+import type { WriteInput } from 'movement-engine/services/translation_graph/adapter';
 
 import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';

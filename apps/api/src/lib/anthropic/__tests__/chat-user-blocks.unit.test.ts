@@ -19,7 +19,7 @@ jest.mock('../../llm_usage', () => ({
   runFields: jest.fn().mockReturnValue({}),
 }));
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

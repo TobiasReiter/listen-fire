@@ -33,7 +33,7 @@
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
-import type { Resource, Fact } from '../adapter';
+import type { Resource, Fact } from 'movement-engine/services/translation_graph/adapter';
 import type { WireNodeType, WireOntology } from '../adapters/kg_client';
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ jest.mock('../../../generated/kysely/knowledge/EvidenceType', () => ({
 // just needs the chain operations to not crash at module load.
 // Inlined into the factory because factories are hoisted above
 // top-level declarations.
-jest.mock('../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -391,10 +391,10 @@ jest.mock('../../../lib/kysely', () => ({
 
 import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE, KG_RESOURCE_TYPE_ID, KG_RESOURCES_EDGE_NAME } from '../adapters/knowledge_graph';
 import { persistKgResources } from '../adapters/knowledge_graph_resources';
-import { RESOURCES_REFERENCE_FIELD_ID, type ResourceFilter } from '../adapter';
-import { makeStablePosition } from '../types';
-import { surfaceReadAdapter } from '../../movement_engine/kg';
-import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
+import { RESOURCES_REFERENCE_FIELD_ID, type ResourceFilter } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
+import { surfaceReadAdapter } from 'movement-engine/services/movement_engine/kg';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import type { InstanceSchema } from 'movement-lang';
 
 /** A schema whose `Message` declares the knowledge graph's resources edge, as
@@ -407,7 +407,7 @@ const resourcesSchema: InstanceSchema = {
   collections: {},
   writableRoots: {},
 };
-import type { SourcePosition } from '../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 const TEAM_ID = 'team-1' as TeamId;
 const KG_CREDENTIALS_ID = 'kg-credential-1';

@@ -2,12 +2,12 @@ import { format } from 'date-fns';
 
 import type { AffinityOperations } from '../../../../adapters/affinity/operations';
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints, ResourceContext } from './types';
-import type { FieldMapping } from '../schemas';
+import type { FieldMapping } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 
 import { valueType, locationFieldValue, AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
 import { services } from '../../../../adapters/registry';
 import { streamToBlob } from '../../../../lib/utils/stream';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../../agent_running_state';
 import { isExpressionConfig, resolveConfigField, StaleLinkedObjectError, MergedEntityError } from './types';

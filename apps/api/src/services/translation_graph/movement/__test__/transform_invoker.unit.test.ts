@@ -1,7 +1,7 @@
 // The production `through` / plugin-call invoker (`transform_invoker.ts`):
 // dispatch by the plugin's declared timing, and translation of its output.
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // The invoker looks stored documents up; these plugins store none.
@@ -15,7 +15,7 @@ import {
   type TransformInput,
 } from '../../engine/transforms/registry';
 import { registryTransformInvoker } from '../transform_invoker';
-import { NO_BUDGET_LIMIT } from '../../../../lib/run_cost';
+import { NO_BUDGET_LIMIT } from 'movement-engine/lib/run_cost';
 
 // ── registryTransformInvoker: kind dispatch + output translation ────────────
 // The production invoker the host hands the engine. Guards the

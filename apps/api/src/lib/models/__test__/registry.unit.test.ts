@@ -1,4 +1,4 @@
-import { hasCapability, isModelName, modelNames, models, parseChatModelName } from '../registry';
+import { hasCapability, isModelName, modelNames, models, parseChatModelName } from 'movement-engine/lib/models/registry';
 
 describe('the model registry', () => {
   it('knows its own names and nothing else', () => {

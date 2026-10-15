@@ -64,7 +64,7 @@ jest.mock('../../../lib/prompts/execute', () => {
 });
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
-import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { resumeRun } from '../../interaction/operator';
 import { claimRunLease, releaseRunLease, RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
@@ -78,12 +78,12 @@ import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/route
 import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
 import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
-import { positionData } from '../../translation_graph/types';
-import type { Adapter, RuntimeCapabilities } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import type { Adapter, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;

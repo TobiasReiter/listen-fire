@@ -12,7 +12,7 @@ jest.mock('../../providers/gemini', () => ({
   geminiClient: (...args: unknown[]) => geminiClient(...(args as [])),
 }));
 
-jest.mock('../../../../services/logger', () => ({ logger: { info: jest.fn() } }));
+jest.mock('movement-engine/services/logger', () => ({ logger: { info: jest.fn() } }));
 
 const recordLlmUsage = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../../llm_usage', () => ({

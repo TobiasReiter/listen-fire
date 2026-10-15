@@ -43,7 +43,7 @@ jest.mock('../metaApi', () => ({
 }));
 
 const loggerInfo = jest.fn();
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: (...args: unknown[]) => loggerInfo(...args) },
 }));
 

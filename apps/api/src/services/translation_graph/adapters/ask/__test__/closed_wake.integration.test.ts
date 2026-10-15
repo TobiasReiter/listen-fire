@@ -23,8 +23,8 @@ import type { TriggerId } from '../../../../../generated/kysely/automations/Trig
 import type { TriggerRunId } from '../../../../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../../../generated/kysely/public/PipelineConfiguration';
-import type { TriggerEvent } from '../../../triggers/types';
-import type { AwaitResolution } from '../../../awaitable';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { AwaitResolution } from 'movement-engine/services/translation_graph/awaitable';
 
 import { testWorkContext } from '../../../../../test/harness/work';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';

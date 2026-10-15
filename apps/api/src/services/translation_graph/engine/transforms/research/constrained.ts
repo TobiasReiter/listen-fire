@@ -22,7 +22,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from '../../../../../lib/models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 import type { ProfileIdentity } from '../linkedin_identity';
 import type { SearchHit } from '../search_hygiene';
 import type {
@@ -40,7 +40,7 @@ import { anthropicChatStructured, meterAnthropicUsage } from '../../../../../lib
 import { DocumentSourceService } from '../../../../../lib/document_sources';
 import { runFields } from '../../../../../lib/llm_usage';
 import { looksLikeNonHtmlAddress } from '../../../../../lib/utils/url';
-import { logger } from '../../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { describeError, fetchWithTimeout } from '../fetch_resource';
 import { canonicalProfileUrl, isLinkedInLink, profileSlug } from '../linkedin_identity';
 import {

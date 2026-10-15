@@ -7,7 +7,7 @@
 import { parseTraversalPath, refinementKey, scanInstanceChains } from 'movement-lang';
 
 import type { InstanceSchema } from 'movement-lang';
-import type { SchemaTypeDescriptor } from '../../types';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 import { narrowForInspection, refineInstanceSchema } from '../refinements';
 

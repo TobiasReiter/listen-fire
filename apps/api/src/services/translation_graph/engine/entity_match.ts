@@ -12,8 +12,8 @@
 import { z } from 'zod';
 
 import type { LanguageVersion } from 'movement-lang';
-import type { ExternalRecordRef } from '../adapter';
-import type { ArbitrationAnswer, Costed, EntityArbitration, Priced } from '../../movement_engine/host';
+import type { ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import type { ArbitrationAnswer, Costed, EntityArbitration, Priced } from 'movement-engine/services/movement_engine/host';
 
 import { execute } from '../../../lib/prompts/execute';
 import { promptDef } from '../../../lib/prompts/definition';
@@ -25,12 +25,12 @@ import {
   type JevAnswer,
   type JevNoulQuestion,
 } from '../../../lib/jev/client';
-import { isBudgetExhausted } from '../../../lib/run_cost';
+import { isBudgetExhausted } from 'movement-engine/lib/run_cost';
 import { withSpendMeter } from '../../../lib/run_spend';
-import { neverAsAny } from '../../../lib/utils/types';
-import { logger } from '../../logger';
-import { arbitrateWithoutJudge, type UniquenessConstraints } from '../uniqueness';
-import { aiExpressionSettings, claudeModelId } from '../../movement_engine/ai_tiers';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
+import { arbitrateWithoutJudge, type UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
+import { aiExpressionSettings, claudeModelId } from 'movement-engine/services/movement_engine/ai_tiers';
 
 
 export type { ArbitrationAnswer, EntityArbitration };

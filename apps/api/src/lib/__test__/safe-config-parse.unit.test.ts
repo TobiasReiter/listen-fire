@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import { safeParseConfig } from '../safe-config-parse';
 
-jest.mock('../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     warn: jest.fn(),
     error: jest.fn(),
@@ -20,7 +20,7 @@ jest.mock('../../services/logger', () => ({
   },
 }));
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 const mockLogger = logger as unknown as { warn: jest.Mock };
 
 describe('safeParseConfig', () => {

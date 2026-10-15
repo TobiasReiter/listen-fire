@@ -1,5 +1,5 @@
 import { prismaClient } from '../../prisma';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { OviUser } from './types';
 import { WhatsAppMessage } from '../../interfaces/whatsapp/webhook';
 import { sendSlackNotification } from '../../lib/slack';

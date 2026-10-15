@@ -15,10 +15,10 @@ import type {
   GetFieldValueInput,
   GetRelatedInput,
   RelatedResult,
-} from '../../adapter';
-import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { Expression } from '#shared/expression/types';
-import type { TriggerEvent } from '../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { uniformWalk } from '../hop';
 import {
@@ -26,7 +26,7 @@ import {
   META_RECORD_TYPE,
   makeUnstablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { BaseAdapter } from '../base';
 import {

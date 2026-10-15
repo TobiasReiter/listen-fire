@@ -4,7 +4,7 @@ import uniq from 'lodash/uniq';
 
 import { parseJsonResponse } from '../../lib/utils/fetch';
 import { Queue } from '../../lib/utils/queue';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { SECOND } from '../../constants';
 import { currentContext } from '../../services/context';
 import {

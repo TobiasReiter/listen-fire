@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 
-import { logger } from '../../services/logger';
-import { describeError } from '../../lib/utils/error';
+import { logger } from 'movement-engine/services/logger';
+import { describeError } from 'movement-engine/lib/utils/error';
 
 /**
  * `fetch`, but a network-level throw (undici `TypeError: fetch failed`) is

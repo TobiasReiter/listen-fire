@@ -26,14 +26,14 @@ import type { Credentials } from 'google-auth-library';
 
 import { decryptToken, encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 import {
   GMAIL_OAUTH_CLIENT_LABEL,
   gmailOAuthClientCredentials,
   gmailOAuthScopes,
 } from './connect_method';
-import { GMAIL_READONLY_SCOPE } from '../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
 
 /** The token half of a signed-in mailbox's credential, as the rotation listener
  *  rewrites it. The mailbox address and the granted scopes sit beside it on the

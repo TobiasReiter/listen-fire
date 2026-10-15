@@ -1,4 +1,4 @@
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 /**
  * The `audience` claim on our OWN self-signed HS256 session + realtime tokens.

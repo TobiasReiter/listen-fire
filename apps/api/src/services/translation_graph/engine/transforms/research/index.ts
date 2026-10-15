@@ -22,17 +22,17 @@ import type {
   ResearchOptions,
   ResearchResult,
 } from './contract';
-import type { TransformSignature } from '../../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { runFields } from '../../../../../lib/llm_usage';
-import { logger } from '../../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { normaliseUrl } from '../fetch_resource';
 import { distinctiveContextTerms, distinctiveOrganisation } from '../search_hygiene';
 import { agenticEngine } from './agentic';
 import { constrainedEngine } from './constrained';
 import { emptyUsage } from './contract';
 import { RESEARCH_HANDBOOK_SECTION } from './research_handbook_section';
-import { importIdentifier } from '../../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 export * from './contract';
 export { constrainedEngine } from './constrained';

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { decryptToken } from '../../../../lib/credentials';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { getAutomationsQb } from '../../../../lib/kysely';

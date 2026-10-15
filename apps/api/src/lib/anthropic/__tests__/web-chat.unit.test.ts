@@ -30,7 +30,7 @@ jest.mock('../../llm_usage', () => ({
 
 const warn = jest.fn();
 const info = jest.fn();
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info, warn, error: jest.fn() },
 }));
 

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { neverAsAny } from '../types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 type DataMapType = {
   node: Record<string, unknown & { id: string }>;

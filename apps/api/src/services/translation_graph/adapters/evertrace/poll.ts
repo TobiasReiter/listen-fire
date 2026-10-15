@@ -14,7 +14,7 @@
 // parameter as is exactly what gets fetched. No selection is the signal alone,
 // which is what every listen written before lists still means.
 
-import type { DiscriminableEvent } from '../../adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type {
@@ -24,8 +24,8 @@ import type {
   EvertraceSignal,
 } from '../../../../adapters/evertrace/apiClient';
 
-import { logger } from '../../../logger';
-import { eventConfigList } from '../../triggers/listen_config';
+import { logger } from 'movement-engine/services/logger';
+import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
 import { narrowsAnything, signalFilterFromSearchRows } from './saved_search';
 import { resolveEvertraceClient, type EvertraceApiClient } from './client';
 import {

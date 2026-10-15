@@ -1,7 +1,7 @@
 // TEXT.PAIRS rendered through the engine, including inside `${…}`
 // interpolation — the Project A composer-row case from the handbook.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {

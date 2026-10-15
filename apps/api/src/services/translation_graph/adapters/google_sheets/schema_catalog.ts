@@ -20,10 +20,10 @@ import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaTypeDescriptor,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 
 import { writableColumnNames } from '../../../../adapters/googleSheets/columns';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   type SheetsTableId,

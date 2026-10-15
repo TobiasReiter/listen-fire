@@ -12,7 +12,7 @@
 // (remote_adapter row), the credential decrypt, the kysely qb (credential
 // row fetch), and `createRemoteAdapter` (so no wire/fetch is exercised).
 
-import type { Adapter } from '../../../adapter';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 

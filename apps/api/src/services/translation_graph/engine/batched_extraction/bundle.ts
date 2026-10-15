@@ -21,7 +21,7 @@
 // happens up the stack so the bundle can be inspected, snapshotted,
 // and diffed in tests.
 
-import type { Resource } from '../../adapter';
+import type { Resource } from 'movement-engine/services/translation_graph/adapter';
 import type { ExtractInvocation, ExtractValueInvocation } from '../evaluator/batcher';
 
 /**

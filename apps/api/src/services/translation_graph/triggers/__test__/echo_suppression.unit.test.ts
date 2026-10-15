@@ -9,10 +9,10 @@
 //
 // Both are pure (no DB / Redis), so the adapter is constructed directly.
 
-import type { Adapter } from '../../adapter';
-import type { TriggerEvent } from '../types';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MutationContext } from '../../mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 import { KnowledgeGraphAdapter, KG_ADAPTER_TYPE } from '../../adapters/knowledge_graph';
 import {

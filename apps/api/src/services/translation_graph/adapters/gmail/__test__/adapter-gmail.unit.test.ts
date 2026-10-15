@@ -6,7 +6,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
   encryptToken: async () => '',
 }));
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -19,7 +19,7 @@ import {
   makeMetaPosition,
   makeStablePosition,
   positionRecordId,
-} from '../../../types';
+} from 'movement-engine/services/translation_graph/types';
 import {
   GmailApiError,
   type GmailMessage,
@@ -30,7 +30,7 @@ import { decodeGmailMessage } from '../../../../../adapters/gmail/mime';
 import { GmailAdapter, GMAIL_MANIFEST, createGmailAdapter } from '../index';
 import { GmailPollSource, listenQuery } from '../poll';
 import { combineGmailQueries, gmailQueryFromWhere } from '../filter';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { normaliseSchemaForAgent } from '../../../movement/agent_schema';
 import {
   GMAIL_ATTACHMENT_TYPE_ID,

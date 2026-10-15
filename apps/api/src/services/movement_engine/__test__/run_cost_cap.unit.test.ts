@@ -9,7 +9,7 @@
 // environment once, as the run host reads it, and handed to the run as data.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -36,7 +36,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -76,19 +76,19 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { runFailureCause, runMovement, MovementRunFailed } from '../run';
-import type { MovementTraceEntry } from '../expression';
+import { runFailureCause, runMovement, MovementRunFailed } from 'movement-engine/services/movement_engine/run';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import { recordLlmUsage } from '../../../lib/llm_usage';
-import { RunCostCapExceeded } from '../../../lib/run_cost';
+import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
 import { assertRunBudget, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
 
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { type Adapter, type RuntimeCapabilities } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData } from '../../translation_graph/types';
+import { type Adapter, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
-import type { HostTransformInvoker } from '../host';
-import { makeTestHost } from '../test_host';
+import type { HostTransformInvoker } from 'movement-engine/services/movement_engine/host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000052');
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
