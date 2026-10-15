@@ -50,13 +50,13 @@ movement race_cancel_probe(go: <runs-[:Invocation]->>) {
     }
   }
 
-  r = await race([
+  r = race(
     () => {
       a = await FIRST(q-[:Response]->)
       return a.Answer
     },
     () => { await sleep(30s) },
-  ])
+  )
 
   chat-[ch2:Channels WHERE \`Name\` == "general"]-> {
     write ch2-[:Messages]-> {

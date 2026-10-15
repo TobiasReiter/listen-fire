@@ -150,10 +150,10 @@ describe('an awaited landing is demanded because the program AWAITS it', () => {
 
   it("a race arm's await is demanded too — an arm is program the run executes", async () => {
     const codes = await codesFor(
-      '  r = await race([\n' +
+      '  r = race(\n' +
         '    () => {\n      a = write qa-[:Check]-> { Prompt: "Ship it?" }\n      return await FIRST(a-[:Response]->)\n    },\n' +
         '    () => { await sleep(2d) },\n' +
-        '  ])',
+        '  )',
     );
     expect(codes).toEqual([]);
   });

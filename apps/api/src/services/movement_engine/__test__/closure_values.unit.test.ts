@@ -1,10 +1,10 @@
-// Closures are values (language version 5, Dancing Wren): a closure may be
-// written as an element of a list literal, and a name, parameter or member
-// whose value is a closure may be called — as TypeScript allows
-// (`[() => a, (x) => x + 1]`, `fs.map(f => f())`). The TypeScript engine is the
-// reference the Rust engine is compared against, so it runs the new forms:
-// a list element closure holds the scope it is written in by REFERENCE, as a
-// closure bound to a name does, and a park inside one resumes.
+// Closures are values (language version 5, Dancing Wren), but not data: a
+// name or parameter whose value is a closure may be called, as TypeScript
+// allows, and `all(f, g)` / `race(f, g)` take closures as their arguments. The
+// TypeScript engine is the reference the Rust engine is compared against, so
+// it runs these forms: a closure holds the scope it is written in by
+// REFERENCE, and a park inside one resumes. `all` is the join `parallel` was,
+// with MAP's `concurrency` and `onError`.
 
 import type { InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
@@ -221,169 +221,192 @@ async function finalPayload(body: string[]): Promise<unknown> {
   return payloadOf(kg.creates);
 }
 
-describe('a closure written as a list element', () => {
-  it('is a value: the list holds the closures, and a MAP calls them', async () => {
+describe('all — the join that replaces parallel', () => {
+  it('answers what each arm returned, in argument order', async () => {
     expect(
       await finalPayload([
         '  k = 7',
-        '  fs = [() => { return k }, () => { return k * 2 }]',
-        '  r = MAP(fs, (f) => f())',
-        '  write graph-[:note]-> { payload: { r: r } }',
+        '  r = all(() => { return k }, () => { return k * 2 }, () => 3)',
+        '  write graph-[:note]-> { payload: { r: r, second: AT(r, 1) } }',
       ]),
-    ).toEqual({ r: [7, 14] });
+    ).toEqual({ r: [7, 14, 3], second: 14 });
   });
 
-  it('a park inside a list element closure resumes', async () => {
+  it('a park inside an arm resumes, the arm reading its scope', async () => {
     expect(
       await finalPayload([
         '  k = 3',
-        '  fs = [() => {',
+        '  r = all(() => {',
         '    await sleep(1h)',
         '    return k + 1',
-        '  }, () => { return 10 }]',
-        '  r = MAP(fs, (f) => f())',
+        '  }, () => { return 10 })',
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
     ).toEqual({ r: [4, 10] });
   });
 
-  it('a parked list element closure names its scope; it carries no copy of it', async () => {
+  it('every arm waiting, at once', async () => {
     const parks = makeParkSink();
-    await start(program(['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k', '  }]', '  r = MAP(fs, (f) => f())']), parks);
-    const parked = JSON.stringify([...parks.parks.values()][0]!.state);
-    expect(parked).toContain('"captured":{}');
-    expect(parked).toMatch(/"scope":\{"kind":"scopeRef"/);
+    const source = program([
+      '  k = 2',
+      '  r = all(() => {',
+      '    await sleep(1h)',
+      '    return k',
+      '  }, () => {',
+      '    await sleep(2h)',
+      '    return k * 10',
+      '  })',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ]);
+    const first = await start(source, parks);
+    expect(first.result.parked).toBe(true);
+    expect(parks.parks.size).toBe(2);
+    const { kg } = await resumeAll(source, parks);
+    expect(payloadOf(kg.creates)).toEqual({ r: [2, 20] });
+  });
+
+  it('a named closure and a named function are arms', async () => {
+    const source = program([
+      '  a = () => { return "a" }',
+      '  r = all(a, twice)',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ]).replace('movement recap', 'function twice() {\n  return 2\n}\nmovement recap');
+    const parks = makeParkSink();
+    const { kg } = await start(source, parks);
+    expect(payloadOf(kg.creates)).toEqual({ r: ['a', 2] });
+  });
+
+  it('run unbound, for the arms\' effects', async () => {
+    const parks = makeParkSink();
+    const { kg } = await start(program([
+      '  all(() => {',
+      '    write graph-[:note]-> { body: "a" }',
+      '  }, () => {',
+      '    write graph-[:note]-> { body: "b" }',
+      '  })',
+    ]), parks);
+    expect(kg.creates.map((c) => c.fields.body).sort()).toEqual(['a', 'b']);
+  });
+
+  it('concurrency: 1 runs one arm at a time, and a parked arm frees its place', async () => {
+    const parks = makeParkSink();
+    const source = program([
+      '  r = all(() => {',
+      '    await sleep(1h)',
+      '    return "slept"',
+      '  }, () => {',
+      '    write graph-[:note]-> { body: "second ran" }',
+      '    return "ran"',
+      '  }, { concurrency: 1 })',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ]);
+    const first = await start(source, parks);
+    // The first arm parked, so the second ran in its place before the park.
+    expect(first.result.parked).toBe(true);
+    expect(first.kg.creates.map((c) => c.fields.body)).toEqual(['second ran']);
+    const { kg } = await resumeAll(source, parks);
+    expect(payloadOf(kg.creates)).toEqual({ r: ['slept', 'ran'] });
+  });
+
+  it('an arm that fails fails the run by default', async () => {
+    const parks = makeParkSink();
+    const kg = makeKgFake();
+    await expect(
+      runMovement(runInput(program(['  r = all(() => { ERROR("boom") }, () => { return 2 })']), parks, kg)),
+    ).rejects.toThrow('boom');
+  });
+
+  it('onError: "warn" leaves a failing arm\'s slot null, and says so', async () => {
+    const parks = makeParkSink();
+    const kg = makeKgFake();
+    const result = await runMovement(runInput(program([
+      '  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ]), parks, kg));
+    expect(payloadOf(kg.creates)).toEqual({ r: [null, 2] });
+    expect(JSON.stringify(result.trace)).toContain("'all' left the slot of arm 0 of 2 null, because the arm failed");
+  });
+
+  it('onError: "ignore" forgives an arm that fails after it resumed', async () => {
+    expect(
+      await finalPayload([
+        '  r = all(() => {',
+        '    await sleep(1h)',
+        '    ERROR("late")',
+        '  }, () => { return 2 }, { onError: "ignore" })',
+        '  write graph-[:note]-> { payload: { r: r } }',
+      ]),
+    ).toEqual({ r: [null, 2] });
   });
 });
 
-describe('a value that is a closure is called', () => {
-  it('MAP(fs, (f) => f()) over a named list of closures', async () => {
+describe('race — its arms are arguments', () => {
+  it('the first to settle fills its slot', async () => {
     expect(
       await finalPayload([
-        '  a = () => { return 1 }',
-        '  b = () => { return 2 }',
-        '  fs = [a, b]',
-        '  out = MAP(fs, (f) => f())',
-        '  write graph-[:note]-> { payload: { out: out } }',
-      ]),
-    ).toEqual({ out: [1, 2] });
-  });
-
-  it('MAP over an inline list, with a block-bodied member and an argument', async () => {
-    expect(
-      await finalPayload([
-        '  k = 10',
-        '  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })',
-        '  write graph-[:note]-> { payload: { out: out } }',
-      ]),
-    ).toEqual({ out: [12, 20] });
-  });
-
-  it('a function declared with a name is a member like a closure', async () => {
-    const source = program(['  out = MAP([twice, twice], (f) => f(4))', '  write graph-[:note]-> { payload: { out: out } }'])
-      .replace('movement recap', 'function twice(n: <number>) {\n  return n * 2\n}\nmovement recap');
-    const parks = makeParkSink();
-    const { kg } = await start(source, parks);
-    expect(payloadOf(kg.creates)).toEqual({ out: [8, 8] });
-  });
-
-  it('a member read with AT is called', async () => {
-    expect(
-      await finalPayload([
-        '  fs = [() => { return "first" }, () => { return "second" }]',
-        '  g = AT(fs, 1)',
-        '  x = g()',
-        '  write graph-[:note]-> { payload: { x: x } }',
-      ]),
-    ).toEqual({ x: 'second' });
-  });
-
-  it('a park inside a member\'s call resumes, the closure\'s scope by reference', async () => {
-    expect(
-      await finalPayload([
-        '  k = 5',
-        '  fs = [() => {',
-        '    await sleep(1h)',
-        '    return k + 1',
-        '  }, () => { return k }]',
-        '  out = MAP(fs, (f) => { return f() })',
-        '  write graph-[:note]-> { payload: { out: out } }',
-      ]),
-    ).toEqual({ out: [6, 5] });
-  });
-
-  it('race over arms built at run time (FILTER keeps the closures)', async () => {
-    expect(
-      await finalPayload([
-        '  all = [() => { return "a" }, () => {',
+        '  a = () => { return "a" }',
+        '  r = race(a, () => {',
         '    await sleep(1h)',
         '    return "b"',
-        '  }]',
-        '  arms = FILTER(all, (f) => TRUE)',
-        '  r = await race(arms)',
+        '  })',
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
     ).toEqual({ r: ['a', null] });
   });
 });
 
-// `parallel` is retired under 5; its rewrite is a MAP over the arms, calling
-// each. It answers what the receipt did, slot by slot, and a park inside an
-// arm parks and resumes the run.
-describe('the MAP that replaces parallel', () => {
-  it('answers what parallel answered, in the arms\' order', async () => {
-    const arms = ['() => { return 1 }', '() => {\n    await sleep(1h)\n    return "two"\n  }', '() => 3'];
-    expect(
-      await finalPayload([`  r = MAP([${arms.join(', ')}], { concurrency: 3 }, (f) => f())`, '  write graph-[:note]-> { payload: { r: r, second: AT(r, 1) } }']),
-    ).toEqual({ r: [1, 'two', 3], second: 'two' });
-  });
-
-  it('every arm waiting, at once', async () => {
+describe('a value that is a closure is called', () => {
+  it('a bound closure, with an argument', async () => {
     expect(
       await finalPayload([
-        '  k = 2',
-        '  r = MAP([() => {',
-        '    await sleep(1h)',
-        '    return k',
-        '  }, () => {',
-        '    await sleep(2h)',
-        '    return k * 10',
-        '  }], { concurrency: 2 }, (f) => f())',
-        '  write graph-[:note]-> { payload: { r: r } }',
+        '  k = 10',
+        '  inc = (n: <number>) => n + k',
+        '  times = (n: <number>) => { return n * k }',
+        '  write graph-[:note]-> { payload: { a: inc(2), b: times(2) } }',
       ]),
-    ).toEqual({ r: [2, 20] });
+    ).toEqual({ a: 12, b: 20 });
   });
 
-  it('run unbound, for the arms\' effects', async () => {
+  it('a function declared with a name, bound to a name', async () => {
+    const source = program(['  g = twice', '  x = g(4)', '  write graph-[:note]-> { payload: { x: x } }'])
+      .replace('movement recap', 'function twice(n: <number>) {\n  return n * 2\n}\nmovement recap');
     const parks = makeParkSink();
-    const { kg } = await start(program([
-      '  MAP([() => {',
-      '    write graph-[:note]-> { body: "a" }',
-      '  }, () => {',
-      '    write graph-[:note]-> { body: "b" }',
-      '  }], { concurrency: 2 }, (f) => f())',
-    ]), parks);
-    expect(kg.creates.map((c) => c.fields.body).sort()).toEqual(['a', 'b']);
+    const { kg } = await start(source, parks);
+    expect(payloadOf(kg.creates)).toEqual({ x: 8 });
+  });
+
+  it('a park inside a closure\'s call resumes, the closure\'s scope by reference', async () => {
+    expect(
+      await finalPayload([
+        '  k = 5',
+        '  g = () => {',
+        '    await sleep(1h)',
+        '    return k + 1',
+        '  }',
+        '  x = g()',
+        '  write graph-[:note]-> { payload: { x: x } }',
+      ]),
+    ).toEqual({ x: 6 });
   });
 });
 
-describe('a closure made in a MAP member that parked, called after the resume', () => {
-  // The member's function is written in place, so its scope is a flat capture
-  // of the movement's; a closure the member returns holds that by reference,
-  // and the answer kept across the member's park must carry it, not take it
-  // for the file's scope (which holds none of the movement's bindings).
+describe('a closure made by a closure that parked, called after the resume', () => {
+  // The closure the maker returns holds the maker's scope by reference, and
+  // the value kept across the maker's park must carry it, not take it for the
+  // file's scope (which holds none of the movement's bindings).
   it('reads the movement scope it was written under', async () => {
     expect(
       await finalPayload([
         '  a = 3',
-        '  fs = MAP([1, 2], (n) => {',
+        '  mk = (n: <number>) => {',
         '    await sleep(1h)',
         '    return () => { return a + n }',
-        '  })',
-        '  r = MAP(fs, (f) => f())',
-        '  write graph-[:note]-> { payload: { r: r } }',
+        '  }',
+        '  h = mk(1)',
+        '  x = h()',
+        '  write graph-[:note]-> { payload: { x: x } }',
       ]),
-    ).toEqual({ r: [4, 5] });
+    ).toEqual({ x: 4 });
   });
 });
 
@@ -409,9 +432,6 @@ describe('a closure\'s value flows through every value position, and a call thro
 
 describe('a parameter of closure type (<(params) => <return>>)', () => {
   const FNS = [
-    'function callAll(fs: <() => <text>>[]) {',
-    '  return MAP(fs, (f) => f())',
-    '}',
     'function run(h: <(n: <number>) => <number>>) {',
     '  return h(20)',
     '}',
@@ -423,8 +443,8 @@ describe('a parameter of closure type (<(params) => <return>>)', () => {
     return payloadOf(kg.creates);
   }
 
-  it('a list of closures is passed, and each member is called', async () => {
-    expect(await payloadWith(['  k = "b"', '  x = callAll([() => "a", () => k])'])).toEqual({ x: ['a', 'b'] });
+  it('a bound closure is passed, and called', async () => {
+    expect(await payloadWith(['  inc = (n: <number>) => n + 1', '  x = run(inc)'])).toEqual({ x: 21 });
   });
 
   it('a closure written in place is the argument, holding its scope', async () => {
@@ -436,10 +456,10 @@ describe('a parameter of closure type (<(params) => <return>>)', () => {
   });
 });
 
-describe('an arrow body that awaits (language version 5)', () => {
-  it('is `{ return await … }`: the race runs, and the closure hands back its receipt', async () => {
+describe('an arrow body that is a combinator (language version 5)', () => {
+  it('returns its answer: the race runs, and the closure hands back its receipt', async () => {
     expect(
-      await finalPayload(['  g = () => await race([() => "first"])', '  r = g()', '  write graph-[:note]-> { payload: { r: r } }']),
+      await finalPayload(['  g = () => race(() => "first")', '  r = g()', '  write graph-[:note]-> { payload: { r: r } }']),
     ).toEqual({ r: ['first'] });
   });
 });

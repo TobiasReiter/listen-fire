@@ -1792,10 +1792,10 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
       [
         'movement intake(msg: <inbox-[:message]->>) {',
         '  crm = attio(credentials: acme_main)',
-        '  r = await race([',
+        '  r = race(',
         '    () => { return "first" },',
         '    () => { return "second" },',
-        '  ])',
+        '  )',
         '  write crm-[:companies]-> {',
         '    name: "done"',
         '    summary: "${AT(r, 0)}/${AT(r, 1)}"',
@@ -1812,7 +1812,7 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
 
   it.each([
     ['parallel (version 4)', '  r = await parallel([', '  ])', 4 as const],
-    ['the MAP that replaces it (version 5)', '  r = MAP([', '  ], { concurrency: 2 }, (f) => f())', undefined],
+    ['all, which replaces it (version 5)', '  r = all(', '  )', undefined],
   ])('an arm that hands nothing back is a null slot: %s', async (_label, open, close, languageVersion) => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');

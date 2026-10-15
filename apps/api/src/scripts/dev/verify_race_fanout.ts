@@ -70,13 +70,13 @@ movement race_fanout_probe(m: <tg-[:\`Message\`]->>) {
     Text: "pick one of \${COUNT(names)}: \${q.Url}"
   }
 
-  w = await race([
+  w = race(
     () => {
       a = await FIRST(q-[:Response]->)
       return a.Answer
     },
     () => { await sleep(2d) },
-  ])
+  )
 
   write m-[:Replies]-> {
     Text: "won=\${COALESCE(AT(w, 0), "timeout")}"

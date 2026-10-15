@@ -74,19 +74,19 @@ export const CONTROL_FORMS: readonly ControlForm[] = [
   },
   {
     name: 'race',
-    signature: 'await race([() => { … }, …]) → receipt; AT(r, i) is arm i\'s returned value, null unless it settled first',
+    signature: 'race(() => { … }, …) → receipt; AT(r, i) is arm i\'s returned value, null unless it settled first',
     purpose: 'wait for whichever of several things happens first, such as an answer or a timeout',
     example: {
-      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = await race([\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n])\napproved = AT(r, 0) == TRUE',
+      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = AT(r, 0) == TRUE',
     },
     anchor: 'front#runs',
   },
   {
-    name: 'parallel',
-    signature: 'MAP([() => { … }, …], { concurrency: n }, (f) => f()) → one slot per function; AT(r, i) is what function i returned (`parallel` is retired)',
+    name: 'all',
+    signature: 'all(() => { … }, …, { concurrency?, onError? }) → one slot per function; AT(r, i) is what function i returned (replaces `parallel`)',
     purpose: 'run several independent pieces of work at once and wait for all of them',
     example: {
-      body: 'r = MAP([\n  () => { return UPPER(m.Subject) },\n  () => { return LOWER(m.Subject) },\n], { concurrency: 2 }, (f) => f())\nboth = "${AT(r, 0)} / ${AT(r, 1)}"',
+      body: 'r = all(\n  () => { return UPPER(m.Subject) },\n  () => { return LOWER(m.Subject) },\n)\nboth = "${AT(r, 0)} / ${AT(r, 1)}"',
     },
     anchor: 'front#runs',
   },

@@ -37,16 +37,16 @@ if ops == null { ERROR("no #ops channel") }
 write ops-[:Messages]-> { Message: "Logged to the CRM: \${record.externalId}" }
 \`\`\`
 
-For writes that genuinely don't depend on each other, \`MAP\` over them as functions and call each, all at once:
+For writes that genuinely don't depend on each other, pass them to \`all\` as functions, and they run at once:
 
 \`\`\`
-MAP([
+all(
   () => { write crm-[:Companies]-> { unique by (FUZZY \`Name\`), Name: msg.\`Subject\` } },
   () => { write sheet-[:Rows]->    { unique by (\`Company\`),    Company: msg.\`Subject\` } },
-], { concurrency: 2 }, (f) => f())
+)
 \`\`\`
 
-Each one is a **function** — \`() => { … }\` written where it stands, or the name of one declared elsewhere — and \`concurrency\` says how many run at once (here every one; without it they run one after another). The MAP finishes when every function has; one that waits parks the run, so there is no \`await\`. A function reads anything bound before the list and never another's bindings. Work that has to come back out is \`return\`ed: the answer has one slot per function in the order written, and \`AT(r, 0)\` reads what the first returned. Functions that only act need no binding at all, as here.
+Each one is a **function** — \`() => { … }\` written where it stands, or the name of one declared elsewhere — and every one runs at once (\`all(f, g, { concurrency: 1 })\` runs one at a time). \`all\` finishes when every function has; one that waits parks the run, so there is no \`await\`. A function reads anything bound before \`all\` and never another's bindings. Work that has to come back out is \`return\`ed: the answer has one slot per function in the order written, and \`AT(r, 0)\` reads what the first returned. Functions that only act need no binding at all, as here.
 
 ### compose-a-report
 
@@ -280,7 +280,7 @@ function \`Attachment Report\`(m: <inbox-[:Email]->>) {
 `,
     },
     {
-      construct: 'MAP over a list of closures, calling each at once (independent writes, concurrent, no binding)',
+      construct: 'all over closures, run at once (independent writes, concurrent, no binding)',
       status: 'runs',
       probe: `
 import { email, attio } from adapters
@@ -290,7 +290,7 @@ inbox = email()
 crm   = attio(credentials: acme)
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  MAP([
+  all(
     () => {
       write crm-[:Companies]-> {
         unique by (FUZZY \`Name\`)
@@ -304,7 +304,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
         Email: m.\`From\`
       }
     },
-  ], { concurrency: 2 }, (f) => f())
+  )
 }
 `,
     },
