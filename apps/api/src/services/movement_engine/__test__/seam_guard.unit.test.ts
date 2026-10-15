@@ -474,7 +474,7 @@ describe('the engine/host seam', () => {
         rule.matches(moduleOf(probe, '../translation_graph/engine/files/retrieve')),
       ),
     ).toBe(true);
-    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, '../../lib/run_spend')))).toBe(
+    expect(FORBIDDEN.some((rule) => rule.matches(moduleOf(probe, 'movement-engine/lib/run_spend')))).toBe(
       true,
     );
     expect(

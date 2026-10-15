@@ -36,7 +36,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { EngineHost, SegmentOpening } from 'movement-engine/services/movement_engine/host';
 
 import { NO_BUDGET_LIMIT, type CostLine } from 'movement-engine/lib/run_cost';
-import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
+import { SpendMeter, underSpendMeter } from 'movement-engine/lib/run_spend';
 import { logger } from 'movement-engine/services/logger';
 import { adapterErrorOf, type ClassifyHostError } from 'movement-engine/services/translation_graph/engine/adapter_table';
 import { teamOfTenant, tenantOfTeam } from './movement/tenant';

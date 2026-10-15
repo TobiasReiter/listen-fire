@@ -8,7 +8,7 @@ import type { DealflowPipelineId } from '../generated/kysely/public/DealflowPipe
 import type { AgentConversationId } from '../generated/kysely/public/AgentConversation';
 import type { TriggerRunId } from '../generated/kysely/automations/TriggerRun';
 
-import { isInsideSpendMeter, reportRunCost } from './run_spend';
+import { isInsideSpendMeter, reportRunCost } from 'movement-engine/lib/run_spend';
 import { models } from 'movement-engine/lib/models/registry';
 import { logger } from 'movement-engine/services/logger';
 import { getQb } from './kysely';

@@ -29,7 +29,7 @@ import type { TriggerRunRecorder } from '../runs/trigger_run';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { isBudgetExhausted, type Budget, type CostLine } from 'movement-engine/lib/run_cost';
-import { withSpendMeter } from '../../../lib/run_spend';
+import { withSpendMeter } from 'movement-engine/lib/run_spend';
 import { enqueueAwaitWake } from '../../movement_engine/await_wake';
 import { makeRecorderCallbackSink } from '../../movement_engine/callback_sink';
 import {

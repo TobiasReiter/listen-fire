@@ -4,7 +4,7 @@
 import type { Resolved } from 'movement-engine/lib/models/map';
 import type { EmbeddingModelName } from 'movement-engine/lib/models/registry';
 
-import { assertRunBudget } from '../../run_spend';
+import { assertRunBudget } from 'movement-engine/lib/run_spend';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
 import { geminiEmbed } from './gemini';

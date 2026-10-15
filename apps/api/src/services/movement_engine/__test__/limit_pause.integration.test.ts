@@ -32,7 +32,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => {
 const mockFetched: string[] = [];
 jest.mock('../../translation_graph/movement/transform_invoker', () => {
   const actual = jest.requireActual('../../translation_graph/movement/transform_invoker');
-  const runSpend = jest.requireActual('../../../lib/run_spend');
+  const runSpend = jest.requireActual('movement-engine/lib/run_spend');
   return {
     ...actual,
     registryTransformInvoker: {
@@ -50,7 +50,7 @@ jest.mock('../../translation_graph/movement/transform_invoker', () => {
 let mockJudgements = 0;
 jest.mock('../../../lib/prompts/execute', () => {
   const actual = jest.requireActual('../../../lib/prompts/execute');
-  const runSpend = jest.requireActual('../../../lib/run_spend');
+  const runSpend = jest.requireActual('movement-engine/lib/run_spend');
   return {
     ...actual,
     async execute(name: string, ...rest: unknown[]) {

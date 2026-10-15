@@ -26,7 +26,7 @@ import {
   reportRunCost,
   runCostCapFromEnv,
   withSpendMeter,
-} from '../run_spend';
+} from 'movement-engine/lib/run_spend';
 
 const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
 const DOLLAR = 1_000_000;

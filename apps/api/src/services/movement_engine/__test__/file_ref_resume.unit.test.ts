@@ -21,7 +21,7 @@ import { Readable } from 'node:stream';
 import type { FileTextResolution, MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import { resumeMovement, runMovement, type MovementRunResult, type ParkSink, type RunLimitPause } from 'movement-engine/services/movement_engine/run';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
-import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from '../../../lib/run_spend';
+import { assertRunBudget, reportRunCost, runCostCapFromEnv, withSpendMeter } from 'movement-engine/lib/run_spend';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { fileHandle, type Adapter, type FileRef, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 import { streamFileRef, type ResolveFileOwner } from '../../translation_graph/engine/files/retrieve';
