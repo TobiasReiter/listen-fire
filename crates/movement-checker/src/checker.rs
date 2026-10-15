@@ -39,6 +39,8 @@ pub struct Checker<'c> {
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
     pub movement_params: std::collections::HashMap<crate::scope::SymbolId, Vec<String>>,
+    /// The bodies being walked, innermost last, each collecting its `return`s.
+    pub return_stack: Vec<crate::families::calls::ReturnCollector>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -53,7 +55,7 @@ pub struct Bound {
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -162,7 +164,9 @@ impl<'c> Checker<'c> {
             Statement::Write(write) => self.check_write(&write.write, scope),
             Statement::Match(statement) => self.check_match(&statement.r#match, scope),
             Statement::Call(call) => self.check_call_statement(call, scope),
-            Statement::Block(block) => self.check_traversal_block(&block.block, scope, None),
+            Statement::Block(block) => {
+                self.check_traversal_block(&block.block, scope, None);
+            }
             Statement::Link(link) => self.check_link(&link.link, scope),
             Statement::Unlink(unlink) => {
                 self.resolve_name(&unlink.from, unlink.span, scope);
@@ -192,6 +196,7 @@ impl<'c> Checker<'c> {
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
             Statement::Return(statement) => {
                 self.check_rvalue(&statement.value, scope, None);
+                self.collect_return(statement.span);
             }
             Statement::Combinator(statement) => self.check_combinator(&statement.combinator, scope),
             Statement::Collection(statement) => self.check_collection_op(&statement.collection, scope),
@@ -224,7 +229,12 @@ impl<'c> Checker<'c> {
                     self.check_expr_slot(config, scope);
                 }
             }
-            RValue::Block { block } => self.check_traversal_block(block, scope, name),
+            RValue::Block { block } => {
+                let returns = self.check_traversal_block(block, scope, name);
+                if !returns {
+                    self.report_block_returns_nothing(block, name);
+                }
+            }
             RValue::Await { r#await } => self.check_await(r#await, scope, name),
             RValue::Combinator { combinator } => self.check_combinator(combinator, scope),
             RValue::Collection { collection } => self.check_collection_op(collection, scope),
@@ -409,7 +419,7 @@ impl<'c> Checker<'c> {
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
-        self.check_statement_list(&movement.body, body);
+        self.check_body(&movement.body, body, format!("'{}'", movement.name));
         if let Some(returns) = &movement.return_type {
             self.check_param_type(returns, scope);
         }
@@ -443,7 +453,7 @@ impl<'c> Checker<'c> {
         if let Some(name) = self_name {
             self.declare_closure_self(name, closure, body);
         }
-        self.check_statement_list(&closure.body, body);
+        self.check_body(&closure.body, body, "the closure".to_string());
     }
 
     pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
@@ -643,10 +653,12 @@ impl<'c> Checker<'c> {
 
     /// `checkTraversalBlock`: the body runs in its own scope holding the hop
     /// aliases, and what it binds is remembered as escaped once it closes.
-    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) {
+    /// Whether the block's body hands a value back.
+    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> bool {
         let aliases = self.check_path_head(&block.head, scope);
         let body = self.open_landing(scope, &aliases, block.head.span);
-        self.check_statement_list(&block.body, body);
+        let what = assigned.map_or_else(|| "this block".to_string(), |name| format!("the block bound to '{name}'"));
+        let returns = self.check_body(&block.body, body, what);
         let bound: Vec<String> = self
             .scopes
             .scope(body)
@@ -663,6 +675,7 @@ impl<'c> Checker<'c> {
         for (name, block_name) in inner {
             self.scopes.scope_mut(scope).escaped.entry(name).or_insert(block_name);
         }
+        !returns.is_empty()
     }
 
     fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {

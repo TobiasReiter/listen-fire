@@ -1110,3 +1110,54 @@ impl Checker<'_> {
         }
     }
 }
+
+/// `ReturnCollector`: a body's `return`s, as they are met.
+pub struct ReturnCollector {
+    pub what: String,
+    pub returns: Vec<Span>,
+    /// Why a `return` here is refused, when the body hands nothing back.
+    pub refuses: Option<String>,
+}
+
+impl Checker<'_> {
+    /// `checkBody`: a body's statements, collecting its `return`s.
+    pub fn check_body(&mut self, statements: &[movement_parser::ast::Statement], scope: ScopeId, what: String) -> Vec<Span> {
+        self.return_stack.push(ReturnCollector { what, returns: Vec::new(), refuses: None });
+        self.check_statement_list(statements, scope);
+        self.return_stack.pop().map(|c| c.returns).unwrap_or_default()
+    }
+
+    /// `checkReturn`'s collecting half.
+    pub fn collect_return(&mut self, span: Span) {
+        match self.return_stack.last_mut() {
+            None => self.report(
+                codes::RETURN_OUTSIDE_BODY,
+                "'return' hands a value back from a body — there is none here. A movement, a traversal-headed block and a closure each return; file-level statements do not.",
+                span,
+            ),
+            Some(ReturnCollector { refuses: Some(why), .. }) => {
+                let why = why.clone();
+                self.report(codes::RETURN_OUTSIDE_BODY, why, span);
+            }
+            Some(collector) => collector.returns.push(span),
+        }
+    }
+
+    /// A bound block whose body returns nothing.
+    pub fn report_block_returns_nothing(&mut self, block: &movement_parser::ast::TraversalBlock, name: Option<&str>) {
+        let root = match &block.head.root {
+            Some(movement_parser::ast::PathRoot::Name { name }) => crate::families::names::spell_name(name),
+            Some(movement_parser::ast::PathRoot::Expression { expr }) => expr.raw.clone(),
+            None => String::new(),
+        };
+        self.report(
+            codes::BLOCK_RETURNS_NOTHING,
+            format!(
+                "this block hands nothing back, so there is nothing to bind — 'return' the value you want out of it (`{} = {root}{} {{ … return <value> }}`), or drop the binding and let it run for its effects",
+                name.unwrap_or("names"),
+                block.head.hops_raw
+            ),
+            block.span,
+        );
+    }
+}
