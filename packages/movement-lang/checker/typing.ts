@@ -239,6 +239,12 @@ export const TypedDiagnosticCodes = {
    *  "[object Object]". Its text is `READ(f)`. Versions 1 to 4 keep the old
    *  meaning; the error under 5 keeps such a program on its version. */
   FILE_IN_TEXT: 'MOV_FILE_IN_TEXT',
+  /** A closure held under a key — `{ g: label }`, `KEYBY(fs, …)`, a record
+   *  type's key typed `<() => <text>>` — from language version 5. There are
+   *  no methods: a dot on a record or map always reads a field, so a closure
+   *  lives in a variable or a list, never under a key. Before 5 a closure is
+   *  not a value at all. */
+  CLOSURE_UNDER_KEY: 'MOV_CLOSURE_UNDER_KEY',
   /** A write handle's FILE field the write did not send, used as a file —
    *  from language version 5. The system hands back its own description of the
    *  file, not bytes the run can pull; the file is on the record's edge, as a
@@ -3368,6 +3374,20 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
 
 type ClosurePosition = Extract<PositionTypeRef, { kind: 'closure' }>;
 
+/** Is this (or any arm of it) a closure? A list of closures is not: a list
+ *  is where closures are kept. */
+export function mayBeClosure(type: FieldType | undefined): boolean {
+  if (type === undefined || typeof type === 'string') return false;
+  const variant = variantOf(stripAbsent(type));
+  if (variant.kind === 'union') return variant.of.some(mayBeClosure);
+  return variant.kind === 'record' && variant.position?.kind === 'closure';
+}
+
+/** Why a closure under `key` is refused (language version 5). */
+export function closureUnderKeyMessage(where: string): string {
+  return `${where} a closure, and a closure is never held under a key — there are no methods: a dot on a record or map always reads a field. Keep the closure in a variable ('g = …', called as 'g()') or in a list ('[f, g]', called through 'MAP(fs, (f) => f())')`;
+}
+
 function closureOfRecord(type: FieldType): ClosurePosition | undefined {
   if (typeof type === 'string') return undefined;
   const variant = variantOf(type);
@@ -5390,6 +5410,9 @@ export class ExpressionTyping {
     for (const member of members) {
       if (!isObjectSpread(member)) {
         const exact = this.inferExactAt(member.value, position);
+        if (since(this.options.languageVersion, 5) && (mayBeClosure(exact) || mayBeClosure(this.mayHoldType(member.value)))) {
+          this.report(TypedDiagnosticCodes.CLOSURE_UNDER_KEY, closureUnderKeyMessage(`'${member.key}' holds`));
+        }
         shape[member.key] = exact ?? null;
         written.add(member.key);
         readTypes.push(widenTuples(exact, this.options.languageVersion));

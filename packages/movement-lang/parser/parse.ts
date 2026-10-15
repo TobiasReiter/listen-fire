@@ -319,13 +319,7 @@ class Parser {
     if (this.atExtractCall()) {
       value = { kind: 'extractCall', extractCall: this.parseExtractCall(start) };
     } else {
-      let callee = this.readName('the name being called');
-      // `box.g()` (language version 5): the member a value holds under a
-      // key, called — the checker and the engine resolve the dotted callee.
-      if (since(this.languageVersion, 5) && this.peekCh() === '.') {
-        this.pos++;
-        callee = `${callee}.${this.readName('the key being called')}`;
-      }
+      const callee = this.readName('the name being called');
       this.skipInlineWs();
       this.expect('(', `to open the call to '${callee}'`);
       value = { kind: 'call', call: this.callNode(callee, this.parseCallArgs(callee, start), start) };

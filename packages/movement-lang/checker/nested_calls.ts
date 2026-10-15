@@ -57,13 +57,7 @@ export function runsAsCall(
   call: CallNode,
   resolve: (callee: string) => CalleeResolution,
   isFunction: (declared: string) => boolean,
-  /** `box.g()` (language version 5): is `object` a value, so the call calls
-   *  the member it holds under `key`? Absent ⇒ a dotted call is never one. */
-  isValueMember?: (object: string, key: string) => boolean,
 ): boolean {
-  if (call.callee.kind === 'member' && call.callee.object.kind === 'name') {
-    return isValueMember?.(call.callee.object.name.text, call.callee.property.text) ?? false;
-  }
   if (call.callee.kind !== 'name') return false;
   const resolution = resolve(call.callee.name.text);
   switch (resolution.kind) {

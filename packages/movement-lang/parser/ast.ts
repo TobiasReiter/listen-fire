@@ -1365,7 +1365,8 @@ export type ValueTypeRef =
    * `<(c: <Company>) => <text>>` — a CLOSURE type (language version 5),
    * TypeScript's function type: what each parameter takes and what calling it
    * hands back. Written in its own angle brackets wherever it appears — a
-   * parameter, a return, a record key — and `<…>[]` is a list of them
+   * parameter, a return (never a record key: the checker refuses a closure
+   * held under a key) — and `<…>[]` is a list of them
    * (`arms: <() => <text>>[]`). Every parameter is typed, as the caller of a
    * value of this type is checked against them.
    */

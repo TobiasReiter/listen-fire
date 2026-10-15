@@ -1,6 +1,7 @@
 // A closure's type is written down (language version 5), as TypeScript's
 // function type is: `<(params) => <return>>` — `handler: <(c: <Company>) =>
-// <text>>`, `arms: <() => <text>>[]`, `{ go: <() => <text>> }`. A parameter
+// <text>>`, `arms: <() => <text>>[]`, a declared return — never a record
+// type's key, as a closure is never held under a key. A parameter
 // of closure type may be called; a closure value fits a closure type when it
 // takes what the type supplies (contravariant parameters) and returns what it
 // returns (covariant returns). Before 5 the syntax is refused.
@@ -95,10 +96,16 @@ describe('the closure type <(params) => <return>> (Dancing Wren, 5)', () => {
     expect(codes(RUN_ONE, ['  v = run((n: <number>) => "x")'])).toEqual(['MOV_CALL_ARG_TYPE']);
   });
 
-  it('a record key may be of closure type', () => {
+  it('a record key is never of closure type: a closure is never held under a key', () => {
     const takesBox = ['function run(b: <{ go: <() => <text>> }>) {', '  return 1', '}'];
-    expect(errorsUnder(5, takesBox, ['  v = run({ go: label })'])).toEqual([]);
-    expect(codes(takesBox, ['  v = run({ go: made })'])).toEqual(['MOV_CALL_ARG_TYPE']);
+    const errors = errorsUnder(5, takesBox, ['  v = 1']);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CLOSURE_UNDER_KEY']);
+    expect(errors[0]!.message).toContain("the key 'go' is typed as a closure");
+    expect(codes(['function run(h: <(b: <{ go: <() => <text>> }>) => <text>>) {', '  return 1', '}'], ['  v = 1'])).toEqual(['MOV_CLOSURE_UNDER_KEY']);
+  });
+
+  it('a record key may be a list of closures', () => {
+    expect(errorsUnder(5, ['function run(b: <{ go: <() => <text>>[] }>) {', '  return 1', '}'], ['  v = 1'])).toEqual([]);
   });
 
   it('a bound closure\'s parameter may be a list of closures', () => {

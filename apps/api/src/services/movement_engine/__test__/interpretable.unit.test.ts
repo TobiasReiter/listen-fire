@@ -324,7 +324,7 @@ movement intake(m: <inbox-[:message]->>) {
     expect(listUnsupportedConstructs(inner, { languageVersion: 5 })).toEqual([]);
   });
 
-  it('a dotted call on a value is the call of the closure it holds (version 5), and scans as one', () => {
+  it('a dotted call on a value is no call the engine runs, under version 5 as before it (there are no methods)', () => {
     const source = `${PRELUDE}
 movement intake(m: <inbox-[:message]->>) {
   shout = (t: <text>) => UPPER(t)
@@ -333,7 +333,7 @@ movement intake(m: <inbox-[:message]->>) {
   write crm-[:companies]-> { name: v }
 }
 `;
-    expect(listUnsupportedConstructs(source, { languageVersion: 5 })).toEqual([]);
+    expect(listUnsupportedConstructs(source, { languageVersion: 5 })).toEqual(['non-built-in function calls (G())']);
     expect(listUnsupportedConstructs(source, { languageVersion: 4 })).toEqual(['non-built-in function calls (G())']);
   });
 

@@ -1,12 +1,12 @@
-// `box.g()` — a dotted call on a value. From language version 5 it calls the
-// closure the value holds under that key, as TypeScript's does, typed by that
-// closure; a key it does not have, or one that is no closure, is refused.
+// `o.f(…)` — a dotted call. The engine reads it as `f` run in `o`'s scope,
+// so a function that is no built-in has nothing to run outside a write field
+// (whose target may advertise its own) — the run always failed where it
+// reached it. That is refused from language version 5 only: versions 1–4 keep
+// their behaviour. A built-in in a record's scope (`o.UPPER(name)`) is what it
+// always was.
 //
-// The engine reads `o.f(…)` as `f` run in `o`'s scope, so a function that is
-// no built-in has nothing to run outside a write field (whose target may
-// advertise its own) — the run always failed where it reached it. That is
-// refused from 5 only: versions 1–4 keep their behaviour. A built-in in a
-// record's scope (`o.UPPER(name)`) is what it always was.
+// Under 5 there are no methods either: a closure is never held under a key,
+// so `box.g()` on a value is refused the same way, never a call of a member.
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
@@ -53,25 +53,20 @@ const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => 
 const codes = (version: LanguageVersion, body: string[]): string[] => errorsUnder(version, body).map(d => d.code);
 const WRITE = '  write crm-[:notes]-> { title: v }';
 
-describe('a dotted call on a value (Dancing Wren, 5)', () => {
-  it('calls the closure the value holds, typed by it', () => {
-    expect(errorsUnder(5, ['  box = { g: label }', '  v = box.g()', WRITE])).toEqual([]);
-    expect(errorsUnder(5, ['  box = { g: label }', '  v = UPPER(box.g())', WRITE])).toEqual([]);
-    expect(codes(5, ['  box = { g: made }', '  v = box.g()', WRITE])).toEqual(['MOV_WRITE_FIELD_TYPE']);
+describe('a dotted call on a value (Dancing Wren, 5): there are no methods', () => {
+  it('is refused as a function that is no built-in, and the message offers no member call', () => {
+    const errors = errorsUnder(5, ['  box = { n: 1 }', '  v = box.g()']);
+    expect(errors.map(d => d.code)).toEqual(['MOV_FUNCTION_UNKNOWN']);
+    expect(errors[0]!.message).toContain('There are no methods');
+    expect(errors[0]!.message).not.toContain("'box.g()'");
   });
 
-  it('is held to the closure\'s parameters', () => {
-    expect(codes(5, ['  box = { g: label }', '  v = box.g(1)'])).toEqual(['MOV_CALL_ARITY']);
+  it('is refused nested in an expression', () => {
+    expect(codes(5, ['  box = { n: 1 }', '  v = UPPER(box.g())'])).toEqual(['MOV_FUNCTION_UNKNOWN']);
   });
 
-  it('a key the value does not have is refused, by name', () => {
-    const errors = errorsUnder(5, ['  box = { g: label }', '  v = box.nope()']);
-    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_NOT_MOVEMENT']);
-    expect(errors[0]!.message).toContain("'box' has no 'nope'");
-  });
-
-  it('a member that is no closure is refused', () => {
-    expect(codes(5, ['  box = { n: 1 }', '  v = box.n()'])).toEqual(['MOV_CALL_NOT_MOVEMENT']);
+  it('a value that would have held a closure is refused where the closure is put under the key', () => {
+    expect(codes(5, ['  box = { g: label }', '  v = box.g()'])).toEqual(['MOV_CLOSURE_UNDER_KEY', 'MOV_FUNCTION_UNKNOWN']);
   });
 });
 

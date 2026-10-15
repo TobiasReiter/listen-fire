@@ -332,6 +332,8 @@ import {
   readsAsPresentText,
   stripAbsent,
   TypedDiagnosticCodes,
+  mayBeClosure,
+  closureUnderKeyMessage,
   valueUnion,
   mixedTupleMessage,
   widenTuples,
@@ -3536,12 +3538,6 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
   return undefined;
 }
 
-/** A name bound to a VALUE (the dot plane) — a binding or a parameter that
- *  holds no record position. */
-function isValueSymbol(symbol: ScopeSymbol): boolean {
-  return (symbol.kind === 'binding' || symbol.kind === 'param') && symbol.posType === undefined && symbol.bindingPlane !== 'node';
-}
-
 /** A body with no `return` at all. */
 /**
  * The closure a VALUE is (language version 5): a record of closure type, or a
@@ -4490,6 +4486,9 @@ class Checker {
         const shape: Record<string, FieldType> = {};
         let typed = true;
         for (const key of member.keys) {
+          if (report && key.type.kind === 'closure') {
+            this.report(DiagnosticCodes.CLOSURE_UNDER_KEY, closureUnderKeyMessage(`the key '${key.name}' is typed as`), key.span);
+          }
           const keyType = this.valueMemberType(key.type, scope, report);
           if (keyType === undefined) {
             typed = false;
@@ -5953,43 +5952,8 @@ class Checker {
   /** The scope's answer for a callee — under the name it was DECLARED with,
    *  which from version 3 may differ from the call's by letter case. */
   private calleeResolution(written: string, scope: Scope): Resolution {
-    const member = this.memberCallee(written, scope);
-    if (member !== undefined) return member;
     return scope.resolve(this.calleeName(written, scope));
   }
-
-  /**
-   * `box.g()` (language version 5): a dotted call on a VALUE calls the member
-   * the value holds under that key, as TypeScript's `box.g()` does — so the
-   * callee is that member, a value like any other, called only when its type
-   * says it is a closure (`calledClosure`) and refused otherwise
-   * (`notAClosureMessage`). Undefined unless `written` is `name.key` and the
-   * name is bound to a value (a record node's dotted call is its own form).
-   */
-  private memberCallee(written: string, scope: Scope): Resolution | undefined {
-    if (before(this.languageVersion, 5)) return undefined;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(written);
-    if (match === null) return undefined;
-    const [, object, key] = match as unknown as [string, string, string];
-    const found = scope.resolve(object);
-    if (found.kind !== 'found') return found.kind === 'unknown' ? undefined : found;
-    if (!isValueSymbol(found.symbol)) return undefined;
-    const holder = found.symbol.fieldType !== undefined ? stripAbsent(found.symbol.fieldType) : undefined;
-    const shape = holder !== undefined && isDictType(holder) ? holder.shape : undefined;
-    const memberType = shape !== undefined && Object.hasOwn(shape, key) ? shape[key] ?? undefined : undefined;
-    const symbol: ScopeSymbol = {
-      name: written,
-      kind: 'binding',
-      span: found.symbol.span,
-      bindingPlane: 'scalar',
-      ...(memberType !== undefined ? { fieldType: memberType } : {}),
-    };
-    if (shape !== undefined && !Object.hasOwn(shape, key)) this.missingMembers.add(symbol);
-    return { kind: 'found', symbol };
-  }
-
-  /** Member callees (`memberCallee`) whose value has no such key. */
-  private readonly missingMembers = new WeakSet<ScopeSymbol>();
 
   /** The closure a callee names, when it names one (language version 3 —
    *  before it, a name bound to a closure is passed, never called). */
@@ -6012,10 +5976,6 @@ class Checker {
     if (before(this.languageVersion, 5) || (callee.kind !== 'binding' && callee.kind !== 'param')) return undefined;
     if (callee.posType !== undefined || this.calledClosure(callee) !== undefined) return undefined;
     const type = callee.fieldType;
-    if (this.missingMembers.has(callee)) {
-      const [object, key] = written.split('.') as [string, string];
-      return `'${written}' is called, and '${object}' has no '${key}' — a dotted call calls the closure a value holds under that key, as TypeScript's does. Call a key it has, or a function by name ('${key}(…)')`;
-    }
     return type === undefined
       ? `'${written}' is called, and nothing says it is a function — its type is unknown here. Call a closure whose type the program shows: one bound to a name, written in a list, or a member of a list of closures ('MAP(fs, (f) => f())')`
       : `'${written}' is called, and it is ${describeFieldType(type)}${mayNotBeAClosure(type) ? ' — it may not be a closure' : ', not a function'}. Only a closure is called: narrow it to one, or call one whose type the program shows`;
@@ -6155,11 +6115,6 @@ class Checker {
       declared => {
         const found = scope.resolve(declared);
         return found.kind === 'found' && (isFunctionSymbol(found.symbol) || this.calledClosure(found.symbol) !== undefined);
-      },
-      object => {
-        if (before(this.languageVersion, 5)) return false;
-        const found = scope.resolve(object);
-        return found.kind === 'found' && isValueSymbol(found.symbol);
       },
     );
   }
@@ -6406,9 +6361,9 @@ class Checker {
    * it as `f` run in `o`'s scope, and a function that is no built-in has nothing
    * to run outside a write field (whose target may advertise its own) — the run
    * always failed where it reached it, so from version 5 the checker refuses it.
-   * Before 5 it is left as it was (a saved movement never breaks). A dotted call
-   * on a VALUE calls the member it holds (`memberCallee`), checked where it is
-   * hoisted; this says the rest.
+   * Before 5 it is left as it was (a saved movement never breaks). There are no
+   * methods: a closure is never held under a key, so a dotted call on a VALUE
+   * (`box.g()`) has nothing to call either, and is refused the same way.
    * A built-in in `o`'s scope (`o.UPPER(name)`) and a stdlib family
    * (`TEXT.SERIALISE(…)`) are what they always were.
    */
@@ -6416,11 +6371,10 @@ class Checker {
     if (before(this.languageVersion, 5) || at.writeField) return;
     const found = at.scope.resolve(object);
     if (found.kind !== 'found') return; // a stdlib family, or reported where the name is read
-    if (isValueSymbol(found.symbol)) return;
     if (lookupBuiltin(key) !== undefined) return;
     this.report(
       DiagnosticCodes.FUNCTION_UNKNOWN,
-      `'${object}.${key}(…)' runs '${key}' in '${object}', and '${key}' is no built-in — there is nothing to run there, and the run would fail where it reached it. Call a function by name ('${key}(${object})')`,
+      `'${object}.${key}(…)' runs '${key}' in '${object}', and '${key}' is no built-in — there is nothing to run there. There are no methods: a dot on a record or map reads a field, and a closure is never held under a key. Call a function by name ('${key}(${object})'), or a closure kept in a variable ('g = …', then 'g()')`,
       span,
     );
   }
@@ -7516,6 +7470,9 @@ class Checker {
           : undefined;
       case 'keyby':
         this.requireDictKeyIn(scope, expr.fn, returned, `filed under by '${spelling}'`);
+        if (since(this.languageVersion, 5) && mayBeClosure(element)) {
+          this.report(TypedDiagnosticCodes.CLOSURE_UNDER_KEY, closureUnderKeyMessage(`'${spelling}' files each member under a key, and each member is`), expr.source.span);
+        }
         return element !== undefined ? { kind: 'dict', of: element } : undefined;
     }
   }

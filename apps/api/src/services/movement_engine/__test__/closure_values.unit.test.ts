@@ -436,21 +436,6 @@ describe('a parameter of closure type (<(params) => <return>>)', () => {
   });
 });
 
-describe('a dotted call on a value calls the closure it holds (box.g())', () => {
-  it('calls the member, as a nested call and bound', async () => {
-    expect(
-      await finalPayload([
-        '  k = "!"',
-        '  shout = (t: <text>) => "${UPPER(t)}${k}"',
-        '  box = { g: shout }',
-        '  a = box.g("hi")',
-        '  b = LOWER(box.g("yo"))',
-        '  write graph-[:note]-> { payload: { a: a, b: b } }',
-      ]),
-    ).toEqual({ a: 'HI!', b: 'yo!' });
-  });
-});
-
 describe('an arrow body that awaits (language version 5)', () => {
   it('is `{ return await … }`: the race runs, and the closure hands back its receipt', async () => {
     expect(
