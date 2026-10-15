@@ -279,6 +279,20 @@ impl<'c> Checker<'c> {
                 self.resolve_name(name, slot.span, scope);
             }
         }
+        self.report_slot_typing(&parsed, slot.span, scope);
+    }
+
+    /// `slotTyping(...).infer(parsed)`: what typing the slot reports.
+    fn report_slot_typing(&mut self, parsed: &movement_parser::lowering::expression::Expression, span: Span, scope: ScopeId) {
+        let diagnostics = {
+            let env = self.typing_env(scope);
+            let mut typing = crate::types::Typing::new(&env, self.version, span);
+            typing.infer(parsed);
+            typing.diagnostics
+        };
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
     }
 
     /// The config slots `checkListen` reads as expressions: every key the
