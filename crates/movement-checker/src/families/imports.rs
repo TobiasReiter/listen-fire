@@ -253,11 +253,6 @@ pub fn link_imports(program: &Program, catalog: &CatalogSnapshot, version: u32) 
 }
 
 impl Checker<'_> {
-    /// Whether file imports resolve here (`fileImportsMap` is defined).
-    pub fn resolves_file_imports(&self) -> bool {
-        self.imports.link.is_some()
-    }
-
     /// `fileImportSymbol`: the local symbol of a file-imported name — the
     /// library's movement or node when the link resolved it (its library
     /// checked first), an opaque file import otherwise. With it, the library

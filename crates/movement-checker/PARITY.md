@@ -2,10 +2,10 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **30 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 11183 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 7740 of 11435.
-- Rust side: 5.3s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **31 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 11184 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 7741 of 11435.
+- Rust side: 8.0s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -13,7 +13,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 |---|---|---|---|
 | checks under v5 | 2360 | 1227 | 1227 |
 | checks v1 | 1535 | 889 | 889 |
-| checks v2 | 1956 | 1102 | 1102 |
+| checks v2 | 1956 | 1103 | 1103 |
 | checks v3 | 2403 | 1341 | 1341 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
@@ -33,7 +33,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | names | 9 | 8 | 371 | 367 | 4 | 0 | 0 |
 | nodes | 25 | 0 | 314 | 0 | 314 | 0 | 0 |
 | records | 3 | 0 | 59 | 0 | 59 | 0 | 0 |
-| systems | 8 | 5 | 100 | 84 | 16 | 0 | 0 |
+| systems | 8 | 6 | 100 | 85 | 15 | 0 | 0 |
 | values | 22 | 0 | 1156 | 12 | 1144 | 0 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
 | walks | 19 | 0 | 745 | 0 | 745 | 0 | 0 |
@@ -87,7 +87,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_COMPARE_TYPE_MISMATCH | values | 60 | 0 | 60 | 0 | 0 |  |
 | MOV_CONSTRUCT_BAD_ARG | systems | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_CONSTRUCT_MISSING_CRED | systems | 8 | 8 | 0 | 0 | 0 | yes |
-| MOV_CONSTRUCT_NOT_ADAPTER | systems | 13 | 12 | 1 | 0 | 0 |  |
+| MOV_CONSTRUCT_NOT_ADAPTER | systems | 13 | 13 | 0 | 0 | 0 | yes |
 | MOV_CONSTRUCT_UNKNOWN_OPTION | systems | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_CRED_WRONG_ADAPTER | systems | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_DELETE_NOT_DECLARED | writes | 1 | 0 | 1 | 0 | 0 |  |

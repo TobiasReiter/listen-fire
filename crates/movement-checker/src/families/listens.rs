@@ -1095,28 +1095,6 @@ fn value_type_span(type_: &ValueType) -> Span {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slugs_a_movement_name() {
-        assert_eq!(suggested_listen_key("Log Sender"), "log-sender");
-        assert_eq!(suggested_listen_key("  "), "intake");
-        assert_eq!(suggested_listen_key("a__b9"), "a-b9");
-    }
-
-    #[test]
-    fn reads_durations_and_literals() {
-        assert!(is_valid_duration("1h30m"));
-        assert!(!is_valid_duration("1x"));
-        assert!(!is_valid_duration("h"));
-        assert_eq!(scalar_literal_kind("-3.5"), Some("number"));
-        assert_eq!(scalar_literal_kind("\"x\""), Some("text"));
-        assert_eq!(scalar_literal_kind("yes"), None);
-    }
-}
-
 /// `surfaceNotEnumerated`: a position whose fields nobody listed.
 fn surface_not_enumerated(position: &movement_parser::catalog::types::PositionSchema) -> bool {
     position.open_properties == Some(true) || position.undescribed == Some(true) || position.pending == Some(true)
@@ -1151,5 +1129,27 @@ fn field_assignable(source: &movement_parser::catalog::types::FieldType, target:
         (_, FieldType::Composite(Composite::Enum { .. })) => Some(false),
         (FieldType::Scalar(Scalar::Json), _) => Some(false),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugs_a_movement_name() {
+        assert_eq!(suggested_listen_key("Log Sender"), "log-sender");
+        assert_eq!(suggested_listen_key("  "), "intake");
+        assert_eq!(suggested_listen_key("a__b9"), "a-b9");
+    }
+
+    #[test]
+    fn reads_durations_and_literals() {
+        assert!(is_valid_duration("1h30m"));
+        assert!(!is_valid_duration("1x"));
+        assert!(!is_valid_duration("h"));
+        assert_eq!(scalar_literal_kind("-3.5"), Some("number"));
+        assert_eq!(scalar_literal_kind("\"x\""), Some("text"));
+        assert_eq!(scalar_literal_kind("yes"), None);
     }
 }

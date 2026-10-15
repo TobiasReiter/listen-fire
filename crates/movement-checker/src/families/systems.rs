@@ -67,8 +67,10 @@ impl Checker<'_> {
         let Resolution::Found(id) = self.scopes.resolve(scope, &self.callee_name(&construct.callee, scope)) else { return None };
         let symbol = self.scopes.symbol(id);
         let value = self.version >= 5 && matches!(symbol.kind, SymbolKind::Binding | SymbolKind::Param);
-        // TODO(type-core): `calledClosure` reads the symbol's closure type; the flag is its stand-in.
-        if !matches!(symbol.kind, SymbolKind::Movement | SymbolKind::Plugin) && !value && !symbol.is_closure {
+        // TODO(type-core): `calledClosure` reads the symbol's closure type; the
+        // flag is its stand-in (a closure is called from version 3).
+        let closure = self.version >= 3 && symbol.is_closure;
+        if !matches!(symbol.kind, SymbolKind::Movement | SymbolKind::Plugin) && !value && !closure {
             return None;
         }
         let args = construct.args.iter().map(|a| CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect();
