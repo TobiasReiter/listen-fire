@@ -250,6 +250,11 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
+  the credential the adapter was installed with, saying the remote install serves only its own. It
+  used to be ignored: two accounts on one remote adapter silently reached the install's account, so
+  writes landed in the wrong workspace. Naming the install's own credential, or none, is unchanged.
+  Per-run credentials for remote adapters are still to come.
 - A `parallel` or `race` arm that names a closure written in the movement body (`f = () => { … }`
   then `parallel([f, g])` or `race([f, g])`) and waits inside it resumes. It used to fail "resume:
   no body for arm 0", because the resume looked an arm's name up only as a movement. It now finds
