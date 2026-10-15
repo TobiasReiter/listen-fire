@@ -666,6 +666,9 @@ impl<'a> Typing<'a> {
             Expression::At { expression, index } => {
                 let inner = self.infer_exact_at(expression, position);
                 let index_ty = self.infer_at(index, position);
+                if crate::families::values::refuse_record_key(self, expression, index, index_ty.as_ref()) {
+                    return (None, vec![inner, index_ty]);
+                }
                 (self.at_type(inner.as_ref(), index, index_ty.as_ref()), vec![inner, index_ty])
             }
             Expression::Aggregate { fn_, expression, .. } => {
@@ -1011,6 +1014,110 @@ impl<'a> Typing<'a> {
         }
         let picked = self.multi_member_type(operand)?;
         arms_union(&[Some(picked), None])
+    }
+
+    /// `handleHeldBy`: the first record or file the value of `expr` holds
+    /// that `walk` does not accept, read off the expression's structure
+    /// where its type says less (a choice's arms, a `COALESCE`, a `MULTI`,
+    /// a pick of one member). Asked after `expr` is typed.
+    pub fn handle_held_by(&self, expr: &Expression, walk: &HeldWalk) -> Option<HeldHandle> {
+        let exact = |e: &Expression| self.exact_types.get(&key(e)).cloned().flatten();
+        match expr {
+            Expression::Object { entries } => entries.iter().find_map(|entry| match entry {
+                ObjectMember::Spread(spread) => self.handle_spread_by(&spread.expression, walk),
+                ObjectMember::Entry { key: name, value } => self.handle_held_by(value, &walk.into(HeldStep::Key(name.clone()))),
+            }),
+            Expression::List { elements } => {
+                // A member's place is fixed until the first spread: past it, a
+                // slot is wherever the run before it ended.
+                let mut numbered = true;
+                for (index, element) in elements.iter().enumerate() {
+                    let held = match element {
+                        ListElement::Spread(spread) => {
+                            numbered = false;
+                            handle_among_members(exact(&spread.expression).as_ref(), walk)
+                        }
+                        ListElement::Expression(e) => {
+                            self.handle_held_by(e, &walk.into(if numbered { HeldStep::Slot(index) } else { HeldStep::Member }))
+                        }
+                    };
+                    if held.is_some() {
+                        return held;
+                    }
+                }
+                None
+            }
+            Expression::Conditional { then, else_, .. } => self.handle_in_arms([&**then, &**else_], walk),
+            // `COALESCE` hands back one of its arguments as it is, and `MULTI`
+            // each present one as a member of the list it builds.
+            Expression::Function { fn_, args } if fn_ == "coalesce" => self.handle_in_arms(args.iter(), walk),
+            Expression::Function { fn_, args } if fn_ == "multi" => args.iter().find_map(|arg| self.handle_among_multi_members(arg, walk)),
+            // `AT` picks one member of what it reads, or reads a value that is
+            // no collection as itself.
+            Expression::At { expression, index } => handle_within(exact(expr).as_ref(), walk).or_else(|| {
+                // A literal index over what a tuple may hold (a receipt's arms)
+                // reads its own slot, not any member.
+                let slot = literal_index(index).and_then(|index| match self.may_hold_type(expression).as_ref().map(strip_absent) {
+                    Some(Ty::Tuple { of, rest }) => Some(tuple_slot_type(of, rest.as_ref(), Some(index), self.version)),
+                    _ => None,
+                });
+                match slot {
+                    Some(slot) => handle_within(slot.as_ref(), walk),
+                    None => self.handle_picked_from(expression, walk),
+                }
+            }),
+            Expression::Aggregate { fn_, expression, .. } => {
+                let within = handle_within(exact(expr).as_ref(), walk);
+                if matches!(fn_, AggregationFunction::First | AggregationFunction::Last | AggregationFunction::Only) {
+                    within.or_else(|| self.handle_picked_from(expression, walk))
+                } else {
+                    within
+                }
+            }
+            _ => handle_within(exact(expr).as_ref(), walk).or_else(|| {
+                let name = self.bare_names.get(&key(expr))?;
+                handle_within(self.env.resolve_may_hold(name).as_ref(), walk)
+            }),
+        }
+    }
+
+    /// `handlePickedFrom`: what a read picking one member of `operand` may
+    /// hand back — one level down in it, or the operand itself.
+    fn handle_picked_from(&self, operand: &Expression, walk: &HeldWalk) -> Option<HeldHandle> {
+        let within = self.handle_held_by(operand, &HeldWalk { steps: Vec::new(), ..walk.clone() })?;
+        let mut steps = walk.steps.clone();
+        steps.extend(within.steps.iter().skip(1).cloned());
+        Some(HeldHandle { steps, may: true, ..within })
+    }
+
+    /// `handleInArms`: the first handle any arm holds; the value only may hold it.
+    fn handle_in_arms<'e>(&self, arms: impl IntoIterator<Item = &'e Expression>, walk: &HeldWalk) -> Option<HeldHandle> {
+        arms.into_iter().find_map(|arm| self.handle_held_by(arm, walk)).map(|held| HeldHandle { may: true, ..held })
+    }
+
+    /// `handleAmongMultiMembers`: a list argument's members, spliced in, or
+    /// the value itself as one member.
+    fn handle_among_multi_members(&self, arg: &Expression, walk: &HeldWalk) -> Option<HeldHandle> {
+        let exact = |e: &Expression| self.exact_types.get(&key(e)).cloned().flatten();
+        match arg {
+            Expression::List { elements } => elements.iter().find_map(|element| match element {
+                ListElement::Spread(spread) => handle_among_members(exact(&spread.expression).as_ref(), walk),
+                ListElement::Expression(e) => self.handle_held_by(e, &walk.into(HeldStep::Member)),
+            }),
+            _ if exact(arg).as_ref().is_some_and(|ty| matches!(strip_absent(ty), Ty::List { .. } | Ty::Tuple { .. })) => {
+                handle_among_members(exact(arg).as_ref(), walk)
+            }
+            _ => self.handle_held_by(arg, &walk.into(HeldStep::Member)),
+        }
+    }
+
+    /// `handleSpreadBy`: what a `...` spread of `expr` would copy.
+    fn handle_spread_by(&self, expr: &Expression, walk: &HeldWalk) -> Option<HeldHandle> {
+        if let Expression::Conditional { then, else_, .. } = expr {
+            let held = self.handle_spread_by(then, walk).or_else(|| self.handle_spread_by(else_, walk))?;
+            return Some(HeldHandle { may: true, ..held });
+        }
+        handle_spread_of(self.exact_types.get(&key(expr)).cloned().flatten().as_ref(), walk)
     }
 
     fn multi_member_type(&self, arg: &Expression) -> Option<Ty> {

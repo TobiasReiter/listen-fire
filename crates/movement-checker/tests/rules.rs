@@ -81,3 +81,17 @@ fn a_field_the_write_did_not_set_reads_the_found_record_when_moving_up_across_4(
     );
     assert!(check_with(source, 4, BOX).is_empty());
 }
+
+#[test]
+fn a_record_is_not_looked_up_by_a_key() {
+    let source = "import { box } from adapters\nb = box()\nmovement m(f: <file>, n: <text>) {\n  h = write b-[:docs]-> { name: \"x\" }\n  a = AT(h, \"name\")\n  c = AT(h, 0)\n  d = AT(IF n == \"x\" THEN h ELSE { name: \"y\" } END, \"name\")\n  e = AT(COALESCE(h, h), k)\n  g = AT(f, \"x\")\n  return n\n}\n";
+    assert_eq!(
+        check_with(source, 5, BOX),
+        [
+            "MOV_AT_RECORD_KEY 5:7-5:20 AT looks up a list's slot or a map's key, and this is a record — 'name' is not a key it holds. Read a field with a dot (h.name), or build a map of the fields you need ({ name: h.`Name`, … }) and look the key up in that",
+            "MOV_AT_RECORD_KEY 7:7-7:60 AT looks up a list's slot or a map's key, and this may be a record — 'name' is not a key it holds. Read a field with a dot (r.name), or build a map of the fields you need ({ name: r.`Name`, … }) and look the key up in that",
+            "MOV_NAME_UNRESOLVED 8:7-8:28 Unknown name 'k' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
+            "MOV_AT_RECORD_KEY 8:7-8:28 AT looks up a list's slot or a map's key, and this may be a record — its fields are not keys to look up. Read a field with a dot (r.`Name`), or build a map of the fields you need ({ name: r.`Name`, … }) and look the key up in that",
+        ]
+    );
+}
