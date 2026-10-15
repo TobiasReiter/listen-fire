@@ -15,11 +15,12 @@ import type { Expression } from '#shared/expression/types';
 import type { Adapter, GetRelatedInput, RelatedResult } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
-import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from 'movement-engine/services/movement_engine/test_host';
 
@@ -862,6 +863,43 @@ describe('the expression tail, on both engines', () => {
     expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
   });
 
+  it("measures a WITHIN from the host's clock, a value's, a condition's and a hop's WHERE's alike", async () => {
+    const body = [
+      '  if "2025-12-30" WITHIN "7d" {',
+      '    write kg-[:note]-> { text: "recent" }',
+      '  }',
+      '  if "2025-12-20" WITHIN "7d" {',
+      '    write kg-[:note]-> { text: "stale" }',
+      '  }',
+      '  x = msg.`subject` WITHIN "7d"',
+      '  write kg-[:note]-> { text: "${x}" }',
+      '  kg-[c:company WHERE `revenue` WITHIN "99999w"]-> {',
+      '    write kg-[:note]-> { text: c.`name` }',
+      '  }',
+    ].join('\n');
+    const { rust } = await agree({ body });
+    expect(written(rust)).toEqual(['recent', 'false', 'Acme', 'Globex', 'Initech', 'Umbrella']);
+    // The hop's WHERE is pure, so it is handed to the adapter as the
+    // TypeScript hands it; the engine decides it itself all the same.
+    expect(calls(rust).filter(([m, input]) => m === 'getRelated' && input.where !== undefined)).toHaveLength(1);
+  });
+
+  it("ranks by a SORT key of any form, read in each member's scope, records and maps alike", async () => {
+    const { rust } = await agree({
+      body: [
+        '  cs = kg-[c:company]->',
+        '  byName = SORT(cs, LOWER(`name`), DESC)',
+        '  byRevenue = SORT(cs, COALESCE(`revenue`, 0) * -1)',
+        '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]',
+        '  ranked = SORT(rows, COALESCE(`s`, 0) * -1)',
+        '  write kg-[:note]-> { text: JOIN(MAP(byName, (c) => c.`name`), ",") }',
+        '  write kg-[:note]-> { text: JOIN(MAP(byRevenue, (c) => c.`name`), ",") }',
+        '  write kg-[:note]-> { text: JOIN(MAP(ranked, (r) => r.n), ",") }',
+      ].join('\n'),
+    });
+    expect(written(rust)).toEqual(['Umbrella,Initech,Hooli,Globex,Acme', 'Initech,Globex,Umbrella,Acme,Hooli', 'a,b,c']);
+  });
+
   it('reads a second name for the event, a landing and a handle as the record it names', async () => {
     await agree({
       body: [
@@ -924,6 +962,70 @@ describe('the expression tail, on both engines', () => {
       expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
       expect(ts.state).toContain('"read":{"instanceName":"kg"}');
     }
+  });
+
+  // Henry's ruling (2026-10-15): the event in a graph literal is held as the
+  // record it is, by reference, as any other record there is.
+  it('holds the event in a graph as its record, read, parked and resumed as the TypeScript engine does', async () => {
+    const before = [
+      '  g = graph { title: "t", owner: msg, inner: { from: msg } }',
+      '  g-[o:owner]-> {',
+      '    write kg-[:note]-> { text: "${g.`title`} ${o.`subject`}" }',
+      '  }',
+    ];
+    const after = ['  g-[i:inner]->-[f:from]-> {', '    write kg-[:note]-> { text: f.`text` }', '  }'];
+    const whole = await agree({ body: [...before, ...after].join('\n'), languageVersion: 5 });
+    expect(written(whole.rust)).toEqual(['t Seed', 'Late']);
+
+    const body = [...before, '  await sleep(1h)', ...after].join('\n');
+    const base = {
+      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+      languageVersion: 5 as const,
+      event: webhook({ subject: 'Seed', text: 'Late' }),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+      firedAt: '2026-05-01T09:00:00.000Z',
+    };
+    const hostFor = (park: ReturnType<typeof makeFakeParkSink>) => {
+      const graph = fakeGraph();
+      return makeTestHost({
+        adapters: { resolve: (request) => (request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter) },
+        park: { sink: park.sink },
+      });
+    };
+    async function onEngine<T>(engine: 'ts' | 'rust', act: () => Promise<T>): Promise<T> {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = engine;
+      try {
+        return await act();
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    const parkOn = (engine: 'ts' | 'rust') =>
+      onEngine(engine, async () => {
+        const park = makeFakeParkSink();
+        await runMovement({ ...base, host: hostFor(park) });
+        expect(park.timerParks).toHaveLength(1);
+        return JSON.stringify(park.timerParks[0]?.state);
+      });
+    const ts = await parkOn('ts');
+    resetRustRunStats();
+    const rust = await parkOn('rust');
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0 });
+    expect(rust).toBe(ts);
+    // Either engine resumes either park to the same writes.
+    const resumed: string[] = [];
+    for (const engine of ['ts', 'rust'] as const) {
+      for (const state of [ts, rust]) {
+        const result = await onEngine(engine, () => resumeMovement({ ...base, state: JSON.parse(state) as ParkedScopeState, host: hostFor(makeFakeParkSink()) }));
+        resumed.push(JSON.stringify({ writes: result.writes, trace: result.trace }));
+      }
+    }
+    expect(new Set(resumed).size).toBe(1);
+    expect(JSON.parse(resumed[0] ?? '{}').writes).toHaveLength(1);
   });
 
   it('tests a record IS of a kind, from the run alone', async () => {

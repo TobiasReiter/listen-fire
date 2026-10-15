@@ -1022,15 +1022,14 @@ impl Run<'_> {
         Ok(kept)
     }
 
-    /// `evaluatePredicate` over one record, a comparison this engine hands
-    /// back (`WITHIN`) answered by the TypeScript comparator, the host's
-    /// clock asked once for the record (run.ts `decideWithClock`).
+    /// `evaluatePredicate` over one record, a `WITHIN` measured from the
+    /// host's clock, asked once for the record (run.ts `decideWithClock`).
     async fn predicate_holds(&self, predicate: &Expression, data: &JsObject) -> Result<bool, Stop> {
         let read = |name: &str| data.get(name).cloned().unwrap_or(Js::Undefined);
         let now = std::cell::RefCell::new(None);
         let now = &now;
-        let ask = |op: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
-            Box::pin(async move { self.compare(op, l, r, now).await })
+        let ask = |_: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
+            Box::pin(async move { self.within(l, r, now).await })
         };
         match crate::filter::evaluate_predicate_with(predicate, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone() }).await {
             Ok(value) => Ok(value.truthy()),

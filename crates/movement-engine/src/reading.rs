@@ -678,9 +678,10 @@ impl Run<'_> {
     }
 
     /// `memberScope`: `expr` evaluated in the scope of the record `subject`
-    /// holds (a SORT key).
+    /// holds, or of a map held as a value (a SORT key).
     pub(crate) async fn scoped_at_record(&self, expr: &Expression, subject: &Js, scope: &Rc<Scope>, span: Option<Js>) -> Result<Evaluated, Failure> {
-        let record = record::binding_of(subject).expect("a SORT key is read off a record here");
+        let record = record::binding_of(subject)
+            .unwrap_or_else(|| Binding::Value(crate::env::ValueBinding { value: subject.clone(), trail: None, many: false }));
         self.evaluate_scoped(expr, scope, span, Some(crate::traverse::scoped_at(&record))).await.map_err(crate::write::failure_of)
     }
 }

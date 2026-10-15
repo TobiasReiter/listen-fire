@@ -346,11 +346,14 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'name_not_value',
-    routes: 'refused',
-    note: "a through stage's plugin argument naming bare a record (the event, a handle): needs what the TypeScript hands a plugin for a binding there (the binding object). Since main's record walk (group G, 2026-10-12) a through stage's argument is held to what the plugin takes, as a plain call's is: the event, whose `deck` is a file, ends at the check (MOV_CALL_ARG_TYPE at 'q.deck', the first program); a written record handed whole still checks and reaches it",
+    routes: 'whole',
+    note: "closed by the v5 probe (2026-10-15): a through stage's plugin argument naming bare a record (a handle, an extraction's record, a node) is handed the record's fields, as a plain call's argument is. The event, whose `deck` is a file, ends at the check (MOV_CALL_ARG_TYPE at 'q.deck', the first program)",
     programs: [
       () => ({ file: `import { echo } from plugins\n${m('  d = extract from [msg.`text`] through [echo(q: msg)] {\n    name: "a name"\n  }')}`, checks: false, routes: 'unreached' }),
-      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}` }),
+      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  e = extract from [msg.`text`] {\n    name: "a name"\n  }\n  d = extract from [msg.`text`] through [echo(q: e)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }, { 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  n = node { title: "t" }\n  d = extract from [msg.`text`] through [echo(q: n)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
     ],
   },
   {
@@ -914,11 +917,13 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'node_event_entry',
-    routes: 'refused',
-    note: 'a graph entry holding the event: needs an entry holding the event',
+    routes: 'whole',
+    note: "closed by the v5 probe (Henry's ruling, 2026-10-15): a graph entry holding the event holds it by reference as its record (its source position), as any record there; the anonymous node literal's entry holding the event the checker refuses (MOV_NODE_ENTRY_NODE_VALUE)",
     programs: [
       () => ({ body: '  g = graph { owner: msg }' }),
       () => ({ body: '  g = graph { title: "t", source: msg }' }),
+      () => ({ body: '  g = graph { title: "t", owner: msg, inner: { from: msg } }\n  g-[o:owner]-> {\n    write crm-[:notes]-> { body: "${g.`title`} ${o.`subject`}" }\n  }\n  await sleep(1h)\n  g-[i:inner]->-[f:from]-> {\n    write crm-[:notes]-> { body: f.`subject` }\n  }', version: 5, resume: (state) => state }),
+      () => ({ body: '  n = node { owner: msg }', version: 5, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -1096,12 +1101,14 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'aggregate:sort_key',
-    routes: 'refused',
-    note: '`SORT(xs, key)` whose key is not a field name (over records): needs record sorts by an expression (a key over plain values the checker refuses, MOV_SORT_KEY_ON_SCALAR)',
+    routes: 'whole',
+    note: "closed by the v5 probe (2026-10-15): `SORT(xs, key)` whose key is not a field name reads the key in each member's scope, a record's or a map's (a key over plain values the checker refuses, MOV_SORT_KEY_ON_SCALAR)",
     programs: [
       () => ({ body: '  x = SORT(["b", "a"], UPPER("a"))', checks: false, routes: 'unreached' }),
-      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LOWER(`name`))' }),
-      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LENGTH(`stage`))' }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LOWER(`name`))\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }' }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LENGTH(`stage`))\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }' }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, `employees` * -1, DESC)\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }', version: 5 }),
+      () => ({ body: '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]\n  x = SORT(rows, COALESCE(`s`, 0) * -1)\n  write crm-[:notes]-> { body: JOIN(MAP(x, (r) => r.n), ",") }', version: 5 }),
     ],
   },
   {
@@ -1204,11 +1211,14 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'within_compare',
-    routes: 'refused',
-    note: '`WITHIN` in an expression: needs WITHIN against the clock (the shared comparator answers it for a unique by today)',
+    routes: 'whole',
+    note: "closed by the v5 probe (2026-10-15): `WITHIN` is compared in the Rust engine (`compareValues`' `within`), measured from the host's clock, in an expression and in a hop's WHERE alike",
     programs: [
-      () => ({ body: '  x = msg.`subject` WITHIN "7d"' }),
+      () => ({ body: '  x = msg.`subject` WITHIN "7d"\n  write crm-[:notes]-> { body: "${x}" }' }),
       () => ({ body: '  if "2025-12-30" WITHIN "7d" {\n    write crm-[:notes]-> { body: "recent" }\n  }' }),
+      () => ({ body: '  if "2025-12-30" WITHIN "7d" {\n    write crm-[:notes]-> { body: "recent" }\n  }\n  if "2025-12-20T00:00:00Z" WITHIN "1w" {\n    write crm-[:notes]-> { body: "stale" }\n  }', version: 5 }),
+      () => ({ body: '  crm-[c:companies WHERE `name` WITHIN "7d"]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', version: 5 }),
+      () => ({ body: '  crm-[c:companies WHERE `employees` WITHIN "99999w"]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', version: 5 }),
     ],
   },
   {

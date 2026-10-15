@@ -588,7 +588,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
       // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
-      [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
       [movement('  x = msg-[:files]->-[#transform]->.`name`'), 'traversal_step'],
@@ -597,8 +596,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    b-[:#foo]-> {\n      y = 1\n    }\n  }'), 'traversal_meta_edge'],
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
-      [movement('  g = graph { owner: msg }'), 'node_event_entry'],
-      [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
@@ -632,7 +629,7 @@ describe('a whole run in the Rust engine', () => {
     expect(resolved).toEqual([]);
     expect(rustRunStats).toMatchObject({
       notAdmitted: { write_bind: 1 },
-      allReasons: { write_bind: 1, traversal_meta_edge: 1, within_compare: 1 },
+      allReasons: { write_bind: 1, traversal_meta_edge: 1 },
       declined: {},
       hostCalls: {},
     });

@@ -1027,7 +1027,16 @@ impl<'r, 'h> Materializer<'r, 'h> {
             let raw = js::trim(&arg.value.raw);
             let value = match context.get(raw) {
                 Some(value) if js::is_identifier(raw) => value.clone(),
-                _ => self.run.evaluate_slot(&arg.value, self.scope).await?.value,
+                // A record reaches only an argument taking structured data,
+                // and what that takes is the record's fields, as a plain
+                // call's argument is handed them (`recordFields`).
+                _ => {
+                    let value = self.run.evaluate_slot(&arg.value, self.scope).await?.value;
+                    match crate::record::binding_of(&value) {
+                        Some(record) => Js::object(crate::record::fields_of(&record).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?),
+                        None => value,
+                    }
+                }
             };
             config.set(arg.name.clone(), value);
         }

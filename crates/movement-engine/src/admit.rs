@@ -25,7 +25,7 @@ use movement_parser::ast::{
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
@@ -3815,11 +3815,11 @@ impl Names<'_> {
                     return refuse("plugin_call");
                 }
                 for arg in &plugin.args {
+                    // A bare name the body binds as a value may name the
+                    // entity's field instead, decided at run time; one bound
+                    // to a record is handed its fields, as a plain call's is.
                     let bare = crate::js::trim(&arg.value.raw);
-                    if crate::js::is_identifier(bare) {
-                        if self.holds_other_than_value(bare) {
-                            return refuse("name_not_value");
-                        }
+                    if crate::js::is_identifier(bare) && !self.holds_other_than_value(bare) {
                         continue;
                     }
                     self.slot(&arg.value)?;
@@ -4104,8 +4104,10 @@ impl Names<'_> {
         for entry in &literal.entries {
             match entry {
                 NodeEntry::Value { value, .. } => {
+                    // In a graph the event is a record like any other: held
+                    // on the edge as its source position (`referencedRecords`).
                     let bare = crate::js::trim(&value.raw);
-                    if graph && records(bare) {
+                    if graph && (records(bare) || self.events.contains(bare)) {
                         continue;
                     }
                     if self.events.contains(bare) {
@@ -4485,7 +4487,6 @@ impl Names<'_> {
                 self.walk(then, scoped)?;
                 self.walk(else_, scoped)
             }
-            Expression::Compare { op: FilterOperator::Within, .. } => refuse("within_compare"),
             Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => {
                 self.walk(left, scoped)?;
                 self.walk(right, scoped)
@@ -4586,9 +4587,10 @@ impl Names<'_> {
             // A walk read as its records keeps its own readings (a binding's
             // whole right-hand side, `selection`); anywhere else it is refused.
             AggregationFunction::Only if crate::formula::spell(inner).is_none() || crate::eval::is_records_walk(inner) => refuse("aggregate:only"),
+            // The key is read in each member's own scope (`memberScope`).
             AggregationFunction::Sort => {
-                if order_by.is_some_and(|key| !matches!(key, Expression::Property { .. } | Expression::AliasRef { .. })) {
-                    return refuse("aggregate:sort_key");
+                if let Some(key) = order_by {
+                    self.walk(key, true)?;
                 }
                 self.walk(inner, scoped)
             }
@@ -5277,7 +5279,7 @@ mod tests {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["meta:trigger", "within_compare", "expression_does_not_lower", "statement:call"]
+            ["meta:trigger", "expression_does_not_lower", "statement:call"]
         );
         assert_eq!(refused(body).as_deref(), Some("meta:trigger"));
         // The file's reasons come first, then each movement's, in source order.
@@ -5296,6 +5298,11 @@ mod tests {
             // The event spread is a record's, and a member spread reads a record's field.
             "  g = graph { ...msg }\n  co = write crm-[:companies]-> { name: \"a\" }\n  h = graph { ...co.`meta` }",
             "  x = NUMBER.FORMAT(1200000, \"compact\")\n  y = { a: [1, -2] }\n  z = y.`a`",
+            // A WITHIN measures from the host's clock, a hop's WHERE's too.
+            "  x = msg.`subject` WITHIN \"7d\"\n  if \"2025-12-30\" WITHIN \"7d\" {\n    y = 1\n  }",
+            "  crm-[c:companies WHERE `name` WITHIN \"7d\"]-> {\n    y = 1\n  }",
+            // The event in a graph is held as its source position.
+            "  g = graph { owner: msg }\n  h = graph { title: \"t\", source: msg, inner: { from: msg } }",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
@@ -5309,14 +5316,13 @@ mod tests {
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
             ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
-            ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
             ("  x = 1\n  x = write crm-[:companies]-> { name: \"a\" }", "name_rebound"),
             ("  inbox = 1", "name_shadowed"),
             ("  msg = 1", "name_shadowed"),
             ("  write crm-[:companies]-> bind co { name: \"a\" }", "write_bind"),
             ("  write crm-[:companies]-> { unique by (`name` == \"a\" AND msg-[:replies]->.`y` == 1) name: \"a\" }", "unique_by_reads_beyond_candidate"),
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
-            ("  g = graph { owner: msg }", "node_event_entry"),
+            ("  n = node { owner: msg }", "node_event_entry"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
@@ -5776,11 +5782,19 @@ mod tests {
         }
         for (body, reason) in [
             ("  d = extract from [msg.`text`] {\n    a: \"${@trigger}\"\n  }", "meta:trigger"),
-            ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
-            ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+        // A record named bare as a stage plugin's argument is handed its
+        // fields, as a plain call's argument is; a SORT key of any form is
+        // read in each member's scope.
+        for body in [
+            "  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }",
+            "  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }",
+            "  co = write crm-[:companies]-> { name: \"Acme\" }\n  d = extract from [msg.`text`] through [fetch_url(url: co)] {\n    a: \"a\"\n  }",
+        ] {
+            assert_eq!(with(body), None, "{body}");
         }
         // A tier is read off the run's input; `AI()` is the run's call.
         for body in ["  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "  x = AI(msg.`text`, \"thorough\")"] {

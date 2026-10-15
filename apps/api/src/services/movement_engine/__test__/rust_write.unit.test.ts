@@ -417,10 +417,10 @@ describe('writes in the Rust engine', () => {
     expect(rust.result?.writes.every((w) => !w.committed)).toBe(true);
   });
 
-  it('asks the TypeScript comparator for a WITHIN, mid-run, once per narrowed candidate', async () => {
-    // The corpus's last comparisons handed back are of this shape
-    // (unique_by_post_filter): WITHIN reads the clock's answer, which only the
-    // TypeScript comparator is handed.
+  it('decides a WITHIN itself, mid-run, from the host clock asked once per narrowed candidate', async () => {
+    // The corpus's last comparisons once handed back were of this shape
+    // (unique_by_post_filter): WITHIN reads the clock's answer, and this
+    // engine now compares with it itself.
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  write crm-[:companies]-> {',
@@ -436,7 +436,8 @@ describe('writes in the Rust engine', () => {
       event: webhook({ subject: 'Nova' }),
       attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-1', data: { domain: 'nova.example', updated } }] },
     });
-    expect(rustRunStats.hostCalls['builtins.compare']).toBe(1);
+    expect(rustRunStats.hostCalls['builtins.compare']).toBeUndefined();
+    expect(rustRunStats.hostCalls['clock.now']).toBe(1);
     expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['update']);
   });
 

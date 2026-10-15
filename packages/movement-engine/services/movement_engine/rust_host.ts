@@ -35,8 +35,6 @@ import type { Resource } from '../translation_graph/adapter';
 import { withResourceFile } from '../translation_graph/engine/files/resources';
 import { z } from 'zod';
 
-import { compareValues } from '#shared/expression/filter';
-import type { FilterOperator } from '#shared/expression/types';
 import { getErrorMessage } from '../../lib/utils/error';
 import { isPlainRecord } from '../../lib/utils/object';
 import { logger } from '../logger';
@@ -104,7 +102,6 @@ export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
   'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
   'check.compatible': "the checker's assignability, which an `IS <Decl>` test of a system's record asks of its record type's schema",
   'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
-  'builtins.compare': "the shared comparator, for a reading the Rust engine hands back",
   'log.write': "the platform's log, for the lines the TypeScript engine writes (sent as a statement ends)",
 };
 
@@ -639,18 +636,6 @@ const ROUTES: Record<string, Route> = {
     const spec = stdlibFunctionById(id);
     return builtinAnswer(wire, () => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
   },
-  /** The shared comparator, likewise. A `WITHIN` measures from `now`, the
-   *  host clock's answer the engine asked for it. */
-  async 'builtins.compare'(request, { wire }) {
-    const op = filterOperator(request.op);
-    const left = wire.read(request.left);
-    const right = wire.read(request.right);
-    if ((op === 'within') !== (request.now !== undefined)) {
-      throw new RustShimError('builtins.compare carries `now` for a WITHIN, and only for one');
-    }
-    const now = op === 'within' ? new Date(instant(request.now, 'builtins.compare now')).getTime() : undefined;
-    return builtinAnswer(wire, () => compareValues(left, op, right, now !== undefined ? { now } : {}));
-  },
 };
 
 /** Every route's path: each an `EngineHost` method or one of
@@ -940,24 +925,6 @@ function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
 function unprefixed(error: MovementEngineError): string {
   const prefix = `${error.code}: `;
   return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
-}
-
-function filterOperator(value: unknown): FilterOperator {
-  switch (value) {
-    case 'eq':
-    case 'neq':
-    case 'gt':
-    case 'gte':
-    case 'lt':
-    case 'lte':
-    case 'exists':
-    case 'in':
-    case 'contains':
-    case 'within':
-      return value;
-    default:
-      throw new RustShimError(`builtins.compare op ${JSON.stringify(value)} is not an operator`);
-  }
 }
 
 /** The trace entry kinds the Rust engine appends (crates/movement-engine/src/trace.rs). */

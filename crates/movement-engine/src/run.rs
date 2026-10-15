@@ -55,7 +55,7 @@ use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{CatalogSnapshot, Composite, FieldType, InstanceSchema};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator};
+use movement_parser::lowering::expression::{AggregationFunction, Expression};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value as Json, json};
@@ -686,22 +686,6 @@ impl Run<'_> {
         })
     }
 
-    /// The comparator's request for a reading `compare_values` hands back.
-    /// A `WITHIN` measures from the host's clock, asked for it alone, as the
-    /// TypeScript engine asks it at the comparison.
-    pub(crate) async fn compare_request(&self, op: FilterOperator, left: &Js, right: &Js) -> Result<host::Request, Failure> {
-        let now = match op {
-            FilterOperator::Within => Some(js_date::to_iso_string(self.clock_now().await?)),
-            _ => None,
-        };
-        self.compare_request_at(op, left, right, now.as_deref())
-    }
-
-    /// The comparator's request, a `WITHIN`'s instant given.
-    pub(crate) fn compare_request_at(&self, op: FilterOperator, left: &Js, right: &Js, now: Option<&str>) -> Result<host::Request, Failure> {
-        let op = serde_json::to_value(op).expect("an operator is JSON");
-        Ok(host::builtins::compare(op.as_str().unwrap_or_default(), self.encode(left)?, self.encode(right)?, now))
-    }
 
     /// The credential id the run was handed for `name`, if any.
     pub(crate) fn credential_id(&self, name: &str) -> Option<String> {
@@ -1837,9 +1821,10 @@ impl Run<'_> {
                 let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
                 self.builtin(request).await
             }
-            Ask::Compare { op, left, right } => {
-                let request = self.compare_request(op, &left, &right).await?;
-                self.builtin(request).await
+            Ask::Within { left, right } => {
+                let now = self.clock_now().await?;
+                let value = Js::Bool(crate::filter::within(&left, &right, now, self.local_zone()));
+                Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
             }
             Ask::Meta { key } => {
                 let value = self.meta_value(&key).await?;

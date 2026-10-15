@@ -156,8 +156,9 @@ pub enum Ask {
     /// A built-in this engine does not reproduce for these arguments: the
     /// TypeScript member answers.
     Function { id: String, args: Vec<Js> },
-    /// The shared comparator, likewise.
-    Compare { op: FilterOperator, left: Js, right: Js },
+    /// A `WITHIN`, measured from the host's clock (`compareValues`'
+    /// `within`): the only comparison `compare_values` hands back.
+    Within { left: Js, right: Js },
     /// A bare name inside a hop's WHERE or ORDER BY (a position-scoped
     /// evaluation) that no value binding answers: the landed record's field.
     /// `edge` for the bracket grammar's `edge_property`, which reads the
@@ -446,8 +447,7 @@ impl<'a> Evaluator<'a> {
                     return Ok(Evaluated { value: Js::Bool(same), prov: self.union(&[&l.prov, &r.prov]) });
                 }
                 let value = self
-                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Compare {
-                        op: *op,
+                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Within {
                         left: l.value.clone(),
                         right: r.value.clone(),
                     })
@@ -731,45 +731,48 @@ impl<'a> Evaluator<'a> {
     /// a plain value its own key, a map's read off it by name; the trail the
     /// collection arrived with, unchanged.
     async fn sort(&self, members: Vec<Js>, key: Option<&Expression>, direction: Option<OrderDirection>, prov: Prov) -> Eval {
-        let mut keys = Vec::with_capacity(members.len());
-        for member in &members {
-            // `memberScope`: a record reads its key in its own scope, a map
-            // reads its keys; a plain value has nothing to read one off.
-            let record = crate::record::binding_of(member).is_some();
-            let dict = record || matches!(member, Js::Object(_));
-            let Some(key) = key else {
-                if dict {
-                    return Err(EvalError::unsupported("sorting records with no key", "say what to rank them by — `SORT(xs, `Added At`, DESC)`"));
-                }
-                keys.push(member.clone());
-                continue;
-            };
-            if record {
-                keys.push(self.ask_run(Ask::ScopedAt { expr: key.clone(), subject: member.clone() }).await?.value);
-                continue;
-            }
-            if !dict {
-                return Err(EvalError::unsupported(
-                    "reading SORT's key off this member",
-                    "the key is read off a RECORD — bind the walk first (`entries = … { return e }`) and sort that, or sort plain values by themselves (`SORT(xs)`)",
-                ));
-            }
-            keys.push(self.member_key(member, key)?);
-        }
+        // Every key is read at once, each settling before the earliest
+        // failure by position is thrown (`sortByOrderKey`).
+        let reads: Vec<_> = members.iter().map(|member| self.sort_key(member, key)).collect();
+        let keys = crate::executor::join_all(reads).await.into_iter().collect::<Result<Vec<Js>, EvalError>>()?;
         let order = crate::order_limit::sort_by_order_key(&keys, direction);
         Ok(Evaluated { value: Js::array(order.into_iter().map(|i| members[i].clone()).collect()), prov })
     }
 
-    /// A SORT key over one map: a bare name reads a value binding of that
-    /// name first (`scopedBinding`), else the map's key (`readBindingField`).
-    fn member_key(&self, member: &Js, key: &Expression) -> Result<Js, EvalError> {
-        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else {
-            return Err(EvalError::Fallback("a SORT key other than a field name".into()));
+    /// One member's SORT key (`memberScope`): a record reads its key in its
+    /// own scope, a map reads its keys; a plain value has nothing to read one
+    /// off, and with no key is its own.
+    async fn sort_key(&self, member: &Js, key: Option<&Expression>) -> Result<Js, EvalError> {
+        let record = crate::record::binding_of(member).is_some();
+        let dict = record || matches!(member, Js::Object(_));
+        let Some(key) = key else {
+            if dict {
+                return Err(EvalError::unsupported("sorting records with no key", "say what to rank them by — `SORT(xs, `Added At`, DESC)`"));
+            }
+            return Ok(member.clone());
         };
-        if let Some(bound) = self.env.value(name) {
-            return Ok(bound.value);
+        if !dict {
+            return Err(EvalError::unsupported(
+                "reading SORT's key off this member",
+                "the key is read off a RECORD — bind the walk first (`entries = … { return e }`) and sort that, or sort plain values by themselves (`SORT(xs)`)",
+            ));
         }
-        Ok(crate::record::project(member, name))
+        match self.member_key(member, key) {
+            Some(value) if !record => Ok(value),
+            _ => Ok(self.ask_run(Ask::ScopedAt { expr: key.clone(), subject: member.clone() }).await?.value),
+        }
+    }
+
+    /// A SORT key over one map that is a bare name, read here: a value
+    /// binding of that name first (`scopedBinding`), else the map's key
+    /// (`readBindingField`). Any other key is the run's to read in the map's
+    /// scope.
+    fn member_key(&self, member: &Js, key: &Expression) -> Option<Js> {
+        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else { return None };
+        if let Some(bound) = self.env.value(name) {
+            return Some(bound.value);
+        }
+        Some(crate::record::project(member, name))
     }
 
     async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {

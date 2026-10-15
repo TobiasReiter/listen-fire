@@ -31,8 +31,9 @@ const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000d1');
 
 const emailSchema: InstanceSchema = {
   positions: { message: { properties: { subject: 'text', text: 'text' }, edges: {} } },
-  collections: {},
-  writableRoots: {},
+  collections: { messages: { target: 'message' } },
+  writableRoots: { message: { fields: { subject: 'text' }, resultShape: { externalId: 'text', subject: 'text' } } },
+  supportsInPlaceUpdate: true,
 };
 
 const catalog = mockCatalogSnapshot({
@@ -52,12 +53,12 @@ const program = (...body: string[]) =>
 
 /** Admitted by the Rust engine. */
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
-/** Refused by its admission: a `WITHIN` comparison (which may stay refused
- *  by name: no corpus run reaches it). */
-const WITHIN = ['  recent = msg.`subject` WITHIN "7d"'];
-const REFUSED = program(...WITHIN, '  return msg.`subject`');
-/** Refused for two reasons: the `WITHIN`, and a bound write. */
-const REFUSED_TWICE = program(...WITHIN, '  write inbox-[:message]-> bind msg { subject: "a" }', '  return msg.`subject`');
+/** Refused by its admission: a bound write (which the checker lets by
+ *  before version 5). */
+const BOUND_WRITE = '  write inbox-[:messages]-> bind msg { subject: "a" }';
+const REFUSED = program(BOUND_WRITE, '  return msg.`subject`');
+/** Refused for two reasons: a `#` hop, and the bound write. */
+const REFUSED_TWICE = program('  n = COUNT(msg-[:#foo]->)', BOUND_WRITE, '  return msg.`subject`');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 
@@ -176,10 +177,10 @@ describe('the admission dry run, through the real artifact', () => {
 
     expect(refused.asked).toEqual([]);
     expect(admitted.asked).toEqual([]);
-    const tally = { sampled: 2, admitted: 1, first: { within_compare: 1 }, all: { within_compare: 1 } };
+    const tally = { sampled: 2, admitted: 1, first: { write_bind: 1 }, all: { write_bind: 1 } };
     expect(rustRunStats.dryRun).toEqual({ firings: 2, faults: 0, ...tally, byVersion: { '3': tally }, byRoute: { run: tally, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
     expect(admissionVerdicts).toEqual([
-      { runId: 'run-refused', languageVersion: 3, reasons: ['within_compare'] },
+      { runId: 'run-refused', languageVersion: 3, reasons: ['write_bind'] },
       { runId: 'run-admitted', languageVersion: 3, reasons: [] },
     ]);
     // Only the dry run's own counters move: no segment was routed, nothing ran in Rust.
@@ -190,8 +191,8 @@ describe('the admission dry run, through the real artifact', () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { within_compare: 1 }, all: { within_compare: 1, write_bind: 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['within_compare', 'write_bind'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({ first: { traversal_meta_edge: 1 }, all: { traversal_meta_edge: 1, write_bind: 1 } });
+    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['traversal_meta_edge', 'write_bind'] }]);
   });
 
   // A real run leaves a slot this engine's lowering misses to its check
@@ -261,14 +262,16 @@ describe('the admission dry run, through the real artifact', () => {
 describe('a run the TypeScript engine runs', () => {
   it('runs as it would without the dry run, and the dry run counts it', async () => {
     const run = (source: string) =>
-      underEngine('ts', () => runMovement(inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+      // The bound write fails mid-run (a bind to the event), alike with or
+      // without the dry run.
+      underEngine('ts', () => runMovement({ ...inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } })), languageVersion: 3 })).catch((error: unknown) => String(error));
     process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY = '0';
     const withoutDryRun = await run(REFUSED);
     expect(rustRunStats.dryRun.sampled).toBe(0);
     delete process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY;
     const withDryRun = await run(REFUSED);
     expect(withDryRun).toEqual(withoutDryRun);
-    expect(rustRunStats.dryRun).toMatchObject({ firings: 2, sampled: 1, admitted: 0, faults: 0, first: { within_compare: 1 } });
+    expect(rustRunStats.dryRun).toMatchObject({ firings: 2, sampled: 1, admitted: 0, faults: 0, first: { write_bind: 1 } });
   });
 
   it('is never asked about under MOVEMENT_ENGINE=rust: an admitted run moves no dry run counter', async () => {

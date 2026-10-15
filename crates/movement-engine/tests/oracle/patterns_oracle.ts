@@ -585,3 +585,37 @@ export async function writePatternsOracle(rand: Rand, write: (name: string, text
   console.log(`patterns.json: ${PATTERNS.length} patterns, ${cases.length} programs (${cases.filter((c) => c.routes === 'whole').length} whole on Rust)`);
 }
 
+
+// ── v5 probe (investigation only) ───────────────────────────────────────────
+/** Every pattern program (plus `extra`) forced to `version`: how the TS check
+ *  went, where Rust admission routed it, and how each engine ended. */
+export async function probeVersion(version: number, rand: Rand, extra: Array<{ reason: string; program: Program }> = []): Promise<unknown[]> {
+  const pick: Pick = (items) => items[Math.floor(rand() * items.length)]!;
+  const only = process.env.PATTERNS_ONLY !== undefined ? new RegExp(process.env.PATTERNS_ONLY) : undefined;
+  const all: Array<{ reason: string; program: Program }> = [];
+  for (const pattern of PATTERNS) for (const make of pattern.programs) all.push({ reason: pattern.reason, program: make(pick) });
+  all.push(...extra);
+  const out: unknown[] = [];
+  for (const { reason, program: base } of all) {
+    if (only !== undefined && !only.test(reason)) continue;
+    const program = { ...base, version };
+    let state: unknown;
+    try {
+      state = program.resume !== undefined ? await parkedState(program) : undefined;
+    } catch (e) {
+      out.push({ reason, src: program.body ?? program.file, tsFailedToPark: String(e).slice(0, 300) });
+      continue;
+    }
+    const ts = state === undefined ? await direct('ts', program) : ((await recorded('ts', program, state)) ?? (await direct('ts', program)));
+    resetRustRunStats();
+    resetRustEvalStats();
+    const rust = state === undefined ? await direct('rust', program) : ((await recorded('rust', program, state)) ?? (await direct('rust', program)));
+    const { routes, reasons } = routing();
+    const short = (r: HostRecording) => JSON.stringify(ending(r)).slice(0, 400);
+    const tsRec = state === undefined ? await recorded('ts', program).catch(() => undefined) : undefined;
+    const rec = tsRec === undefined ? 'none' : short(tsRec);
+    if (process.env.PROBE_DUMP !== undefined && tsRec !== undefined) for (const q of tsRec.requests) if (new RegExp(process.env.PROBE_DUMP).test(`${q.family}.${q.method}`)) console.log('REQ', reason, `${q.family}.${q.method}`, JSON.stringify(q.args).slice(0, 700));
+    out.push({ reason, src: program.body ?? program.file, routes, reasons, ts: short(ts), rust: short(rust), ...(rec !== short(ts) ? { tsRecorded: rec } : {}) });
+  }
+  return out;
+}
