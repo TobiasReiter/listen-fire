@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use movement_parser::ast::{
     CallArg, CallbackExpression, CallbackSubject, ExprSlot, ListenDeclaration, MovementDeclaration, MovementParam, NamedArg, ParamTypeRef,
-    ShapeDeclaration, ShapeNode, Span, TypeRef, ValueType,
+    Span, TypeRef, ValueType,
 };
 use movement_parser::catalog::helpers::parse_field_type_name;
 use movement_parser::catalog::types::TriggerConfigFormat;
@@ -56,10 +56,6 @@ pub struct ListenState {
     /// Each movement symbol's parameters and the scope it was declared in
     /// (`ScopeSymbol.movement`).
     movements: HashMap<SymbolId, MovementInfo>,
-    /// Each node declaration's symbol and what it declares.
-    // TODO(nodes): the nodes family's declared schema (`shapeToSchema`,
-    // `extends` folded in) replaces this.
-    shapes: HashMap<SymbolId, ShapeDeclaration>,
 }
 
 struct Dispatchable {
@@ -143,9 +139,6 @@ impl ListenState {
             let info = MovementInfo { params: info.params.clone(), decl_scope: info.decl_scope };
             self.movements.insert(local, info);
         }
-        if let Some(shape) = self.shapes.get(&library).cloned() {
-            self.shapes.insert(local, shape);
-        }
     }
 }
 
@@ -154,15 +147,6 @@ impl Checker<'_> {
     pub fn note_movement(&mut self, scope: ScopeId, movement: &MovementDeclaration) {
         if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied() {
             self.listens.movements.insert(id, MovementInfo { params: movement.params.clone(), decl_scope: scope });
-        }
-    }
-
-    /// Remembers a node declaration on its symbol, once declared in `scope`.
-    pub fn note_shape(&mut self, scope: ScopeId, shape: &ShapeDeclaration) {
-        if let Some(id) = self.scopes.scope(scope).symbols.get(&shape.name).copied()
-            && self.scopes.symbol(id).kind == SymbolKind::Shape
-        {
-            self.listens.shapes.insert(id, shape.clone());
         }
     }
 
@@ -443,9 +427,9 @@ impl Checker<'_> {
         let Resolution::Found(param_graph) = self.scopes.resolve(decl_scope, &declared.graph) else { return };
         if self.scopes.symbol(param_graph).kind == SymbolKind::Shape {
             let instance = self.scopes.symbol(instance_id).instance.clone();
-            if let Some(shape) = self.listens.shapes.get(&param_graph).cloned() {
+            if let Some(shape) = self.declared_node(param_graph).map(|d| d.instance.clone()) {
                 let schema = instance.as_ref().and_then(|i| i.schema.as_ref());
-                self.check_listen_shape_conformance(&shape, schema, &declared.graph, statement);
+                self.check_listen_shape_conformance(&shape.schema, &shape.name, schema, &declared.graph, statement);
             }
             return;
         }
@@ -497,16 +481,17 @@ impl Checker<'_> {
     }
 
     /// `checkListenShapeConformance`: the instance's event position against
-    /// the node declaration the movement's parameter names.
+    /// the node declaration the movement's parameter names (its schema, any
+    /// base folded in).
     fn check_listen_shape_conformance(
         &mut self,
-        shape: &ShapeDeclaration,
+        shape: &movement_parser::catalog::types::InstanceSchema,
+        shape_name: &str,
         schema: Option<&movement_parser::catalog::types::InstanceSchema>,
         written: &str,
         statement: &ListenDeclaration,
     ) {
-        // TODO(nodes): a node that extends another is the nodes family's to fold.
-        if shape.extends.is_some() {
+        if !shape.positions.contains_key(shape_name) {
             return;
         }
         let event = schema.and_then(|s| s.event_position.as_ref().and_then(|e| s.positions.get(e).map(|p| (e, p))));
@@ -536,7 +521,7 @@ impl Checker<'_> {
         }
         let schema = schema.expect("an event position is read off a schema");
         let mut visited = HashSet::new();
-        self.conform_shape_node(&shape.root, &shape.name, schema, event_name, statement, &mut visited, "");
+        self.conform_shape_node(shape, shape_name, schema, event_name, statement, &mut visited, "");
     }
 
     /// `conformShapeNode`: every field and nested node the declaration
@@ -544,7 +529,7 @@ impl Checker<'_> {
     #[allow(clippy::too_many_arguments)]
     fn conform_shape_node(
         &mut self,
-        node: &ShapeNode,
+        shape: &movement_parser::catalog::types::InstanceSchema,
         node_name: &str,
         schema: &movement_parser::catalog::types::InstanceSchema,
         position_name: &str,
@@ -555,50 +540,44 @@ impl Checker<'_> {
         if !visited.insert(format!("{node_name}::{position_name}")) {
             return;
         }
-        let Some(position) = schema.positions.get(position_name) else { return };
+        let (Some(node), Some(position)) = (shape.positions.get(node_name), schema.positions.get(position_name)) else { return };
         if surface_not_enumerated(position) {
             return;
         }
         let (instance, movement) = (&statement.instance, &statement.movement);
-        for field in &node.fields {
-            let declared = declared_field_type(field);
-            let Some(source) = position.properties.get(&field.name) else {
+        for (field, declared) in node.properties.iter() {
+            let Some(source) = position.properties.get(field) else {
                 let message = if path.is_empty() {
-                    format!("'{instance}' has no field `{}` that the declaration '{node_name}' requires — this lane can't fire '{movement}'", field.name)
+                    format!("'{instance}' has no field `{field}` that the declaration '{node_name}' requires — this lane can't fire '{movement}'")
                 } else {
-                    format!("'{instance}' {path}has no field `{}` that the declaration '{node_name}' requires", field.name)
+                    format!("'{instance}' {path}has no field `{field}` that the declaration '{node_name}' requires")
                 };
                 self.report(codes::LISTEN_SHAPE_MISMATCH, message, statement.span);
                 continue;
             };
-            if !crate::types::field::field_assignable(&crate::types::field::Ty::from_schema(source), &crate::types::field::Ty::from_schema(&declared)) {
-                let describe = |t: &movement_parser::catalog::types::FieldType| {
-                    movement_parser::catalog::helpers::describe_field_type(t).unwrap_or_default()
-                };
+            if !crate::types::field::field_assignable(&crate::types::field::Ty::from_schema(source), &crate::types::field::Ty::from_schema(declared)) {
+                let describe = |t: &movement_parser::catalog::types::FieldType| movement_parser::catalog::helpers::describe_field_type(t).unwrap_or_default();
                 let message = format!(
-                    "'{instance}'{}`{}` ({}) doesn't fit declared field `{}` ({})",
+                    "'{instance}'{}`{field}` ({}) doesn't fit declared field `{field}` ({})",
                     if path.is_empty() { ".".to_string() } else { format!(" {path}") },
-                    field.name,
                     describe(source),
-                    field.name,
-                    describe(&declared)
+                    describe(declared)
                 );
                 self.report(codes::LISTEN_SHAPE_MISMATCH, message, statement.span);
             }
         }
-        for child in &node.children {
-            let Some(edge) = position.edges.get(&child.name) else {
+        for (child, shape_edge) in node.edges.iter() {
+            let Some(edge) = position.edges.get(child) else {
                 let message = if path.is_empty() {
-                    format!("'{instance}' has no relationship '{}' that the declaration '{node_name}' requires", child.name)
+                    format!("'{instance}' has no relationship '{child}' that the declaration '{node_name}' requires")
                 } else {
-                    format!("'{instance}' {path}has no relationship '{}' that the declaration '{node_name}' requires", child.name)
+                    format!("'{instance}' {path}has no relationship '{child}' that the declaration '{node_name}' requires")
                 };
                 self.report(codes::LISTEN_SHAPE_MISMATCH, message, statement.span);
                 continue;
             };
-            let child_name = format!("{node_name}.{}", child.name);
-            let child_path = format!("{path}{} → ", child.name);
-            self.conform_shape_node(child, &child_name, schema, &edge.target, statement, visited, &child_path);
+            let child_path = format!("{path}{child} → ");
+            self.conform_shape_node(shape, &shape_edge.target, schema, &edge.target, statement, visited, &child_path);
         }
     }
 
@@ -1102,17 +1081,6 @@ fn value_type_span(type_: &ValueType) -> Span {
 /// `surfaceNotEnumerated`: a position whose fields nobody listed.
 fn surface_not_enumerated(position: &movement_parser::catalog::types::PositionSchema) -> bool {
     position.open_properties == Some(true) || position.undescribed == Some(true) || position.pending == Some(true)
-}
-
-/// A declared node's field type, as `shapeToSchema` reads it.
-// TODO(nodes): `shapeToSchema` resolves a field naming a declared `type` to its enum.
-fn declared_field_type(field: &movement_parser::ast::ShapeField) -> movement_parser::catalog::types::FieldType {
-    use movement_parser::catalog::types::{Composite, FieldType, Scalar};
-    let named = parse_field_type_name(Some(&field.type_)).unwrap_or(FieldType::Scalar(Scalar::Text));
-    if field.nullable == Some(true) {
-        return FieldType::Composite(Composite::MaybeAbsent { of: Box::new(named) });
-    }
-    named
 }
 
 #[cfg(test)]

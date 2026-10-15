@@ -179,7 +179,6 @@ impl<'c> Checker<'c> {
                     self.note_movement_params(movement, scope);
                 }
                 Statement::Shape(shape) => {
-                    self.note_shape(scope, shape);
                     self.declare_shape(scope, shape, existing.is_none());
                 }
                 _ => {}
@@ -231,7 +230,6 @@ impl<'c> Checker<'c> {
             Statement::Shape(shape) => {
                 if !self.scopes.has_own(scope, &shape.name) {
                     self.declare_authored(scope, Symbol::new(&shape.name, SymbolKind::Shape, shape.span), shape.span);
-                    self.note_shape(scope, shape);
                     self.declare_shape(scope, shape, true);
                 }
                 self.settle_shape(shape, scope);
