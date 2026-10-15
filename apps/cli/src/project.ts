@@ -1,0 +1,108 @@
+// A project is a folder with `lf.yaml` at its root: the engine version it is
+// pinned to, where its movement files live, and its externals folder. `.lf/`
+// beside it holds what the host keeps (state, files, secrets) and is ignored
+// by git.
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { z } from 'zod';
+import { parse, stringify } from 'yaml';
+import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+
+export const PROJECT_FILE = 'lf.yaml';
+
+/** The engine version a new project is pinned to: this release's. */
+export const CURRENT_ENGINE_VERSION = '0.11.0';
+
+const ProjectFile = z.object({
+  engine: z.string().regex(/^\d+\.\d+\.\d+$/, 'engine: a semver version, e.g. 0.11.0'),
+  movements: z.string().default('movements'),
+  externals: z.string().default('externals'),
+});
+
+export interface Project {
+  root: string;
+  /** The host's own folder: `<root>/.lf`. */
+  lfDir: string;
+  engine: string;
+  /** The language version the pinned engine runs. */
+  languageVersion: LanguageVersion;
+  movementsDir: string;
+  externalsDir: string;
+}
+
+/**
+ * The language version an engine version runs. The language version is
+ * becoming the engine version (Henry, 2026-10-15); until it does, every engine
+ * this release knows runs the current language version (5, Dancing Wren), and
+ * an engine version newer than this release is refused.
+ */
+export function languageVersionOfEngine(engine: string): LanguageVersion {
+  if (compareSemver(engine, CURRENT_ENGINE_VERSION) > 0) {
+    throw new Error(
+      `lf.yaml pins engine ${engine}, newer than this lf (${CURRENT_ENGINE_VERSION}); upgrade lf or lower the pin`,
+    );
+  }
+  return CURRENT_LANGUAGE_VERSION;
+}
+
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** The project whose `lf.yaml` is at `from` or the nearest folder above it. */
+export function loadProject(from: string): Project {
+  let dir = resolve(from);
+  while (!existsSync(join(dir, PROJECT_FILE))) {
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error(`no ${PROJECT_FILE} here or in any folder above (run \`lf init\`)`);
+    dir = parent;
+  }
+  const parsed = ProjectFile.safeParse(parse(readFileSync(join(dir, PROJECT_FILE), 'utf8')) ?? {});
+  if (!parsed.success) {
+    throw new Error(`${join(dir, PROJECT_FILE)}: ${parsed.error.issues.map((i) => i.message).join('; ')}`);
+  }
+  const lfDir = join(dir, '.lf');
+  mkdirSync(lfDir, { recursive: true });
+  return {
+    root: dir,
+    lfDir,
+    engine: parsed.data.engine,
+    languageVersion: languageVersionOfEngine(parsed.data.engine),
+    movementsDir: join(dir, parsed.data.movements),
+    externalsDir: join(dir, parsed.data.externals),
+  };
+}
+
+/** Write `lf.yaml`, `.lf/` and its `.gitignore` entry; leave an existing project alone. */
+export function initProject(dir: string): string[] {
+  const root = resolve(dir);
+  const made: string[] = [];
+  const projectFile = join(root, PROJECT_FILE);
+  if (!existsSync(projectFile)) {
+    writeFileSync(
+      projectFile,
+      stringify({ engine: CURRENT_ENGINE_VERSION, movements: 'movements', externals: 'externals' }),
+    );
+    made.push(PROJECT_FILE);
+  }
+  for (const folder of ['.lf', 'movements', 'externals']) {
+    if (!existsSync(join(root, folder))) {
+      mkdirSync(join(root, folder), { recursive: true });
+      made.push(`${folder}/`);
+    }
+  }
+  const gitignore = join(root, '.gitignore');
+  const ignored = existsSync(gitignore) ? readFileSync(gitignore, 'utf8').split('\n') : [];
+  if (!ignored.some((line) => line.trim() === '.lf/' || line.trim() === '.lf')) {
+    appendFileSync(gitignore, `${ignored.length > 0 && ignored.at(-1) !== '' ? '\n' : ''}.lf/\n`);
+    made.push('.gitignore entry .lf/');
+  }
+  return made;
+}
