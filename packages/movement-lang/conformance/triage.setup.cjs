@@ -5,7 +5,9 @@
 // could see through validate, run, story or MCP output — cannot be edited to
 // match. It is listed instead, by file and title, with its reason, in
 // `__conformance__/v<n>/triage.cjs` beside the corpus, and skipped here (a
-// table-driven one by its title template, all its rows). A list
+// table-driven one by its title template, all its rows). An entry marked
+// `wholeFile: true` (no `test`) rules out a file that cannot load at all; it is
+// ignored by the jest config (`triage_files.cjs`), not here. A list
 // entry that names no test in its file fails the run, so the list cannot rot.
 const path = require('path');
 
@@ -17,7 +19,7 @@ if (match) {
   const [, root, relative] = match;
   const file = relative.split(path.sep).join('/');
   const { triage } = require(path.join(root, 'triage.cjs'));
-  const ruledOut = new Set(triage.filter((entry) => entry.file === file).map((entry) => entry.test));
+  const ruledOut = new Set(triage.filter((entry) => entry.file === file && !entry.wholeFile).map((entry) => entry.test));
   if (ruledOut.size > 0) {
     const seen = new Set();
     const wrap = (original) => {

@@ -3,7 +3,11 @@
 // through validate, run, story or MCP output. Anything an author could observe
 // is a version conditional instead, never an entry here.
 // `file` is relative to this directory; `test` is the test's (or describe's)
-// own title.
+// own title. An entry `{ file, wholeFile: true, reason }` (no `test`) rules out
+// a file that cannot load; the jest config leaves it unopened.
+const RUN_HOST_CORE =
+  "mocks hosted resume modules the shared run-host core replaced (packages/movement-engine/services/run_host); the await/resume behaviour is now held by the run-host contract suite, run against both the Postgres and SQLite backends, so no movement observes the difference";
+
 const NODE_FIELD_ORDER =
   "hand-built synthesised node: a synthesised node now carries its fields' declaration order (`fieldOrder`), which this test's literal binding predates; runs build it themselves, so no movement observes the difference";
 
@@ -75,4 +79,5 @@ exports.triage = [
   { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "captures the artifact ref and the deterministic stdlib values", reason: HAND_BUILT_STORE },
   { file: "services/movement_engine/__test__/stdlib_file.unit.test.ts", test: "streams text/plain bytes that are the digest verbatim", reason: HAND_BUILT_STORE },
   { file: 'services/movement_engine/__test__/call_value.unit.test.ts', test: 'parks with the closure in scope — its body as AST, its capture as bindings', reason: BODY_CLOSURE_PARK_FORMAT },
+  { file: 'services/movement_engine/__test__/await_resume.unit.test.ts', wholeFile: true, reason: RUN_HOST_CORE },
 ];

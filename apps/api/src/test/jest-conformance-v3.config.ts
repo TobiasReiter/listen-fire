@@ -12,6 +12,8 @@
 // `pnpm test:conformance:v3`.
 import path from 'node:path';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ignoredPaths } = require('../../../../packages/movement-lang/conformance/triage_files.cjs');
 import unitConfig from './jest-unit.config';
 
 const CONFORMANCE = path.resolve(__dirname, '../../../../packages/movement-lang/conformance');
@@ -27,7 +29,7 @@ export default {
     '<rootDir>/src/__conformance__/v3/**/*.unit.test.ts',
     '<rootDir>/src/services/movement_engine/__test__/binding_consumer_matrix.unit.test.ts',
   ],
-  testPathIgnorePatterns: ['/node_modules/'],
+  testPathIgnorePatterns: ['/node_modules/', ...ignoredPaths(path.resolve(__dirname, '../__conformance__/v3'))],
   resolver: path.join(CONFORMANCE, 'resolver.cjs'),
   setupFilesAfterEnv: [
     path.join(CONFORMANCE, 'v3.setup.cjs'),

@@ -17,6 +17,9 @@ const GRAPH_SPREAD_RECORD =
 const BODY_CLOSURE_PARK_FORMAT =
   'body closures park their scope by reference (61a58921); the park format is not language semantics';
 
+const RUN_HOST_CORE =
+  "mocks hosted resume modules the shared run-host core replaced (packages/movement-engine/services/run_host); the await/resume behaviour is now held by the run-host contract suite, run against both the Postgres and SQLite backends, so no movement observes the difference";
+
 exports.triage = [
   { file: UNSUPPORTED_SITES, test: 'only the registered files throw it', reason: SOURCE_SCAN },
   { file: UNSUPPORTED_SITES, test: 'expression.ts: the registry lists exactly the call sites in the file', reason: SOURCE_SCAN },
@@ -25,4 +28,5 @@ exports.triage = [
   { file: 'services/movement_engine/__test__/list_literal_record.unit.test.ts', test: 'with no shape: an engine error naming the key, never the record stored as a field', reason: GRAPH_SPREAD_RECORD },
   { file: 'services/movement_engine/__test__/list_literal_record.unit.test.ts', test: 'with a shape declaring the key a child, holding records by key: the same engine error', reason: GRAPH_SPREAD_RECORD },
   { file: 'services/movement_engine/__test__/call_value.unit.test.ts', test: 'parks with the closure in scope — its body as AST, its capture as bindings', reason: BODY_CLOSURE_PARK_FORMAT },
+  { file: 'services/movement_engine/__test__/await_resume.unit.test.ts', wholeFile: true, reason: RUN_HOST_CORE },
 ];
