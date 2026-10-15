@@ -18,6 +18,8 @@ const ProjectFile = z.object({
   engine: z.string().regex(/^\d+\.\d+\.\d+$/, 'engine: a semver version, e.g. 0.11.0'),
   movements: z.string().default('movements'),
   externals: z.string().default('externals'),
+  /** Who events act as on this machine (`@user_*`); LF_USER / LF_USER_EMAIL override it. */
+  user: z.object({ name: z.string().min(1).optional(), email: z.string().min(1).optional() }).default({}),
 });
 
 export interface Project {
@@ -29,6 +31,8 @@ export interface Project {
   languageVersion: LanguageVersion;
   movementsDir: string;
   externalsDir: string;
+  /** The local acting identity lf.yaml names; unset parts fall back to the OS user. */
+  user: { name?: string; email?: string };
 }
 
 /**
@@ -77,6 +81,10 @@ export function loadProject(from: string): Project {
     languageVersion: languageVersionOfEngine(parsed.data.engine),
     movementsDir: join(dir, parsed.data.movements),
     externalsDir: join(dir, parsed.data.externals),
+    user: {
+      ...(parsed.data.user.name !== undefined ? { name: parsed.data.user.name } : {}),
+      ...(parsed.data.user.email !== undefined ? { email: parsed.data.user.email } : {}),
+    },
   };
 }
 
@@ -88,7 +96,10 @@ export function initProject(dir: string): string[] {
   if (!existsSync(projectFile)) {
     writeFileSync(
       projectFile,
-      stringify({ engine: CURRENT_ENGINE_VERSION, movements: 'movements', externals: 'externals' }),
+      stringify({ engine: CURRENT_ENGINE_VERSION, movements: 'movements', externals: 'externals' }) +
+        '# Who events act as on this machine (@user_name, @user_email). Defaults to the OS user;\n' +
+        '# LF_USER and LF_USER_EMAIL override.\n' +
+        '# user: { name: Your Name, email: you@example.com }\n',
     );
     made.push(PROJECT_FILE);
   }

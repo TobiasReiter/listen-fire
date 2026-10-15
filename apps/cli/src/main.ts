@@ -16,6 +16,7 @@ import type { DiscriminableEvent } from 'movement-engine/services/translation_gr
 import { initProject, loadProject } from './project';
 import { EventFile, fireEvent, openSession, parkedRuns, receiveWebhook, resumeRun, type RunOutcome } from './runs';
 import { serve } from './serve';
+import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
 
 const USAGE = `usage: lf <init|check|run|resume|serve|runs> [options]
@@ -58,7 +59,15 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'check': {
       const project = loadProject(values.dir);
-      const session = await openSession(project, { ephemeral: true, start: true });
+      let session;
+      try {
+        session = await openSession(project, { ephemeral: true, start: true });
+      } catch (error) {
+        if (!(error instanceof MissingCredentialsError)) throw error;
+        for (const m of error.missing) process.stdout.write(`${m.file}:${m.line}:${m.column} error MISSING_CREDENTIAL ${m.message}\n`);
+        process.stdout.write(`${error.missing.length} error(s)\n`);
+        return 1;
+      }
       try {
         let errors = 0;
         for (const file of session.files) {
