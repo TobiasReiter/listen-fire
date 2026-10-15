@@ -23,6 +23,9 @@ pub struct SymbolTypes {
     pub non_blank: bool,
     /// …or these fields read off it (`nonBlank.fields`).
     pub non_blank_fields: std::collections::BTreeSet<String>,
+    /// A value that is many values under one value's type: a walk read for a
+    /// field, or a second name for one (`ScopeSymbol.plural`).
+    pub many_valued: bool,
 }
 
 pub struct ScopeEnv<'s> {
@@ -62,5 +65,9 @@ impl TypeEnv for ScopeEnv<'_> {
 
     fn plural_order_of(&self, name: &str) -> Option<CollectionOrder> {
         self.types(name)?.plural
+    }
+
+    fn is_many_valued_name(&self, name: &str) -> bool {
+        self.types(name).is_some_and(|t| t.many_valued)
     }
 }

@@ -13,6 +13,11 @@ use movement_parser::ast::{
 use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
+use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
+use crate::types::{TypeEnv, Typing};
+
+use crate::types::narrowing::{negative_presence_proofs, presence_proofs};
+use crate::types::position::{LocalEdge, LocalNode, Position};
 use crate::families::names::spell_name;
 use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
 use movement_parser::lowering::condition::MovementCondition;
@@ -20,7 +25,7 @@ use movement_parser::lowering::condition::MovementCondition;
 use crate::slots::{collect_expression_names, condition_of_slot, expression_of_slot, expression_of_text, extract_hop_aliases, is_bare_ident, is_literal_word};
 
 /// `EXPRESSION_ROOT_PROBE`: what an expression root is spelled as in a probe.
-const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
+pub(crate) const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
 
 /// The scalar names a value type may be written as (`<number>`).
 const SCALAR_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
@@ -44,6 +49,16 @@ pub struct Checker<'c> {
     pub upgrading_from: Option<u32>,
 }
 
+/// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
+/// value type, and what it may hold where its type cannot say.
+#[derive(Default)]
+#[allow(dead_code)] // what the families read off a slot; none reads it yet
+pub struct SlotTyped {
+    pub expr: Option<movement_parser::lowering::expression::Expression>,
+    pub ty: Option<Ty>,
+    pub may_hold: Option<Ty>,
+}
+
 /// What a right-hand side carries onto the name it is bound to.
 #[derive(Default)]
 pub struct Bound {
@@ -54,8 +69,8 @@ pub struct Bound {
     pub adapter: Option<String>,
     /// For an instance: what its construction built.
     pub instance: Option<std::rc::Rc<crate::families::systems::Instance>>,
-    /// The record a write, a match or a link hands back.
-    pub handle: Option<crate::types::Position>,
+    /// The record the value is, when checking it typed one (a node literal, a lazy walk).
+    pub pos: Option<Position>,
 }
 
 impl<'c> Checker<'c> {
@@ -154,8 +169,8 @@ impl<'c> Checker<'c> {
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name));
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
                 self.type_assigned(&assign.name, &assign.value, scope);
-                if let Some(handle) = bound.handle {
-                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(handle), ..Default::default() });
+                if let Some(pos) = bound.pos {
+                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
                 }
             }
             Statement::Type(_) => {}
@@ -190,6 +205,7 @@ impl<'c> Checker<'c> {
             Statement::Unlink(unlink) => {
                 self.resolve_name(&unlink.from, unlink.span, scope);
                 self.resolve_name(&unlink.to, unlink.span, scope);
+                self.report_absent_edge_end("unlink", &unlink.from, &unlink.edge, Some(&unlink.to), unlink.span, scope);
                 self.check_bare_link_edge(&unlink.from, &unlink.edge, unlink.span, crate::families::writes::LinkVerb::Unlink, scope);
             }
             Statement::Delete(delete) => {
@@ -204,40 +220,7 @@ impl<'c> Checker<'c> {
                     _ => self.check_refresh_rules(&refresh.name, refresh.name_span, scope),
                 }
             }
-            Statement::If(statement) => {
-                // A failed bare `IS` rules its variant out of every later arm and the `else`.
-                let mut ruled_out = crate::families::walks::RuledOut::default();
-                let mut all_prior_leave = true;
-                let mut arms_leave = Vec::new();
-                for arm in &statement.arms {
-                    let arm_scope = self.scopes.open(Some(scope));
-                    self.declare_eliminated(&ruled_out, scope, arm_scope);
-                    self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
-                    self.narrow_arm(&arm.condition, scope, arm_scope);
-                    self.check_statement_list(&arm.body, arm_scope);
-                    let leaves = terminates(&arm.body, self.version);
-                    arms_leave.push(leaves);
-                    if all_prior_leave && leaves {
-                        self.narrow_fails(&arm.condition, scope, scope);
-                    }
-                    all_prior_leave = all_prior_leave && leaves;
-                    if let Ok(condition) = condition_of_slot(&arm.condition) {
-                        self.collect_is_elimination(&condition, scope, &mut ruled_out);
-                    }
-                }
-                if let Some(else_arm) = &statement.else_arm {
-                    let else_scope = self.scopes.open(Some(scope));
-                    self.declare_eliminated(&ruled_out, scope, else_scope);
-                    for arm in &statement.arms {
-                        self.narrow_fails(&arm.condition, else_scope, else_scope);
-                    }
-                    self.check_statement_list(&else_arm.body, else_scope);
-                    let falls_through: Vec<usize> = arms_leave.iter().enumerate().filter(|(_, leaves)| !**leaves).map(|(i, _)| i).collect();
-                    if self.version >= 3 && falls_through.len() == 1 && terminates(&else_arm.body, self.version) {
-                        self.narrow_holds_slot(&statement.arms[falls_through[0]].condition, scope, scope);
-                    }
-                }
-            }
+            Statement::If(statement) => self.check_if(statement, scope),
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
             Statement::Return(statement) => {
                 self.check_rvalue(&statement.value, scope, None);
@@ -259,22 +242,22 @@ impl<'c> Checker<'c> {
                 let constructed = self.check_construction(construct, scope);
                 let adapter = constructed.adapter.clone();
                 let instance = name.map(|_| std::rc::Rc::new(self.instance_of(construct, constructed)));
-                return Bound { is_closure: false, is_instance: name.is_some(), adapter, instance, handle: None };
+                return Bound { is_closure: false, is_instance: name.is_some(), adapter, instance, pos: None };
             }
             RValue::Call { call } => self.check_call(call, scope),
             RValue::Write { write } => {
                 let handle = self.check_write(write, scope, name, name.is_some());
-                return Bound { handle, ..Bound::default() };
+                return Bound { pos: handle, ..Bound::default() };
             }
             RValue::Match { r#match } => {
                 self.check_match(r#match, scope);
                 let handle = self.check_match_rules(r#match, scope, name, false);
                 let handle = if self.version >= 4 { handle.map(|h| crate::types::Position::MaybeEmpty(Box::new(h))) } else { handle };
-                return Bound { handle, ..Bound::default() };
+                return Bound { pos: handle, ..Bound::default() };
             }
             RValue::Link { link } => {
                 let handle = self.check_link(link, scope, name);
-                return Bound { handle, ..Bound::default() };
+                return Bound { pos: handle, ..Bound::default() };
             }
             RValue::Extract { extract } => self.check_extract(extract, scope),
             RValue::ExtractCall { extract_call } => {
@@ -304,17 +287,26 @@ impl<'c> Checker<'c> {
                 self.check_closure(closure, scope, name);
                 return Bound { is_closure: true, ..Bound::default() };
             }
-            RValue::Node { node } => self.check_node_literal(node, scope),
+            RValue::Node { node } => {
+                let pos = self.check_node_literal(node, scope);
+                return Bound { pos, ..Bound::default() };
+            }
             RValue::Lazy { lazy } => {
                 let aliases = self.check_path_head(&lazy.head, scope);
                 let walk = self.walk_head(&lazy.head, scope, false);
-                if let Some(mapping) = &lazy.mapping {
-                    let landing = self.open_landing(scope, &aliases, lazy.head.span);
-                    self.type_hop_aliases(landing, &aliases, walk.as_ref());
-                    self.check_node_literal(mapping, landing);
-                }
+                let pos = match &lazy.mapping {
+                    Some(mapping) => {
+                        let landing = self.open_landing(scope, &aliases, lazy.head.span);
+                        self.type_hop_aliases(landing, &aliases, walk.as_ref());
+                        self.check_node_literal(mapping, landing)
+                    }
+                    None => walk.and_then(|w| w.landed),
+                };
+                return Bound { pos, ..Bound::default() };
             }
-            RValue::Expr { expr } => self.check_expr_slot(expr, scope),
+            RValue::Expr { expr } => {
+                self.check_expr_slot_as(expr, scope, name.is_some());
+            }
         }
         Bound::default()
     }
@@ -328,41 +320,137 @@ impl<'c> Checker<'c> {
         self.scopes.resolve_function(scope, written).map(|id| self.scopes.symbol(id).name.clone()).unwrap_or_else(|| written.to_string())
     }
 
-    /// `checkExprSlot`, the name half: a bare name resolves as written; any
-    /// other slot is parsed and every name it reads resolves.
+    /// `checkExprSlot`: a bare name resolves as written; any other slot is
+    /// parsed, every name it reads resolves, and it is typed, what the typing
+    /// reports surfacing here.
     pub fn check_expr_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        self.check_expr_slot_as(slot, scope, false);
+    }
+
+    /// `checkExprSlot` with `holdsValue`: the slot's value is kept as it is
+    /// written (a tuple stays one), so it is typed exactly and not read.
+    pub fn check_expr_slot_as(&mut self, slot: &ExprSlot, scope: ScopeId, holds_value: bool) -> SlotTyped {
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
-            if !is_literal_word(trimmed) {
-                self.resolve_name(trimmed, slot.span, scope);
+            if is_literal_word(trimmed) {
+                let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
+                return SlotTyped { expr: None, ty, may_hold: None };
             }
-            return;
+            self.resolve_name(trimmed, slot.span, scope);
+            let bound = {
+                let env = self.typing_env(scope);
+                Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
+            };
+            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
+            let may_hold = self.typing_env(scope).resolve_may_hold(trimmed);
+            return SlotTyped { expr: None, ty, may_hold };
         }
-        let Ok(parsed) = expression_of_slot(slot) else { return };
+        let Ok(parsed) = expression_of_slot(slot) else { return SlotTyped::default() };
         let names = collect_expression_names(&parsed);
         for name in names.distinct_refs() {
             if !names.aliases.contains(name) {
                 self.resolve_name(name, slot.span, scope);
             }
         }
-        self.report_slot_typing(&parsed, slot.span, scope);
-    }
-
-    /// `slotTyping(...).infer(parsed)`: what typing the slot reports.
-    fn report_slot_typing(&mut self, parsed: &movement_parser::lowering::expression::Expression, span: Span, scope: ScopeId) {
-        let diagnostics = {
+        let (ty, may_hold, diagnostics) = {
             let env = self.typing_env(scope);
-            let mut typing = crate::types::Typing::new(&env, self.version, span);
-            typing.infer(parsed);
-            typing.diagnostics
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
+            let may_hold = typing.may_hold_type(&parsed);
+            (ty, may_hold, typing.diagnostics)
         };
         for diagnostic in diagnostics {
             self.push(diagnostic);
         }
+        SlotTyped { expr: Some(parsed), ty, may_hold }
     }
 
-    /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
-    /// tests name a subject and a type.
+    /// `readHeldValue`: a bare name's value read — a tuple as the list it
+    /// widens to, refused where it holds records and values both.
+    fn read_held_value(&mut self, ty: Option<Ty>, span: Span) -> Option<Ty> {
+        if let Some(mixed) = mixed_tuple_message(ty.as_ref()) {
+            self.report(crate::codes::LIST_MIXED, mixed, span);
+        }
+        widen_tuples(ty, self.version)
+    }
+
+    /// `checkIf`: each arm's condition is checked in the arm's own scope and
+    /// narrows it, conjunct by conjunct; an arm that always leaves proves its
+    /// condition false below the `if` (while every arm before it leaves too);
+    /// the `else` sees every arm's condition false; and from version 3, when
+    /// the `else` and every arm but one leave, that arm's condition holds below.
+    /// A failed bare `IS` test rules its variant out of the arms below it.
+    fn check_if(&mut self, statement: &movement_parser::ast::IfStatement, scope: ScopeId) {
+        // A failed bare `IS` rules its variant out of every later arm and the `else`.
+        let mut ruled_out = crate::families::walks::RuledOut::default();
+        let mut all_prior_terminate = true;
+        let mut arm_terminates = Vec::new();
+        for arm in &statement.arms {
+            let arm_scope = self.scopes.open(Some(scope));
+            self.declare_eliminated(&ruled_out, scope, arm_scope);
+            self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
+            self.check_statement_list(&arm.body, arm_scope);
+            let terminating = terminates(&arm.body, self.version);
+            arm_terminates.push(terminating);
+            if all_prior_terminate && terminating {
+                self.narrow_condition_negation(&arm.condition, scope, scope);
+            }
+            all_prior_terminate = all_prior_terminate && terminating;
+            if let Ok(condition) = condition_of_slot(&arm.condition) {
+                self.collect_is_elimination(&condition, scope, &mut ruled_out);
+            }
+        }
+        let Some(else_arm) = &statement.else_arm else { return };
+        let else_scope = self.scopes.open(Some(scope));
+        self.declare_eliminated(&ruled_out, scope, else_scope);
+        for arm in &statement.arms {
+            self.narrow_condition_negation(&arm.condition, else_scope, else_scope);
+        }
+        self.check_statement_list(&else_arm.body, else_scope);
+        let falls_through: Vec<usize> = arm_terminates.iter().enumerate().filter(|(_, leaves)| !**leaves).map(|(i, _)| i).collect();
+        if self.version >= 3 && falls_through.len() == 1 && terminates(&else_arm.body, self.version) {
+            self.narrow_condition_holds(&statement.arms[falls_through[0]].condition, scope);
+        }
+    }
+
+    /// `narrowConditionNegation`: what a condition's falsity proves present.
+    /// A conjunction's falsity proves none of its conjuncts false.
+    fn narrow_condition_negation(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: ScopeId) {
+        let Ok(MovementCondition::Expr { expr }) = condition_of_slot(slot) else { return };
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            negative_presence_proofs(&expr, &mut |o| typing.infer(o))
+        };
+        self.declare_presence(&proofs, scope, narrow_into);
+    }
+
+    /// `narrowConditionHolds`: each conjunct of the one arm that falls through.
+    fn narrow_condition_holds(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        let Ok(condition) = condition_of_slot(slot) else { return };
+        let conjuncts = match condition {
+            MovementCondition::And { conjuncts } => conjuncts,
+            other => vec![other],
+        };
+        for conjunct in conjuncts {
+            if let MovementCondition::Expr { expr } = conjunct {
+                self.narrow_presence(&expr, scope, scope, slot.span);
+            }
+        }
+    }
+
+    /// `narrowPresence`: what a condition's truth proves present, declared into `narrow_into`.
+    fn narrow_presence(&mut self, expr: &movement_parser::lowering::expression::Expression, scope: ScopeId, narrow_into: ScopeId, span: Span) {
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, span);
+            presence_proofs(expr, &mut |o| typing.infer(o))
+        };
+        self.declare_presence(&proofs, scope, narrow_into);
+    }
+
+    /// `checkConditionSlot`: an `if` condition, whose `IS` tests name a
+    /// subject and a type, and whose conjuncts narrow `narrow_into` in order.
     fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         let Ok(condition) = condition_of_slot(slot) else { return };
         self.check_condition(&condition, slot, scope, narrow_into);
@@ -388,7 +476,29 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
-                self.report_slot_typing(expr, slot.span, scope);
+                let (ty, diagnostics) = {
+                    let env = self.typing_env(scope);
+                    let mut typing = Typing::new(&env, self.version, slot.span);
+                    let ty = typing.infer(expr);
+                    (ty, typing.diagnostics)
+                };
+                for diagnostic in diagnostics {
+                    self.push(diagnostic);
+                }
+                // Gating on a structured value is always true, never a decision.
+                if let Some(message) = crate::families::values::json_opaque_message(ty.as_ref(), "used as a condition") {
+                    self.report(crate::codes::JSON_OPAQUE, message, slot.span);
+                }
+                if self.version >= 5 && crate::types::field::may_be_closure(ty.as_ref()) {
+                    self.report(
+                        crate::codes::CLOSURE_NOT_DATA,
+                        crate::types::field::closure_not_data_message("a value used as a condition is"),
+                        slot.span,
+                    );
+                }
+                if let Some(narrow_into) = narrow_into {
+                    self.narrow_presence(expr, scope, narrow_into, slot.span);
+                }
             }
         }
     }
@@ -474,7 +584,9 @@ impl<'c> Checker<'c> {
                 CallArg::Write { write, .. } => {
                     self.check_write(write, scope, None, true);
                 }
-                CallArg::Node { node, .. } => self.check_node_literal(node, scope),
+                CallArg::Node { node, .. } => {
+                    self.check_node_literal(node, scope);
+                }
                 CallArg::Call { call, .. } => self.check_call(call, scope),
                 CallArg::Closure { closure, .. } => self.check_closure(closure, scope, None),
                 CallArg::Type { .. } => {}
@@ -529,6 +641,11 @@ impl<'c> Checker<'c> {
 
     fn check_link(&mut self, link: &movement_parser::ast::LinkExpression, scope: ScopeId, binding: Option<&str>) -> Option<crate::types::Position> {
         self.resolve_name(&link.from, link.span, scope);
+        let to = match &link.to {
+            LinkTarget::Handle { name } => Some(name.as_str()),
+            LinkTarget::Match { .. } => None,
+        };
+        self.report_absent_edge_end("link", &link.from, &link.edge, to, link.span, scope);
         match &link.to {
             LinkTarget::Handle { name } => {
                 self.resolve_name(name, link.span, scope);
@@ -591,27 +708,44 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) {
+    /// `checkNodeLiteral`: its names resolve and its values are checked; the
+    /// record it builds (a run-local node: each value entry a read, each
+    /// nested node, declared edge or walk an edge), when it is a plain node.
+    /// A `graph` literal is not typed here.
+    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) -> Option<Position> {
         if let Some(shape) = node.graph.as_ref().and_then(|g| g.shape.as_ref()) {
             self.resolve_name(&shape.name, shape.span, scope);
         }
+        let mut reads = indexmap::IndexMap::new();
+        let mut edges = indexmap::IndexMap::new();
         for entry in &node.entries {
             match entry {
-                NodeEntry::Value { value, .. } => self.check_expr_slot(value, scope),
-                NodeEntry::Nodes { nodes, .. } => {
-                    for nested in nodes {
-                        self.check_node_literal(nested, scope);
-                    }
+                NodeEntry::Value { name, value, .. } => {
+                    let typed = self.check_expr_slot_as(value, scope, false);
+                    reads.insert(name.clone(), typed.ty);
                 }
-                NodeEntry::Declared { .. } => {}
-                NodeEntry::Traversal { head, mapping, .. } => {
+                NodeEntry::Nodes { name, nodes, .. } => {
+                    let landings: Vec<Option<Position>> = nodes.iter().map(|nested| self.check_node_literal(nested, scope)).collect();
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target: Some(merge_landings(&landings, name)) });
+                }
+                NodeEntry::Declared { name, sequenced, .. } => {
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, sequenced.as_ref()), target: None });
+                }
+                NodeEntry::Traversal { name, head, mapping, .. } => {
                     let aliases = self.check_path_head(head, scope);
                     let walk = self.walk_head(head, scope, false);
-                    if let Some(mapping) = mapping {
-                        let landing = self.open_landing(scope, &aliases, head.span);
-                        self.type_hop_aliases(landing, &aliases, walk.as_ref());
-                        self.check_node_literal(mapping, landing);
-                    }
+                    let target = match mapping {
+                        Some(mapping) => {
+                            let landing = self.open_landing(scope, &aliases, head.span);
+                            self.type_hop_aliases(landing, &aliases, walk.as_ref());
+                            self.check_node_literal(mapping, landing).map(|mapped| match mapped {
+                                Position::Local(local) => Position::Local(LocalNode { label: format!("a '{name}' landing"), ..local }),
+                                other => other,
+                            })
+                        }
+                        None => walk.and_then(|w| w.landed),
+                    };
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target });
                 }
             }
         }
@@ -619,6 +753,10 @@ impl<'c> Checker<'c> {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
             self.resolve_name(root, spread.span, scope);
         }
+        if node.graph.is_some() {
+            return None;
+        }
+        Some(Position::Local(LocalNode { label: "a node".to_string(), reads, edges: Some(edges), run_built: None, extracted: None }))
     }
 
     /// `landingScope`: the scope a walk's tail is read in, holding its hop aliases.
@@ -750,8 +888,9 @@ impl<'c> Checker<'c> {
     }
 }
 
-/// `terminates` (flow.ts): a list that always leaves — an `ERROR`, a
-/// `return` from version 3, or an `if` every arm of which leaves.
+/// `terminates` (checker/flow.ts): every path through the list leaves it —
+/// an `ERROR`, from version 3 a `return`, or an `if` whose every arm and
+/// `else` leave.
 fn terminates(statements: &[Statement], version: u32) -> bool {
     statements.iter().any(|statement| match statement {
         Statement::Error(_) => true,
@@ -765,4 +904,44 @@ fn terminates(statements: &[Statement], version: u32) -> bool {
 
 fn is_closure_type(type_: &ParamTypeRef) -> bool {
     matches!(type_, ParamTypeRef::Value(ValueType::Closure { .. }))
+}
+
+/// A run-local edge's promise: readable, and nothing else; sequenced when its
+/// author said in what order.
+fn local_edge_schema(name: &str, sequenced: Option<&movement_parser::ast::EdgeSequencing>) -> movement_parser::catalog::types::EdgeSchema {
+    let mut schema = serde_json::json!({ "target": name, "readable": true });
+    if let Some(sequenced) = sequenced {
+        schema["sequenced"] = serde_json::to_value(sequenced).unwrap_or(serde_json::Value::Null);
+    }
+    serde_json::from_value(schema).unwrap_or_else(|_| crate::types::position::edge_schema_to(name))
+}
+
+/// `mergeLandings`, the typing half: the landings of a nested-node entry as
+/// one type — the reads every landing wrote (untyped where one could not be
+/// typed), the edges every landing has. (The disagreement it reports is the
+/// nodes family's.)
+fn merge_landings(landings: &[Option<Position>], name: &str) -> Position {
+    let label = format!("a '{name}' landing");
+    let empty = || Position::Local(LocalNode { label: label.clone(), reads: Default::default(), edges: None, run_built: None, extracted: None });
+    let locals: Vec<Option<&LocalNode>> = landings.iter().map(|l| match l { Some(Position::Local(local)) => Some(local), _ => None }).collect();
+    let Some(Some(first)) = locals.first() else { return empty() };
+    if locals.len() == 1 {
+        return Position::Local(LocalNode { label, ..(*first).clone() });
+    }
+    let rest = &locals[1..];
+    let mut reads = indexmap::IndexMap::new();
+    for (read, ty) in &first.reads {
+        if !rest.iter().all(|l| l.is_some_and(|l| l.reads.contains_key(read))) {
+            continue;
+        }
+        let all_typed = ty.is_some() && rest.iter().all(|l| l.is_some_and(|l| l.reads.get(read).is_some_and(Option::is_some)));
+        reads.insert(read.clone(), if all_typed { ty.clone() } else { None });
+    }
+    let mut edges = indexmap::IndexMap::new();
+    for (edge, local_edge) in first.edges.iter().flatten() {
+        if rest.iter().all(|l| l.is_some_and(|l| l.edges.as_ref().is_some_and(|e| e.contains_key(edge)))) {
+            edges.insert(edge.clone(), local_edge.clone());
+        }
+    }
+    Position::Local(LocalNode { label, reads, edges: Some(edges), run_built: None, extracted: None })
 }

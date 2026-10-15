@@ -100,3 +100,11 @@ pub fn position_from_address(instance: &InstanceRef, hops_raw: &str) -> Option<P
         other => other,
     })
 }
+
+/// `narrowingPrefixKey`: the pins so far as the key `eventNarrowingValues`
+/// files the next hop's options under — `JSON.stringify` of the pairs, sorted.
+pub fn narrowing_prefix_key(pins: &[(String, String)]) -> String {
+    let mut pins = pins.to_vec();
+    pins.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+    serde_json::to_string(&pins).unwrap_or_default()
+}

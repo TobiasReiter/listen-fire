@@ -482,7 +482,8 @@ pub enum BaseKind {
     Record,
 }
 
-fn base_kinds(ty: &Ty) -> Vec<BaseKind> {
+/// `baseKinds`: the base kind of each member a value may be.
+pub fn base_kinds(ty: &Ty) -> Vec<BaseKind> {
     union_members(&unwrap_list(ty)).iter().map(member_base_kind).collect()
 }
 
@@ -504,6 +505,15 @@ fn member_base_kind(ty: &Ty) -> BaseKind {
         Ty::File => BaseKind::File,
         Ty::Json => BaseKind::Json,
         Ty::Absent => BaseKind::Absent,
+    }
+}
+
+/// `holdsOneValue`: each value of this type stands alone, not several.
+pub fn holds_one_value(ty: &Ty) -> bool {
+    match strip_absent(ty) {
+        Ty::List { .. } | Ty::Tuple { .. } | Ty::Json => false,
+        Ty::Union(members) => members.iter().all(holds_one_value),
+        Ty::Text | Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::File | Ty::Absent | Ty::Dict { .. } | Ty::Enum { .. } | Ty::Record(_) | Ty::MaybeAbsent(_) => true,
     }
 }
 

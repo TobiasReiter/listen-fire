@@ -62,6 +62,8 @@ pub struct ExtractField {
     pub explicit: Option<Ty>,
     /// `readsAsPresentText`: an unannotated field reads as present text.
     pub reads_as_present_text: bool,
+    /// An annotation was written (`annotationRaw`), resolved or not.
+    pub annotated: bool,
 }
 
 /// `ExtractNodeType`: a node of an extract result graph.
@@ -70,13 +72,19 @@ pub struct ExtractNode {
     pub name: String,
     pub properties: IndexMap<String, ExtractField>,
     pub children: IndexMap<String, Rc<ExtractNode>>,
+    /// A node whose fields and nested nodes a `node` declaration states
+    /// (`node entry: <Entry>`). Reading its declared schema is the nodes
+    /// family's (`shapeToSchema`); until then everything off it is untyped.
+    pub declared: bool,
 }
 
 /// `LocalEdge`: an edge of a checker-local node, with its landing.
 #[derive(Debug, Clone)]
 pub struct LocalEdge {
     pub schema: EdgeSchema,
-    pub target: Position,
+    /// `None` when the landing could not be typed: the edge is declared, and
+    /// walking it is untyped rather than unknown.
+    pub target: Option<Position>,
 }
 
 #[derive(Debug, Clone)]
@@ -396,6 +404,7 @@ pub fn record_field_types(position: &Position) -> Option<IndexMap<String, Option
             }
             Some(typed(names))
         }
+        Position::Extract { node, .. } if node.declared => None,
         Position::Extract { node, present } => Some(
             node.properties
                 .iter()
@@ -586,13 +595,17 @@ pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
                 EdgeLanding::Untyped { edge: Some(first.clone()) }
             }
         }
+        Position::Extract { node, .. } if node.declared => EdgeLanding::Untyped { edge: None },
         Position::Extract { node, .. } => match node.children.get(edge) {
             Some(child) => EdgeLanding::Landed { landing: Position::Extract { node: child.clone(), present: BTreeSet::new() }, edge: None },
             None => EdgeLanding::Unknown { available: node.children.keys().cloned().collect() },
         },
         Position::Closure(_) => EdgeLanding::NotTraversable,
         Position::Local(local) => match local.edges.as_ref().and_then(|e| e.get(edge)) {
-            Some(local_edge) => EdgeLanding::Landed { landing: local_edge.target.clone(), edge: Some(local_edge.schema.clone()) },
+            Some(local_edge) => match &local_edge.target {
+                Some(landing) => EdgeLanding::Landed { landing: landing.clone(), edge: Some(local_edge.schema.clone()) },
+                None => EdgeLanding::Untyped { edge: Some(local_edge.schema.clone()) },
+            },
             None => EdgeLanding::Unknown { available: local.edges.as_ref().map(|e| e.keys().cloned().collect()).unwrap_or_default() },
         },
         Position::MaybeEmpty(of) => edge_landing(of, edge, version),

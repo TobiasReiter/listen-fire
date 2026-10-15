@@ -292,7 +292,8 @@ impl Checker<'_> {
                     Severity::Info,
                 );
             }
-            let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref());
+            let path = root_description.contains('.').then(|| format!("{root_description}.{}", field.name));
+            let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref(), path);
             // Only against a target the walk typed: one it could not (a node
             // this run built) may declare the field maybe-absent itself.
             if root.is_some()
@@ -424,6 +425,15 @@ impl Checker<'_> {
         {
             return Some(fields);
         }
+        // A declared extract node's fields are its declaration's (the nodes
+        // family's shapeToSchema), unknown here rather than absent.
+        if let Some(Position::Extract { node, .. }) = position.as_ref().map(|p| match p {
+            Position::MaybeEmpty(of) => &**of,
+            other => other,
+        }) && node.declared
+        {
+            return None;
+        }
         // Only a name the type core typed can be said to be something else.
         let what = match &position {
             Some(position) => {
@@ -464,9 +474,8 @@ impl Checker<'_> {
         bind_name: Option<&str>,
         scope: ScopeId,
     ) -> Landing {
-        let (root_type, steps) = self.head_walk(path, scope);
         let root_name = path_root_name(path);
-        let (Some(steps), Some(root_type)) = (steps, root_type) else { return Landing::default() };
+        let Some((Some(root_type), steps)) = self.head_walk(path, scope) else { return Landing::default() };
         if steps.is_empty() {
             return Landing::default();
         }
@@ -714,7 +723,7 @@ impl Checker<'_> {
             return Landing { local: true, ..Landing::default() };
         };
         let description = format!("'{edge_name}' on {} this run built", from.label);
-        let Some(schema) = position_schema_of_ref(&edge.target).map(|s| s.into_owned()) else {
+        let Some(schema) = edge.target.as_ref().and_then(|target| position_schema_of_ref(target)).map(|s| s.into_owned()) else {
             return Landing { local: true, description: Some(description), ..Landing::default() };
         };
         let root = WritableRootSchema {
@@ -1167,8 +1176,21 @@ impl Checker<'_> {
 
     /// A field's value type, and the first record or file in it the target
     /// does not take (`checkExprSlot`'s `valueType` and `held`).
-    fn write_field_value(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId, target: Option<&Ty>) -> (Option<Ty>, Option<HeldHandle>) {
-        let Some((_, ty, may_hold)) = self.type_of_slot(slot, scope) else { return (None, None) };
+    fn write_field_value(&mut self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId, target: Option<&Ty>, path: Option<String>) -> (Option<Ty>, Option<HeldHandle>) {
+        let Ok(expr) = crate::slots::expression_of_slot(slot) else { return (None, None) };
+        let (ty, may_hold, refused) = {
+            let env = self.typing_env(scope);
+            let mut typing = crate::types::Typing::new(&env, self.version, slot.span);
+            typing.write_target = target.map(|t| (t.clone(), path));
+            let ty = typing.infer(&expr);
+            let may_hold = typing.may_hold_type(&expr);
+            // The slot's other typing diagnostics are reported where it is checked.
+            let refused: Vec<_> = typing.diagnostics.into_iter().filter(|d| d.code == codes::EXTRACT_NEEDS_ANNOTATION).collect();
+            (ty, may_hold, refused)
+        };
+        for diagnostic in refused {
+            self.push(diagnostic);
+        }
         let walk = HeldWalk::taken_by(target);
         let held = handle_within(ty.as_ref(), &walk).or_else(|| handle_within(may_hold.as_ref(), &walk));
         (ty, held)
@@ -1338,7 +1360,7 @@ impl Checker<'_> {
                     field.span,
                 );
             }
-            let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref());
+            let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref(), None);
             self.report_blankable_identity_key(&matched.unique_by, field, value_type.as_ref(), &root_description, scope);
             self.report_field_value_type(
                 &field.name,
@@ -1558,7 +1580,7 @@ fn found_handle(handle: Option<Position>, version: u32) -> Option<Position> {
 /// `knownFieldsOf`: a record's fields, where this program spells them out.
 fn known_fields_of(position: &Position) -> Option<Vec<String>> {
     match position {
-        Position::Extract { node, .. } => Some(node.properties.keys().cloned().collect()),
+        Position::Extract { node, .. } => (!node.declared).then(|| node.properties.keys().cloned().collect()),
         Position::Local(local) => Some(local.reads.keys().cloned().collect()),
         Position::MaybeEmpty(of) => known_fields_of(of),
         Position::Handle(h) => Some(match position_schema_of_ref(position) {

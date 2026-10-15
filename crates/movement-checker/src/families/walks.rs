@@ -146,7 +146,7 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
             typing.report(codes::TRAVERSE_UNKNOWN_EDGE, format!("no variant of {} has an edge '{edge}'", describe_position(from)));
         }
         Position::Extract { node, .. } => {
-            if !node.children.contains_key(edge) {
+            if !node.declared && !node.children.contains_key(edge) {
                 let available: Vec<&str> = node.children.keys().map(String::as_str).collect();
                 typing.report(codes::TRAVERSE_UNKNOWN_EDGE, format!("{} has no nested node '{edge}'{}", describe_position(from), it_has(&available)));
             }
@@ -870,6 +870,10 @@ impl crate::checker::Checker<'_> {
             }
             return;
         }
+        if let Some(hops) = &reference.hops_raw {
+            self.check_address_pins(&reference.graph, hops, reference.span, scope);
+        }
+        let symbol = self.scopes.symbol(id);
         let Some(Position::Meta { instance }) = &symbol.types.pos else { return };
         let Some(position) = &reference.position else { return };
         let resolved = match &reference.hops_raw {
@@ -1038,6 +1042,9 @@ impl crate::checker::Checker<'_> {
             }
             let message = format!("'{}' has no position type '{position}'{}", type_.graph, it_has(&available));
             self.report(codes::UNKNOWN_POSITION, message, span);
+        }
+        if let Some(hops) = &type_.hops_raw {
+            self.check_address_pins(&type_.graph, hops, span, scope);
         }
         let (Some(into), Some(instance), true) = (narrow_into, instance, bare) else { return };
         let subject_pos = self.symbol_types(subject, scope).and_then(|t| t.pos.clone());

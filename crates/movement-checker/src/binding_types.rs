@@ -15,15 +15,13 @@ use movement_parser::lowering::expression::{Expression, TraversalStep};
 use crate::checker::Checker;
 use crate::scope::{Resolution, ScopeId, SymbolKind};
 use crate::slots::expression_of_slot;
-use crate::types::field::{Ty, maybe_absent, record_head_position, strip_absent, unify_value_types, widen_tuples};
+use crate::types::field::{Ty, maybe_absent, strip_absent, unify_value_types};
 use crate::types::position::{ClosureParam, ClosureType, Instance, PlaneType, Position, ReturnShape, position_ref_in};
 use crate::types::scope_env::{ScopeEnv, SymbolTypes};
-use crate::types::Typing;
 use crate::types::field::is_maybe_absent;
-use crate::types::narrowing::{PresenceProof, negative_presence_proofs, presence_proofs};
+use crate::types::narrowing::PresenceProof;
 use crate::types::position::{narrow_present, narrow_present_node};
-use crate::slots::condition_of_slot;
-use movement_parser::lowering::condition::MovementCondition;
+use crate::types::{TypeEnv, Typing};
 
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
@@ -33,6 +31,7 @@ impl Checker<'_> {
 
     /// An expression slot's type in `scope`, and what it may hold where its
     /// type cannot say; nothing reported.
+    #[allow(dead_code)] // the families' entry point; none reads it yet
     pub fn type_of_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Expression, Option<Ty>, Option<Ty>)> {
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
@@ -42,78 +41,8 @@ impl Checker<'_> {
         Some((expr, ty, may_hold))
     }
 
-    /// `checkPathHead`, the typing half: where a walk's root starts (a name
-    /// on the arrow plane, or one holding a record) and its parsed steps.
-    pub fn head_walk(&self, head: &PathHead, scope: ScopeId) -> (Option<Position>, Option<Vec<TraversalStep>>) {
-        let root_type = match &head.root {
-            Some(PathRoot::Name { name }) => match self.scopes.resolve(scope, name) {
-                Resolution::Found(id) => {
-                    let types = &self.scopes.symbol(id).types;
-                    types.pos.clone().or_else(|| record_head_position(widen_tuples(types.field.clone(), self.version).as_ref()))
-                }
-                _ => None,
-            },
-            Some(PathRoot::Expression { expr }) => self.type_of_slot(expr, scope).and_then(|(_, ty, _)| record_head_position(ty.as_ref())),
-            None => None,
-        };
-        let root = match &head.root {
-            None => String::new(),
-            Some(PathRoot::Name { name }) => crate::families::names::spell_name(name),
-            Some(PathRoot::Expression { .. }) => "__movement_expression_root__".to_string(),
-        };
-        let steps = match crate::slots::expression_of_text(&format!("{root}{}.`__movement_head_probe__`", head.hops_raw)) {
-            Ok(Expression::Traverse { steps, .. }) => Some(steps),
-            _ => None,
-        };
-        (root_type, steps)
-    }
-
-    /// What an `if` statement proves (`checkIf`'s presence narrowing):
-    /// each arm's condition holds inside it; every arm's condition failed
-    /// inside the `else`; and past the statement, an arm that always leaves
-    /// proves its condition false (while every earlier arm leaves too), and
-    /// the one arm that falls through beside a leaving `else` proves its
-    /// condition true. `IS` narrowing is not modelled here.
-    pub fn narrow_arm(&mut self, condition: &ExprSlot, scope: ScopeId, arm: ScopeId) {
-        let span = condition.span;
-        let Ok(condition) = condition_of_slot(condition) else { return };
-        self.narrow_holds(&condition, scope, arm, span);
-    }
-
-    /// `narrowConditionNegation`: a top-level conjunction proves nothing false.
-    pub fn narrow_fails(&mut self, slot: &ExprSlot, scope: ScopeId, into: ScopeId) {
-        let Ok(MovementCondition::Expr { expr }) = condition_of_slot(slot) else { return };
-        let proofs = {
-            let env = self.typing_env(scope);
-            let mut typing = Typing::new(&env, self.version, slot.span);
-            negative_presence_proofs(&expr, &mut |operand| typing.infer(operand))
-        };
-        self.declare_presence(&proofs, scope, into);
-    }
-
-    /// `narrowConditionHolds`: each conjunct of the condition, proved true.
-    pub fn narrow_holds_slot(&mut self, slot: &ExprSlot, scope: ScopeId, into: ScopeId) {
-        let Ok(condition) = condition_of_slot(slot) else { return };
-        self.narrow_holds(&condition, scope, into, slot.span);
-    }
-
-    fn narrow_holds(&mut self, condition: &MovementCondition, scope: ScopeId, into: ScopeId, span: movement_parser::ast::Span) {
-        match condition {
-            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.narrow_holds(c, into, into, span)),
-            MovementCondition::IsTest { .. } => {}
-            MovementCondition::Expr { expr } => {
-                let proofs = {
-                    let env = self.typing_env(scope);
-                    let mut typing = Typing::new(&env, self.version, span);
-                    presence_proofs(expr, &mut |operand| typing.infer(operand))
-                };
-                self.declare_presence(&proofs, scope, into);
-            }
-        }
-    }
-
     /// `declarePresence`: each proven name shadowed by its narrowed self.
-    fn declare_presence(&mut self, proofs: &[PresenceProof], scope: ScopeId, into: ScopeId) {
+    pub(crate) fn declare_presence(&mut self, proofs: &[PresenceProof], scope: ScopeId, into: ScopeId) {
         for proof in proofs {
             let Resolution::Found(id) = self.scopes.resolve(scope, proof.root()) else { continue };
             let symbol = self.scopes.symbol(id).clone();
@@ -151,6 +80,36 @@ impl Checker<'_> {
         }
     }
 
+    /// `name = <slot>`: a pick off a walk binds the landing it may not find
+    /// (`landedAggregatePosition`), a second name for a record binds that
+    /// record (`bareNodeSymbol`), and anything else binds the value as written
+    /// (`holdsValue`: a list literal stays the tuple it is).
+    fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<SymbolTypes> {
+        let expr = expression_of_slot(slot).ok()?;
+        let env = self.typing_env(scope);
+        let mut typing = Typing::new(&env, self.version, slot.span);
+        if let Some((root, steps)) = aggregated_bare_path(&expr) {
+            let start = root.and_then(|r| env.resolve_root(r));
+            if let Some(start) = start {
+                let landed = typing.walk_steps(Some(start), steps, false);
+                if let Some(landed) = landed {
+                    return Some(SymbolTypes { pos: Some(Position::MaybeEmpty(Box::new(landed))), ..SymbolTypes::default() });
+                }
+            }
+        }
+        if let Some(name) = crate::types::narrowing::bare_name(&expr)
+            && let Some(pos) = env.resolve_root(name)
+        {
+            return Some(SymbolTypes { pos: Some(pos), ..SymbolTypes::default() });
+        }
+        let ty = typing.infer_exact(&expr);
+        let may_hold = typing.may_hold_type(&expr);
+        let may_hold = if ty.is_none() { may_hold } else { None };
+        let many_valued = crate::types::narrowing::is_walk_projection(&expr)
+            || crate::types::narrowing::bare_name(&expr).is_some_and(|n| env.is_many_valued_name(n));
+        Some(SymbolTypes { field: ty, may_hold, many_valued, ..SymbolTypes::default() })
+    }
+
     /// Gives `name`, bound in `scope` itself, its types.
     pub fn set_types(&mut self, scope: ScopeId, name: &str, types: SymbolTypes) {
         if let Some(id) = self.scopes.scope(scope).symbols.get(name).copied() {
@@ -162,11 +121,23 @@ impl Checker<'_> {
     pub fn type_assigned(&mut self, name: &str, value: &RValue, scope: ScopeId) {
         let types = match value {
             RValue::Construct { construct } => self.instance_types(name, construct, scope),
-            RValue::Expr { expr } => match self.type_of_slot(expr, scope) {
-                Some((_, ty, may_hold)) => {
-                    let may_hold = if ty.is_none() { may_hold } else { None };
-                    SymbolTypes { field: ty, may_hold, ..SymbolTypes::default() }
+            RValue::Extract { extract } => SymbolTypes {
+                pos: Some(Position::Extract {
+                    node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, false, scope)),
+                    present: Default::default(),
+                }),
+                ..SymbolTypes::default()
+            },
+            // From version 3 a positional call is also read as one expression
+            // (`n = ONLY(…)`), and `check_call` reads it so.
+            RValue::Call { call } if call.expression.is_some() => {
+                match call.expression.as_ref().and_then(|expr| self.type_of_bound_slot(expr, scope)) {
+                    Some(types) => types,
+                    None => return,
                 }
+            }
+            RValue::Expr { expr } => match self.type_of_bound_slot(expr, scope) {
+                Some(types) => types,
                 None => return,
             },
             RValue::Closure { closure } => {
@@ -175,6 +146,31 @@ impl Checker<'_> {
             _ => return,
         };
         self.set_types(scope, name, types);
+    }
+
+    /// `buildExtractGraph`, the typing half: every field a node declares across
+    /// its stages (a later stage's re-declaration wins), and its nested nodes.
+    /// A node that takes a declaration as its shape is not read through it here.
+    fn extract_graph(&self, name: &str, stages: &[movement_parser::ast::ExtractStage], declared: bool, scope: ScopeId) -> crate::types::position::ExtractNode {
+        use crate::types::position::{ExtractField, ExtractNode};
+        use movement_parser::ast::ExtractNode as Node;
+        let mut node = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared };
+        for stage in stages {
+            for child in &stage.children {
+                let (child_name, child_stages, declared) = match child {
+                    Node::Inline(inline) => (&inline.name, &inline.stages, false),
+                    Node::Declared(declared) => (&declared.name, &declared.stages, true),
+                };
+                node.children.insert(child_name.clone(), Rc::new(self.extract_graph(child_name, child_stages, declared, scope)));
+            }
+            for field in &stage.fields {
+                let explicit = field.type_.as_deref().filter(|t| !t.contains('.')).and_then(|t| Ty::from_scalar_name(t).or_else(|| self.declared_type_in(t, scope)));
+                let nullable = field.nullable == Some(true);
+                let reads_as_present_text = !nullable && (matches!(explicit, Some(Ty::Text)) || (explicit.is_none() && field.type_.is_none()));
+                node.properties.insert(field.name.clone(), ExtractField { explicit, reads_as_present_text, annotated: field.type_.is_some() });
+            }
+        }
+        node
     }
 
     /// An instance: the schema its construction picks.
@@ -200,6 +196,35 @@ impl Checker<'_> {
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
         let instance = Rc::new(Instance { name: name.to_string(), schema });
         SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() }
+    }
+
+    /// `checkPathHead`, the typing half: where a head's walk starts (a record
+    /// the root names or holds) and the hops it takes. `None` when the hops do
+    /// not parse to a walk (a `_resources` head, a syntax error), which stays
+    /// untyped; a rootless head starts nowhere.
+    pub fn head_walk(&self, head: &PathHead, scope: ScopeId) -> Option<(Option<Position>, Vec<TraversalStep>)> {
+        let probe_root = match &head.root {
+            None => String::new(),
+            Some(PathRoot::Name { name }) => crate::families::names::spell_name(name),
+            Some(PathRoot::Expression { .. }) => crate::checker::EXPRESSION_ROOT_PROBE.to_string(),
+        };
+        let probe = format!("{probe_root}{}.`__movement_head_probe__`", head.hops_raw);
+        let Ok(Expression::Traverse { steps, .. }) = crate::slots::expression_of_text(&probe) else { return None };
+        let start = match &head.root {
+            None => None,
+            Some(PathRoot::Name { name }) => {
+                let env = self.typing_env(scope);
+                env.resolve_root(name).or_else(|| {
+                    let held = crate::types::field::widen_tuples(env.resolve_scalar(name), self.version);
+                    crate::types::field::record_head_position(held.as_ref())
+                })
+            }
+            Some(PathRoot::Expression { expr }) => {
+                let held = self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty);
+                crate::types::field::record_head_position(held.as_ref())
+            }
+        };
+        Some((start, steps))
     }
 
     /// A `type` declaration: the closed option set it names.
@@ -353,3 +378,16 @@ fn spell_param_type(type_: &ParamTypeRef) -> String {
         }
     }
 }
+
+/// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` over a walk read for its landings.
+fn aggregated_bare_path(expr: &Expression) -> Option<(Option<&str>, &[movement_parser::lowering::expression::TraversalStep])> {
+    use movement_parser::lowering::expression::AggregationFunction as F;
+    let Expression::Aggregate { fn_: F::First | F::Last | F::Only, expression, .. } = expr else { return None };
+    let Expression::Traverse { alias_root, steps, expression: terminal } = &**expression else { return None };
+    if steps.is_empty() || !crate::types::narrowing::is_position_terminal(terminal) {
+        return None;
+    }
+    Some((alias_root.as_deref(), steps.as_slice()))
+}
+
+

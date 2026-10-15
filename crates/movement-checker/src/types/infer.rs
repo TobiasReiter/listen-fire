@@ -22,7 +22,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 use super::field::*;
 use super::narrowing::{PresenceProof, exists_subject, is_position_terminal, negative_presence_proofs, presence_proofs};
-use super::position::{EdgeLanding, Position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
+use super::position::{EdgeLanding, Position, describe_position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
 use super::stdlib::{bare_coercer_returns, lookup_builtin, movement_meta_key_type, stdlib_function_by_id};
 
 /// What the typing asks of the scope it types in (the TypeScript's
@@ -46,6 +46,10 @@ pub trait TypeEnv {
     /// A name bound to a block over a walk: its records, in this order.
     fn plural_order_of(&self, _name: &str) -> Option<CollectionOrder> {
         None
+    }
+    /// A value-plane name bound to a walk read for a field: many values.
+    fn is_many_valued_name(&self, _name: &str) -> bool {
+        false
     }
 }
 
@@ -81,11 +85,18 @@ pub struct Typing<'a> {
     pub last_ordering: CollectionOrder,
     pub last_ordering_edge: Option<String>,
     pub diagnostics: Vec<Diagnostic>,
+    /// The field a write puts this value into (`WriteTargetRef`): its type,
+    /// and its borrowable spelling (`crm.companies.stage`) when known.
+    pub write_target: Option<(Ty, Option<String>)>,
     narrowed_scalars: HashMap<String, Ty>,
     narrowed_roots: HashMap<String, Position>,
     read_types: HashMap<usize, Option<Ty>>,
     exact_types: HashMap<usize, Option<Ty>>,
     bare_names: HashMap<usize, String>,
+    /// Each traversal's own walk: its order and last edge (`walkOrderings`).
+    walk_orderings: HashMap<usize, (CollectionOrder, Option<String>)>,
+    /// Where each traversal landed (`walkDestinations`).
+    walk_destinations: HashMap<usize, Position>,
 }
 
 impl<'a> Typing<'a> {
@@ -101,11 +112,14 @@ impl<'a> Typing<'a> {
             last_ordering: CollectionOrder::Unknown,
             last_ordering_edge: None,
             diagnostics: Vec::new(),
+            write_target: None,
             narrowed_scalars: HashMap::new(),
             narrowed_roots: HashMap::new(),
             read_types: HashMap::new(),
             exact_types: HashMap::new(),
             bare_names: HashMap::new(),
+            walk_orderings: HashMap::new(),
+            walk_destinations: HashMap::new(),
         }
     }
 
@@ -127,6 +141,16 @@ impl<'a> Typing<'a> {
     /// The type a node was typed as before widening, once typed.
     pub fn exact_type_of(&self, expr: &Expression) -> Option<&Option<Ty>> {
         self.exact_types.get(&key(expr))
+    }
+
+    /// A traversal's own walk, once typed: its order and its last edge.
+    pub fn walk_ordering_of(&self, expr: &Expression) -> Option<&(CollectionOrder, Option<String>)> {
+        self.walk_orderings.get(&key(expr))
+    }
+
+    /// Where a traversal landed, once typed.
+    pub fn walk_destination_of(&self, expr: &Expression) -> Option<&Position> {
+        self.walk_destinations.get(&key(expr))
     }
 
     /// The bare name a node reads, once typed.
@@ -394,7 +418,8 @@ impl<'a> Typing<'a> {
                         self.infer_at(filter, next.as_ref());
                     }
                     if let Some(order_by) = edge.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
-                        self.infer_at(order_by, next.as_ref());
+                        let key_ty = self.infer_at(order_by, next.as_ref());
+                        crate::families::values::ordering_key(self, order_by, key_ty.as_ref(), &format!("ORDER BY on '{}'", edge.edge_type_id));
                     }
                     crate::families::walks::observe_hop(self, from.as_ref(), edge, next.as_ref());
                     current = next;
@@ -421,9 +446,65 @@ impl<'a> Typing<'a> {
     /// `readProperty`, the typing half: a dot read off `position`. The walks
     /// family reports an unknown or ambiguous property.
     pub fn read_property(&mut self, position: Option<&Position>, property: &str) -> Option<Ty> {
-        let ty = lookup_property_type(position, property);
+        let ty = match position {
+            Some(Position::Extract { node, present }) => self.read_extract_field(node, property).map(|t| {
+                if present.contains(property) { strip_absent(&t).clone() } else { t }
+            }),
+            Some(Position::MaybeEmpty(of)) if matches!(**of, Position::Extract { .. }) => {
+                let Position::Extract { node, present } = &**of else { unreachable!() };
+                let read = self.read_extract_field(node, property);
+                read.map(|t| maybe_absent(if present.contains(property) { strip_absent(&t).clone() } else { t }))
+            }
+            _ => lookup_property_type(position, property),
+        };
         crate::families::walks::observe_read(self, position, property, ty.as_ref());
         ty
+    }
+
+    /// `readExtractField`, the typing half (the extraction family reports an
+    /// unknown field): a typed field may not have been found, so it reads
+    /// `T | absent`; text is handed over as `""` when not found, so it is
+    /// present. An unannotated field is text, so written into a field text
+    /// cannot be it is refused, naming the annotation (the version 1
+    /// suggestion and the option-set nudge are the extraction family's).
+    fn read_extract_field(&mut self, node: &super::position::ExtractNode, property: &str) -> Option<Ty> {
+        let field = node.properties.get(property)?;
+        if let Some(explicit) = &field.explicit {
+            if self.version < 2 {
+                return Some(maybe_absent(explicit.clone()));
+            }
+            return Some(if field.reads_as_present_text { Ty::Text } else { maybe_absent(explicit.clone()) });
+        }
+        if field.annotated || self.version < 2 {
+            return None;
+        }
+        let Some((target, path)) = self.write_target.clone() else { return Some(Ty::Text) };
+        match super::field::base_kind(&target) {
+            Some(super::field::BaseKind::Text | super::field::BaseKind::Json | super::field::BaseKind::Absent | super::field::BaseKind::Record) => {
+                return Some(Ty::Text);
+            }
+            _ => {}
+        }
+        let primitive = describe_field_type(&super::field::unwrap_list(&target));
+        let borrow = path.as_deref().map(|path| {
+            let segments: Vec<&str> = path.split('.').collect();
+            let spelled = match segments.as_slice() {
+                [graph, position, field] => format!("{graph}-[:{position}]->.`{field}`"),
+                _ => path.to_string(),
+            };
+            format!(" (or borrow the field's own type: `{property}: <{spelled}> \"…\"`)")
+        });
+        let node_label = describe_position(&Position::Extract { node: std::rc::Rc::new(node.clone()), present: Default::default() });
+        self.report(
+            crate::codes::EXTRACT_NEEDS_ANNOTATION,
+            format!(
+                "'{property}' on {node_label} is text — a field with no annotation asks the model for words — and it is written into a {} field{}. Annotate it so the model answers a {primitive}: `{property}: <{primitive}> \"…\"`{}. An annotated {primitive} may not be found, so write it with '?:' (set-if-empty), or fall back with COALESCE.",
+                describe_field_type(&target),
+                path.as_deref().map(|p| format!(" ({p})")).unwrap_or_default(),
+                borrow.unwrap_or_default()
+            ),
+        );
+        None
     }
 
     /// `dictMemberRead`: `d.key` off a name holding a dict.
@@ -525,6 +606,10 @@ impl<'a> Typing<'a> {
                     None => position.cloned(),
                 };
                 let destination = self.walk_steps(start, steps, false);
+                self.walk_orderings.insert(key(expr), (self.last_ordering, self.last_ordering_edge.clone()));
+                if let Some(destination) = &destination {
+                    self.walk_destinations.insert(key(expr), destination.clone());
+                }
                 if !steps.is_empty() && is_position_terminal(expression) {
                     return (Some(list_of(Ty::record(destination), self.last_ordering)), Vec::new());
                 }
@@ -545,7 +630,7 @@ impl<'a> Typing<'a> {
                 let tuple = self.list_literal_type(elements, position);
                 (if self.version < 3 { self.widen(Some(tuple)) } else { Some(tuple) }, Vec::new())
             }
-            Expression::Object { entries } => (Some(self.object_literal_type(entries, position)), Vec::new()),
+            Expression::Object { entries } => (self.object_literal_type(entries, position), Vec::new()),
             Expression::Concat { parts } => {
                 let operands: Vec<Option<Ty>> = parts.iter().map(|p| self.infer_at(p, position)).collect();
                 (Some(Ty::Text), operands)
@@ -588,7 +673,7 @@ impl<'a> Typing<'a> {
             Expression::At { expression, index } => {
                 let inner = self.infer_exact_at(expression, position);
                 let index_ty = self.infer_at(index, position);
-                (self.at_type(inner.as_ref(), index), vec![inner, index_ty])
+                (self.at_type(inner.as_ref(), index, index_ty.as_ref()), vec![inner, index_ty])
             }
             Expression::Aggregate { fn_, expression, .. } => {
                 let inner = self.infer_at(expression, position);
@@ -635,10 +720,11 @@ impl<'a> Typing<'a> {
     }
 
     /// `AT(x, i)`: a dict's key, a tuple's slot, a list's member.
-    fn at_type(&mut self, inner: Option<&Ty>, index: &Expression) -> Option<Ty> {
+    fn at_type(&mut self, inner: Option<&Ty>, index: &Expression, index_ty: Option<&Ty>) -> Option<Ty> {
         let inner = inner?;
         let shape = strip_absent(inner);
         if let Ty::Dict { of, shape: keys } = shape {
+            crate::families::values::require_dict_key(self, index_ty, "looked up in a dict");
             let literal = index.as_static_text();
             let (Some(keys), Some(literal)) = (keys, literal) else { return Some(maybe_absent((**of).clone())) };
             let Some(slot) = keys.get(literal) else {
@@ -666,8 +752,8 @@ impl<'a> Typing<'a> {
                 let order = self.collection_order(operand, inner);
                 element.map(|e| list_of(e, order))
             }
-            // `SORT` keeps its operand's type; the values family judges its key.
-            F::Sort => inner.cloned(),
+            // `SORT` hands the members back in order; the values family judges its key.
+            F::Sort => element.map(|e| list_of(e, CollectionOrder::Ordered)),
             F::Llm => None,
         }
     }
@@ -749,6 +835,12 @@ impl<'a> Typing<'a> {
     /// what is no list.
     fn spread_parts(&mut self, expr: &Expression, position: Option<&Position>) -> Vec<(bool, Option<Ty>)> {
         let Some(spread) = self.infer_exact_at(expr, position) else { return vec![(true, None)] };
+        let many_valued = super::narrowing::is_walk_projection(expr)
+            || (position.is_none() && super::narrowing::bare_name(expr).is_some_and(|n| self.env.is_many_valued_name(n)));
+        if many_valued && holds_one_value(&spread) {
+            return vec![(true, Some(spread))];
+        }
+        crate::families::values::list_spread(self, &spread);
         match strip_absent(&spread) {
             Ty::Tuple { of, rest } => {
                 let mut parts: Vec<(bool, Option<Ty>)> = of.iter().map(|s| (false, s.clone())).collect();
@@ -763,19 +855,29 @@ impl<'a> Typing<'a> {
         }
     }
 
-    fn object_literal_type(&mut self, members: &[ObjectMember], position: Option<&Position>) -> Ty {
+    /// `None` where a spread could not be typed: the TypeScript types more of
+    /// what a program binds than this core yet does, so an untyped spread
+    /// leaves the map untyped here rather than one whose keys nobody named.
+    fn object_literal_type(&mut self, members: &[ObjectMember], position: Option<&Position>) -> Option<Ty> {
         let mut shape: IndexMap<String, Option<Ty>> = IndexMap::new();
+        // Keys a written entry gave, until something overwrites them.
+        let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut read_types: Vec<Option<Ty>> = Vec::new();
         let mut keys_named = true;
+        let mut untyped_spread = false;
         for member in members {
             match member {
                 ObjectMember::Entry { key: name, value } => {
                     let exact = self.infer_exact_at(value, position);
                     read_types.push(widen_tuples(exact.clone(), self.version));
                     shape.insert(name.clone(), exact);
+                    written.insert(name.clone());
                 }
                 ObjectMember::Spread(spread) => {
-                    let Some(held) = self.infer_exact_at(&spread.expression, position) else { continue };
+                    let Some(held) = self.infer_exact_at(&spread.expression, position) else {
+                        untyped_spread = true;
+                        continue;
+                    };
                     let may_be_absent = is_maybe_absent(Some(&held));
                     let keys: Option<IndexMap<String, Option<Ty>>> = match strip_absent(&held) {
                         Ty::Json => {
@@ -789,13 +891,25 @@ impl<'a> Typing<'a> {
                             read_types.push(Some((**of).clone()));
                             continue;
                         }
-                        Ty::Record(Some(record)) => super::position::record_field_types(record),
-                        _ => None,
+                        Ty::Record(Some(record)) if holds_fields_in_hand(record) => super::position::record_field_types(record),
+                        present => {
+                            crate::families::values::map_spread_not_keyed(self, present);
+                            keys_named = false;
+                            read_types.push(None);
+                            continue;
+                        }
                     };
-                    let Some(keys) = keys else { continue };
+                    let Some(keys) = keys else {
+                        keys_named = false;
+                        read_types.push(Some(Ty::Json));
+                        continue;
+                    };
                     for (name, ty) in keys {
                         let earlier = shape.get(&name).cloned();
                         let next = if !may_be_absent {
+                            if written.contains(&name) {
+                                crate::families::values::map_key_overwritten(self, &name);
+                            }
                             ty
                         } else {
                             match earlier {
@@ -806,11 +920,15 @@ impl<'a> Typing<'a> {
                                 },
                             }
                         };
+                        written.remove(&name);
                         shape.insert(name, next.clone());
                         read_types.push(widen_tuples(next, self.version));
                     }
                 }
             }
+        }
+        if untyped_spread {
+            return None;
         }
         let first = read_types.first().cloned().flatten();
         let agree = first.as_ref().is_some_and(|f| read_types.iter().all(|t| t.as_ref().is_some_and(|t| field_type_equals(t, f))));
@@ -825,10 +943,10 @@ impl<'a> Typing<'a> {
             _ => Ty::Json,
         };
         if self.version < 2 {
-            return if agree { Ty::Dict { of: Box::new(of), shape: None } } else { Ty::Json };
+            return Some(if agree { Ty::Dict { of: Box::new(of), shape: None } } else { Ty::Json });
         }
         let shape: Option<movement_parser::catalog::types::JsMap<Option<Ty>>> = keys_named.then(|| shape.into_iter().collect());
-        Ty::Dict { of: Box::new(of), shape }
+        Some(Ty::Dict { of: Box::new(of), shape })
     }
 
     // ── What a choice may hold ──
@@ -910,5 +1028,17 @@ pub fn literal_index(expr: &Expression) -> Option<i64> {
     match expr {
         Expression::Static { value: StaticValue::Number(n) } if n.0.fract() == 0.0 && n.0.is_finite() => Some(n.0 as i64),
         _ => None,
+    }
+}
+
+/// `holdsFieldsInHand`: the checker holds this record's fields (a node
+/// literal, an extraction, a write's handle) rather than a system's schema
+/// describing them. A declared shape's graph is not told apart from a
+/// system's here.
+pub fn holds_fields_in_hand(position: &Position) -> bool {
+    match position {
+        Position::Extract { .. } | Position::Handle(_) | Position::Local(_) => true,
+        Position::MaybeEmpty(of) => holds_fields_in_hand(of),
+        Position::Position(_) | Position::Union(_) | Position::Meta { .. } | Position::Closure(_) => false,
     }
 }
