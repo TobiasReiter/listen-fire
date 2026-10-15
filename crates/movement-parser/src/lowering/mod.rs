@@ -19,7 +19,7 @@ mod call_shape;
 pub mod condition;
 pub mod expression;
 mod read;
-mod vocabulary;
+pub mod vocabulary;
 
 use std::borrow::Cow;
 

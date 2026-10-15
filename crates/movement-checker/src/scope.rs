@@ -55,11 +55,15 @@ pub struct Symbol {
     pub adapter: Option<String>,
     /// A binding or parameter whose value is a closure: a function by name.
     pub is_closure: bool,
+    /// What the binding is typed as (the type core's; empty is untyped).
+    pub types: crate::types::scope_env::SymbolTypes,
+    /// For an instance: what its construction built.
+    pub instance: Option<std::rc::Rc<crate::families::systems::Instance>>,
 }
 
 impl Symbol {
     pub fn new(name: impl Into<String>, kind: SymbolKind, span: Span) -> Self {
-        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false }
+        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, types: Default::default(), instance: None }
     }
 
     /// `isFunctionSymbol`: a name a call can run.
@@ -123,12 +127,16 @@ impl Scopes {
         &self.symbols[id.0]
     }
 
+    pub fn symbol_mut(&mut self, id: SymbolId) -> &mut Symbol {
+        &mut self.symbols[id.0]
+    }
+
     pub fn add_symbol(&mut self, symbol: Symbol) -> SymbolId {
         self.symbols.push(symbol);
         SymbolId(self.symbols.len() - 1)
     }
 
-    fn chain(&self, from: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
+    pub fn chain(&self, from: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
         std::iter::successors(Some(from), move |id| self.scopes[id.0].parent)
     }
 

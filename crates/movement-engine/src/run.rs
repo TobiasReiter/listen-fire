@@ -633,7 +633,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
 /// (program_check.ts `checkPinned`): errors only, and a retired write form
 /// that still runs does not block.
 fn native_check(source: &str, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
-    let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None };
+    let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &crate::env_services::EnvZones };
     let diagnostics = movement_checker::check_source(source, catalog, options).map_err(|_| Stop::Declined("source_does_not_parse".into()))?;
     let blocking: Vec<String> = diagnostics
         .iter()

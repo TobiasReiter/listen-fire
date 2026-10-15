@@ -5,12 +5,17 @@
 //! until the parity harness (PARITY.md) finds no difference.
 
 pub mod abi;
+mod binding_types;
 mod checker;
 pub mod codes;
+mod cron;
 mod diagnostic;
 pub mod families;
-mod scope;
+pub mod host;
+mod meta;
+pub mod scope;
 pub mod slots;
+pub mod types;
 mod version;
 
 pub use diagnostic::{Diagnostic, Severity};
@@ -19,22 +24,29 @@ use movement_parser::ast::Program;
 use movement_parser::catalog::types::CatalogSnapshot;
 use movement_parser::util::form::form_of_text;
 
-#[derive(Debug, Clone, Copy)]
-pub struct CheckOptions {
+#[derive(Clone, Copy)]
+pub struct CheckOptions<'a> {
     pub language_version: u32,
     /// Checking for a move up from this version (`upgradingFrom`).
     pub upgrading_from: Option<u32>,
     /// Parse under this version when it differs from the one checked under.
     pub parse_version: Option<u32>,
+    /// The host's zone database (`host`): a cron listen's `timezone`, a
+    /// standard-library zone argument.
+    pub zones: &'a dyn host::ZoneLookup,
 }
 
 /// `checkProgram`: the diagnostics for `program` under `options`.
 pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: CheckOptions) -> Vec<Diagnostic> {
     let resolves_files = catalog.files.is_some();
-    let mut checker = checker::Checker::new(catalog, options.language_version, resolves_files);
+    let mut link = resolves_files.then(|| families::imports::link_imports(program, catalog, options.language_version));
+    let problems = link.as_mut().map(|l| std::mem::take(&mut l.problems)).unwrap_or_default();
+    let mut checker = checker::Checker::new(catalog, &options, resolves_files);
+    checker.imports = families::imports::ImportState::new(link);
     checker.run(&program.statements);
     version::standing_diagnostic(options.language_version)
         .into_iter()
+        .chain(problems)
         .chain(checker.diagnostics.into_iter().map(version::with_handbook_pointer))
         .collect()
 }
