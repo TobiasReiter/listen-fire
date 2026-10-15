@@ -641,6 +641,38 @@ pub fn check_enum_literal(literal: &str, enum_ty: &Ty) -> Option<EnumDiagnostic>
     })
 }
 
+/// `checkAddressPins`: each value an event address pins is one its hop
+/// offers — the `action` pin against the event node's own enum, then the hop
+/// pins in the order the adapter keys them, each against the options
+/// published under the pins before it. A pin nobody can vouch for ends the
+/// walk; an error ends it too.
+pub fn address_pin_diagnostics(schema: &movement_parser::catalog::types::InstanceSchema, address: &crate::types::address::EventAddress) -> Vec<EnumDiagnostic> {
+    let pin = |key: &str| address.narrowing.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+    let mut found = Vec::new();
+    let action_type = schema.positions.get(&address.event).and_then(|p| p.properties.get("action")).map(Ty::from_schema);
+    if let (Some(action), Some(action_type @ Ty::Enum { .. })) = (pin("action"), action_type)
+        && let Some(diagnostic) = check_enum_literal(&action, &action_type)
+    {
+        let is_error = diagnostic.severity.is_none();
+        found.push(diagnostic);
+        if is_error {
+            return found;
+        }
+    }
+    let (Some(keys), Some(values)) = (&schema.event_narrowing_keys, &schema.event_narrowing_values) else { return found };
+    let mut pinned: Vec<(String, String)> = Vec::new();
+    for key in keys {
+        let Some(value) = pin(key) else { return found };
+        let Some(options) = values.get(&crate::types::address::narrowing_prefix_key(&pinned)).and_then(|v| v.get(key)) else { return found };
+        if let Some(diagnostic) = check_enum_literal(&value, &Ty::Enum { options: options.clone(), open: None }) {
+            found.push(diagnostic);
+            return found;
+        }
+        pinned.push((key.clone(), value));
+    }
+    found
+}
+
 const AI_TIERS: [&str; 3] = ["quick", "careful", "thorough"];
 
 /// `aiTierDiagnostics`: a written tier, judged.
@@ -1150,4 +1182,31 @@ fn pattern_matches(pattern: &str, text: &str) -> Option<bool> {
     }
     let starts: Vec<usize> = if anchored_start { vec![0] } else { (0..=t.len()).collect() };
     Some(starts.into_iter().any(|start| matches_at(&atoms, &t, start, anchored_end)))
+}
+
+// ── Event addresses ──
+
+impl crate::checker::Checker<'_> {
+    /// `checkAddressPins` where an address is written as a parameter's type
+    /// (`positionFromTypeRefStrict`): reported at the type.
+    pub fn check_param_address_pins(&mut self, type_: &movement_parser::ast::ParamTypeRef, scope: crate::scope::ScopeId) {
+        let movement_parser::ast::ParamTypeRef::Name(reference) = type_ else { return };
+        let Some(hops) = &reference.hops_raw else { return };
+        self.check_address_pins(&reference.graph, hops, reference.span, scope);
+    }
+
+    /// `checkAddressPins` for the address `hops` off the instance `graph` names.
+    pub fn check_address_pins(&mut self, graph: &str, hops: &str, span: movement_parser::ast::Span, scope: crate::scope::ScopeId) {
+        let crate::scope::Resolution::Found(id) = self.scopes.resolve(scope, graph) else { return };
+        let schema = match &self.scopes.symbol(id).types.pos {
+            Some(Position::Meta { instance }) => instance.schema.clone(),
+            _ => return,
+        };
+        let Some(address) = crate::types::address::event_address_of_hops(hops) else { return };
+        for found in address_pin_diagnostics(&schema, &address) {
+            let mut diagnostic = crate::diagnostic::Diagnostic::error(found.code, found.message, span);
+            diagnostic.severity = found.severity;
+            self.push(diagnostic);
+        }
+    }
 }

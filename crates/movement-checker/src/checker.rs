@@ -459,6 +459,9 @@ impl<'c> Checker<'c> {
                     self.check_expr_slot(&ExprSlot::plain(subject_raw.clone(), slot.span), scope);
                 }
                 self.resolve_name(&type_.graph, slot.span, scope);
+                if let Some(hops) = &type_.hops_raw {
+                    self.check_address_pins(&type_.graph, hops, slot.span, scope);
+                }
             }
             MovementCondition::Expr { expr } => {
                 let names = collect_expression_names(expr);
@@ -534,6 +537,7 @@ impl<'c> Checker<'c> {
         for param in &movement.params {
             let Some(type_) = &param.type_ else { continue };
             self.check_param_type(type_, scope);
+            self.check_param_address_pins(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
@@ -565,6 +569,7 @@ impl<'c> Checker<'c> {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
+                self.check_param_address_pins(type_, scope);
                 self.type_param(body, &param.name, type_, scope);
             }
         }

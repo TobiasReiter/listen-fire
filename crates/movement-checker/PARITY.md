@@ -3,18 +3,18 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **14 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 864 of 15246; 4 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 1061 of 11435.
-- Rust side: 7.0s; 0 records the Rust parser or catalog refused; 0 panics.
+- Diagnostics matched: 892 of 15246; 4 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 1065 of 11435.
+- Rust side: 6.0s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 298 | 298 |
-| checks v1 | 1535 | 193 | 193 |
-| checks v2 | 1956 | 244 | 244 |
-| checks v3 | 2403 | 321 | 321 |
+| checks under v5 | 2360 | 299 | 299 |
+| checks v1 | 1535 | 194 | 194 |
+| checks v2 | 1956 | 245 | 245 |
+| checks v3 | 2403 | 322 | 322 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 0 | 0 |
 | oracle parallel | 398 | 0 | 0 |
@@ -34,7 +34,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 25 | 0 | 314 | 0 | 314 | 0 | 0 |
 | records | 3 | 0 | 59 | 4 | 55 | 0 | 0 |
 | systems | 8 | 0 | 100 | 4 | 96 | 0 | 0 |
-| values | 22 | 5 | 1156 | 484 | 672 | 4 | 0 |
+| values | 22 | 5 | 1156 | 512 | 644 | 4 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
 | walks | 19 | 0 | 745 | 0 | 745 | 0 | 0 |
 | writes | 45 | 0 | 713 | 0 | 713 | 0 | 0 |
@@ -95,7 +95,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_DICT_UNKNOWN_KEY | values | 25 | 8 | 17 | 0 | 0 |  |
 | MOV_DUPLICATE_DECL | names | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_ENUM_EMPTY_DOMAIN | values | 12 | 4 | 8 | 0 | 0 |  |
-| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 35 | 83 | 0 | 0 |  |
+| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 63 | 55 | 0 | 0 |  |
 | MOV_EXPR_PARSE | calls | 141 | 0 | 141 | 0 | 0 |  |
 | MOV_EXTENDS_CYCLE | nodes | 9 | 0 | 9 | 0 | 0 |  |
 | MOV_EXTENDS_NOT_A_NODE | nodes | 3 | 0 | 3 | 0 | 0 |  |
