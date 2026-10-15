@@ -101,6 +101,9 @@ pub struct Bound {
     pub closure_suspends: bool,
     /// For a function's call: what it hands back.
     pub returned: Option<crate::types::position::ReturnShape>,
+    /// Bound on the node plane with a record nobody could type
+    /// (`bindingPlane: 'node'` and no `posType`).
+    pub record: bool,
 }
 
 impl<'c> Checker<'c> {
@@ -229,6 +232,8 @@ impl<'c> Checker<'c> {
                 self.note_shape_alias(&assign.name, &assign.value, scope);
                 if let Some(pos) = bound.pos {
                     self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
+                } else if bound.record {
+                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { is_record: true, ..Default::default() });
                 }
                 self.note_closure_returns(&assign.name, &assign.value, scope);
             }
@@ -879,14 +884,14 @@ impl<'c> Checker<'c> {
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
-                return Bound { pos: walk.and_then(awaited_landing), ..Bound::default() };
+                return awaited_walk(walk);
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
-                return Bound { pos: walk.and_then(awaited_landing), ..Bound::default() };
+                return awaited_walk(walk);
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
@@ -894,10 +899,12 @@ impl<'c> Checker<'c> {
             }
             AwaitSource::Sleep { duration, .. } => {
                 self.check_sleep_duration(duration);
-                if self.version >= 3 {
-                    let plane = crate::types::position::PlaneType { field: Some(crate::types::Ty::Boolean), pos: None };
-                    return Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() };
+                // A woken sleep binds `true`; before version 3 it was left untyped.
+                if self.version < 3 {
+                    return Bound { record: true, ..Bound::default() };
                 }
+                let plane = crate::types::position::PlaneType { field: Some(crate::types::Ty::Boolean), pos: None };
+                return Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() };
             }
             AwaitSource::Until { condition, every, .. } => {
                 if let Some(every) = every {
@@ -914,11 +921,17 @@ impl<'c> Checker<'c> {
                         }
                     }
                     UntilCondition::Expr { expr } => {
-                        self.check_expr_slot(expr, scope);
+                        let typed = self.check_expr_slot_with(expr, scope, SlotOptions::default());
                         if let Resolution::Found(id) = self.scopes.resolve(scope, expr.raw.trim()) {
                             let suspends = self.closure_suspends(id);
                             self.absorb_suspend(suspends);
+                            // A named closure is the condition: what it returns is what the tick tests.
+                            if let Some(Position::Closure(closure)) = &self.scopes.symbol(id).types.pos {
+                                return until_bound(&closure.returns);
+                            }
                         }
+                        let plane = crate::types::position::PlaneType { field: typed.ty, pos: None };
+                        return until_bound(&crate::types::position::ReturnShape { returns: true, plane, may_hold: None });
                     }
                 }
             }
@@ -927,10 +940,22 @@ impl<'c> Checker<'c> {
     }
 }
 
-/// An awaited walk's landing: maybe empty where its last edge can settle empty.
-fn awaited_landing(walk: crate::families::walks::HeadWalk) -> Option<Position> {
-    let landed = walk.landed?;
-    Some(if walk.last_edge_schema.is_some_and(|e| e.resolves_empty == Some(true)) { Position::MaybeEmpty(Box::new(landed)) } else { landed })
+/// An awaited walk binds its landing on the node plane: maybe empty where its
+/// last edge can settle empty, a record nobody can type where it cannot be walked.
+fn awaited_walk(walk: Option<crate::families::walks::HeadWalk>) -> Bound {
+    let Some(landed) = walk.as_ref().and_then(|w| w.landed.clone()) else { return Bound { record: true, ..Bound::default() } };
+    let resolves_empty = walk.and_then(|w| w.last_edge_schema).is_some_and(|e| e.resolves_empty == Some(true));
+    Bound { pos: Some(if resolves_empty { Position::MaybeEmpty(Box::new(landed)) } else { landed }), ..Bound::default() }
+}
+
+/// An `until` binds what its condition returns, where that is typed. An
+/// untyped condition stays untyped here: an inline closure's return is not
+/// inferred yet, so saying "a record" would be a claim the TypeScript does not make.
+fn until_bound(returns: &crate::types::position::ReturnShape) -> Bound {
+    if returns.plane.field.is_none() && returns.plane.pos.is_none() {
+        return Bound::default();
+    }
+    Bound { returned: Some(returns.clone()), ..Bound::default() }
 }
 
 /// `terminates` (checker/flow.ts): every path through the list leaves it —
