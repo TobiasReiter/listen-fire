@@ -32,12 +32,15 @@
 //! - MOV_UNKNOWN_PROPERTY
 //! - MOV_UNREACHABLE_BRANCH
 
+use movement_parser::ast::{PathHead, PathRoot};
 use movement_parser::catalog::types::{EdgeCapability, EdgeSchema, PositionSchema, PushMode};
-use movement_parser::lowering::expression::{EdgeStep, Expression, FilterOperator, ListElement, OrderDirection};
+use movement_parser::lowering::expression::{EdgeStep, Expression, FilterOperator, ListElement, OrderDirection, TraversalStep};
 
 use crate::codes;
 use crate::diagnostic::Severity;
-use crate::types::field::{CollectionOrder, Ty};
+use crate::scope::{Resolution, ScopeId};
+use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, record_head_position, widen_tuples};
+use crate::types::scope_env::SymbolTypes;
 use crate::types::infer::Typing;
 use crate::types::position::{EdgeLanding, Position, describe_position, display_name_of, is_artificial_edge, position_schema_of_ref};
 
@@ -723,4 +726,120 @@ fn edit_distance(a: &[u16], b: &[u16]) -> usize {
         prev.clone_from(&curr);
     }
     prev[b.len()]
+}
+
+// ── Path heads (`checkPathHead`, and the walk each block, lazy entry and
+// awaited head types its hops with) ──
+
+/// Where a head's walk went: each hop alias's landing, and the last.
+pub struct HeadWalk {
+    pub locals: indexmap::IndexMap<String, Option<Position>>,
+    pub landed: Option<Position>,
+    pub last_edge_schema: Option<EdgeSchema>,
+    pub ordering: CollectionOrder,
+}
+
+impl crate::checker::Checker<'_> {
+    /// The hops a head walks (`parsed.steps` of its probe), when it parses to
+    /// a plain hop chain.
+    fn head_steps(head: &PathHead) -> Option<Vec<TraversalStep>> {
+        let root = match &head.root {
+            None => String::new(),
+            Some(PathRoot::Name { name }) => crate::families::names::spell_name(name),
+            Some(PathRoot::Expression { .. }) => "__movement_expression_root__".to_string(),
+        };
+        match crate::slots::expression_of_text(&format!("{root}{}.`__movement_head_probe__`", head.hops_raw)).ok()? {
+            Expression::Traverse { steps, .. } => Some(steps),
+            _ => None,
+        }
+    }
+
+    /// `rootValueType`: what a head's root holds on the value plane.
+    fn head_root_value_type(&self, head: &PathHead, scope: ScopeId) -> Option<Ty> {
+        match &head.root {
+            Some(PathRoot::Expression { expr }) => self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty),
+            Some(PathRoot::Name { name }) => {
+                let types = self.symbol_types(name, scope)?;
+                if types.pos.is_some() {
+                    return None;
+                }
+                widen_tuples(types.field.clone(), self.version)
+            }
+            None => None,
+        }
+    }
+
+    fn symbol_types(&self, name: &str, scope: ScopeId) -> Option<&SymbolTypes> {
+        match self.scopes.resolve(scope, name) {
+            Resolution::Found(id) => Some(&self.scopes.symbol(id).types),
+            _ => None,
+        }
+    }
+
+    /// `rootType`: where a head's walk starts.
+    fn head_root_type(&self, head: &PathHead, scope: ScopeId) -> Option<Position> {
+        let symbol_pos = match &head.root {
+            Some(PathRoot::Name { name }) => self.symbol_types(name, scope).and_then(|t| t.pos.clone()),
+            _ => None,
+        };
+        symbol_pos.or_else(|| record_head_position(self.head_root_value_type(head, scope).as_ref()))
+    }
+
+    /// `checkPathHead`'s MOV_HEAD_NOT_A_POSITION: a hop off a root whose value
+    /// type is known and holds no record.
+    pub fn report_head_not_a_position(&mut self, head: &PathHead, scope: ScopeId) {
+        let Some(root) = &head.root else { return };
+        if Self::head_steps(head).is_none() {
+            return;
+        }
+        let Some(value) = self.head_root_value_type(head, scope) else { return };
+        if holds_records(Some(&value)) {
+            return;
+        }
+        let spelled = match root {
+            PathRoot::Name { name } => crate::families::names::spell_name(name),
+            PathRoot::Expression { expr } => expr.raw.clone(),
+        };
+        self.report(
+            codes::HEAD_NOT_A_POSITION,
+            format!(
+                "'{spelled}' is {}, and a hop walks from a POSITION — there is nothing here to hop from. A head starts at a record, an extraction's result, or a list of them ('found = MAP(pieces, (p) => {{ return extract … }})'); read a value with the value functions instead.",
+                describe_field_type(&value)
+            ),
+            head.span,
+        );
+    }
+
+    /// `slotTyping(scope, head.span).walkSteps(rootType, steps)`: types the
+    /// head's hops, reporting what the walk reports.
+    pub fn walk_head(&mut self, head: &PathHead, scope: ScopeId, awaited: bool) -> Option<HeadWalk> {
+        let steps = Self::head_steps(head)?;
+        let start = self.head_root_type(head, scope)?;
+        let (walk, diagnostics) = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, head.span);
+            let landed = typing.walk_steps(Some(start), &steps, awaited);
+            let walk = HeadWalk {
+                locals: typing.locals.clone(),
+                landed,
+                last_edge_schema: typing.last_edge_schema.clone(),
+                ordering: typing.last_ordering,
+            };
+            (walk, std::mem::take(&mut typing.diagnostics))
+        };
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
+        Some(walk)
+    }
+
+    /// Gives each hop alias declared in `landing` the position its hop landed on.
+    pub fn type_hop_aliases(&mut self, landing: ScopeId, aliases: &[String], walk: Option<&HeadWalk>) {
+        let Some(walk) = walk else { return };
+        for alias in aliases {
+            if let Some(Some(pos)) = walk.locals.get(alias) {
+                self.set_types(landing, alias, SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
+            }
+        }
+    }
 }

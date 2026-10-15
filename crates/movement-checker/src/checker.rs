@@ -243,8 +243,10 @@ impl<'c> Checker<'c> {
             RValue::Node { node } => self.check_node_literal(node, scope),
             RValue::Lazy { lazy } => {
                 let aliases = self.check_path_head(&lazy.head, scope);
+                let walk = self.walk_head(&lazy.head, scope, false);
                 if let Some(mapping) = &lazy.mapping {
                     let landing = self.open_landing(scope, &aliases, lazy.head.span);
+                    self.type_hop_aliases(landing, &aliases, walk.as_ref());
                     self.check_node_literal(mapping, landing);
                 }
             }
@@ -578,8 +580,10 @@ impl<'c> Checker<'c> {
                 NodeEntry::Declared { .. } => {}
                 NodeEntry::Traversal { head, mapping, .. } => {
                     let aliases = self.check_path_head(head, scope);
+                    let walk = self.walk_head(head, scope, false);
                     if let Some(mapping) = mapping {
                         let landing = self.open_landing(scope, &aliases, head.span);
+                        self.type_hop_aliases(landing, &aliases, walk.as_ref());
                         self.check_node_literal(mapping, landing);
                     }
                 }
@@ -631,6 +635,7 @@ impl<'c> Checker<'c> {
                 }
             }
         }
+        self.report_head_not_a_position(head, scope);
         aliases
     }
 
@@ -638,7 +643,9 @@ impl<'c> Checker<'c> {
     /// aliases, and what it binds is remembered as escaped once it closes.
     fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) {
         let aliases = self.check_path_head(&block.head, scope);
+        let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
+        self.type_hop_aliases(body, &aliases, walk.as_ref());
         self.check_statement_list(&block.body, body);
         let bound: Vec<String> = self
             .scopes
@@ -662,6 +669,7 @@ impl<'c> Checker<'c> {
         match &awaited.source {
             AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
                 self.check_path_head(head, scope);
+                self.walk_head(head, scope, true);
             }
             AwaitSource::Combinator { combinator, .. } => self.check_combinator(combinator, scope),
             AwaitSource::Sleep { .. } => {}
