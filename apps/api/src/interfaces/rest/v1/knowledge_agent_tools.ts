@@ -988,7 +988,12 @@ const upgradeMovementHandler: RequestHandler = jsonHandler(
   },
 );
 
-const completionsAtSchema = z.object({ source: z.string(), team: z.string().optional() });
+const completionsAtSchema = z.object({
+  source: z.string(),
+  team: z.string().optional(),
+  automation: z.string().optional(),
+  languageVersion: z.number().int().optional(),
+});
 
 const completionsAtHandler: RequestHandler = jsonHandler(
   completionsAtSchema,
@@ -1001,10 +1006,18 @@ const completionsAtHandler: RequestHandler = jsonHandler(
       markerIdx === -1
         ? input.source
         : input.source.slice(0, markerIdx) + input.source.slice(markerIdx + MARKER.length);
-    const { snapshot } = await movementCatalogSnapshotForTeam(
-      (await resolveToolTeam(input.team)) as TeamId,
-    );
-    const result = getMovementCompletions(fullSource, offset, snapshot);
+    const teamId = (await resolveToolTeam(input.team)) as TeamId;
+    const { snapshot } = await movementCatalogSnapshotForTeam(teamId);
+    // Same version rule as validateAutomationText: explicit, else the saved automation's pin, else current.
+    let languageVersion = input.languageVersion;
+    if (languageVersion === undefined && input.automation !== undefined) {
+      const row = await getMovementRow({ teamId, id: input.automation }).catch(() => null);
+      if (!row) return { error: `No automation '${input.automation}' in this team.` };
+      languageVersion = row.languageVersion;
+    }
+    const result = getMovementCompletions(fullSource, offset, snapshot, {
+      languageVersion: languageVersion ?? CURRENT_LANGUAGE_VERSION,
+    });
     return {
       completions: result.items.map((i) => ({
         label: i.label,
@@ -1662,7 +1675,7 @@ function registerAutomationToolRoutes(): void {
   reg('GET', '/automations/grep', 'Search across a team\'s automations for a literal snippet (or, with isRegex: true, a regular expression) and get back every matching line: { matches: [{ id, name, teamId, line, text, before, after }], truncated }. Query: pattern, isRegex?, contextLines? (lines of surrounding context per match, default 0), team? (default: every team the connection covers). Capped at 200 matches. Use it to find where something is defined or imported before editing it.', { inputSchema: grepAutomationsSchema, readOnly: true, latency: 'fast' });
   reg('POST', '/automations/validate', 'Typecheck an automation program against the live connected systems WITHOUT saving. Returns diagnostics (code, message, severity, line/col). A clean validation predicts a live save; saving runs the same check first, so this is for exploring. Acts in your default team unless you pass `team`. Also the top-level "validateAutomation" tool.', { inputSchema: validateMovementSchema, latency: 'medium' });
   reg('POST', '/automations/upgrade', 'Move a saved automation onto the current language version. Body: { automation, acknowledge?, team? }. Validates it under the current version and returns { status, from, to, diagnostics, message }: `blocked` (diagnostics to repair), `needs_acknowledgement` (clean — call again with acknowledge: true to move it), `upgraded`, `already_current`, or `unverified`. Without acknowledge nothing changes. Also the top-level "upgradeAutomation" tool.', { inputSchema: upgradeMovementSchema, latency: 'medium' });
-  reg('POST', '/automations/completions', 'Given an automation program with a `<|>` cursor marker, return the valid next tokens at that point (writable fields, edges, enum options). Body: { source, team? }.', { inputSchema: completionsAtSchema, latency: 'medium' });
+  reg('POST', '/automations/completions', 'Given an automation program with a `<|>` cursor marker, return the valid next tokens at that point (writable fields, edges, enum options). Body: { source, team?, automation?, languageVersion? } (a saved automation completes under its pinned language version).', { inputSchema: completionsAtSchema, latency: 'medium' });
   reg('POST', '/automations/save', 'Save an automation program and provision its listeners (authoring → live). It validates first: text with errors, or that can\'t be verified, is NOT saved — the answer is { ok: false, saved: false, diagnostics } — and acknowledgeErrors: true ships it anyway (replacing whatever ran, even broken). A clean save goes live. No "draft" quietly keeps the last good version running. Returns diagnostics, per-listener details, runnable, `warnings` (saved fine, but would surprise the user — a movement name another automation already fires, or listeners retired because the saved source could not be read; always relay these), and `storyUrl` — a login-free link to a picture of what the automation does, worth offering as a labelled link once a save goes live. Body: { source, name?, description?, id?, acknowledgeErrors?, expectedRevision?, team? } — pass id to re-save, expectedRevision (the `revision` from your last getAutomation read) when updating an EXISTING automation so a concurrent edit can\'t be silently clobbered — a stale expectedRevision is rejected with { ok: false, conflict } instead of overwriting; call getAutomation again, merge, and re-save with the new revision. Omit expectedRevision for today\'s behaviour (no precondition — last write wins); it\'s ignored when creating a new automation. `team` files it in a specific team. Also the top-level "saveAutomation" tool.', { inputSchema: saveMovementSchema, latency: 'medium' });
   reg('POST', '/automations/delete', 'Permanently delete a saved automation and every listener it derives (a hard delete — the automation and its run triggers are gone, and any now-orphaned external subscriptions are torn down). Body: { automation, team? } — the automation id (from listAutomations); pass `team` when you belong to more than one. Returns { deleted } — false if no automation with that id lives in the resolved team. Also the top-level "deleteAutomation" tool.', { inputSchema: deleteMovementSchema, latency: 'fast' });
   reg('POST', '/automations/run', 'Dispatch a saved automation on its manual channel and return IMMEDIATELY with { runId, status: "running" } — the run executes asynchronously (it can take a while). Optionally pass text and/or files as its input. Body: { automation, text?, files?, team? }. Poll /automations/run-status (the "checkRun" tool) with the runId for the outcome. Also the top-level "runAutomation" tool.', { inputSchema: runMovementSchema, latency: 'fast' });

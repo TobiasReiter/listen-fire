@@ -771,6 +771,9 @@ export const MovementEditor = forwardRef<
           context.state.doc.toString(),
           context.pos,
           snapshotRef.current,
+          languageVersionRef.current !== undefined
+            ? { languageVersion: languageVersionRef.current }
+            : undefined,
         );
       } catch (err) {
         console.error("Movement completions failed:", err);

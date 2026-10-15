@@ -16,7 +16,7 @@
 // updates, registered under the 'movement' domain.
 
 import { z } from 'zod';
-import { getMovementCompletions } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, getMovementCompletions } from 'movement-lang';
 
 import type { AgentUpdate } from '../openai/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -367,7 +367,10 @@ function createWrappedTools(
             ? args.source
             : args.source.slice(0, markerIdx) + args.source.slice(markerIdx + MARKER.length);
         const { snapshot } = await movementCatalogSnapshotForTeam(teamId);
-        const result = getMovementCompletions(fullSource, offset, snapshot);
+        // The agent writes new text, which validateMovement checks under the current version.
+        const result = getMovementCompletions(fullSource, offset, snapshot, {
+          languageVersion: CURRENT_LANGUAGE_VERSION,
+        });
         return {
           completions: result.items.map((i) => ({
             label: i.label,
