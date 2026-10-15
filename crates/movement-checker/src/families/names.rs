@@ -294,6 +294,7 @@ impl Checker<'_> {
         let mut symbol = Symbol::new(name, kind, span);
         symbol.is_closure = bound.is_closure;
         symbol.adapter = bound.adapter.clone();
+        symbol.instance = bound.instance.clone();
         if symbol.is_function() {
             self.check_function_name(name, span, scope);
         }
@@ -339,7 +340,7 @@ impl Checker<'_> {
     }
 
     /// `credentialArgRepair`.
-    fn credential_arg_repair(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<(String, Vec<serde_json::Value>)> {
+    pub(crate) fn credential_arg_repair(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<(String, Vec<serde_json::Value>)> {
         let raw = slot.raw.trim();
         let quoted = raw
             .strip_prefix('"')

@@ -2,39 +2,39 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **9 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 372 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 997 of 11435.
-- Rust side: 1.0s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **23 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 10963 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 7540 of 11435.
+- Rust side: 6.4s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 285 | 285 |
-| checks v1 | 1535 | 175 | 175 |
-| checks v2 | 1956 | 225 | 225 |
-| checks v3 | 2403 | 307 | 307 |
+| checks under v5 | 2360 | 1180 | 1180 |
+| checks v1 | 1535 | 838 | 838 |
+| checks v2 | 1956 | 1051 | 1051 |
+| checks v3 | 2403 | 1290 | 1290 |
 | checks v99 | 5 | 5 | 5 |
-| oracle handles | 981 | 0 | 0 |
-| oracle parallel | 398 | 0 | 0 |
-| oracle records | 1797 | 0 | 0 |
+| oracle handles | 981 | 981 | 981 |
+| oracle parallel | 398 | 398 | 398 |
+| oracle records | 1797 | 1797 | 1797 |
 
 ## By family
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| calls | 26 | 0 | 476 | 0 | 476 | 0 | 0 |
+| calls | 26 | 0 | 476 | 4 | 472 | 0 | 0 |
 | closures | 14 | 0 | 305 | 0 | 305 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
 | flow | 10 | 0 | 78 | 0 | 78 | 0 | 0 |
 | imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
-| listens | 12 | 0 | 10671 | 0 | 10671 | 0 | 0 |
+| listens | 12 | 9 | 10671 | 10499 | 172 | 0 | 0 |
 | names | 9 | 7 | 371 | 355 | 16 | 0 | 0 |
 | nodes | 25 | 0 | 314 | 0 | 314 | 0 | 0 |
 | records | 3 | 0 | 59 | 0 | 59 | 0 | 0 |
-| systems | 8 | 0 | 100 | 0 | 100 | 0 | 0 |
-| values | 22 | 0 | 1156 | 0 | 1156 | 0 | 0 |
+| systems | 8 | 5 | 100 | 84 | 16 | 0 | 0 |
+| values | 22 | 0 | 1156 | 4 | 1152 | 0 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
 | walks | 19 | 0 | 745 | 0 | 745 | 0 | 0 |
 | writes | 45 | 0 | 713 | 0 | 713 | 0 | 0 |
@@ -44,8 +44,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | code | family | TS | matched | missing in Rust | extra in Rust | message differs | parity |
 |---|---|---|---|---|---|---|---|
 | MOV_ABSENT_REQUIRED | values | 514 | 0 | 514 | 0 | 0 |  |
-| MOV_ADAPTER_NOT_CONSTRUCTED | systems | 28 | 0 | 28 | 0 | 0 |  |
-| MOV_AI_TIER_LEGACY | systems | 8 | 0 | 8 | 0 | 0 |  |
+| MOV_ADAPTER_NOT_CONSTRUCTED | systems | 28 | 28 | 0 | 0 | 0 | yes |
+| MOV_AI_TIER_LEGACY | systems | 8 | 4 | 4 | 0 | 0 |  |
 | MOV_AMBIGUOUS_PROPERTY | walks | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_ARITH_NON_NUMERIC | values | 79 | 0 | 79 | 0 | 0 |  |
 | MOV_AWAIT_BAD_DURATION | flow | 4 | 0 | 4 | 0 | 0 |  |
@@ -62,16 +62,16 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_BUILTIN_ARG_TYPE | calls | 20 | 0 | 20 | 0 | 0 |  |
 | MOV_BUILTIN_NOT_RUN | calls | 6 | 0 | 6 | 0 | 0 |  |
 | MOV_BUILTIN_UNUSED | calls | 2 | 0 | 2 | 0 | 0 |  |
-| MOV_CALLBACK_BAD_CONFIG | listens | 16 | 0 | 16 | 0 | 0 |  |
-| MOV_CALLBACK_NOT_MOVEMENT | listens | 10 | 0 | 10 | 0 | 0 |  |
-| MOV_CALLBACK_PARAM_NOT_VALUE | listens | 14 | 0 | 14 | 0 | 0 |  |
+| MOV_CALLBACK_BAD_CONFIG | listens | 16 | 16 | 0 | 0 | 0 | yes |
+| MOV_CALLBACK_NOT_MOVEMENT | listens | 10 | 10 | 0 | 0 | 0 | yes |
+| MOV_CALLBACK_PARAM_NOT_VALUE | listens | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_DUPLICATE | calls | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_CALL_ARG_MISSING | calls | 24 | 0 | 24 | 0 | 0 |  |
 | MOV_CALL_ARG_TYPE | calls | 55 | 0 | 55 | 0 | 0 |  |
 | MOV_CALL_ARG_UNKNOWN | calls | 18 | 0 | 18 | 0 | 0 |  |
 | MOV_CALL_ARITY | calls | 18 | 0 | 18 | 0 | 0 |  |
 | MOV_CALL_NESTED | calls | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_CALL_NOT_MOVEMENT | calls | 13 | 0 | 13 | 0 | 0 |  |
+| MOV_CALL_NOT_MOVEMENT | calls | 13 | 4 | 9 | 0 | 0 |  |
 | MOV_CALL_RETURNS_NOTHING | calls | 22 | 0 | 22 | 0 | 0 |  |
 | MOV_CHUNKS_NOT_TEXT | extraction | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_COLLECTION_OP_ARITY | closures | 8 | 0 | 8 | 0 | 0 |  |
@@ -85,17 +85,17 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_COMBINATOR_NEEDS_AWAIT | closures | 6 | 0 | 6 | 0 | 0 |  |
 | MOV_COMBINATOR_NO_AWAIT | closures | 28 | 0 | 28 | 0 | 0 |  |
 | MOV_COMPARE_TYPE_MISMATCH | values | 60 | 0 | 60 | 0 | 0 |  |
-| MOV_CONSTRUCT_BAD_ARG | systems | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_CONSTRUCT_MISSING_CRED | systems | 8 | 0 | 8 | 0 | 0 |  |
-| MOV_CONSTRUCT_NOT_ADAPTER | systems | 13 | 0 | 13 | 0 | 0 |  |
-| MOV_CONSTRUCT_UNKNOWN_OPTION | systems | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_CRED_WRONG_ADAPTER | systems | 16 | 0 | 16 | 0 | 0 |  |
+| MOV_CONSTRUCT_BAD_ARG | systems | 12 | 12 | 0 | 0 | 0 | yes |
+| MOV_CONSTRUCT_MISSING_CRED | systems | 8 | 8 | 0 | 0 | 0 | yes |
+| MOV_CONSTRUCT_NOT_ADAPTER | systems | 13 | 12 | 1 | 0 | 0 |  |
+| MOV_CONSTRUCT_UNKNOWN_OPTION | systems | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_CRED_WRONG_ADAPTER | systems | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_DELETE_NOT_DECLARED | writes | 1 | 0 | 1 | 0 | 0 |  |
 | MOV_DICT_KEY_NOT_TEXT | values | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_DICT_UNKNOWN_KEY | values | 25 | 0 | 25 | 0 | 0 |  |
 | MOV_DUPLICATE_DECL | names | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_ENUM_EMPTY_DOMAIN | values | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 0 | 118 | 0 | 0 |  |
+| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 4 | 114 | 0 | 0 |  |
 | MOV_EXPR_PARSE | calls | 141 | 0 | 141 | 0 | 0 |  |
 | MOV_EXTENDS_CYCLE | nodes | 9 | 0 | 9 | 0 | 0 |  |
 | MOV_EXTENDS_NOT_A_NODE | nodes | 3 | 0 | 3 | 0 | 0 |  |
@@ -147,14 +147,14 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_LINKED_UNKNOWN_EDGE | writes | 39 | 0 | 39 | 0 | 0 |  |
 | MOV_LINK_MATCH_BODY_RETIRED | writes | 15 | 0 | 15 | 0 | 0 |  |
 | MOV_LINK_UNSUPPORTED_EDGE | writes | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_LISTEN_ALIAS_DUPLICATE | listens | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_LISTEN_BAD_CONFIG | listens | 138 | 0 | 138 | 0 | 0 |  |
-| MOV_LISTEN_CANNOT_FIRE | listens | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_LISTEN_DUPLICATE | listens | 8 | 0 | 8 | 0 | 0 |  |
-| MOV_LISTEN_FILE_LEVEL | listens | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_LISTEN_MISSING | listens | 10299 | 0 | 10299 | 0 | 0 |  |
-| MOV_LISTEN_NOT_INSTANCE | listens | 8 | 0 | 8 | 0 | 0 |  |
-| MOV_LISTEN_PARAM_MISMATCH | listens | 142 | 0 | 142 | 0 | 0 |  |
+| MOV_LISTEN_ALIAS_DUPLICATE | listens | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_BAD_CONFIG | listens | 138 | 106 | 32 | 0 | 0 |  |
+| MOV_LISTEN_CANNOT_FIRE | listens | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_DUPLICATE | listens | 8 | 8 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_FILE_LEVEL | listens | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_MISSING | listens | 10299 | 10299 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_NOT_INSTANCE | listens | 8 | 8 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_PARAM_MISMATCH | listens | 142 | 26 | 116 | 0 | 0 |  |
 | MOV_LISTEN_SHAPE_MISMATCH | listens | 24 | 0 | 24 | 0 | 0 |  |
 | MOV_LIST_MIXED | values | 21 | 0 | 21 | 0 | 0 |  |
 | MOV_LIST_SPREAD_NOT_A_LIST | values | 8 | 0 | 8 | 0 | 0 |  |

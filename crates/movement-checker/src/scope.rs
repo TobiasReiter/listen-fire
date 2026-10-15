@@ -55,11 +55,13 @@ pub struct Symbol {
     pub adapter: Option<String>,
     /// A binding or parameter whose value is a closure: a function by name.
     pub is_closure: bool,
+    /// For an instance: what its construction built.
+    pub instance: Option<std::rc::Rc<crate::families::systems::Instance>>,
 }
 
 impl Symbol {
     pub fn new(name: impl Into<String>, kind: SymbolKind, span: Span) -> Self {
-        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false }
+        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, instance: None }
     }
 
     /// `isFunctionSymbol`: a name a call can run.

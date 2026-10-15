@@ -7,8 +7,10 @@
 pub mod abi;
 mod checker;
 pub mod codes;
+mod cron;
 mod diagnostic;
 pub mod families;
+mod meta;
 mod scope;
 pub mod slots;
 mod version;
