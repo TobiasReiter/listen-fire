@@ -33,6 +33,9 @@ use crate::meta::did_you_mean;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
 use crate::slots::{expression_of_slot, is_bare_ident};
 
+mod event_types;
+use event_types::{EventRef, Kind};
+
 /// `SUPPRESS_SELF_KEY`: the listen key every listener accepts.
 const SUPPRESS_SELF_KEY: &str = "suppress_self";
 
@@ -67,6 +70,17 @@ struct Dispatchable {
 pub struct MovementInfo {
     pub params: Vec<MovementParam>,
     pub decl_scope: ScopeId,
+}
+
+/// What a listen's config states, read as its keys are checked.
+#[derive(Default)]
+struct ConfigRead {
+    /// Each single-literal value, by key: the address it subscribes to.
+    pins: Vec<(String, String)>,
+    /// The `events:` selection.
+    selected: Option<Vec<String>>,
+    /// A `fields`-format key's bare names, and where they are written.
+    fields: Option<(Vec<String>, Span)>,
 }
 
 /// `suggestedListenKey`: a movement's name as a slug.
@@ -259,16 +273,28 @@ impl Checker<'_> {
             }
             self.push(diagnostic);
         }
+        let mut read = ConfigRead::default();
         for arg in &statement.config {
             if arg.name == SUPPRESS_SELF_KEY {
                 continue;
             }
-            self.check_listen_config_arg(arg, spec, &adapter_label, scope);
+            self.check_listen_config_arg(arg, spec, &adapter_label, scope, &mut read);
         }
 
-        // TODO(type-core): `checkHopPins`, the event types the listen derives
-        // (`derivedEventTypes`) and the `fields:` names they land on need
-        // instance references and positions.
+        let schema = instance_id
+            .map(|id| self.scopes.symbol(id))
+            .and_then(|s| s.instance.clone())
+            .filter(|i| i.schema.is_some());
+        let schema = schema.as_ref().and_then(|i| i.schema.as_ref());
+        let subscribed = read.selected.clone().or_else(|| spec.and_then(|s| s.default_events.clone()));
+        if let Some(schema) = schema {
+            let span_for = |key: &str| statement.config.iter().find(|a| a.name == key).map_or(statement.span, |a| a.value.span);
+            self.check_hop_pins(schema, &read.pins, span_for);
+        }
+        let event_types = schema.and_then(|schema| event_types::derived_event_types(schema, subscribed.as_deref(), &read.pins));
+        if let (Some((names, span)), Some(schema), Some(event_types)) = (&read.fields, schema, &event_types) {
+            self.check_listen_fields(schema, event_types, names, *span);
+        }
 
         let mut config: Vec<String> = statement.config.iter().map(|a| format!("{}={}", a.name, a.value.raw.trim())).collect();
         config.sort();
@@ -375,8 +401,108 @@ impl Checker<'_> {
                 statement.span,
             );
         }
-        // TODO(type-core): the parameter's position against each event type the
-        // listen fires (`positionsMatch`), and the rewrite it suggests.
+        let (Some(schema), Some(event_types)) = (schema, &event_types) else { return };
+        let Some(param_type) = event_types::param_position(schema, declared) else { return };
+        let Some(mismatch) = event_types.iter().find(|t| !event_types::positions_match(t, &param_type)) else { return };
+        let wrote = format!("<{}{}>", declared.graph, declared.hops_raw.as_deref().unwrap_or(""));
+        let instance = &statement.instance;
+        let movement = &statement.movement;
+        let fires = event_types::describe_event_type(schema, mismatch, instance);
+        if let Some((signature, binding, event_param)) =
+            event_types::record_signature_rewrite(schema, instance, mismatch, &param.name, &param_type)
+        {
+            self.report(
+                codes::LISTEN_PARAM_MISMATCH,
+                format!(
+                    "'{movement}' takes '{}: {wrote}', but this listener fires {fires} — the EVENT, not the record it is about. Type the parameter against the event and reach the record in one hop: '{movement}({event_param}: {signature})', then wrap the body in '{binding}'.",
+                    param.name
+                ),
+                statement.span,
+            );
+            return;
+        }
+        let example = event_types::event_traversal_example(schema, &param.name, instance);
+        let tail = match example {
+            None => ".".to_string(),
+            Some(example) => format!(" — e.g. `{example}` (a delete event has no record to read)."),
+        };
+        self.report(
+            codes::LISTEN_PARAM_MISMATCH,
+            format!(
+                "'{movement}' takes '{}: {wrote}' ({}), but this listener fires {fires}. Every listen firing a movement must satisfy its signature — either narrow this listen to what '{movement}' accepts, or widen the signature{tail}",
+                param.name,
+                event_types::describe_position(schema, &param_type, &declared.graph)
+            ),
+            statement.span,
+        );
+    }
+
+    /// `checkHopPins`: each pin of a listen's address against what the
+    /// adapter published as legal under the pins before it.
+    fn check_hop_pins(&mut self, schema: &movement_parser::catalog::types::InstanceSchema, pins: &[(String, String)], span_for: impl Fn(&str) -> Span) {
+        let (Some(keys), Some(values)) = (&schema.event_narrowing_keys, &schema.event_narrowing_values) else { return };
+        let mut pinned: Vec<(String, String)> = Vec::new();
+        for key in keys {
+            let Some((_, value)) = pins.iter().find(|(k, _)| k == key) else { return };
+            let Some(options) = values.get(&event_types::narrowing_prefix_key(&pinned)).and_then(|v| v.get(key)) else { return };
+            // TODO(type-core): `checkEnumLiteral` is the values family's; this is
+            // its closed-enum half, which is all an address pin can be.
+            if options.is_empty() {
+                return self.report(
+                    codes::ENUM_EMPTY_DOMAIN,
+                    "This field has no values to choose from — the connected system currently offers none, so its option set is empty. No value can satisfy it, which makes this impossible rather than mistaken: it is not a typo, and no spelling would work. Nothing can use this field until an option exists.",
+                    span_for(key),
+                );
+            }
+            if !options.contains(value) {
+                let mut message =
+                    format!("\"{value}\" isn't a value of enum ({}) — expected one of: {}.", options.join(" | "), options.join(" | "));
+                if let Some(closest) = crate::meta::closest_by_edit_distance(value, options) {
+                    message.push_str(&format!(" Did you mean \"{closest}\"?"));
+                }
+                return self.report(codes::ENUM_UNKNOWN_VALUE, message, span_for(key));
+            }
+            pinned.push((key.clone(), value.clone()));
+        }
+    }
+
+    /// The `fields:` names, against what the listen's events land on (or the
+    /// record each is about, where the event declares a subject edge).
+    fn check_listen_fields(
+        &mut self,
+        schema: &movement_parser::catalog::types::InstanceSchema,
+        event_types: &[EventRef],
+        names: &[String],
+        span: Span,
+    ) {
+        let mut known: Vec<&String> = Vec::new();
+        let mut described = false;
+        for type_ in event_types.iter().filter(|t| t.kind == Kind::Position) {
+            let Some(landed) = schema.positions.get(&type_.key) else { continue };
+            let position = event_types::subject_of(schema, landed).map_or(landed, |(_, _, p)| p);
+            if position.undescribed == Some(true) {
+                continue;
+            }
+            described = true;
+            for name in position.properties.keys() {
+                if !known.contains(&name) {
+                    known.push(name);
+                }
+            }
+        }
+        if !described {
+            return;
+        }
+        let mut sorted: Vec<&String> = known.clone();
+        sorted.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+        let one_of = if sorted.is_empty() {
+            String::new()
+        } else {
+            format!(" — one of: {}", sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+        };
+        for name in names.iter().filter(|n| !known.contains(n)) {
+            self.report(codes::LISTEN_BAD_CONFIG, format!("'{name}' is not a property of what this listener watches{one_of}"), span);
+        }
     }
 
     /// One config key of a listen, against the adapter's vocabulary and formats.
@@ -386,6 +512,7 @@ impl Checker<'_> {
         spec: Option<&movement_parser::catalog::types::AdapterSpec>,
         adapter: &str,
         scope: ScopeId,
+        read: &mut ConfigRead,
     ) {
         let vocabulary: &[String] = spec.and_then(|s| s.trigger_config.as_deref()).unwrap_or(&[]);
         if spec.is_some() && !vocabulary.contains(&arg.name) {
@@ -414,6 +541,12 @@ impl Checker<'_> {
             return;
         }
         let span = arg.value.span;
+        if let Some([literal]) = static_string_values(&arg.value).as_deref()
+            && !is_list_slot(&arg.value)
+        {
+            read.pins.retain(|(k, _)| k != &arg.name);
+            read.pins.push((arg.name.clone(), literal.clone()));
+        }
         if let Some(options) = spec.and_then(|s| s.trigger_config_options.as_ref()).and_then(|o| o.0.get(&arg.name)) {
             match static_string_values(&arg.value).filter(|_| is_list_slot(&arg.value)) {
                 None => {
@@ -426,6 +559,7 @@ impl Checker<'_> {
                     );
                 }
                 Some(values) => {
+                    read.selected = Some(values.clone());
                     for value in values.iter().filter(|v| !options.contains(v)) {
                         self.report(
                             codes::LISTEN_BAD_CONFIG,
@@ -485,15 +619,14 @@ impl Checker<'_> {
                 }
             }
             Some(TriggerConfigFormat::Fields) => {
-                if bare_name_values(&arg.value).is_none() {
-                    self.report(
+                match bare_name_values(&arg.value) {
+                    None => self.report(
                         codes::LISTEN_BAD_CONFIG,
                         format!("'{}' is a list of the watched type's properties, bare — e.g. {}: [domains]", arg.name, arg.name),
                         span,
-                    );
+                    ),
+                    Some(names) => read.fields = Some((names, span)),
                 }
-                // TODO(type-core): the names are checked against the type the
-                // listen's address lands on, once event types are derived.
                 return;
             }
             None => {}
