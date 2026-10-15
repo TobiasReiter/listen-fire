@@ -19,10 +19,10 @@ import {
   WALL_CLOCK,
 } from 'movement-engine/services/movement_engine/host_kit';
 import { InMemoryWriteLocks, segmentWriteLocks } from 'movement-engine/services/write_locks/write_locks';
-import type { ParkSink } from 'movement-engine/services/movement_engine/run';
 import { rpc, type RunningExternal } from './externals';
 import { localFileText } from './files';
 import { modelCalls } from './models';
+import { localParkFamily } from './parks';
 import type { Project } from './project';
 import { withCredential, type Credential } from './secrets';
 import type { State } from './state';
@@ -44,8 +44,9 @@ export interface LocalHostParts {
   state: State;
   externals: Map<string, RunningExternal>;
   credentials: Map<string, Credential>;
-  /** The engine a parked run's state was written by, stamped on each park. */
-  engine: 'rust' | 'ts';
+  /** The engine a parked run's state was written by, stamped on each park:
+   *  always Rust, the only engine lf runs. */
+  engine: 'rust';
 }
 
 /**
@@ -66,27 +67,6 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
     },
   });
 
-  const parkSink: ParkSink = {
-    recordJoin: async ({ frameAddress, parkedChildren }) => state.recordJoin(parts.runId, frameAddress, parkedChildren),
-    commitTimerPark: async ({ address, state: parked, wakeAt }) => {
-      state.addPark({ run_id: parts.runId, kind: 'timer', address, wake_at: wakeAt, adapter_type: null, correlation_key: null, state: JSON.stringify(parked), engine: parts.engine });
-      state.enqueue('resume', wakeAt, { runId: parts.runId });
-    },
-    commitAwaitPark: async ({ address, state: parked, adapterType, correlationKey }) => {
-      state.addPark({ run_id: parts.runId, kind: 'await', address, wake_at: null, adapter_type: adapterType, correlation_key: correlationKey, state: JSON.stringify(parked), engine: parts.engine });
-    },
-    decrementJoin: async ({ frameAddress }) => state.decrementJoin(parts.runId, frameAddress),
-    // THIN: branch exports of a parked join are not persisted yet, so a run
-    // whose parked combinator arms export values resumes without them.
-    persistBranchExport: async () => {},
-    collectBranchExports: async () => [],
-    cancelSubtrees: async ({ subtreeAddresses }) => state.dropParks(parts.runId, subtreeAddresses),
-    commitSuspension: async ({ address, state: parked }) => {
-      state.addPark({ run_id: parts.runId, kind: 'suspension', address, wake_at: null, adapter_type: null, correlation_key: null, state: JSON.stringify(parked), engine: parts.engine });
-    },
-  };
-
-  const bindings = new Map<string, unknown>();
   const models = modelCalls(credentials);
 
   return {
@@ -137,32 +117,7 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
       },
     },
     llm: models,
-    park: {
-      sink: {
-        recordJoin: ({ segmentId: _s, ...input }) => parkSink.recordJoin(input),
-        commitTimerPark: ({ segmentId: _s, ...input }) => parkSink.commitTimerPark(input),
-        commitAwaitPark: ({ segmentId: _s, ...input }) => parkSink.commitAwaitPark(input),
-        decrementJoin: ({ segmentId: _s, ...input }) => parkSink.decrementJoin(input),
-        persistBranchExport: ({ segmentId: _s, ...input }) => parkSink.persistBranchExport(input),
-        collectBranchExports: ({ segmentId: _s, ...input }) => parkSink.collectBranchExports(input),
-        cancelSubtrees: ({ segmentId: _s, ...input }) => parkSink.cancelSubtrees(input),
-        commitSuspension: ({ segmentId: _s, ...input }) => parkSink.commitSuspension!(input),
-      },
-      // STUB: an await's wake is not queued; `lf resume` re-enters await
-      // parks, and the external's push door (`/hooks/<external>/wake`) is
-      // not served yet.
-      wake: async () => {},
-      // THIN: record bindings live for the process only.
-      bindings: {
-        record: async ({ from, to }) => {
-          bindings.set(JSON.stringify(from), to);
-        },
-        findBoundCounterpart: async () => null,
-        delete: async ({ from }) => {
-          bindings.delete(JSON.stringify(from));
-        },
-      },
-    },
+    park: localParkFamily({ state, runId: parts.runId, engine: parts.engine }),
     control: { cancel: NEVER_CANCELLED },
     files: {
       resolveFileText: async ({ file }) => localFileText(project, file),

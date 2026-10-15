@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import { initProject, loadProject } from './project';
-import { EventFile, fireEvent, openSession, parkedRuns, receiveWebhook, resumeRun, type RunOutcome } from './runs';
+import { EventFile, fireEvent, openSession, receiveWebhook, resumeAll, resumeRun, type RunOutcome } from './runs';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
@@ -110,10 +110,8 @@ async function main(argv: string[]): Promise<number> {
       const project = loadProject(values.dir);
       const session = await openSession(project, { ephemeral: false, start: true });
       try {
-        const ids = rest[0] !== undefined ? [rest[0]] : parkedRuns(session);
-        const outcomes: RunOutcome[] = [];
-        for (const id of ids) outcomes.push(await resumeRun(session, id));
-        if (ids.length === 0) process.stdout.write('no parked runs\n');
+        const outcomes = rest[0] !== undefined ? [await resumeRun(session, rest[0])] : await resumeAll(session);
+        if (outcomes.length === 0) process.stdout.write('no parked runs\n');
         return report(outcomes);
       } finally {
         session.close();
@@ -121,12 +119,13 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'serve': {
       const project = loadProject(values.dir);
-      const session = await openSession(project, { ephemeral: values.ephemeral, start: true });
-      const serving = await serve(session, { port: Number(values.port) });
+      const serving = await serve((hostUrl) => openSession(project, { ephemeral: values.ephemeral, start: true, hostUrl }), {
+        port: Number(values.port),
+      });
       process.stdout.write(`lf serving on http://127.0.0.1:${serving.port}/hooks/<external>/<install>\n`);
       const stop = () => {
         void serving.stop().then(() => {
-          session.close();
+          serving.session.close();
           process.exit(0);
         });
       };
