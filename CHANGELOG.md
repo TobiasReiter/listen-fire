@@ -532,7 +532,8 @@ guide](docs/language/dancing-wren-migration.md).
   browser's artifact is unchanged. It now crosses the 1 MiB warning at 1,171,349 bytes, still under
   the failure line: a paused run's closures, walks and local shapes are rebuilt on resume from the
   syntax tree saved with the pause rather than looked up by position, and reading that tree back
-  takes about 100 KB.
+  takes about 100 KB. The Rust checker now ships inside it too (the engine can check a program
+  itself, off by default), which takes it to 1,422,881 bytes, still under the failure line.
 - The browser now loads the parser's own WebAssembly artifact (`movement_parser.wasm`, 325 KB
   gzipped, a little over the earlier 323 KB because the parser reads text in the engine's in-band
   form, so a U+FDD0 or a lone surrogate half in a source crosses it exactly), not the API's
