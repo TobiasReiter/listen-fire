@@ -1328,7 +1328,8 @@ impl Run<'_> {
     /// `compare_values` hands back), measured from `now`: the host's clock,
     /// asked the first time the decision reaches one.
     pub(crate) async fn within(&self, left: Js, right: Js, now: &RefCell<Option<f64>>) -> Result<bool, EvalError> {
-        let at = match *now.borrow() {
+        let cached = *now.borrow();
+        let at = match cached {
             Some(at) => at,
             None => self.clock_now().await.map_err(Failure::into_eval)?,
         };
