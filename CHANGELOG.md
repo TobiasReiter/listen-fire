@@ -55,6 +55,13 @@ guide](docs/language/dancing-wren-migration.md).
   fill the other arm with a record. A union of records alone is one record and still fits. A record with
   `NULL` is a maybe-absent record and fits. Inside an `IS` arm the value is the record (on every
   version, it passes as a position and enters a graph).
+- **A value that may be a record, handed to a value parameter** (`MOV_CALL_ARG_MAYBE_RECORD`):
+  `f(COALESCE(co, 1))` or `f(IF c THEN co ELSE 1 END)` where `f` takes `<number>`, or a name bound
+  to either. Why: TypeScript's `Org | number` is no `number`. Under 3 and 4 the check said nothing,
+  and the call ran with the record where the number was typed (a sum over it came out `NaN`), so
+  the refusal is new under 5. Under 3 and 4 it is a warning that blocks the move up. Narrow it to
+  the record with `IS` and pass a field off it, or fill every arm with a value. A plugin argument
+  and a written field already refused it on every version.
 - **A record a `race` arm hands back reads as that record** (and so does a slot of `all`, which
   replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
   the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4
@@ -81,9 +88,11 @@ guide](docs/language/dancing-wren-migration.md).
 ### Language version 5, Dancing Wren: new
 
 - **A closure is not data** (`MOV_CLOSURE_NOT_DATA`). A closure lives in a variable (`g = label`,
-  a call that answers one, `IF` or `COALESCE` choosing between closures), in a parameter, or is
-  passed as an argument where it is written (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`).
-  Refused: a closure as a list's element, a record or map's value (`{ g: label }`), a field
+  a call that answers one), in a parameter, or is passed as an argument to a parameter that takes
+  one (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, a closure-typed parameter). It is never an
+  operand of a value expression: `IF … THEN a ELSE b END` or `COALESCE(a, b)` choosing between
+  closures, a comparison, interpolation, arithmetic, `NOT`/`AND`/`OR`, a condition, or a built-in's
+  argument that is not its function. Refused: a closure as a list's element, a record or map's value (`{ g: label }`), a field
   written, a spread, a `MAP` whose function returns one, `GROUPBY` or `KEYBY` over closures, a
   `race` or `all` arm that returns one, and a type whose list element or record key is a closure
   (`<() => <text>>[]`, `<{ run: <() => <text>> }>`). There are no methods: a dot on a record or
@@ -91,10 +100,8 @@ guide](docs/language/dancing-wren-migration.md).
   closure is no value at all, and a closure written in a list stays `MOV_EXPR_CLOSURE_POSITION`.
 - **A value that is a closure is called**: a bound closure (`g = () => …` then `g()`), a function
   declared with a name read as a value (`g = made`, `() => made`, `return made`), a closure a call
-  returns, `IF … THEN a ELSE b END` or `COALESCE(a, b)` over closures (their union), or a
-  closure-typed parameter. The call's type is the union of what the closures may return, records
-  included, so the record-in-data rules see a record any of them hands back; it is held to every
-  closure's arity. A value that may not be a closure, or whose type nothing shows, is refused where
+  returns, or a closure-typed parameter. The call's type is what the closure returns, records
+  included, so the record-in-data rules see a record it hands back. A value that may not be a closure, or whose type nothing shows, is refused where
   it is called (`MOV_CALL_NOT_MOVEMENT`). A body that is one call, `(f) => f()`, returns the call:
   a callee that waits parks the run, and one that returns nothing makes the closure return
   nothing. A body that is a combinator, `() => all(f, g)`, returns its answer.
