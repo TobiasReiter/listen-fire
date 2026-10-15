@@ -9,12 +9,14 @@
 // Every method is plain data in and out. A backend is held to one meaning by
 // the contract suite (contract.ts), run against each.
 
-import type { CoreParkReason } from 'engine-contracts';
+import type { CoreParkReason, ParkReason } from 'engine-contracts';
 
 /** One parked leaf of a run, as the backend lists it. */
 export interface LeafRow {
   address: string;
-  reason: CoreParkReason;
+  /** One of the core's reasons, or one a unit owns: a unit's parked leaf
+   *  still holds its run open. */
+  reason: ParkReason;
   /** `parked`, or `resuming` while a resume holds its claim. */
   status: 'parked' | 'resuming';
   /** A timer's wake instant (ISO 8601); null for any other reason. */
@@ -40,14 +42,14 @@ export interface ParkStore {
   }): Promise<void>;
   /** Claim a parked leaf for its resume (`parked` → `resuming`). Null when it
    *  is not parked: another resume took it, or a race cancelled it. */
-  claimLeaf(input: { runId: string; address: string; reason?: CoreParkReason }): Promise<{ state: unknown; reason: CoreParkReason } | null>;
+  claimLeaf(input: { runId: string; address: string; reason?: ParkReason }): Promise<{ state: unknown; reason: ParkReason } | null>;
   /** The claimed leaf is done with: delete it unless its step parked it again
    *  (the row is `parked` again, and stays). Given `fence`, only while the run's
    *  lease is still that token's. */
   finishLeaf(input: { runId: string; address: string; fence?: string }): Promise<void>;
   /** The run's leaves, by address. `parkedOnly` leaves out claimed ones;
    *  `dueBy` keeps only timers due by that instant. */
-  leaves(input: { runId: string; parkedOnly?: boolean; reason?: CoreParkReason; dueBy?: string }): Promise<LeafRow[]>;
+  leaves(input: { runId: string; parkedOnly?: boolean; reason?: ParkReason; dueBy?: string }): Promise<LeafRow[]>;
   /** Delete the named leaves, whatever their status. */
   deleteLeaves(input: { runId: string; addresses: readonly string[] }): Promise<void>;
 }

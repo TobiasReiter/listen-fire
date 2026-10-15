@@ -10,7 +10,7 @@
 // segment for one leaf, and recording what it did.
 
 import type { ParkedScopeState } from 'engine-contracts';
-import type { CoreParkReason } from 'engine-contracts';
+import type { ParkReason } from 'engine-contracts';
 import { withRunLease, type HeldRunLease, type LeaseOptions } from './lease';
 import {
   abandonRun,
@@ -28,7 +28,7 @@ export type StepRequest =
   /** Resume a claimed leaf: re-enter at its statement (an await, a suspension,
    *  an `await until`) or step past it (a slept timer). A completing race
    *  branch defers its race. */
-  | { kind: 'leaf'; address: string; reason: CoreParkReason; state: ParkedScopeState; reenter: boolean; deferRaceSettlement: true }
+  | { kind: 'leaf'; address: string; reason: ParkReason; state: ParkedScopeState; reenter: boolean; deferRaceSettlement: true }
   /** Settle a race whose branches completed in this batch, with all winners.
    *  `state` is a completed branch's (its scope chain covers the race). */
   | { kind: 'race'; frameAddress: string; state: ParkedScopeState };
@@ -60,17 +60,21 @@ export type StepLeaf = (request: StepRequest, settle: { runComplete(): Promise<b
 export interface DrainLeaves {
   addresses: readonly string[];
   /** Claim only leaves parked for this reason. */
-  reason?: CoreParkReason;
+  reason?: ParkReason;
 }
 
 /**
  * Step the chosen leaves of one run, under the lease the caller holds. A
  * cancel requested meanwhile settles the run instead of stepping it. Answers
  * `leaseLost` when the lease went mid-drain (every row is left as it is).
+ *
+ * `until` stops the batch early once it holds after a leaf (a limit resume
+ * stops once a flow paused the run again: the leaves not yet reached stay
+ * paused with it); the races already deferred still settle.
  */
 export async function drainRun(
   host: RunHost,
-  input: { runId: string; leaves: DrainLeaves; lease?: HeldRunLease; step: StepLeaf },
+  input: { runId: string; leaves: DrainLeaves; lease?: HeldRunLease; step: StepLeaf; until?: () => Promise<boolean> },
 ): Promise<'done' | 'leaseLost'> {
   const { store } = host;
   const { runId, lease, step } = input;
@@ -113,9 +117,11 @@ export async function drainRun(
     // Parked again at its own address: the await re-armed without resolving,
     // and its rows were just rewritten as parked. Anything else resolved this
     // leaf: its correlation and its claimed row go.
-    if (outcome.kind === 'parked' && outcome.parkedAddress === address) continue;
-    await store.correlations.drop({ runId, address });
-    await store.parks.finishLeaf({ runId, address, ...fence });
+    if (!(outcome.kind === 'parked' && outcome.parkedAddress === address)) {
+      await store.correlations.drop({ runId, address });
+      await store.parks.finishLeaf({ runId, address, ...fence });
+    }
+    if (input.until !== undefined && (await input.until())) break;
   }
 
   for (const [frameAddress, state] of deferredRaces) {
