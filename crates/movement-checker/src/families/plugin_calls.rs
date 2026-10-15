@@ -17,8 +17,8 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::scope::SymbolId;
-use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, list_of, strip_absent};
-use crate::types::position::{LocalNode, PlaneType, Position, ReturnShape};
+use crate::types::field::{CollectionOrder, HandleKinds, HeldHandle, HeldStep, Ty, describe_field_type, holds_records, list_of, spell_held_steps, strip_absent};
+use crate::types::position::{LocalNode, PlaneType, Position, ReturnShape, describe_position};
 
 /// What a plugin call's arguments are held to: the types it declares, by name.
 pub struct PluginArgTypes<'a> {
@@ -199,7 +199,7 @@ impl Checker<'_> {
                         let shape = self.check_call(call, scope);
                         let record = shape.plane.pos.as_deref().cloned().or_else(|| crate::types::field::record_in(shape.plane.field.as_ref()).flatten());
                         let value = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
-                        self.check_plugin_arg_value(callee, declared, name, record.as_ref(), value.as_ref(), call.span);
+                        self.check_plugin_arg_value(PluginArg { callee, declared, name, record: record.as_ref(), value: value.as_ref(), held: None, may_hold: None, span: call.span });
                     }
                 }
             }
@@ -207,7 +207,7 @@ impl Checker<'_> {
                 if is_structured_or_open(declared) {
                     let synthesised = self.check_node_literal(node, scope);
                     let value = synthesised.clone().map(|p| Ty::record(Some(p)));
-                    self.check_plugin_arg_value(callee, declared, name, synthesised.as_ref(), value.as_ref(), node.span);
+                    self.check_plugin_arg_value(PluginArg { callee, declared, name, record: synthesised.as_ref(), value: value.as_ref(), held: None, may_hold: None, span: node.span });
                     return;
                 }
                 self.refuse_plugin_record_in_place(callee, declared, arg);
@@ -217,15 +217,39 @@ impl Checker<'_> {
     }
 
     /// `checkPluginArgValue`: a plugin argument's value against its declared type.
-    pub fn check_plugin_arg_value(&mut self, callee: &str, declared: Option<&SchemaFieldType>, name: &str, record: Option<&Position>, value: Option<&Ty>, span: Span) {
-        // TODO(records): where the plugin takes structured data (or declares
-        // nothing), it is handed the record's fields — a record or file held
-        // inside the value, and a record whose fields are read from its system
-        // one at a time, are refused (`handleInPluginArgMessage`,
-        // `recordAsFieldsProblem`); and a declared value type refuses a file
-        // held below the whole value. Both need the held-handle walk
-        // (`HeldHandle`) the type core does not carry.
-        let Some(declared) = declared.filter(|d| !is_json(d)) else { return };
+    pub fn check_plugin_arg_value(&mut self, arg: PluginArg) {
+        let PluginArg { callee, declared, name, record, value, held, may_hold, span } = arg;
+        // Where a plugin takes a record at all (structured data, or no
+        // declared type), it takes it as the WHOLE argument and is handed its
+        // fields. A record anywhere inside that value reaches the plugin as
+        // the engine's own description of it; so does a file anywhere in it.
+        if is_structured_or_open(declared) {
+            if let Some(held) = held.as_ref().filter(|h| !h.steps.is_empty() || h.is_file()) {
+                self.report(codes::CALL_ARG_TYPE, handle_in_plugin_arg_message(callee, name, held), span);
+                return;
+            }
+            // The whole argument a record is handed its fields, all at once:
+            // none may be a file, and a record whose fields are read from its
+            // system one at a time has none to hand.
+            let whole = held.or_else(|| record.map(|r| HeldHandle { steps: Vec::new(), handle: Ty::record(Some(r.clone())), may: false }));
+            let Some(problem) = whole.and_then(|whole| self.record_as_fields_problem(whole)) else { return };
+            if problem.is_file() {
+                self.report(codes::CALL_ARG_TYPE, handle_in_plugin_arg_message(callee, name, &problem), span);
+                return;
+            }
+            let Ty::Record(Some(position)) = strip_absent(&problem.handle) else { return };
+            self.report(
+                codes::CALL_ARG_TYPE,
+                format!(
+                    "'{callee}' takes every field of the record it is given as '{name}', and this {} {}, whose fields are read from its system one at a time. Pass a dict of the fields it needs ('{name}: {{ name: r.name, … }}')",
+                    if problem.may { "may be" } else { "is" },
+                    describe_position(position)
+                ),
+                span,
+            );
+            return;
+        }
+        let Some(declared) = declared else { return };
         if record.is_some() || value.is_some_and(|v| holds_records(Some(strip_absent(v)))) {
             self.report(
                 codes::CALL_ARG_TYPE,
@@ -235,6 +259,41 @@ impl Checker<'_> {
                 ),
                 span,
             );
+            return;
+        }
+        // A declared value type takes what it holds and nothing else of the
+        // engine's: a text argument no file and no record, at any depth or in
+        // any arm; a file argument a file as the whole value, never one
+        // inside a map or a list.
+        let declared_ty = Ty::from_schema(declared);
+        let misplaced = held.or_else(|| if matches!(strip_absent(&declared_ty), Ty::File) { file_below_whole(may_hold.or(value)) } else { None });
+        let Some(misplaced) = misplaced else { return };
+        self.report(codes::CALL_ARG_TYPE, handle_in_typed_plugin_arg_message(callee, name, &declared_ty, &misplaced), span);
+    }
+
+    /// `recordAsFieldsProblem`: a record handed over as its fields — a file
+    /// among them, or a record whose fields its system reads one at a time
+    /// (the problem); `None` where the program holds them in hand.
+    fn record_as_fields_problem(&self, held: HeldHandle) -> Option<HeldHandle> {
+        let Ty::Record(Some(position)) = strip_absent(&held.handle) else { return None };
+        let walk = crate::types::field::HeldWalk { steps: held.steps.clone(), accepts_record: true, accepts_file: false };
+        if let Some(file_field) = crate::types::field::handle_spread_of(Some(&held.handle), &walk) {
+            return Some(HeldHandle { may: file_field.may || held.may, ..file_field });
+        }
+        if self.holds_fields_in_hand(position) {
+            return None;
+        }
+        Some(held)
+    }
+
+    /// `holdsFieldsInHand` with the declared shapes' graphs told apart from a
+    /// system's: a declared node's fields are the program's own.
+    pub fn holds_fields_in_hand(&self, position: &Position) -> bool {
+        match position {
+            Position::Position(p) => p.instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol)),
+            Position::Union(u) => u.instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol)),
+            Position::MaybeEmpty(of) => self.holds_fields_in_hand(of),
+            _ => crate::types::infer::holds_fields_in_hand(position),
         }
     }
 
@@ -283,6 +342,86 @@ impl Checker<'_> {
 
 fn is_json(declared: &SchemaFieldType) -> bool {
     matches!(Ty::from_schema(declared), Ty::Json)
+}
+
+/// A plugin argument's value, as `checkPluginArgValue` judges it.
+pub struct PluginArg<'a> {
+    pub callee: &'a str,
+    pub declared: Option<&'a SchemaFieldType>,
+    pub name: &'a str,
+    pub record: Option<&'a Position>,
+    pub value: Option<&'a Ty>,
+    /// The record or file the value holds that the declared type does not take.
+    pub held: Option<HeldHandle>,
+    /// What the value may turn out to be, arm by arm.
+    pub may_hold: Option<&'a Ty>,
+    pub span: Span,
+}
+
+/// `pluginArgSlotOptions`: for a declared value type, the engine objects that
+/// type takes are passed over; structured data (or no declared type) finds
+/// every object, the record handed whole included.
+pub fn plugin_arg_held_takes(declared: Option<&SchemaFieldType>) -> HandleKinds {
+    match declared.filter(|d| !is_json(d)) {
+        None => HandleKinds::default(),
+        Some(declared) => HandleKinds::taken_by(Some(&Ty::from_schema(declared))),
+    }
+}
+
+/// `handleInPluginArgMessage`.
+fn handle_in_plugin_arg_message(callee: &str, name: &str, held: &HeldHandle) -> String {
+    let said = format!(
+        "'{callee}' takes structured data for '{name}', and '{name}{}' {} {}",
+        spell_held_steps(&held.steps),
+        if held.may { "may be" } else { "is" },
+        describe_field_type(&held.handle)
+    );
+    if held.is_file() {
+        let at = if held.steps.is_empty() { repair_at(Some(name), None, "READ(f)") } else { repair_at(None, Some(held), "READ(f)") };
+        return format!("{said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ({at}).");
+    }
+    format!(
+        "{said} — a record, not a value. A record goes to a plugin only as the whole argument ('{name}: r', which hands it the record's fields); inside a value, write a field off it ({}).",
+        repair_at(None, Some(held), "r.`Name`")
+    )
+}
+
+/// `handleInTypedPluginArgMessage`: a declared value type's argument holding
+/// a record or a file the type does not take, where it sits.
+fn handle_in_typed_plugin_arg_message(callee: &str, name: &str, declared: &Ty, held: &HeldHandle) -> String {
+    let direct = held.steps.is_empty();
+    let where_ = if direct { "this".to_string() } else { format!("'{name}{}'", spell_held_steps(&held.steps)) };
+    let said = format!("'{callee}' takes {} for '{name}', and {where_} {} {}", describe_field_type(declared), if held.may { "may be" } else { "is" }, describe_field_type(&held.handle));
+    let at = |repair: &str| if direct { repair_at(Some(name), None, repair) } else { repair_at(None, Some(held), repair) };
+    if held.is_file() {
+        let as_whole = if matches!(strip_absent(declared), Ty::File) { format!("hand it over as the whole argument ('{name}: f'), or ") } else { String::new() };
+        return format!("{said} — a file, not a value. A file goes to a plugin only as an argument it takes a file for; {as_whole}put its text in its place ({}).", at("READ(f)"));
+    }
+    format!("{said} — a record, not a value. Pass one of its fields ({}).", at("r.`Name`"))
+}
+
+/// `repairAt`: a repair, placed under the key the engine object sat at where
+/// there is one (or under the argument's own name).
+fn repair_at(name: Option<&str>, held: Option<&HeldHandle>, repair: &str) -> String {
+    let place = name.map(str::to_string).or_else(|| match held.and_then(|h| h.steps.last()) {
+        Some(HeldStep::Key(key)) => Some(key.clone()),
+        _ => None,
+    });
+    match place {
+        Some(place) => format!("'{place}: {repair}'"),
+        None => format!("'{repair}'"),
+    }
+}
+
+/// `fileBelowWhole`: a file somewhere below the value — under a key, as a
+/// member — in any arm; a file that is the whole value (or one arm) is not one.
+fn file_below_whole(ty: Option<&Ty>) -> Option<HeldHandle> {
+    let ty = ty?;
+    match strip_absent(ty) {
+        Ty::Union(members) => members.iter().find_map(|member| file_below_whole(Some(member))).map(|held| HeldHandle { may: true, ..held }),
+        Ty::File => None,
+        _ => crate::types::field::handle_within(Some(ty), &HandleKinds { record: true, file: false }.walk()),
+    }
 }
 
 /// Structured data, or no declared type: the plugin takes a record's fields.

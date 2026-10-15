@@ -698,6 +698,190 @@
     }
    },
    "plugins": {}
+  },
+  "plug": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "crm_cred": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {}
+        },
+        "note": {
+         "properties": {
+          "title": "text",
+          "company": "json",
+          "upload": "file"
+         },
+         "edges": {}
+        },
+        "doc": {
+         "properties": {
+          "label": "text",
+          "scan": "file"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        },
+        "notes": {
+         "target": "note"
+        },
+        "docs": {
+         "target": "doc"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        },
+        "note": {
+         "fields": {
+          "title": "text",
+          "company": "json",
+          "upload": "file"
+         },
+         "resultShape": {
+          "externalId": "text"
+         }
+        },
+        "doc": {
+         "fields": {
+          "label": "text",
+          "scan": "file"
+         },
+         "resultShape": {
+          "externalId": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "crm_cred": {
+     "adapters": [
+      "attio"
+     ]
+    }
+   },
+   "plugins": {
+    "summarise": {
+     "args": [
+      "data"
+     ],
+     "argTypes": {
+      "data": "json"
+     },
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "relay": {
+     "args": [
+      "data"
+     ],
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "tag": {
+     "args": [
+      "label"
+     ],
+     "argTypes": {
+      "label": "text"
+     },
+     "requiredArgs": [
+      "label"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "ocr": {
+     "args": [
+      "doc"
+     ],
+     "argTypes": {
+      "doc": "file"
+     },
+     "requiredArgs": [
+      "doc"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "score": {
+     "args": [
+      "n"
+     ],
+     "argTypes": {
+      "n": "number"
+     },
+     "requiredArgs": [
+      "n"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "number"
+     },
+     "priced": false
+    }
+   }
   }
  },
  "cases": [
@@ -1298,6 +1482,467 @@
    "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction pick() {\n  return label\n}\nmovement m() {\n  f = made\n  y = f()\n  write crm-[:notes]-> { title: y }\n  h = pick()\n  z = h()\n  write crm-[:notes]-> { title: z }\n}",
    "expected": [
     "MOV_WRITE_FIELD_TYPE 20:33-20:34 'title' on crm.note is text, and this is a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "member fit: MAP closure number (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: MAP closure number (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: MAP named (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], inc)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 'inc' expects number for 'n' (argument 1), but each member 'MAP' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: MAP named (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], inc)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 'inc' expects number for 'n' (argument 1), but each member 'MAP' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: FILTER (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = FILTER([\"a\"], (n: <number>) => n > 1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'FILTER' expects number for 'n' (argument 1), but each member 'FILTER' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: FILTER (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = FILTER([\"a\"], (n: <number>) => n > 1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'FILTER' expects number for 'n' (argument 1), but each member 'FILTER' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: GROUPBY (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = GROUPBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:15-9:20 the function for 'GROUPBY' expects number for 'n' (argument 1), but each member 'GROUPBY' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: GROUPBY (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = GROUPBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:15-9:20 the function for 'GROUPBY' expects number for 'n' (argument 1), but each member 'GROUPBY' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: KEYBY (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = KEYBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:13-9:18 the function for 'KEYBY' expects number for 'n' (argument 1), but each member 'KEYBY' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: KEYBY (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = KEYBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:13-9:18 the function for 'KEYBY' expects number for 'n' (argument 1), but each member 'KEYBY' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE start (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([1, 2], \"s\", (acc: <number>, n: <number>) => acc + n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:22-9:25 the function for 'REDUCE' expects number for 'acc' (argument 1), but its starting value 'REDUCE' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE start (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([1, 2], \"s\", (acc: <number>, n: <number>) => acc + n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:22-9:25 the function for 'REDUCE' expects number for 'acc' (argument 1), but its starting value 'REDUCE' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE member (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([\"a\"], 0, (acc: <number>, n: <number>) => acc + n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'REDUCE' expects number for 'n' (argument 2), but each member 'REDUCE' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE member (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([\"a\"], 0, (acc: <number>, n: <number>) => acc + n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'REDUCE' expects number for 'n' (argument 2), but each member 'REDUCE' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: record member (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([co], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:15 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is a crm.company handle"
+   ]
+  },
+  {
+   "name": "member fit: record member (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([co], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:15 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is a crm.company handle. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: maybe record member (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([COALESCE(co, 1)], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 9:11-9:28 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value"
+   ]
+  },
+  {
+   "name": "member fit: maybe record member (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([COALESCE(co, 1)], (n: <number>) => n)\n}",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 9:11-9:28 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: hop records to text closure (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  up = (t: <text>) => UPPER(t)\n  x = MAP(crm-[:companies]->, up)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:11-10:29 'up' expects text for 't' (argument 1), but each member 'MAP' hands it is crm.company"
+   ]
+  },
+  {
+   "name": "member fit: hop records to text closure (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  up = (t: <text>) => UPPER(t)\n  x = MAP(crm-[:companies]->, up)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:11-10:29 'up' expects text for 't' (argument 1), but each member 'MAP' hands it is crm.company. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: FILTER hop (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  long = (t: <text>) => LENGTH(t) > 3\n  x = FILTER(crm-[:companies]->, long)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:14-10:32 'long' expects text for 't' (argument 1), but each member 'FILTER' hands it is crm.company"
+   ]
+  },
+  {
+   "name": "member fit: FILTER hop (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  long = (t: <text>) => LENGTH(t) > 3\n  x = FILTER(crm-[:companies]->, long)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:14-10:32 'long' expects text for 't' (argument 1), but each member 'FILTER' hands it is crm.company. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE record start (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  add = (acc: <text>, n: <text>) => CONCAT(acc, n)\n  x = REDUCE([\"a\"], co, add)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:21-10:23 'add' expects text for 'acc' (argument 1), but its starting value 'REDUCE' hands it is a crm.company handle"
+   ]
+  },
+  {
+   "name": "member fit: REDUCE record start (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  add = (acc: <text>, n: <text>) => CONCAT(acc, n)\n  x = REDUCE([\"a\"], co, add)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 10:21-10:23 'add' expects text for 'acc' (argument 1), but its starting value 'REDUCE' hands it is a crm.company handle. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: MAP adding (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (t: <number>) => t + 1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 't' (argument 1), but each member 'MAP' hands it is text"
+   ]
+  },
+  {
+   "name": "member fit: MAP adding (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (t: <number>) => t + 1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 't' (argument 1), but each member 'MAP' hands it is text. Before \"Dancing Wren\" (5) the function is handed the member as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "member fit: fits (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([1, 2], (n: <number>) => n)\n}",
+   "expected": []
+  },
+  {
+   "name": "member fit: untyped (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (n) => n)\n}",
+   "expected": []
+  },
+  {
+   "name": "member fit: REDUCE fits (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([1, 2], 0, (acc: <number>, n: <number>) => acc + n)\n}",
+   "expected": []
+  },
+  {
+   "name": "member fit: field off record (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([co], (c) => c.name)\n}",
+   "expected": []
+  },
+  {
+   "name": "member fit: untyped over maybe record (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([COALESCE(co, 1)], (n) => n)\n}",
+   "expected": []
+  },
+  {
+   "name": "plugin arg: record in MULTI to structured (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: MULTI(org))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:33 'summarise' takes structured data for 'data', and 'data[…]' is a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: record under a key (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { a: COALESCE(org, \"x\") })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:48 'summarise' takes structured data for 'data', and 'data.a' may be a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('a: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: file in COALESCE to open (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = relay(data: COALESCE(f, \"x\"))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:19-9:35 'relay' takes structured data for 'data', and 'data' may be file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('data: READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: record whole of COALESCE (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: COALESCE(org, org))\n}",
+   "expected": []
+  },
+  {
+   "name": "plugin arg: system record whole (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  c = FIRST(crm-[:companies]->)\n  s = summarise(data: c)\n}",
+   "expected": [
+    "MOV_FOLD_NEEDS_ORDER 9:7-9:32 FIRST takes the first of a sequence, and 'companies' comes back in no particular order — so there is no first. If you mean the one that matched, write ONLY(…) — it answers that one and fails the run if there turns out to be more than one. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_CALL_ARG_TYPE 10:23-10:24 'summarise' takes every field of the record it is given as 'data', and this is crm.company (which may be empty), whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')"
+   ]
+  },
+  {
+   "name": "plugin arg: file under a key to text (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: { a: f })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:18-9:26 'tag' takes text for 'label', and 'label.a' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; put its text in its place ('a: READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: file in a list to file (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: [f])\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:16-9:19 'ocr' takes file for 'doc', and 'doc[0]' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; hand it over as the whole argument ('doc: f'), or put its text in its place ('READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: file whole to file (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: f)\n}",
+   "expected": []
+  },
+  {
+   "name": "plugin arg: maybe record to number (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = score(n: COALESCE(org, 1))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:16-9:32 'score' takes number for 'n', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('n: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: record in IF to text (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: IF 1 > 0 THEN org ELSE \"x\" END)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:18-9:48 'tag' takes text for 'label', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('label: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: node literal with file to structured (v3)",
+   "snapshot": "plug",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { k: \"x\", up: f })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:40 'summarise' takes structured data for 'data', and 'data.up' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('up: READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: record in MULTI to structured (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: MULTI(org))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:33 'summarise' takes structured data for 'data', and 'data[…]' is a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: record under a key (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { a: COALESCE(org, \"x\") })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:48 'summarise' takes structured data for 'data', and 'data.a' may be a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('a: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: file in COALESCE to open (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = relay(data: COALESCE(f, \"x\"))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:19-9:35 'relay' takes structured data for 'data', and 'data' may be file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('data: READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: record whole of COALESCE (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: COALESCE(org, org))\n}",
+   "expected": []
+  },
+  {
+   "name": "plugin arg: system record whole (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  c = FIRST(crm-[:companies]->)\n  s = summarise(data: c)\n}",
+   "expected": [
+    "MOV_FOLD_NEEDS_ORDER 9:7-9:32 FIRST takes the first of a sequence, and 'companies' comes back in no particular order — so there is no first. If you mean the one that matched, write ONLY(…) — it answers that one and fails the run if there turns out to be more than one. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_CALL_ARG_TYPE 10:23-10:24 'summarise' takes every field of the record it is given as 'data', and this is crm.company (which may be empty), whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')"
+   ]
+  },
+  {
+   "name": "plugin arg: file under a key to text (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: { a: f })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:18-9:26 'tag' takes text for 'label', and 'label.a' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; put its text in its place ('a: READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: file in a list to file (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: [f])\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:16-9:19 'ocr' takes file for 'doc', and 'doc[0]' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; hand it over as the whole argument ('doc: f'), or put its text in its place ('READ(f)')."
+   ]
+  },
+  {
+   "name": "plugin arg: file whole to file (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: f)\n}",
+   "expected": []
+  },
+  {
+   "name": "plugin arg: maybe record to number (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = score(n: COALESCE(org, 1))\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:16-9:32 'score' takes number for 'n', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('n: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: record in IF to text (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: IF 1 > 0 THEN org ELSE \"x\" END)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:18-9:48 'tag' takes text for 'label', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('label: r.`Name`')."
+   ]
+  },
+  {
+   "name": "plugin arg: node literal with file to structured (v5)",
+   "snapshot": "plug",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { k: \"x\", up: f })\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 9:23-9:40 'summarise' takes structured data for 'data', and 'data.up' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('up: READ(f)')."
    ]
   }
  ]

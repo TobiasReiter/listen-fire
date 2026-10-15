@@ -617,6 +617,26 @@ pub struct HeldWalk {
     pub accepts_file: bool,
 }
 
+/// `HandleKind`s a target takes (`ReadonlySet<HandleKind>`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HandleKinds {
+    pub record: bool,
+    pub file: bool,
+}
+
+impl HandleKinds {
+    /// `handleKindsTaken(target)`.
+    pub fn taken_by(target: Option<&Ty>) -> HandleKinds {
+        let (record, file) = target.map(kinds_held_by).unwrap_or((false, false));
+        HandleKinds { record, file }
+    }
+
+    /// `heldWalk(kinds)`.
+    pub fn walk(self) -> HeldWalk {
+        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file }
+    }
+}
+
 impl HeldWalk {
     pub fn into(&self, step: HeldStep) -> HeldWalk {
         let mut next = self.clone();

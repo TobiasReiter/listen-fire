@@ -79,6 +79,10 @@ pub struct SlotOptions<'f> {
     pub write_field: bool,
     /// A `through` stage's argument: the fields it may (and may not yet) read.
     pub fields: Option<&'f crate::families::extraction::ThroughFields>,
+    /// The engine objects (records, files) the slot's target takes
+    /// (`heldTakes`): the first one held inside the value that the walk does
+    /// not accept is found (`SlotTyped::held`). `None`: nobody asks.
+    pub held_takes: Option<crate::types::field::HandleKinds>,
 }
 
 /// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
@@ -89,6 +93,9 @@ pub struct SlotTyped {
     pub expr: Option<movement_parser::lowering::expression::Expression>,
     pub ty: Option<Ty>,
     pub may_hold: Option<Ty>,
+    /// The record or file the value holds that the slot's target does not
+    /// take, where `SlotOptions::held_takes` asked.
+    pub held: Option<crate::types::field::HeldHandle>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -451,12 +458,13 @@ impl<'c> Checker<'c> {
     /// its nested calls hoisted out, is parsed, every name it reads resolves,
     /// and it is typed, what the typing reports surfacing here.
     pub fn check_expr_slot_with(&mut self, slot: &ExprSlot, scope: ScopeId, options: SlotOptions) -> SlotTyped {
-        let SlotOptions { holds_value, write_field, fields } = options;
+        let SlotOptions { holds_value, write_field, fields, held_takes } = options;
+        let held_takes = held_takes.map(crate::types::field::HandleKinds::walk);
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if is_literal_word(trimmed) {
                 let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
-                return SlotTyped { expr: None, ty, may_hold: None };
+                return SlotTyped { expr: None, ty, may_hold: None, held: None };
             }
             self.resolve_name_with_fields(trimmed, slot.span, scope, fields);
             self.type_function_values([trimmed], scope);
@@ -464,9 +472,16 @@ impl<'c> Checker<'c> {
                 let env = self.typing_env(scope);
                 Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
             };
-            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
             let may_hold = self.typing_env(scope).resolve_may_hold(trimmed);
-            return SlotTyped { expr: None, ty, may_hold };
+            // A name on the record plane with no value type (an instance) is
+            // still the engine object it names.
+            let held = held_takes.as_ref().and_then(|walk| {
+                let named = if bound.is_none() { self.bare_slot_position_type(slot, scope).map(|p| Ty::record(Some(p))) } else { None };
+                let may_hold = may_hold.clone().or(named);
+                crate::types::field::handle_within(bound.as_ref(), walk).or_else(|| crate::types::field::handle_within(may_hold.as_ref(), walk))
+            });
+            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
+            return SlotTyped { expr: None, ty, may_hold, held };
         }
         if let Some(hoisted) = self.hoist_nested_calls(slot, scope) {
             return self.check_expr_slot_with(&hoisted, scope, options);
@@ -487,16 +502,17 @@ impl<'c> Checker<'c> {
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
         self.type_function_values(names.distinct_refs(), scope);
-        let (ty, may_hold, diagnostics, watchable) = {
+        let (ty, may_hold, held, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            (ty, may_hold, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
+            let held = held_takes.as_ref().and_then(|walk| typing.handle_held_by(&parsed, walk).or_else(|| crate::types::field::handle_within(ty.as_ref(), walk)));
+            (ty, may_hold, held, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
         };
         self.effects.note_watchable_reads(&watchable);
         self.push_typed(diagnostics, scope);
-        SlotTyped { expr: Some(parsed), ty, may_hold }
+        SlotTyped { expr: Some(parsed), ty, may_hold, held }
     }
 
     /// `readHeldValue`: a bare name's value read — a tuple as the list it

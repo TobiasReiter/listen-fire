@@ -234,9 +234,19 @@ impl Checker<'_> {
             self.report_plugin_bad_arg(&plugin.plugin, spec.as_ref(), &arg.name, arg.value.span, false);
             // Held to what the plugin takes exactly as a plain call's argument is.
             let declared = spec.as_ref().and_then(|s| s.arg_types.as_ref()).and_then(|t| t.0.get(&arg.name));
-            let typed = self.check_expr_slot_with(&arg.value, scope, SlotOptions { fields: Some(fields), ..SlotOptions::default() });
+            let held_takes = Some(crate::families::plugin_calls::plugin_arg_held_takes(declared));
+            let typed = self.check_expr_slot_with(&arg.value, scope, SlotOptions { fields: Some(fields), held_takes, ..SlotOptions::default() });
             let record = self.bare_slot_position_type(&arg.value, scope).or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
-            self.check_plugin_arg_value(&plugin.plugin, declared, &arg.name, record.as_ref(), typed.ty.as_ref(), arg.value.span);
+            self.check_plugin_arg_value(crate::families::plugin_calls::PluginArg {
+                callee: &plugin.plugin,
+                declared,
+                name: &arg.name,
+                record: record.as_ref(),
+                value: typed.ty.as_ref(),
+                held: typed.held,
+                may_hold: typed.may_hold.as_ref(),
+                span: arg.value.span,
+            });
         }
     }
 }

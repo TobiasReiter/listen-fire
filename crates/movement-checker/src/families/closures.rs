@@ -30,7 +30,7 @@ use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
 use crate::types::field::{CollectionOrder, Ty, collection_order_of, list_of};
-use crate::types::position::{PlaneType, ReturnShape};
+use crate::types::position::{ClosureParam, PlaneType, ReturnShape};
 
 /// Whether a body hands a value back: a `return` at its own level or in an
 /// `if` arm (a block, a closure or a movement inside it returns for itself).
@@ -67,6 +67,15 @@ fn shift(loc: Loc, by: isize) -> Loc {
 
 fn edit(start: Loc, end: Loc, text: &str) -> serde_json::Value {
     json!({ "span": Span { start, end }, "text": text })
+}
+
+/// What a collection op hands its function (`CollectionMembers`): each
+/// member, REDUCE's starting value, and what each may hold beyond its type.
+struct Members {
+    element: Option<Ty>,
+    element_may_hold: Option<Ty>,
+    carried: Option<Ty>,
+    carried_may_hold: Option<Ty>,
 }
 
 /// A combinator's answer (`checkCombinator`'s value): its type, what its
@@ -467,7 +476,13 @@ impl Checker<'_> {
                 op.source.span,
             );
         }
-        let carried = init.and_then(|i| i.ty);
+        let members = Members {
+            element: element.clone(),
+            element_may_hold: source.may_hold.as_ref().and_then(crate::types::field::collection_element_of),
+            carried: init.as_ref().and_then(|i| i.ty.clone()),
+            carried_may_hold: init.as_ref().and_then(|i| i.may_hold.clone()),
+        };
+        let carried = members.carried.clone();
         let arity = if op.op == CollectionOp::Reduce { 2 } else { 1 };
         // The function is called once per member, so a parameter it leaves
         // untyped takes the member's type (REDUCE's first, the carried value's).
@@ -490,12 +505,25 @@ impl Checker<'_> {
                         *span,
                     );
                 }
+                // A parameter left untyped takes the member's type.
+                let bound: Vec<(ClosureParam, bool)> = closure
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, param)| match &param.type_ {
+                        Some(written) => (ClosureParam { name: param.name.clone(), plane: self.plane_type_of(written, scope) }, true),
+                        None => (ClosureParam { name: param.name.clone(), plane: supplied.get(index).cloned().unwrap_or_default() }, false),
+                    })
+                    .collect();
+                self.check_members_fit_params(op, spelling, &format!("the function for '{spelling}'"), &bound, &members);
                 self.absorb_suspend(suspends);
                 let returns = Some(!returned.returns.is_empty() || closure.return_type.is_some());
                 (returns, self.closure_returns(closure, returned.value, scope))
             }
             ArmExpression::Ref { name, span } => {
                 let returns = self.check_named_arm(name, *span, spelling, scope, arity);
+                let named: Vec<(ClosureParam, bool)> = self.named_function_params(name, scope).into_iter().map(|param| (param, true)).collect();
+                self.check_members_fit_params(op, spelling, &format!("'{name}'"), &named, &members);
                 (returns, self.named_function_return(name, scope))
             }
         };
@@ -535,6 +563,84 @@ impl Checker<'_> {
             _ => None,
         };
         ReturnShape { returns: true, plane: as_value(value), may_hold }
+    }
+
+    /// The parameters of a function named as an op's function, with the
+    /// types they are written with.
+    fn named_function_params(&self, written: &str, scope: ScopeId) -> Vec<ClosureParam> {
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return Vec::new() };
+        let symbol = self.scopes.symbol(id);
+        match &symbol.types.pos {
+            Some(crate::types::position::Position::Closure(closure)) => closure.params.clone(),
+            _ if symbol.kind == SymbolKind::Movement => self.movement_declared_params(id).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `checkMembersFitParams`: the members a collection op binds to its
+    /// function's parameters, against the types those parameters are written
+    /// with — the call-site fit, where the op, not the author, makes the
+    /// call (TypeScript refuses `["a"].map((n: number) => n)`). REDUCE's
+    /// starting value is held to its accumulator, each member to the
+    /// parameter after it. Refused from version 5; from 3 the op ran, handing
+    /// the function the member as it was, so an older pin is warned.
+    fn check_members_fit_params(&mut self, op: &CollectionOpExpression, spelling: &str, callee: &str, params: &[(ClosureParam, bool)], members: &Members) {
+        if before(self.version, 3) {
+            return;
+        }
+        let each = (members.element.as_ref(), members.element_may_hold.as_ref(), "each member", op.source.span);
+        let given = if op.op == CollectionOp::Reduce {
+            vec![(members.carried.as_ref(), members.carried_may_hold.as_ref(), "its starting value", op.init.as_ref().map_or(op.span, |i| i.span)), each]
+        } else {
+            vec![each]
+        };
+        self.as_upgrade_warnings_before_5("the function is handed the member as it is", |this| {
+            for (index, (ty, may_hold, argument, span)) in given.into_iter().enumerate() {
+                let Some((param, written)) = params.get(index) else { continue };
+                let fit = crate::families::arg_fit::ArgFit {
+                    callee,
+                    param: Some(param),
+                    index,
+                    positional: true,
+                    plugin: None,
+                    caller: Some(crate::families::arg_fit::ArgCaller { callee: callee.to_string(), argument: format!("{argument} '{spelling}' hands it") }),
+                };
+                let record = crate::types::field::record_in(ty).flatten();
+                if let Some(param_ty) = &param.plane.field {
+                    if record.is_none() {
+                        this.refuse_maybe_record_for_value(&fit, param_ty, ty, may_hold, span, "");
+                    }
+                    // A parameter that took the member's own type fits it.
+                    if *written {
+                        this.check_value_arg_fit_at(&fit, param_ty, ty, span);
+                    }
+                    continue;
+                }
+                if let Some(param_pos) = param.plane.pos.as_deref().filter(|_| *written) {
+                    this.check_call_arg_fit_at(&fit, record.as_ref(), param_pos, span);
+                }
+            }
+        });
+    }
+
+    /// `asUpgradeWarningsBefore5`: checks whose refusals are new under
+    /// version 5 — before it, each error they report is an upgrade warning
+    /// saying what the older version did (`then`).
+    pub fn as_upgrade_warnings_before_5(&mut self, then: &str, run: impl FnOnce(&mut Self)) {
+        let from = self.diagnostics.len();
+        run(self);
+        if since(self.version, 5) {
+            return;
+        }
+        for diagnostic in &mut self.diagnostics[from..] {
+            if diagnostic.severity.is_some() {
+                continue;
+            }
+            diagnostic.message = format!("{}. Before {} {then}; from it, this is refused", diagnostic.message, crate::version::describe(5));
+            diagnostic.severity = Some(crate::diagnostic::Severity::Warning);
+            diagnostic.upgrade = Some(true);
+        }
     }
 
     /// What a function named as an op's function hands back.

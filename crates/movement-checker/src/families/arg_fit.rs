@@ -271,14 +271,24 @@ impl Checker<'_> {
 
     /// `checkCallArg`'s expression case.
     fn check_expr_arg(&mut self, fit: &ArgFit, name: Option<&str>, expr: &ExprSlot, scope: ScopeId) {
-        let typed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions::default());
+        let plugin_declared = fit.plugin.and_then(|plugin| name.and_then(|name| plugin.declared.and_then(|d| d.0.get(name))));
+        let held_takes = fit.plugin.map(|_| crate::families::plugin_calls::plugin_arg_held_takes(plugin_declared));
+        let typed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions { held_takes, ..crate::checker::SlotOptions::default() });
         let arg_type = self.bare_slot_position_type(expr, scope);
         // A plugin's named argument: a value against what the plugin takes
         // (a positional one is refused where the call is checked).
-        if let (Some(plugin), Some(name)) = (fit.plugin, name) {
-            let declared = plugin.declared.and_then(|d| d.0.get(name));
+        if let (Some(_), Some(name)) = (fit.plugin, name) {
             let record = arg_type.clone().or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
-            self.check_plugin_arg_value(fit.callee, declared, name, record.as_ref(), typed.ty.as_ref(), expr.span);
+            self.check_plugin_arg_value(crate::families::plugin_calls::PluginArg {
+                callee: fit.callee,
+                declared: plugin_declared,
+                name,
+                record: record.as_ref(),
+                value: typed.ty.as_ref(),
+                held: typed.held,
+                may_hold: typed.may_hold.as_ref(),
+                span: expr.span,
+            });
             return;
         }
         if let Some(param) = fit.field_type() {
@@ -400,11 +410,22 @@ impl Checker<'_> {
         );
     }
 
+    /// `checkValueArgFit` for a value no author wrote (a member an op hands its function).
+    pub(crate) fn check_value_arg_fit_at(&mut self, fit: &ArgFit, param_ty: &Ty, arg_ty: Option<&Ty>, span: Span) {
+        self.check_value_arg_fit(fit, param_ty, arg_ty, ValueArg::at(span));
+    }
+
+    /// `checkCallArgFit` for a record no author wrote.
+    pub(crate) fn check_call_arg_fit_at(&mut self, fit: &ArgFit, arg: Option<&Position>, param: &Position, span: Span) {
+        self.check_call_arg_fit(fit, arg, Some(param), span);
+    }
+
     /// `checkValueArgFit`: a value argument against a value parameter.
     fn check_value_arg_fit(&mut self, fit: &ArgFit, param_ty: &Ty, arg_ty: Option<&Ty>, options: ValueArg) {
         let Some(arg_ty) = arg_ty else { return };
         let span = options.span;
-        let expected = format!("'{}' expects {}{}", fit.callee, describe_field_type(param_ty), describe_arg_place(fit));
+        let expected = format!("{} expects {}{}", callee_words(fit), describe_field_type(param_ty), describe_arg_place(fit));
+        let argument = fit.caller.as_ref().map_or("this argument", |caller| caller.argument.as_str());
         if let Some(literal) = string_literal_of(options.parsed)
             && self.report_enum_literal(literal, strip_absent(param_ty), span)
         {
@@ -413,7 +434,7 @@ impl Checker<'_> {
         if is_maybe_absent(Some(arg_ty)) && !is_maybe_absent(Some(param_ty)) {
             self.report(
                 codes::CALL_ARG_TYPE,
-                format!("{expected}, but this argument may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{{ key?: … }}')"),
+                format!("{expected}, but {argument} may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{{ key?: … }}')"),
                 span,
             );
             return;
@@ -432,8 +453,8 @@ impl Checker<'_> {
             _ => None,
         };
         let message = match &as_list {
-            Some((_, text)) => format!("{expected}, but this argument is {} — pass it as a list: '{text}'", describe_field_type(arg)),
-            None => format!("{expected}, but this argument is {}", describe_field_type(arg)),
+            Some((_, text)) => format!("{expected}, but {argument} is {} — pass it as a list: '{text}'", describe_field_type(arg)),
+            None => format!("{expected}, but {argument} is {}", describe_field_type(arg)),
         };
         let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::CALL_ARG_TYPE, message, span);
         if let Some((at, text)) = as_list {
