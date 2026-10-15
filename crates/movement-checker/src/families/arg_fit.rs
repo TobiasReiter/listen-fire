@@ -21,6 +21,7 @@ use crate::types::field::{
     Ty, describe_field_type, field_assignable, holds_records, is_maybe_absent, mixes_record_with_value, strip_absent,
     values_beside_record,
 };
+use crate::types::field::shows_more_handles;
 use crate::types::position::{ClosureParam, Position, ReturnShape, describe_position, positions_match, system_difference};
 
 /// `ArgFit`: whose argument this is, the parameter it binds, and its place.
@@ -131,16 +132,30 @@ impl Checker<'_> {
         )
     }
 
-    /// `movementReturnType`, where the checker can say: what a movement
-    /// declares it returns (version 3). Its body is not inferred for it here.
-    // TODO(calls): `inferMovement`'s return shape, and a linked file import's.
-    pub fn movement_return(&self, id: SymbolId) -> ReturnShape {
-        match self.movement_declaration(id) {
-            Some((movement, declared_in)) if since(self.version, 3) => match &movement.return_type {
-                Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None },
-                None => ReturnShape::default(),
-            },
-            _ => ReturnShape::default(),
+    /// `movementReturnType`: what a call of a movement hands back — what it
+    /// declares (version 3), else what its body was found to hand back. A
+    /// call reached while that body is still being walked gets the unknown.
+    /// An imported movement answers with its library declaration.
+    pub fn movement_return(&mut self, id: SymbolId) -> ReturnShape {
+        let Some((movement, declared_in)) = self.movement_declaration(id) else { return crate::families::returns::unknown_return() };
+        let written = movement.return_type.as_ref().filter(|_| since(self.version, 3));
+        if !(written.is_some() && since(self.version, 5)) {
+            self.infer_movement(id);
+        }
+        let inferred = self.movement_inferred_return(id);
+        let Some(written) = written else {
+            return inferred.unwrap_or_else(crate::families::returns::unknown_return);
+        };
+        let declared = ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None };
+        // Before version 5 a declaration that does not take what a return may
+        // hold is not refused where it is written, so the call still carries
+        // what the body may hand back.
+        if since(self.version, 5) {
+            return declared;
+        }
+        match inferred.and_then(|i| i.may_hold).filter(|held| shows_more_handles(held, declared.plane.field.as_ref())) {
+            Some(held) => ReturnShape { may_hold: Some(held), ..declared },
+            None => declared,
         }
     }
 

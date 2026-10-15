@@ -1189,7 +1189,10 @@ impl Checker<'_> {
     /// A field's value type, and the first record or file in it the target
     /// does not take (`checkExprSlot`'s `valueType` and `held`).
     fn write_field_value(&mut self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId, target: Option<&Ty>, path: Option<String>) -> (Option<Ty>, Option<HeldHandle>) {
-        let Ok(expr) = crate::slots::expression_of_slot(slot) else { return (None, None) };
+        // The slot as it was checked: each call it runs already hoisted to a
+        // name holding what the call hands back.
+        let hoisted = self.nested_call_rewrite(slot, scope).map(|(_, hoisted)| hoisted);
+        let Ok(expr) = crate::slots::expression_of_slot(hoisted.as_ref().unwrap_or(slot)) else { return (None, None) };
         let (ty, may_hold, refused) = {
             let env = self.typing_env(scope);
             let mut typing = crate::types::Typing::new(&env, self.version, slot.span);
