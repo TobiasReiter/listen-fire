@@ -182,11 +182,16 @@ impl Checker<'_> {
     /// the head: each hop alias's landing, and the order the head yields its
     /// records in (`lastOrdering`).
     pub fn type_head_walk(&mut self, head: &PathHead, scope: ScopeId) -> HeadWalk {
+        self.type_head_walk_as(head, scope, false)
+    }
+
+    /// `type_head_walk` for a walk that is `awaited` (`await FIRST(x-[:E]->)`).
+    pub fn type_head_walk_as(&mut self, head: &PathHead, scope: ScopeId, awaited: bool) -> HeadWalk {
         let Some((Some(start), steps)) = self.head_walk(head, scope) else { return HeadWalk::default() };
         let (walk, diagnostics) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, head.span);
-            let landed = typing.walk_steps(Some(start), &steps, false);
+            let landed = typing.walk_steps(Some(start), &steps, awaited);
             let aliases = typing.locals.iter().map(|(name, pos)| (name.clone(), pos.clone())).collect();
             (HeadWalk { landed, aliases, ordering: typing.last_ordering }, typing.diagnostics)
         };

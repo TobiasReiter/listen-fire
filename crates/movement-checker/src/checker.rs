@@ -248,8 +248,10 @@ impl<'c> Checker<'c> {
             RValue::Node { node } => self.check_node_literal(node, scope),
             RValue::Lazy { lazy } => {
                 let aliases = self.check_path_head(&lazy.head, scope);
+                let walk = self.type_head_walk(&lazy.head, scope);
                 if let Some(mapping) = &lazy.mapping {
                     let landing = self.open_landing(scope, &aliases, lazy.head.span);
+                    self.type_head_aliases(landing, &walk);
                     self.check_node_literal(mapping, landing);
                 }
             }
@@ -730,8 +732,10 @@ impl<'c> Checker<'c> {
                 NodeEntry::Declared { .. } => {}
                 NodeEntry::Traversal { head, mapping, .. } => {
                     let aliases = self.check_path_head(head, scope);
+                    let walk = self.type_head_walk(head, scope);
                     if let Some(mapping) = mapping {
                         let landing = self.open_landing(scope, &aliases, head.span);
+                        self.type_head_aliases(landing, &walk);
                         self.check_node_literal(mapping, landing);
                     }
                 }
@@ -816,6 +820,7 @@ impl<'c> Checker<'c> {
         match &awaited.source {
             AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
                 self.check_path_head(head, scope);
+                self.type_head_walk_as(head, scope, true);
             }
             AwaitSource::Combinator { combinator, .. } => self.check_combinator(combinator, scope),
             AwaitSource::Sleep { .. } => {}
