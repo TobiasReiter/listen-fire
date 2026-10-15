@@ -895,6 +895,7 @@ impl crate::checker::Checker<'_> {
             return;
         }
         if let Some(hops) = &reference.hops_raw {
+            self.report_meta_hops_in_type_ref(hops, reference.span);
             self.check_address_pins(&reference.graph, hops, reference.span, scope);
         }
         let symbol = self.scopes.symbol(id);
@@ -1190,6 +1191,23 @@ impl crate::checker::Checker<'_> {
                     format!("the settings '{{ … }}' on the hop '{label}' are not read — a hop takes no settings. Remove them, or say what they mean in the hop's WHERE"),
                     span,
                 );
+            }
+        }
+    }
+
+    /// `reportMetaHopsInTypeRef` (language version 5): a type's address walks
+    /// no `#` hop either, refused where the address is written.
+    pub fn report_meta_hops_in_type_ref(&mut self, hops_raw: &str, span: movement_parser::ast::Span) {
+        if self.version < 5 {
+            return;
+        }
+        // `hopsOfAddress`: the address read by the expression grammar; none
+        // when it does not parse (the address's own check says so).
+        let parsed = movement_parser::expr::parse_expression(&format!("__address_probe__{hops_raw}"));
+        let Ok(movement_parser::tree::MExpr::Path { hops, .. }) = &parsed else { return };
+        for hop in hops {
+            if hop.label.text.starts_with('#') && hop.label.text != "#extract" {
+                self.report(codes::META_HOP_RETIRED, meta_hop_retired_message(&hop.label.text), span);
             }
         }
     }

@@ -834,6 +834,10 @@ impl Checker<'_> {
         if symbol.kind == SymbolKind::Adapter {
             return None;
         }
+        if let Some(hops) = &type_.hops_raw {
+            self.report_meta_hops_in_type_ref(hops, type_.span);
+        }
+        let symbol = self.scopes.symbol(id);
         let start = symbol.types.pos.clone().or_else(|| match &symbol.types.field {
             Some(Ty::Record(Some(p))) => Some((**p).clone()),
             _ => None,
