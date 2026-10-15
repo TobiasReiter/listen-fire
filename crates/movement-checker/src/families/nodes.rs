@@ -1157,6 +1157,81 @@ impl Checker<'_> {
     }
 }
 
+impl Checker<'_> {
+    /// A `link` with a body onto a node this run built: the body would find
+    /// among what the edge already holds.
+    pub fn report_local_link_body(&mut self, link: &movement_parser::ast::LinkExpression, label: &str, span: Span) {
+        self.report(
+            codes::NODE_LINK_BODY,
+            format!(
+                "'{from}' is {label} this run built, so a body here would find among what '{edge}' already holds — anything it found is linked already. To pick one of them out, 'match {from}-[:{edge}]-> {{ … }}'; to link a record you hold, 'link {from} -[:{edge}]-> <name>'",
+                from = link.from,
+                edge = link.edge
+            ),
+            span,
+        );
+    }
+
+    /// `reportUndeclaredLocalEdge`: a local node's edges are exactly what declared it.
+    pub fn report_undeclared_local_edge(&mut self, from: &LocalNode, edge: &str, span: Span, subject: Option<&str>) {
+        let declared: Vec<&str> = from.edges.iter().flat_map(|e| e.keys()).map(String::as_str).collect();
+        let subject = subject.map_or_else(|| from.label.clone(), |s| format!("'{s}'"));
+        let has = if declared.is_empty() {
+            format!(" — declare it where the node is built ('{edge}: <SomeNode>' or '{edge}: <source-[:Edge]->>')")
+        } else {
+            format!(" — it has: {}", declared.join(", "))
+        };
+        self.report(codes::NODE_EDGE_UNDECLARED, format!("{subject} declares no edge '{edge}'{has}"), span);
+    }
+
+    /// `checkLocalLink`: `link sent -[:messages]-> one` onto a node this run
+    /// built — appended to an edge the literal declared, and judged by
+    /// structure where the edge's landings are a declared node's (or the
+    /// record linked is itself a node a construct built).
+    pub fn check_local_link(&mut self, link: &movement_parser::ast::LinkExpression, to: &str, from: &LocalNode, scope: ScopeId) {
+        let Some(edge) = from.edges.as_ref().and_then(|e| e.get(&link.edge)) else {
+            self.report_undeclared_local_edge(from, &link.edge, link.span, Some(&link.from));
+            return;
+        };
+        if edge.deferred {
+            self.report(
+                codes::NODE_EDGE_DEFERRED,
+                format!(
+                    "'{e}' is a lazy entry — its landings come from a walk that runs again at every read, so an appended one would be gone by the next. Declare a separate edge for what this run writes ('{e}Written: <source-[:Edge]->>')",
+                    e = link.edge
+                ),
+                link.span,
+            );
+            return;
+        }
+        let to_type = match self.scopes.resolve(scope, to) {
+            Resolution::Found(id) => {
+                let types = &self.scopes.symbol(id).types;
+                types.pos.clone().or_else(|| match &types.field {
+                    Some(Ty::Record(Some(p))) => Some((**p).clone()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        };
+        let (Some(to_type), Some(target)) = (to_type, edge.target.as_ref()) else { return };
+        let local_to = matches!(to_type, Position::Local(_));
+        if (edge.structural || local_to)
+            && let Some(misfit) = structural_misfit(&to_type, target)
+        {
+            self.report(codes::NODE_LINK_SHAPE, format!("'{}' lands on {}, and {misfit}", link.edge, describe_position(target)), link.span);
+            return;
+        }
+        if !edge.structural && !local_to && positions_match(&to_type, target) == Some(false) {
+            self.report(
+                codes::NODE_LINK_SHAPE,
+                format!("'{}' lands on {}, but '{to}' is {}", link.edge, describe_position(target), describe_position(&to_type)),
+                link.span,
+            );
+        }
+    }
+}
+
 /// What a graph literal's spread supplies: its keys on the two planes.
 struct SpreadKeys {
     reads: IndexMap<String, Option<Ty>>,

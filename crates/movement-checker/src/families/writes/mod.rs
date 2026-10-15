@@ -706,30 +706,45 @@ impl Checker<'_> {
         }
     }
 
-    /// `localWriteTarget`: a write into an edge of a node this run built.
+    /// `localWriteTarget`: a write into an edge of a node this run built. The
+    /// handle is a local node with the whole of what the landing type
+    /// declares: its fields, and (for a declared node) its nested nodes.
     fn local_write_target(&mut self, from: &crate::types::position::LocalNode, edge_name: &str, span: Span, subject: Option<&str>) -> Landing {
         let Some(edge) = from.edges.as_ref().and_then(|e| e.get(edge_name)) else {
-            let declared: Vec<&str> = from.edges.as_ref().map(|e| e.keys().map(String::as_str).collect()).unwrap_or_default();
-            let subject = subject.map_or(from.label.clone(), |s| format!("'{s}'"));
-            let has = if declared.is_empty() {
-                format!(" — declare it where the node is built ('{edge_name}: <SomeNode>' or '{edge_name}: <source-[:Edge]->>')")
-            } else {
-                format!(" — it has: {}", declared.join(", "))
-            };
-            self.report(codes::NODE_EDGE_UNDECLARED, format!("{subject} declares no edge '{edge_name}'{has}"), span);
+            self.report_undeclared_local_edge(from, edge_name, span, subject);
             return Landing { local: true, ..Landing::default() };
         };
+        if edge.deferred {
+            self.report(
+                codes::NODE_EDGE_DEFERRED,
+                format!(
+                    "'{edge_name}' is a lazy entry — its landings come from a walk that runs again at every read, so a written one would be gone by the next. Declare a separate edge for what this run writes ('{edge_name}Written: <SomeNode>')"
+                ),
+                span,
+            );
+            return Landing { local: true, ..Landing::default() };
+        }
         let description = format!("'{edge_name}' on {} this run built", from.label);
-        let Some(schema) = edge.target.as_ref().and_then(position_schema_of_ref).map(|s| s.into_owned()) else {
+        let (Some(landing), Some(schema)) = (edge.target.as_ref(), edge.target.as_ref().and_then(position_schema_of_ref).map(|s| s.into_owned())) else {
             return Landing { local: true, description: Some(description), ..Landing::default() };
         };
+        let instance = crate::types::position::instance_of_ref(Some(landing));
+        let declared = instance.is_some_and(|i| i.declared);
+        let nested = if edge.structural { instance.and_then(|i| nested_local_edges(i, &schema)) } else { None };
         let root = WritableRootSchema {
             fields: schema.properties.clone(),
             result_shape: schema.properties.clone(),
             fuzzy_resolution: Some(movement_parser::catalog::types::FuzzyResolution::All(true)),
             ..empty_writable_root()
         };
-        Landing { local: true, description: Some(description), root: Some(root), ..Landing::default() }
+        let handle = Position::Local(crate::types::position::LocalNode {
+            label: format!("a '{edge_name}' landing"),
+            reads: schema.properties.iter().map(|(k, v)| (k.clone(), Some(Ty::from_schema(v)))).collect(),
+            edges: nested,
+            run_built: Some(Box::new(landing.clone())),
+            extracted: None,
+        });
+        Landing { local: true, declared, description: Some(description), root: Some(root), handle: Some(handle), ..Landing::default() }
     }
 
     /// `checkTupleWriteTarget`: every path resolves as a linked one does, and
@@ -1534,6 +1549,26 @@ fn found_handle(handle: Option<Position>, version: u32) -> Option<Position> {
         }
         other => other,
     }
+}
+
+/// `nestedLocalEdges`: a declared landing's nested nodes, as the landing's
+/// own appendable edges.
+fn nested_local_edges(instance: &crate::types::position::InstanceRef, schema: &PositionSchema) -> Option<indexmap::IndexMap<String, crate::types::position::LocalEdge>> {
+    let mut edges = indexmap::IndexMap::new();
+    for (name, declared) in schema.edges.iter() {
+        let Some(target) = crate::types::position::position_ref_in(instance, &declared.target) else { continue };
+        edges.insert(
+            name.clone(),
+            crate::types::position::LocalEdge {
+                schema: crate::families::nodes::local_edge_schema(name, declared.sequenced),
+                target: Some(crate::types::declared::run_built_landing(target)),
+                structural: true,
+                deferred: false,
+                references: false,
+            },
+        );
+    }
+    (!edges.is_empty()).then_some(edges)
 }
 
 /// `knownFieldsOf`: a record's fields, where this program spells them out.

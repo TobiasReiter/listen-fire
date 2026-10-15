@@ -22,12 +22,11 @@ impl Checker<'_> {
     pub fn check_link_rules(&mut self, link: &LinkExpression, scope: ScopeId, binding: Option<&str>) -> Option<Position> {
         let from_type = self.symbol_position(&link.from, scope);
         let retired_body = matches!(link.to, LinkTarget::Match { .. }) && self.version >= 4;
-        if matches!(from_type, Some(Position::Local(_))) {
-            // A link onto a node this run built is the nodes family's.
-            if let LinkTarget::Match { r#match, .. } = &link.to
-                && retired_body
-            {
-                self.report_link_body_retired(link, r#match.span);
+        if let Some(Position::Local(local)) = &from_type {
+            match &link.to {
+                LinkTarget::Match { r#match, .. } if retired_body => self.report_link_body_retired(link, r#match.span),
+                LinkTarget::Match { r#match, .. } => self.report_local_link_body(link, &local.label, r#match.span),
+                LinkTarget::Handle { name } => self.check_local_link(link, name, local, scope),
             }
             return None;
         }
