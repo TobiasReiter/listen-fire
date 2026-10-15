@@ -640,12 +640,11 @@ export const DiagnosticCodes = {
    *  a function parameter whose body needs every field in hand (it
    *  serialises, spreads or passes on the record to one that does). */
   CALL_ARG_OPAQUE_RECORD: 'MOV_CALL_ARG_OPAQUE_RECORD',
-  /** From version 5: a value that MAY be a record and may be something else
-   *  (`COALESCE(org, "x")`, a function that returns either) handed to a
-   *  parameter that takes a record position — TypeScript's `Org | string` is no
-   *  `Org`. Earlier versions let it through, and Rust admission refuses it at
-   *  run time. */
-  CALL_ARG_MAYBE_RECORD: 'MOV_CALL_ARG_MAYBE_RECORD',
+  /** Before version 5, an upgrade warning only: a call of a closure a body
+   *  hands back on one of several paths is typed by the first path's closure,
+   *  and a later one may hand back a record the first does not. From 5 the
+   *  call is any of their returns, and each use of it is checked as such. */
+  CALL_CLOSURE_RETURNS: 'MOV_CALL_CLOSURE_RETURNS',
   // Listeners (trigger rows are derived from `listen` statements)
   LISTEN_FILE_LEVEL: 'MOV_LISTEN_FILE_LEVEL',
   LISTEN_NOT_INSTANCE: 'MOV_LISTEN_NOT_INSTANCE',
@@ -1400,6 +1399,23 @@ interface ArgFit {
   index: number;
   /** Written without its parameter's name — so the diagnostic says it. */
   positional: boolean;
+  /** Who makes the call and what it hands, where no author wrote a call: a
+   *  collection op hands each member to its function. */
+  caller?: { callee: string; argument: string };
+}
+
+/** The callee as a diagnostic names it. */
+function calleeWords(fit: ArgFit): string {
+  return fit.caller?.callee ?? `'${fit.callee}'`;
+}
+
+/** What a collection op hands its function: each member, and REDUCE's
+ *  starting value — their types, and what each may hold beyond them. */
+interface CollectionMembers {
+  element: FieldType | undefined;
+  carried: FieldType | undefined;
+  elementMayHold: FieldType | undefined;
+  carriedMayHold: FieldType | undefined;
 }
 
 /** Where a positional argument binds, for a diagnostic: the author did not
@@ -3554,33 +3570,93 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
   return undefined;
 }
 
-/** A body with no `return` at all. */
 /**
  * The closure a VALUE is (language version 5): a record of closure type, or a
  * union of them — TypeScript's `(() => A) | (() => B)`, which a list of
- * closures' members are. Calling one is calling any of them, so its value is
- * the union of what they return (`unionReturns`), its row the union of theirs,
- * and its parameters the first's (`closureArities` keeps every arity, so a
- * call is held to each). Undefined when the value may be something else, or
- * absent: that is no function to call.
+ * closures' members are. Calling one is calling any of them (`oneOfClosures`).
+ * Undefined when the value may be something else, or absent: that is no
+ * function to call.
  */
-export function closureOfValue(type: FieldType | undefined): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
+export function closureOfValue(type: FieldType | undefined): ClosureRef | undefined {
   const closures = closuresOfValue(type);
-  if (closures === undefined) return undefined;
-  if (closures.length === 1) return closures[0];
-  const merged: Extract<PositionTypeRef, { kind: 'closure' }> = {
+  return closures === undefined ? undefined : oneOfClosures(closures);
+}
+
+type ClosureRef = Extract<PositionTypeRef, { kind: 'closure' }>;
+
+/**
+ * Several closures any one of which a value may be — a list's members, a
+ * function whose returns hand back different closures. Calling it is calling
+ * any of them, as TypeScript calls a union of function types: its value is the
+ * union of what they return (`unionReturns`), its row the union of theirs, and
+ * the call is held to EVERY candidate's parameters (`closureCandidates` keeps
+ * them; the parameters it carries are the first's only as a placeholder).
+ *
+ * `typedBy: 'first'` is the rule before language version 5 for the closures a
+ * body's returns hand back: a call is typed and bound by the first return's
+ * closure alone, and the others are kept only so the call can say, as an
+ * upgrade warning, where version 5 holds it to them.
+ */
+export function oneOfClosures(closures: ReadonlyArray<ClosureRef>, options: { typedBy: 'every' | 'first' } = { typedBy: 'every' }): ClosureRef {
+  const flat: ClosureRef[] = [];
+  for (const closure of closures) {
+    for (const candidate of closureCandidates.get(closure) ?? [closure]) if (!flat.includes(candidate)) flat.push(candidate);
+  }
+  if (flat.length === 1) return flat[0]!;
+  const merged: ClosureRef = options.typedBy === 'first' ? { ...flat[0]! } : {
     kind: 'closure',
     label: 'one of several closures',
-    params: closures[0]!.params,
-    returns: unionReturns(closures.map(closure => closure.returns)),
-    effects: unionRows(closures.map(closure => closure.effects)),
+    params: flat[0]!.params,
+    returns: unionReturns(flat.map(closure => closure.returns)),
+    effects: unionRows(flat.map(closure => closure.effects)),
   };
-  closureArities.set(merged, [...new Set(closures.map(closure => closure.params.length))]);
+  closureCandidates.set(merged, flat);
   return merged;
 }
 
-/** The arities of the closures a merged closure stands for. */
-const closureArities = new WeakMap<object, number[]>();
+/** The closures a merged closure stands for. */
+const closureCandidates = new WeakMap<object, ReadonlyArray<ClosureRef>>();
+
+/** The closures a call of `closure` may run — itself, or each it stands for. */
+export function candidatesOf(closure: ClosureRef): ReadonlyArray<ClosureRef> {
+  return closureCandidates.get(closure) ?? [closure];
+}
+
+/**
+ * Does every argument a candidate's parameter `narrow` takes fit `wide` too?
+ * An untyped parameter takes anything; a value and a record parameter share
+ * no argument.
+ */
+function paramTakesAll(narrow: PlaneType, wide: PlaneType): boolean {
+  if (wide.fieldType === undefined && wide.posType === undefined) return true;
+  if (narrow.fieldType !== undefined && wide.fieldType !== undefined) return fieldAssignable(narrow.fieldType, wide.fieldType);
+  if (narrow.posType !== undefined && wide.posType !== undefined) return positionsMatch(narrow.posType, wide.posType) !== false;
+  return false;
+}
+
+/**
+ * The parameters a call of one of several closures is held to — TypeScript's
+ * rule for a union of function types: an argument must fit every candidate's
+ * parameter, so each place takes the candidate parameter every other one
+ * takes too. Where no candidate's parameter is that narrow, no argument
+ * satisfies them all: `disagree` names the two candidates, and the place is
+ * left untyped so the misfit is said once.
+ */
+export function paramsOfCandidates(
+  candidates: ReadonlyArray<ClosureRef>,
+  disagree: (place: { index: number; first: ClosureRef; second: ClosureRef }) => void,
+): ClosureParam[] {
+  const [first] = candidates;
+  if (first === undefined) return [];
+  return first.params.map((own, index) => {
+    const at = candidates.map(candidate => candidate.params[index]);
+    const narrowest = at.find(param => param !== undefined && at.every(other => other === undefined || paramTakesAll(param, other)));
+    if (narrowest !== undefined) return narrowest;
+    const firstOff = candidates.findIndex((candidate, i) => i > 0 && !paramTakesAll(own, at[i] ?? {}) && !paramTakesAll(at[i] ?? {}, own));
+    disagree({ index, first, second: candidates[firstOff > 0 ? firstOff : 1]! });
+    return { name: own.name };
+  });
+}
 
 function closuresOfValue(type: FieldType | undefined): Array<Extract<PositionTypeRef, { kind: 'closure' }>> | undefined {
   if (type === undefined || typeof type === 'string') return undefined;
@@ -4695,6 +4771,14 @@ class Checker {
         `${collector.what} returns ${firstPlane === 'node' ? 'a record' : 'a value'} on line ${first.span.start.line} and ${plane === 'node' ? 'a record' : 'a value'} here — a body has one value, so every 'return' in it hands back the same kind of thing`,
         later.span,
       );
+    }
+    // Returns that each hand back a closure are one of several closures: a
+    // call of the value is held to every one of them, and is any of their
+    // returns — not the first's alone.
+    const closures = collector.returns.flatMap(returned =>
+      returned.fieldType === undefined && returned.mayHold === undefined && returned.posType?.kind === 'closure' ? [returned.posType] : []);
+    if (closures.length > 1 && closures.length === collector.returns.length) {
+      return { returns: true, posType: oneOfClosures(closures, { typedBy: since(this.languageVersion, 5) ? 'every' : 'first' }) };
     }
     // What the value may hold is what ANY return may hold — TypeScript's
     // return type is the union of its returns. The type stays the first's;
@@ -7447,7 +7531,12 @@ class Checker {
     }
 
     const carried = expr.op === 'reduce' ? (init?.valueType) : undefined;
-    const shape = this.checkCollectionFunction(expr, spelling, scope, element, carried);
+    const shape = this.checkCollectionFunction(expr, spelling, scope, {
+      element,
+      carried,
+      elementMayHold: source.mayHold !== undefined ? collectionElementOf(source.mayHold) : undefined,
+      carriedMayHold: init?.mayHold,
+    });
     // What the function hands back, on whichever plane it handed it back on. A
     // record is a value type, so a closure that returns one (`(p) => { return
     // extract … }`, `(t) => { return t }`) answers in the same currency as one
@@ -7540,9 +7629,9 @@ class Checker {
     expr: CollectionOpExpression,
     spelling: string,
     scope: Scope,
-    element: FieldType | undefined,
-    carried: FieldType | undefined,
+    members: CollectionMembers,
   ): ReturnShape {
+    const { element, carried } = members;
     const supplied = expr.op === 'reduce'
       ? [{ fieldType: carried }, { fieldType: element }]
       : [{ fieldType: element }];
@@ -7557,6 +7646,7 @@ class Checker {
         suppliedParams: supplied,
       });
       this.checkMembersFieldsInHand(spelling, `the function for '${spelling}'`, bound, supplied, expr.fn.span);
+      this.checkMembersFitParams(expr, spelling, { callee: `the function for '${spelling}'`, params: bound }, members);
       this.absorbCollectionRow(effects, spelling, expr.fn.span);
       if (expr.op === 'map' && !returns.returns) return MAP_SLOT_ABSENT;
       this.requireCollectionReturn(returns, spelling, expr.fn.span);
@@ -7574,9 +7664,82 @@ class Checker {
       ? (this.movementParams(symbol) ?? []).map(param => ({ name: param.name, ...param.type }))
       : [];
     this.checkMembersFieldsInHand(spelling, `'${expr.fn.name}'`, namedParams, supplied, expr.fn.span);
+    this.checkMembersFitParams(expr, spelling, { callee: `'${expr.fn.name}'`, params: namedParams }, members);
     if (expr.op === 'map' && !named.returns) return MAP_SLOT_ABSENT;
     this.requireCollectionReturn(named, spelling, expr.fn.span);
     return named;
+  }
+
+  /**
+   * The members a collection op binds to its function's parameters, against
+   * the types those parameters are written with — the call-site fit
+   * (`checkValueArgFit`, `refuseMaybeRecordForValue`, `checkCallArgFit`) where
+   * the op, not the author, makes the call: TypeScript's `["a"].map((n:
+   * number) => n)` is refused. REDUCE's starting value is held to its
+   * accumulator, each member to the parameter after it. A parameter left
+   * untyped takes the member's type, so there is nothing to compare.
+   *
+   * From version 5. Before it nothing compared them and the op ran, handing
+   * the function whatever the member was; so an older pin is warned, and the
+   * warning blocks the move up.
+   */
+  private checkMembersFitParams(
+    expr: CollectionOpExpression,
+    spelling: string,
+    fn: { callee: string; params: ReadonlyArray<ClosureParam> },
+    members: CollectionMembers,
+  ): void {
+    if (before(this.languageVersion, 3)) return;
+    const reduce = expr.op === 'reduce';
+    const given = reduce
+      ? [
+          { type: members.carried, mayHold: members.carriedMayHold, argument: 'its starting value', span: expr.init?.span ?? expr.span },
+          { type: members.element, mayHold: members.elementMayHold, argument: 'each member', span: expr.source.span },
+        ]
+      : [{ type: members.element, mayHold: members.elementMayHold, argument: 'each member', span: expr.source.span }];
+    this.asUpgradeWarningsBefore5(() => {
+      for (const [index, supplied] of given.entries()) {
+        const param = fn.params[index];
+        if (param === undefined) continue;
+        const fit: ArgFit = {
+          callee: fn.callee,
+          param: { name: param.name, type: param },
+          index,
+          positional: true,
+          caller: { callee: fn.callee, argument: `${supplied.argument} '${spelling}' hands it` },
+        };
+        if (param.fieldType !== undefined) {
+          const record = recordIn(supplied.type)?.position;
+          if (record === undefined) {
+            this.refuseMaybeRecordForValue(fit, param.fieldType, { valueType: supplied.type, mayHold: supplied.mayHold, span: supplied.span, written: '' });
+          }
+          this.checkValueArgFit(fit, param.fieldType, supplied.type, { span: supplied.span });
+          continue;
+        }
+        if (param.posType !== undefined) this.checkCallArgFit(fit, recordIn(supplied.type)?.position, param.posType, supplied.span);
+      }
+    }, 'the function is handed the member as it is');
+  }
+
+  /**
+   * Runs checks whose refusals are new under version 5: before it, each error
+   * they report is an upgrade warning instead, saying what the older version
+   * did (`then`) — and the warning blocks the move up.
+   */
+  private asUpgradeWarningsBefore5(run: () => void, then: string): void {
+    const from = this.diagnostics.length;
+    run();
+    if (since(this.languageVersion, 5)) return;
+    for (let i = from; i < this.diagnostics.length; i++) {
+      const diagnostic = this.diagnostics[i]!;
+      if (diagnostic.severity !== undefined) continue;
+      this.diagnostics[i] = {
+        ...diagnostic,
+        message: `${diagnostic.message}. Before ${describeLanguageVersion(5)} ${then}; from it, this is refused`,
+        severity: 'warning',
+        upgrade: true,
+      };
+    }
   }
 
   /**
@@ -10950,14 +11113,7 @@ class Checker {
         value = closure.returns;
         this.effects?.absorb(closure.effects);
         this.noteUndeclaredSelfCall(callee, statement.span);
-        const arities = closureArities.get(closure) ?? [closure.params.length];
-        if (arities.some(arity => arity !== statement.args.length)) {
-          const arity = arities.length === 1
-            ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
-            : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
-          this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${statement.args.length}`, statement.span);
-        }
-        params = closure.params.map(({ name, ...type }) => ({ name, type }));
+        params = this.closureCallParams(statement, closure).map(({ name, ...type }) => ({ name, type }));
       } else {
         // Either an unlinked file import (a body nobody parsed) or a name that
         // is not callable at all. Both leave the row a lower bound.
@@ -10988,6 +11144,63 @@ class Checker {
       this.checkCallArg(statement.callee, arg, param, index, scope, pluginArgTypes);
     }
     return value;
+  }
+
+  /**
+   * The parameters a call through a closure value is held to, its arity
+   * checked. One of several closures is called as TypeScript calls a union of
+   * function types: every candidate's arity, and an argument that fits every
+   * candidate's parameter. Before version 5 the closures a body's returns hand
+   * back are called as the first of them (the call ran, whichever one it
+   * reached), so what version 5 holds the call to is an upgrade warning.
+   */
+  private closureCallParams(statement: CallStatement, closure: ClosureRef): ClosureParam[] {
+    const candidates = candidatesOf(closure);
+    const given = statement.args.length;
+    const strict = candidates.length === 1 || since(this.languageVersion, 5);
+    const say = (code: string, message: string): void => {
+      if (strict) this.report(code, message, statement.span);
+      else this.reportUpgradeWarning(code, `${message}. Before ${describeLanguageVersion(5)} the call is typed by the first; from it, this is refused`, statement.span);
+    };
+    const arities = [...new Set(candidates.map(candidate => candidate.params.length))];
+    if (!strict && closure.params.length !== given) {
+      this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' takes ${closure.params.length} argument${closure.params.length === 1 ? '' : 's'}, got ${given}`, statement.span);
+    } else if (arities.some(arity => arity !== given)) {
+      const arity = arities.length === 1
+        ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
+        : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
+      say(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${given}`);
+    }
+    if (candidates.length === 1) return closure.params;
+    if (!strict) this.warnLaterClosureReturns(statement, candidates);
+    if (arities.length !== 1) return closure.params;
+    const held = paramsOfCandidates(candidates, ({ index, first, second }) => {
+      const describe = (param: ClosureParam | undefined): string =>
+        param?.fieldType !== undefined ? describeFieldType(param.fieldType) : param?.posType !== undefined ? describePosition(param.posType) : 'anything';
+      const a = first.params[index];
+      const b = second.params[index];
+      say(
+        DiagnosticCodes.CALL_ARG_TYPE,
+        `'${statement.callee}' may be any of several closures, and two disagree about argument ${index + 1}: ${describePosition(first)} takes ${describe(a)} for '${a?.name}', and ${describePosition(second)} takes ${describe(b)} for '${b?.name}'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known`,
+      );
+    });
+    return strict ? held : closure.params;
+  }
+
+  /** Before version 5: a later candidate may hand back a record the first —
+   *  which types the call — does not. From 5 the call is any of their
+   *  returns, so each use of it is checked as one that may be that record. */
+  private warnLaterClosureReturns(statement: CallStatement, candidates: ReadonlyArray<ClosureRef>): void {
+    const first = candidates[0]!.returns;
+    const every = unionReturns(candidates.map(candidate => candidate.returns));
+    const shown = first.mayHold ?? first.fieldType ?? recordValueOf(first.posType);
+    const hidden = handleWithin(every.mayHold ?? every.fieldType, heldWalk(handleKindsTaken(shown)));
+    if (hidden === undefined) return;
+    this.reportUpgradeWarning(
+      DiagnosticCodes.CALL_CLOSURE_RETURNS,
+      `'${statement.callee}' may be any of several closures, and calling one other than the first may hand back ${describeFieldType(hidden.handle)}. Before ${describeLanguageVersion(5)} the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused`,
+      statement.span,
+    );
   }
 
   /** One argument: check it in its own right, then check that it FITS the
@@ -11262,7 +11475,7 @@ class Checker {
     const file = variantOf(hidden.handle).kind === 'file';
     const where = steps === '' ? `may be ${describeFieldType(hidden.handle)}` : `may hold ${describeFieldType(hidden.handle)} at '${steps}'`;
     const repair = file ? "pass its text ('READ(f)')" : "narrow it to the record with IS and pass a field off it ('r.`Name`')";
-    const message = `'${fit.callee}' expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but '${arg.written}' ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
+    const message = `${calleeWords(fit)} expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but ${fit.caller?.argument ?? `'${arg.written}'`} ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
     if (since(this.languageVersion, 5)) {
       this.report(DiagnosticCodes.CALL_ARG_MAYBE_RECORD, message, arg.span);
       return;
@@ -11290,7 +11503,8 @@ class Checker {
   ): void {
     if (argType === undefined) return;
     const { span } = options;
-    const expected = `'${fit.callee}' expects ${describeFieldType(paramType)}${describeArgPlace(fit)}`;
+    const expected = `${calleeWords(fit)} expects ${describeFieldType(paramType)}${describeArgPlace(fit)}`;
+    const argument = fit.caller?.argument ?? 'this argument';
     // A string LITERAL is its own type — `"warm"` is `"warm"`, which TypeScript
     // assigns to `"brisk" | "warm"` — so against a closed set it is a
     // membership check, with the enum's own did-you-mean.
@@ -11299,7 +11513,7 @@ class Checker {
     if (isMaybeAbsent(argType) && !isMaybeAbsent(paramType)) {
       this.report(
         DiagnosticCodes.CALL_ARG_TYPE,
-        `${expected}, but this argument may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{ key?: … }')`,
+        `${expected}, but ${argument} may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{ key?: … }')`,
         span,
       );
       return;
@@ -11318,7 +11532,7 @@ class Checker {
           : undefined;
       this.reportWithFix({
         code: DiagnosticCodes.CALL_ARG_TYPE,
-        message: `${expected}, but this argument is ${describeFieldType(arg)}${asList !== undefined ? ` — pass it as a list: '${asList.text}'` : ''}`,
+        message: `${expected}, but ${argument} is ${describeFieldType(arg)}${asList !== undefined ? ` — pass it as a list: '${asList.text}'` : ''}`,
         span,
         ...(asList !== undefined ? { fix: { edits: [asList] } } : {}),
       });
