@@ -438,9 +438,38 @@ impl<'a> Typing<'a> {
     /// `readProperty`, the typing half: a dot read off `position`. The walks
     /// family reports an unknown or ambiguous property.
     pub fn read_property(&mut self, position: Option<&Position>, property: &str) -> Option<Ty> {
-        let ty = lookup_property_type(position, property);
+        let ty = match position {
+            Some(Position::Extract { node, present }) => self.read_extract_field(node, property).map(|t| {
+                if present.contains(property) { strip_absent(&t).clone() } else { t }
+            }),
+            Some(Position::MaybeEmpty(of)) if matches!(**of, Position::Extract { .. }) => {
+                let Position::Extract { node, present } = &**of else { unreachable!() };
+                let read = self.read_extract_field(node, property);
+                read.map(|t| maybe_absent(if present.contains(property) { strip_absent(&t).clone() } else { t }))
+            }
+            _ => lookup_property_type(position, property),
+        };
         crate::families::walks::observe_read(self, position, property, ty.as_ref());
         ty
+    }
+
+    /// `readExtractField`, the typing half (the extraction family reports an
+    /// unknown field): a typed field may not have been found, so it reads
+    /// `T | absent`; text is handed over as `""` when not found, so it is
+    /// present. A write target's own reading of an unannotated field is not
+    /// modelled.
+    fn read_extract_field(&self, node: &super::position::ExtractNode, property: &str) -> Option<Ty> {
+        let field = node.properties.get(property)?;
+        if let Some(explicit) = &field.explicit {
+            if self.version < 2 {
+                return Some(maybe_absent(explicit.clone()));
+            }
+            return Some(if field.reads_as_present_text { Ty::Text } else { maybe_absent(explicit.clone()) });
+        }
+        if field.annotated || self.version < 2 {
+            return None;
+        }
+        Some(Ty::Text)
     }
 
     /// `dictMemberRead`: `d.key` off a name holding a dict.

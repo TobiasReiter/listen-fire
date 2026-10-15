@@ -16,6 +16,9 @@ use movement_parser::catalog::types::CatalogSnapshot;
 use crate::diagnostic::Diagnostic;
 use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
+use crate::types::field::{is_maybe_absent, strip_absent};
+use crate::types::narrowing::{PresenceProof, negative_presence_proofs, presence_proofs};
+use crate::types::position::{narrow_present, narrow_present_node};
 use crate::families::names::spell_name;
 use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
 use movement_parser::lowering::condition::MovementCondition;
@@ -183,17 +186,7 @@ impl<'c> Checker<'c> {
                     self.report_resolution_failure(&refresh.name, refresh.name_span, failure);
                 }
             }
-            Statement::If(statement) => {
-                for arm in &statement.arms {
-                    self.check_condition_slot(&arm.condition, scope);
-                    let arm_scope = self.scopes.open(Some(scope));
-                    self.check_statement_list(&arm.body, arm_scope);
-                }
-                if let Some(else_arm) = &statement.else_arm {
-                    let else_scope = self.scopes.open(Some(scope));
-                    self.check_statement_list(&else_arm.body, else_scope);
-                }
-            }
+            Statement::If(statement) => self.check_if(statement, scope),
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
             Statement::Return(statement) => {
                 self.check_rvalue(&statement.value, scope, None);
@@ -352,16 +345,112 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
-    /// tests name a subject and a type.
-    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
-        let Ok(condition) = condition_of_slot(slot) else { return };
-        self.check_condition(&condition, slot, scope);
+    /// `checkIf`: each arm's condition is checked in the arm's own scope and
+    /// narrows it, conjunct by conjunct; an arm that always leaves proves its
+    /// condition false below the `if` (while every arm before it leaves too);
+    /// the `else` sees every arm's condition false; and from version 3, when
+    /// the `else` and every arm but one leave, that arm's condition holds below.
+    /// The `IS` eliminations down the chain are not modelled.
+    fn check_if(&mut self, statement: &movement_parser::ast::IfStatement, scope: ScopeId) {
+        let mut all_prior_terminate = true;
+        let mut arm_terminates = Vec::new();
+        for arm in &statement.arms {
+            let arm_scope = self.scopes.open(Some(scope));
+            self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
+            self.check_statement_list(&arm.body, arm_scope);
+            let terminating = terminates(&arm.body, self.version);
+            arm_terminates.push(terminating);
+            if all_prior_terminate && terminating {
+                self.narrow_condition_negation(&arm.condition, scope, scope);
+            }
+            all_prior_terminate = all_prior_terminate && terminating;
+        }
+        let Some(else_arm) = &statement.else_arm else { return };
+        let else_scope = self.scopes.open(Some(scope));
+        for arm in &statement.arms {
+            self.narrow_condition_negation(&arm.condition, else_scope, else_scope);
+        }
+        self.check_statement_list(&else_arm.body, else_scope);
+        let falls_through: Vec<usize> = arm_terminates.iter().enumerate().filter(|(_, leaves)| !**leaves).map(|(i, _)| i).collect();
+        if self.version >= 3 && falls_through.len() == 1 && terminates(&else_arm.body, self.version) {
+            self.narrow_condition_holds(&statement.arms[falls_through[0]].condition, scope);
+        }
     }
 
-    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId) {
+    /// `narrowConditionNegation`: what a condition's falsity proves present.
+    /// A conjunction's falsity proves none of its conjuncts false.
+    fn narrow_condition_negation(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: ScopeId) {
+        let Ok(MovementCondition::Expr { expr }) = condition_of_slot(slot) else { return };
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            negative_presence_proofs(&expr, &mut |o| typing.infer(o))
+        };
+        self.declare_presence(&proofs, scope, narrow_into);
+    }
+
+    /// `narrowConditionHolds`: each conjunct of the one arm that falls through.
+    fn narrow_condition_holds(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        let Ok(condition) = condition_of_slot(slot) else { return };
+        let conjuncts = match condition {
+            MovementCondition::And { conjuncts } => conjuncts,
+            other => vec![other],
+        };
+        for conjunct in conjuncts {
+            if let MovementCondition::Expr { expr } = conjunct {
+                self.narrow_presence(&expr, scope, scope, slot.span);
+            }
+        }
+    }
+
+    /// `narrowPresence`: what a condition's truth proves present, declared into `narrow_into`.
+    fn narrow_presence(&mut self, expr: &movement_parser::lowering::expression::Expression, scope: ScopeId, narrow_into: ScopeId, span: Span) {
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, span);
+            presence_proofs(expr, &mut |o| typing.infer(o))
+        };
+        self.declare_presence(&proofs, scope, narrow_into);
+    }
+
+    /// `declarePresence`: each proven name shadowed by its narrowed self. A
+    /// value binding sheds its absence; a record's landing its emptiness, or
+    /// the field proven present. Blankness proofs are not modelled.
+    fn declare_presence(&mut self, proofs: &[PresenceProof], scope: ScopeId, narrow_into: ScopeId) {
+        for proof in proofs {
+            let Resolution::Found(id) = self.scopes.resolve(scope, proof.root()) else { continue };
+            let mut symbol = self.scopes.symbol(id).clone();
+            match proof {
+                PresenceProof::NonBlank { .. } => continue,
+                PresenceProof::Field { property, .. } => {
+                    let Some(narrowed) = symbol.types.pos.as_ref().and_then(|p| narrow_present(p, property)) else { continue };
+                    symbol.types.pos = Some(narrowed);
+                }
+                PresenceProof::Binding { .. } => {
+                    if symbol.types.pos.is_none() {
+                        let Some(field) = symbol.types.field.as_ref().filter(|f| is_maybe_absent(Some(f))) else { continue };
+                        symbol.types.field = Some(strip_absent(field).clone());
+                    } else {
+                        let Some(narrowed) = symbol.types.pos.as_ref().and_then(narrow_present_node) else { continue };
+                        symbol.types.pos = Some(narrowed);
+                    }
+                }
+            }
+            let narrowed = self.scopes.add_symbol(symbol);
+            self.scopes.declare(narrow_into, narrowed);
+        }
+    }
+
+    /// `checkConditionSlot`: an `if` condition, whose `IS` tests name a
+    /// subject and a type, and whose conjuncts narrow `narrow_into` in order.
+    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
+        let Ok(condition) = condition_of_slot(slot) else { return };
+        self.check_condition(&condition, slot, scope, narrow_into);
+    }
+
+    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         match condition {
-            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope)),
+            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope, narrow_into)),
             MovementCondition::IsTest { subject_raw, type_ } => {
                 let subject = subject_raw.trim();
                 if is_bare_ident(subject) {
@@ -397,6 +486,9 @@ impl<'c> Checker<'c> {
                         crate::types::field::closure_not_data_message("a value used as a condition is"),
                         slot.span,
                     );
+                }
+                if let Some(narrow_into) = narrow_into {
+                    self.narrow_presence(expr, scope, narrow_into, slot.span);
                 }
             }
         }
@@ -765,6 +857,20 @@ impl<'c> Checker<'c> {
             self.check_expr_slot(config, scope);
         }
     }
+}
+
+/// `terminates` (checker/flow.ts): every path through the list leaves it —
+/// an `ERROR`, from version 3 a `return`, or an `if` whose every arm and
+/// `else` leave.
+fn terminates(statements: &[Statement], version: u32) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::Error(_) => true,
+        Statement::Return(_) => version >= 3,
+        Statement::If(statement) => {
+            statement.else_arm.as_ref().is_some_and(|e| terminates(&e.body, version)) && statement.arms.iter().all(|arm| terminates(&arm.body, version))
+        }
+        _ => false,
+    })
 }
 
 fn is_closure_type(type_: &ParamTypeRef) -> bool {

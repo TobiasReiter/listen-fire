@@ -62,6 +62,8 @@ pub struct ExtractField {
     pub explicit: Option<Ty>,
     /// `readsAsPresentText`: an unannotated field reads as present text.
     pub reads_as_present_text: bool,
+    /// An annotation was written (`annotationRaw`), resolved or not.
+    pub annotated: bool,
 }
 
 /// `ExtractNodeType`: a node of an extract result graph.
