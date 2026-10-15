@@ -135,7 +135,7 @@ impl Checker<'_> {
     /// `movementReturnType`: what a call of a movement hands back — what it
     /// declares (version 3), else what its body was found to hand back. A
     /// call reached while that body is still being walked gets the unknown.
-    // TODO(calls): a linked file import's signatures.
+    /// An imported movement answers with its library declaration.
     pub fn movement_return(&mut self, id: SymbolId) -> ReturnShape {
         let Some((movement, declared_in)) = self.movement_declaration(id) else { return crate::families::returns::unknown_return() };
         let written = movement.return_type.as_ref().filter(|_| since(self.version, 3));
