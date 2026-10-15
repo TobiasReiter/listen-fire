@@ -43,78 +43,12 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
 use crate::slots::SlotError;
-use crate::types::stdlib::{Builtin, lookup_builtin};
-
-/// `describeBuiltin` for each flat built-in (generated from
-/// `standardLibrary()`), with its form.
-const DESCRIBED: &[(&str, &str, &str)] = &[
-    ("ISNULL", "ISNULL(value)", "value"),
-    ("COALESCE", "COALESCE(…values)", "value"),
-    ("TRIM", "TRIM(text)", "value"),
-    ("LOWER", "LOWER(text)", "value"),
-    ("UPPER", "UPPER(text)", "value"),
-    ("LENGTH", "LENGTH(value)", "value"),
-    ("ABS", "ABS(number)", "value"),
-    ("ROUND", "ROUND(number, places?)", "value"),
-    ("FLOOR", "FLOOR(number)", "value"),
-    ("CEIL", "CEIL(number)", "value"),
-    ("TOSTRING", "TOSTRING(value)", "value"),
-    ("TONUMBER", "TONUMBER(value)", "value"),
-    ("MULTI", "MULTI(…values)", "value"),
-    ("SPLIT", "SPLIT(text, separator?)", "value"),
-    ("DATE", "DATE(value)", "value"),
-    ("DATETIME", "DATETIME(value)", "value"),
-    ("NUMBER", "NUMBER(value)", "value"),
-    ("FIRST", "FIRST(collection)", "value"),
-    ("LAST", "LAST(collection)", "value"),
-    ("ONLY", "ONLY(collection)", "value"),
-    ("COUNT", "COUNT(collection)", "value"),
-    ("SUM", "SUM(collection)", "value"),
-    ("AVG", "AVG(collection)", "value"),
-    ("MIN", "MIN(collection)", "value"),
-    ("MAX", "MAX(collection)", "value"),
-    ("JOIN", "JOIN(collection, separator?)", "value"),
-    ("COLLECT", "COLLECT(collection)", "value"),
-    ("LLM_AGG", "LLM_AGG(collection, instruction?)", "value"),
-    ("AI", "AI(prompt, tier?)", "value"),
-    ("CONCAT", "CONCAT(…parts)", "value"),
-    ("KG_EXISTS", "KG_EXISTS(query, …params)", "value"),
-    ("KG_VALUE", "KG_VALUE(query, …params)", "value"),
-    ("EXTRACT_VALUE", "EXTRACT_VALUE(…values)", "value"),
-    ("AT", "AT(collection, index)", "value"),
-    ("SORT", "SORT(collection, key?, direction?)", "value"),
-    ("FILE", "FILE(content, type)", "value"),
-    ("READ", "READ(file)", "value"),
-    ("CHUNKS", "CHUNKS(text, options)", "value"),
-    ("EXISTS", "EXISTS(walk)", "value"),
-    ("MAP", "MAP(collection, settings?, function)", "collection"),
-    ("FILTER", "FILTER(collection, settings?, function)", "collection"),
-    ("REDUCE", "REDUCE(collection, start, function)", "collection"),
-    ("GROUPBY", "GROUPBY(collection, key)", "collection"),
-    ("KEYBY", "KEYBY(collection, key)", "collection"),
-    ("MEMBERS", "MEMBERS(type)", "members"),
-    ("EXTRACT", "EXTRACT(content, shape, settings?)", "extract"),
-    ("EXTRACTONE", "EXTRACTONE(content, shape, settings?)", "extract"),
-    ("CURRENCY.GET_NUMBER_FROM_FIGURE", "CURRENCY.GET_NUMBER_FROM_FIGURE(figure)", "value"),
-    ("CURRENCY.GET_CODE_FROM_FIGURE", "CURRENCY.GET_CODE_FROM_FIGURE(figure)", "value"),
-    ("CURRENCY.FORMAT_FIGURE", "CURRENCY.FORMAT_FIGURE(number, code)", "value"),
-    ("DATE.PARSE", "DATE.PARSE(text)", "value"),
-    ("DATE.ADD_DAYS", "DATE.ADD_DAYS(date, days)", "value"),
-    ("DATE.FORMAT", "DATE.FORMAT(value, pattern)", "value"),
-    ("DATE.FORMAT_ISO", "DATE.FORMAT_ISO(value)", "value"),
-    ("DATE.TODAY", "DATE.TODAY(zone)", "value"),
-    ("DATETIME.AT", "DATETIME.AT(date, time, zone)", "value"),
-    ("TEXT.REGEX_EXTRACT", "TEXT.REGEX_EXTRACT(text, pattern, group?)", "value"),
-    ("TEXT.SLUG", "TEXT.SLUG(text)", "value"),
-    ("TEXT.PAIRS", "TEXT.PAIRS(record, separator?)", "value"),
-    ("TEXT.SERIALISE", "TEXT.SERIALISE(value, format)", "value"),
-    ("URL.HOST", "URL.HOST(text)", "value"),
-    ("NUMBER.FORMAT", "NUMBER.FORMAT(number, style)", "value"),
-];
+use crate::types::field::{closure_not_data_message, describe_field_type, may_be_closure, strip_absent};
+use crate::types::stdlib::{Builtin, ParamType, STANDARD_LIBRARY, describe_param_type, lookup_builtin, param_accepts, reads_as_value, stdlib_function_by_id};
 
 /// `describeBuiltin`: the built-in's signature as the author reads it.
 pub fn describe_builtin(builtin: &Builtin) -> String {
-    DESCRIBED.iter().find(|(name, ..)| *name == builtin.name).map_or_else(|| format!("{}(…)", builtin.name), |(_, d, _)| d.to_string())
+    builtin.describe()
 }
 
 /// A built-in's `form`: how a call of it is read.
@@ -127,10 +61,10 @@ pub enum BuiltinForm {
 }
 
 pub fn builtin_form(builtin: &Builtin) -> BuiltinForm {
-    match DESCRIBED.iter().find(|(name, ..)| *name == builtin.name).map(|(.., form)| *form) {
-        Some("members") => BuiltinForm::Members,
-        Some("extract") => BuiltinForm::Extract,
-        Some("collection") => BuiltinForm::Collection,
+    match builtin.name {
+        "MEMBERS" => BuiltinForm::Members,
+        "EXTRACT" | "EXTRACTONE" => BuiltinForm::Extract,
+        "MAP" | "FILTER" | "REDUCE" | "GROUPBY" | "KEYBY" => BuiltinForm::Collection,
         _ => BuiltinForm::Value,
     }
 }
@@ -150,9 +84,77 @@ use crate::types::position::Position;
 /// Called by the type core after the values family's `observe`, for every
 /// node: a built-in call's argument rules (`checkBuiltinArgs`,
 /// `checkStdlibLiteralArgs`) live here. `crate::types::stdlib` has the signatures.
-pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Position>, _operands: &[Option<Ty>], _ty: Option<&Ty>) {
-    if let Expression::Function { fn_, args } = expr {
-        check_stdlib_literal_args(typing, fn_, args);
+pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Position>, operands: &[Option<Ty>], _ty: Option<&Ty>) {
+    match expr {
+        Expression::Function { fn_, args } => {
+            // `extractOne` was a name like any other before version 3.
+            let builtin = if fn_ == "extractone" && typing.version < 3 { None } else { lookup_builtin(fn_) };
+            if let Some(builtin) = builtin {
+                if refuse_closure_operands(typing, builtin, args, operands) {
+                    return;
+                }
+                check_builtin_args(typing, builtin, operands);
+            }
+            check_stdlib_literal_args(typing, fn_, args);
+            if let Some(function) = stdlib_function_by_id(fn_) {
+                crate::families::records::check_stdlib_record_arg(typing, function, args, operands);
+                crate::families::records::check_stdlib_whole_value_arg(typing, function, operands);
+            }
+        }
+        Expression::Llm { .. } => {
+            if let Some(ai) = lookup_builtin("AI") {
+                check_builtin_args(typing, ai, operands);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `refuseClosureOperands` for a built-in's arguments (language version 5):
+/// a closure handed where a value is read. A `function` parameter takes one.
+fn refuse_closure_operands(typing: &mut Typing, builtin: &Builtin, args: &[Expression], operands: &[Option<Ty>]) -> bool {
+    if typing.version < 5 {
+        return false;
+    }
+    let closure = args.iter().zip(operands).enumerate().any(|(index, (arg, ty))| {
+        builtin.param_at(index).is_none_or(|param| param.ty != ParamType::Function)
+            && (may_be_closure(ty.as_ref()) || may_be_closure(typing.may_hold_type(arg).as_ref()))
+    });
+    if closure {
+        typing.report(codes::CLOSURE_NOT_DATA, closure_not_data_message(&format!("a value handed to {} is", builtin.name)));
+    }
+    closure
+}
+
+/// `checkBuiltinArgs` (language version 3): each argument a value of the
+/// kind its parameter takes. A record or a json value is the rule every
+/// value-reading site shares; an argument nobody can type stays silent.
+fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>]) {
+    if typing.version < 3 {
+        return;
+    }
+    for (index, ty) in args.iter().enumerate() {
+        let (Some(param), Some(ty)) = (builtin.param_at(index), ty) else { continue };
+        if !reads_as_value(param.ty) {
+            continue;
+        }
+        if crate::families::values::require_transparent(typing, Some(ty), &format!("handed to {}", builtin.name)) {
+            continue;
+        }
+        if param_accepts(param.ty, ty) {
+            continue;
+        }
+        typing.report(
+            codes::BUILTIN_ARG_TYPE,
+            format!(
+                "{}'s '{}' takes {}, and this is {} — {}",
+                builtin.name,
+                param.name,
+                describe_param_type(param.ty),
+                describe_field_type(strip_absent(ty)),
+                builtin.describe()
+            ),
+        );
     }
 }
 
@@ -922,7 +924,7 @@ impl Checker<'_> {
     /// `closestFunctionName`.
     pub fn closest_function_name(&self, name: &str, scope: ScopeId) -> Option<String> {
         let mut folded: Vec<(String, String)> = Vec::new();
-        let flat = DESCRIBED.iter().map(|(n, ..)| n.to_string()).filter(|n| !n.contains('.'));
+        let flat = STANDARD_LIBRARY.iter().map(|b| b.name.to_string()).filter(|n| !n.contains('.'));
         for candidate in self.function_names(scope).into_iter().chain(flat) {
             let lower = candidate.to_lowercase();
             if !folded.iter().any(|(l, _)| *l == lower) {
