@@ -370,6 +370,7 @@ dependencies = [
  "icu_normalizer",
  "jiff",
  "jiff-tzdb",
+ "movement-checker",
  "movement-parser",
  "ryu-js",
  "serde",

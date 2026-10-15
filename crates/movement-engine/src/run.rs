@@ -116,6 +116,13 @@ pub struct SegmentInput {
     /// `sleep` fast-forwarded.
     #[serde(default)]
     pub dry_run: bool,
+    /// Answer `check.program` with the Rust checker (crates/movement-checker)
+    /// instead of asking the host. Off by default, and nothing turns it on:
+    /// that checker reports only the families PARITY.md marks at parity, and
+    /// its answer carries no stamps and no file-import link, so a program
+    /// that needs either does not run the same way through it.
+    #[serde(default)]
+    pub native_check: bool,
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
@@ -539,11 +546,14 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let Some(now_ms) = js_date::parse(&input.now, local) else {
         return Err(Stop::Declined("instant_does_not_read".into()));
     };
-    let answer = host
-        .request(host::check::program(&input.source, version, None))
-        .await
-        .map_err(|e| Stop::Thrown(Failure::Host(e)))?
-        .ok_or_else(|| Stop::Declined("check_answer_malformed".into()))?;
+    let answer = if input.native_check {
+        native_check(&input.source, &catalog, version)?
+    } else {
+        host.request(host::check::program(&input.source, version, None))
+            .await
+            .map_err(|e| Stop::Thrown(Failure::Host(e)))?
+            .ok_or_else(|| Stop::Declined("check_answer_malformed".into()))?
+    };
     let checked = program::join_check(root, &answer, version).map_err(|_| Stop::Declined("check_answer_malformed".into()))?;
     let run = Run {
         host,
@@ -615,6 +625,25 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // the shim logs it.
     let _ = run.hand_over_trace(true).await;
     outcome
+}
+
+/// The Rust checker's answer to `check.program` (`SegmentInput::native_check`),
+/// shaped as the host's: `{diagnostics, stamps}`. A program it refuses ends
+/// as the host ends one, with MOVENG_CHECK listing the blocking diagnostics
+/// (program_check.ts `checkPinned`): errors only, and a retired write form
+/// that still runs does not block.
+fn native_check(source: &str, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
+    let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None };
+    let diagnostics = movement_checker::check_source(source, catalog, options).map_err(|_| Stop::Declined("source_does_not_parse".into()))?;
+    let blocking: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.is_error() && d.code != movement_checker::codes::WRITE_SHAPE_RETIRED)
+        .map(|d| format!("  {} (line {}): {}", d.code, d.span.start.line, d.message))
+        .collect();
+    if !blocking.is_empty() {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_CHECK", format!("the movement program failed checking:\n{}", blocking.join("\n")))));
+    }
+    Ok(json!({ "diagnostics": diagnostics, "stamps": [] }))
 }
 
 /// A source this engine's parser refuses: the check's to fail, as the
@@ -2764,6 +2793,23 @@ mod tests {
         assert!(reads(input.clone()) > 0);
         input.as_object_mut().unwrap().remove("localZone");
         assert_eq!(reads(input), 0);
+    }
+
+    /// With `nativeCheck` the Rust checker answers `check.program`: the host
+    /// is never asked, a clean program runs, and one it refuses ends with
+    /// MOVENG_CHECK before any request at all.
+    #[test]
+    fn a_native_check_answers_in_place_of_the_host() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
+        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
+        input["nativeCheck"] = json!(true);
+        let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
+        assert!(done.get("result").is_some(), "{done}");
+        assert!(seen.iter().all(|r| r.family != "check"), "{seen:?}");
+        input["source"] = json!(source.replace("msg.`subject`", "nowhere"));
+        let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+        assert!(seen.is_empty(), "{seen:?}");
+        assert!(done.to_string().contains("MOVENG_CHECK") && done.to_string().contains("MOV_NAME_UNRESOLVED"), "{done}");
     }
 
     /// A null test of a credential reads it, and is refused as every other
