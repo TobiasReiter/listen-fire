@@ -26,3 +26,18 @@
 //! - MOV_UNKNOWN_POSITION
 //! - MOV_UNKNOWN_PROPERTY
 //! - MOV_UNREACHABLE_BRANCH
+
+use movement_parser::lowering::expression::EdgeStep;
+
+use crate::types::field::Ty;
+use crate::types::infer::Typing;
+use crate::types::position::{EdgeLanding, Position};
+
+/// Called by the type core after each edge step it types (`stepEdge`):
+/// `landing` is `None` when the walk had already lost its position. The
+/// walks family reports an unknown edge, a narrowing, an await rule here.
+pub fn observe_step(_typing: &mut Typing, _from: Option<&Position>, _step: &EdgeStep, _landing: Option<&EdgeLanding>) {}
+
+/// Called by the type core after each dot read off a record (`readProperty`):
+/// `ty` is `None` for a property the position does not declare (or cannot type).
+pub fn observe_read(_typing: &mut Typing, _position: Option<&Position>, _property: &str, _ty: Option<&Ty>) {}

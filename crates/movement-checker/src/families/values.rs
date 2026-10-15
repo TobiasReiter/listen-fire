@@ -23,3 +23,19 @@
 //! - MOV_SORT_NEEDS_KEY
 //! - MOV_SORT_NOT_COLLECTION
 //! - MOV_VALUE_UNLISTED
+
+use movement_parser::lowering::expression::Expression;
+
+use crate::types::field::Ty;
+use crate::types::infer::Typing;
+use crate::types::position::Position;
+
+/// Called by the type core after it types each expression node, children
+/// first: `operands` are the direct operands' types in source order (an
+/// arithmetic's two sides, a call's arguments, a concat's parts, a
+/// conditional's condition, then and else). The values family's operand
+/// rules (arithmetic, comparison, absence, json, enums) live here.
+pub fn observe(_typing: &mut Typing, _expr: &Expression, _position: Option<&Position>, _operands: &[Option<Ty>], _ty: Option<&Ty>) {}
+
+/// A literal key a dict written as a literal does not have (`reportUnknownDictKey`).
+pub fn unknown_dict_key(_typing: &mut Typing, _key: &str, _keys: &[String]) {}

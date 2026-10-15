@@ -28,3 +28,14 @@
 //! - MOV_RETURN_TYPE
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
+
+use movement_parser::lowering::expression::Expression;
+
+use crate::types::field::Ty;
+use crate::types::infer::Typing;
+use crate::types::position::Position;
+
+/// Called by the type core after the values family's `observe`, for every
+/// node: a built-in call's argument rules (`checkBuiltinArgs`,
+/// `checkStdlibLiteralArgs`) live here. `crate::types::stdlib` has the signatures.
+pub fn observe(_typing: &mut Typing, _expr: &Expression, _position: Option<&Position>, _operands: &[Option<Ty>], _ty: Option<&Ty>) {}

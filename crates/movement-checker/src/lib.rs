@@ -5,12 +5,14 @@
 //! until the parity harness (PARITY.md) finds no difference.
 
 pub mod abi;
+mod binding_types;
 mod checker;
 pub mod codes;
 mod diagnostic;
 pub mod families;
-mod scope;
+pub mod scope;
 pub mod slots;
+pub mod types;
 mod version;
 
 pub use diagnostic::{Diagnostic, Severity};

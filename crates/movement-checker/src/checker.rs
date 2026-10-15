@@ -35,6 +35,8 @@ pub struct Checker<'c> {
     pub diagnostics: Vec<Diagnostic>,
     /// Depth of type-only walks, which report nothing.
     type_only: usize,
+    /// Each catalog schema an instance was built from, read once.
+    pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -49,7 +51,7 @@ pub struct Bound {
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0 }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -84,6 +86,7 @@ impl<'c> Checker<'c> {
                 if let Some(existing) = self.declare_authored(scope, symbol, declaration.span) {
                     self.report_duplicate_declaration(&declaration.name, existing, declaration.span);
                 }
+                self.type_declared(scope, &declaration.name, &declaration.options);
             }
         }
         for statement in statements {
@@ -124,6 +127,7 @@ impl<'c> Checker<'c> {
                 self.check_reserved_name(&assign.name, assign.span);
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name));
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
+                self.type_assigned(&assign.name, &assign.value, scope);
             }
             Statement::Type(_) => {}
             Statement::Shape(shape) => {
@@ -370,6 +374,7 @@ impl<'c> Checker<'c> {
             let Some(type_) = &param.type_ else { continue };
             self.check_param_type(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
+            self.type_param(body, &param.name, type_, scope);
         }
         self.check_statement_list(&movement.body, body);
         if let Some(returns) = &movement.return_type {
@@ -398,6 +403,9 @@ impl<'c> Checker<'c> {
         for param in &closure.params {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
+            if let Some(type_) = &param.type_ {
+                self.type_param(body, &param.name, type_, scope);
+            }
         }
         self.check_statement_list(&closure.body, body);
     }
