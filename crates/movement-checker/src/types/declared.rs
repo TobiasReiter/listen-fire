@@ -12,7 +12,7 @@ use movement_parser::catalog::helpers::parse_field_type_name;
 use movement_parser::catalog::types::{Composite, EdgeSchema, FieldType, InstanceSchema, JsMap, PositionSchema, Scalar, SchemaFieldType};
 
 use super::field::{Ty, describe_field_type, field_assignable, strip_absent};
-use super::position::{Instance, InstanceRef, LocalNode, Position};
+use super::position::{ExtractNode, Instance, InstanceRef, LocalNode, Position};
 
 /// `T | absent` as a schema spells it.
 pub fn schema_maybe_absent(of: SchemaFieldType) -> SchemaFieldType {
@@ -202,6 +202,18 @@ pub fn supplied_surface(position: &Position) -> Option<Surface<'_>> {
         Position::Position(p) => schema_surface(&p.instance.schema, &p.position),
         _ => None,
     }
+}
+
+/// `extractSurface`: what an extracted node offers — each field as its
+/// annotation types it (text where none is written), each child node an edge.
+pub fn extract_surface(node: &ExtractNode) -> Option<Surface<'_>> {
+    if node.declared {
+        return None;
+    }
+    Some(Surface {
+        properties: node.properties.iter().map(|(name, field)| (name.clone(), Some(field.explicit.clone().unwrap_or(Ty::Text)))).collect(),
+        edges: node.children.iter().map(|(name, child)| (name.clone(), Some(Box::new(move || extract_surface(child)) as SurfaceThunk<'_>))).collect(),
+    })
 }
 
 fn local_surface<'a>(local: &'a LocalNode) -> Surface<'a> {
