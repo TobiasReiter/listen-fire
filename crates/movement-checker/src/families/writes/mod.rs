@@ -720,7 +720,7 @@ impl Checker<'_> {
             return Landing { local: true, ..Landing::default() };
         };
         let description = format!("'{edge_name}' on {} this run built", from.label);
-        let Some(schema) = edge.target.as_ref().and_then(|target| position_schema_of_ref(target)).map(|s| s.into_owned()) else {
+        let Some(schema) = edge.target.as_ref().and_then(position_schema_of_ref).map(|s| s.into_owned()) else {
             return Landing { local: true, description: Some(description), ..Landing::default() };
         };
         let root = WritableRootSchema {

@@ -484,11 +484,8 @@ impl<'a> Typing<'a> {
             return None;
         }
         let Some((target, path)) = self.write_target.clone() else { return Some(Ty::Text) };
-        match super::field::base_kind(&target) {
-            Some(super::field::BaseKind::Text | super::field::BaseKind::Json | super::field::BaseKind::Absent | super::field::BaseKind::Record) => {
-                return Some(Ty::Text);
-            }
-            _ => {}
+        if let Some(BaseKind::Text | BaseKind::Json | BaseKind::Absent | BaseKind::Record) = base_kind(&target) {
+            return Some(Ty::Text);
         }
         let primitive = describe_field_type(&super::field::unwrap_list(&target));
         let borrow = path.as_deref().map(|path| {
