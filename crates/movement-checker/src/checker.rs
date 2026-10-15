@@ -172,13 +172,20 @@ impl<'c> Checker<'c> {
                 }
             }
             Statement::If(statement) => {
+                // A failed bare `IS` rules its variant out of every later arm and the `else`.
+                let mut ruled_out = crate::families::walks::RuledOut::default();
                 for arm in &statement.arms {
-                    self.check_condition_slot(&arm.condition, scope);
                     let arm_scope = self.scopes.open(Some(scope));
+                    self.declare_eliminated(&ruled_out, scope, arm_scope);
+                    self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
                     self.check_statement_list(&arm.body, arm_scope);
+                    if let Ok(condition) = condition_of_slot(&arm.condition) {
+                        self.collect_is_elimination(&condition, scope, &mut ruled_out);
+                    }
                 }
                 if let Some(else_arm) = &statement.else_arm {
                     let else_scope = self.scopes.open(Some(scope));
+                    self.declare_eliminated(&ruled_out, scope, else_scope);
                     self.check_statement_list(&else_arm.body, else_scope);
                 }
             }
@@ -321,14 +328,14 @@ impl<'c> Checker<'c> {
 
     /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
     /// tests name a subject and a type.
-    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         let Ok(condition) = condition_of_slot(slot) else { return };
-        self.check_condition(&condition, slot, scope);
+        self.check_condition(&condition, slot, scope, narrow_into);
     }
 
-    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId) {
+    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         match condition {
-            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope)),
+            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope, narrow_into)),
             MovementCondition::IsTest { subject_raw, type_ } => {
                 let subject = subject_raw.trim();
                 if is_bare_ident(subject) {
@@ -337,6 +344,7 @@ impl<'c> Checker<'c> {
                     self.check_expr_slot(&ExprSlot::plain(subject_raw.clone(), slot.span), scope);
                 }
                 self.resolve_name(&type_.graph, slot.span, scope);
+                self.check_is_test(subject_raw, type_, slot.span, scope, narrow_into);
             }
             MovementCondition::Expr { expr } => {
                 let names = collect_expression_names(expr);
@@ -345,6 +353,7 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
+                self.report_slot_typing(expr, slot.span, scope);
             }
         }
     }
@@ -389,6 +398,7 @@ impl<'c> Checker<'c> {
         for param in &movement.params {
             let Some(type_) = &param.type_ else { continue };
             self.check_param_type(type_, scope);
+            self.report_param_position(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
@@ -420,6 +430,7 @@ impl<'c> Checker<'c> {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
+                self.report_param_position(type_, scope);
                 self.type_param(body, &param.name, type_, scope);
             }
         }

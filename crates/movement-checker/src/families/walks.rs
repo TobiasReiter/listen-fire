@@ -136,8 +136,7 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
             }
             if !carrying.is_empty() {
                 let shown: Vec<String> = carrying.iter().map(|v| format!("{}'s {}", u.instance.name, display_name_of(&u.instance, v))).collect();
-                // An event address's example is the listens family's to derive.
-                let example = format!("x IS <{}-[:`…` WHERE …]->>", u.instance.name);
+                let example = narrowing_example(u, &carrying);
                 typing.report(
                     codes::NARROWING,
                     format!("'{edge}' is an edge of {} only — narrow with an IS test (e.g. `{example}`) before traversing it", shown.join(" / ")),
@@ -840,6 +839,288 @@ impl crate::checker::Checker<'_> {
             if let Some(Some(pos)) = walk.locals.get(alias) {
                 self.set_types(landing, alias, SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
             }
+        }
+    }
+}
+
+impl crate::checker::Checker<'_> {
+    /// `positionFromTypeRefStrict`, the reporting half: a written parameter
+    /// type naming a position its graph's schema does not have.
+    pub fn report_param_position(&mut self, type_: &movement_parser::ast::ParamTypeRef, scope: ScopeId) {
+        let movement_parser::ast::ParamTypeRef::Name(reference) = type_ else { return };
+        if reference.hops_raw.is_none() && reference.position.is_none() {
+            return;
+        }
+        let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph) else { return };
+        let symbol = self.scopes.symbol(id);
+        if symbol.kind == crate::scope::SymbolKind::Adapter {
+            return;
+        }
+        if symbol.kind == crate::scope::SymbolKind::Shape {
+            if reference.hops_raw.is_some() {
+                let graph = &reference.graph;
+                let name = reference.position.as_deref().unwrap_or("name");
+                self.report(
+                    codes::SHAPE_HOP_RETIRED,
+                    format!(
+                        "'{graph}' is a declared node — the structure a parameter is checked against — and it IS the record it describes, so there is nothing to hop through: write '<{graph}>'. Its nested nodes are edges you traverse off the parameter instead ('d-[x:{name}]->')"
+                    ),
+                    reference.span,
+                );
+            }
+            return;
+        }
+        let Some(Position::Meta { instance }) = &symbol.types.pos else { return };
+        let Some(position) = &reference.position else { return };
+        let resolved = match &reference.hops_raw {
+            Some(hops) => crate::types::event_address::position_from_address(instance, hops),
+            None => crate::types::position::position_ref_in(instance, position),
+        };
+        if resolved.is_some() {
+            return;
+        }
+        let mut available: Vec<&str> = instance.schema.unions.iter().flat_map(|u| u.keys()).map(String::as_str).collect();
+        for name in instance.schema.positions.keys() {
+            if !available.contains(&name.as_str()) {
+                available.push(name);
+            }
+        }
+        let message = format!("'{}' has no position type '{position}'{}", reference.graph, it_has(&available));
+        self.report(codes::UNKNOWN_POSITION, message, reference.span);
+    }
+}
+
+/// The IS test a NARROWING message suggests: the first `action` option whose
+/// narrowing of the union's own address carries what was asked for.
+fn narrowing_example(u: &crate::types::position::UnionPosition, carrying: &[&String]) -> String {
+    let fallback = format!("x IS <{}-[:`…` WHERE …]->>", u.instance.name);
+    let Some(address) = &u.address else { return fallback };
+    let action = u.instance.schema.positions.get(&address.event).and_then(|p| p.properties.get("action")).map(Ty::from_schema);
+    let Some(Ty::Enum { options, .. }) = action else { return fallback };
+    for option in options {
+        let mut narrowing: Vec<(String, String)> = address.narrowing.iter().filter(|(k, _)| k != "action").cloned().collect();
+        match address.narrowing.iter().position(|(k, _)| k == "action") {
+            Some(at) => narrowing.insert(at.min(narrowing.len()), ("action".to_string(), option.clone())),
+            None => narrowing.push(("action".to_string(), option.clone())),
+        }
+        let key = crate::types::event_address::event_address_key(&crate::types::event_address::EventAddress { event: address.event.clone(), narrowing });
+        if carrying.iter().any(|v| **v == key) {
+            return format!("x IS <{}-[:`{}` WHERE `action` == \"{option}\"]->>", u.instance.name, address.event);
+        }
+    }
+    fallback
+}
+
+// ── IS-test narrowing (`checkCondition`'s isTest case, `checkIf`'s
+// elimination down the arms) ──
+
+/// What the failed `IS` tests above an arm ruled out, per subject name;
+/// `None` where a declared node's test ruled out what this port cannot yet
+/// work out (conformance is the nodes family's), so the subject goes untyped
+/// rather than wrong.
+pub type RuledOut = indexmap::IndexMap<String, Option<Vec<String>>>;
+
+/// `residualUnion`: a union with only `remaining` left; one left is that position.
+fn residual_union(union: &crate::types::position::UnionPosition, remaining: &[String]) -> Position {
+    let mut variants: Vec<String> = remaining.to_vec();
+    variants.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    variants.dedup();
+    if variants.len() == 1 {
+        return Position::record(union.instance.clone(), variants[0].clone());
+    }
+    let key = serde_json::to_string(&("union", &variants)).unwrap_or_default();
+    let display = variants.iter().map(|v| display_name_of(&union.instance, v)).collect::<Vec<_>>().join(" | ");
+    Position::Union(crate::types::position::UnionPosition {
+        instance: union.instance.clone(),
+        union: key,
+        variants,
+        narrows_event: None,
+        display: Some(display),
+        address: None,
+    })
+}
+
+/// `ruledOutVariant`: the variant a failed test disproves, if any.
+fn ruled_out_variant(type_: &movement_parser::lowering::condition::IsType, union: &crate::types::position::UnionPosition) -> Option<String> {
+    let Some(hops) = &type_.hops_raw else { return type_.position.clone() };
+    let test = crate::types::event_address::event_address_of_hops(hops)?;
+    let subject = union.address.clone().unwrap_or(crate::types::event_address::EventAddress { event: union.union.clone(), narrowing: Vec::new() });
+    if subject.event != test.event {
+        return None;
+    }
+    let merged = merge_pins(&subject.narrowing, &test.narrowing)?;
+    let key = crate::types::event_address::event_address_key(&crate::types::event_address::EventAddress { event: test.event, narrowing: merged });
+    union.variants.contains(&key).then_some(key)
+}
+
+/// The subject's pins extended by the test's; `None` when they contradict.
+fn merge_pins(subject: &[(String, String)], test: &[(String, String)]) -> Option<Vec<(String, String)>> {
+    let mut merged = subject.to_vec();
+    for (key, value) in test {
+        match merged.iter().find(|(k, _)| k == key) {
+            Some((_, existing)) if existing != value => return None,
+            Some(_) => {}
+            None => merged.push((key.clone(), value.clone())),
+        }
+    }
+    Some(merged)
+}
+
+impl crate::checker::Checker<'_> {
+    fn graph_instance(&self, graph: &str, scope: ScopeId) -> Option<crate::types::position::InstanceRef> {
+        match self.symbol_types(graph, scope)?.pos.as_ref()? {
+            Position::Meta { instance } => Some(instance.clone()),
+            _ => None,
+        }
+    }
+
+    fn union_of(&self, name: &str, scope: ScopeId) -> Option<crate::types::position::UnionPosition> {
+        match self.symbol_types(name, scope)?.pos.as_ref()? {
+            Position::Union(u) => Some(u.clone()),
+            _ => None,
+        }
+    }
+
+    /// Re-declares `name` (resolved from `scope`) into `into` with a sharper position.
+    fn declare_narrowed(&mut self, name: &str, scope: ScopeId, into: ScopeId, position: Option<Position>) {
+        let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return };
+        let mut symbol = self.scopes.symbol(id).clone();
+        symbol.types.pos = position;
+        let narrowed = self.scopes.add_symbol(symbol);
+        self.scopes.declare(into, narrowed);
+    }
+
+    /// The `IS` test's walks rules: an unknown position, and the narrowing a
+    /// positive test declares into the arm (`narrow_into`).
+    pub fn check_is_test(
+        &mut self,
+        subject_raw: &str,
+        type_: &movement_parser::lowering::condition::IsType,
+        span: movement_parser::ast::Span,
+        scope: ScopeId,
+        narrow_into: Option<ScopeId>,
+    ) {
+        let subject = subject_raw.trim();
+        let bare = crate::slots::is_bare_ident(subject);
+        let Resolution::Found(graph_id) = self.scopes.resolve(scope, &type_.graph) else { return };
+        if self.scopes.symbol(graph_id).kind == crate::scope::SymbolKind::Shape {
+            if type_.position.is_some() || type_.hops_raw.is_some() {
+                let graph = crate::families::names::spell_name(&type_.graph);
+                let name = crate::families::names::spell_name(type_.position.as_deref().unwrap_or("name"));
+                self.report(
+                    codes::SHAPE_HOP_RETIRED,
+                    format!(
+                        "'{}' is a declared node — it IS the record it describes, so there is nothing to hop through: write '{subject} IS <{graph}>'. Its nested nodes are edges you traverse off the value instead ('{subject}-[x:{name}]->')",
+                        type_.graph
+                    ),
+                    span,
+                );
+                return;
+            }
+            // Which members conform is the nodes family's to answer; until
+            // then the arm reads the subject untyped rather than wrongly.
+            if let Some(into) = narrow_into
+                && self.union_of(subject, scope).is_some()
+            {
+                self.declare_narrowed(subject, scope, into, None);
+            }
+            return;
+        }
+        let instance = self.graph_instance(&type_.graph, scope);
+        if let (Some(instance), Some(position)) = (&instance, &type_.position)
+            && crate::types::position::position_ref_in(instance, position).is_none()
+        {
+            let mut available: Vec<&str> = instance.schema.unions.iter().flat_map(|u| u.keys()).map(String::as_str).collect();
+            for name in instance.schema.positions.keys() {
+                if !available.contains(&name.as_str()) {
+                    available.push(name);
+                }
+            }
+            let message = format!("'{}' has no position type '{position}'{}", type_.graph, it_has(&available));
+            self.report(codes::UNKNOWN_POSITION, message, span);
+        }
+        let (Some(into), Some(instance), true) = (narrow_into, instance, bare) else { return };
+        let subject_pos = self.symbol_types(subject, scope).and_then(|t| t.pos.clone());
+        if let (Some(Position::Union(union)), Some(position)) = (&subject_pos, &type_.position)
+            && crate::types::position::same_instance(&union.instance, &instance)
+            && union.variants.contains(position)
+        {
+            self.declare_narrowed(subject, scope, into, Some(Position::record(instance.clone(), position.clone())));
+        }
+        let Some(hops) = &type_.hops_raw else { return };
+        let Some(test) = crate::types::event_address::event_address_of_hops(hops) else { return };
+        let (subject_instance, subject_address) = match &subject_pos {
+            Some(Position::Position(p)) => (&p.instance, crate::types::event_address::EventAddress { event: p.position.clone(), narrowing: Vec::new() }),
+            Some(Position::Union(u)) => {
+                (&u.instance, u.address.clone().unwrap_or(crate::types::event_address::EventAddress { event: u.union.clone(), narrowing: Vec::new() }))
+            }
+            _ => return,
+        };
+        if !crate::types::position::same_instance(subject_instance, &instance) || subject_address.event != test.event {
+            return;
+        }
+        let Some(merged) = merge_pins(&subject_address.narrowing, &test.narrowing) else { return };
+        let address = crate::types::event_address::EventAddress { event: test.event, narrowing: merged };
+        let narrowed = !address.narrowing.is_empty();
+        let resolved = match crate::types::position::position_ref_in(&instance, &crate::types::event_address::event_address_key(&address)) {
+            Some(Position::Position(mut p)) => {
+                if narrowed {
+                    p.narrows_event = Some(address.event.clone());
+                }
+                Position::Position(p)
+            }
+            Some(Position::Union(mut u)) => {
+                if narrowed {
+                    u.narrows_event = Some(address.event.clone());
+                }
+                u.address = Some(address);
+                Position::Union(u)
+            }
+            _ => return,
+        };
+        self.declare_narrowed(subject, scope, into, Some(resolved));
+    }
+
+    /// `collectIsElimination`: a bare `IS` that failed rules its variant out.
+    pub fn collect_is_elimination(&self, condition: &movement_parser::lowering::condition::MovementCondition, scope: ScopeId, ruled_out: &mut RuledOut) {
+        let movement_parser::lowering::condition::MovementCondition::IsTest { subject_raw, type_ } = condition else { return };
+        let subject = subject_raw.trim();
+        if !crate::slots::is_bare_ident(subject) {
+            return;
+        }
+        let Some(union) = self.union_of(subject, scope) else { return };
+        let Resolution::Found(graph) = self.scopes.resolve(scope, &type_.graph) else { return };
+        if self.scopes.symbol(graph).kind == crate::scope::SymbolKind::Shape {
+            if type_.position.is_none() && type_.hops_raw.is_none() {
+                ruled_out.insert(subject.to_string(), None);
+            }
+            return;
+        }
+        let Some(instance) = self.graph_instance(&type_.graph, scope) else { return };
+        if !crate::types::position::same_instance(&union.instance, &instance) {
+            return;
+        }
+        let Some(variant) = ruled_out_variant(type_, &union) else { return };
+        if let Some(eliminated) = ruled_out.entry(subject.to_string()).or_insert_with(|| Some(Vec::new())) {
+            if !eliminated.contains(&variant) {
+                eliminated.push(variant);
+            }
+        }
+    }
+
+    /// `declareEliminated`: each subject, its union minus what was ruled out.
+    pub fn declare_eliminated(&mut self, ruled_out: &RuledOut, scope: ScopeId, into: ScopeId) {
+        for (name, eliminated) in ruled_out {
+            let Some(union) = self.union_of(name, scope) else { continue };
+            let Some(eliminated) = eliminated else {
+                self.declare_narrowed(name, scope, into, None);
+                continue;
+            };
+            let remaining: Vec<String> = union.variants.iter().filter(|v| !eliminated.contains(v)).cloned().collect();
+            if remaining.len() == union.variants.len() {
+                continue;
+            }
+            self.declare_narrowed(name, scope, into, Some(residual_union(&union, &remaining)));
         }
     }
 }

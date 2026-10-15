@@ -10,6 +10,7 @@
 //! - `infer`: `Typing`, which types an expression against a `TypeEnv`.
 //! - `scope_env`: the `TypeEnv` the checker's scope chain answers.
 
+pub mod event_address;
 pub mod field;
 pub mod infer;
 pub mod narrowing;

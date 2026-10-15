@@ -107,6 +107,8 @@ pub struct UnionPosition {
     pub variants: Vec<String>,
     pub narrows_event: Option<String>,
     pub display: Option<String>,
+    /// The event address a parameter type named it by (`positionFromAddress`).
+    pub address: Option<super::event_address::EventAddress>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +161,7 @@ pub fn position_ref_in(instance: &InstanceRef, name: &str) -> Option<Position> {
             variants: variants.clone(),
             narrows_event: None,
             display: None,
+            address: None,
         }));
     }
     instance.schema.positions.contains_key(name).then(|| Position::record(instance.clone(), name))

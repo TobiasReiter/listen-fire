@@ -120,13 +120,13 @@ impl Checker<'_> {
 
     /// `positionFromTypeRef`, the part without hops: `<crm.Company>` is a
     /// position (or a union) of the instance `crm`, `<crm>` the instance
-    /// itself. A type written with hops is the walks family's to resolve.
+    /// itself, and a type written with hops names an event address.
     pub fn position_from_type_ref(&self, reference: &TypeRef, scope: ScopeId) -> Option<Position> {
-        if reference.hops_raw.is_some() {
-            return None;
-        }
         let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph) else { return None };
         let Some(Position::Meta { instance }) = &self.scopes.symbol(id).types.pos else { return None };
+        if let Some(hops) = &reference.hops_raw {
+            return crate::types::event_address::position_from_address(instance, hops);
+        }
         match &reference.position {
             None => Some(Position::Meta { instance: instance.clone() }),
             Some(name) => position_ref_in(instance, name).or_else(|| {
