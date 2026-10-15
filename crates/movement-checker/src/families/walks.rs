@@ -1101,10 +1101,10 @@ impl crate::checker::Checker<'_> {
             return;
         }
         let Some(variant) = ruled_out_variant(type_, &union) else { return };
-        if let Some(eliminated) = ruled_out.entry(subject.to_string()).or_insert_with(|| Some(Vec::new())) {
-            if !eliminated.contains(&variant) {
-                eliminated.push(variant);
-            }
+        if let Some(eliminated) = ruled_out.entry(subject.to_string()).or_insert_with(|| Some(Vec::new()))
+            && !eliminated.contains(&variant)
+        {
+            eliminated.push(variant);
         }
     }
 

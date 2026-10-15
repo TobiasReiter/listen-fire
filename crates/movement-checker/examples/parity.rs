@@ -148,7 +148,7 @@ fn push_sample(samples: &mut BTreeMap<String, Vec<String>>, code: String, sample
         return;
     }
     let list = samples.entry(code).or_default();
-    if list.len() < 12 {
+    if list.len() < std::env::var("PARITY_SAMPLES").ok().and_then(|n| n.parse().ok()).unwrap_or(12) {
         let line = span["start"]["line"].as_u64().unwrap_or(1) as usize;
         let text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
         list.push(format!("{sample}\n  line {line}: {}", text.trim()));
