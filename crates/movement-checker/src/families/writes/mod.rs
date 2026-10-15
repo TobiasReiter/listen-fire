@@ -1791,3 +1791,16 @@ pub fn report_write_only_property(typing: &mut Typing, position: Option<&Positio
         .unwrap_or_default();
     typing.report(codes::WRITE_ONLY_PROPERTY, format!("'{property}' on {shown} is write-only — a value a write sets, not one to read.{doc}"));
 }
+
+/// `MOV_LINKED_HOP_RETIRED`'s message: raised where a walk's hops are read
+/// (`checkWalkKeepsWhatIsWritten`), for a `-[#linked …]->` hop.
+pub fn linked_hop_retired_message(version: u32) -> String {
+    let instead = if version >= 5 {
+        "or store the link in the system that holds it — a field or an edge there"
+    } else {
+        "or tie a write to a record you hold with 'write … bind other { … }'"
+    };
+    format!(
+        "the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> {{ … }}', then 'rec.<field>' or 'rec-[:…]->'; {instead}"
+    )
+}
