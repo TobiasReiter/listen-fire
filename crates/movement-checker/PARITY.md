@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **35 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 986 of 15246; 0 extra in Rust.
+- Diagnostics matched: 990 of 15246; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 1115 of 11435.
-- Rust side: 4.8s; 0 records the Rust parser or catalog refused; 0 panics.
+- Rust side: 5.3s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -27,7 +27,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | calls | 26 | 11 | 476 | 313 | 162 | 0 | 1 |
 | closures | 14 | 9 | 305 | 259 | 46 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
-| flow | 10 | 6 | 78 | 42 | 36 | 0 | 0 |
+| flow | 10 | 6 | 78 | 46 | 32 | 0 | 0 |
 | imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
 | listens | 12 | 0 | 10671 | 0 | 10671 | 0 | 0 |
 | names | 9 | 7 | 371 | 355 | 16 | 0 | 0 |
@@ -52,7 +52,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_AWAIT_BARE_WALK | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_AWAIT_IMPURE_CONDITION | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_AWAIT_NEEDS_CADENCE | flow | 8 | 0 | 8 | 0 | 0 |  |
-| MOV_AWAIT_NOT_AWAITABLE | flow | 12 | 0 | 12 | 0 | 0 |  |
+| MOV_AWAIT_NOT_AWAITABLE | flow | 12 | 4 | 8 | 0 | 0 |  |
 | MOV_BLOCK_READ_BACK_RETIRED | closures | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_BLOCK_RETURNS_NOTHING | closures | 152 | 152 | 0 | 0 | 0 | yes |
 | MOV_BORROW_UNKNOWN_FIELD | nodes | 12 | 0 | 12 | 0 | 0 |  |

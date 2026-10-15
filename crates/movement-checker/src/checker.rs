@@ -20,7 +20,7 @@ use movement_parser::lowering::condition::MovementCondition;
 use crate::slots::{collect_expression_names, condition_of_slot, expression_of_slot, expression_of_text, extract_hop_aliases, is_bare_ident, is_literal_word};
 
 /// `EXPRESSION_ROOT_PROBE`: what an expression root is spelled as in a probe.
-const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
+pub(crate) const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
 
 /// The scalar names a value type may be written as (`<number>`).
 const SCALAR_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
@@ -723,10 +723,12 @@ impl<'c> Checker<'c> {
             AwaitSource::Traversal { head, span } => {
                 self.check_awaited_head(head, Some(*span));
                 self.check_path_head(head, scope);
+                self.check_awaitable(head, scope);
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
+                self.check_awaitable(head, scope);
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));

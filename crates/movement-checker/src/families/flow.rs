@@ -15,7 +15,12 @@
 use movement_parser::ast::{DurationLiteral, PathHead, PathRoot, RValue, Span, Statement};
 use movement_parser::version::before;
 
+use movement_parser::lowering::expression::{Expression, TraversalStep};
+
 use crate::checker::Checker;
+use crate::scope::ScopeId;
+use crate::types::field::record_head_position;
+use crate::types::infer::Typing;
 use crate::codes;
 
 /// An `until` condition is re-evaluated on a timer: it may not re-check
@@ -129,6 +134,49 @@ impl Checker<'_> {
                     "'await' parks on the record it waits at, and a parked run finds that record again by NAME — so this one is bound first: 'waiting = {}', then 'await FIRST(waiting{})'.",
                     expr.raw, head.hops_raw
                 ),
+                head.span,
+            );
+        }
+    }
+
+    /// What an awaited walk lands on must resume the run: an edge whose
+    /// resolution does (awaitable), and one that says when (watchable). An
+    /// undescribed edge claims nothing.
+    pub fn check_awaitable(&mut self, head: &PathHead, scope: ScopeId) {
+        let (root, expression_root) = match &head.root {
+            Some(PathRoot::Name { name }) => (crate::families::names::spell_name(name), None),
+            Some(PathRoot::Expression { expr }) => (crate::checker::EXPRESSION_ROOT_PROBE.to_string(), Some(expr)),
+            None => return,
+        };
+        let probe = format!("{root}{}.`__movement_head_probe__`", head.hops_raw);
+        let Ok(Expression::Traverse { alias_root: Some(root), steps, .. }) = crate::slots::expression_of_text(&probe) else { return };
+        if steps.is_empty() {
+            return;
+        }
+        let env = self.typing_env(scope);
+        let mut typing = Typing::new(&env, self.version, head.span);
+        let start = match expression_root {
+            Some(expr) => self.type_of_slot(expr, scope).and_then(|(_, ty, _)| record_head_position(ty.as_ref())),
+            None => typing.walk_start(&root),
+        };
+        let Some(start) = start else { return };
+        typing.walk_steps(Some(start), &steps, true);
+        let Some(edge) = typing.last_edge_schema.clone() else { return };
+        let path = spell_path_head(head);
+        if edge.awaitable != Some(true) {
+            self.report(
+                codes::AWAIT_NOT_AWAITABLE,
+                format!("'FIRST({path})' can't be awaited — 'await' waits on an edge whose resolution resumes the run (an ask's Response). This is an ordinary edge; read it live, without 'await'."),
+                head.span,
+            );
+        } else if edge.watchable != Some(true) {
+            let named = match steps.last() {
+                Some(TraversalStep::Edge(step)) => format!("'-[:{}]->'", step.edge_type_id),
+                _ => "This edge".to_string(),
+            };
+            self.report(
+                codes::AWAIT_NEEDS_CADENCE,
+                format!("{named} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: `await until(() => {{ return EXISTS({path}) }}, every: 15m)`."),
                 head.span,
             );
         }
