@@ -648,7 +648,15 @@ impl<'a> Typing<'a> {
                 (None, prompt.into_iter().collect())
             }
             Expression::Function { fn_, args } => {
-                let types: Vec<Option<Ty>> = args.iter().map(|a| self.infer_at(a, position)).collect();
+                let options = crate::families::extraction::options_contract(fn_);
+                let types: Vec<Option<Ty>> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| match options {
+                        Some(contract) if contract.index == i => crate::families::extraction::type_options_map(self, a, contract, position),
+                        _ => self.infer_at(a, position),
+                    })
+                    .collect();
                 (self.function_type(fn_, &types), types)
             }
             Expression::KgExists { params, .. } | Expression::KgValue { params, .. } => {

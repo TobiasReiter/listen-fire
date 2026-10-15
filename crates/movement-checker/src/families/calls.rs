@@ -517,12 +517,13 @@ impl Checker<'_> {
             let span = span_of_extent(slot, at);
             let name = nested_call_name(span);
             let head = String::from_utf16_lossy(&units[..at.end]);
-            match movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start) {
+            let parsed = movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start);
+            match &parsed {
                 Ok(value) => {
                     self.open_effect_frame();
-                    self.check_rvalue(&value, scope, None, span);
+                    self.check_rvalue(value, scope, None, span);
                     let row = self.close_effect_frame();
-                    let callee = match &value {
+                    let callee = match value {
                         RValue::Call { call } => Some(&call.callee),
                         RValue::Construct { construct } => Some(&construct.callee),
                         _ => None,
@@ -540,6 +541,10 @@ impl Checker<'_> {
             }
             let symbol = self.scopes.add_symbol(Symbol::new(&name, SymbolKind::Binding, span));
             self.scopes.declare(scope, symbol);
+            // The name holds what the call hands back, as a binding of it would.
+            if let Ok(value) = &parsed {
+                self.type_assigned(&name, value, scope);
+            }
             rewritten.extend_from_slice(&units[from..at.start]);
             // The name in the call's place, padded to the call's length so
             // every later offset into the text is the original's.

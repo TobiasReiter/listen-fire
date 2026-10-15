@@ -48,6 +48,7 @@ use crate::types::position::EXTRACT_ROOT_NAME;
 use movement_parser::ast::ExprSlot;
 use movement_parser::ast::{PathHead, PathRoot};
 use movement_parser::catalog::types::InstanceSchema;
+use movement_parser::lowering::vocabulary::{OptionType, OptionsContract, vocabulary};
 use movement_parser::tree::{Hop, MExpr};
 use crate::families::names::spell_name;
 use crate::types::field::{record_head_position, widen_tuples};
@@ -1166,4 +1167,47 @@ fn file_edges_of(schema: &InstanceSchema, positions: &[String]) -> Vec<String> {
         }
     }
     if declared.is_empty() { filed } else { declared }
+}
+
+/// `builtinOptionsFor`: the options map a built-in declares (`CHUNKS`'s).
+pub fn options_contract(function: &str) -> Option<&'static OptionsContract> {
+    vocabulary().options_for(function)
+}
+
+/// `typeOptionsMap`: each value of a built-in's options map, typed against
+/// the key's declared type. The map itself is call shape, not a value.
+pub fn type_options_map(typing: &mut Typing, arg: &Expression, contract: &OptionsContract, position: Option<&Position>) -> Option<Ty> {
+    let Expression::Object { entries } = arg else { return None };
+    for entry in entries {
+        let ObjectMember::Entry { key, value } = entry else { continue };
+        let got = typing.infer_at(value, position);
+        let Some(option) = contract.options.iter().find(|o| o.key == key) else { continue };
+        let want = match option.type_ {
+            OptionType::Number => Ty::Number,
+            OptionType::Text => Ty::Text,
+            OptionType::Literal => continue,
+        };
+        let Some(got) = got else { continue };
+        if !crate::types::field::field_type_equals(strip_absent(&got), &want) {
+            typing.report(
+                codes::OPTION_INVALID,
+                format!(
+                    "{}: '{key}' is {}, so it is a {} — and this is {}.",
+                    contract.signature,
+                    option.summary,
+                    describe_field_type(&want),
+                    describe_field_type(strip_absent(&got))
+                ),
+            );
+        } else if matches!(got, Ty::MaybeAbsent(_)) {
+            typing.report(
+                codes::OPTION_INVALID,
+                format!(
+                    "{}: '{key}' is {}, and this may not answer at all — fill it in ('COALESCE(…, 2000)') so the run always has one.",
+                    contract.signature, option.summary
+                ),
+            );
+        }
+    }
+    None
 }
