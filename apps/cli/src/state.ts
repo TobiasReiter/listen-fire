@@ -1,11 +1,12 @@
 // The host's state, in SQLite at `.lf/state.db` (or a temporary file with
-// `--ephemeral`): the run log, each run's trace, parked leaves and the joins
-// they hold, record bindings, and the work queue `lf serve` drains. The same
-// host families the hosted Postgres backend serves, with the same semantics:
-// a park is one row per (run, address), a resume claims its leaf before it
-// steps it, a join closes exactly once, a work row is leased (not taken), and
-// a run is stepped by one process at a time (the run lease) — so `lf resume`
-// and a running `lf serve` can share one state file.
+// `--ephemeral`): the run log, each run's trace, record bindings, and the run
+// host's backend families (store.ts in the run-host core): parked leaves, the
+// joins they hold, await correlations, the run lease and the work queue
+// `lf serve` drains. The families mean what the hosted Postgres backend's
+// mean, held to it by the run host's contract suite; the rules over them are
+// the core's. Every write that must not interleave with another process's
+// runs in one `begin immediate` transaction, so `lf resume` and a running
+// `lf serve` can share one state file.
 
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,7 +15,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/services/movement_engine/host';
-import { isAncestorOrSelf, parseAddress } from 'movement-engine/services/movement_engine/address';
+import { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
+import type { ClaimedWork, LeafRow as CoreLeafRow, RunHostStore } from 'movement-engine/services/run_host/store';
+import { CORE_PARK_REASONS } from 'engine-contracts';
 import {
   asEncoded,
   encodeEndpoint,
@@ -38,23 +41,7 @@ const RunRow = z.object({
 });
 export type RunRow = z.infer<typeof RunRow>;
 
-const ParkKind = z.enum(['timer', 'await', 'suspension']);
-const ParkRow = z.object({
-  run_id: z.string(),
-  address: z.string(),
-  kind: ParkKind,
-  /** `parked`, or `resuming` while a resume holds the claim on it. */
-  status: z.enum(['parked', 'resuming']),
-  wake_at: z.string().nullable(),
-  adapter_type: z.string().nullable(),
-  correlation_key: z.string().nullable(),
-  state: z.string(),
-  /** The engine whose state this is. */
-  engine: z.enum(['rust', 'ts']),
-});
-export type ParkRow = z.infer<typeof ParkRow>;
-
-export const WorkKind = z.enum(['resume_timer', 'wake_await']);
+export const WorkKind = z.enum(['resume_timer', 'wake_await', 'fire_event']);
 export type WorkKind = z.infer<typeof WorkKind>;
 
 const WorkRow = z.object({
@@ -70,16 +57,28 @@ const WorkRow = z.object({
 });
 export type WorkRow = z.infer<typeof WorkRow>;
 
-/** A claimed work row: what to do, and the lease to finish it under. */
-export interface ClaimedWork {
-  id: number;
-  kind: WorkKind;
-  key: string;
-  payload: unknown;
-  leaseToken: string;
-  claimedVersion: number;
-}
+const LeafRow = z.object({
+  address: z.string(),
+  reason: z.enum(CORE_PARK_REASONS),
+  status: z.enum(['parked', 'resuming']),
+  wake_at: z.string().nullable(),
+});
 
+/** A work claim's handle: the lease it took and the version it saw. */
+const WorkClaim = z.string().transform((claim, ctx) => {
+  const at = claim.lastIndexOf('/');
+  const version = Number(claim.slice(at + 1));
+  if (at <= 0 || !Number.isInteger(version)) {
+    ctx.addIssue({ code: 'custom', message: `not a work claim: ${claim}` });
+    return z.NEVER;
+  }
+  return { leaseToken: claim.slice(0, at), version };
+});
+
+// `leaf` replaces the `park` table of earlier lf versions, which kept an
+// await's correlation on its row and named a limit park `suspension`. A state
+// file written by one of those still opens: its `park` table is left as it
+// was, and read by nothing.
 const SCHEMA = `
 create table if not exists run (
   id text primary key,
@@ -99,19 +98,24 @@ create table if not exists trace (
   entry text not null,
   primary key (run_id, seq)
 );
-create table if not exists park (
+create table if not exists leaf (
   run_id text not null,
   address text not null,
-  kind text not null,
+  reason text not null,
   status text not null default 'parked',
   wake_at text,
-  adapter_type text,
-  correlation_key text,
   state text not null,
-  engine text not null,
   primary key (run_id, address)
 );
-create index if not exists park_correlation on park (adapter_type, correlation_key);
+create table if not exists await_correlation (
+  run_id text not null,
+  team_id text not null,
+  address text not null,
+  adapter_type text not null,
+  correlation_key text not null,
+  primary key (run_id, address)
+);
+create index if not exists await_correlation_key on await_correlation (team_id, adapter_type, correlation_key);
 create table if not exists join_frame (
   run_id text not null,
   frame_address text not null,
@@ -152,11 +156,13 @@ create table if not exists work (
 );
 `;
 
-/** How long a run lease or a work lease lasts without renewal. */
+/** How long a work lease lasts without renewal. */
 export const LEASE_TTL_MS = 60_000;
 
 export class State {
   readonly path: string;
+  /** The run host's backend families over this file. */
+  readonly store: RunHostStore;
   private readonly db: DatabaseSync;
   private readonly now: () => Date;
   /** How far ahead of `now` what is due is judged (timers, work rows). */
@@ -171,6 +177,7 @@ export class State {
     // never block the writer, and a writer waits for another's transaction.
     this.db.exec('pragma journal_mode = wal; pragma busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.store = this.families();
   }
 
   static open(project: Project, options: { ephemeral: boolean; dueClockOffsetMs?: number }): State {
@@ -186,6 +193,11 @@ export class State {
 
   private iso(offsetMs = 0): string {
     return new Date(this.now().getTime() + offsetMs).toISOString();
+  }
+
+  /** The instant what is due is judged by: now, or `LF_CLOCK_AHEAD_MS` on. */
+  dueBy(): string {
+    return this.iso(this.dueOffsetMs);
   }
 
   /** One write transaction, taken before its first read so two processes
@@ -216,8 +228,16 @@ export class State {
       .run(status, JSON.stringify(outcome ?? null), status === 'parked' || status === 'running' ? null : at, id);
   }
 
-  markRunning(id: string): void {
-    this.db.prepare("update run set status = 'running' where id = ?").run(id);
+  /** The run is observably parked (a park landed). A settled run stays. */
+  markParked(id: string): void {
+    this.db.prepare("update run set status = 'parked' where id = ? and status in ('running', 'parked')").run(id);
+  }
+
+  /** The run is over without completing. A run already settled stays. */
+  markFailed(id: string, message: string): void {
+    this.db
+      .prepare("update run set status = 'failed', outcome = ?, finished_at = ? where id = ? and status in ('running', 'parked')")
+      .run(JSON.stringify({ error: message }), this.iso(), id);
   }
 
   run(id: string): RunRow | undefined {
@@ -227,32 +247,6 @@ export class State {
 
   runs(limit = 50): RunRow[] {
     return this.db.prepare('select * from run order by started_at desc limit ?').all(limit).map((r) => RunRow.parse(r));
-  }
-
-  /** Take the run's lease: only one process steps a run at a time. Null when
-   *  another holds it. Taking it returns any leaf a lapsed holder left
-   *  claimed (`resuming`) to `parked`, for this holder to resume. */
-  claimRunLease(runId: string, ttlMs = LEASE_TTL_MS): { token: string } | null {
-    const token = randomUUID();
-    return this.transaction(() => {
-      const claimed = this.db
-        .prepare('update run set lease_token = ?, lease_until = ? where id = ? and (lease_until is null or lease_until < ?)')
-        .run(token, this.iso(ttlMs), runId, this.iso());
-      if (Number(claimed.changes) === 0) return null;
-      this.db.prepare("update park set status = 'parked' where run_id = ? and status = 'resuming'").run(runId);
-      return { token };
-    });
-  }
-
-  renewRunLease(runId: string, token: string, ttlMs = LEASE_TTL_MS): boolean {
-    const renewed = this.db
-      .prepare('update run set lease_until = ? where id = ? and lease_token = ? and lease_until > ?')
-      .run(this.iso(ttlMs), runId, token, this.iso());
-    return Number(renewed.changes) > 0;
-  }
-
-  releaseRunLease(runId: string, token: string): void {
-    this.db.prepare('update run set lease_token = null, lease_until = null where id = ? and lease_token = ?').run(runId, token);
   }
 
   // ── Trace ─────────────────────────────────────────────────────────────────
@@ -272,219 +266,6 @@ export class State {
       .prepare('select entry from trace where run_id = ? order by seq')
       .all(runId)
       .map((r) => JSON.parse(z.object({ entry: z.string() }).parse(r).entry));
-  }
-
-  // ── Parks ─────────────────────────────────────────────────────────────────
-
-  /** Park a leaf. One row per (run, address): a re-reached park rewrites its
-   *  own row, `parked` again (a leaf re-parked by its own resume is parked,
-   *  not the claimed row its resume deletes once the step is over). */
-  upsertPark(row: Omit<ParkRow, 'status'>): void {
-    this.db
-      .prepare(
-        `insert into park (run_id, address, kind, status, wake_at, adapter_type, correlation_key, state, engine)
-         values (?, ?, ?, 'parked', ?, ?, ?, ?, ?)
-         on conflict (run_id, address) do update set
-           kind = excluded.kind, status = 'parked', wake_at = excluded.wake_at, adapter_type = excluded.adapter_type,
-           correlation_key = excluded.correlation_key, state = excluded.state, engine = excluded.engine`,
-      )
-      .run(row.run_id, row.address, row.kind, row.wake_at, row.adapter_type, row.correlation_key, row.state, row.engine);
-  }
-
-  /** Every park of the run (or of every run), parked or claimed. */
-  parks(runId?: string): ParkRow[] {
-    return (
-      runId === undefined
-        ? this.db.prepare('select * from park order by run_id, address').all()
-        : this.db.prepare('select * from park where run_id = ? order by address').all(runId)
-    ).map((r) => ParkRow.parse(r));
-  }
-
-  /** The run's timer leaves due by now, still parked. */
-  dueTimerParks(runId: string): ParkRow[] {
-    return this.db
-      .prepare("select * from park where run_id = ? and kind = 'timer' and status = 'parked' and wake_at <= ? order by wake_at")
-      .all(runId, this.iso(this.dueOffsetMs))
-      .map((r) => ParkRow.parse(r));
-  }
-
-  /** The earliest wake of the run's still-parked timer leaves. */
-  nextTimerWake(runId: string): string | null {
-    const row = z
-      .object({ wake_at: z.string().nullable() })
-      .parse(this.db.prepare("select min(wake_at) as wake_at from park where run_id = ? and kind = 'timer' and status = 'parked'").get(runId));
-    return row.wake_at;
-  }
-
-  /** Every await leaf parked on one adapter's correlation key. */
-  awaitParks(input: { adapterType: string; correlationKey: string }): ParkRow[] {
-    return this.db
-      .prepare("select * from park where kind = 'await' and status = 'parked' and adapter_type = ? and correlation_key = ? order by run_id, address")
-      .all(input.adapterType, input.correlationKey)
-      .map((r) => ParkRow.parse(r));
-  }
-
-  /** Claim a parked leaf for its resume: null when it is not parked (another
-   *  resume took it, or a race cancelled it). */
-  claimPark(runId: string, address: string): ParkRow | null {
-    return this.transaction(() => {
-      const claimed = this.db
-        .prepare("update park set status = 'resuming' where run_id = ? and address = ? and status = 'parked'")
-        .run(runId, address);
-      if (Number(claimed.changes) === 0) return null;
-      return ParkRow.parse(this.db.prepare('select * from park where run_id = ? and address = ?').get(runId, address));
-    });
-  }
-
-  /** The claimed leaf is done with: delete it, unless its step parked again
-   *  at the same address (the row is `parked` again, and stays). */
-  finishPark(runId: string, address: string): void {
-    this.db.prepare("delete from park where run_id = ? and address = ? and status = 'resuming'").run(runId, address);
-  }
-
-  // ── Joins ─────────────────────────────────────────────────────────────────
-
-  /** A join frame's count of parked children. A re-reached frame rewrites the
-   *  count to the same deterministic value, never double-counting. */
-  recordJoin(runId: string, frameAddress: string, parkedChildren: number): void {
-    this.db
-      .prepare(
-        `insert into join_frame (run_id, frame_address, pending) values (?, ?, ?)
-         on conflict (run_id, frame_address) do update set pending = excluded.pending`,
-      )
-      .run(runId, frameAddress, parkedChildren);
-  }
-
-  /** A completed branch's exports at its join frame, written before its
-   *  decrement. A rewrite never touches `decremented`, the branch's claim on
-   *  its one decrement. */
-  persistBranchExport(input: { runId: string; frameAddress: string; branchAddress: string; branchIndex: number; exports: unknown }): void {
-    this.db
-      .prepare(
-        `insert into join_branch_export (run_id, frame_address, branch_address, branch_index, exports) values (?, ?, ?, ?, ?)
-         on conflict (run_id, frame_address, branch_address) do update set exports = excluded.exports, branch_index = excluded.branch_index`,
-      )
-      .run(input.runId, input.frameAddress, input.branchAddress, input.branchIndex, JSON.stringify(input.exports ?? null));
-  }
-
-  /** Every branch's exports at a frame, in branch order: the closer's fold order. */
-  collectBranchExports(runId: string, frameAddress: string): Array<{ branchAddress: string; branchIndex: number; exports: unknown }> {
-    return this.db
-      .prepare('select branch_address, branch_index, exports from join_branch_export where run_id = ? and frame_address = ? order by branch_index')
-      .all(runId, frameAddress)
-      .map((r) => {
-        const row = z.object({ branch_address: z.string(), branch_index: z.number().int(), exports: z.string() }).parse(r);
-        return { branchAddress: row.branch_address, branchIndex: row.branch_index, exports: JSON.parse(row.exports) };
-      });
-  }
-
-  /**
-   * One branch of a join finished: decrement the frame's count, exactly once
-   * per branch (its export row's `decremented` claim). The decrement that
-   * reaches 0 marks the frame closed by this leaf and is the one closer; a
-   * branch whose claim was already taken (a retry) is the closer only if the
-   * frame says it closed it.
-   */
-  decrementJoin(input: { runId: string; frameAddress: string; branchAddress: string; leafAddress: string }): { closed: boolean } {
-    return this.transaction(() => {
-      const claimed = this.db
-        .prepare(
-          'update join_branch_export set decremented = 1 where run_id = ? and frame_address = ? and branch_address = ? and decremented = 0',
-        )
-        .run(input.runId, input.frameAddress, input.branchAddress);
-      if (Number(claimed.changes) > 0) {
-        const updated = this.db
-          .prepare('update join_frame set pending = pending - 1 where run_id = ? and frame_address = ? and pending > 0 returning pending')
-          .get(input.runId, input.frameAddress);
-        if (updated !== undefined) {
-          if (z.object({ pending: z.number().int() }).parse(updated).pending === 0) {
-            this.db
-              .prepare('update join_frame set closed_by_address = ? where run_id = ? and frame_address = ?')
-              .run(input.leafAddress, input.runId, input.frameAddress);
-            return { closed: true };
-          }
-          return { closed: false };
-        }
-      }
-      const row = this.db
-        .prepare('select closed_by_address from join_frame where run_id = ? and frame_address = ?')
-        .get(input.runId, input.frameAddress);
-      const closedBy = row === undefined ? null : z.object({ closed_by_address: z.string().nullable() }).parse(row).closed_by_address;
-      return { closed: closedBy === input.leafAddress };
-    });
-  }
-
-  /** Whether any join of the run still waits on a branch. A closed frame
-   *  (count 0) does not. */
-  runHasPendingJoins(runId: string): boolean {
-    return this.db.prepare('select 1 from join_frame where run_id = ? and pending > 0 limit 1').get(runId) !== undefined;
-  }
-
-  /**
-   * Whether the run is quiescent but for one leaf: no join waiting and no
-   * other leaf parked. The leaf being resumed is excluded: its own row goes
-   * after its step.
-   */
-  runCompleteBut(runId: string, leafAddress: string): boolean {
-    if (this.runHasPendingJoins(runId)) return false;
-    return this.db.prepare("select 1 from park where run_id = ? and address != ? and status = 'parked' limit 1").get(runId, leafAddress) === undefined;
-  }
-
-  /** Whether the run has nothing left waiting: no join, no parked leaf. */
-  runQuiescent(runId: string): boolean {
-    if (this.runHasPendingJoins(runId)) return false;
-    return this.db.prepare("select 1 from park where run_id = ? and status = 'parked' limit 1").get(runId) === undefined;
-  }
-
-  /** Drop the run's live state: its joins and their exports. */
-  clearJoins(runId: string): void {
-    this.transaction(() => {
-      this.db.prepare('delete from join_frame where run_id = ?').run(runId);
-      this.db.prepare('delete from join_branch_export where run_id = ?').run(runId);
-    });
-  }
-
-  /** Drop every leaf and join of the run (a failed run: nothing will resume it). */
-  dropRunLeaves(runId: string): void {
-    this.transaction(() => {
-      this.db.prepare('delete from park where run_id = ?').run(runId);
-      this.db.prepare('delete from join_frame where run_id = ?').run(runId);
-      this.db.prepare('delete from join_branch_export where run_id = ?').run(runId);
-    });
-  }
-
-  /**
-   * Cancel every parked leaf at or below one of the subtree addresses (a
-   * race's losers), sparing `excludeLeaf` (the winner, whose own row may still
-   * be mid-resume), and every join frame inside them with its exports. The
-   * algebra runs on the parsed address: `s1.b1` is not an ancestor of `s1.b10`.
-   */
-  cancelSubtrees(input: { runId: string; subtreeAddresses: string[]; excludeLeaf?: string }): void {
-    if (input.subtreeAddresses.length === 0) return;
-    const prefixes = input.subtreeAddresses.map(parseAddress);
-    const inSubtree = (address: string): boolean => {
-      if (input.excludeLeaf !== undefined && address === input.excludeLeaf) return false;
-      const parsed = parseAddress(address);
-      return prefixes.some((p) => isAncestorOrSelf(p, parsed));
-    };
-    this.transaction(() => {
-      const parked = this.db
-        .prepare("select address from park where run_id = ? and status = 'parked'")
-        .all(input.runId)
-        .map((r) => z.object({ address: z.string() }).parse(r).address);
-      const dropPark = this.db.prepare('delete from park where run_id = ? and address = ?');
-      for (const address of parked.filter(inSubtree)) dropPark.run(input.runId, address);
-      const frames = this.db
-        .prepare('select frame_address from join_frame where run_id = ?')
-        .all(input.runId)
-        .map((r) => z.object({ frame_address: z.string() }).parse(r).frame_address);
-      const dropFrame = this.db.prepare('delete from join_frame where run_id = ? and frame_address = ?');
-      const dropExports = this.db.prepare('delete from join_branch_export where run_id = ? and frame_address = ?');
-      for (const frame of frames.filter(inSubtree)) {
-        dropFrame.run(input.runId, frame);
-        dropExports.run(input.runId, frame);
-      }
-    });
   }
 
   // ── Record bindings ───────────────────────────────────────────────────────
@@ -541,73 +322,270 @@ export class State {
       .parse(this.db.prepare('select coalesce(max(bound_seq), 0) + 1 as next from record_binding').get()).next;
   }
 
-  // ── Work queue ────────────────────────────────────────────────────────────
-
-  /**
-   * Queue work by key. A key already queued is re-armed: its payload is
-   * replaced, and its due time is the earlier of the two while nobody holds
-   * it (a held row takes the new due time: its holder's completion leaves it
-   * for the re-arm).
-   */
-  enqueue(input: { kind: WorkKind; key: string; payload: unknown; dueAt?: string }): void {
-    const now = this.iso();
-    this.db
-      .prepare(
-        `insert into work (kind, key, payload, due_at) values (?, ?, ?, ?)
-         on conflict (key) do update set
-           due_at = case when work.lease_until > ? then excluded.due_at else min(work.due_at, excluded.due_at) end,
-           payload = excluded.payload,
-           version = work.version + 1`,
-      )
-      .run(input.kind, input.key, JSON.stringify(input.payload ?? null), input.dueAt ?? now, now);
-  }
-
-  /** Lease every unleased row due by now (or whose lease lapsed), earliest first. */
-  claimDue(input: { limit?: number; leaseMs?: number; kinds?: readonly WorkKind[] } = {}): ClaimedWork[] {
-    const now = this.iso();
-    const dueBy = this.iso(this.dueOffsetMs);
-    const kinds = input.kinds ?? WorkKind.options;
-    return this.transaction(() => {
-      const due = this.db
-        .prepare(
-          `select * from work where due_at <= ? and (lease_until is null or lease_until < ?)
-             and kind in (${kinds.map(() => '?').join(', ')}) order by due_at, id limit ?`,
-        )
-        .all(dueBy, now, ...kinds, input.limit ?? 100)
-        .map((r) => WorkRow.parse(r));
-      const lease = this.db.prepare('update work set lease_token = ?, lease_until = ?, version = version + 1 where id = ?');
-      return due.map((row) => {
-        const leaseToken = randomUUID();
-        lease.run(leaseToken, this.iso(input.leaseMs ?? LEASE_TTL_MS), row.id);
-        return { id: row.id, kind: row.kind, key: row.key, payload: JSON.parse(row.payload), leaseToken, claimedVersion: row.version + 1 };
-      });
-    });
-  }
-
-  /** The work is done: delete its row, unless it was re-armed since the
-   *  claim (then it stays, unleased, for its new due time). */
-  completeWork(work: Pick<ClaimedWork, 'id' | 'leaseToken' | 'claimedVersion'>): void {
-    this.transaction(() => {
-      this.db.prepare('delete from work where id = ? and lease_token = ? and version = ?').run(work.id, work.leaseToken, work.claimedVersion);
-      this.db.prepare('update work set lease_token = null, lease_until = null where id = ? and lease_token = ?').run(work.id, work.leaseToken);
-    });
-  }
-
-  /** The work failed or could not run now: unlease it, due again at `dueAt`
-   *  (unless it was re-armed since the claim, whose due time stands). */
-  releaseWork(work: Pick<ClaimedWork, 'id' | 'leaseToken' | 'claimedVersion'> & { dueAt?: string }): void {
-    this.db
-      .prepare(
-        `update work set lease_token = null, lease_until = null,
-           due_at = case when version = ? then coalesce(?, due_at) else due_at end
-         where id = ? and lease_token = ?`,
-      )
-      .run(work.claimedVersion, work.dueAt ?? null, work.id, work.leaseToken);
-  }
-
-  /** Every queued row (for inspection and tests). */
+  /** Every queued work row (for inspection and tests). */
   work(): WorkRow[] {
     return this.db.prepare('select * from work order by due_at, id').all().map((r) => WorkRow.parse(r));
+  }
+
+  // ── The run host's backend families ───────────────────────────────────────
+  //
+  // Synchronous SQLite under the core's async interface. Their meaning is the
+  // core's (store.ts); what is written here is only how SQLite holds it.
+
+  /** Whether the run is leased under `fence`, and the lease has not lapsed. */
+  private holds(runId: string, fence: string): boolean {
+    return this.db.prepare('select 1 from run where id = ? and lease_token = ? and lease_until > ?').get(runId, fence, this.iso()) !== undefined;
+  }
+
+  /** `body` in one transaction, refused with `RunLeaseLost` unless the run is
+   *  leased under `fence` (when one is given). */
+  private fenced<T>(runId: string, fence: string | undefined, body: () => T): T {
+    return this.transaction(() => {
+      if (fence !== undefined && !this.holds(runId, fence)) throw new RunLeaseLost(runId);
+      return body();
+    });
+  }
+
+  private families(): RunHostStore {
+    const db = this.db;
+    const leafOf = (row: unknown): CoreLeafRow => {
+      const r = LeafRow.parse(row);
+      return { address: r.address, reason: r.reason, status: r.status, wakeAt: r.wake_at };
+    };
+    return {
+      parks: {
+        putLeaf: async ({ runId, address, reason, wakeAt, state, fence }) => {
+          // `rewritten` is not kept: lf has no limit resume to read it.
+          this.fenced(runId, fence, () =>
+            db
+              .prepare(
+                `insert into leaf (run_id, address, reason, status, wake_at, state) values (?, ?, ?, 'parked', ?, ?)
+                 on conflict (run_id, address) do update set
+                   reason = excluded.reason, status = 'parked', wake_at = excluded.wake_at, state = excluded.state`,
+              )
+              .run(runId, address, reason, wakeAt, JSON.stringify(state ?? null)),
+          );
+        },
+        claimLeaf: async ({ runId, address, reason }) => {
+          const claimed = db
+            .prepare(
+              `update leaf set status = 'resuming' where run_id = ? and address = ? and status = 'parked'
+               ${reason !== undefined ? 'and reason = ?' : ''} returning reason, state`,
+            )
+            .get(runId, address, ...(reason !== undefined ? [reason] : []));
+          if (claimed === undefined) return null;
+          const row = z.object({ reason: z.enum(CORE_PARK_REASONS), state: z.string() }).parse(claimed);
+          return { reason: row.reason, state: JSON.parse(row.state) };
+        },
+        finishLeaf: async ({ runId, address, fence }) => {
+          this.transaction(() => {
+            if (fence !== undefined && !this.holds(runId, fence)) return;
+            db.prepare("delete from leaf where run_id = ? and address = ? and status = 'resuming'").run(runId, address);
+          });
+        },
+        leaves: async ({ runId, parkedOnly, reason, dueBy }) => {
+          const where = ['run_id = ?'];
+          const args: string[] = [runId];
+          if (parkedOnly === true) where.push("status = 'parked'");
+          if (reason !== undefined) {
+            where.push('reason = ?');
+            args.push(reason);
+          }
+          if (dueBy !== undefined) {
+            where.push("reason = 'timer' and wake_at <= ?");
+            args.push(dueBy);
+          }
+          return db
+            .prepare(`select address, reason, status, wake_at from leaf where ${where.join(' and ')} order by address`)
+            .all(...args)
+            .map(leafOf);
+        },
+        deleteLeaves: async ({ runId, addresses }) => {
+          this.transaction(() => {
+            const drop = db.prepare('delete from leaf where run_id = ? and address = ?');
+            for (const address of addresses) drop.run(runId, address);
+          });
+        },
+      },
+
+      joins: {
+        recordJoin: async ({ runId, frameAddress, pending, fence }) => {
+          // A re-reached frame rewrites the count to the same value.
+          this.fenced(runId, fence, () =>
+            db
+              .prepare(
+                `insert into join_frame (run_id, frame_address, pending) values (?, ?, ?)
+                 on conflict (run_id, frame_address) do update set pending = excluded.pending`,
+              )
+              .run(runId, frameAddress, pending),
+          );
+        },
+        decrementJoin: async ({ runId, frameAddress, branchAddress, leafAddress }) =>
+          // The branch's export row carries its one claim on a decrement; the
+          // decrement that reaches 0 marks the frame closed by this leaf.
+          this.transaction(() => {
+            const claimed = db
+              .prepare('update join_branch_export set decremented = 1 where run_id = ? and frame_address = ? and branch_address = ? and decremented = 0')
+              .run(runId, frameAddress, branchAddress);
+            if (Number(claimed.changes) > 0) {
+              const updated = db
+                .prepare('update join_frame set pending = pending - 1 where run_id = ? and frame_address = ? and pending > 0 returning pending')
+                .get(runId, frameAddress);
+              if (updated !== undefined) {
+                if (z.object({ pending: z.number().int() }).parse(updated).pending > 0) return { closed: false };
+                db.prepare('update join_frame set closed_by_address = ? where run_id = ? and frame_address = ?').run(leafAddress, runId, frameAddress);
+                return { closed: true };
+              }
+            }
+            const row = db.prepare('select closed_by_address from join_frame where run_id = ? and frame_address = ?').get(runId, frameAddress);
+            const closedBy = row === undefined ? null : z.object({ closed_by_address: z.string().nullable() }).parse(row).closed_by_address;
+            return { closed: closedBy === leafAddress };
+          }),
+        persistBranchExport: async ({ runId, frameAddress, branchAddress, branchIndex, exports }) => {
+          // A rewrite never touches `decremented`, the branch's decrement claim.
+          db.prepare(
+            `insert into join_branch_export (run_id, frame_address, branch_address, branch_index, exports) values (?, ?, ?, ?, ?)
+             on conflict (run_id, frame_address, branch_address) do update set exports = excluded.exports, branch_index = excluded.branch_index`,
+          ).run(runId, frameAddress, branchAddress, branchIndex, JSON.stringify(exports ?? null));
+        },
+        collectBranchExports: async ({ runId, frameAddress }) =>
+          db
+            .prepare('select branch_address, branch_index, exports from join_branch_export where run_id = ? and frame_address = ? order by branch_index')
+            .all(runId, frameAddress)
+            .map((r) => {
+              const row = z.object({ branch_address: z.string(), branch_index: z.number().int(), exports: z.string() }).parse(r);
+              return { branchAddress: row.branch_address, branchIndex: row.branch_index, exports: JSON.parse(row.exports) };
+            }),
+        hasPendingJoins: async ({ runId }) => db.prepare('select 1 from join_frame where run_id = ? and pending > 0 limit 1').get(runId) !== undefined,
+        frames: async ({ runId }) =>
+          db
+            .prepare('select frame_address from join_frame where run_id = ? order by frame_address')
+            .all(runId)
+            .map((r) => z.object({ frame_address: z.string() }).parse(r).frame_address),
+        deleteFrames: async ({ runId, frameAddresses }) => {
+          this.transaction(() => {
+            const dropFrame = db.prepare('delete from join_frame where run_id = ? and frame_address = ?');
+            const dropExports = db.prepare('delete from join_branch_export where run_id = ? and frame_address = ?');
+            for (const frame of frameAddresses) {
+              dropFrame.run(runId, frame);
+              dropExports.run(runId, frame);
+            }
+          });
+        },
+      },
+
+      correlations: {
+        correlate: async ({ runId, teamId, address, adapterType, correlationKey }) => {
+          db.prepare(
+            `insert into await_correlation (run_id, team_id, address, adapter_type, correlation_key) values (?, ?, ?, ?, ?)
+             on conflict (run_id, address) do update set
+               team_id = excluded.team_id, adapter_type = excluded.adapter_type, correlation_key = excluded.correlation_key`,
+          ).run(runId, teamId, address, adapterType, correlationKey);
+        },
+        correlated: async ({ adapterType, teamId, correlationKey }) =>
+          db
+            .prepare(
+              'select run_id, team_id, address from await_correlation where team_id = ? and adapter_type = ? and correlation_key = ? order by run_id, address',
+            )
+            .all(teamId, adapterType, correlationKey)
+            .map((r) => {
+              const row = z.object({ run_id: z.string(), team_id: z.string(), address: z.string() }).parse(r);
+              return { runId: row.run_id, teamId: row.team_id, address: row.address };
+            }),
+        ofRun: async ({ runId, adapterType }) =>
+          db
+            .prepare('select run_id, team_id, address, correlation_key from await_correlation where run_id = ? and adapter_type = ? order by address')
+            .all(runId, adapterType)
+            .map((r) => {
+              const row = z.object({ run_id: z.string(), team_id: z.string(), address: z.string(), correlation_key: z.string() }).parse(r);
+              return { runId: row.run_id, teamId: row.team_id, address: row.address, correlationKey: row.correlation_key };
+            }),
+        drop: async ({ runId, address }) => {
+          db.prepare('delete from await_correlation where run_id = ? and address = ?').run(runId, address);
+        },
+        dropRun: async ({ runId }) => {
+          db.prepare('delete from await_correlation where run_id = ?').run(runId);
+        },
+      },
+
+      leases: {
+        claim: async ({ runId, ttlMs }) => {
+          const token = randomUUID();
+          return this.transaction(() => {
+            const claimed = db
+              .prepare('update run set lease_token = ?, lease_until = ? where id = ? and (lease_until is null or lease_until < ?)')
+              .run(token, this.iso(ttlMs), runId, this.iso());
+            if (Number(claimed.changes) === 0) return null;
+            db.prepare("update leaf set status = 'parked' where run_id = ? and status = 'resuming'").run(runId);
+            return { token };
+          });
+        },
+        renew: async ({ runId, token, ttlMs }) => {
+          const renewed = db
+            .prepare('update run set lease_until = ? where id = ? and lease_token = ? and lease_until > ?')
+            .run(this.iso(ttlMs), runId, token, this.iso());
+          return Number(renewed.changes) > 0;
+        },
+        release: async ({ runId, token }) => {
+          db.prepare('update run set lease_token = null, lease_until = null where id = ? and lease_token = ?').run(runId, token);
+        },
+        dropRunState: async ({ runId, fence }) =>
+          this.transaction(() => {
+            if (fence !== undefined && !this.holds(runId, fence)) return false;
+            db.prepare('delete from leaf where run_id = ?').run(runId);
+            db.prepare('delete from join_frame where run_id = ?').run(runId);
+            db.prepare('delete from join_branch_export where run_id = ?').run(runId);
+            return true;
+          }),
+      },
+
+      work: {
+        enqueue: async ({ kind, key, payload, dueAt }) => {
+          // Against a held row the new due time wins: its holder's completion
+          // leaves the row for the re-arm.
+          const now = this.iso();
+          db.prepare(
+            `insert into work (kind, key, payload, due_at) values (?, ?, ?, ?)
+             on conflict (key) do update set
+               due_at = case when work.lease_until > ? then excluded.due_at else min(work.due_at, excluded.due_at) end,
+               payload = excluded.payload,
+               version = work.version + 1`,
+          ).run(WorkKind.parse(kind), key, JSON.stringify(payload ?? null), dueAt ?? now, now);
+        },
+        claimDue: async ({ limit, leaseMs, dueBy }) => {
+          const now = this.iso();
+          return this.transaction(() => {
+            const due = db
+              .prepare('select * from work where due_at <= ? and (lease_until is null or lease_until < ?) order by due_at, id limit ?')
+              .all(dueBy ?? this.dueBy(), now, limit)
+              .map((r) => WorkRow.parse(r));
+            const lease = db.prepare('update work set lease_token = ?, lease_until = ?, version = version + 1 where id = ?');
+            return due.map((row): ClaimedWork => {
+              const leaseToken = randomUUID();
+              lease.run(leaseToken, this.iso(leaseMs), row.id);
+              return { id: String(row.id), kind: row.kind, key: row.key, payload: JSON.parse(row.payload), claim: `${leaseToken}/${row.version + 1}` };
+            });
+          });
+        },
+        complete: async (work) => {
+          // Deleted only when nothing re-armed it since the claim; else the
+          // re-armed row stays, unleased, for its new due time.
+          const { leaseToken, version } = WorkClaim.parse(work.claim);
+          this.transaction(() => {
+            db.prepare('delete from work where id = ? and lease_token = ? and version = ?').run(Number(work.id), leaseToken, version);
+            db.prepare('update work set lease_token = null, lease_until = null where id = ? and lease_token = ?').run(Number(work.id), leaseToken);
+          });
+        },
+        release: async (work) => {
+          const { leaseToken, version } = WorkClaim.parse(work.claim);
+          db.prepare(
+            `update work set lease_token = null, lease_until = null,
+               due_at = case when version = ? then coalesce(?, due_at) else due_at end
+             where id = ? and lease_token = ?`,
+          ).run(version, work.dueAt ?? null, Number(work.id), leaseToken);
+        },
+      },
+    };
   }
 }
 

@@ -9,7 +9,9 @@ import { sql } from 'kysely';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import { claimParkedLeaf, finishResumedLeaf } from '../run_lease';
+import { postgresRunHostStore } from '../run_host_store';
+
+const { parks } = postgresRunHostStore;
 
 const TEAM_ID = randomUUID();
 let runId: TriggerRunId;
@@ -47,18 +49,20 @@ afterAll(async () => {
 describe('park reasons owned by units', () => {
   it('a leaf parked as ask (the pre-migration reason) is claimable and finishable through the normal claim and finish', async () => {
     await park('legacy-ask', 'ask');
-    expect(await claimParkedLeaf({ runId, address: 'legacy-ask', parkReason: 'ask' })).toEqual({
+    expect(await parks.claimLeaf({ runId, address: 'legacy-ask', reason: 'ask' })).toEqual({
       state: { address: 'legacy-ask' },
+      reason: 'ask',
     });
-    await finishResumedLeaf(runId, 'legacy-ask');
+    await parks.finishLeaf({ runId, address: 'legacy-ask' });
     expect(await exists('legacy-ask')).toBe(false);
   });
 
   it('a new unit-owned reason is accepted and claimable by that reason only', async () => {
     await park('unit-owned', 'approval_test');
-    expect(await claimParkedLeaf({ runId, address: 'unit-owned', parkReason: 'await' })).toBeNull();
-    expect(await claimParkedLeaf({ runId, address: 'unit-owned', parkReason: 'approval_test' })).toEqual({
+    expect(await parks.claimLeaf({ runId, address: 'unit-owned', reason: 'await' })).toBeNull();
+    expect(await parks.claimLeaf({ runId, address: 'unit-owned', reason: 'approval_test' })).toEqual({
       state: { address: 'unit-owned' },
+      reason: 'approval_test',
     });
   });
 

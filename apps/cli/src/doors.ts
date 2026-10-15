@@ -2,23 +2,24 @@
 // served by `lf serve` exactly as the hosted product serves them:
 //
 //   POST /api/public/adapter/<external>/emit  { events }  new data: each event
-//        is routed to the listens it matches, as a webhook delivery's are;
+//        is queued, and the drain routes it to the listens it matches, as a
+//        webhook delivery's are;
 //   POST /api/public/adapter/<external>/wake  { keys }    resume whatever is
-//        parked on these correlation keys.
+//        parked on these correlation keys (queued as a wake per key).
 //
 // The caller presents the credential its install holds, carried the way the
 // host authenticates to it (the external's manifest `auth`), and the install
-// whose secret matches is the caller. 202 `{ accepted }` once done or
-// queued; 401 for any mismatch, saying nothing about who is installed; 409
+// whose secret matches is the caller. 202 `{ accepted }` once queued, counting
+// the rows queued (as hosted's receipts); 401 for any mismatch, saying nothing about who is installed; 409
 // when the credential matches several installs; 400 for a malformed body.
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AdapterEmitBody, AdapterWakeBody } from 'engine-contracts';
 import { authHeader } from 'movement-engine/services/translation_graph/protocol/client';
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { enqueueAwaitWake } from './parks';
-import { fireEvent, type RunOutcome, type Session } from './runs';
+import { queueAwaitWake } from 'movement-engine/services/run_host/rules';
+import { LOCAL_TENANT } from './host';
+import type { Session } from './runs';
 import type { Credential } from './secrets';
 
 export type AdapterDoorAuth =
@@ -69,7 +70,7 @@ export interface DoorAnswer {
 export async function receiveAdapterPush(
   session: Session,
   input: { external: string; door: 'emit' | 'wake'; headers: Record<string, string | undefined>; body: unknown },
-  options: { onRuns?: (outcomes: RunOutcome[]) => void; onWake?: () => void } = {},
+  options: { onQueued?: () => void } = {},
 ): Promise<DoorAnswer> {
   const auth = authenticateAdapterDoor(session, input);
   switch (auth.kind) {
@@ -86,18 +87,24 @@ export async function receiveAdapterPush(
     case 'emit': {
       const body = AdapterEmitBody.safeParse(input.body);
       if (!body.success) return badRequest(body.error);
-      const outcomes: RunOutcome[] = [];
       for (const event of body.data.events) {
-        outcomes.push(...(await fireEvent(session, { external: input.external, event: event as DiscriminableEvent })));
+        await session.runHost.store.work.enqueue({
+          kind: 'fire_event',
+          key: `fire_event:${randomUUID()}`,
+          teamId: LOCAL_TENANT,
+          payload: { external: input.external, event },
+        });
       }
-      options.onRuns?.(outcomes);
-      return { status: 202, body: { accepted: outcomes.length } };
+      options.onQueued?.();
+      return { status: 202, body: { accepted: body.data.events.length } };
     }
     case 'wake': {
       const body = AdapterWakeBody.safeParse(input.body);
       if (!body.success) return badRequest(body.error);
-      for (const correlationKey of body.data.keys) enqueueAwaitWake(session.state, { adapterType: input.external, correlationKey });
-      options.onWake?.();
+      for (const correlationKey of body.data.keys) {
+        await queueAwaitWake(session.runHost.store, { adapterType: input.external, teamId: LOCAL_TENANT, correlationKey });
+      }
+      options.onQueued?.();
       return { status: 202, body: { accepted: body.data.keys.length } };
     }
     default:

@@ -21,8 +21,6 @@ const loadResolvableAskAwaitsMock = jest.fn();
 const resumeMovementFiringMock = jest.fn();
 const loadTriggerByIdMock = jest.fn();
 const runHasPendingJoinsMock = jest.fn();
-const clearJoinsMock = jest.fn();
-const settleCancelledRunMock = jest.fn();
 const loggerErrorMock = jest.fn();
 
 // ── The parked_run substrate, in memory ─────────────────────────────────────
@@ -108,15 +106,6 @@ jest.mock('../../../lib/kysely', () => ({
 }));
 jest.mock('../../../lib/worker', () => ({ worker: jest.fn() }));
 jest.mock('movement-engine/services/logger', () => ({ logger: { error: (...a: unknown[]) => loggerErrorMock(...a), info: jest.fn(), warn: jest.fn() } }));
-jest.mock('../../interaction/run_failure', () => ({
-  settleCancelledRun: (...a: unknown[]) => settleCancelledRunMock(...a),
-}));
-jest.mock('../join_pending', () => ({
-  runHasPendingJoins: (...a: unknown[]) => runHasPendingJoinsMock(...a),
-  clearJoins: (...a: unknown[]) => clearJoinsMock(...a),
-}));
-// The record-backed awaits a run host keeps, as the adapter registry serves
-// them: one keeper here, standing in for the ask unit's.
 jest.mock('../../translation_graph/adapters/packages', () => ({
   awaitKeepers: () => [
     {
@@ -126,11 +115,11 @@ jest.mock('../../translation_graph/adapters/packages', () => ({
     },
   ],
 }));
-jest.mock('../../translation_graph/adapters/await_correlation', () => ({
-  dropAwaitCorrelation: (...a: unknown[]) => dropAwaitCorrelationMock(...a),
-  dropAwaitCorrelationsForRun: (...a: unknown[]) => dropAwaitCorrelationsForRunMock(...a),
-  loadCorrelatedParks: (...a: unknown[]) => loadCorrelatedParksMock(...a),
+jest.mock('../callback_sink', () => ({
+  callbackAwaitKeeper: { adapterType: 'callback', loadResolvable: async () => [], abandon: async () => {} },
 }));
+jest.mock('../callback_store', () => ({ revokeRunCallbacks: jest.fn() }));
+jest.mock('../run_engine_record', () => ({ settleRunEngineRecord: jest.fn(async () => {}) }));
 jest.mock('../../translation_graph/movement/execute', () => ({
   resumeMovementFiring: (...a: unknown[]) => resumeMovementFiringMock(...a),
 }));
@@ -141,17 +130,38 @@ jest.mock('movement-engine/services/translation_graph/triggers/types', () => ({
   triggerEventSchema: { parse: (x: unknown) => x },
 }));
 
-// The run's lease and its leaf claims, in memory: `leaseHeldElsewhere` is
-// another process stepping the run.
+// The run host's backend, in memory: the run's lease (`leaseHeldElsewhere` is
+// another process stepping the run), its leaves, its joins and its
+// correlations. The core's drain runs over it for real.
 let leaseHeldElsewhere = false;
-jest.mock('../run_lease', () => ({
-  withRunLease: async (_runId: string, fn: () => Promise<unknown>) =>
-    leaseHeldElsewhere ? { kind: 'busy' } : { kind: 'held', value: await fn() },
-  claimParkedLeaf: async ({ address }: { address: string }) =>
-    livePark.has(address) ? { state: { address } } : null,
-  finishResumedLeaf: async (_runId: string, address: string) => {
-    deletedAddresses.push(address);
-    livePark.delete(address);
+jest.mock('../run_host_store', () => ({
+  triggerRunIdOf: (id: string) => id,
+  postgresRunHostStore: {
+    leases: {
+      claim: async () => (leaseHeldElsewhere ? null : { token: 'lease-1' }),
+      renew: async () => true,
+      release: async () => {},
+      dropRunState: async () => {
+        sweepDeleted = true;
+        livePark.clear();
+        return true;
+      },
+    },
+    parks: {
+      claimLeaf: async ({ address }: { address: string }) =>
+        livePark.has(address) ? { state: { address }, reason: 'await' } : null,
+      finishLeaf: async ({ address }: { address: string }) => {
+        deletedAddresses.push(address);
+        livePark.delete(address);
+      },
+      leaves: async () => [...livePark].map((address) => ({ address, reason: 'await', status: 'parked', wakeAt: null })),
+    },
+    joins: { hasPendingJoins: (...a: unknown[]) => runHasPendingJoinsMock(...a) },
+    correlations: {
+      correlated: (...a: unknown[]) => loadCorrelatedParksMock(...a),
+      drop: (...a: unknown[]) => dropAwaitCorrelationMock(...a),
+      dropRun: (...a: unknown[]) => dropAwaitCorrelationsForRunMock(...a),
+    },
   },
 }));
 

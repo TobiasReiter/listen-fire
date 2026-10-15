@@ -21,7 +21,7 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import { getAutomationsQb } from '../../lib/kysely';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import { failRunAndCancelRequests, stampCancelRequested } from './run_failure';
-import { resumeLimitPausedRun } from '../movement_engine/limit_pause';
+import { resumeLimitPausedRun } from '../movement_engine/limit_resume';
 import { runResumeSlot } from '../movement_engine/await_resume';
 import { RunBusy, withRunLease } from '../movement_engine/run_lease';
 

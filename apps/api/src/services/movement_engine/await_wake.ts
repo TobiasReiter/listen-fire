@@ -3,10 +3,12 @@
 // production host's `park.wake`) never import the resume driver, which imports
 // the engine.
 
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { enqueueWork } from '../work/store';
+import { queueAwaitWake } from 'movement-engine/services/run_host/rules';
+
 import type { TeamId } from '../../generated/kysely/core/Team';
+
+import { postgresRunHostStore } from './run_host_store';
 
 export const wakeAwaitPayloadSchema = z.object({
   adapterType: z.string(),
@@ -28,12 +30,9 @@ export async function enqueueAwaitWake(
   wake: AwaitWake,
   opts: { coalesceKey?: string; dueAt?: Date } = {},
 ): Promise<void> {
-  await enqueueWork({
-    kind: 'wake_await',
-    key: `wake_await:${opts.coalesceKey ?? randomUUID()}`,
-    teamId: wake.teamId,
-    payload: wake,
-    ...(opts.dueAt !== undefined ? { dueAt: opts.dueAt } : {}),
+  await queueAwaitWake(postgresRunHostStore, wake, {
+    ...(opts.coalesceKey !== undefined ? { coalesceKey: opts.coalesceKey } : {}),
+    ...(opts.dueAt !== undefined ? { dueAt: opts.dueAt.toISOString() } : {}),
   });
 }
 

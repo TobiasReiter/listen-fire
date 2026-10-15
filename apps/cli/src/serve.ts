@@ -1,9 +1,9 @@
 // `lf serve`: the inbound doors and the work queue. A request at
 // `/hooks/<external>/<install>` is verified and parsed by its external and
 // routed like any event; an external's pushes arrive at
-// `/api/public/adapter/<external>/{emit,wake}` (doors.ts); due work — a parked
-// run's timer, a queued await wake — is drained on a tick, and at once when a
-// wake arrives.
+// `/api/public/adapter/<external>/{emit,wake}` (doors.ts) and are queued;
+// due work — an emitted event, a parked run's timer, a queued await wake — is
+// drained on a tick, and at once when a push queues some.
 //
 // The server listens before the session opens, so the externals the session
 // starts are told where to push (LF_HOST_URL).
@@ -28,7 +28,9 @@ export async function serve(
 ): Promise<Serving> {
   const log = options.log ?? ((line: string) => process.stdout.write(`${line}\n`));
   const logRuns = (outcomes: RunOutcome[]) => {
-    for (const o of outcomes) log(`run ${o.runId} ${o.file}:${o.movement} ${o.status}${o.error ? ` — ${o.error}` : ''}`);
+    for (const o of outcomes) {
+      log(`${o.entry === 'fired' ? 'run' : 'resumed'} ${o.runId} ${o.file}:${o.movement} ${o.status}${o.error ? ` — ${o.error}` : ''}`);
+    }
   };
   let session: Session | undefined;
 
@@ -47,7 +49,7 @@ export async function serve(
     try {
       do {
         again = false;
-        for (const o of await drainWork(session, { log })) log(`resumed ${o.runId} ${o.file}:${o.movement} ${o.status}${o.error ? ` — ${o.error}` : ''}`);
+        logRuns(await drainWork(session, { log }));
       } while (again);
     } catch (error) {
       log(`drain failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -91,7 +93,7 @@ export async function serve(
       const answer = await receiveAdapterPush(
         session,
         { external: decodeURIComponent(door[1]), door: door[2], headers, body },
-        { onRuns: logRuns, onWake: () => void tick() },
+        { onQueued: () => void tick() },
       );
       return json(res, answer.status, answer.body);
     }

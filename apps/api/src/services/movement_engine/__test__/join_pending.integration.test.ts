@@ -8,14 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import {
-  decrementJoin,
-  decrementJoinClose,
-  persistBranchExport,
-  collectBranchExports,
-  runHasPendingJoins,
-  clearJoins,
-} from '../join_pending';
+import { postgresRunHostStore } from '../run_host_store';
+
+const { joins } = postgresRunHostStore;
+const clearJoins = (run: string) => postgresRunHostStore.leases.dropRunState({ runId: run });
+const runHasPendingJoins = (run: string) => joins.hasPendingJoins({ runId: run });
 
 let teamId: TeamId;
 let runId: TriggerRunId;
@@ -60,7 +57,7 @@ async function seedJoin(frameAddress: string, pending: number): Promise<void> {
     .execute();
 }
 
-/** Seed a branch's export row — decrementJoinClose's per-leaf exactly-once claim
+/** Seed a branch's export row — the mark-closed decrement's per-leaf exactly-once claim
  *  (§7) requires this row to exist (persist-before-decrement); a decrement with no
  *  export row is never claimed and never decrements. */
 async function seedBranchExport(
@@ -68,7 +65,7 @@ async function seedBranchExport(
   branchAddress: string,
   branchIndex: number,
 ): Promise<void> {
-  await persistBranchExport({
+  await joins.persistBranchExport({
     runId,
     frameAddress,
     branchAddress,
@@ -77,60 +74,21 @@ async function seedBranchExport(
   });
 }
 
-describe('decrementJoin — the race-free completer (§5.4)', () => {
-  it('decrements toward zero; only the decrement reaching 0 completes (and deletes the row)', async () => {
-    await seedJoin('s1', 2);
-
-    const first = await decrementJoin({ runId, frameAddress: 's1' });
-    expect(first).toEqual({ completed: false, pending: 1 });
-    // The run is still parked (pending > 0).
-    expect(await runHasPendingJoins(runId)).toBe(true);
-
-    const second = await decrementJoin({ runId, frameAddress: 's1' });
-    expect(second).toEqual({ completed: true, pending: 0 });
-    // The row is gone — the join is dissolved.
-    expect(await runHasPendingJoins(runId)).toBe(false);
-  });
-
-  it('a missing join (no enclosing join / already completed) returns not-completed', async () => {
-    const result = await decrementJoin({ runId, frameAddress: 's0' });
-    expect(result).toEqual({ completed: false, pending: 0 });
-  });
-
-  it('THE RACE: N concurrent decrements of one join — exactly one completes', async () => {
+describe('the race-free closer (§5.4)', () => {
+  it('THE RACE: N branches decrementing one join at once — exactly one closes it', async () => {
     const N = 8;
     await seedJoin('s7', N);
+    for (let i = 0; i < N; i++) await seedBranchExport('s7', `s7.b${i}`, i);
 
-    // Fire all N decrements concurrently (siblings answered in the same window).
+    // Every sibling answered in the same window.
     const results = await Promise.all(
-      Array.from({ length: N }, () => decrementJoin({ runId, frameAddress: 's7' })),
+      Array.from({ length: N }, (_, i) =>
+        joins.decrementJoin({ runId, frameAddress: 's7', branchAddress: `s7.b${i}`, leafAddress: `s7.b${i}.s0` }),
+      ),
     );
 
-    // Exactly ONE observed 0 → the unique completer.
-    const completers = results.filter((r) => r.completed);
-    expect(completers).toHaveLength(1);
-    expect(completers[0].pending).toBe(0);
-    // The other N-1 saw a positive remaining count, never 0.
-    expect(results.filter((r) => !r.completed).every((r) => r.pending > 0)).toBe(true);
-    // The pending values the non-completers observed are 1..N-1, each once.
-    expect(
-      results
-        .map((r) => r.pending)
-        .sort((a, b) => a - b),
-    ).toEqual(Array.from({ length: N }, (_, i) => i));
-    // The row is fully dissolved.
+    expect(results.filter((r) => r.closed)).toHaveLength(1);
     expect(await runHasPendingJoins(runId)).toBe(false);
-  });
-
-  it('independent joins of one run decrement independently', async () => {
-    await seedJoin('s1', 1);
-    await seedJoin('s2', 2);
-    const a = await decrementJoin({ runId, frameAddress: 's1' });
-    expect(a.completed).toBe(true);
-    // s2 untouched — still pending.
-    const b = await decrementJoin({ runId, frameAddress: 's2' });
-    expect(b).toEqual({ completed: false, pending: 1 });
-    expect(await runHasPendingJoins(runId)).toBe(true);
   });
 });
 
@@ -144,14 +102,14 @@ async function readClosedBy(frameAddress: string): Promise<string | null | undef
   return row?.closed_by_address;
 }
 
-describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
+describe('the mark-closed decrement (§6.4)', () => {
   it('decrements toward close; the closer is marked and the row is retained; re-scan is idempotent for the closer, false for a sibling', async () => {
     await seedJoin('f0', 2);
     await seedBranchExport('f0', 'f0.b0', 0);
     await seedBranchExport('f0', 'f0.b1', 1);
 
     // First branch: pending 2 -> 1, not the closer.
-    const first = await decrementJoinClose({
+    const first = await joins.decrementJoin({
       runId,
       frameAddress: 'f0',
       branchAddress: 'f0.b0',
@@ -163,7 +121,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
 
     // Second branch: pending 1 -> 0, the closer. Row NOT deleted; closer marked.
     const closerLeaf = 'f0.s0.b1';
-    const second = await decrementJoinClose({
+    const second = await joins.decrementJoin({
       runId,
       frameAddress: 'f0',
       branchAddress: 'f0.b1',
@@ -175,7 +133,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
     expect(await runHasPendingJoins(runId)).toBe(false);
 
     // Re-scanned closer (crash-retry, same leaf) → still the closer.
-    const reScan = await decrementJoinClose({
+    const reScan = await joins.decrementJoin({
       runId,
       frameAddress: 'f0',
       branchAddress: 'f0.b1',
@@ -184,7 +142,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
     expect(reScan).toEqual({ closed: true });
 
     // A DIFFERENT leaf re-scanned after close → NOT the closer.
-    const sibling = await decrementJoinClose({
+    const sibling = await joins.decrementJoin({
       runId,
       frameAddress: 'f0',
       branchAddress: 'f0.b0',
@@ -204,7 +162,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
     await seedBranchExport('c0', 'c0.b2', 2);
 
     // b0 decrements once (pending 3 -> 2).
-    const b0 = await decrementJoinClose({
+    const b0 = await joins.decrementJoin({
       runId,
       frameAddress: 'c0',
       branchAddress: 'c0.b0',
@@ -214,7 +172,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
 
     // b0 re-scanned (crash window): its export row is decremented=true already, so
     // the claim finds no row → NO second decrement. Pending must stay 2.
-    const b0Rescan = await decrementJoinClose({
+    const b0Rescan = await joins.decrementJoin({
       runId,
       frameAddress: 'c0',
       branchAddress: 'c0.b0',
@@ -226,14 +184,14 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
 
     // b1 (pending 2 -> 1), then b2 (pending 1 -> 0) closes — proving the count
     // still reflects EACH branch exactly once despite b0's re-scan.
-    const b1 = await decrementJoinClose({
+    const b1 = await joins.decrementJoin({
       runId,
       frameAddress: 'c0',
       branchAddress: 'c0.b1',
       leafAddress: 'c0.s0.b1',
     });
     expect(b1).toEqual({ closed: false });
-    const b2 = await decrementJoinClose({
+    const b2 = await joins.decrementJoin({
       runId,
       frameAddress: 'c0',
       branchAddress: 'c0.b2',
@@ -244,7 +202,7 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
   });
 
   it('a missing frame is never the closer', async () => {
-    const result = await decrementJoinClose({
+    const result = await joins.decrementJoin({
       runId,
       frameAddress: 'nope',
       branchAddress: 'nope.b0',
@@ -257,21 +215,21 @@ describe('decrementJoinClose — mark-closed decrement (§6.4)', () => {
 describe('join_branch_export — persist + collect (§12)', () => {
   it('collects branches ordered by branch_index regardless of persist order', async () => {
     const frame = 'g0';
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: frame,
       branchAddress: 'g0.b2',
       branchIndex: 2,
       exports: { c: 'third' },
     });
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: frame,
       branchAddress: 'g0.b0',
       branchIndex: 0,
       exports: { a: 'first' },
     });
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: frame,
       branchAddress: 'g0.b1',
@@ -279,7 +237,7 @@ describe('join_branch_export — persist + collect (§12)', () => {
       exports: { b: 'second' },
     });
 
-    const rows = await collectBranchExports({ runId, frameAddress: frame });
+    const rows = await joins.collectBranchExports({ runId, frameAddress: frame });
     expect(rows.map((r) => r.branchIndex)).toEqual([0, 1, 2]);
     expect(rows.map((r) => r.branchAddress)).toEqual(['g0.b0', 'g0.b1', 'g0.b2']);
     expect(rows.map((r) => r.exports)).toEqual([
@@ -291,14 +249,14 @@ describe('join_branch_export — persist + collect (§12)', () => {
 
   it('re-persisting the same branch (same PK) updates in place — no duplicate row', async () => {
     const frame = 'g1';
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: frame,
       branchAddress: 'g1.b0',
       branchIndex: 0,
       exports: { v: 'original' },
     });
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: frame,
       branchAddress: 'g1.b0',
@@ -306,19 +264,19 @@ describe('join_branch_export — persist + collect (§12)', () => {
       exports: { v: 'updated' },
     });
 
-    const rows = await collectBranchExports({ runId, frameAddress: frame });
+    const rows = await joins.collectBranchExports({ runId, frameAddress: frame });
     expect(rows).toHaveLength(1);
     expect(rows[0].exports).toEqual({ v: 'updated' });
   });
 });
 
-describe('runHasPendingJoins — closed rows no longer count (§6.4)', () => {
+describe('pending joins — closed rows no longer count (§6.4)', () => {
   it('a pending>0 row counts; after decrement-to-0-and-close it does not', async () => {
     await seedJoin('h0', 1);
     await seedBranchExport('h0', 'h0.b0', 0);
     expect(await runHasPendingJoins(runId)).toBe(true);
 
-    const closed = await decrementJoinClose({
+    const closed = await joins.decrementJoin({
       runId,
       frameAddress: 'h0',
       branchAddress: 'h0.b0',
@@ -331,10 +289,10 @@ describe('runHasPendingJoins — closed rows no longer count (§6.4)', () => {
   });
 });
 
-describe('clearJoins — wipes both join_pending and join_branch_export (§12.6)', () => {
+describe('dropping the run state wipes both join_pending and join_branch_export (§12.6)', () => {
   it('deletes every join and every branch export for the run', async () => {
     await seedJoin('k0', 3);
-    await persistBranchExport({
+    await joins.persistBranchExport({
       runId,
       frameAddress: 'k0',
       branchAddress: 'k0.b0',
@@ -343,11 +301,11 @@ describe('clearJoins — wipes both join_pending and join_branch_export (§12.6)
     });
 
     expect(await runHasPendingJoins(runId)).toBe(true);
-    expect(await collectBranchExports({ runId, frameAddress: 'k0' })).toHaveLength(1);
+    expect(await joins.collectBranchExports({ runId, frameAddress: 'k0' })).toHaveLength(1);
 
     await clearJoins(runId);
 
     expect(await runHasPendingJoins(runId)).toBe(false);
-    expect(await collectBranchExports({ runId, frameAddress: 'k0' })).toEqual([]);
+    expect(await joins.collectBranchExports({ runId, frameAddress: 'k0' })).toEqual([]);
   });
 });

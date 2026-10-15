@@ -8,6 +8,7 @@
 import { userInfo } from 'node:os';
 import { tenantIdOf, type ActingPrincipal, type TenantId } from 'engine-contracts';
 import type { EngineHost } from 'movement-engine/services/movement_engine/host';
+import type { RunHost } from 'movement-engine/services/run_host/rules';
 import { adapterTable } from 'movement-engine/services/translation_graph/engine/adapter_table';
 import type { DryRunWriteSink } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import { redeemFileRef } from 'movement-engine/services/translation_graph/engine/files/redeem';
@@ -49,9 +50,8 @@ export interface LocalHostParts {
   state: State;
   externals: Map<string, RunningExternal>;
   credentials: Map<string, Credential>;
-  /** The engine a parked run's state was written by, stamped on each park:
-   *  always Rust, the only engine lf runs. */
-  engine: 'rust';
+  /** The run host core over the state: its park sink, its await wake. */
+  runHost: RunHost;
   documents: LocalDocumentStore;
   /** Receives each write a rehearsed (dry-run) instance captured instead of
    *  making it. */
@@ -59,11 +59,11 @@ export interface LocalHostParts {
 }
 
 /**
- * The host for one run entry (a firing or a resume) of `runId`. A park the
- * engine commits is written to the state's park table; a timer park also
- * queues its wake for `lf serve`.
+ * The host for one run entry (a firing or a resume) of `runId`, under the run
+ * lease whose token is `fence`. A park the engine commits goes through the
+ * run host core's park sink; a timer park also queues its wake for `lf serve`.
  */
-export function localHost(parts: LocalHostParts & { runId: string }): EngineHost {
+export function localHost(parts: LocalHostParts & { runId: string; fence?: string }): EngineHost {
   const { project, state, externals, credentials } = parts;
   const segments = new SegmentDirectory();
   const locks = segmentWriteLocks(new InMemoryWriteLocks());
@@ -97,7 +97,13 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
     },
     adapters: { resolve: (resolution) => adapters.resolve(resolution), call: (call) => adapters.call(call) },
     llm: models,
-    park: localParkFamily({ state, runId: parts.runId, engine: parts.engine }),
+    park: localParkFamily({
+      state,
+      host: parts.runHost,
+      runId: parts.runId,
+      teamId: LOCAL_TENANT,
+      ...(parts.fence !== undefined ? { fence: parts.fence } : {}),
+    }),
     control: { cancel: NEVER_CANCELLED },
     files: {
       resolveFileText: async ({ segmentId, file }) =>

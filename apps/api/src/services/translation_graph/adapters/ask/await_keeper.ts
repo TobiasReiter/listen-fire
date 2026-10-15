@@ -6,6 +6,7 @@
 import type { AwaitKeeper } from '../await_correlation';
 
 import { getAsksQb } from '../../../../lib/kysely';
+import { triggerRunIdOf } from '../../../movement_engine/run_host_store';
 import { abandonAskAwaits, loadResolvableAskAwaits } from './await_store';
 import { askIdSchema } from './store';
 import { ASK_ADAPTER_TYPE } from './type';
@@ -36,7 +37,8 @@ async function describeAskAwaits(correlationKeys: string[]): Promise<Map<string,
 
 export const askAwaitKeeper: AwaitKeeper = {
   adapterType: ASK_ADAPTER_TYPE,
-  loadResolvable: (input) => loadResolvableAskAwaits(input),
-  abandon: (input) => abandonAskAwaits(input),
+  loadResolvable: ({ runId }) => loadResolvableAskAwaits({ runId: triggerRunIdOf(runId) }),
+  abandon: ({ runId, addresses }) =>
+    abandonAskAwaits({ runId: triggerRunIdOf(runId), ...(addresses !== undefined ? { addresses } : {}) }),
   describe: describeAskAwaits,
 };

@@ -4,23 +4,25 @@
 // not one, and the two must not be conflated at the seam any more than they are
 // in the tables.
 
+import { sql } from 'kysely';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
+
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { TeamId } from '../../generated/kysely/core/Team';
-
-import { sql } from 'kysely';
+import type { AwaitKeeper, CorrelatedAwait } from 'movement-engine/services/run_host/store';
+import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import type { ResolvableAwait } from '../translation_graph/adapters/await_correlation';
+import { triggerRunIdOf } from './run_host_store';
 import {
   callbackUrl,
   mintCallback,
   readCallbackCalls,
 } from './callback_store';
-import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
 
-import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
+
 
 // Re-exported only for the conformance corpora; live code imports it from
 // `host.ts`.
@@ -41,14 +43,13 @@ export type { CallbackSink };
  * exactly as the ask's does: load this type's rows, then keep the ones whose
  * callback has a landed call.
  */
-export async function loadResolvableCallbackAwaits(
-  opts: { runId?: TriggerRunId } = {},
-): Promise<ResolvableAwait[]> {
-  let corr = getAutomationsQb(['adapter_await'])
+async function loadResolvableCallbackAwaits(opts: { runId: TriggerRunId }): Promise<CorrelatedAwait[]> {
+  const rows = await getAutomationsQb(['adapter_await'])
     .selectFrom('adapter_await')
-    .where('adapter_type', '=', CALLBACK_AWAIT_TYPE);
-  if (opts.runId !== undefined) corr = corr.where('run_id', '=', opts.runId);
-  const rows = await corr.select(['run_id', 'team_id', 'address', 'correlation_key']).execute();
+    .where('adapter_type', '=', CALLBACK_AWAIT_TYPE)
+    .where('run_id', '=', opts.runId)
+    .select(['run_id', 'team_id', 'address', 'correlation_key'])
+    .execute();
   if (rows.length === 0) return [];
 
   const ids = [...new Set(rows.map((r) => r.correlation_key))] as CallbackId[];
@@ -62,10 +63,18 @@ export async function loadResolvableCallbackAwaits(
 
   return rows
     .filter((r) => firedIds.has(r.correlation_key))
-    // `adapter_await.team_id` is an opaque tenant uuid (D3 dropped the FK, and
-    // with it the brand); naming it as core's team id is the boundary conversion.
-    .map((r) => ({ runId: r.run_id, teamId: r.team_id as TeamId, address: r.address }));
+    .map((r) => ({ runId: r.run_id, teamId: r.team_id, address: r.address }));
 }
+
+/** The callback's awaits as the run host reaches them. A withdrawn callback
+ *  await closes nothing of its own: the callback is the run's, revoked when the
+ *  run ends (the run host's `closeRun`), and a lost race arm's correlation is
+ *  dropped by the core. */
+export const callbackAwaitKeeper: AwaitKeeper = {
+  adapterType: CALLBACK_AWAIT_TYPE,
+  loadResolvable: ({ runId }) => loadResolvableCallbackAwaits({ runId: triggerRunIdOf(runId) }),
+  abandon: async () => {},
+};
 
 export function makeRecorderCallbackSink(
   recorder: TriggerRunRecorder,

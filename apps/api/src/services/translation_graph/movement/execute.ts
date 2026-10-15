@@ -139,6 +139,10 @@ export interface MovementFiringOutcome {
    *  be stepping the run, so nothing was recorded or settled, and the caller
    *  must leave the run's rows alone too. */
   leaseLost?: true;
+  /** A resumed segment an operator's cancel stopped: the reason they gave.
+   *  The step is recorded; tearing the run down is the run host's
+   *  (its drain's `afterStep`). */
+  cancelReason?: string;
 }
 
 /** A segment that lost its run lease stops where it is: it records nothing,
@@ -638,10 +642,11 @@ async function resumeMovementFiringInContext(
     const lostBeforeSettle = leaseLostBeforeSettle(input.lease, leaseContext);
     if (lostBeforeSettle !== null) return lostBeforeSettle;
     if (result.cancelled) {
-      // Cancelled mid-resume: settle the run `failed` + cancel its open asks,
-      // skipping finish()/markParked() (mirrors the parked/re-park early return).
-      // Earlier writes stand (P14) — this segment's go onto the step channel
-      // before the settle, appending to whatever the park left there.
+      // Cancelled mid-resume: skip finish()/markParked() (mirrors the
+      // parked/re-park early return). Earlier writes stand (P14) — this
+      // segment's go onto the step channel, appending to whatever the park
+      // left there, before the drain that stepped it settles the run failed
+      // with the reason.
       recorder.recordMovementStep({
         movementId: input.movementId,
         movementName: result.movementName,
@@ -649,16 +654,8 @@ async function resumeMovementFiringInContext(
         result,
       });
       await recorder.snapshotSteps();
-      await failRunAndCancelRequests({
-        runId: input.runId,
-        message: cancelGate.reason() ?? 'Cancelled by an operator',
-      }).catch((err) =>
-        logger.warn('[MovementEngine] cancel settle failed', {
-          runId: input.runId,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
-      return { result };
+      const reason = cancelGate.reason();
+      return { result, ...(reason != null ? { cancelReason: reason } : {}) };
     }
     if (result.parked) {
       // Re-parked at a deeper ask — the new park rows + `parked` status were

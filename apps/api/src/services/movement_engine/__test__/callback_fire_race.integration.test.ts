@@ -41,11 +41,11 @@ import { fireCallback } from '../callback_fire';
 import { runResumeSlot } from '../await_resume';
 import * as callbackStore from '../callback_store';
 import { getCallback, mintCallback, revokeRunCallbacks } from '../callback_store';
-import { claimRunLease, releaseRunLease } from '../run_lease';
 import { registerCallbackFireWork } from '../callback_fire';
 import { drainWork, resetWorkHandlersForTests } from '../../work/drain';
 import * as workStore from '../../work/store';
 import { enqueueWork } from '../../work/store';
+import { postgresRunHostStore } from '../run_host_store';
 
 const SOURCE = 'go = manual()';
 
@@ -377,13 +377,13 @@ describe('two processes fire one run at once', () => {
 
   it('a queued body follows the door: none once its run has ended and its callback is revoked', async () => {
     const { runId, callbackId } = await seedFiredRun({ singleUse: false });
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     const outcome = await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20' });
     expect(outcome).toMatchObject({ kind: 'recorded', queued: true });
     // The run ends while the body waits: its callbacks are revoked with it.
     await getAutomationsQb(['trigger_run']).updateTable('trigger_run').set({ status: 'success' }).where('id', '=', runId).execute();
     await revokeRunCallbacks(runId);
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
 
     const result = await drainWork({ owner: 'drain-1', teamId, heartbeatMs: false });
     expect(result).toMatchObject({ claimed: 1, ran: 1 });
@@ -418,11 +418,11 @@ describe('two processes fire one run at once', () => {
 
   it('a queued body whose lease is lost before it starts re-queues, unmarked, and the next holder runs it once', async () => {
     const { runId, callbackId } = await seedFiredRun({ singleUse: false });
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     expect(await fireCallback({ id: callbackId, values: {}, suppliedValue: '2026-08-20' })).toMatchObject({
       queued: true,
     });
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
     fireCallbackFiringMock.mockResolvedValue({ result: { movementName: 'book_it' } });
 
     // Between the row taking the lease and the body starting, another

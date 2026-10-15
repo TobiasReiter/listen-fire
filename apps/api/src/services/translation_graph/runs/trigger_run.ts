@@ -41,7 +41,8 @@ import OpsSeverity from '../../../generated/kysely/public/OpsSeverity';
 import { OpsDetailLevel } from '../../../lib/ops/types';
 import { markTriggerEventFailed } from '../triggers/event_store';
 import { settleUnresumableRun } from '../../interaction/run_failure';
-import { ORPHAN_AFTER, returnLeavesOfLapsedLeases, withRunLease } from '../../movement_engine/run_lease';
+import { ORPHAN_AFTER, withRunLease } from '../../movement_engine/run_lease';
+import { returnLeavesOfLapsedLeases } from '../../movement_engine/run_host_store';
 import { registerWorkHandler } from '../../work/drain';
 
 export type TriggerRunTriggerType =

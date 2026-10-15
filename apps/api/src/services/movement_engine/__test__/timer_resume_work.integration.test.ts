@@ -36,9 +36,9 @@ import { registerTimerWork, resumeTimerParkedRun, settleCancelledTimersHandler, 
 import { testWorkContext } from '../../../test/harness/work';
 import { makeRecorderParkSink } from '../park_sink';
 import { drainUntilIdle, drainWork, resetWorkHandlersForTests } from '../../work/drain';
-import { claimRunLease, releaseRunLease, withRunLease, type HeldRunLease } from '../run_lease';
+import { withRunLease, type HeldRunLease } from '../run_lease';
 import { getCallback, listRunCallbacks } from '../callback_store';
-import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
+import { postgresRunHostStore } from '../run_host_store';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -486,7 +486,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     const { triggerId } = await seedMovementWithTrigger(teamId);
     await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
     const { runId } = await parkedRun(teamId);
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     expect(elsewhere).not.toBeNull();
 
     await backdateLeafAndRow(runId);
@@ -508,7 +508,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(dueIn).toBeGreaterThan(1_000);
     expect(dueIn).toBeLessThan(30_000);
 
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
     await backdateLeafAndRow(runId);
     await drainUntilIdle({ owner: 't' });
     expect(slackCreates).toEqual([{ channel: '#alerts', text: 'awake after sleep' }]);
@@ -743,7 +743,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
       .set({ lease_until: new Date(Date.now() - 1_000) })
       .where('id', '=', runId)
       .execute();
-    const other = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    const other = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     expect(other).not.toBeNull();
     for (let i = 0; i < 40 && !stale?.isLost(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(stale?.isLost()).toBe(true);
@@ -755,12 +755,14 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(texts).toEqual(['last']);
     expect((await runRow(runId)).status).toBe('parked');
     expect((await getCallback(callback!.id))?.status).toBe('live');
-    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-kept' })).toHaveLength(1);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'req-kept' })).toHaveLength(1);
+    // The stale holder left its claimed leaf alone; the new holder's claim of
+    // the lease already returned it to parked.
     const leaves = await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('status').execute();
-    expect(leaves).toEqual([{ status: 'resuming' }]);
+    expect(leaves).toEqual([{ status: 'parked' }]);
 
     // The new holder resumes the run itself and finishes it, alone.
-    await releaseRunLease(runId, other!.token);
+    await postgresRunHostStore.leases.release({ runId, token: other!.token });
     const fresh = await withRunLease(runId, (lease) => resumeTimerParkedRun({ runId, teamId }, new Date(), lease));
     expect(fresh).toEqual({ kind: 'held', value: 'done' });
     expect(texts).toEqual(['last', 'last']);
@@ -778,7 +780,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
     const { runId } = await parkedRun(teamId);
     const [callback] = await listRunCallbacks(runId);
-    const holder = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    const holder = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
 
     const stale = new TriggerRunRecorder({
       teamId,
@@ -794,6 +796,6 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
 
     expect((await runRow(runId)).status).toBe('parked');
     expect((await getCallback(callback!.id))?.status).toBe('live');
-    await releaseRunLease(runId, holder!.token);
+    await postgresRunHostStore.leases.release({ runId, token: holder!.token });
   });
 });
