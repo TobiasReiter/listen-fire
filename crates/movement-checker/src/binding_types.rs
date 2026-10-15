@@ -18,7 +18,7 @@ use crate::slots::expression_of_slot;
 use crate::types::field::{Ty, maybe_absent, strip_absent, unify_value_types};
 use crate::types::position::{ClosureParam, ClosureType, Instance, PlaneType, Position, ReturnShape, position_ref_in};
 use crate::types::scope_env::{ScopeEnv, SymbolTypes};
-use crate::types::Typing;
+use crate::types::{TypeEnv, Typing};
 
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
@@ -28,6 +28,7 @@ impl Checker<'_> {
 
     /// An expression slot's type in `scope`, and what it may hold where its
     /// type cannot say; nothing reported.
+    #[allow(dead_code)] // the families' entry point; none reads it yet
     pub fn type_of_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Expression, Option<Ty>, Option<Ty>)> {
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
@@ -35,6 +36,36 @@ impl Checker<'_> {
         let ty = typing.infer(&expr);
         let may_hold = typing.may_hold_type(&expr);
         Some((expr, ty, may_hold))
+    }
+
+    /// `name = <slot>`: a pick off a walk binds the landing it may not find
+    /// (`landedAggregatePosition`), a second name for a record binds that
+    /// record (`bareNodeSymbol`), and anything else binds the value as written
+    /// (`holdsValue`: a list literal stays the tuple it is).
+    fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<SymbolTypes> {
+        let expr = expression_of_slot(slot).ok()?;
+        let env = self.typing_env(scope);
+        let mut typing = Typing::new(&env, self.version, slot.span);
+        if let Some((root, steps)) = aggregated_bare_path(&expr) {
+            let start = root.and_then(|r| env.resolve_root(r));
+            if let Some(start) = start {
+                let landed = typing.walk_steps(Some(start), steps, false);
+                if let Some(landed) = landed {
+                    return Some(SymbolTypes { pos: Some(Position::MaybeEmpty(Box::new(landed))), ..SymbolTypes::default() });
+                }
+            }
+        }
+        if let Some(name) = crate::types::narrowing::bare_name(&expr)
+            && let Some(pos) = env.resolve_root(name)
+        {
+            return Some(SymbolTypes { pos: Some(pos), ..SymbolTypes::default() });
+        }
+        let ty = typing.infer_exact(&expr);
+        let may_hold = typing.may_hold_type(&expr);
+        let may_hold = if ty.is_none() { may_hold } else { None };
+        let many_valued = crate::types::narrowing::is_walk_projection(&expr)
+            || crate::types::narrowing::bare_name(&expr).is_some_and(|n| env.is_many_valued_name(n));
+        Some(SymbolTypes { field: ty, may_hold, many_valued, ..SymbolTypes::default() })
     }
 
     /// Gives `name`, bound in `scope` itself, its types.
@@ -48,11 +79,8 @@ impl Checker<'_> {
     pub fn type_assigned(&mut self, name: &str, value: &RValue, scope: ScopeId) {
         let types = match value {
             RValue::Construct { construct } => self.instance_types(name, construct, scope),
-            RValue::Expr { expr } => match self.type_of_slot(expr, scope) {
-                Some((_, ty, may_hold)) => {
-                    let may_hold = if ty.is_none() { may_hold } else { None };
-                    SymbolTypes { field: ty, may_hold, ..SymbolTypes::default() }
-                }
+            RValue::Expr { expr } => match self.type_of_bound_slot(expr, scope) {
+                Some(types) => types,
                 None => return,
             },
             RValue::Closure { closure } => {
@@ -122,11 +150,11 @@ impl Checker<'_> {
     /// position (or a union) of the instance `crm`, `<crm>` the instance
     /// itself. A type written with hops is the walks family's to resolve.
     pub fn position_from_type_ref(&self, reference: &TypeRef, scope: ScopeId) -> Option<Position> {
-        if reference.hops_raw.is_some() {
-            return None;
-        }
         let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph) else { return None };
         let Some(Position::Meta { instance }) = &self.scopes.symbol(id).types.pos else { return None };
+        if let Some(hops) = &reference.hops_raw {
+            return position_from_address(instance, hops);
+        }
         match &reference.position {
             None => Some(Position::Meta { instance: instance.clone() }),
             Some(name) => position_ref_in(instance, name).or_else(|| {
@@ -220,4 +248,34 @@ fn spell_param_type(type_: &ParamTypeRef) -> String {
             format!("<{spelled}>")
         }
     }
+}
+
+/// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` over a walk read for its landings.
+fn aggregated_bare_path(expr: &Expression) -> Option<(Option<&str>, &[movement_parser::lowering::expression::TraversalStep])> {
+    use movement_parser::lowering::expression::AggregationFunction as F;
+    let Expression::Aggregate { fn_: F::First | F::Last | F::Only, expression, .. } = expr else { return None };
+    let Expression::Traverse { alias_root, steps, expression: terminal } = &**expression else { return None };
+    if steps.is_empty() || !crate::types::narrowing::is_position_terminal(terminal) {
+        return None;
+    }
+    Some((alias_root.as_deref(), steps.as_slice()))
+}
+
+/// `positionFromAddress`: the position an event address names — the key the
+/// host grafted it under. A pinned address is narrower than its event.
+fn position_from_address(instance: &crate::types::InstanceRef, hops_raw: &str) -> Option<Position> {
+    let address = crate::types::address::event_address_of_hops(hops_raw)?;
+    let resolved = position_ref_in(instance, &crate::types::address::event_address_key(&address))?;
+    let narrowed = !address.narrowing.is_empty();
+    Some(match resolved {
+        Position::Position(mut record) if narrowed => {
+            record.narrows_event = Some(address.event.clone());
+            Position::Position(record)
+        }
+        Position::Union(mut union) if narrowed => {
+            union.narrows_event = Some(address.event.clone());
+            Position::Union(union)
+        }
+        other => other,
+    })
 }

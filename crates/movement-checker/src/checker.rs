@@ -14,6 +14,8 @@ use movement_parser::catalog::helpers::credential_arg_of;
 use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
+use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
+use crate::types::{TypeEnv, Typing};
 use crate::families::names::spell_name;
 use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
 use movement_parser::lowering::condition::MovementCondition;
@@ -37,6 +39,16 @@ pub struct Checker<'c> {
     type_only: usize,
     /// Each catalog schema an instance was built from, read once.
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
+}
+
+/// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
+/// value type, and what it may hold where its type cannot say.
+#[derive(Default)]
+#[allow(dead_code)] // what the families read off a slot; none reads it yet
+pub struct SlotTyped {
+    pub expr: Option<movement_parser::lowering::expression::Expression>,
+    pub ty: Option<Ty>,
+    pub may_hold: Option<Ty>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -248,7 +260,9 @@ impl<'c> Checker<'c> {
                     self.check_node_literal(mapping, landing);
                 }
             }
-            RValue::Expr { expr } => self.check_expr_slot(expr, scope),
+            RValue::Expr { expr } => {
+                self.check_expr_slot_as(expr, scope, name.is_some());
+            }
         }
         Bound::default()
     }
@@ -262,23 +276,58 @@ impl<'c> Checker<'c> {
         self.scopes.resolve_function(scope, written).map(|id| self.scopes.symbol(id).name.clone()).unwrap_or_else(|| written.to_string())
     }
 
-    /// `checkExprSlot`, the name half: a bare name resolves as written; any
-    /// other slot is parsed and every name it reads resolves.
+    /// `checkExprSlot`: a bare name resolves as written; any other slot is
+    /// parsed, every name it reads resolves, and it is typed, what the typing
+    /// reports surfacing here.
     pub fn check_expr_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        self.check_expr_slot_as(slot, scope, false);
+    }
+
+    /// `checkExprSlot` with `holdsValue`: the slot's value is kept as it is
+    /// written (a tuple stays one), so it is typed exactly and not read.
+    pub fn check_expr_slot_as(&mut self, slot: &ExprSlot, scope: ScopeId, holds_value: bool) -> SlotTyped {
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
-            if !is_literal_word(trimmed) {
-                self.resolve_name(trimmed, slot.span, scope);
+            if is_literal_word(trimmed) {
+                let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
+                return SlotTyped { expr: None, ty, may_hold: None };
             }
-            return;
+            self.resolve_name(trimmed, slot.span, scope);
+            let bound = {
+                let env = self.typing_env(scope);
+                Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
+            };
+            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
+            let may_hold = self.typing_env(scope).resolve_may_hold(trimmed);
+            return SlotTyped { expr: None, ty, may_hold };
         }
-        let Ok(parsed) = expression_of_slot(slot) else { return };
+        let Ok(parsed) = expression_of_slot(slot) else { return SlotTyped::default() };
         let names = collect_expression_names(&parsed);
         for name in names.distinct_refs() {
             if !names.aliases.contains(name) {
                 self.resolve_name(name, slot.span, scope);
             }
         }
+        let (ty, may_hold, diagnostics) = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
+            let may_hold = typing.may_hold_type(&parsed);
+            (ty, may_hold, typing.diagnostics)
+        };
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
+        SlotTyped { expr: Some(parsed), ty, may_hold }
+    }
+
+    /// `readHeldValue`: a bare name's value read — a tuple as the list it
+    /// widens to, refused where it holds records and values both.
+    fn read_held_value(&mut self, ty: Option<Ty>, span: Span) -> Option<Ty> {
+        if let Some(mixed) = mixed_tuple_message(ty.as_ref()) {
+            self.report(crate::codes::LIST_MIXED, mixed, span);
+        }
+        widen_tuples(ty, self.version)
     }
 
     /// The config slots `checkListen` reads as expressions: every key the
@@ -328,6 +377,26 @@ impl<'c> Checker<'c> {
                     if !names.aliases.contains(name) {
                         self.resolve_name(name, slot.span, scope);
                     }
+                }
+                let (ty, diagnostics) = {
+                    let env = self.typing_env(scope);
+                    let mut typing = Typing::new(&env, self.version, slot.span);
+                    let ty = typing.infer(expr);
+                    (ty, typing.diagnostics)
+                };
+                for diagnostic in diagnostics {
+                    self.push(diagnostic);
+                }
+                // Gating on a structured value is always true, never a decision.
+                if let Some(message) = crate::families::values::json_opaque_message(ty.as_ref(), "used as a condition") {
+                    self.report(crate::codes::JSON_OPAQUE, message, slot.span);
+                }
+                if self.version >= 5 && crate::types::field::may_be_closure(ty.as_ref()) {
+                    self.report(
+                        crate::codes::CLOSURE_NOT_DATA,
+                        crate::types::field::closure_not_data_message("a value used as a condition is"),
+                        slot.span,
+                    );
                 }
             }
         }
