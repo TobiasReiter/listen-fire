@@ -1123,7 +1123,7 @@ impl Checker<'_> {
 }
 
 /// `callArgSpan`.
-fn call_arg_span(arg: &CallArg) -> Span {
+pub(crate) fn call_arg_span(arg: &CallArg) -> Span {
     match arg {
         CallArg::Expr { expr, .. } => expr.span,
         CallArg::Write { write, .. } => write.span,
@@ -1199,6 +1199,7 @@ impl Checker<'_> {
             return params;
         }
         if callee.kind == SymbolKind::Plugin {
+            self.check_plugin_application(call, callee.imported_name.as_deref().unwrap_or(&call.callee));
             return None;
         }
         if self.calls_closure(&callee) {

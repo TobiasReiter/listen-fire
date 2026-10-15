@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -65,11 +65,13 @@ pub struct Checker<'c> {
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
 #[derive(Default, Clone, Copy)]
-pub struct SlotOptions {
+pub struct SlotOptions<'f> {
     /// The value is kept as written (`holdsValue`): typed exactly, not read.
     pub holds_value: bool,
     /// A write's field value, whose target may advertise functions of its own.
     pub write_field: bool,
+    /// A `through` stage's argument: the fields it may (and may not yet) read.
+    pub fields: Option<&'f crate::families::extraction::ThroughFields>,
 }
 
 /// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
@@ -403,14 +405,14 @@ impl<'c> Checker<'c> {
     /// its nested calls hoisted out, is parsed, every name it reads resolves,
     /// and it is typed, what the typing reports surfacing here.
     pub fn check_expr_slot_with(&mut self, slot: &ExprSlot, scope: ScopeId, options: SlotOptions) -> SlotTyped {
-        let SlotOptions { holds_value, write_field } = options;
+        let SlotOptions { holds_value, write_field, fields } = options;
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if is_literal_word(trimmed) {
                 let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
                 return SlotTyped { expr: None, ty, may_hold: None };
             }
-            self.resolve_name(trimmed, slot.span, scope);
+            self.resolve_name_with_fields(trimmed, slot.span, scope, fields);
             let bound = {
                 let env = self.typing_env(scope);
                 Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
@@ -432,7 +434,7 @@ impl<'c> Checker<'c> {
         let names = collect_expression_names(&parsed);
         for name in names.distinct_refs() {
             if !names.aliases.contains(name) {
-                self.resolve_name(name, slot.span, scope);
+                self.resolve_name_with_fields(name, slot.span, scope, fields);
             }
         }
         self.check_slot_expression(slot, scope, write_field);
@@ -771,41 +773,12 @@ impl<'c> Checker<'c> {
         for input in &extract.from {
             self.check_expr_slot(input, scope);
         }
-        self.check_extract_stages(&extract.stages, scope);
-    }
-
-    fn check_extract_stages(&mut self, stages: &[ExtractStage], scope: ScopeId) {
-        for stage in stages {
-            for call in stage.through.iter().flatten() {
-                self.resolve_name(&call.plugin, call.span, scope);
-            }
-            for field in &stage.fields {
-                self.check_expr_slot(&field.description, scope);
-            }
-            for child in &stage.children {
-                match child {
-                    ExtractNode::Declared(node) => {
-                        if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) =
-                            self.scopes.resolve(scope, &node.declared.type_)
-                        {
-                            self.report_resolution_failure(&node.declared.type_, node.declared.span, failure);
-                        }
-                        if let Some(description) = &node.description {
-                            self.check_expr_slot(description, scope);
-                        }
-                        self.check_extract_stages(&node.stages, scope)
-                    }
-                    ExtractNode::Inline(node) => {
-                        self.check_expr_slot(&node.description, scope);
-                        self.check_extract_stages(&node.stages, scope)
-                    }
-                }
-            }
-        }
+        self.check_extract_stages(&extract.stages, scope, &Default::default(), None);
     }
 
     /// `checkShapeDescriptions`: a node declaration's words may interpolate names.
     fn check_shape_descriptions(&mut self, node: &ShapeNode, scope: ScopeId) {
+        self.check_shape_names_apart(node);
         if let Some(description) = &node.description {
             self.check_expr_slot(description, scope);
         }

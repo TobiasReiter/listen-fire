@@ -59,7 +59,7 @@ pub struct ListenState {
     /// Each node declaration's symbol and what it declares.
     // TODO(nodes): the nodes family's declared schema (`shapeToSchema`,
     // `extends` folded in) replaces this.
-    shapes: HashMap<SymbolId, ShapeDeclaration>,
+    pub shapes: HashMap<SymbolId, ShapeDeclaration>,
 }
 
 struct Dispatchable {
