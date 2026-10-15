@@ -11024,6 +11024,9 @@ class Checker {
           return;
         }
         if (param?.type.fieldType !== undefined) {
+          if (argType === undefined) {
+            this.refuseMaybeRecordForValue(fit, param.type.fieldType, { valueType, mayHold, span: arg.expr.span, written: arg.expr.raw.trim() });
+          }
           this.checkValueArgFit(fit, param.type.fieldType, argType !== undefined ? recordOf(argType) : valueType, {
             span: arg.expr.span,
             literal: isRecordLiteralSlot(arg.expr),
@@ -11232,6 +11235,42 @@ class Checker {
       DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
       `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or ${[...new Set(valuesBesideRecord(mixed).map(describeFieldType))].join(' or ')}, and such a union is no record, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
       span,
+    );
+  }
+
+  /**
+   * A value that MAY be a record (or a file) and may be something else —
+   * `COALESCE(org, 1)`, `IF c THEN org ELSE 1 END`, a name bound to one —
+   * handed to a VALUE parameter that does not take one. Its type is unknown
+   * (no union mixes a record with a value), so the fit check alone is silent;
+   * what it may hold says it. TypeScript's `Org | number` is no `number`.
+   * Refused from version 5; before it the record was passed through as it was
+   * (the call ran), so an older pin is warned, and the warning blocks the move
+   * up.
+   */
+  private refuseMaybeRecordForValue(
+    fit: ArgFit,
+    paramType: FieldType,
+    arg: { valueType: FieldType | undefined; mayHold: FieldType | undefined; span: Span; written: string },
+  ): void {
+    if (before(this.languageVersion, 3) || arg.mayHold === undefined) return;
+    const walk = heldWalk(handleKindsTaken(paramType));
+    const hidden = handleWithin(arg.mayHold, walk);
+    // The value's own type shows the record: the fit check says it.
+    if (hidden === undefined || handleWithin(arg.valueType, heldWalk(handleKindsTaken(paramType))) !== undefined) return;
+    const steps = spellHeldSteps(hidden.steps);
+    const file = variantOf(hidden.handle).kind === 'file';
+    const where = steps === '' ? `may be ${describeFieldType(hidden.handle)}` : `may hold ${describeFieldType(hidden.handle)} at '${steps}'`;
+    const repair = file ? "pass its text ('READ(f)')" : "narrow it to the record with IS and pass a field off it ('r.`Name`')";
+    const message = `'${fit.callee}' expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but '${arg.written}' ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
+    if (since(this.languageVersion, 5)) {
+      this.report(DiagnosticCodes.CALL_ARG_MAYBE_RECORD, message, arg.span);
+      return;
+    }
+    this.reportUpgradeWarning(
+      DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
+      `${message}. Before ${describeLanguageVersion(5)} the ${file ? 'file' : 'record'} is passed through as it is; from it, this is refused`,
+      arg.span,
     );
   }
 
@@ -14909,6 +14948,10 @@ class Checker {
         // is left to its own truthiness, as before.
         const opaque = checkJsonOpaque(type, 'used as a condition');
         if (opaque !== null) this.report(opaque.code, opaque.message, slot.span);
+        // A closure is no decision either: it is not data (language version 5).
+        if (since(this.languageVersion, 5) && mayBeClosure(type)) {
+          this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage('a value used as a condition is'), slot.span);
+        }
         // Narrowing (layer 6): an `==` against a present value proves its
         // subject present inside the arm — the comparison joins `?:` fill and
         // traversal-as-gate as a guard form. Runs AFTER the walk above so the

@@ -68,24 +68,23 @@ describe('a closure written as a list element', () => {
   });
 });
 
-// A closure's type flows through every place a closure may be (a variable, an
-// IF or COALESCE choosing between closures, a parameter, a call's answer), so
-// a value whose type is a closure — or a union of them, TypeScript's `(() =>
-// A) | (() => B)` — may be called under 5: its value is the union of what the
-// closures return, records included, so the record-in-data rules see a record
-// any of them hands back. A value that may not be a closure, or whose type
+// A closure's type flows through every place a closure may be (a variable, a
+// parameter, a call's answer), so a value whose type is a closure may be called
+// under 5: its value is what the closure returns, records included, so the
+// record-in-data rules see a record it hands back. A closure is never an
+// operand, so IF and COALESCE do not choose between closures
+// (MOV_CLOSURE_NOT_DATA). A value that may not be a closure, or whose type
 // nothing shows, is refused where it is called.
 describe('calling a value that is a closure', () => {
   const note = (value: string): string => `  write crm-[:notes]-> { title: ${value} }`;
-  const MIXED = ['  a = () => { return made() }', '  b = () => { return "x" }', '  c = TRUE', '  g = IF c THEN a ELSE b END'];
-  const TEXT = ['  a = () => { return "y" }', '  b = () => { return "x" }', '  c = TRUE', '  g = IF c THEN a ELSE b END'];
+  const MIXED = ['  a = () => { return made() }', '  g = a'];
+  const TEXT = ['  a = () => { return "y" }', '  g = a'];
 
   const CALLS: Array<[string, string[]]> = [
     ['a bound closure', ['  a = () => { return 1 }', '  x = a()']],
-    ['a conditional choosing between closures', [...TEXT, '  x = g()']],
+    ['a closure bound to another name', [...TEXT, '  x = g()']],
     ['a closure called as a statement', ['  a = () => { return 1 }', '  a()']],
     ['a closure with an argument', ['  inc = (n: <number>) => n + 1', '  x = inc(3)']],
-    ['a COALESCE of closures', ['  a = () => { return 1 }', '  b = () => { return 2 }', '  g = COALESCE(a, b)', '  x = g()']],
   ];
 
   it.each(CALLS)('%s: checks clean under 5', (_label, body) => {
@@ -93,13 +92,12 @@ describe('calling a value that is a closure', () => {
   });
 
   it('under 4 a closure value is not called', () => {
-    expect(codes(4, CALLS[1]![1])).not.toEqual([]);
+    expect(codes(4, ['  a = () => { return "y" }', '  c = TRUE', '  g = IF c THEN a ELSE a END', '  x = g()'])).not.toEqual([]);
   });
 
-  it('a call is held to every closure the value may be', () => {
-    const errors = errorsUnder(5, ['  a = () => { return 1 }', '  b = (n: <number>) => n', '  c = TRUE', '  g = IF c THEN a ELSE b END', '  x = g()']);
-    expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARITY']);
-    expect(errors[0]!.message).toContain('taking 0 or 1 arguments');
+  it('IF and COALESCE do not choose between closures: a closure is not data', () => {
+    expect(codes(5, ['  a = () => { return 1 }', '  b = (n: <number>) => n', '  c = TRUE', '  g = IF c THEN a ELSE b END'])).toEqual(['MOV_CLOSURE_NOT_DATA']);
+    expect(codes(5, ['  a = () => { return 1 }', '  b = () => { return 2 }', '  g = COALESCE(a, b)'])).toEqual(['MOV_CLOSURE_NOT_DATA']);
   });
 
   it('a value that is not a closure is refused where it is called', () => {
@@ -114,7 +112,7 @@ describe('calling a value that is a closure', () => {
   });
 
   describe('what a called closure returns', () => {
-    it('a record one of them returns is refused in a field', () => {
+    it('a record it returns is refused in a field', () => {
       const errors = errorsUnder(5, [...MIXED, '  x = g()', note('x')]);
       expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
       expect(errors[0]!.message).toContain('crm.company handle');
@@ -125,7 +123,7 @@ describe('calling a value that is a closure', () => {
       expect(codes(5, ['  a = () => { return made() }', '  b = () => { return "x" }', '  r = all(a, b)', note('AT(r, 1)')])).toEqual([]);
     });
 
-    it('closures that return text are written', () => {
+    it('a closure that returns text is written', () => {
       expect(errorsUnder(5, [...TEXT, '  x = g()', note('x')])).toEqual([]);
     });
 

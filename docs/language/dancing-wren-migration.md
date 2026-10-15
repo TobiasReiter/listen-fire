@@ -135,6 +135,9 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 - Under Dancing Wren (5) a value that MAY be a record and may be something else, handed to a parameter that takes a record position, is `MOV_CALL_ARG_MAYBE_RECORD`: `v = COALESCE(org, "x")` then `hp(r: v)`, `hp(r: IF cond THEN org ELSE "x" END)`, or a function or closure whose returns are a record on one path and text on another.
 - Why: TypeScript's `Org | string` is no `Org`. The value that is not a record has nowhere to go, and the engine refuses it by name at run time, which a checked program could reach.
 - Narrow it to the record with `IS` before passing it, handle the case where it is not one, or fill the other arm with a record. A union of records alone (`COALESCE(org, other)`) is one record and passes. Versions 1 to 4 are unchanged.
+- The same value handed to a parameter typed as a VALUE (`function f(n: <number>)`, then `f(COALESCE(org, 1))`, `f(IF cond THEN org ELSE 1 END)`, or a name bound to either) is `MOV_CALL_ARG_MAYBE_RECORD` too, through a function by name, a closure in a variable, or a list handed to `<number[]>`.
+- Why: `Org | number` is no `number`. Under versions 3 and 4 the check said nothing and the call ran: the record arrived where the number was typed, and a sum over it came out `NaN`. So under 3 and 4 it is a warning that blocks the move up, and the refusal is new under 5.
+- Narrow it to the record with `IS` and pass a field off it (`f(COALESCE(org.size, 1))`), or fill every arm with a value.
 
 ## 9. A record a combinator arm hands back reads as itself
 
@@ -173,9 +176,10 @@ text = READ(FIRST(h-[:Files]->).`File`)
 ## 11. A closure is not data
 
 - Under Dancing Wren (5) a closure is a value, as TypeScript's functions are, but it is never data. It lives in exactly three places:
-  - a variable: `g = label`, `g = () => { … }`, a call that answers one (`h = mk()`), or `IF`/`COALESCE` choosing between closures;
+  - a variable: `g = label`, `g = () => { … }`, or a call that answers one (`h = mk()`);
   - a parameter, including one typed as a closure (`handler: <(c: <Company>) => <text>>`, [section 13](#13-a-closures-type-is-written-params--return));
-  - an argument written in a call: `MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, `run(label)`.
+  - an argument to a parameter that takes one: `MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, `run(label)`.
+- It is never an operand of a value expression (`MOV_CLOSURE_NOT_DATA`): `IF c THEN a ELSE b END` or `COALESCE(a, b)` choosing between closures, a comparison (`a == b`), interpolation (`"${a}"`), arithmetic, `NOT`/`AND`/`OR`, a condition (`if a { … }`), or a built-in's argument that is not its function (`UPPER(a)`). Choose with a statement instead: `if c { v = a() } else { v = b() }`.
 - Anywhere a value would be kept as data it is `MOV_CLOSURE_NOT_DATA`: a list's element (`[label]`, `[() => { … }]`), a record or map's value (`{ g: label }`, `{ g: () => 1 }`), a field written, a spread, a `MAP` whose function returns a closure, `GROUPBY` or `KEYBY` over closures, a `race` or `all` arm that returns a closure, and a type whose list element or record key is a closure (`<() => <text>>[]`, `<{ run: <() => <text>> }>`).
 - Why: a closure stored as data is a function that outlives the scope that made it, travels through records and lists, and has to be called back through whatever holds it. Kept in a variable or passed as an argument, every call of it is visible where it is written.
 - Under Luminous Owl (4) and earlier a closure is no value at all: written in a list it stays `MOV_EXPR_CLOSURE_POSITION` (bind it to a name first).
@@ -197,20 +201,18 @@ r = all(label, () => { return "x" })
   - a bound closure (`g = () => { … }` then `g()`);
   - a function declared with a name, read as a value: bound (`g = made` then `g()`) or handed back (`() => made`, `return made`, a function that returns one, then `h = mk()` and `h()`);
   - a closure a closure returns in place (`mk = () => { return () => { … } }`);
-  - `IF c THEN a ELSE b END` and `COALESCE(a, b)` over closures, which are their union (TypeScript's `A | B`);
   - a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)).
 
   Under 4 such a call is refused (`MOV_CONSTRUCT_NOT_ADAPTER` / `MOV_CALL_NOT_MOVEMENT`).
-- The call's type is the union of what the closures may return, records included, so the rules for a record in data (a written field, a graph entry, a plugin argument) see a record any of them hands back. The call is held to every closure's arity (`MOV_CALL_ARITY` names them all).
+- The call's type is what the closure returns, records included, so the rules for a record in data (a written field, a graph entry, a plugin argument) see a record it hands back.
 - A value that may not be a closure (`COALESCE(c, 2)`), or whose type nothing shows, is refused where it is called (`MOV_CALL_NOT_MOVEMENT`), never run on the chance.
 - A body that is one call, `(f) => f()`, returns the call, as `(f) => { return f() }` does: a callee that waits parks the run where the call is, and a callee that returns nothing makes the closure return nothing (TypeScript's `() => g()` when `g` returns `void`). A body that is a combinator, `() => all(f, g)`, returns its answer.
 
 ```
 a = () => { return made() }
-b = () => { return "x" }
-g = IF c THEN a ELSE b END
+g = a
 v = g()
-write crm-[:notes]-> { title: v }   # may be a record: MOV_WRITE_FIELD_TYPE
+write crm-[:notes]-> { title: v }   # a record: MOV_WRITE_FIELD_TYPE
 ```
 
 ### No methods

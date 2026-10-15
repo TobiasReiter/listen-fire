@@ -1,9 +1,9 @@
 // A closure's type flows wherever its value goes (language version 5), as a
 // TypeScript function's does: a named function bound or handed back as a
-// value, a conditional or COALESCE over closures (their union), and a closure
-// an `all` arm captures. A call through any of them is typed by what the closures it
-// may be return — so a record one returns is refused in a text field, and text
-// is clean.
+// value, and a closure an `all` arm captures. A call through any of them is
+// typed by what the closure returns — so a record it returns is refused in a
+// text field, and text is clean. IF and COALESCE never choose between closures:
+// a closure is not data (closure_not_data).
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
@@ -64,10 +64,6 @@ const POSITIONS: Array<[string, (rec: string, txt: string) => string[]]> = [
   ['a named function a concise closure returns', fn => [`  mk = () => ${fn}`, '  h = mk()', '  v = h()']],
   ['a named function a block closure returns', fn => [`  mk = () => { return ${fn} }`, '  h = mk()', '  v = h()']],
   ['a named function a declared function returns', fn => [`  h = ${fn === 'made' ? 'pickMade' : 'pickLabel'}()`, '  v = h()']],
-  ['IF … THEN … ELSE … END over bound closures', fn => ['  a = () => label()', `  b = () => ${fn}()`, '  c = TRUE', '  g = IF c THEN a ELSE b END', '  v = g()']],
-  ['IF … THEN … ELSE … END over named functions', fn => ['  c = TRUE', `  g = IF c THEN label ELSE ${fn} END`, '  v = g()']],
-  ['COALESCE over bound closures', fn => ['  a = () => label()', `  b = () => ${fn}()`, '  g = COALESCE(a, b)', '  v = g()']],
-  ['COALESCE of a named function and a bound closure', fn => ['  a = () => label()', `  g = COALESCE(${fn}, a)`, '  v = g()']],
   ['a closure an all arm captures and calls', fn => [`  g = ${fn}`, '  r = all(() => { return g() })', '  v = AT(r, 0)']],
 ];
 
