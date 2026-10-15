@@ -128,7 +128,7 @@ impl Checker<'_> {
         self.push(diagnostic);
     }
 
-    fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
+    pub(crate) fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
         let mut diagnostic = Diagnostic::error(code, message, span);
         diagnostic.severity = Some(Severity::Warning);
         diagnostic.upgrade = Some(true);
@@ -330,6 +330,7 @@ impl Checker<'_> {
                 field.value.span,
                 FieldFit { relationship, declared: declared_target, held: held.as_ref() },
             );
+            self.check_enum_literal_write(&field.value, target_type.as_ref(), &format!("'{}' on {root_description}", field.name));
         }
         if !fields.is_empty() && omittable == fields.len() {
             self.report_with(
@@ -1223,6 +1224,21 @@ impl Checker<'_> {
 
 
     /// `reportFieldValueType`: a value the field's type does not take.
+    /// `checkEnumLiteralWrite`: a string literal written into an enum field is
+    /// one of its options. A value that is not a literal is unknown at author
+    /// time, which is a reason for silence only while some value could still
+    /// be right — so an empty domain is refused whatever is written.
+    fn check_enum_literal_write(&mut self, value: &movement_parser::ast::ExprSlot, target: Option<&Ty>, subject: &str) {
+        let Some(target @ Ty::Enum { .. }) = target else { return };
+        let found = crate::families::values::check_enum_domain(target, subject)
+            .or_else(|| static_string_literal_of(value).and_then(|literal| crate::families::values::check_enum_literal(&literal, target)));
+        let Some(found) = found else { return };
+        match found.severity {
+            Some(severity) => self.report_with(found.code, found.message, value.span, severity),
+            None => self.report(found.code, found.message, value.span),
+        }
+    }
+
     fn report_field_value_type(&mut self, field_name: &str, subject: &str, target: Option<&Ty>, value: Option<&Ty>, span: Span, fit: FieldFit) {
         if self.version >= 5 && (may_be_closure(value) || may_be_closure(fit.held.map(|h| &h.handle))) {
             self.report(
@@ -1347,6 +1363,7 @@ impl Checker<'_> {
                 field.value.span,
                 FieldFit { relationship: false, declared: false, held: held.as_ref() },
             );
+            self.check_enum_literal_write(&field.value, target_type.as_ref(), &format!("'{}' on {root_description}", field.name));
         }
         if let Some(binding) = binding
             && self.upgrade_crosses(4)

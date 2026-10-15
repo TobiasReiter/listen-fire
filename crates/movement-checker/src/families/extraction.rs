@@ -106,6 +106,7 @@ impl Checker<'_> {
                 let fields = ThroughFields { prior: prior.clone(), own_or_later: own_or_later.clone() };
                 self.check_plugin_stage(plugin, scope, &fields);
             }
+            self.check_no_prototype_name(stage.fields.iter().map(|f| (f.name.as_str(), f.span)).chain(stage.children.iter().map(extract_node_name_span)));
             let mut seen = HashSet::new();
             for field in &stage.fields {
                 if !seen.insert(field.name.as_str()) {

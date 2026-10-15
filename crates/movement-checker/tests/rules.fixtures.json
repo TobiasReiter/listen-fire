@@ -1,0 +1,979 @@
+{
+ "note": "Programs the parity corpus never exercises, each with the TypeScript checker's own answer (every diagnostic, in order, as CODE line:col-line:col message), read off it on 2026-10-16. Run by tests/rules.rs.",
+ "snapshots": {
+  "old_edge": {
+   "contractVersion": 1,
+   "adapters": {
+    "email": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "dealflow_inbox": {
+       "positions": {
+        "message": {
+         "properties": {
+          "subject": "text",
+          "text": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "messages": {
+         "target": "message"
+        }
+       },
+       "writableRoots": {}
+      }
+     }
+    },
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "acme_main": {
+       "positions": {
+        "company": {
+         "properties": {
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "edges": {}
+        },
+        "note": {
+         "properties": {
+          "title": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        },
+        "notes": {
+         "target": "note"
+        }
+       },
+       "supportsInPlaceUpdate": true,
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "resultShape": {
+          "externalId": "text",
+          "url": "text",
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         }
+        },
+        "note": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "url": "text",
+          "title": "text"
+         }
+        }
+       }
+      }
+     }
+    },
+    "kg": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "native_knowledge": {
+       "positions": {
+        "meeting": {
+         "properties": {
+          "title": "text",
+          "created": "date"
+         },
+         "edges": {}
+        },
+        "minute": {
+         "properties": {
+          "title": "text",
+          "committed": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "meetings": {
+         "target": "meeting"
+        },
+        "minutes": {
+         "target": "minute"
+        }
+       },
+       "writableRoots": {
+        "meeting": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "title": "text",
+          "created": "date"
+         }
+        },
+        "minute": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "title": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "dealflow_inbox": {
+     "adapters": [
+      "email"
+     ]
+    },
+    "acme_main": {
+     "adapters": [
+      "attio"
+     ]
+    },
+    "native_knowledge": {
+     "adapters": [
+      "kg"
+     ]
+    }
+   },
+   "plugins": {}
+  },
+  "cap": {
+   "contractVersion": 1,
+   "adapters": {
+    "cap": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "cap_cred": {
+       "positions": {
+        "company": {
+         "properties": {
+          "Name": "text",
+          "Notes": "text",
+          "Stage": {
+           "kind": "enum",
+           "options": [
+            "Seed",
+            "Series A"
+           ]
+          },
+          "Created": "date"
+         },
+         "edges": {
+          "people": {
+           "target": "person",
+           "capability": {
+            "filter": "bounded",
+            "order": "bounded",
+            "supportsLimit": true
+           }
+          },
+          "Owner": {
+           "target": "person"
+          },
+          "staff": {
+           "target": "person",
+           "capability": {
+            "filter": "native",
+            "order": "native",
+            "supportsLimit": false
+           }
+          }
+         },
+         "propertyCapabilities": {
+          "Name": {
+           "filterOperators": [
+            "eq",
+            "contains"
+           ],
+           "orderable": true
+          },
+          "Stage": {
+           "filterOperators": [
+            "eq",
+            "neq",
+            "in"
+           ],
+           "orderable": true
+          },
+          "Created": {
+           "filterOperators": [
+            "within",
+            "gte",
+            "lte"
+           ],
+           "orderable": true
+          }
+         }
+        },
+        "person": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {},
+         "propertyCapabilities": {
+          "name": {}
+         }
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company",
+         "capability": {
+          "filter": "native",
+          "order": "native",
+          "supportsLimit": true
+         }
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "Name": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "Name": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "cap_cred": {
+     "adapters": [
+      "cap"
+     ]
+    }
+   },
+   "plugins": {}
+  },
+  "delete": {
+   "contractVersion": 1,
+   "adapters": {
+    "crm": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {
+      "": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {
+          "notes": {
+           "target": "note"
+          },
+          "people": {
+           "target": "person"
+          }
+         },
+         "deletable": true
+        },
+        "note": {
+         "properties": {
+          "text": "text"
+         },
+         "edges": {}
+        },
+        "person": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {},
+         "deletable": true
+        }
+       },
+       "collections": {
+        "company": {
+         "target": "company"
+        },
+        "note": {
+         "target": "note"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        },
+        "note": {
+         "fields": {
+          "text": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "text": "text"
+         }
+        }
+       },
+       "unions": {
+        "record": [
+         "company",
+         "note"
+        ],
+        "party": [
+         "company",
+         "person"
+        ]
+       }
+      }
+     }
+    },
+    "loose": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {}
+    }
+   },
+   "credentials": {},
+   "plugins": {}
+  },
+  "cred": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "acme": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "acme": {
+     "adapters": [
+      "attio"
+     ]
+    }
+   },
+   "plugins": {
+    "summarise": {
+     "args": [
+      "data"
+     ],
+     "priced": false,
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     }
+    }
+   }
+  },
+  "meta": {
+   "contractVersion": 1,
+   "adapters": {
+    "slack": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {
+      "": {
+       "positions": {
+        "channel": {
+         "properties": {
+          "Name": "text"
+         },
+         "edges": {
+          "members": {
+           "target": "person"
+          }
+         }
+        },
+        "person": {
+         "properties": {
+          "Name": "text"
+         },
+         "edges": {}
+        },
+        "note": {
+         "properties": {
+          "Body": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "Channels": {
+         "target": "channel"
+        },
+        "note": {
+         "target": "note"
+        }
+       },
+       "writableRoots": {
+        "note": {
+         "fields": {
+          "Body": "text"
+         },
+         "resultShape": {
+          "Body": "text"
+         },
+         "edges": {}
+        }
+       }
+      }
+     }
+    },
+    "loose": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {}
+    }
+   },
+   "credentials": {},
+   "plugins": {
+    "vc_url_retrieval": {
+     "args": [
+      "email"
+     ],
+     "priced": false,
+     "fedArgs": [
+      {
+       "name": "text",
+       "required": true
+      }
+     ],
+     "effects": {
+      "reads": [
+       "the web"
+      ],
+      "ai": true
+     },
+     "output": {
+      "kind": "records",
+      "fields": {
+       "name": "text",
+       "url": "text",
+       "text": "text"
+      }
+     }
+    },
+    "linkedin_enrichment": {
+     "args": [],
+     "priced": false,
+     "fedByExtraction": true,
+     "effects": {
+      "reads": [
+       "the web"
+      ],
+      "ai": true
+     }
+    }
+   }
+  },
+  "maybe": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "crm_cred": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text",
+          "size": "number"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text",
+          "size": "number"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "crm_cred": {
+     "adapters": [
+      "attio"
+     ]
+    }
+   },
+   "plugins": {
+    "score": {
+     "args": [
+      "n"
+     ],
+     "priced": false,
+     "argTypes": {
+      "n": "number"
+     },
+     "requiredArgs": [
+      "n"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     }
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 4,
+   "upgradingFrom": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_READ_FOUND 10:33-10:69 since \"Luminous Owl\" (4) 'created' on 'org' reads the record as the write found it; before, it read what the system handed back from the write (often nothing). If the program assumed the old reading, change it, then upgrade. (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_MATCH_MISS_CONTINUES 11:8-11:69 since \"Luminous Owl\" (4) a 'match' that finds nothing no longer ends the scope: 'ex' is absent and the block carries on — guard what depends on it with `if ex != null { … }` (see handbook: writes#match)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_UPDATED_IN_PLACE 13:9-13:12 since \"Luminous Owl\" (4) 'org' reads as the updated record below this line; before, it kept the values of its own write",
+    "MOV_HANDLE_UPDATED_IN_PLACE 14:16-14:19 since \"Luminous Owl\" (4) 'org' reads as the updated record below this line ('org2' names the same record); before, it kept the values of its own write"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_TRAVERSE_UNKNOWN_EDGE 9:7-9:32 a crm.company handle has no edge '@previous'",
+    "MOV_PRESENCE_TEST_CONSTANT 12:6-12:16 'ex' always has a value here, so 'ex != null' is always true — nothing on this path can make it absent.",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 12:23-12:42 a crm.company handle has no edge '@old'"
+   ]
+  },
+  {
+   "name": "a hop's LIMIT where the source takes none",
+   "snapshot": "cap",
+   "version": 3,
+   "source": "import { cap } from adapters\nimport { cap_cred } from credentials\n\nc = cap(credentials: cap_cred)\nmovement main(msg: <c-[:company]->>) {\n  n = COUNT(msg-[p:staff LIMIT 3]->)\n  k = COUNT(msg-[p:people LIMIT 3]->)\n}\nlisten to c fire main\n",
+   "expected": [
+    "MOV_LIMIT_NEEDS_ORDER 6:7-6:37 'staff' comes back in no particular order, so 'LIMIT 3' takes some 3 of them — a different 3 each run. Say which ones you mean with an ORDER BY (`-[:staff ORDER BY `…` DESC LIMIT 3]->`).",
+    "MOV_HOP_LIMIT_UNSUPPORTED 6:7-6:37 'staff' can't be limited here — this source doesn't support LIMIT across that relationship.",
+    "MOV_LIMIT_NEEDS_ORDER 7:7-7:38 'people' comes back in no particular order, so 'LIMIT 3' takes some 3 of them — a different 3 each run. Say which ones you mean with an ORDER BY (`-[:people ORDER BY `…` DESC LIMIT 3]->`)."
+   ]
+  },
+  {
+   "name": "a hop's LIMIT where the source takes none",
+   "snapshot": "cap",
+   "version": 5,
+   "source": "import { cap } from adapters\nimport { cap_cred } from credentials\n\nc = cap(credentials: cap_cred)\nmovement main(msg: <c-[:company]->>) {\n  n = COUNT(msg-[p:staff LIMIT 3]->)\n  k = COUNT(msg-[p:people LIMIT 3]->)\n}\nlisten to c fire main\n",
+   "expected": [
+    "MOV_LIMIT_NEEDS_ORDER 6:7-6:37 'staff' comes back in no particular order, so 'LIMIT 3' takes some 3 of them — a different 3 each run. Say which ones you mean with an ORDER BY (`-[:staff ORDER BY `…` DESC LIMIT 3]->`).",
+    "MOV_HOP_LIMIT_UNSUPPORTED 6:7-6:37 'staff' can't be limited here — this source doesn't support LIMIT across that relationship.",
+    "MOV_LIMIT_NEEDS_ORDER 7:7-7:38 'people' comes back in no particular order, so 'LIMIT 3' takes some 3 of them — a different 3 each run. Say which ones you mean with an ORDER BY (`-[:people ORDER BY `…` DESC LIMIT 3]->`)."
+   ]
+  },
+  {
+   "name": "delete refuses what is no deletable record",
+   "snapshot": "delete",
+   "version": 5,
+   "source": "import { crm, loose } from adapters\ndb = crm()\nfree = loose()\n\nnode Company: \"each company named\" {\n  name: <text> \"its name\"\n}\n\nmovement scan(x: <db-[:company]->>) {\n  x-[n:notes]-> {\n    delete n\n  }\n  v = \"Acme\"\n  delete v\n  people = x-[:people]->\n  delete people\n  w = IF x.name == \"a\" THEN x ELSE null END\n  delete w\n  d = extract from [x.name] {\n    node co: \"a company\" {\n      nm: <text> \"the name\"\n    }\n  }\n  delete d\n  d-[k:co]-> {\n    delete k\n  }\n  delete x\n}\n",
+   "expected": [
+    "MOV_DELETE_NOT_DECLARED 11:5-11:13 'n' is db.note, and its system does not declare that it can delete one — 'delete' is checked against the system's own promise ('deletable' on the type it describes). Change the record instead ('write n { … }'), or delete it in a system that can.",
+    "MOV_DELETE_NOT_RECORD 14:3-14:11 'v' is text — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
+    "MOV_DELETE_NOT_RECORD 16:3-16:16 'people' is list of db.person, which may hold something other than one record — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
+    "MOV_DELETE_NOT_RECORD 18:3-18:11 'w' is a value that may hold something other than one record — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
+    "MOV_DELETE_NOT_RECORD 24:3-24:11 'd' is the extract result, an extracted node — a transient graph the extraction built, which nothing stores — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
+    "MOV_DELETE_NOT_RECORD 26:5-26:13 'k' is the extracted node 'co', an extracted node — a transient graph the extraction built, which nothing stores — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
+    "MOV_LISTEN_MISSING 9:1-9:1 'scan' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to db fire scan"
+   ]
+  },
+  {
+   "name": "delete refuses what is no deletable record",
+   "snapshot": "delete",
+   "version": 4,
+   "source": "import { crm, loose } from adapters\ndb = crm()\nfree = loose()\n\nnode Company: \"each company named\" {\n  name: <text> \"its name\"\n}\n\nmovement scan(x: <db-[:company]->>) {\n  x-[n:notes]-> {\n    delete n\n  }\n  v = \"Acme\"\n  delete v\n  people = x-[:people]->\n  delete people\n  w = IF x.name == \"a\" THEN x ELSE null END\n  delete w\n  d = extract from [x.name] {\n    node co: \"a company\" {\n      nm: <text> \"the name\"\n    }\n  }\n  delete d\n  d-[k:co]-> {\n    delete k\n  }\n  delete x\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 9:1-9:1 'scan' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to db fire scan"
+   ]
+  },
+  {
+   "name": "a credential is never a value",
+   "snapshot": "cred",
+   "version": 1,
+   "source": "import { attio } from adapters\nimport { acme } from credentials\nimport { summarise } from plugins\ncrm = attio(credentials: acme)\nfunction echo(v: <crm-[:company]->>) {\n  return v\n}\nmovement m() {\n  x1 = acme\n  x2 = acme.token\n  x3 = \"${acme}\"\n  x4 = acme == \"acme\"\n  if acme == null { ERROR(\"none\") }\n  x5 = EXISTS(acme)\n  x6 = [acme]\n  x7 = { a: acme }\n  ERROR(\"${acme}\")\n  x8 = AI(\"say ${acme}\")\n  x9 = TEXT.PAIRS(acme)\n  x10 = AT(acme, \"token\")\n  x11 = echo(acme)\n  x12 = summarise(data: acme)\n  write crm-[:companies]-> { name: acme }\n  return acme\n}\nmovement n(c: <acme-[:company]->>) {\n  y = 1\n}\n",
+   "expected": [
+    "MOV_CREDENTIAL_NOT_A_VALUE 9:8-9:12 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 10:8-10:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 11:8-11:17 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 12:8-12:22 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 13:6-13:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 14:8-14:20 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 15:8-15:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 16:8-16:19 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 17:9-17:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 18:8-18:25 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 19:8-19:24 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 20:9-20:26 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 21:9-21:19 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 22:25-22:29 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 23:36-23:40 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 24:10-24:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 26:15-26:34 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_LISTEN_MISSING 5:1-5:1 'echo' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to crm fire echo"
+   ]
+  },
+  {
+   "name": "a credential is never a value",
+   "snapshot": "cred",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { acme } from credentials\nimport { summarise } from plugins\ncrm = attio(credentials: acme)\nfunction echo(v: <text>) {\n  return v\n}\nmovement m() {\n  x1 = acme\n  x2 = acme.token\n  x3 = \"${acme}\"\n  x4 = acme == \"acme\"\n  if acme == null { ERROR(\"none\") }\n  x5 = EXISTS(acme)\n  x6 = [acme]\n  x7 = { a: acme }\n  ERROR(\"${acme}\")\n  x8 = AI(\"say ${acme}\")\n  x9 = TEXT.PAIRS(acme)\n  x10 = AT(acme, \"token\")\n  x11 = echo(acme)\n  x12 = summarise(data: acme)\n  write crm-[:companies]-> { name: acme }\n  return acme\n}\nmovement n(c: <acme-[:company]->>) {\n  y = 1\n}\n",
+   "expected": [
+    "MOV_CREDENTIAL_NOT_A_VALUE 9:8-9:12 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 10:8-10:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 11:8-11:17 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 12:8-12:22 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 13:6-13:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 14:8-14:20 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 15:8-15:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 16:8-16:19 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 17:9-17:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 18:8-18:25 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 19:8-19:24 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 20:9-20:26 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 21:14-21:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 22:25-22:29 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 23:36-23:40 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 24:10-24:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 26:15-26:34 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there"
+   ]
+  },
+  {
+   "name": "a credential is never a value",
+   "snapshot": "cred",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { acme } from credentials\nimport { summarise } from plugins\ncrm = attio(credentials: acme)\nfunction echo(v: <text>) {\n  return v\n}\nmovement m() {\n  x1 = acme\n  x2 = acme.token\n  x3 = \"${acme}\"\n  x4 = acme == \"acme\"\n  if acme == null { ERROR(\"none\") }\n  x5 = EXISTS(acme)\n  x6 = [acme]\n  x7 = { a: acme }\n  ERROR(\"${acme}\")\n  x8 = AI(\"say ${acme}\")\n  x9 = TEXT.PAIRS(acme)\n  x10 = AT(acme, \"token\")\n  x11 = echo(acme)\n  x12 = summarise(data: acme)\n  write crm-[:companies]-> { name: acme }\n  return acme\n}\nmovement n(c: <acme-[:company]->>) {\n  y = 1\n}\n",
+   "expected": [
+    "MOV_CREDENTIAL_NOT_A_VALUE 9:8-9:12 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 10:8-10:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 11:8-11:17 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 12:8-12:22 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 13:6-13:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 14:8-14:20 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 15:8-15:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 16:8-16:19 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 17:9-17:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 18:8-18:25 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 19:8-19:24 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 20:9-20:26 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 21:14-21:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 22:25-22:29 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 23:36-23:40 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 24:10-24:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 26:15-26:34 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there"
+   ]
+  },
+  {
+   "name": "a '#' hop is retired",
+   "snapshot": "meta",
+   "version": 3,
+   "source": "import { slack, loose } from adapters\nimport { vc_url_retrieval, linkedin_enrichment } from plugins\nchat = slack()\nfree = loose()\nmovement scan(c: <chat-[:channel]->>, d: <chat-[:channel]->-[:#members]->>) {\n  x1 = FIRST(c-[:#foo]->)\n  x2 = c-[:#foo]->.Name\n  c-[:#foo]-> {\n    y = 1\n  }\n  c-[#foo]-> {\n    y = 1\n  }\n  x3 = c-[:`#foo`]->.Name\n  write c-[:#foo]-> { Body: \"a\" }\n  x4 = COUNT(chat-[:#Channels]->)\n  x5 = FIRST(free-[:#foo]->)\n  c-[f:#resources]-> {\n    y = f.url\n  }\n  x6 = c-[t:#transform { plugin: \"vc_url_retrieval\" }]->.out\n  x7 = c-[t:#transform { plugin: \"linkedin_enrichment\" }]->.out\n  x8 = c-[#linked WHERE type = \"ATTIO\"]->.external_id\n  x9 = c-[t:#transform]->.out\n}\nlisten to chat fire scan\n",
+   "expected": [
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:8-6:26 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:8-7:24 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 8:3-8:14 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 11:3-11:13 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 14:8-14:26 chat.channel has no edge '#foo' — it has: members",
+    "MOV_LINKED_UNKNOWN_EDGE 15:9-15:21 chat.channel has no edge '#foo' — a linked write creates the record AND the edge, so the parent's type must declare it; it declares: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 16:8-16:34 'chat' has no collection '#Channels' — it has: Channels, note",
+    "MOV_TRANSFORM_HOP_RETIRED 21:8-21:61 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads: 'import { vc_url_retrieval } from plugins', then 'out = vc_url_retrieval(…)'",
+    "MOV_TRANSFORM_HOP_RETIRED 22:8-22:64 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads: 'import { linkedin_enrichment } from plugins', then 'out = linkedin_enrichment(…)'",
+    "MOV_LINKED_HOP_RETIRED 23:8-23:54 the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; or tie a write to a record you hold with 'write … bind other { … }' (see handbook: front#identity)",
+    "MOV_TRANSFORM_HOP_RETIRED 24:8-24:30 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads, e.g. 'import { fetch_url } from plugins', then 'page = fetch_url(url: m.u)'",
+    "MOV_LISTEN_PARAM_MISMATCH 26:1-26:25 'scan' takes 2 parameters — a movement fired by a listener takes exactly one, the event position"
+   ]
+  },
+  {
+   "name": "a '#' hop is retired",
+   "snapshot": "meta",
+   "version": 5,
+   "source": "import { slack, loose } from adapters\nimport { vc_url_retrieval, linkedin_enrichment } from plugins\nchat = slack()\nfree = loose()\nmovement scan(c: <chat-[:channel]->>, d: <chat-[:channel]->-[:#members]->>) {\n  x1 = FIRST(c-[:#foo]->)\n  x2 = c-[:#foo]->.Name\n  c-[:#foo]-> {\n    y = 1\n  }\n  c-[#foo]-> {\n    y = 1\n  }\n  x3 = c-[:`#foo`]->.Name\n  write c-[:#foo]-> { Body: \"a\" }\n  x4 = COUNT(chat-[:#Channels]->)\n  x5 = FIRST(free-[:#foo]->)\n  c-[f:#resources]-> {\n    y = f.url\n  }\n  x6 = c-[t:#transform { plugin: \"vc_url_retrieval\" }]->.out\n  x7 = c-[t:#transform { plugin: \"linkedin_enrichment\" }]->.out\n  x8 = c-[#linked WHERE type = \"ATTIO\"]->.external_id\n  x9 = c-[t:#transform]->.out\n}\nlisten to chat fire scan\n",
+   "expected": [
+    "MOV_META_HOP_RETIRED 5:42-5:75 '-[:#members]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 6:14-6:26 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 7:8-7:24 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 8:3-8:14 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 11:3-11:13 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 14:8-14:26 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 15:9-15:21 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 16:14-16:34 '-[:#Channels]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 17:14-17:29 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 18:3-18:21 '-[:#resources]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files",
+    "MOV_TRANSFORM_HOP_RETIRED 21:8-21:61 the '#transform' hop is retired — there are no meta edges, and a plugin is a function: import it and call it, and bind what it hands back like any function's result — 'import { vc_url_retrieval } from plugins', then 'out = vc_url_retrieval(text: …)'",
+    "MOV_TRANSFORM_HOP_RETIRED 22:8-22:64 the '#transform' hop is retired — there are no meta edges, and a plugin is a function, but 'linkedin_enrichment' runs only as a stage of an extraction: 'import { linkedin_enrichment } from plugins', then 'extract from [ … ] through [linkedin_enrichment] { … }'",
+    "MOV_LINKED_HOP_RETIRED 23:8-23:54 the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; or store the link in the system that holds it — a field or an edge there (see handbook: front#identity)",
+    "MOV_TRANSFORM_HOP_RETIRED 24:8-24:30 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads, e.g. 'import { fetch_url } from plugins', then 'page = fetch_url(url: m.u)'",
+    "MOV_LISTEN_PARAM_MISMATCH 26:1-26:25 'scan' takes 2 parameters — a movement fired by a listener takes exactly one, the event position"
+   ]
+  },
+  {
+   "name": "a '#' hop in a type's address",
+   "snapshot": "meta",
+   "version": 5,
+   "source": "import { slack } from adapters\nchat = slack()\nmovement scan(c: <chat-[:#channel]->>) {\n  sent = node { messages: <chat-[:Channels]->-[:#members]->> }\n  y = 1\n}\nlisten to chat fire scan\n",
+   "expected": [
+    "MOV_META_HOP_RETIRED 3:18-3:38 '-[:#channel]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
+    "MOV_META_HOP_RETIRED 4:27-4:61 '-[:#members]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')"
+   ]
+  },
+  {
+   "name": "a '#' hop is retired",
+   "snapshot": "meta",
+   "version": 4,
+   "source": "import { slack, loose } from adapters\nimport { vc_url_retrieval, linkedin_enrichment } from plugins\nchat = slack()\nfree = loose()\nmovement scan(c: <chat-[:channel]->>, d: <chat-[:channel]->-[:#members]->>) {\n  x1 = FIRST(c-[:#foo]->)\n  x2 = c-[:#foo]->.Name\n  c-[:#foo]-> {\n    y = 1\n  }\n  c-[#foo]-> {\n    y = 1\n  }\n  x3 = c-[:`#foo`]->.Name\n  write c-[:#foo]-> { Body: \"a\" }\n  x4 = COUNT(chat-[:#Channels]->)\n  x5 = FIRST(free-[:#foo]->)\n  c-[f:#resources]-> {\n    y = f.url\n  }\n  x6 = c-[t:#transform { plugin: \"vc_url_retrieval\" }]->.out\n  x7 = c-[t:#transform { plugin: \"linkedin_enrichment\" }]->.out\n  x8 = c-[#linked WHERE type = \"ATTIO\"]->.external_id\n  x9 = c-[t:#transform]->.out\n}\nlisten to chat fire scan\n",
+   "expected": [
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:8-6:26 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:8-7:24 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 8:3-8:14 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 11:3-11:13 chat.channel has no edge '#foo' — it has: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 14:8-14:26 chat.channel has no edge '#foo' — it has: members",
+    "MOV_LINKED_UNKNOWN_EDGE 15:9-15:21 chat.channel has no edge '#foo' — a linked write creates the record AND the edge, so the parent's type must declare it; it declares: members",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 16:8-16:34 'chat' has no collection '#Channels' — it has: Channels, note",
+    "MOV_TRANSFORM_HOP_RETIRED 21:8-21:61 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads: 'import { vc_url_retrieval } from plugins', then 'out = vc_url_retrieval(…)'",
+    "MOV_TRANSFORM_HOP_RETIRED 22:8-22:64 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads: 'import { linkedin_enrichment } from plugins', then 'out = linkedin_enrichment(…)'",
+    "MOV_LINKED_HOP_RETIRED 23:8-23:54 the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; or tie a write to a record you hold with 'write … bind other { … }' (see handbook: front#identity)",
+    "MOV_TRANSFORM_HOP_RETIRED 24:8-24:30 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads, e.g. 'import { fetch_url } from plugins', then 'page = fetch_url(url: m.u)'",
+    "MOV_LISTEN_PARAM_MISMATCH 26:1-26:25 'scan' takes 2 parameters — a movement fired by a listener takes exactly one, the event position"
+   ]
+  },
+  {
+   "name": "a '#' hop in a type's address",
+   "snapshot": "meta",
+   "version": 4,
+   "source": "import { slack } from adapters\nchat = slack()\nmovement scan(c: <chat-[:#channel]->>) {\n  sent = node { messages: <chat-[:Channels]->-[:#members]->> }\n  y = 1\n}\nlisten to chat fire scan\n",
+   "expected": [
+    "MOV_TRAVERSE_UNKNOWN_EDGE 4:27-4:61 chat.channel has no edge '#members' — it has: members"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 1,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_UNRESOLVED 21:23-21:29 Unknown name 'text' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 3,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
+   ]
+  }
+ ]
+}

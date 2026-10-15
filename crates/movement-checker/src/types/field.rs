@@ -591,7 +591,7 @@ pub struct HeldWalk {
 }
 
 impl HeldWalk {
-    fn into(&self, step: HeldStep) -> HeldWalk {
+    pub fn into(&self, step: HeldStep) -> HeldWalk {
         let mut next = self.clone();
         next.steps.push(step);
         next

@@ -457,13 +457,14 @@ impl<'c> Checker<'c> {
         }
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
-        let (ty, may_hold, diagnostics) = {
+        let (ty, may_hold, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            (ty, may_hold, typing.diagnostics)
+            (ty, may_hold, typing.diagnostics, typing.watchable_reads)
         };
+        self.effects.note_watchable_reads(&watchable);
         for diagnostic in diagnostics {
             self.push(diagnostic);
         }
@@ -588,12 +589,13 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
-                let (ty, diagnostics) = {
+                let (ty, diagnostics, watchable) = {
                     let env = self.typing_env(scope);
                     let mut typing = Typing::new(&env, self.version, slot.span);
                     let ty = typing.infer(expr);
-                    (ty, typing.diagnostics)
+                    (ty, typing.diagnostics, typing.watchable_reads)
                 };
+                self.effects.note_watchable_reads(&watchable);
                 for diagnostic in diagnostics {
                     self.push(diagnostic);
                 }
@@ -628,6 +630,11 @@ impl<'c> Checker<'c> {
                 self.report_param_needs_type(&param.name, param.span, &format!("'{}'", movement.name));
                 continue;
             };
+            if let ParamTypeRef::Value(value) = type_
+                && self.version >= 3
+            {
+                self.report_value_type(value, scope);
+            }
             let graph = self.check_param_type(type_, scope);
             if let (ParamTypeRef::Name(reference), false) = (type_, crate::families::systems::is_value_param_type(self, type_, scope)) {
                 self.check_param_source(reference, graph);
@@ -655,7 +662,7 @@ impl<'c> Checker<'c> {
 
     /// A parameter's type: a graph's name resolves; a value type names nothing.
     /// What the graph's name resolved to.
-    fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
+    pub(crate) fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
         let ParamTypeRef::Name(reference) = type_ else { return None };
         if reference.position.is_none() && reference.hops_raw.is_none() && self.version >= 3 {
             if SCALAR_TYPE_NAMES.contains(&reference.graph.as_str()) {
@@ -705,6 +712,9 @@ impl<'c> Checker<'c> {
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
                 self.report_param_needs_type(&param.name, param.span, label);
+            }
+            if let Some(ParamTypeRef::Value(value)) = &param.type_ {
+                self.report_value_type(value, scope);
             }
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
@@ -921,30 +931,35 @@ impl<'c> Checker<'c> {
                 if let Some(every) = every {
                     self.check_until_cadence(every);
                 }
-                match condition {
+                let condition_span = match condition {
+                    UntilCondition::Closure { closure } => closure.span,
+                    UntilCondition::Expr { expr } => expr.span,
+                };
+                return self.check_until_watching(condition_span, |this| match condition {
                     UntilCondition::Closure { closure } => {
-                        self.check_until_params(closure);
-                        let impure = self.check_until_purity(&closure.body);
-                        let (_, suspends) = self.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
-                        self.absorb_suspend(suspends);
+                        this.check_until_params(closure);
+                        let impure = this.check_until_purity(&closure.body);
+                        let (_, suspends) = this.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
+                        this.absorb_suspend(suspends);
                         if suspends && !impure {
-                            self.refuse_unresumable_wait("this 'until' condition", closure.span);
+                            this.refuse_unresumable_wait("this 'until' condition", closure.span);
                         }
+                        Bound::default()
                     }
                     UntilCondition::Expr { expr } => {
-                        let typed = self.check_expr_slot_with(expr, scope, SlotOptions::default());
-                        if let Resolution::Found(id) = self.scopes.resolve(scope, expr.raw.trim()) {
-                            let suspends = self.closure_suspends(id);
-                            self.absorb_suspend(suspends);
+                        let typed = this.check_expr_slot_with(expr, scope, SlotOptions::default());
+                        if let Resolution::Found(id) = this.scopes.resolve(scope, expr.raw.trim()) {
+                            let suspends = this.closure_suspends(id);
+                            this.absorb_suspend(suspends);
                             // A named closure is the condition: what it returns is what the tick tests.
-                            if let Some(Position::Closure(closure)) = &self.scopes.symbol(id).types.pos {
+                            if let Some(Position::Closure(closure)) = &this.scopes.symbol(id).types.pos {
                                 return until_bound(&closure.returns);
                             }
                         }
                         let plane = crate::types::position::PlaneType { field: typed.ty, pos: None };
                         return until_bound(&crate::types::position::ReturnShape { returns: true, plane, may_hold: None });
                     }
-                }
+                });
             }
         }
         Bound::default()
