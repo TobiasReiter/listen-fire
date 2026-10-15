@@ -8,8 +8,10 @@ pub mod abi;
 mod binding_types;
 mod checker;
 pub mod codes;
+mod cron;
 mod diagnostic;
 pub mod families;
+mod meta;
 pub mod scope;
 pub mod slots;
 pub mod types;
@@ -33,10 +35,14 @@ pub struct CheckOptions {
 /// `checkProgram`: the diagnostics for `program` under `options`.
 pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: CheckOptions) -> Vec<Diagnostic> {
     let resolves_files = catalog.files.is_some();
+    let mut link = resolves_files.then(|| families::imports::link_imports(program, catalog, options.language_version));
+    let problems = link.as_mut().map(|l| std::mem::take(&mut l.problems)).unwrap_or_default();
     let mut checker = checker::Checker::new(catalog, options.language_version, resolves_files);
+    checker.imports = families::imports::ImportState::new(link);
     checker.run(&program.statements);
     version::standing_diagnostic(options.language_version)
         .into_iter()
+        .chain(problems)
         .chain(checker.diagnostics.into_iter().map(version::with_handbook_pointer))
         .collect()
 }

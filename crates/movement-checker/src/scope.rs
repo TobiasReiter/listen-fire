@@ -57,11 +57,13 @@ pub struct Symbol {
     pub is_closure: bool,
     /// What the binding is typed as (the type core's; empty is untyped).
     pub types: crate::types::scope_env::SymbolTypes,
+    /// For an instance: what its construction built.
+    pub instance: Option<std::rc::Rc<crate::families::systems::Instance>>,
 }
 
 impl Symbol {
     pub fn new(name: impl Into<String>, kind: SymbolKind, span: Span) -> Self {
-        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, types: Default::default() }
+        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, types: Default::default(), instance: None }
     }
 
     /// `isFunctionSymbol`: a name a call can run.

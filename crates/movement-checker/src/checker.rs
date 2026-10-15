@@ -5,12 +5,11 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    ArmExpression, AwaitExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CollectionOpExpression,
-    CombinatorArms, CombinatorExpression, ConstructionCall, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    ArmExpression, AwaitExpression, AwaitSource, CallArg, CallStatement, ClosureExpression, CollectionOpExpression,
+    CombinatorArms, CombinatorExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
-use movement_parser::catalog::helpers::credential_arg_of;
 use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
@@ -37,6 +36,10 @@ pub struct Checker<'c> {
     type_only: usize,
     /// Each catalog schema an instance was built from, read once.
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
+    /// What the listens family remembers across the file.
+    pub listens: crate::families::listens::ListenState,
+    /// The resolved file imports, and each library once checked.
+    pub imports: crate::families::imports::ImportState,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -47,11 +50,23 @@ pub struct Bound {
     pub is_instance: bool,
     /// For an instance: the adapter that constructed it.
     pub adapter: Option<String>,
+    /// For an instance: what its construction built.
+    pub instance: Option<std::rc::Rc<crate::families::systems::Instance>>,
 }
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default() }
+        Checker {
+            catalog,
+            version,
+            resolves_files,
+            scopes: Scopes::default(),
+            diagnostics: Vec::new(),
+            type_only: 0,
+            listens: Default::default(),
+            imports: Default::default(),
+            schemas: Default::default(),
+        }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -67,6 +82,7 @@ impl<'c> Checker<'c> {
     pub fn run(&mut self, statements: &[Statement]) -> ScopeId {
         let file = self.scopes.open(None);
         self.check_statement_list(statements, file);
+        self.report_missing_listens();
         file
     }
 
@@ -101,6 +117,11 @@ impl<'c> Checker<'c> {
             if let Some(existing) = self.declare_authored(scope, Symbol::new(name, kind, span), span) {
                 self.report_duplicate_declaration(name, existing, span);
             }
+            match statement {
+                Statement::Movement(movement) => self.note_movement(scope, movement),
+                Statement::Shape(shape) => self.note_shape(scope, shape),
+                _ => {}
+            }
         }
     }
 
@@ -133,6 +154,7 @@ impl<'c> Checker<'c> {
             Statement::Shape(shape) => {
                 if !self.scopes.has_own(scope, &shape.name) {
                     self.declare_authored(scope, Symbol::new(&shape.name, SymbolKind::Shape, shape.span), shape.span);
+                    self.note_shape(scope, shape);
                 }
                 self.check_shape_descriptions(&shape.root, scope);
                 if let Some(base) = &shape.extends {
@@ -143,15 +165,7 @@ impl<'c> Checker<'c> {
                 }
             }
             Statement::Movement(movement) => self.check_movement(movement, scope),
-            Statement::Listen(listen) => {
-                let adapter = match &listen.construct {
-                    Some(construct) => self.check_construction(construct, scope),
-                    None => self.resolve_reference(&listen.instance, listen.span, scope).and_then(|id| self.scopes.symbol(id).adapter.clone()),
-                };
-                self.check_listen_config(listen, adapter.as_deref(), scope);
-                let callee = self.callee_name(&listen.movement, scope);
-                self.resolve_reference(&callee, listen.span, scope);
-            }
+            Statement::Listen(listen) => self.check_listen(listen, scope),
             Statement::Write(write) => self.check_write(&write.write, scope),
             Statement::Match(statement) => self.check_match(&statement.r#match, scope),
             Statement::Call(call) => self.check_call(call, scope),
@@ -196,8 +210,14 @@ impl<'c> Checker<'c> {
     pub fn check_rvalue(&mut self, value: &RValue, scope: ScopeId, name: Option<&str>) -> Bound {
         match value {
             RValue::Construct { construct } => {
-                let adapter = self.check_construction(construct, scope);
-                return Bound { is_closure: false, is_instance: name.is_some(), adapter };
+                if let Some(call) = self.call_in_construct_position(construct, scope) {
+                    self.check_call(&call, scope);
+                    return Bound::default();
+                }
+                let constructed = self.check_construction(construct, scope);
+                let adapter = constructed.adapter.clone();
+                let instance = name.map(|_| std::rc::Rc::new(self.instance_of(construct, constructed)));
+                return Bound { is_closure: false, is_instance: name.is_some(), adapter, instance };
             }
             RValue::Call { call } => self.check_call(call, scope),
             RValue::Write { write } => self.check_write(write, scope),
@@ -226,16 +246,7 @@ impl<'c> Checker<'c> {
                 let block_scope = self.scopes.open(Some(scope));
                 self.check_statement_list(&inline_block.body, block_scope);
             }
-            RValue::Callback { callback } => {
-                match &callback.subject {
-                    CallbackSubject::Inline { closure, .. } => self.check_closure(closure, scope, None),
-                    // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
-                    CallbackSubject::Named { args, .. } => self.check_call_args(args, scope),
-                }
-                for arg in &callback.config {
-                    self.check_expr_slot(&arg.value, scope);
-                }
-            }
+            RValue::Callback { callback } => self.check_callback(callback, scope),
             RValue::Closure { closure } => {
                 self.check_closure(closure, scope, name);
                 return Bound { is_closure: true, ..Bound::default() };
@@ -255,7 +266,7 @@ impl<'c> Checker<'c> {
 
     /// The name a call or a listen fires: from version 3 a function written
     /// in another letter case is the same function.
-    fn callee_name(&self, written: &str, scope: ScopeId) -> String {
+    pub fn callee_name(&self, written: &str, scope: ScopeId) -> String {
         if matches!(self.scopes.resolve(scope, written), Resolution::Found(_)) || self.version < 3 {
             return written.to_string();
         }
@@ -278,28 +289,6 @@ impl<'c> Checker<'c> {
             if !names.aliases.contains(name) {
                 self.resolve_name(name, slot.span, scope);
             }
-        }
-    }
-
-    /// The config slots `checkListen` reads as expressions: every key the
-    /// listener accepts, except a type reference and a `fields` list (bare
-    /// property names, not names in scope).
-    fn check_listen_config(&mut self, listen: &movement_parser::ast::ListenDeclaration, adapter: Option<&str>, scope: ScopeId) {
-        let spec = adapter.and_then(|a| self.catalog.adapter(a));
-        for arg in &listen.config {
-            if let Some(spec) = spec
-                && !spec.trigger_config.as_ref().is_some_and(|accepted| accepted.contains(&arg.name))
-            {
-                continue;
-            }
-            if arg.is_type == Some(true) {
-                continue;
-            }
-            let format = spec.and_then(|s| s.trigger_config_formats.as_ref()).and_then(|f| f.0.get(&arg.name));
-            if format == Some(&movement_parser::catalog::types::TriggerConfigFormat::Fields) {
-                continue;
-            }
-            self.check_expr_slot(&arg.value, scope);
         }
     }
 
@@ -333,46 +322,20 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// `checkConstruction`, the name half; the adapter it constructs, when its callee is one.
-    fn check_construction(&mut self, construct: &ConstructionCall, scope: ScopeId) -> Option<String> {
-        match self.scopes.resolve(scope, &construct.callee) {
-            Resolution::Found(id) => {
-                let callee = self.scopes.symbol(id);
-                if callee.kind != SymbolKind::Adapter {
-                    return None; // MOV_CONSTRUCT_NOT_ADAPTER: the systems family's.
-                }
-                let adapter = callee.imported_name.clone().unwrap_or_else(|| construct.callee.clone());
-                let Some(credential) = self.catalog.adapter(&adapter).and_then(credential_arg_of).map(|a| a.name.clone()) else {
-                    return Some(adapter);
-                };
-                for arg in construct.args.iter().filter(|a| a.name == credential) {
-                    // An argument that is no name is MOV_CRED_WRONG_ADAPTER: the systems family's.
-                    let Some(name) = movement_parser::catalog::helpers::unwrap_credential_arg(arg.value.raw.trim()) else { continue };
-                    if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) = self.scopes.resolve(scope, &name) {
-                        self.report_resolution_failure(&name, arg.value.span, failure);
-                    }
-                }
-                return Some(adapter);
-            }
-            Resolution::Unknown if self.catalog.adapter(&construct.callee).is_some() => {
-                let credential = self.catalog.adapter(&construct.callee).and_then(credential_arg_of).map(|a| a.name.clone());
-                let slot = credential.and_then(|name| construct.args.iter().find(|a| a.name == name)).map(|a| &a.value);
-                self.report_unimported_adapter_construction(&construct.callee, slot, construct.span, scope);
-            }
-            failure => self.report_resolution_failure(&construct.callee, construct.span, failure),
-        }
-        None
-    }
-
     fn check_movement(&mut self, movement: &MovementDeclaration, scope: ScopeId) {
         if !self.scopes.has_own(scope, &movement.name) {
             self.check_function_name(&movement.name, movement.span, scope);
             self.declare_authored(scope, Symbol::new(&movement.name, SymbolKind::Movement, movement.span), movement.span);
+            self.note_movement(scope, movement);
         }
         let body = self.scopes.open(Some(scope));
         for param in &movement.params {
             let Some(type_) = &param.type_ else { continue };
-            self.check_param_type(type_, scope);
+            let graph = self.check_param_type(type_, scope);
+            if let (ParamTypeRef::Name(reference), false) = (type_, crate::families::systems::is_value_param_type(self, type_, scope)) {
+                self.check_param_source(reference, graph);
+                self.note_dispatchable(movement, reference, graph, scope);
+            }
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
@@ -383,19 +346,20 @@ impl<'c> Checker<'c> {
     }
 
     /// A parameter's type: a graph's name resolves; a value type names nothing.
-    fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) {
-        let ParamTypeRef::Name(reference) = type_ else { return };
+    /// What the graph's name resolved to.
+    fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
+        let ParamTypeRef::Name(reference) = type_ else { return None };
         if reference.position.is_none() && reference.hops_raw.is_none() && self.version >= 3 {
             if SCALAR_TYPE_NAMES.contains(&reference.graph.as_str()) {
-                return;
+                return None;
             }
             if let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph)
                 && self.scopes.symbol(id).kind == SymbolKind::Type
             {
-                return;
+                return None;
             }
         }
-        self.resolve_name(&reference.graph, reference.span, scope);
+        self.resolve_name(&reference.graph, reference.span, scope)
     }
 
     pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, _self_name: Option<&str>) {
@@ -430,7 +394,7 @@ impl<'c> Checker<'c> {
         self.check_call_args(&call.args, scope);
     }
 
-    fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
+    pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
         for arg in args {
             match arg {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
@@ -498,6 +462,7 @@ impl<'c> Checker<'c> {
     }
 
     fn check_extract(&mut self, extract: &ExtractExpression, scope: ScopeId) {
+        self.check_ai_tier(extract.tier.as_deref(), extract.span);
         for input in &extract.from {
             self.check_expr_slot(input, scope);
         }
@@ -593,9 +558,10 @@ impl<'c> Checker<'c> {
             Some(PathRoot::Name { name }) => Some(name.clone()),
             _ => None,
         };
-        if let Some(name) = &root_name {
-            self.resolve_name(name, head.span, scope);
-        }
+        let root_symbol = match &root_name {
+            Some(name) => self.resolve_name(name, head.span, scope),
+            None => None,
+        };
         if let Some(PathRoot::Expression { expr }) = &head.root {
             self.check_expr_slot(expr, scope);
         }
@@ -616,6 +582,9 @@ impl<'c> Checker<'c> {
                     self.resolve_name(name, head.span, scope);
                 }
             }
+        }
+        if let Some(name) = &root_name {
+            self.check_path_root_constructed(name, root_symbol, &head.hops_raw, head.span);
         }
         aliases
     }

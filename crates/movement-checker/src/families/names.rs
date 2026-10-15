@@ -251,8 +251,13 @@ impl Checker<'_> {
         }
         for imported in &statement.names {
             let local = imported.alias.clone().unwrap_or_else(|| imported.name.clone());
+            let mut library = None;
             let kind = match &statement.source {
-                ImportSource::File { .. } => SymbolKind::FileImport,
+                ImportSource::File { .. } => {
+                    let (symbol, from) = self.file_import_symbol(&local, &imported.name, statement.span);
+                    library = from;
+                    symbol.kind
+                }
                 ImportSource::Builtin { namespace } => {
                     let (kind, known, what) = match namespace.as_str() {
                         "adapters" => (SymbolKind::Adapter, self.catalog.adapter(&imported.name).is_some(), "adapter"),
@@ -270,7 +275,13 @@ impl Checker<'_> {
             if symbol.is_function() {
                 self.check_function_name(&local, statement.span, scope);
             }
-            if let Some(existing) = self.declare_authored(scope, symbol, statement.span) {
+            let existing = self.declare_authored(scope, symbol, statement.span);
+            if let Some(library) = library
+                && let Some(id) = self.scopes.scope(scope).symbols.get(&local).copied()
+            {
+                self.adopt_library_symbol(id, library);
+            }
+            if let Some(existing) = existing {
                 let what = self.scopes.symbol(existing).kind.describe();
                 self.report(codes::IMPORT_DUPLICATE, format!("Duplicate import '{local}' — already declared as {what}"), statement.span);
             }
@@ -294,6 +305,7 @@ impl Checker<'_> {
         let mut symbol = Symbol::new(name, kind, span);
         symbol.is_closure = bound.is_closure;
         symbol.adapter = bound.adapter.clone();
+        symbol.instance = bound.instance.clone();
         if symbol.is_function() {
             self.check_function_name(name, span, scope);
         }
@@ -339,7 +351,7 @@ impl Checker<'_> {
     }
 
     /// `credentialArgRepair`.
-    fn credential_arg_repair(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<(String, Vec<serde_json::Value>)> {
+    pub(crate) fn credential_arg_repair(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<(String, Vec<serde_json::Value>)> {
         let raw = slot.raw.trim();
         let quoted = raw
             .strip_prefix('"')
