@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **196 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14880 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 11073 of 11435.
-- Rust side: 3.3s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **197 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 14882 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 11075 of 11435.
+- Rust side: 3.4s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2255 | 2259 |
+| checks under v5 | 2360 | 2256 | 2260 |
 | checks v1 | 1535 | 1466 | 1467 |
 | checks v2 | 1956 | 1873 | 1874 |
-| checks v3 | 2403 | 2298 | 2302 |
+| checks v3 | 2403 | 2299 | 2303 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -31,7 +31,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | imports | 5 | 5 | 44 | 44 | 0 | 0 | 0 |
 | listens | 12 | 12 | 10671 | 10671 | 0 | 0 | 0 |
 | names | 9 | 9 | 371 | 371 | 0 | 0 | 0 |
-| nodes | 25 | 23 | 314 | 304 | 10 | 0 | 0 |
+| nodes | 25 | 24 | 314 | 306 | 8 | 0 | 0 |
 | records | 3 | 1 | 59 | 52 | 7 | 0 | 0 |
 | systems | 8 | 8 | 100 | 100 | 0 | 0 | 0 |
 | values | 22 | 12 | 1156 | 999 | 157 | 0 | 0 |
@@ -230,7 +230,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNIQUE_UNKNOWN_FIELD | writes | 31 | 31 | 0 | 0 | 0 | yes |
 | MOV_UNKNOWN_POSITION | walks | 56 | 56 | 0 | 0 | 0 | yes |
 | MOV_UNKNOWN_PROPERTY | walks | 286 | 238 | 48 | 0 | 0 |  |
-| MOV_UNKNOWN_TYPE_NAME | nodes | 23 | 21 | 2 | 0 | 0 |  |
+| MOV_UNKNOWN_TYPE_NAME | nodes | 23 | 23 | 0 | 0 | 0 | yes |
 | MOV_UNREACHABLE_BRANCH | walks | 28 | 28 | 0 | 0 | 0 | yes |
 | MOV_UNTIL_CADENCE_TOO_SHORT | flow | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 4 | 4 | 0 | 0 | 0 | yes |

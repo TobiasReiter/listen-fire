@@ -615,6 +615,11 @@ impl<'c> Checker<'c> {
                 self.report_param_needs_type(&param.name, param.span, &format!("'{}'", movement.name));
                 continue;
             };
+            if let ParamTypeRef::Value(value) = type_
+                && self.version >= 3
+            {
+                self.report_value_type(value, scope);
+            }
             let graph = self.check_param_type(type_, scope);
             if let (ParamTypeRef::Name(reference), false) = (type_, crate::families::systems::is_value_param_type(self, type_, scope)) {
                 self.check_param_source(reference, graph);
@@ -690,6 +695,9 @@ impl<'c> Checker<'c> {
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
                 self.report_param_needs_type(&param.name, param.span, label);
+            }
+            if let Some(ParamTypeRef::Value(value)) = &param.type_ {
+                self.report_value_type(value, scope);
             }
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);

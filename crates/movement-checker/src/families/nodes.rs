@@ -482,6 +482,64 @@ impl Checker<'_> {
         Some(crate::types::Ty::list(named))
     }
 
+    /// `valueMemberType`'s reports: a name that is no value type, and a
+    /// closure where data belongs (a list's element, a record's key). Each
+    /// member's type is read as the type core reads it, so a closure type
+    /// stops at its first parameter nobody could type, as the TypeScript does.
+    pub fn report_value_type(&mut self, value: &movement_parser::ast::ValueType, scope: ScopeId) {
+        use movement_parser::ast::{ParamTypeRef, ValueType};
+        match value {
+            ValueType::Name { name, span } => {
+                if crate::types::Ty::from_scalar_name(name).is_none() && self.declared_type_in(name, scope).is_none() {
+                    let names = self.type_names_in_scope(scope);
+                    self.report(
+                        codes::UNKNOWN_TYPE_NAME,
+                        format!(
+                            "'{name}' is not a value type — a list or record type holds values: a primitive ({}), a type you declare (`type {name} = <\"A\" | \"B\">`), or a list or record of them{}",
+                            PRIMITIVE_TYPE_NAMES.join(", "),
+                            crate::meta::did_you_mean(name, &names)
+                        ),
+                        *span,
+                    );
+                }
+            }
+            ValueType::List { of, span } => {
+                if matches!(**of, ValueType::Closure { .. }) {
+                    self.report(codes::CLOSURE_NOT_DATA, crate::types::field::closure_not_data_message("a list's element is typed as"), *span);
+                }
+                self.report_value_type(of, scope);
+            }
+            ValueType::Record { keys, .. } => {
+                for key in keys {
+                    if matches!(key.type_, ValueType::Closure { .. }) {
+                        self.report(
+                            codes::CLOSURE_NOT_DATA,
+                            crate::types::field::closure_not_data_message(&format!("the key '{}' is typed as", key.name)),
+                            key.span,
+                        );
+                    }
+                    self.report_value_type(&key.type_, scope);
+                }
+            }
+            ValueType::Closure { params, returns, .. } => {
+                let report_plane = |this: &mut Self, type_: &ParamTypeRef| -> bool {
+                    if let ParamTypeRef::Value(value) = type_ {
+                        this.report_value_type(value, scope);
+                    }
+                    let plane = this.plane_type_of(type_, scope);
+                    plane.field.is_some() || plane.pos.is_some()
+                };
+                for param in params {
+                    let Some(type_) = &param.type_ else { return };
+                    if !report_plane(self, type_) {
+                        return;
+                    }
+                }
+                report_plane(self, returns);
+            }
+        }
+    }
+
     /// `typeNamesInScope`: the primitives, then every `type` declared in scope.
     fn type_names_in_scope(&self, scope: ScopeId) -> Vec<String> {
         let mut names: Vec<String> = PRIMITIVE_TYPE_NAMES.iter().map(|s| s.to_string()).collect();
