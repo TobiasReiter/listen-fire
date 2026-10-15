@@ -646,6 +646,11 @@ export const DiagnosticCodes = {
    *  `Org`. Earlier versions let it through, and Rust admission refuses it at
    *  run time. */
   CALL_ARG_MAYBE_RECORD: 'MOV_CALL_ARG_MAYBE_RECORD',
+  /** Before version 5, an upgrade warning only: a call of a closure a body
+   *  hands back on one of several paths is typed by the first path's closure,
+   *  and a later one may hand back a record the first does not. From 5 the
+   *  call is any of their returns, and each use of it is checked as such. */
+  CALL_CLOSURE_RETURNS: 'MOV_CALL_CLOSURE_RETURNS',
   // Listeners (trigger rows are derived from `listen` statements)
   LISTEN_FILE_LEVEL: 'MOV_LISTEN_FILE_LEVEL',
   LISTEN_NOT_INSTANCE: 'MOV_LISTEN_NOT_INSTANCE',
@@ -3554,33 +3559,93 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
   return undefined;
 }
 
-/** A body with no `return` at all. */
 /**
  * The closure a VALUE is (language version 5): a record of closure type, or a
  * union of them — TypeScript's `(() => A) | (() => B)`, which a list of
- * closures' members are. Calling one is calling any of them, so its value is
- * the union of what they return (`unionReturns`), its row the union of theirs,
- * and its parameters the first's (`closureArities` keeps every arity, so a
- * call is held to each). Undefined when the value may be something else, or
- * absent: that is no function to call.
+ * closures' members are. Calling one is calling any of them (`oneOfClosures`).
+ * Undefined when the value may be something else, or absent: that is no
+ * function to call.
  */
-export function closureOfValue(type: FieldType | undefined): Extract<PositionTypeRef, { kind: 'closure' }> | undefined {
+export function closureOfValue(type: FieldType | undefined): ClosureRef | undefined {
   const closures = closuresOfValue(type);
-  if (closures === undefined) return undefined;
-  if (closures.length === 1) return closures[0];
-  const merged: Extract<PositionTypeRef, { kind: 'closure' }> = {
+  return closures === undefined ? undefined : oneOfClosures(closures);
+}
+
+type ClosureRef = Extract<PositionTypeRef, { kind: 'closure' }>;
+
+/**
+ * Several closures any one of which a value may be — a list's members, a
+ * function whose returns hand back different closures. Calling it is calling
+ * any of them, as TypeScript calls a union of function types: its value is the
+ * union of what they return (`unionReturns`), its row the union of theirs, and
+ * the call is held to EVERY candidate's parameters (`closureCandidates` keeps
+ * them; the parameters it carries are the first's only as a placeholder).
+ *
+ * `typedBy: 'first'` is the rule before language version 5 for the closures a
+ * body's returns hand back: a call is typed and bound by the first return's
+ * closure alone, and the others are kept only so the call can say, as an
+ * upgrade warning, where version 5 holds it to them.
+ */
+export function oneOfClosures(closures: ReadonlyArray<ClosureRef>, options: { typedBy: 'every' | 'first' } = { typedBy: 'every' }): ClosureRef {
+  const flat: ClosureRef[] = [];
+  for (const closure of closures) {
+    for (const candidate of closureCandidates.get(closure) ?? [closure]) if (!flat.includes(candidate)) flat.push(candidate);
+  }
+  if (flat.length === 1) return flat[0]!;
+  const merged: ClosureRef = options.typedBy === 'first' ? { ...flat[0]! } : {
     kind: 'closure',
     label: 'one of several closures',
-    params: closures[0]!.params,
-    returns: unionReturns(closures.map(closure => closure.returns)),
-    effects: unionRows(closures.map(closure => closure.effects)),
+    params: flat[0]!.params,
+    returns: unionReturns(flat.map(closure => closure.returns)),
+    effects: unionRows(flat.map(closure => closure.effects)),
   };
-  closureArities.set(merged, [...new Set(closures.map(closure => closure.params.length))]);
+  closureCandidates.set(merged, flat);
   return merged;
 }
 
-/** The arities of the closures a merged closure stands for. */
-const closureArities = new WeakMap<object, number[]>();
+/** The closures a merged closure stands for. */
+const closureCandidates = new WeakMap<object, ReadonlyArray<ClosureRef>>();
+
+/** The closures a call of `closure` may run — itself, or each it stands for. */
+export function candidatesOf(closure: ClosureRef): ReadonlyArray<ClosureRef> {
+  return closureCandidates.get(closure) ?? [closure];
+}
+
+/**
+ * Does every argument a candidate's parameter `narrow` takes fit `wide` too?
+ * An untyped parameter takes anything; a value and a record parameter share
+ * no argument.
+ */
+function paramTakesAll(narrow: PlaneType, wide: PlaneType): boolean {
+  if (wide.fieldType === undefined && wide.posType === undefined) return true;
+  if (narrow.fieldType !== undefined && wide.fieldType !== undefined) return fieldAssignable(narrow.fieldType, wide.fieldType);
+  if (narrow.posType !== undefined && wide.posType !== undefined) return positionsMatch(narrow.posType, wide.posType) !== false;
+  return false;
+}
+
+/**
+ * The parameters a call of one of several closures is held to — TypeScript's
+ * rule for a union of function types: an argument must fit every candidate's
+ * parameter, so each place takes the candidate parameter every other one
+ * takes too. Where no candidate's parameter is that narrow, no argument
+ * satisfies them all: `disagree` names the two candidates, and the place is
+ * left untyped so the misfit is said once.
+ */
+export function paramsOfCandidates(
+  candidates: ReadonlyArray<ClosureRef>,
+  disagree: (place: { index: number; first: ClosureRef; second: ClosureRef }) => void,
+): ClosureParam[] {
+  const [first] = candidates;
+  if (first === undefined) return [];
+  return first.params.map((own, index) => {
+    const at = candidates.map(candidate => candidate.params[index]);
+    const narrowest = at.find(param => param !== undefined && at.every(other => other === undefined || paramTakesAll(param, other)));
+    if (narrowest !== undefined) return narrowest;
+    const firstOff = candidates.findIndex((candidate, i) => i > 0 && !paramTakesAll(own, at[i] ?? {}) && !paramTakesAll(at[i] ?? {}, own));
+    disagree({ index, first, second: candidates[firstOff > 0 ? firstOff : 1]! });
+    return { name: own.name };
+  });
+}
 
 function closuresOfValue(type: FieldType | undefined): Array<Extract<PositionTypeRef, { kind: 'closure' }>> | undefined {
   if (type === undefined || typeof type === 'string') return undefined;
@@ -4695,6 +4760,14 @@ class Checker {
         `${collector.what} returns ${firstPlane === 'node' ? 'a record' : 'a value'} on line ${first.span.start.line} and ${plane === 'node' ? 'a record' : 'a value'} here — a body has one value, so every 'return' in it hands back the same kind of thing`,
         later.span,
       );
+    }
+    // Returns that each hand back a closure are one of several closures: a
+    // call of the value is held to every one of them, and is any of their
+    // returns — not the first's alone.
+    const closures = collector.returns.flatMap(returned =>
+      returned.fieldType === undefined && returned.mayHold === undefined && returned.posType?.kind === 'closure' ? [returned.posType] : []);
+    if (closures.length > 1 && closures.length === collector.returns.length) {
+      return { returns: true, posType: oneOfClosures(closures, { typedBy: since(this.languageVersion, 5) ? 'every' : 'first' }) };
     }
     // What the value may hold is what ANY return may hold — TypeScript's
     // return type is the union of its returns. The type stays the first's;
@@ -10950,14 +11023,7 @@ class Checker {
         value = closure.returns;
         this.effects?.absorb(closure.effects);
         this.noteUndeclaredSelfCall(callee, statement.span);
-        const arities = closureArities.get(closure) ?? [closure.params.length];
-        if (arities.some(arity => arity !== statement.args.length)) {
-          const arity = arities.length === 1
-            ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
-            : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
-          this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${statement.args.length}`, statement.span);
-        }
-        params = closure.params.map(({ name, ...type }) => ({ name, type }));
+        params = this.closureCallParams(statement, closure).map(({ name, ...type }) => ({ name, type }));
       } else {
         // Either an unlinked file import (a body nobody parsed) or a name that
         // is not callable at all. Both leave the row a lower bound.
@@ -10988,6 +11054,63 @@ class Checker {
       this.checkCallArg(statement.callee, arg, param, index, scope, pluginArgTypes);
     }
     return value;
+  }
+
+  /**
+   * The parameters a call through a closure value is held to, its arity
+   * checked. One of several closures is called as TypeScript calls a union of
+   * function types: every candidate's arity, and an argument that fits every
+   * candidate's parameter. Before version 5 the closures a body's returns hand
+   * back are called as the first of them (the call ran, whichever one it
+   * reached), so what version 5 holds the call to is an upgrade warning.
+   */
+  private closureCallParams(statement: CallStatement, closure: ClosureRef): ClosureParam[] {
+    const candidates = candidatesOf(closure);
+    const given = statement.args.length;
+    const strict = candidates.length === 1 || since(this.languageVersion, 5);
+    const say = (code: string, message: string): void => {
+      if (strict) this.report(code, message, statement.span);
+      else this.reportUpgradeWarning(code, `${message}. Before ${describeLanguageVersion(5)} the call is typed by the first; from it, this is refused`, statement.span);
+    };
+    const arities = [...new Set(candidates.map(candidate => candidate.params.length))];
+    if (!strict && closure.params.length !== given) {
+      this.report(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' takes ${closure.params.length} argument${closure.params.length === 1 ? '' : 's'}, got ${given}`, statement.span);
+    } else if (arities.some(arity => arity !== given)) {
+      const arity = arities.length === 1
+        ? `takes ${arities[0]} argument${arities[0] === 1 ? '' : 's'}`
+        : `may be any of several closures, taking ${arities.join(' or ')} arguments`;
+      say(DiagnosticCodes.CALL_ARITY, `'${statement.callee}' ${arity}, got ${given}`);
+    }
+    if (candidates.length === 1) return closure.params;
+    if (!strict) this.warnLaterClosureReturns(statement, candidates);
+    if (arities.length !== 1) return closure.params;
+    const held = paramsOfCandidates(candidates, ({ index, first, second }) => {
+      const describe = (param: ClosureParam | undefined): string =>
+        param?.fieldType !== undefined ? describeFieldType(param.fieldType) : param?.posType !== undefined ? describePosition(param.posType) : 'anything';
+      const a = first.params[index];
+      const b = second.params[index];
+      say(
+        DiagnosticCodes.CALL_ARG_TYPE,
+        `'${statement.callee}' may be any of several closures, and two disagree about argument ${index + 1}: ${describePosition(first)} takes ${describe(a)} for '${a?.name}', and ${describePosition(second)} takes ${describe(b)} for '${b?.name}'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known`,
+      );
+    });
+    return strict ? held : closure.params;
+  }
+
+  /** Before version 5: a later candidate may hand back a record the first —
+   *  which types the call — does not. From 5 the call is any of their
+   *  returns, so each use of it is checked as one that may be that record. */
+  private warnLaterClosureReturns(statement: CallStatement, candidates: ReadonlyArray<ClosureRef>): void {
+    const first = candidates[0]!.returns;
+    const every = unionReturns(candidates.map(candidate => candidate.returns));
+    const shown = first.mayHold ?? first.fieldType ?? recordValueOf(first.posType);
+    const hidden = handleWithin(every.mayHold ?? every.fieldType, heldWalk(handleKindsTaken(shown)));
+    if (hidden === undefined) return;
+    this.reportUpgradeWarning(
+      DiagnosticCodes.CALL_CLOSURE_RETURNS,
+      `'${statement.callee}' may be any of several closures, and calling one other than the first may hand back ${describeFieldType(hidden.handle)}. Before ${describeLanguageVersion(5)} the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused`,
+      statement.span,
+    );
   }
 
   /** One argument: check it in its own right, then check that it FITS the

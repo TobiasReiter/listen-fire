@@ -62,6 +62,17 @@ guide](docs/language/dancing-wren-migration.md).
   the refusal is new under 5. Under 3 and 4 it is a warning that blocks the move up. Narrow it to
   the record with `IS` and pass a field off it, or fill every arm with a value. A plugin argument
   and a written field already refused it on every version.
+- **A call of one of several closures is held to every one of them**: a function or closure
+  whose returns hand back different closures (`return made` on one path, `return label` on
+  another), then `g = mk()` and `g()`. The call takes only what every closure takes (each arity,
+  and an argument that fits each parameter; two closures whose parameters share no argument are
+  named, `MOV_CALL_ARG_TYPE`), and its value is any of their returns, so a record a later one hands
+  back is refused where it is written (`MOV_WRITE_FIELD_TYPE`). Why: TypeScript calls a union of
+  function types this way. Under 3 and 4 the call was typed by the first closure alone and ran on
+  whichever it reached (a record written into a text field, a number into a text parameter), so
+  under 3 and 4 each is a warning that blocks the move up (`MOV_CALL_ARITY`, `MOV_CALL_ARG_TYPE`,
+  `MOV_CALL_CLOSURE_RETURNS`). A declared return type (`): <() => <text>>`) narrows the closures
+  to it.
 - **A record a `race` arm hands back reads as that record** (and so does a slot of `all`, which
   replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
   the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4
