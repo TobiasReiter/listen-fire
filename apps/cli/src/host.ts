@@ -21,19 +21,22 @@ import {
 import { InMemoryWriteLocks, segmentWriteLocks } from 'movement-engine/services/write_locks/write_locks';
 import type { ParkSink } from 'movement-engine/services/movement_engine/run';
 import { rpc, type RunningExternal } from './externals';
+import { localFileText } from './files';
 import { modelCalls } from './models';
 import type { Project } from './project';
-import type { Credential } from './secrets';
+import { withCredential, type Credential } from './secrets';
 import type { State } from './state';
 
 /** The one tenant a local project is. */
 export const LOCAL_TENANT = 'local';
 
-/** The developer running lf, as the principal an event acts as. STUB: one
- *  identity for every event; no mapping from an event's actor to a user. */
-export function localIdentity(env: NodeJS.ProcessEnv = process.env): ActingPrincipal {
-  const name = env.LF_USER ?? userInfo().username;
-  return { principal: { id: `local:${name}`, display: name }, email: env.LF_USER_EMAIL ?? `${name}@localhost` };
+/** The developer running lf, as the principal an event acts as: LF_USER /
+ *  LF_USER_EMAIL, else lf.yaml's `user`, else the OS user. STUB: one identity
+ *  for every event; no mapping from an event's actor to a user. The only host
+ *  call that takes the acting principal is `lookup.resolveActingUser`. */
+export function localIdentity(configured: Project['user'] = {}, env: NodeJS.ProcessEnv = process.env): ActingPrincipal {
+  const name = env.LF_USER ?? configured.name ?? userInfo().username;
+  return { principal: { id: `local:${name}`, display: name }, email: env.LF_USER_EMAIL ?? configured.email ?? `${name}@localhost` };
 }
 
 export interface LocalHostParts {
@@ -122,7 +125,9 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
         const held = instances.get(instance);
         if (held === undefined) throw new Error(`no adapter instance '${instance}' in this segment`);
         try {
-          const raw = await rpc({ running: held.running, credential: held.credential, method, params: args, tenant: LOCAL_TENANT });
+          const raw = await withCredential(held.credential, () =>
+            rpc({ running: held.running, credential: held.credential, method, params: args, tenant: LOCAL_TENANT }),
+          );
           const schema = (METHODS as Record<string, { result: Parameters<typeof parseWireResult>[0] } | undefined>)[method]?.result;
           const result = schema !== undefined ? parseWireResult(schema, raw, { method, adapter: held.running.external.manifest.name }) : raw;
           return { result } as Awaited<ReturnType<EngineHost['adapters']['call']>>;
@@ -160,9 +165,7 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
     },
     control: { cancel: NEVER_CANCELLED },
     files: {
-      resolveFileText: async () => {
-        throw new Error('reading a file\'s text is not built in lf yet (files.resolveFileText)');
-      },
+      resolveFileText: async ({ file }) => localFileText(project, file),
       // The object store is a folder. THIN: a "pdf" is stored as its text.
       render: async ({ content, type }) => {
         const dir = join(project.lfDir, 'files');
@@ -177,7 +180,7 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
         };
       },
     },
-    lookup: { resolveActingUser: async () => localIdentity() },
+    lookup: { resolveActingUser: async () => localIdentity(project.user) },
     locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },
     trace: {
       append: async ({ entries }) => state.appendTrace(parts.runId, entries),

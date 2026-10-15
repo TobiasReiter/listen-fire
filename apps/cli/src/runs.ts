@@ -27,7 +27,7 @@ import {
 } from './externals';
 import { LOCAL_TENANT, localHost, tenant } from './host';
 import type { Project } from './project';
-import { loadSecrets, type Credential } from './secrets';
+import { loadSecrets, requireCredentials, type Credential } from './secrets';
 import { catalogOf, collectListens, scanMovements, type Listen, type MovementFile } from './sources';
 import { State } from './state';
 
@@ -52,6 +52,7 @@ export async function openSession(project: Project, options: { ephemeral: boolea
   // Every run takes the engine its pinned language version runs on.
   process.env.MOVEMENT_ENGINE ??= 'by-version';
   const credentials = loadSecrets(project);
+  if (options.start) requireCredentials(project, credentials);
   const externals = scanExternals(project);
   const running = options.start
     ? await startExternals({ project, externals, credentials, tenant: LOCAL_TENANT })
