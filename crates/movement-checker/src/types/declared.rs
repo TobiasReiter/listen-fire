@@ -127,8 +127,8 @@ pub fn inherit_schema(own: &InstanceSchema, name: &str, base_name: &str, base: &
 }
 
 /// A declared node's own instance: its root is the position keyed by its name.
-pub fn declared_instance(name: &str, schema: InstanceSchema) -> InstanceRef {
-    Rc::new(Instance { name: name.to_string(), schema: Rc::new(schema), declared: true })
+pub fn declared_instance(name: &str, schema: InstanceSchema, symbol: crate::scope::SymbolId) -> InstanceRef {
+    Rc::new(Instance { name: name.to_string(), schema: Rc::new(schema), declared: Some(symbol), address: None })
 }
 
 /// `declaredRootPosition`: the record `<X>` denotes — X's root.

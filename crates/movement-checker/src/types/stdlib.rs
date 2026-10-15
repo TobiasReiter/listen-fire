@@ -32,6 +32,8 @@ pub enum Arity {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Param {
+    /// As the signature names it (`describeBuiltin`).
+    pub name: &'static str,
     pub ty: ParamType,
     pub arity: Arity,
 }
@@ -83,16 +85,30 @@ impl Builtin {
     pub fn param_at(&self, index: usize) -> Option<&Param> {
         self.params.get(index).or_else(|| self.params.last().filter(|p| p.arity == Arity::Rest))
     }
+
+    /// `describeBuiltin`: the signature as the author reads it (`ROUND(number, places?)`).
+    pub fn describe(&self) -> String {
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|param| match param.arity {
+                Arity::One => param.name.to_string(),
+                Arity::Optional => format!("{}?", param.name),
+                Arity::Rest => format!("…{}", param.name),
+            })
+            .collect();
+        format!("{}({})", self.name, params.join(", "))
+    }
 }
 
-const fn p(ty: ParamType) -> Param {
-    Param { ty, arity: Arity::One }
+const fn p(name: &'static str, ty: ParamType) -> Param {
+    Param { name, ty, arity: Arity::One }
 }
-const fn opt(ty: ParamType) -> Param {
-    Param { ty, arity: Arity::Optional }
+const fn opt(name: &'static str, ty: ParamType) -> Param {
+    Param { name, ty, arity: Arity::Optional }
 }
-const fn rest(ty: ParamType) -> Param {
-    Param { ty, arity: Arity::Rest }
+const fn rest(name: &'static str, ty: ParamType) -> Param {
+    Param { name, ty, arity: Arity::Rest }
 }
 
 use ParamType as T;
@@ -108,68 +124,68 @@ macro_rules! b {
 }
 
 pub static STANDARD_LIBRARY: &[Builtin] = &[
-    b!("ISNULL", [p(T::Any)], R::Boolean),
-    b!("COALESCE", [rest(T::Any)], R::Derived),
-    b!("TRIM", [p(T::Text)], R::Text),
-    b!("LOWER", [p(T::Text)], R::Text),
-    b!("UPPER", [p(T::Text)], R::Text),
-    b!("LENGTH", [p(T::TextOrList)], R::Number),
-    b!("ABS", [p(T::Number)], R::Number),
-    b!("ROUND", [p(T::Number), opt(T::Number)], R::Number),
-    b!("FLOOR", [p(T::Number)], R::Number),
-    b!("CEIL", [p(T::Number)], R::Number),
-    b!("TOSTRING", [p(T::Scalar)], R::Text),
-    b!("TONUMBER", [p(T::Scalar)], R::Number),
-    b!("MULTI", [rest(T::Any)], R::Derived),
-    b!("SPLIT", [p(T::Text), opt(T::Text)], R::ListOfText),
-    b!("DATE", [p(T::Scalar)], R::Date),
-    b!("DATETIME", [p(T::Scalar)], R::Datetime),
-    b!("NUMBER", [p(T::Scalar)], R::Number),
-    b!("FIRST", [p(T::Any)], R::Derived),
-    b!("LAST", [p(T::Any)], R::Derived),
-    b!("ONLY", [p(T::Any)], R::Derived),
-    b!("COUNT", [p(T::Any)], R::Number),
-    b!("SUM", [p(T::Any)], R::Number),
-    b!("AVG", [p(T::Any)], R::Number),
-    b!("MIN", [p(T::Any)], R::Derived),
-    b!("MAX", [p(T::Any)], R::Derived),
-    b!("JOIN", [p(T::Any), opt(T::Text)], R::Text),
-    b!("COLLECT", [p(T::Any)], R::Derived),
-    b!("LLM_AGG", [p(T::Any), opt(T::Text)], R::Derived),
-    b!("AI", [p(T::Text), opt(T::Text)], R::Derived),
-    b!("CONCAT", [rest(T::Scalar)], R::Text),
-    b!("KG_EXISTS", [p(T::Text), rest(T::Any)], R::Boolean),
-    b!("KG_VALUE", [p(T::Text), rest(T::Any)], R::Derived),
-    b!("EXTRACT_VALUE", [rest(T::Any)], R::Derived),
-    b!("AT", [p(T::Any), p(T::Any)], R::Derived),
-    b!("SORT", [p(T::Any), opt(T::Any), opt(T::Any)], R::Derived),
-    b!("FILE", [p(T::Any), p(T::Text)], R::File),
-    b!("READ", [p(T::File)], R::Text),
-    b!("CHUNKS", [p(T::Text), p(T::Options)], R::Derived),
-    b!("EXISTS", [p(T::Any)], R::Boolean),
-    b!("MAP", [p(T::List), opt(T::Options), p(T::Function)], R::Derived),
-    b!("FILTER", [p(T::List), opt(T::Options), p(T::Function)], R::Derived),
-    b!("REDUCE", [p(T::List), p(T::Any), p(T::Function)], R::Derived),
-    b!("GROUPBY", [p(T::List), p(T::Function)], R::Derived),
-    b!("KEYBY", [p(T::List), p(T::Function)], R::Derived),
-    b!("MEMBERS", [p(T::Type)], R::Derived),
-    b!("EXTRACT", [p(T::Any), p(T::Shape), opt(T::Options)], R::Derived),
-    b!("EXTRACTONE", [p(T::Any), p(T::Shape), opt(T::Options)], R::Derived),
-    b!("CURRENCY.GET_NUMBER_FROM_FIGURE", [p(T::Text)], R::Number, family),
-    b!("CURRENCY.GET_CODE_FROM_FIGURE", [p(T::Text)], R::Text, family),
-    b!("CURRENCY.FORMAT_FIGURE", [p(T::Number), p(T::Text)], R::MaybeAbsentText, family),
-    b!("DATE.PARSE", [p(T::Text)], R::MaybeAbsentDate, family),
-    b!("DATE.ADD_DAYS", [p(T::Temporal), p(T::Number)], R::Date, family),
-    b!("DATE.FORMAT", [p(T::Temporal), p(T::Text)], R::Text, family),
-    b!("DATE.FORMAT_ISO", [p(T::Temporal)], R::Date, family),
-    b!("DATE.TODAY", [p(T::Text)], R::Date, family),
-    b!("DATETIME.AT", [p(T::Temporal), p(T::Text), p(T::Text)], R::Datetime, family),
-    b!("TEXT.REGEX_EXTRACT", [p(T::Text), p(T::Text), opt(T::Number)], R::Text, family),
-    b!("TEXT.SLUG", [p(T::Text)], R::Text, family),
-    b!("TEXT.PAIRS", [p(T::Record), opt(T::Text)], R::Text, family),
-    b!("TEXT.SERIALISE", [p(T::Any), p(T::Text)], R::Text, family),
-    b!("URL.HOST", [p(T::Text)], R::MaybeAbsentText, family),
-    b!("NUMBER.FORMAT", [p(T::Number), p(T::Text)], R::MaybeAbsentText, family),
+    b!("ISNULL", [p("value", T::Any)], R::Boolean),
+    b!("COALESCE", [rest("values", T::Any)], R::Derived),
+    b!("TRIM", [p("text", T::Text)], R::Text),
+    b!("LOWER", [p("text", T::Text)], R::Text),
+    b!("UPPER", [p("text", T::Text)], R::Text),
+    b!("LENGTH", [p("value", T::TextOrList)], R::Number),
+    b!("ABS", [p("number", T::Number)], R::Number),
+    b!("ROUND", [p("number", T::Number), opt("places", T::Number)], R::Number),
+    b!("FLOOR", [p("number", T::Number)], R::Number),
+    b!("CEIL", [p("number", T::Number)], R::Number),
+    b!("TOSTRING", [p("value", T::Scalar)], R::Text),
+    b!("TONUMBER", [p("value", T::Scalar)], R::Number),
+    b!("MULTI", [rest("values", T::Any)], R::Derived),
+    b!("SPLIT", [p("text", T::Text), opt("separator", T::Text)], R::ListOfText),
+    b!("DATE", [p("value", T::Scalar)], R::Date),
+    b!("DATETIME", [p("value", T::Scalar)], R::Datetime),
+    b!("NUMBER", [p("value", T::Scalar)], R::Number),
+    b!("FIRST", [p("collection", T::Any)], R::Derived),
+    b!("LAST", [p("collection", T::Any)], R::Derived),
+    b!("ONLY", [p("collection", T::Any)], R::Derived),
+    b!("COUNT", [p("collection", T::Any)], R::Number),
+    b!("SUM", [p("collection", T::Any)], R::Number),
+    b!("AVG", [p("collection", T::Any)], R::Number),
+    b!("MIN", [p("collection", T::Any)], R::Derived),
+    b!("MAX", [p("collection", T::Any)], R::Derived),
+    b!("JOIN", [p("collection", T::Any), opt("separator", T::Text)], R::Text),
+    b!("COLLECT", [p("collection", T::Any)], R::Derived),
+    b!("LLM_AGG", [p("collection", T::Any), opt("instruction", T::Text)], R::Derived),
+    b!("AI", [p("prompt", T::Text), opt("tier", T::Text)], R::Derived),
+    b!("CONCAT", [rest("parts", T::Scalar)], R::Text),
+    b!("KG_EXISTS", [p("query", T::Text), rest("params", T::Any)], R::Boolean),
+    b!("KG_VALUE", [p("query", T::Text), rest("params", T::Any)], R::Derived),
+    b!("EXTRACT_VALUE", [rest("values", T::Any)], R::Derived),
+    b!("AT", [p("collection", T::Any), p("index", T::Any)], R::Derived),
+    b!("SORT", [p("collection", T::Any), opt("key", T::Any), opt("direction", T::Any)], R::Derived),
+    b!("FILE", [p("content", T::Any), p("type", T::Text)], R::File),
+    b!("READ", [p("file", T::File)], R::Text),
+    b!("CHUNKS", [p("text", T::Text), p("options", T::Options)], R::Derived),
+    b!("EXISTS", [p("walk", T::Any)], R::Boolean),
+    b!("MAP", [p("collection", T::List), opt("settings", T::Options), p("function", T::Function)], R::Derived),
+    b!("FILTER", [p("collection", T::List), opt("settings", T::Options), p("function", T::Function)], R::Derived),
+    b!("REDUCE", [p("collection", T::List), p("start", T::Any), p("function", T::Function)], R::Derived),
+    b!("GROUPBY", [p("collection", T::List), p("key", T::Function)], R::Derived),
+    b!("KEYBY", [p("collection", T::List), p("key", T::Function)], R::Derived),
+    b!("MEMBERS", [p("type", T::Type)], R::Derived),
+    b!("EXTRACT", [p("content", T::Any), p("shape", T::Shape), opt("settings", T::Options)], R::Derived),
+    b!("EXTRACTONE", [p("content", T::Any), p("shape", T::Shape), opt("settings", T::Options)], R::Derived),
+    b!("CURRENCY.GET_NUMBER_FROM_FIGURE", [p("figure", T::Text)], R::Number, family),
+    b!("CURRENCY.GET_CODE_FROM_FIGURE", [p("figure", T::Text)], R::Text, family),
+    b!("CURRENCY.FORMAT_FIGURE", [p("number", T::Number), p("code", T::Text)], R::MaybeAbsentText, family),
+    b!("DATE.PARSE", [p("text", T::Text)], R::MaybeAbsentDate, family),
+    b!("DATE.ADD_DAYS", [p("date", T::Temporal), p("days", T::Number)], R::Date, family),
+    b!("DATE.FORMAT", [p("value", T::Temporal), p("pattern", T::Text)], R::Text, family),
+    b!("DATE.FORMAT_ISO", [p("value", T::Temporal)], R::Date, family),
+    b!("DATE.TODAY", [p("zone", T::Text)], R::Date, family),
+    b!("DATETIME.AT", [p("date", T::Temporal), p("time", T::Text), p("zone", T::Text)], R::Datetime, family),
+    b!("TEXT.REGEX_EXTRACT", [p("text", T::Text), p("pattern", T::Text), opt("group", T::Number)], R::Text, family),
+    b!("TEXT.SLUG", [p("text", T::Text)], R::Text, family),
+    b!("TEXT.PAIRS", [p("record", T::Record), opt("separator", T::Text)], R::Text, family),
+    b!("TEXT.SERIALISE", [p("value", T::Any), p("format", T::Text)], R::Text, family),
+    b!("URL.HOST", [p("text", T::Text)], R::MaybeAbsentText, family),
+    b!("NUMBER.FORMAT", [p("number", T::Number), p("style", T::Text)], R::MaybeAbsentText, family),
 ];
 
 /// `lookupBuiltin`: by name, in any letter case.

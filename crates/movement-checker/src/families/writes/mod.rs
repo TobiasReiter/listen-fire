@@ -729,7 +729,7 @@ impl Checker<'_> {
             return Landing { local: true, description: Some(description), ..Landing::default() };
         };
         let instance = crate::types::position::instance_of_ref(Some(landing));
-        let declared = instance.is_some_and(|i| i.declared);
+        let declared = instance.is_some_and(|i| i.declared.is_some());
         let nested = if edge.structural { instance.and_then(|i| nested_local_edges(i, &schema)) } else { None };
         let root = WritableRootSchema {
             fields: schema.properties.clone(),
@@ -1583,7 +1583,7 @@ fn known_fields_of(position: &Position) -> Option<Vec<String>> {
         }),
         // A system's position: its fields are the system's to say. (A
         // declared node's position is the nodes family's to type.)
-        Position::Position(p) if p.instance.declared => p.instance.schema.positions.get(&p.position).map(|s| s.properties.keys().cloned().collect()),
+        Position::Position(p) if p.instance.declared.is_some() => p.instance.schema.positions.get(&p.position).map(|s| s.properties.keys().cloned().collect()),
         Position::Position(_) | Position::Meta { .. } | Position::Union(_) | Position::Closure(_) => None,
     }
 }

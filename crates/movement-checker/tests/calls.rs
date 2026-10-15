@@ -43,3 +43,43 @@ fn a_closure_that_calls_itself_and_returns_nothing_binds_nothing() {
     let source = "movement main(e: <number>) {\n  tick = (n: <number>) => {\n    if n > 0 {\n      y = tick(n - 1)\n    }\n  }\n  tick(2)\n}";
     assert!(has(&codes(source, 3), "MOV_CALL_RETURNS_NOTHING"));
 }
+
+#[test]
+fn a_value_argument_is_held_to_its_parameter_type() {
+    let source = "movement inc(v: <number>): <number> {\n  return v + 1\n}\nmovement main(e: <number>) {\n  x = inc(\"three\")\n  y = inc(v: e)\n}";
+    let found = codes(source, 3);
+    let misfits: Vec<_> = found.iter().filter(|(c, _)| c == "MOV_CALL_ARG_TYPE").collect();
+    assert_eq!(misfits.len(), 1, "{found:?}");
+    assert_eq!(misfits[0].1, "'inc' expects number for 'v' (argument 1), but this argument is text");
+}
+
+#[test]
+fn a_record_literal_argument_carries_only_the_keys_its_parameter_declares() {
+    let source = "movement configured(cfg: <{ mode: text, owner?: text }>) {\n  x = 1\n}\nmovement main(e: <number>) {\n  configured({ mode: \"fast\", ownr: \"sam\" })\n}";
+    let found = codes(source, 3);
+    assert!(found.iter().any(|(c, m)| c == "MOV_CALL_ARG_TYPE" && m.ends_with("which has no key 'ownr' — did you mean 'owner'?")), "{found:?}");
+}
+
+#[test]
+fn a_builtin_argument_of_the_wrong_kind_is_refused_from_version_3() {
+    let source = "movement main(e: <number>) {\n  x = UPPER(e)\n}";
+    let message = "UPPER's 'text' takes text, and this is number — UPPER(text)";
+    assert!(codes(source, 3).iter().any(|(c, m)| c == "MOV_BUILTIN_ARG_TYPE" && m == message));
+    assert!(!has(&codes(source, 2), "MOV_BUILTIN_ARG_TYPE"));
+}
+
+#[test]
+fn a_collection_op_reads_its_settings_as_written() {
+    let source = "movement main(e: <number>) {\n  names = [\"a\", \"b\"]\n  x = MAP(names, { concurrency: 2, initialConcurrency: 4 }, (t) => { return t })\n}";
+    let found = codes(source, 3);
+    let message = "'MAP' runs its first batch 4 at a time and the rest 2 at a time — the first batch is the warm-up, so it is never the wider one. Lower initialConcurrency, or raise concurrency.";
+    assert!(found.iter().any(|(c, m)| c == "MOV_COLLECTION_OP_CONFIG" && m == message), "{found:?}");
+}
+
+#[test]
+fn a_collection_ops_function_takes_its_members_type() {
+    let source = "movement main(e: <number>) {\n  xs = [1, 2]\n  x = MAP(xs, (t) => { return UPPER(t) })\n  y = MAP(e, (t) => { return t })\n}";
+    let found = codes(source, 3);
+    assert!(found.iter().any(|(c, m)| c == "MOV_BUILTIN_ARG_TYPE" && m.starts_with("UPPER's 'text' takes text, and this is number")), "{found:?}");
+    assert!(found.iter().any(|(c, m)| c == "MOV_COLLECTION_OP_NOT_A_COLLECTION" && m.starts_with("'MAP' reads a collection, and this is number")), "{found:?}");
+}

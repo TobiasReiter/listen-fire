@@ -32,6 +32,7 @@ pub struct ScopeEnv<'s> {
     pub scopes: &'s Scopes,
     pub scope: ScopeId,
     pub zones: &'s dyn crate::host::ZoneLookup,
+    pub nodes: &'s crate::families::nodes::NodeState,
 }
 
 impl ScopeEnv<'_> {
@@ -44,6 +45,10 @@ impl ScopeEnv<'_> {
 }
 
 impl TypeEnv for ScopeEnv<'_> {
+    fn is_declared_graph(&self, instance: &super::position::InstanceRef) -> bool {
+        instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol))
+    }
+
     fn is_zone(&self, zone: &str) -> Option<bool> {
         Some(self.zones.is_zone(zone))
     }

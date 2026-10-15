@@ -816,7 +816,6 @@ impl Checker<'_> {
         }
         self.check_callback_suspends(movement, name_span, scope);
         self.check_callback_arguments(movement, args, span, scope);
-        self.check_call_args(args, scope);
         if kind != Some(SymbolKind::Movement) {
             return;
         }

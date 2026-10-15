@@ -58,6 +58,11 @@ impl NodeState {
     pub fn declared(&self, symbol: SymbolId) -> Option<&Declared> {
         self.declared.get(&symbol)
     }
+
+    /// `declaredShapeTokens`: a declaration this file wrote (not an imported one).
+    pub fn is_local(&self, symbol: SymbolId) -> bool {
+        self.local.contains_key(&symbol)
+    }
 }
 
 pub const PRIMITIVE_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
@@ -86,7 +91,7 @@ impl Checker<'_> {
             return;
         }
         let schema = self.schema_of_shape(shape, scope);
-        self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, schema), declaration: shape.clone() });
+        self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, schema, id), declaration: shape.clone() });
         if fresh {
             self.nodes.local.insert(id, (shape.clone(), scope));
         }
@@ -149,7 +154,7 @@ impl Checker<'_> {
         let Some(base) = self.nodes.declared.get(&base).cloned() else { return };
         let schema = inherit_schema(&own, &shape.name, &base.declaration.name, &base.instance.schema);
         let declaration = inherit_declaration(shape, &base.declaration);
-        self.nodes.declared.insert(symbol, Declared { instance: declared_instance(&shape.name, schema), declaration });
+        self.nodes.declared.insert(symbol, Declared { instance: declared_instance(&shape.name, schema, symbol), declaration });
     }
 
     /// `settleShape`: a node declaration at its own statement — its field
@@ -173,11 +178,7 @@ impl Checker<'_> {
             {
                 let mut schema = (*declared.instance.schema).clone();
                 self.resolve_shape_field_types(&shape.root, &shape.name, &mut schema, scope);
-                // A new instance only when a type changed, so a record typed
-                // before this statement stays the same declaration's.
-                if schema != *declared.instance.schema {
-                    self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, schema), declaration: declared.declaration });
-                }
+                self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, schema, id), declaration: declared.declaration });
             }
             self.check_shape_descriptions(&shape.root, scope);
             return;
@@ -187,13 +188,13 @@ impl Checker<'_> {
         self.check_shape_descriptions(&shape.root, scope);
         let Some(base) = self.settled_base(shape, scope) else {
             if let Some(id) = symbol {
-                self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, own), declaration: shape.clone() });
+                self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, own, id), declaration: shape.clone() });
             }
             return;
         };
         let Some(base_declaration) = self.nodes.declared.get(&base).map(|d| d.declaration.clone()) else {
             if let Some(id) = symbol {
-                self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, own), declaration: shape.clone() });
+                self.nodes.declared.insert(id, Declared { instance: declared_instance(&shape.name, own, id), declaration: shape.clone() });
             }
             return;
         };
@@ -1319,89 +1320,8 @@ impl Checker<'_> {
     }
 }
 
-impl Checker<'_> {
-    /// `bareSlotPositionType`: the record an argument slot that is one bare name holds.
-    pub fn bare_slot_position(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<Position> {
-        let trimmed = slot.raw.trim();
-        if !crate::slots::is_bare_ident(trimmed) {
-            return None;
-        }
-        let Resolution::Found(id) = self.scopes.resolve(scope, trimmed) else { return None };
-        let types = &self.scopes.symbol(id).types;
-        types.pos.clone().or_else(|| match &types.field {
-            Some(Ty::Record(Some(p))) => Some((**p).clone()),
-            _ => None,
-        })
-    }
-
-    /// The record parameters of the function `callee` resolved to, in order
-    /// (`None` for a value parameter or one not typed as a record).
-    fn record_params(&self, callee: SymbolId) -> Option<Vec<(String, Option<Position>, bool)>> {
-        let symbol = self.scopes.symbol(callee);
-        if symbol.kind == SymbolKind::Movement {
-            let info = self.listens.movement_info(callee)?;
-            return Some(
-                info.params
-                    .iter()
-                    .map(|p| {
-                        let plane = p.type_.as_ref().map(|t| self.plane_type_of(t, info.decl_scope)).unwrap_or_default();
-                        (p.name.clone(), plane.pos.map(|b| *b), plane.field.is_some())
-                    })
-                    .collect(),
-            );
-        }
-        None
-    }
-
-    /// `checkCallArgFit`, the record half: an argument a construct built is
-    /// judged by structure (MOV_NODE_ARG_SHAPE), and any record reaching a
-    /// declared-node parameter by what it carries (MOV_CALL_ARG_TYPE).
-    pub fn check_call_arg_fits(&mut self, callee: &str, id: SymbolId, args: &[movement_parser::ast::CallArg], arg_types: &[Option<Position>]) {
-        let Some(params) = self.record_params(id) else { return };
-        let names: Vec<&str> = params.iter().map(|(n, _, _)| n.as_str()).collect();
-        for (index, (arg, arg_type)) in args.iter().zip(arg_types).enumerate() {
-            let Some(arg_type) = arg_type else { continue };
-            let param = match arg.name() {
-                Some(name) => names.iter().position(|n| *n == name),
-                None => (index < names.len()).then_some(index),
-            };
-            let Some(param) = param else { continue };
-            let (param_name, param_type, value_param) = &params[param];
-            if *value_param {
-                continue;
-            }
-            let Some(param_type) = param_type else { continue };
-            let place = if arg.name().is_some() { String::new() } else { format!(" for '{param_name}' (argument {})", index + 1) };
-            let span = call_arg_span(arg);
-            if let Position::Local(_) = arg_type {
-                if let Some(misfit) = structural_misfit(arg_type, param_type) {
-                    self.report(codes::NODE_ARG_SHAPE, format!("'{callee}' expects {}{place}, and {misfit}", describe_position(param_type)), span);
-                }
-                continue;
-            }
-            if let Position::Position(p) = param_type
-                && p.instance.declared
-                && let Some(misfit) = declared_param_misfit(arg_type, p)
-            {
-                self.report(codes::CALL_ARG_TYPE, format!("'{callee}' expects a <{}> record{place}, and {misfit}", p.position), span);
-            }
-        }
-    }
-}
-
-fn call_arg_span(arg: &movement_parser::ast::CallArg) -> Span {
-    use movement_parser::ast::CallArg;
-    match arg {
-        CallArg::Expr { expr, .. } => expr.span,
-        CallArg::Write { write, .. } => write.span,
-        CallArg::Node { node, .. } => node.span,
-        CallArg::Call { call, .. } => call.span,
-        CallArg::Closure { span, .. } | CallArg::Type { span, .. } => *span,
-    }
-}
-
 /// `declaredParamMisfit`: what a record lacks that a declared-node parameter needs.
-fn declared_param_misfit(arg: &Position, param: &crate::types::position::RecordPosition) -> Option<String> {
+pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::position::RecordPosition) -> Option<String> {
     let schema = &param.instance.schema;
     match arg {
         Position::Union(u) => {

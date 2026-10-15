@@ -205,14 +205,16 @@ impl Checker<'_> {
                 vec![edit(awaited.start, expr.span.start, "")],
             );
         }
-        if let Some(settings) = &expr.settings
-            && expr.kind == CombinatorKind::Race
-        {
-            self.report(
-                codes::COLLECTION_OP_CONFIG,
-                "'race' takes no settings — it settles on the first arm to finish, so every arm runs at once. 'all' takes { concurrency, onError }",
-                settings.span,
-            );
+        if let Some(settings) = &expr.settings {
+            if expr.kind == CombinatorKind::Race {
+                self.report(
+                    codes::COLLECTION_OP_CONFIG,
+                    "'race' takes no settings — it settles on the first arm to finish, so every arm runs at once. 'all' takes { concurrency, onError }",
+                    settings.span,
+                );
+            } else {
+                self.check_collection_config(settings, kind, Some(crate::families::collection_config::ALL_SETTING_KEYS));
+            }
         }
     }
 
@@ -282,9 +284,6 @@ impl Checker<'_> {
                 }
             }
             CombinatorArms::Dynamic { expr, .. } => self.check_expr_slot(expr, scope),
-        }
-        if let Some(settings) = &combinator.settings {
-            self.check_expr_slot(settings, scope);
         }
     }
 
@@ -366,20 +365,27 @@ impl Checker<'_> {
     /// function the op is given.
     pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
         let spelling = op_spelling(op.op);
-        self.check_expr_slot(&op.source, scope);
-        if let Some(init) = &op.init {
-            self.check_expr_slot(init, scope);
-        }
+        let source = self.check_expr_slot_with(&op.source, scope, crate::checker::SlotOptions::default());
+        let init = op.init.as_ref().map(|init| self.check_expr_slot_with(init, scope, crate::checker::SlotOptions::default()));
         if let Some(config) = &op.config {
-            self.check_expr_slot(config, scope);
+            self.check_collection_config(config, spelling, None);
         }
+        let element = self.collection_element(&op.source, source.expr.as_ref(), source.ty.as_ref(), spelling, scope);
         let arity = if op.op == CollectionOp::Reduce { 2 } else { 1 };
+        // The function is called once per member, so a parameter it leaves
+        // untyped takes the member's type (REDUCE's first, the carried value's).
+        let as_value = |ty: Option<crate::types::Ty>| crate::types::position::PlaneType { field: ty, pos: None };
+        let supplied = if op.op == CollectionOp::Reduce {
+            vec![as_value(init.and_then(|i| i.ty)), as_value(element)]
+        } else {
+            vec![as_value(element)]
+        };
         let returns = match &op.r#fn {
             ArmExpression::Closure { closure, span } => {
                 if closure.params.len() != arity {
                     self.report_arm_arity(spelling, arity, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
-                let (returned, suspends) = self.check_closure_walked(closure, scope, None, &format!("the function for '{spelling}'"), arity);
+                let (returned, suspends) = self.check_closure_supplied(closure, scope, None, &format!("the function for '{spelling}'"), arity, &supplied);
                 if suspends && before(self.version, 3) {
                     self.report(
                         codes::COLLECTION_OP_SUSPENDS,

@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    AwaitExpression, AwaitSource, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
     LinkTarget, MatchExpression, MovementDeclaration, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -98,6 +98,8 @@ pub struct Bound {
     pub pos: Option<Position>,
     /// For a closure: whether calling it may wait.
     pub closure_suspends: bool,
+    /// For a function's call: what it hands back.
+    pub returned: Option<crate::types::position::ReturnShape>,
 }
 
 impl<'c> Checker<'c> {
@@ -221,6 +223,9 @@ impl<'c> Checker<'c> {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
                 self.type_assigned(&assign.name, &assign.value, scope);
+                if let Some(returned) = &bound.returned {
+                    self.set_types(scope, &assign.name, crate::families::arg_fit::types_of_return(returned));
+                }
                 if let Some(pos) = bound.pos {
                     self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
                 }
@@ -289,8 +294,8 @@ impl<'c> Checker<'c> {
         match value {
             RValue::Construct { construct } => {
                 if let Some(call) = self.call_in_construct_position(construct, scope) {
-                    self.check_call_rvalue(&call, scope, span);
-                    return Bound::default();
+                    let returned = self.check_call_rvalue(&call, scope, span);
+                    return Bound { returned, ..Bound::default() };
                 }
                 let constructed = self.check_construction(construct, scope);
                 let adapter = constructed.adapter.clone();
@@ -300,7 +305,10 @@ impl<'c> Checker<'c> {
                 }
                 return Bound { is_instance: name.is_some(), adapter, instance, ..Bound::default() };
             }
-            RValue::Call { call } => self.check_call_rvalue(call, scope, span),
+            RValue::Call { call } => {
+                let returned = self.check_call_rvalue(call, scope, span);
+                return Bound { returned, ..Bound::default() };
+            }
             RValue::Write { write } => {
                 let handle = self.check_write(write, scope, name, name.is_some());
                 return Bound { pos: handle, ..Bound::default() };
@@ -672,6 +680,21 @@ impl<'c> Checker<'c> {
     /// `checkClosure`, with whether calling the closure may wait: its body
     /// is its own function, so what it does is not the writer's.
     pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Vec<Span>, bool) {
+        self.check_closure_supplied(closure, scope, self_name, label, supplied, &[])
+    }
+
+    /// `checkClosure` with `suppliedParams`: the caller supplies the first
+    /// `supplied` parameters, and `types` says what it hands each, where the
+    /// closure leaves the type out (contextual typing).
+    pub fn check_closure_supplied(
+        &mut self,
+        closure: &ClosureExpression,
+        scope: ScopeId,
+        self_name: Option<&str>,
+        label: &str,
+        supplied: usize,
+        types: &[crate::types::position::PlaneType],
+    ) -> (Vec<Span>, bool) {
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
@@ -682,6 +705,9 @@ impl<'c> Checker<'c> {
             if let Some(type_) = &param.type_ {
                 self.report_param_position(type_, scope);
                 self.type_param(body, &param.name, type_, scope);
+            } else if let Some(given) = types.get(index) {
+                let types = crate::types::scope_env::SymbolTypes { pos: given.pos.as_deref().cloned(), field: given.field.clone(), ..Default::default() };
+                self.set_types(body, &param.name, types);
             }
         }
         let own = self_name.and_then(|name| self.declare_closure_self(name, closure, body));
@@ -692,37 +718,6 @@ impl<'c> Checker<'c> {
             self.close_closure_self(own, returns.is_empty());
         }
         (returns, suspends)
-    }
-
-    pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
-        self.check_call_args_typed(args, scope);
-    }
-
-    /// `checkCallArgs`, each argument checked in its own right: the record
-    /// each one is, where it is one (`argType`).
-    pub fn check_call_args_typed(&mut self, args: &[CallArg], scope: ScopeId) -> Vec<Option<Position>> {
-        let mut types = Vec::new();
-        for arg in args {
-            let ty = match arg {
-                CallArg::Expr { expr, .. } => {
-                    self.check_expr_slot(expr, scope);
-                    self.bare_slot_position(expr, scope)
-                }
-                CallArg::Write { write, .. } => self.check_write(write, scope, None, true),
-                CallArg::Node { node, .. } => self.check_node_literal(node, scope),
-                CallArg::Call { call, .. } => {
-                    self.check_call_in_argument(call, scope);
-                    None
-                }
-                CallArg::Closure { closure, .. } => {
-                    self.check_closure(closure, scope, None);
-                    None
-                }
-                CallArg::Type { .. } => None,
-            };
-            types.push(ty);
-        }
-        types
     }
 
     fn check_target(&mut self, target: &WriteTarget, scope: ScopeId) {
@@ -744,7 +739,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
+    pub(crate) fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
         self.check_target(&write.target, scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind

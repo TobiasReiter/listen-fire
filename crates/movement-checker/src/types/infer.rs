@@ -51,6 +51,11 @@ pub trait TypeEnv {
     fn is_many_valued_name(&self, _name: &str) -> bool {
         false
     }
+    /// `isDeclaredGraphToken`: the instance is a declared shape's own graph
+    /// (its records' fields are the program's words), not a system's.
+    fn is_declared_graph(&self, _instance: &super::position::InstanceRef) -> bool {
+        false
+    }
     /// Whether the host's zone database knows `zone`; `None` for a typing
     /// with no host behind it (one outside a check), which accuses nothing.
     fn is_zone(&self, _zone: &str) -> Option<bool> {
