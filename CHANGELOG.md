@@ -529,7 +529,7 @@ guide](docs/language/dancing-wren-migration.md).
 - CI's size warning for the API's WebAssembly artifact (`movement.wasm`) moves from 800 KiB to 1 MiB
   gzipped, and its failure line from 1 MiB to 1.5 MiB: it is 963 KiB (986,091 bytes) as chunk 7A
   ends, the readings of records held as values having first taken it past the old line. The
-  browser's artifact is unchanged. It now crosses the 1 MiB warning at 1,108,094 bytes, still under
+  browser's artifact is unchanged. It now crosses the 1 MiB warning at 1,171,349 bytes, still under
   the failure line: a paused run's closures, walks and local shapes are rebuilt on resume from the
   syntax tree saved with the pause rather than looked up by position, and reading that tree back
   takes about 100 KB.

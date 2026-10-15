@@ -1688,7 +1688,8 @@ impl<'c> Bound<'c> {
                 let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
                 for (index, param) in closure.params.iter().enumerate() {
                     self.member_params.push((param.name.clone(), inner.clone()));
-                    let held = param_holder(op.op, index, member);
+                    let checked = self.callees.is_some_and(|c| c.language_version >= 5 && c.takes_value(param));
+                    let held = if checked { Holder::Free } else { param_holder(op.op, index, member) };
                     let joined = self.param_holders.get(&param.name).map_or(held, |h| h.join(held));
                     self.param_holders.insert(param.name.clone(), joined);
                 }
@@ -1701,8 +1702,12 @@ impl<'c> Bound<'c> {
                 let Some(movement) = callees.movement(name) else { return };
                 let any: Vec<Kind> = std::iter::once(Kind::Value).chain(callees.held_kinds.iter().copied()).collect();
                 let mut signatures: Vec<Signature> = vec![Vec::new()];
-                for _ in &movement.params {
-                    signatures = signatures.iter().flat_map(|s| any.iter().map(move |k| [s.as_slice(), &[*k]].concat())).collect();
+                for param in &movement.params {
+                    // From version 5 a typed value parameter takes only a
+                    // value: the checker holds each member, and a REDUCE's
+                    // start, to it (MOV_CALL_ARG_TYPE, MOV_CALL_ARG_MAYBE_RECORD).
+                    let kinds: &[Kind] = if callees.language_version >= 5 && callees.takes_value(param) { &[Kind::Value] } else { &any };
+                    signatures = signatures.iter().flat_map(|s| kinds.iter().map(move |k| [s.as_slice(), &[*k]].concat())).collect();
                     if signatures.len() > any.len() * any.len() {
                         self.unknown_calls.push(op.span);
                         return;
@@ -3567,7 +3572,7 @@ impl Names<'_> {
                     either_values.remove(param);
                 }
                 let member = lowered(&op.source.raw).map_or(Holder::Other, |source| member_holder(&source, &|name| self.holder(name)));
-                value_holders.extend(closure.params.iter().enumerate().map(|(index, p)| (p.name.clone(), param_holder(op.op, index, member))));
+                value_holders.extend(closure.params.iter().enumerate().map(|(index, p)| (p.name.clone(), self.member_param_holder(op.op, index, p, member))));
                 let member = Names {
                     value_holders: &value_holders,
                     either_values: &either_values,
@@ -3614,6 +3619,12 @@ impl Names<'_> {
                 if !params.iter().any(|p| self.callees.takes_value(p)) {
                     return Ok(());
                 }
+                // From version 5 the checker holds each member, and a
+                // REDUCE's start, to the function's typed parameter
+                // (MOV_CALL_ARG_TYPE, MOV_CALL_ARG_MAYBE_RECORD), as it holds
+                // a plain call's argument: only what the function hands back
+                // is left to read here.
+                let checked = self.language_version >= 5;
                 let returns_free = match self.callees.movement(name) {
                     Some(movement) if movement.params.iter().all(|p| self.callees.takes_value(p)) => {
                         self.callees.returns(movement, &vec![Kind::Value; movement.params.len()], &[]).1 == Holder::Free
@@ -3621,8 +3632,8 @@ impl Names<'_> {
                     Some(_) => false,
                     None => self.closure_holder(name) == Holder::Free,
                 };
-                let accumulator_free = op.op != CollectionOp::Reduce || (op.init.as_ref().is_none_or(|init| !self.may_hold_record_slot(init)) && returns_free);
-                if member != Holder::Free || !accumulator_free { refuse("call_arg_record") } else { Ok(()) }
+                let accumulator_free = op.op != CollectionOp::Reduce || ((checked || op.init.as_ref().is_none_or(|init| !self.may_hold_record_slot(init))) && returns_free);
+                if (!checked && member != Holder::Free) || !accumulator_free { refuse("call_arg_record") } else { Ok(()) }
             }
         }
     }
@@ -4545,6 +4556,15 @@ impl Names<'_> {
 
     /// Whether a slot's value may hold a record (one it does not lower to
     /// is refused where it is walked).
+    /// What a collection op's function parameter holds in its body: the
+    /// member (or a REDUCE's accumulator) as the source holds it, but from
+    /// version 5 a typed value parameter's is free of records, the checker
+    /// holding each member and the start to it (MOV_CALL_ARG_TYPE,
+    /// MOV_CALL_ARG_MAYBE_RECORD).
+    fn member_param_holder(&self, op: CollectionOp, index: usize, param: &ast::MovementParam, member: Holder) -> Holder {
+        if self.language_version >= 5 && self.callees.takes_value(param) { Holder::Free } else { param_holder(op, index, member) }
+    }
+
     fn may_hold_record_slot(&self, slot: &ExprSlot) -> bool {
         // A nested call's value may be anything.
         let nested = self.nested_text(&slot.raw);
@@ -6024,6 +6044,34 @@ mod tests {
         // closure is called through the value it holds: run as the
         // TypeScript runs it, the checker typing the call.
         assert_eq!(reasons(mixed, use_h, None), none, "a return that is no closure");
+    }
+
+    /// A collection op's function parameter from version 5: the checker
+    /// holds each member, and a REDUCE's start, to the function's typed
+    /// parameter (MOV_CALL_ARG_TYPE, MOV_CALL_ARG_MAYBE_RECORD), so a typed
+    /// value parameter is read as a value, for a movement by name as for a
+    /// closure. Version 4 still walks the movement under every kind.
+    #[test]
+    fn a_collection_ops_typed_value_parameter_takes_a_value_from_version_5() {
+        let put = "movement put(t: <text>) {\n  write crm-[:notes]-> { body: t }\n}\n";
+        let reasons = |body: &str, version: u32| {
+            let source = format!("{PRELUDE}{put}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+            let program = movement_parser::stmt::parse_program(&source, version, false).expect("the test's program parses");
+            let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
+            let entry = declared.iter().copied().find(|m| m.name == "m");
+            refusals(&program, &reachable(&program, Some("m"), version), entry, version, &Plugins(None), &Libraries::default()).reasons
+        };
+        let none: Vec<String> = Vec::new();
+        for body in [
+            "  MAP([\"a\", \"b\"], put)",
+            "  MAP(SPLIT(\"a,b\", \",\"), put)",
+            "  MAP([msg.`subject`], put)",
+            "  up = (t: <text>) => UPPER(t)\n  r = MAP([msg.`subject`], up)\n  write crm-[:notes]-> { body: \"${COUNT(r)}\" }",
+            "  add = (acc: <text>, t: <text>) => CONCAT(acc, t)\n  r = REDUCE([\"a\"], msg.`subject`, add)\n  write crm-[:notes]-> { body: r }",
+        ] {
+            assert_eq!(reasons(body, 5), none, "{body}");
+        }
+        assert_eq!(reasons("  MAP([msg.`subject`], put)", 4), vec!["write_field_record".to_string()]);
     }
 
     /// B15: a value that may be a record and may be data (a COALESCE or an
