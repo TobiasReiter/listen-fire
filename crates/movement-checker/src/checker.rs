@@ -271,6 +271,7 @@ impl<'c> Checker<'c> {
             RValue::InlineBlock { inline_block } => {
                 let block_scope = self.scopes.open(Some(scope));
                 self.check_statement_list(&inline_block.body, block_scope);
+                self.report_inline_block_retired(inline_block);
             }
             RValue::Callback { callback } => {
                 match &callback.subject {
@@ -351,6 +352,7 @@ impl<'c> Checker<'c> {
             }
         }
         self.check_slot_expression(slot, scope, write_field);
+        self.report_block_read_back(&names, scope, slot.span);
     }
 
     /// The config slots `checkListen` reads as expressions: every key the
@@ -718,6 +720,7 @@ impl<'c> Checker<'c> {
                     self.resolve_name(name, head.span, scope);
                 }
             }
+            self.report_block_read_back(&names, scope, head.span);
             self.check_head_expression(&probe, head.span, scope);
         }
         aliases

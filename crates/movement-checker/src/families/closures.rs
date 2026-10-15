@@ -216,6 +216,35 @@ impl Checker<'_> {
         }
     }
 
+    /// `reportInlineBlockRetired`: `{ … }.name` read a block's inner binding.
+    pub fn report_inline_block_retired(&mut self, inline: &movement_parser::ast::InlineBlockExpression) {
+        let binding = &inline.binding;
+        self.report(
+            codes::INLINE_BLOCK_RETIRED,
+            format!("reading a block's inner binding by name ('{{ … }}.{binding}') is retired — a body hands its value back with 'return'. Bind the value directly, or write a closure ('() => {{ … return {binding} }}') where the body should run later."),
+            inline.span,
+        );
+    }
+
+    /// `reportBlockReadBack`: `orgs.name` reached into the block `orgs` was
+    /// bound to for a name bound inside it — matched against what escaped.
+    pub fn report_block_read_back(&mut self, names: &crate::slots::CollectedNames, scope: ScopeId, span: Span) {
+        for (root, members) in &names.rooted {
+            for member in members {
+                let escaped = self.scopes.chain(scope).find_map(|s| self.scopes.scope(s).escaped.get(member).cloned());
+                if escaped.flatten().as_deref() != Some(root.as_str()) {
+                    continue;
+                }
+                self.report(
+                    codes::BLOCK_READ_BACK_RETIRED,
+                    format!("'{member}' is bound INSIDE the block '{root}' came from, and a block's bindings do not escape it — return the value from the block instead: '{root} = … {{ … return {member} }}'"),
+                    span,
+                );
+                return;
+            }
+        }
+    }
+
     /// `reportParallelRetired`.
     fn report_parallel_retired(&mut self, expr: &CombinatorExpression, written: Span) {
         let message = "'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order";

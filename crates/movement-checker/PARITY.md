@@ -2,10 +2,10 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **38 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 1014 of 15246; 0 extra in Rust.
+- Codes at parity: **40 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 1034 of 15246; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 1135 of 11435.
-- Rust side: 6.6s; 0 records the Rust parser or catalog refused; 0 panics.
+- Rust side: 4.6s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -25,7 +25,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
 | calls | 26 | 12 | 476 | 323 | 152 | 0 | 1 |
-| closures | 14 | 10 | 305 | 261 | 44 | 0 | 0 |
+| closures | 14 | 12 | 305 | 281 | 24 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
 | flow | 10 | 7 | 78 | 58 | 20 | 0 | 0 |
 | imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
@@ -53,7 +53,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_AWAIT_IMPURE_CONDITION | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_AWAIT_NEEDS_CADENCE | flow | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_AWAIT_NOT_AWAITABLE | flow | 12 | 4 | 8 | 0 | 0 |  |
-| MOV_BLOCK_READ_BACK_RETIRED | closures | 12 | 0 | 12 | 0 | 0 |  |
+| MOV_BLOCK_READ_BACK_RETIRED | closures | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_BLOCK_RETURNS_NOTHING | closures | 152 | 152 | 0 | 0 | 0 | yes |
 | MOV_BORROW_UNKNOWN_FIELD | nodes | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_BORROW_UNKNOWN_GRAPH | nodes | 12 | 0 | 12 | 0 | 0 |  |
@@ -137,7 +137,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_IMPORT_FILE_UNSUPPORTED | imports | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_IMPORT_NOT_EXPORTED | imports | 20 | 0 | 20 | 0 | 0 |  |
 | MOV_IMPORT_UNKNOWN | names | 20 | 20 | 0 | 0 | 0 | yes |
-| MOV_INLINE_BLOCK_RETIRED | closures | 8 | 0 | 8 | 0 | 0 |  |
+| MOV_INLINE_BLOCK_RETIRED | closures | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_JSON_OPAQUE | values | 56 | 0 | 56 | 0 | 0 |  |
 | MOV_LANGUAGE_VERSION_UNSUPPORTED | versions | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_LIMIT_NEEDS_ORDER | walks | 8 | 0 | 8 | 0 | 0 |  |
