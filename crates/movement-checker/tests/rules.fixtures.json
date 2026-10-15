@@ -1,0 +1,239 @@
+{
+ "note": "Programs the parity corpus never exercises, each with the TypeScript checker's own answer (every diagnostic, in order, as CODE line:col-line:col message), read off it on 2026-10-16. Run by tests/rules.rs.",
+ "snapshots": {
+  "old_edge": {
+   "contractVersion": 1,
+   "adapters": {
+    "email": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "dealflow_inbox": {
+       "positions": {
+        "message": {
+         "properties": {
+          "subject": "text",
+          "text": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "messages": {
+         "target": "message"
+        }
+       },
+       "writableRoots": {}
+      }
+     }
+    },
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "acme_main": {
+       "positions": {
+        "company": {
+         "properties": {
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "edges": {}
+        },
+        "note": {
+         "properties": {
+          "title": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        },
+        "notes": {
+         "target": "note"
+        }
+       },
+       "supportsInPlaceUpdate": true,
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "resultShape": {
+          "externalId": "text",
+          "url": "text",
+          "Name": "text",
+          "Domains": {
+           "kind": "list",
+           "of": "text"
+          }
+         }
+        },
+        "note": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "url": "text",
+          "title": "text"
+         }
+        }
+       }
+      }
+     }
+    },
+    "kg": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "native_knowledge": {
+       "positions": {
+        "meeting": {
+         "properties": {
+          "title": "text",
+          "created": "date"
+         },
+         "edges": {}
+        },
+        "minute": {
+         "properties": {
+          "title": "text",
+          "committed": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "meetings": {
+         "target": "meeting"
+        },
+        "minutes": {
+         "target": "minute"
+        }
+       },
+       "writableRoots": {
+        "meeting": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "title": "text",
+          "created": "date"
+         }
+        },
+        "minute": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "title": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "dealflow_inbox": {
+     "adapters": [
+      "email"
+     ]
+    },
+    "acme_main": {
+     "adapters": [
+      "attio"
+     ]
+    },
+    "native_knowledge": {
+     "adapters": [
+      "kg"
+     ]
+    }
+   },
+   "plugins": {}
+  }
+ },
+ "cases": [
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 4,
+   "upgradingFrom": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_READ_FOUND 10:33-10:69 since \"Luminous Owl\" (4) 'created' on 'org' reads the record as the write found it; before, it read what the system handed back from the write (often nothing). If the program assumed the old reading, change it, then upgrade. (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_MATCH_MISS_CONTINUES 11:8-11:69 since \"Luminous Owl\" (4) a 'match' that finds nothing no longer ends the scope: 'ex' is absent and the block carries on — guard what depends on it with `if ex != null { … }` (see handbook: writes#match)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_UPDATED_IN_PLACE 13:9-13:12 since \"Luminous Owl\" (4) 'org' reads as the updated record below this line; before, it kept the values of its own write",
+    "MOV_HANDLE_UPDATED_IN_PLACE 14:16-14:19 since \"Luminous Owl\" (4) 'org' reads as the updated record below this line ('org2' names the same record); before, it kept the values of its own write"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+   ]
+  },
+  {
+   "name": "the @old edge and a write handle's fields",
+   "snapshot": "old_edge",
+   "version": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_TRAVERSE_UNKNOWN_EDGE 9:7-9:32 a crm.company handle has no edge '@previous'",
+    "MOV_PRESENCE_TEST_CONSTANT 12:6-12:16 'ex' always has a value here, so 'ex != null' is always true — nothing on this path can make it absent.",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 12:23-12:42 a crm.company handle has no edge '@old'"
+   ]
+  }
+ ]
+}

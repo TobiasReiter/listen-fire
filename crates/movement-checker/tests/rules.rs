@@ -115,3 +115,30 @@ fn a_graph_holds_no_record_as_a_field_value() {
     let entry = "import { box } from adapters\nb = box()\nmovement m(n: <text>) {\n  x = node { k: b, j: n }\n  return n\n}\n";
     assert!(check_with(entry, 5, BOX).is_empty());
 }
+
+/// Every case in `rules.fixtures.json`: a program checked under its version
+/// against the catalog snapshot it names, and the TypeScript's answer.
+#[test]
+fn the_fixture_programs_get_the_typescripts_answers() {
+    // Raw, so each snapshot keeps the key order the TypeScript read (a
+    // `Value` round trip would sort every object's keys).
+    #[derive(serde::Deserialize)]
+    struct Fixtures<'a> {
+        #[serde(borrow)]
+        snapshots: std::collections::HashMap<String, &'a serde_json::value::RawValue>,
+        cases: Vec<serde_json::Value>,
+    }
+    let fixtures: Fixtures = serde_json::from_str(include_str!("rules.fixtures.json")).unwrap();
+    let mut failures = Vec::new();
+    for case in &fixtures.cases {
+        let snapshot = fixtures.snapshots[case["snapshot"].as_str().unwrap()].get();
+        let version = case["version"].as_u64().unwrap() as u32;
+        let upgrading_from = case["upgradingFrom"].as_u64().map(|v| v as u32);
+        let found = check_upgrading(case["source"].as_str().unwrap(), version, upgrading_from, snapshot);
+        let expected: Vec<String> = case["expected"].as_array().unwrap().iter().map(|d| d.as_str().unwrap().to_string()).collect();
+        if found != expected {
+            failures.push(format!("{} (v{version}{}):\n  expected {expected:#?}\n  found {found:#?}", case["name"], upgrading_from.map_or(String::new(), |f| format!(" from {f}"))));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
