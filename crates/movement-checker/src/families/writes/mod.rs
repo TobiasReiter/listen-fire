@@ -1721,3 +1721,73 @@ fn handle_in_field_message(field_name: &str, subject: &str, target: &Ty, value: 
         handle_in_field_said(field_name, subject, target, value, held)
     ))
 }
+
+// ── write-only reads (typing.ts `reportWriteOnlyEdge`, `reportWriteOnlyProperty`) ──
+//
+// Raised inside the walk's typing, at the points the walks family's hooks
+// observe (`walks::observe_step`, `walks::observe_read`): each hook calls
+// the matching function here.
+
+/// A hop along an edge its system offers nothing to read along.
+pub fn report_write_only_edge(typing: &mut Typing, from: Option<&Position>, step: &movement_parser::lowering::expression::EdgeStep, landing: Option<&crate::types::position::EdgeLanding>) {
+    let (Some(from), Some(crate::types::position::EdgeLanding::Untyped { edge: Some(schema) })) = (from, landing) else { return };
+    let from = match from {
+        Position::MaybeEmpty(of) => &**of,
+        other => other,
+    };
+    let unreadable = schema.readable == Some(false) && (matches!(from, Position::Union(_)) || schema.awaitable != Some(true));
+    if !unreadable || !matches!(from, Position::Position(_) | Position::Handle(_) | Position::Union(_)) {
+        return;
+    }
+    let edge = &step.edge_type_id;
+    let why = if schema.writable == Some(true) {
+        format!("it writes (write …-[:{edge}]-> {{ … }}); the system offers nothing to read back along it")
+    } else {
+        "the system offers nothing to read along it".to_string()
+    };
+    typing.report(codes::WRITE_ONLY_EDGE, format!("'-[:{edge}]->' on {} is write-only — {why}", describe_position(from)));
+}
+
+/// A dot read of a field the type declares on its write shape only.
+pub fn report_write_only_property(typing: &mut Typing, position: Option<&Position>, property: &str, ty: Option<&Ty>) {
+    if ty.is_some() {
+        return;
+    }
+    let Some(position) = position else { return };
+    let position = match position {
+        Position::MaybeEmpty(of) => &**of,
+        other => other,
+    };
+    let (instance, type_name, schema) = match position {
+        Position::Position(p) => (&p.instance, Some(p.position.clone()), position_schema_of_ref(position).map(|s| s.into_owned())),
+        Position::Handle(h) => (&h.instance, h.position.clone(), position_schema_of_ref(position).map(|s| s.into_owned())),
+        Position::Union(u) => {
+            if u.variants.iter().any(|v| u.instance.schema.positions.get(v).is_some_and(|p| p.properties.contains_key(property))) {
+                return;
+            }
+            let Some(variant) =
+                u.variants.iter().find(|v| u.instance.schema.positions.get(*v).and_then(|p| p.write_only_properties.as_ref()).is_some_and(|w| w.iter().any(|f| f == property)))
+            else {
+                return;
+            };
+            (&u.instance, Some(variant.clone()), u.instance.schema.positions.get(variant).cloned())
+        }
+        _ => return,
+    };
+    let Some(schema) = schema else { return };
+    if schema.properties.contains_key(property) || !schema.write_only_properties.as_ref().is_some_and(|w| w.iter().any(|f| f == property)) {
+        return;
+    }
+    let shown = match (position, &type_name) {
+        (Position::Union(_), Some(variant)) => describe_position(&Position::record(instance.clone(), variant.clone())),
+        _ => describe_position(position),
+    };
+    let doc = type_name
+        .as_ref()
+        .and_then(|t| instance.schema.writable_roots.get(t).or_else(|| instance.schema.create_shapes.as_ref().and_then(|c| c.get(t))))
+        .and_then(|shape| shape.field_docs.as_ref())
+        .and_then(|docs| docs.get(property))
+        .map(|doc| format!(" {doc}"))
+        .unwrap_or_default();
+    typing.report(codes::WRITE_ONLY_PROPERTY, format!("'{property}' on {shown} is write-only — a value a write sets, not one to read.{doc}"));
+}
