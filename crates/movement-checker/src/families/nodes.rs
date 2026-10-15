@@ -434,6 +434,30 @@ impl Checker<'_> {
         Some(crate::types::Ty::list(named))
     }
 
+    /// `declaredExtractGraph`: an extraction node that takes a declaration as
+    /// its shape — the declaration's fields (typed where it resolved them)
+    /// and nested nodes, then the `through` stages on top. Untyped (`declared`)
+    /// when the name is no node declaration.
+    pub fn declared_extract_graph(&self, node: &movement_parser::ast::DeclaredExtractNode, scope: ScopeId) -> crate::types::position::ExtractNode {
+        use crate::types::position::ExtractNode;
+        let shape = match self.scopes.resolve(scope, &node.declared.type_) {
+            Resolution::Found(id) => self.declared_node(id).cloned(),
+            _ => None,
+        };
+        let mut graph = match &shape {
+            Some(shape) => shape_extract_graph(&node.name, &shape.declaration.root, &shape.declaration.name, &shape.instance.schema),
+            None => ExtractNode { name: node.name.clone(), properties: Default::default(), children: Default::default(), declared: true },
+        };
+        let staged = self.extract_graph(&node.name, &node.stages, false, scope);
+        for (name, child) in staged.children {
+            graph.children.insert(name, child);
+        }
+        for (name, field) in staged.properties {
+            graph.properties.insert(name, field);
+        }
+        graph
+    }
+
     /// `typeNamesInScope`: the primitives, then every `type` declared in scope.
     fn type_names_in_scope(&self, scope: ScopeId) -> Vec<String> {
         let mut names: Vec<String> = PRIMITIVE_TYPE_NAMES.iter().map(|s| s.to_string()).collect();
@@ -778,6 +802,24 @@ fn entry_name(entry: &NodeEntry) -> (&str, Span) {
 
 fn empty_local(label: &str) -> Position {
     Position::Local(LocalNode { label: label.to_string(), reads: IndexMap::new(), edges: None, run_built: None, extracted: None })
+}
+
+/// `shapeExtractGraph`: one node of a declaration, read as the extract node
+/// it describes; `key` is its position in the declaration's schema.
+fn shape_extract_graph(name: &str, shape: &ShapeNode, key: &str, schema: &InstanceSchema) -> crate::types::position::ExtractNode {
+    use crate::types::position::{ExtractField, ExtractNode};
+    let mut graph = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared: false };
+    for child in &shape.children {
+        graph.children.insert(child.name.clone(), std::rc::Rc::new(shape_extract_graph(&child.name, child, &format!("{key}.{}", child.name), schema)));
+    }
+    let properties = schema.positions.get(key).map(|p| &p.properties);
+    for field in &shape.fields {
+        let explicit = properties.and_then(|p| p.get(&field.name)).map(|t| crate::types::field::strip_absent(&Ty::from_schema(t)).clone());
+        let nullable = field.nullable == Some(true);
+        let reads_as_present_text = !nullable && matches!(explicit, Some(Ty::Text));
+        graph.properties.insert(field.name.clone(), ExtractField { explicit, reads_as_present_text, annotated: true });
+    }
+    graph
 }
 
 /// `structuralMisfit`: what a supplied record lacks that the required

@@ -150,18 +150,19 @@ impl Checker<'_> {
 
     /// `buildExtractGraph`, the typing half: every field a node declares across
     /// its stages (a later stage's re-declaration wins), and its nested nodes.
-    /// A node that takes a declaration as its shape is not read through it here.
-    fn extract_graph(&self, name: &str, stages: &[movement_parser::ast::ExtractStage], declared: bool, scope: ScopeId) -> crate::types::position::ExtractNode {
+    /// A node that takes a declaration as its shape starts from the
+    /// declaration (`declared_extract_graph`, the nodes family's).
+    pub(crate) fn extract_graph(&self, name: &str, stages: &[movement_parser::ast::ExtractStage], declared: bool, scope: ScopeId) -> crate::types::position::ExtractNode {
         use crate::types::position::{ExtractField, ExtractNode};
         use movement_parser::ast::ExtractNode as Node;
         let mut node = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared };
         for stage in stages {
             for child in &stage.children {
-                let (child_name, child_stages, declared) = match child {
-                    Node::Inline(inline) => (&inline.name, &inline.stages, false),
-                    Node::Declared(declared) => (&declared.name, &declared.stages, true),
+                let built = match child {
+                    Node::Inline(inline) => self.extract_graph(&inline.name, &inline.stages, false, scope),
+                    Node::Declared(declared) => self.declared_extract_graph(declared, scope),
                 };
-                node.children.insert(child_name.clone(), Rc::new(self.extract_graph(child_name, child_stages, declared, scope)));
+                node.children.insert(built.name.clone(), Rc::new(built));
             }
             for field in &stage.fields {
                 let explicit = field.type_.as_deref().filter(|t| !t.contains('.')).and_then(|t| Ty::from_scalar_name(t).or_else(|| self.declared_type_in(t, scope)));
