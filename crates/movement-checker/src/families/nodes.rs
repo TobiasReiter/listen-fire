@@ -795,7 +795,10 @@ impl Checker<'_> {
         }?;
         let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
         let symbol = self.scopes.symbol(id);
-        let node_plane = symbol.types.pos.is_some() || symbol.is_closure || matches!(symbol.types.field, Some(Ty::Record(_)));
+        // An instance's position is read off its construction, not bound on
+        // the node plane (the TypeScript's instance symbol carries no `posType`).
+        let node_plane = symbol.kind != SymbolKind::Instance
+            && (symbol.types.pos.is_some() || symbol.is_closure || matches!(symbol.types.field, Some(Ty::Record(_))));
         node_plane.then(|| symbol.name.clone())
     }
 
@@ -938,7 +941,7 @@ pub fn or_list(items: &[String]) -> String {
 
 // ── Graph literals ──
 
-use crate::types::field::{field_assignable, holds_records, is_maybe_absent, record_in, strip_absent};
+use crate::types::field::{HeldHandle, HeldStep, HeldWalk, field_assignable, handle_within, holds_records, is_maybe_absent, record_in, strip_absent};
 
 /// `RequiredPosition`: the declared node a graph body has to satisfy.
 #[derive(Clone)]
@@ -1099,8 +1102,9 @@ impl Checker<'_> {
                         edges.insert(name.clone(), reference_edge(name, reference.position, reference.sequenced));
                         continue;
                     }
-                    // A value holding a record somewhere inside is the
-                    // graph-spread family's refusal; its field is not judged here.
+                    self.refuse_record_in_graph_entry(name, &value.raw, *span, typed.ty.as_ref(), typed.may_hold.as_ref());
+                    // A value holding a record somewhere inside is refused
+                    // above; its field is not judged again.
                     let holds = holds_records(typed.ty.as_ref()) || holds_records(typed.may_hold.as_ref());
                     let ty = self.node_value_entry_type(name, value, *span, typed.expr.as_ref(), typed.ty, scope);
                     edges.shift_remove(name);
@@ -1560,21 +1564,92 @@ impl Checker<'_> {
             ),
             _ => None,
         };
-        let Some(keys) = keys else {
-            if required.is_none() {
-                self.report(
-                    codes::GRAPH_SPREAD_UNTYPED,
-                    format!(
-                        "nothing says which keys '{s}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> {{ ...{s} }}'), and it is checked against the shape when it is built",
-                        s = spread.source
-                    ),
-                    spread.span,
-                );
-            }
+        if keys.is_none() && required.is_none() {
+            self.report(
+                codes::GRAPH_SPREAD_UNTYPED,
+                format!(
+                    "nothing says which keys '{s}' holds, so nothing could say what this graph holds — give the graph a shape ('graph<Shape> {{ ...{s} }}'), and it is checked against the shape when it is built",
+                    s = spread.source
+                ),
+                spread.span,
+            );
             return None;
-        };
+        }
+        self.refuse_record_in_graph_spread(spread, symbol.types.may_hold.as_ref(), &value);
+        let keys = keys?;
         let (reads, edges) = self.check_spread_keys(&keys, required, spread, written, earlier);
         Some(SpreadKeys { reads, edges, may_be_absent })
+    }
+
+    /// `refuseRecordInGraphSpread`: a map spread into a graph copies values
+    /// and maps; a record under any key, at any depth or in any arm, is
+    /// neither (the engine refuses it when the graph is built). A file is a
+    /// value a graph field holds.
+    fn refuse_record_in_graph_spread(&mut self, spread: &movement_parser::ast::MapSpread, may_hold: Option<&Ty>, value: &Ty) {
+        let walk = HeldWalk::files_only();
+        let Some(held) = handle_within(Some(value), &walk).or_else(|| handle_within(may_hold, &walk)) else { return };
+        let written = if spread.path.is_some() { spread.source.clone() } else { crate::families::names::spell_name(&spread.source) };
+        let place = place_in_input(&written, &held, &describe_field_type(&held.handle));
+        // The entry the record would be written as: the key it sits under —
+        // in a list, the list's key, holding the records as a list.
+        let last_key = held.steps.iter().rposition(|step| matches!(step, HeldStep::Key(_)));
+        let entry_name = match last_key.map(|i| &held.steps[i]) {
+            Some(HeldStep::Key(key)) => key.as_str(),
+            _ => "name",
+        };
+        let in_list = last_key.map_or(!held.steps.is_empty(), |i| i + 1 < held.steps.len());
+        let as_entry = |value: &str| format!("'{entry_name}: {}'", if in_list { format!("[{value}, …]") } else { value.to_string() });
+        let field_off = if last_key.is_some() { as_entry("r.`Name`") } else { "'r.`Name`'".to_string() };
+        self.report(
+            codes::GRAPH_SPREAD_RECORD,
+            format!(
+                "'...{written}' copies a map's values and maps into the graph, and {place} — a record, not a value. Write a field off it ({field_off}), or write the record into the graph as an entry of its own ({})",
+                as_entry("r")
+            ),
+            spread.span,
+        );
+    }
+
+    /// `refuseRecordInGraphEntry`: a graph entry that is not a reference but
+    /// may hold a record — in an operator's arm or inside a value — is a field
+    /// holding the record, which the graph cannot hold. A file passes.
+    fn refuse_record_in_graph_entry(&mut self, name: &str, raw: &str, span: Span, ty: Option<&Ty>, may_hold: Option<&Ty>) {
+        let walk = HeldWalk::files_only();
+        let Some(held) = handle_within(ty, &walk).or_else(|| handle_within(may_hold, &walk)) else { return };
+        let written = raw.trim();
+        let position = match strip_absent(&held.handle) {
+            Ty::Record(position) => position.as_deref(),
+            _ => None,
+        };
+        if let Some(position @ Position::Meta { .. }) = position {
+            // A connection stands for a whole system: no field holds one.
+            self.report(
+                codes::GRAPH_ENTRY_RECORD,
+                format!(
+                    "'{name}' is a field, and {} — a connection, not a value a field holds. Write a record read through it, or the fields you want ('{name}: r.`Name`')",
+                    place_in_input(written, &held, &describe_position(position))
+                ),
+                span,
+            );
+            return;
+        }
+        let place = place_in_input(written, &held, &describe_field_type(&held.handle));
+        // The entry made the record alone holds it as a reference: the value
+        // itself when it is the record, or a slot of it.
+        let only = match held.steps.as_slice() {
+            [HeldStep::Slot(index)] if crate::slots::is_bare_ident(written) => Some(format!("AT({written}, {index})")),
+            [] => Some("r".to_string()),
+            _ => None,
+        };
+        let alone = match only {
+            Some(only) if only != written => format!(", or make the entry the record alone ('{name}: {only}'), which holds it as a reference"),
+            _ => String::new(),
+        };
+        self.report(
+            codes::GRAPH_ENTRY_RECORD,
+            format!("'{name}' is a field, and {place} — a record, not a value a field holds. Write a field off the record ('{name}: r.`Name`'){alone}"),
+            span,
+        );
     }
 
     /// `checkGraphRecordSpread`: `...r` of one record — its fields copied.
@@ -1715,4 +1790,19 @@ fn last_hop_ordered(head: &movement_parser::ast::PathHead) -> bool {
     let probe = format!("x{}.`__movement_head_probe__`", head.hops_raw);
     let Ok(Expression::Traverse { steps, .. }) = crate::slots::expression_of_text(&probe) else { return false };
     matches!(steps.last(), Some(TraversalStep::Edge(edge)) if edge.cardinality.as_ref().is_some_and(|c| c.order_by.is_some()))
+}
+
+/// `placeInInput`: where a held object sits in an input as written — the
+/// input itself, a path under a name, or a path inside a written value.
+fn place_in_input(written: &str, held: &HeldHandle, kind: &str) -> String {
+    let steps = crate::types::field::spell_held_steps(&held.steps);
+    let verb = if held.may { "may be" } else { "is" };
+    if steps.is_empty() {
+        return format!("'{written}' {verb} {kind}");
+    }
+    if crate::slots::is_bare_ident(written) {
+        format!("'{written}{steps}' {verb} {kind}")
+    } else {
+        format!("'{written}' {} {kind} at '{steps}'", if held.may { "may hold" } else { "holds" })
+    }
 }

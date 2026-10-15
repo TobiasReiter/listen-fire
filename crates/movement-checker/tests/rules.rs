@@ -95,3 +95,23 @@ fn a_record_is_not_looked_up_by_a_key() {
         ]
     );
 }
+
+#[test]
+fn a_graph_holds_no_record_as_a_field_value() {
+    let source = "import { box } from adapters\nb = box()\nmovement m(f: <file>, n: <text>) {\n  h = write b-[:docs]-> { name: \"x\" }\n  v = { who: h, tag: \"t\" }\n  w = { all: [h, h], k: \"x\" }\n  pair = [h, \"x\"]\n  g1 = graph { ...v }\n  g2 = graph { ...w }\n  g3 = graph { a: COALESCE(h, \"x\"), b: IF n == \"x\" THEN h ELSE \"y\" END, c: f, d: { inner: h }, e: pair, k: b }\n  return n\n}\n";
+    assert_eq!(
+        check_with(source, 5, BOX),
+        [
+            "MOV_GRAPH_SPREAD_RECORD 8:16-8:20 '...v' copies a map's values and maps into the graph, and 'v.who' is a b.Doc handle — a record, not a value. Write a field off it ('who: r.`Name`'), or write the record into the graph as an entry of its own ('who: r')",
+            "MOV_GRAPH_SPREAD_RECORD 9:16-9:20 '...w' copies a map's values and maps into the graph, and 'w.all[0]' is a b.Doc handle — a record, not a value. Write a field off it ('all: [r.`Name`, …]'), or write the record into the graph as an entry of its own ('all: [r, …]')",
+            "MOV_GRAPH_ENTRY_RECORD 10:16-10:35 'a' is a field, and 'COALESCE(h, \"x\")' may be a b.Doc handle — a record, not a value a field holds. Write a field off the record ('a: r.`Name`'), or make the entry the record alone ('a: r'), which holds it as a reference",
+            "MOV_GRAPH_ENTRY_RECORD 10:37-10:71 'b' is a field, and 'IF n == \"x\" THEN h ELSE \"y\" END' may be a b.Doc handle — a record, not a value a field holds. Write a field off the record ('b: r.`Name`'), or make the entry the record alone ('b: r'), which holds it as a reference",
+            "MOV_LIST_MIXED 10:99-10:103 a list holds one kind of thing, and this one holds both: a b.Doc handle is a record, and another member is text. A tuple may hold both — read one slot with 'AT(t, 0)' — but read as a list it may not. Build a list of records and walk it ('both = [one, two]' … 'both-[c:company]-> { … }'), or read the records' fields first and build a list of the values.",
+            "MOV_GRAPH_ENTRY_RECORD 10:105-10:109 'k' is a field, and 'b' is 'b' (the instance itself) — a connection, not a value a field holds. Write a record read through it, or the fields you want ('k: r.`Name`')",
+        ]
+    );
+    // An instance is no record bound on the node plane: a node literal's
+    // entry naming one says nothing (the TypeScript's answer).
+    let entry = "import { box } from adapters\nb = box()\nmovement m(n: <text>) {\n  x = node { k: b, j: n }\n  return n\n}\n";
+    assert!(check_with(entry, 5, BOX).is_empty());
+}
