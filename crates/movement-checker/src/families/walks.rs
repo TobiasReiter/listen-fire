@@ -113,6 +113,10 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
                             describe_position(from)
                         ),
                     );
+                    return;
+                }
+                if edge_schema.watchable == Some(true) {
+                    typing.watchable_reads.push(edge.to_string());
                 }
             }
             // A write-only edge is the writes family's (MOV_WRITE_ONLY_EDGE).
@@ -816,7 +820,7 @@ impl crate::checker::Checker<'_> {
     pub fn walk_head(&mut self, head: &PathHead, scope: ScopeId, awaited: bool) -> Option<HeadWalk> {
         let steps = Self::head_steps(head)?;
         let start = self.head_root_type(head, scope)?;
-        let (walk, diagnostics) = {
+        let (walk, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, head.span);
             let landed = typing.walk_steps(Some(start), &steps, awaited);
@@ -826,8 +830,9 @@ impl crate::checker::Checker<'_> {
                 last_edge_schema: typing.last_edge_schema.clone(),
                 ordering: typing.last_ordering,
             };
-            (walk, std::mem::take(&mut typing.diagnostics))
+            (walk, std::mem::take(&mut typing.diagnostics), std::mem::take(&mut typing.watchable_reads))
         };
+        self.effects.note_watchable_reads(&watchable);
         for diagnostic in diagnostics {
             self.push(diagnostic);
         }

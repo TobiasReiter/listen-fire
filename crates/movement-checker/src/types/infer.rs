@@ -95,6 +95,9 @@ pub struct Typing<'a> {
     pub last_ordering: CollectionOrder,
     pub last_ordering_edge: Option<String>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Edges read bare that their source would announce (`onWatchableRead`):
+    /// whoever polls decides whether that is worth saying.
+    pub watchable_reads: Vec<String>,
     /// The field a write puts this value into (`WriteTargetRef`): its type,
     /// and its borrowable spelling (`crm.companies.stage`) when known.
     pub write_target: Option<(Ty, Option<String>)>,
@@ -121,6 +124,7 @@ impl<'a> Typing<'a> {
             last_landings: Vec::new(),
             last_ordering: CollectionOrder::Unknown,
             last_ordering_edge: None,
+            watchable_reads: Vec::new(),
             diagnostics: Vec::new(),
             write_target: None,
             narrowed_scalars: HashMap::new(),

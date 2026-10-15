@@ -442,13 +442,14 @@ impl<'c> Checker<'c> {
         }
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
-        let (ty, may_hold, diagnostics) = {
+        let (ty, may_hold, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            (ty, may_hold, typing.diagnostics)
+            (ty, may_hold, typing.diagnostics, typing.watchable_reads)
         };
+        self.effects.note_watchable_reads(&watchable);
         for diagnostic in diagnostics {
             self.push(diagnostic);
         }
@@ -573,12 +574,13 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
-                let (ty, diagnostics) = {
+                let (ty, diagnostics, watchable) = {
                     let env = self.typing_env(scope);
                     let mut typing = Typing::new(&env, self.version, slot.span);
                     let ty = typing.infer(expr);
-                    (ty, typing.diagnostics)
+                    (ty, typing.diagnostics, typing.watchable_reads)
                 };
+                self.effects.note_watchable_reads(&watchable);
                 for diagnostic in diagnostics {
                     self.push(diagnostic);
                 }
@@ -887,24 +889,28 @@ impl<'c> Checker<'c> {
                 if let Some(every) = every {
                     self.check_until_cadence(every);
                 }
-                match condition {
+                let condition_span = match condition {
+                    UntilCondition::Closure { closure } => closure.span,
+                    UntilCondition::Expr { expr } => expr.span,
+                };
+                self.check_until_watching(condition_span, |this| match condition {
                     UntilCondition::Closure { closure } => {
-                        self.check_until_params(closure);
-                        let impure = self.check_until_purity(&closure.body);
-                        let (_, suspends) = self.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
-                        self.absorb_suspend(suspends);
+                        this.check_until_params(closure);
+                        let impure = this.check_until_purity(&closure.body);
+                        let (_, suspends) = this.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
+                        this.absorb_suspend(suspends);
                         if suspends && !impure {
-                            self.refuse_unresumable_wait("this 'until' condition", closure.span);
+                            this.refuse_unresumable_wait("this 'until' condition", closure.span);
                         }
                     }
                     UntilCondition::Expr { expr } => {
-                        self.check_expr_slot(expr, scope);
-                        if let Resolution::Found(id) = self.scopes.resolve(scope, expr.raw.trim()) {
-                            let suspends = self.closure_suspends(id);
-                            self.absorb_suspend(suspends);
+                        this.check_expr_slot(expr, scope);
+                        if let Resolution::Found(id) = this.scopes.resolve(scope, expr.raw.trim()) {
+                            let suspends = this.closure_suspends(id);
+                            this.absorb_suspend(suspends);
                         }
                     }
-                }
+                });
             }
         }
     }

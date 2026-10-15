@@ -268,9 +268,44 @@ pub struct Effects {
     frames: Vec<bool>,
     /// Whether each closure bound to a name may wait when called.
     pub closures: std::collections::HashMap<SymbolId, bool>,
+    /// While an `until` condition is checked: the edges it reads bare that
+    /// their source would announce (`polledWatchableEdges`), in first-read order.
+    polled_watchable: Option<Vec<String>>,
+}
+
+impl Effects {
+    pub fn note_watchable_reads(&mut self, edges: &[String]) {
+        let Some(polled) = self.polled_watchable.as_mut() else { return };
+        for edge in edges {
+            if !polled.contains(edge) {
+                polled.push(edge.clone());
+            }
+        }
+    }
 }
 
 impl Checker<'_> {
+    /// `checkUntil`'s bracket: `check` checks the condition, and an edge it
+    /// polls that its source announces is worth a nudge (a warning — the
+    /// rewrite is the author's: an adapter growing webhooks must not quietly
+    /// change when a saved movement wakes).
+    pub fn check_until_watching(&mut self, condition_span: Span, check: impl FnOnce(&mut Self)) {
+        let outer = self.effects.polled_watchable.replace(Vec::new());
+        check(self);
+        let watchable = std::mem::replace(&mut self.effects.polled_watchable, outer).unwrap_or_default();
+        if watchable.is_empty() {
+            return;
+        }
+        let edges = watchable.iter().map(|edge| format!("'-[:{edge}]->'")).collect::<Vec<_>>().join(", ");
+        let mut warning = crate::diagnostic::Diagnostic::error(
+            codes::UNTIL_EDGE_WATCHABLE,
+            format!("{edges} now arrives as it happens, so this doesn't have to be checked on a timer — 'await FIRST(…)' on it waits without polling."),
+            condition_span,
+        );
+        warning.severity = Some(crate::diagnostic::Severity::Warning);
+        self.push(warning);
+    }
+
     /// `withEffectFrame`'s opening half: a body whose effects are its own.
     pub fn open_effect_frame(&mut self) {
         self.effects.frames.push(false);
