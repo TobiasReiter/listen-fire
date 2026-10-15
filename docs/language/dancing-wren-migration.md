@@ -175,7 +175,7 @@ text = READ(FIRST(h-[:Files]->).`File`)
 - Under Dancing Wren (5) a closure is a value in a list literal, as TypeScript allows: `fs = [() => { … }, (x: <number>) => x + 1]`, or in place as a collection op's source, `MAP([() => { … }, f], …)`. Under 4 and earlier it is `MOV_EXPR_CLOSURE_POSITION` (bind it to a name first).
 - It is a closure like one bound to a name: its body is checked where it is written, it holds the scope it is written in by reference (it sees the bindings around the list, a park inside it resumes), and a parameter nothing supplies needs a type (`MOV_PARAM_NEEDS_TYPE`), as TypeScript's `noImplicitAny` asks.
 - The list's element type is the union of its closures' types (TypeScript's `(() => A) | ((x: number) => number)`), and a list of named functions (`[made, label]`) is the same: from 5 a function declared with a name, read as a value, is a closure of its signature.
-- A closure written as a call's argument is passed to a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)). Anywhere else inside an expression (`IF … THEN () => … END`, a value in a record literal `{ g: () => … }`, a concise body that is itself a closure `(n) => () => …`) it is still refused by name: bind it to a name first.
+- A closure written as a call's argument is passed to a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)). Anywhere else inside an expression (`IF … THEN () => … END`, a concise body that is itself a closure `(n) => () => …`) it is still refused by name: bind it to a name first. A value in a record literal is never a closure, written in place or bound ([no methods](#no-methods-a-closure-is-never-held-under-a-key)).
 
 ```
 # version 4: each closure bound to a name first
@@ -195,7 +195,7 @@ fs = [() => { return 1 }, () => { return "x" }]
   - a closure a closure returns in place (`mk = () => { return () => { … } }`);
   - `IF c THEN a ELSE b END` and `COALESCE(a, b)` over closures, which are their union (TypeScript's `A | B`);
   - a `race` receipt's slot whose arm returned a closure (`g = AT(r, 0)`, narrowed);
-  - a parameter or a record key whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)).
+  - a parameter whose type is a closure type ([section 13](#13-a-closures-type-is-written-params--return)).
 
   Under 4 such a call is refused (`MOV_CONSTRUCT_NOT_ADAPTER` / `MOV_CALL_NOT_MOVEMENT`).
 - A closure's type flows through every value position: a list keeps its closures' union, `FILTER` keeps it, `AT` reads a slot's exactly (a literal index on a list written down) or the union, a MAP whose function returns a closure holds that closure, and a call hands back what its callee returns.
@@ -210,10 +210,24 @@ write crm-[:notes]-> { title: COALESCE(AT(r, 1), "") }   # text: written
 write crm-[:notes]-> { title: COALESCE(AT(r, 0), "") }   # may be a record: MOV_WRITE_FIELD_TYPE
 ```
 
-### A dotted call on a value
+### No methods: a closure is never held under a key
 
-- Under Dancing Wren (5) `box.g()` calls the closure `box` holds under `g`, as TypeScript's does, typed by it: `box = { g: label }` then `v = box.g()` is `label`'s answer, and `UPPER(box.g())` runs it first, as any call in an expression does. A key the value does not have (`box.nope()`, "'box' has no 'nope'") and a member that is no closure are `MOV_CALL_NOT_MOVEMENT`.
-- Under Dancing Wren (5), a dotted call of a function that is no built-in (`o.nope()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Versions 1–4 are unchanged (a saved movement never breaks). Two forms are unchanged on every version: a built-in in a record's scope (`o.UPPER(name)`), and a function inside a write field, which the target may advertise.
+- Under Dancing Wren (5) a closure lives in a variable or a list, never under a key of a record or map. There are no methods: a dot on a record or map always reads a field. Why: a closure under a key made `box.g()` a second way to call a function, and `box.g` mean two things.
+- A closure (or a value that may be one) put under a key is `MOV_CLOSURE_UNDER_KEY`, however the map is built: a literal (`{ g: label }`, `{ g: f }`, `{ g: FIRST(fs) }`), a map a function or a MAP returns, a map inside a list, or `KEYBY` over closures. A closure written in place under a key (`{ g: () => … }`) stays `MOV_EXPR_CLOSURE_POSITION`.
+- A list of closures under a key is a list, and stays: `{ arms: [a, b] }`, and `GROUPBY` over closures.
+- `race` receipts are lists, so a slot whose arm returned a closure is read with `AT(r, 0)` and called (`g = AT(r, 0)`, narrowed, then `g()`).
+- Under Dancing Wren (5), a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is `MOV_FUNCTION_UNKNOWN`. The engine reads `o.f(…)` as `f` run in `o`'s scope, and outside a write field there is no such function to run, so the run always failed where it reached the call; the checker now says so where it is written. Versions 1–4 are unchanged (a saved movement never breaks). Two forms are unchanged on every version: a built-in in a record's scope (`o.UPPER(name)`), and a function inside a write field, which the target may advertise.
+
+```
+# refused under 5: a closure under a key
+box = { g: label }        # MOV_CLOSURE_UNDER_KEY
+v = box.g()               # MOV_FUNCTION_UNKNOWN
+
+# instead: a variable, or a list
+g = label
+v = g()
+r = MAP([label, made], { concurrency: 2 }, (f) => f())
+```
 
 ## 13. A closure's type is written `<(params) => <return>>`
 
@@ -223,9 +237,9 @@ write crm-[:notes]-> { title: COALESCE(AT(r, 0), "") }   # may be a record: MOV_
 function run(handler: <(c: <crm-[:company]->>) => <text>>) { … }   # a parameter
 function all(arms: <() => <text>>[]) { … }                          # a list of closures
 function pick(): <() => <text>> { … }                               # a declared return
-function go(b: <{ run: <() => <text>> }>) { … }                     # a record key
 ```
 
+- A record type's key is never a closure type (`<{ run: <() => <text>> }>` is `MOV_CLOSURE_UNDER_KEY`, see [no methods](#no-methods-a-closure-is-never-held-under-a-key)); a key may be a list of closures (`<{ arms: <() => <text>>[] }>`).
 - `<…>[]` is a list of closures. A closure that returns a list is `<() => <text[]>>`; `<() => <text>[]>` is ambiguous and refused, with both spellings in the message. Every parameter needs a type: a caller of the closure is checked against it.
 - A parameter of closure type is called (`handler(c)`), typed by its return and held to its parameters (`MOV_CALL_ARITY`).
 - A closure fits a closure type as TypeScript's assignability says. Parameters are contravariant: each of the closure's parameters takes what the type's hands it. Returns are covariant: what the closure returns, what it may hold included, is what the type's returns. A closure that takes fewer parameters fits, and the extra arguments are dropped; one that takes more does not. A misfit is `MOV_CALL_ARG_TYPE` (or `MOV_RETURN_TYPE` for a declared return), naming what the closure returns.
@@ -261,12 +275,13 @@ r = MAP([a, () => { … }], { concurrency: 2 }, (f) => f())
 | `MOV_CALL_ARG_MAYBE_RECORD` | [A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter) |
 | `MOV_CALL_ARITY` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a call of one of several closures names every arity) |
 | `MOV_CALL_ARG_TYPE` | [A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return) (a closure that does not fit a closure type) |
-| `MOV_CALL_NOT_MOVEMENT` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a value that may not be a closure, or whose type nothing shows; a dotted call of a key the value lacks) |
+| `MOV_CALL_NOT_MOVEMENT` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a value that may not be a closure, or whose type nothing shows) |
+| `MOV_CLOSURE_UNDER_KEY` | [No methods: a closure is never held under a key](#no-methods-a-closure-is-never-held-under-a-key) (a closure as a record or map value, or a record type's key typed as one; since 5) |
 | `MOV_COMBINATOR_ARM_NOT_FUNCTION` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (`race` arms built at run time that are not closures; since 5) |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#4-delete-only-where-the-system-declares-it) |
 | `MOV_EXPR_CLOSURE_POSITION` | [A closure may be written in a list](#11-a-closure-may-be-written-in-a-list) (no longer for a list element under 5) |
-| `MOV_FUNCTION_UNKNOWN` | [A dotted call on a value](#a-dotted-call-on-a-value) (a dotted call of no built-in; version 5) |
+| `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods-a-closure-is-never-held-under-a-key) (a dotted call of no built-in, `box.g()` included; version 5) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#6-a-file-is-never-joined-into-text) |
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#10-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) |

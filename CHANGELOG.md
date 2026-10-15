@@ -81,7 +81,7 @@ guide](docs/language/dancing-wren-migration.md).
 - **A value that is a closure is called**: `MAP(fs, (f) => f())`, `g = AT(fs, 0)` then `g()`, a
   function declared with a name read as a value (`[made, label]`, `g = made`, `() => made`,
   `return made`), a closure returned in place, `IF … THEN a ELSE b END` or `COALESCE(a, b)` over
-  closures (their union), a `race` slot holding one, or a closure-typed parameter. The call's
+  closures (their union), a `race` slot holding one (`g = AT(r, 0)`), or a closure-typed parameter. The call's
   type is the union of what the closures may return, records included, so the record-in-data
   rules see a record any of them hands back; it is held to every closure's arity. A value that
   may not be a closure, or whose type nothing shows, is refused where it is called
@@ -89,12 +89,15 @@ guide](docs/language/dancing-wren-migration.md).
   that waits parks the run, and one that returns nothing makes the closure return nothing. A body
   that awaits, `() => await race([…])`, is `() => { return await race([…]) }`.
 - **A closure's type is written `<(params) => <return>>`**, TypeScript's function type:
-  `handler: <(c: <Company>) => <text>>`, `arms: <() => <text>>[]`, a record key, a declared
-  return. A closure-typed parameter is called. A closure fits the type with contravariant
+  `handler: <(c: <Company>) => <text>>`, `arms: <() => <text>>[]`, a declared return (never a
+  record type's key). A closure-typed parameter is called. A closure fits the type with contravariant
   parameters (fewer is fine) and covariant returns (`MOV_CALL_ARG_TYPE` otherwise), and one
   written in place is an argument, its parameters typed by the type. Under 4 it does not parse.
-- **A dotted call on a value calls the closure it holds**: `box.g()`, typed by it; a key the
-  value lacks, or a member that is no closure, is `MOV_CALL_NOT_MOVEMENT`.
+- **No methods: a closure is never held under a key** (`MOV_CLOSURE_UNDER_KEY`). A closure lives in
+  a variable or a list; a dot on a record or map always reads a field. Refused: a closure (or a
+  value that may be one) as a record or map value, however the map is built (`{ g: label }`, a map
+  a function or MAP returns, `KEYBY` over closures), and a record type's key typed as a closure. A
+  list of closures under a key stays. `box.g()` is `MOV_FUNCTION_UNKNOWN`, as `o.nope()` is.
 - Adapter protocol: a type's describe may declare `deletable: true` (optional; absent means no).
   Attio, Affinity, Airtable, Evertrace (not signals), the knowledge graph and Valuations declare it
   where they delete. No protocol version bump: the field is additive, but under language version
@@ -142,7 +145,7 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
-- From language version 5, a dotted call of a function that is no built-in (`o.nope()`) is
+- From language version 5, a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is
   `MOV_FUNCTION_UNKNOWN`. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
   there was never such a function: the run always failed where it reached the call. Versions 1–4
   are unchanged, as are a built-in in a record's scope (`o.UPPER(name)`) and a write field's own function.
