@@ -194,7 +194,7 @@ impl Checker<'_> {
             .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
-        let instance = Rc::new(Instance { name: name.to_string(), schema });
+        let instance = Rc::new(Instance { name: name.to_string(), schema, declared: false });
         SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() }
     }
 
@@ -272,6 +272,11 @@ impl Checker<'_> {
     /// the position the event address names.
     pub fn position_from_type_ref(&self, reference: &TypeRef, scope: ScopeId) -> Option<Position> {
         let Resolution::Found(id) = self.scopes.resolve(scope, &reference.graph) else { return None };
+        // A declaration IS its root node, so `<Doc>` starts there; a hop off
+        // the name is the retired meta-node form (refused where it is written).
+        if self.scopes.symbol(id).kind == crate::scope::SymbolKind::Shape {
+            return if reference.hops_raw.is_none() { self.declared_root(id) } else { None };
+        }
         let Some(Position::Meta { instance }) = &self.scopes.symbol(id).types.pos else { return None };
         if let Some(hops) = &reference.hops_raw {
             return crate::types::event_address::position_from_address(instance, hops);

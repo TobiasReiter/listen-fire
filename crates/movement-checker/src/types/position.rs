@@ -18,6 +18,9 @@ pub struct Instance {
     pub name: String,
     /// Shared between instances built from one catalog schema.
     pub schema: Rc<InstanceSchema>,
+    /// A node declaration's own (`node X { … }`), belonging to no system:
+    /// its records are compared by structure (`isDeclaredNode`).
+    pub declared: bool,
 }
 
 pub type InstanceRef = Rc<Instance>;
@@ -85,6 +88,14 @@ pub struct LocalEdge {
     /// `None` when the landing could not be typed: the edge is declared, and
     /// walking it is untyped rather than unknown.
     pub target: Option<Position>,
+    /// The landing type is a declared node, so landings are compared by
+    /// what they offer rather than by system.
+    pub structural: bool,
+    /// The landings are recomputed at every read (a `lazy` entry's walk):
+    /// there is nothing a `link` could append to.
+    pub deferred: bool,
+    /// A graph literal's edge holding references to real records.
+    pub references: bool,
 }
 
 #[derive(Debug, Clone)]

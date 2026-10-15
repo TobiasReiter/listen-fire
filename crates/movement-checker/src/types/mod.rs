@@ -8,8 +8,10 @@
 //! - `narrowing`: what a condition proves present.
 //! - `stdlib`: built-in signatures.
 //! - `infer`: `Typing`, which types an expression against a `TypeEnv`.
+//! - `declared`: node declarations as schemas, and the structural comparator.
 //! - `scope_env`: the `TypeEnv` the checker's scope chain answers.
 
+pub mod declared;
 pub mod event_address;
 pub mod field;
 pub mod infer;

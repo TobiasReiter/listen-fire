@@ -281,6 +281,7 @@ impl Checker<'_> {
     /// The library facts an imported symbol carries over from the library's own.
     pub fn adopt_library_symbol(&mut self, local: SymbolId, library: SymbolId) {
         self.listens.adopt(local, library);
+        self.nodes.adopt(local, library);
     }
 
     /// `checkLibrary`: one library checked once, in its own file scope, its

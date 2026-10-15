@@ -1548,6 +1548,7 @@ fn known_fields_of(position: &Position) -> Option<Vec<String>> {
         }),
         // A system's position: its fields are the system's to say. (A
         // declared node's position is the nodes family's to type.)
+        Position::Position(p) if p.instance.declared => p.instance.schema.positions.get(&p.position).map(|s| s.properties.keys().cloned().collect()),
         Position::Position(_) | Position::Meta { .. } | Position::Union(_) | Position::Closure(_) => None,
     }
 }

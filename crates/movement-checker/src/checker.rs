@@ -6,7 +6,7 @@
 
 use movement_parser::ast::{
     AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
-    LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
+    LinkTarget, MatchExpression, MovementDeclaration, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
 use movement_parser::catalog::types::CatalogSnapshot;
@@ -16,7 +16,7 @@ use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
 
 use crate::types::narrowing::{negative_presence_proofs, presence_proofs};
-use crate::types::position::{LocalEdge, LocalNode, Position};
+use crate::types::position::Position;
 use crate::families::names::spell_name;
 use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
 use movement_parser::lowering::condition::MovementCondition;
@@ -61,6 +61,8 @@ pub struct Checker<'c> {
     pub effects: crate::families::flow::Effects,
     /// Movement bodies walked to learn what a call to them returns and does.
     pub inference: crate::families::calls::Inference,
+    /// Node declarations, as their uses read them.
+    pub nodes: crate::families::nodes::NodeState,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
@@ -118,6 +120,7 @@ impl<'c> Checker<'c> {
             selves: Default::default(),
             effects: Default::default(),
             inference: Default::default(),
+            nodes: Default::default(),
         }
     }
 
@@ -166,7 +169,8 @@ impl<'c> Checker<'c> {
             if kind == SymbolKind::Movement {
                 self.check_function_name(name, span, scope);
             }
-            if let Some(existing) = self.declare_authored(scope, Symbol::new(name, kind, span), span) {
+            let existing = self.declare_authored(scope, Symbol::new(name, kind, span), span);
+            if let Some(existing) = existing {
                 self.report_duplicate_declaration(name, existing, span);
             }
             match statement {
@@ -174,8 +178,17 @@ impl<'c> Checker<'c> {
                     self.note_movement(scope, movement);
                     self.note_movement_params(movement, scope);
                 }
-                Statement::Shape(shape) => self.note_shape(scope, shape),
+                Statement::Shape(shape) => {
+                    self.note_shape(scope, shape);
+                    self.declare_shape(scope, shape, existing.is_none());
+                }
                 _ => {}
+            }
+        }
+        let mut visited = Vec::new();
+        for statement in statements {
+            if let Statement::Shape(shape) = statement {
+                self.inherit_at_hoist(shape, scope, &mut visited);
             }
         }
     }
@@ -219,14 +232,9 @@ impl<'c> Checker<'c> {
                 if !self.scopes.has_own(scope, &shape.name) {
                     self.declare_authored(scope, Symbol::new(&shape.name, SymbolKind::Shape, shape.span), shape.span);
                     self.note_shape(scope, shape);
+                    self.declare_shape(scope, shape, true);
                 }
-                self.check_shape_descriptions(&shape.root, scope);
-                if let Some(base) = &shape.extends {
-                    match self.scopes.resolve(scope, &base.name) {
-                        Resolution::Found(_) => {}
-                        failure => self.report_resolution_failure(&base.name, base.span, failure),
-                    }
-                }
+                self.settle_shape(shape, scope);
             }
             Statement::Movement(movement) => self.check_movement(movement, scope),
             Statement::Listen(listen) => self.check_listen(listen, scope),
@@ -804,74 +812,8 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// `checkShapeDescriptions`: a node declaration's words may interpolate names.
-    fn check_shape_descriptions(&mut self, node: &ShapeNode, scope: ScopeId) {
-        if let Some(description) = &node.description {
-            self.check_expr_slot(description, scope);
-        }
-        for field in &node.fields {
-            if let Some(description) = &field.description {
-                self.check_expr_slot(description, scope);
-            }
-        }
-        for child in &node.children {
-            self.check_shape_descriptions(child, scope);
-        }
-    }
-
-    /// `checkNodeLiteral`: its names resolve and its values are checked; the
-    /// record it builds (a run-local node: each value entry a read, each
-    /// nested node, declared edge or walk an edge), when it is a plain node.
-    /// A `graph` literal is not typed here.
-    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) -> Option<Position> {
-        if let Some(shape) = node.graph.as_ref().and_then(|g| g.shape.as_ref()) {
-            self.resolve_name(&shape.name, shape.span, scope);
-        }
-        let mut reads = indexmap::IndexMap::new();
-        let mut edges = indexmap::IndexMap::new();
-        for entry in &node.entries {
-            match entry {
-                NodeEntry::Value { name, value, .. } => {
-                    let typed = self.check_expr_slot_as(value, scope, false);
-                    reads.insert(name.clone(), typed.ty);
-                }
-                NodeEntry::Nodes { name, nodes, .. } => {
-                    let landings: Vec<Option<Position>> = nodes.iter().map(|nested| self.check_node_literal(nested, scope)).collect();
-                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target: Some(merge_landings(&landings, name)) });
-                }
-                NodeEntry::Declared { name, sequenced, .. } => {
-                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, sequenced.as_ref()), target: None });
-                }
-                NodeEntry::Traversal { name, head, mapping, .. } => {
-                    let aliases = self.check_path_head(head, scope);
-                    let walk = self.walk_head(head, scope, false);
-                    let target = match mapping {
-                        Some(mapping) => {
-                            let landing = self.open_landing(scope, &aliases, head.span);
-                            self.type_hop_aliases(landing, &aliases, walk.as_ref());
-                            self.check_node_literal(mapping, landing).map(|mapped| match mapped {
-                                Position::Local(local) => Position::Local(LocalNode { label: format!("a '{name}' landing"), ..local }),
-                                other => other,
-                            })
-                        }
-                        None => walk.and_then(|w| w.landed),
-                    };
-                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target });
-                }
-            }
-        }
-        for spread in node.spreads.iter().flatten() {
-            let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
-            self.resolve_name(root, spread.span, scope);
-        }
-        if node.graph.is_some() {
-            return None;
-        }
-        Some(Position::Local(LocalNode { label: "a node".to_string(), reads, edges: Some(edges), run_built: None, extracted: None }))
-    }
-
     /// `landingScope`: the scope a walk's tail is read in, holding its hop aliases.
-    fn open_landing(&mut self, scope: ScopeId, aliases: &[String], span: Span) -> ScopeId {
+    pub(crate) fn open_landing(&mut self, scope: ScopeId, aliases: &[String], span: Span) -> ScopeId {
         let landing = self.scopes.open(Some(scope));
         for alias in aliases {
             self.declare_authored(landing, Symbol::new(alias, SymbolKind::Alias, span), span);
@@ -1016,44 +958,4 @@ fn terminates(statements: &[Statement], version: u32) -> bool {
 
 fn is_closure_type(type_: &ParamTypeRef) -> bool {
     matches!(type_, ParamTypeRef::Value(ValueType::Closure { .. }))
-}
-
-/// A run-local edge's promise: readable, and nothing else; sequenced when its
-/// author said in what order.
-fn local_edge_schema(name: &str, sequenced: Option<&movement_parser::ast::EdgeSequencing>) -> movement_parser::catalog::types::EdgeSchema {
-    let mut schema = serde_json::json!({ "target": name, "readable": true });
-    if let Some(sequenced) = sequenced {
-        schema["sequenced"] = serde_json::to_value(sequenced).unwrap_or(serde_json::Value::Null);
-    }
-    serde_json::from_value(schema).unwrap_or_else(|_| crate::types::position::edge_schema_to(name))
-}
-
-/// `mergeLandings`, the typing half: the landings of a nested-node entry as
-/// one type — the reads every landing wrote (untyped where one could not be
-/// typed), the edges every landing has. (The disagreement it reports is the
-/// nodes family's.)
-fn merge_landings(landings: &[Option<Position>], name: &str) -> Position {
-    let label = format!("a '{name}' landing");
-    let empty = || Position::Local(LocalNode { label: label.clone(), reads: Default::default(), edges: None, run_built: None, extracted: None });
-    let locals: Vec<Option<&LocalNode>> = landings.iter().map(|l| match l { Some(Position::Local(local)) => Some(local), _ => None }).collect();
-    let Some(Some(first)) = locals.first() else { return empty() };
-    if locals.len() == 1 {
-        return Position::Local(LocalNode { label, ..(*first).clone() });
-    }
-    let rest = &locals[1..];
-    let mut reads = indexmap::IndexMap::new();
-    for (read, ty) in &first.reads {
-        if !rest.iter().all(|l| l.is_some_and(|l| l.reads.contains_key(read))) {
-            continue;
-        }
-        let all_typed = ty.is_some() && rest.iter().all(|l| l.is_some_and(|l| l.reads.get(read).is_some_and(Option::is_some)));
-        reads.insert(read.clone(), if all_typed { ty.clone() } else { None });
-    }
-    let mut edges = indexmap::IndexMap::new();
-    for (edge, local_edge) in first.edges.iter().flatten() {
-        if rest.iter().all(|l| l.is_some_and(|l| l.edges.as_ref().is_some_and(|e| e.contains_key(edge)))) {
-            edges.insert(edge.clone(), local_edge.clone());
-        }
-    }
-    Position::Local(LocalNode { label, reads, edges: Some(edges), run_built: None, extracted: None })
 }
