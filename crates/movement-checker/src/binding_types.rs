@@ -201,11 +201,33 @@ impl Checker<'_> {
             }
             _ => return SymbolTypes::default(),
         };
-        let args: Args = construct.args.iter().map(|a| (a.name.clone(), a.value.raw.clone())).collect();
+        let credential_arg = self.catalog.adapter(&adapter).and_then(movement_parser::catalog::helpers::credential_arg_of).map(|a| a.name.clone());
+        let args: Args = construct
+            .args
+            .iter()
+            .filter(|a| a.name != "dry_run")
+            .map(|a| {
+                let raw = a.value.raw.trim().to_string();
+                let raw = if credential_arg.as_ref() == Some(&a.name) { self.imported_credential_name(&raw, scope) } else { raw };
+                (a.name.clone(), raw)
+            })
+            .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
         let instance = Rc::new(Instance { name: name.to_string(), schema });
         SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() }
+    }
+
+    /// `importedCredentialName`: the catalog's name for a credential named
+    /// locally, perhaps through an alias.
+    fn imported_credential_name(&self, local: &str, scope: ScopeId) -> String {
+        let name = movement_parser::catalog::helpers::unwrap_credential_arg(local).unwrap_or_else(|| local.to_string());
+        match self.scopes.resolve(scope, &name) {
+            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Credential => {
+                self.scopes.symbol(id).imported_name.clone().unwrap_or(name)
+            }
+            _ => name,
+        }
     }
 
     /// A `type` declaration: the closed option set it names.

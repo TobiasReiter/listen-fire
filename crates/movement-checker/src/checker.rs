@@ -160,7 +160,7 @@ impl<'c> Checker<'c> {
                 self.resolve_reference(&callee, listen.span, scope);
             }
             Statement::Write(write) => {
-                self.check_write(&write.write, scope, None);
+                self.check_write(&write.write, scope, None, false);
             }
             Statement::Match(statement) => {
                 self.check_match(&statement.r#match, scope);
@@ -235,7 +235,7 @@ impl<'c> Checker<'c> {
             }
             RValue::Call { call } => self.check_call(call, scope),
             RValue::Write { write } => {
-                let handle = self.check_write(write, scope, name);
+                let handle = self.check_write(write, scope, name, name.is_some());
                 return Bound { handle, ..Bound::default() };
             }
             RValue::Match { r#match } => {
@@ -480,7 +480,7 @@ impl<'c> Checker<'c> {
             match arg {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
                 CallArg::Write { write, .. } => {
-                    self.check_write(write, scope, None);
+                    self.check_write(write, scope, None, true);
                 }
                 CallArg::Node { node, .. } => self.check_node_literal(node, scope),
                 CallArg::Call { call, .. } => self.check_call(call, scope),
@@ -509,7 +509,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>) -> Option<crate::types::Position> {
+    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
         self.check_target(&write.target, scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind
@@ -525,7 +525,7 @@ impl<'c> Checker<'c> {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
             self.resolve_name(root, spread.span, scope);
         }
-        self.check_write_rules(write, scope, binding)
+        self.check_write_rules(write, scope, binding, is_bound)
     }
 
     fn check_match(&mut self, matched: &MatchExpression, scope: ScopeId) {

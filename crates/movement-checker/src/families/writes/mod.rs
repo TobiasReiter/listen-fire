@@ -145,8 +145,7 @@ impl Checker<'_> {
     // ── write ──
 
     /// `checkWrite`, the rules half: returns the handle the write hands back.
-    pub fn check_write_rules(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>) -> Option<Position> {
-        let is_bound = binding.is_some();
+    pub fn check_write_rules(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<Position> {
         let spread_lines = self.expand_write_spreads(write, scope);
         let mut fields: Vec<Field> = write.fields.iter().map(Field::authored).collect();
         fields.extend(spread_lines);
@@ -1640,7 +1639,7 @@ fn write_bind_retired_message(name: &str) -> String {
 /// `fallbackLiteral`: a value of the type that is always there.
 fn fallback_literal(ty: &Ty) -> Option<&'static str> {
     Some(match ty {
-        Ty::Text => "\"\"",
+        Ty::Text => "\"unknown\"",
         Ty::Number => "0",
         Ty::Boolean => "false",
         Ty::List { .. } => "[]",
