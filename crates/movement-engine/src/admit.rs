@@ -25,7 +25,7 @@ use movement_parser::ast::{
 };
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 use movement_parser::lowering::condition::MovementCondition;
-use movement_parser::lowering::expression::{AggregationFunction, Expression, FilterOperator, ListElement, ObjectMember, StaticValue, TraversalStep};
+use movement_parser::lowering::expression::{AggregationFunction, Expression, ListElement, ObjectMember, StaticValue, TraversalStep};
 
 
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
