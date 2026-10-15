@@ -695,22 +695,34 @@ impl<'c> Checker<'c> {
     }
 
     pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
+        self.check_call_args_typed(args, scope);
+    }
+
+    /// `checkCallArgs`, each argument checked in its own right: the record
+    /// each one is, where it is one (`argType`).
+    pub fn check_call_args_typed(&mut self, args: &[CallArg], scope: ScopeId) -> Vec<Option<Position>> {
+        let mut types = Vec::new();
         for arg in args {
-            match arg {
-                CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
-                CallArg::Write { write, .. } => {
-                    self.check_write(write, scope, None, true);
+            let ty = match arg {
+                CallArg::Expr { expr, .. } => {
+                    self.check_expr_slot(expr, scope);
+                    self.bare_slot_position(expr, scope)
                 }
-                CallArg::Node { node, .. } => {
-                    self.check_node_literal(node, scope);
+                CallArg::Write { write, .. } => self.check_write(write, scope, None, true),
+                CallArg::Node { node, .. } => self.check_node_literal(node, scope),
+                CallArg::Call { call, .. } => {
+                    self.check_call_in_argument(call, scope);
+                    None
                 }
-                CallArg::Call { call, .. } => self.check_call_in_argument(call, scope),
                 CallArg::Closure { closure, .. } => {
                     self.check_closure(closure, scope, None);
+                    None
                 }
-                CallArg::Type { .. } => {}
-            }
+                CallArg::Type { .. } => None,
+            };
+            types.push(ty);
         }
+        types
     }
 
     fn check_target(&mut self, target: &WriteTarget, scope: ScopeId) {

@@ -132,6 +132,11 @@ impl ListenState {
         self.dispatchables = outer.dispatchables;
     }
 
+    /// A movement's parameters and the scope it was declared in.
+    pub fn movement_info(&self, id: SymbolId) -> Option<&MovementInfo> {
+        self.movements.get(&id)
+    }
+
     /// An imported symbol stands for the library's: its declaration too.
     pub fn adopt(&mut self, local: SymbolId, library: SymbolId) {
         if let Some(info) = self.movements.get(&library) {

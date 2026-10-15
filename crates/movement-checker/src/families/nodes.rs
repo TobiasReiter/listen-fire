@@ -1232,6 +1232,106 @@ impl Checker<'_> {
     }
 }
 
+impl Checker<'_> {
+    /// `bareSlotPositionType`: the record an argument slot that is one bare name holds.
+    pub fn bare_slot_position(&self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId) -> Option<Position> {
+        let trimmed = slot.raw.trim();
+        if !crate::slots::is_bare_ident(trimmed) {
+            return None;
+        }
+        let Resolution::Found(id) = self.scopes.resolve(scope, trimmed) else { return None };
+        let types = &self.scopes.symbol(id).types;
+        types.pos.clone().or_else(|| match &types.field {
+            Some(Ty::Record(Some(p))) => Some((**p).clone()),
+            _ => None,
+        })
+    }
+
+    /// The record parameters of the function `callee` resolved to, in order
+    /// (`None` for a value parameter or one not typed as a record).
+    fn record_params(&self, callee: SymbolId) -> Option<Vec<(String, Option<Position>, bool)>> {
+        let symbol = self.scopes.symbol(callee);
+        if symbol.kind == SymbolKind::Movement {
+            let info = self.listens.movement_info(callee)?;
+            return Some(
+                info.params
+                    .iter()
+                    .map(|p| {
+                        let plane = p.type_.as_ref().map(|t| self.plane_type_of(t, info.decl_scope)).unwrap_or_default();
+                        (p.name.clone(), plane.pos.map(|b| *b), plane.field.is_some())
+                    })
+                    .collect(),
+            );
+        }
+        None
+    }
+
+    /// `checkCallArgFit`, the record half: an argument a construct built is
+    /// judged by structure (MOV_NODE_ARG_SHAPE), and any record reaching a
+    /// declared-node parameter by what it carries (MOV_CALL_ARG_TYPE).
+    pub fn check_call_arg_fits(&mut self, callee: &str, id: SymbolId, args: &[movement_parser::ast::CallArg], arg_types: &[Option<Position>]) {
+        let Some(params) = self.record_params(id) else { return };
+        let names: Vec<&str> = params.iter().map(|(n, _, _)| n.as_str()).collect();
+        for (index, (arg, arg_type)) in args.iter().zip(arg_types).enumerate() {
+            let Some(arg_type) = arg_type else { continue };
+            let param = match arg.name() {
+                Some(name) => names.iter().position(|n| *n == name),
+                None => (index < names.len()).then_some(index),
+            };
+            let Some(param) = param else { continue };
+            let (param_name, param_type, value_param) = &params[param];
+            if *value_param {
+                continue;
+            }
+            let Some(param_type) = param_type else { continue };
+            let place = if arg.name().is_some() { String::new() } else { format!(" for '{param_name}' (argument {})", index + 1) };
+            let span = call_arg_span(arg);
+            if let Position::Local(_) = arg_type {
+                if let Some(misfit) = structural_misfit(arg_type, param_type) {
+                    self.report(codes::NODE_ARG_SHAPE, format!("'{callee}' expects {}{place}, and {misfit}", describe_position(param_type)), span);
+                }
+                continue;
+            }
+            if let Position::Position(p) = param_type
+                && p.instance.declared
+                && let Some(misfit) = declared_param_misfit(arg_type, p)
+            {
+                self.report(codes::CALL_ARG_TYPE, format!("'{callee}' expects a <{}> record{place}, and {misfit}", p.position), span);
+            }
+        }
+    }
+}
+
+fn call_arg_span(arg: &movement_parser::ast::CallArg) -> Span {
+    use movement_parser::ast::CallArg;
+    match arg {
+        CallArg::Expr { expr, .. } => expr.span,
+        CallArg::Write { write, .. } => write.span,
+        CallArg::Node { node, .. } => node.span,
+        CallArg::Call { call, .. } => call.span,
+        CallArg::Closure { span, .. } | CallArg::Type { span, .. } => *span,
+    }
+}
+
+/// `declaredParamMisfit`: what a record lacks that a declared-node parameter needs.
+fn declared_param_misfit(arg: &Position, param: &crate::types::position::RecordPosition) -> Option<String> {
+    let schema = &param.instance.schema;
+    match arg {
+        Position::Union(u) => {
+            for variant in &u.variants {
+                let surface = crate::types::declared::schema_surface(&u.instance.schema, variant);
+                if let Some(misfit) = surface_misfit(surface.as_ref(), schema, &param.position, false) {
+                    let shown = crate::types::position::display_name_of(&u.instance, variant);
+                    return Some(format!("{shown}, one of what this argument may be, does not fit: {misfit}"));
+                }
+            }
+            None
+        }
+        Position::Meta { .. } | Position::Closure(_) => Some(format!("this argument is {}, not a record", describe_position(arg))),
+        _ => surface_misfit(record_surface(arg).as_ref(), schema, &param.position, false),
+    }
+}
+
 /// What a graph literal's spread supplies: its keys on the two planes.
 struct SpreadKeys {
     reads: IndexMap<String, Option<Ty>>,
