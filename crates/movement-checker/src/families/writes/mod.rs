@@ -1613,7 +1613,7 @@ fn literal_string_values_of(raw: &str) -> Option<Vec<String>> {
 
 /// `genericLandingKey` (generics.ts).
 fn generic_landing_key(target: &str, values: &[String]) -> String {
-    serde_json::to_string(&(target, values)).unwrap_or_default()
+    serde_json::to_string(&("generic-landing", target, values)).unwrap_or_default()
 }
 
 /// `literalExampleFor`.

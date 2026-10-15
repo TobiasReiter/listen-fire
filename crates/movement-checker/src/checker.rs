@@ -276,7 +276,9 @@ impl<'c> Checker<'c> {
                 }
             }
             Statement::If(statement) => self.check_if(statement, scope),
-            Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
+            Statement::Await(statement) => {
+                self.check_await(&statement.r#await, scope, None);
+            }
             Statement::Return(statement) => {
                 self.check_rvalue(&statement.value, scope, None, statement.span);
                 self.collect_return(statement.span);
@@ -332,7 +334,7 @@ impl<'c> Checker<'c> {
                     self.report_block_returns_nothing(block, name);
                 }
             }
-            RValue::Await { r#await } => self.check_await(r#await, scope, name),
+            RValue::Await { r#await } => return self.check_await(r#await, scope, name),
             RValue::Combinator { combinator } => {
                 self.report_combinator_form(combinator, None);
                 self.check_combinator(combinator, scope);
@@ -346,7 +348,10 @@ impl<'c> Checker<'c> {
                 self.check_statement_list(&inline_block.body, block_scope);
                 self.report_inline_block_retired(inline_block);
             }
-            RValue::Callback { callback } => self.check_callback(callback, scope),
+            RValue::Callback { callback } => {
+                let params = self.check_callback(callback, scope);
+                return Bound { pos: Some(crate::families::listens::callback_type(params)), ..Bound::default() };
+            }
             RValue::Closure { closure } => {
                 let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
                 let (_, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
@@ -863,7 +868,10 @@ impl<'c> Checker<'c> {
         !returns.is_empty()
     }
 
-    fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {
+    /// `checkAwait`: what the awaited value binds — the landing of the walk
+    /// it parks on (maybe empty where the edge can settle empty), `true` once
+    /// a sleep wakes.
+    fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) -> Bound {
         self.flag_suspend();
         match &awaited.source {
             AwaitSource::Traversal { head, span } => {
@@ -871,18 +879,26 @@ impl<'c> Checker<'c> {
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
+                return Bound { pos: walk.and_then(awaited_landing), ..Bound::default() };
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
+                return Bound { pos: walk.and_then(awaited_landing), ..Bound::default() };
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
                 self.check_combinator(combinator, scope);
             }
-            AwaitSource::Sleep { duration, .. } => self.check_sleep_duration(duration),
+            AwaitSource::Sleep { duration, .. } => {
+                self.check_sleep_duration(duration);
+                if self.version >= 3 {
+                    let plane = crate::types::position::PlaneType { field: Some(crate::types::Ty::Boolean), pos: None };
+                    return Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() };
+                }
+            }
             AwaitSource::Until { condition, every, .. } => {
                 if let Some(every) = every {
                     self.check_until_cadence(every);
@@ -907,7 +923,14 @@ impl<'c> Checker<'c> {
                 }
             }
         }
+        Bound::default()
     }
+}
+
+/// An awaited walk's landing: maybe empty where its last edge can settle empty.
+fn awaited_landing(walk: crate::families::walks::HeadWalk) -> Option<Position> {
+    let landed = walk.landed?;
+    Some(if walk.last_edge_schema.is_some_and(|e| e.resolves_empty == Some(true)) { Position::MaybeEmpty(Box::new(landed)) } else { landed })
 }
 
 /// `terminates` (checker/flow.ts): every path through the list leaves it —
