@@ -29,7 +29,7 @@
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
 
-use movement_parser::ast::{ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
+use movement_parser::ast::{MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
 use movement_parser::lowering::expression::Expression;
 use movement_parser::version::since;
@@ -609,6 +609,504 @@ impl Checker<'_> {
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             _ => self.check_call(call, scope),
+        }
+    }
+}
+
+/// Where a checked tree's places are in the file: within a slot, or all at
+/// a block head's span.
+#[derive(Clone, Copy)]
+pub enum TreeAt<'s> {
+    Slot(&'s ExprSlot),
+    Head(Span),
+}
+
+impl TreeAt<'_> {
+    fn span_of(&self, at: At) -> Span {
+        match self {
+            TreeAt::Slot(slot) => span_within(slot, Some(at.start)),
+            TreeAt::Head(span) => *span,
+        }
+    }
+}
+
+/// `children` (expression/lower.ts): every sub-expression of a node.
+pub fn expression_children(e: &MExpr) -> Vec<&MExpr> {
+    use movement_parser::tree::{ClosureBody, EntryValue, LiteralEntry};
+    fn entry_values(entries: &[LiteralEntry]) -> impl Iterator<Item = &MExpr> {
+        entries.iter().filter_map(|x| match &x.value {
+            EntryValue::Expr(v) => Some(v),
+            EntryValue::DeclaredEdge(_) => None,
+        })
+    }
+    match e {
+        MExpr::Call { callee, args, .. } => std::iter::once(callee.as_ref()).chain(args.iter().map(|a| &a.value)).collect(),
+        MExpr::Path { root, hops, .. } => {
+            let mut out: Vec<&MExpr> = root.as_deref().into_iter().collect();
+            for hop in hops {
+                out.extend(hop.where_.as_ref());
+                if let Some(config) = &hop.config {
+                    out.extend(config.entries.iter().map(|x| match x {
+                        MapMember::Spread(s) => &s.expr,
+                        MapMember::Entry { value, .. } => value,
+                    }));
+                }
+                out.extend(hop.order_by.as_ref().map(|o| &o.key));
+            }
+            out
+        }
+        MExpr::Where { source, predicate, .. } => vec![source, predicate],
+        MExpr::Closure { body, .. } => match body.as_ref() {
+            ClosureBody::Expr { expr } => vec![expr],
+            ClosureBody::Block { .. } => Vec::new(),
+        },
+        MExpr::Node { entries, .. } => entry_values(entries).collect(),
+        MExpr::Graph { entries, spreads, .. } => entry_values(entries).chain(spreads.iter()).collect(),
+        MExpr::Mapped { source, body, .. } => vec![source, body],
+        MExpr::Lazy { walk, .. } => vec![walk],
+        _ => value_children(e),
+    }
+}
+
+/// `builtinArity`.
+fn builtin_arity(builtin: &Builtin) -> (usize, Option<usize>) {
+    use crate::types::stdlib::Arity;
+    let min = builtin.params.iter().filter(|p| p.arity == Arity::One).count();
+    let max = if builtin.params.iter().any(|p| p.arity == Arity::Rest) { None } else { Some(builtin.params.len()) };
+    (min, max)
+}
+
+/// `nestedMessage`.
+pub fn nested_message(callee: &str) -> String {
+    format!("'{callee}(…)' runs once where it is written, and a walk's WHERE, ORDER BY and settings are read once per landing — bind it first, then use the name: `answer = {callee}(…)`")
+}
+
+/// `sortKeyNestedMessage`.
+fn sort_key_nested_message(callee: &str) -> String {
+    format!("'{callee}(…)' runs once where it is written, and SORT reads its key once per member — every member would sort by that one answer. Work the key out per member first, then sort by it: `keyed = MAP(xs, (x) => {{ return {{ item: x, key: {callee}(…) }} }})`, then `SORT(keyed, key)`")
+}
+
+/// `builtinNotRun`.
+fn builtin_not_run(builtin: &Builtin) -> Option<&'static str> {
+    (builtin.name == "LLM_AGG").then_some(
+        "is not run by the movement engine — the run would fail where it is reached, and its instruction never reaches a model. Join the members and ask the model directly: `notes = JOIN(xs, \"\\n\")`, then `AI(\"Summarise these: ${notes}\")`",
+    )
+}
+
+/// `computedArgNotRead`: the argument a built-in would drop because it is
+/// computed, not written in place.
+fn computed_arg_not_read<'t>(builtin: &Builtin, args: &'t [movement_parser::tree::CallArg]) -> Option<(&'t MExpr, &'static str)> {
+    const QUERY: &str = "reads its query only as text written in place (\"MATCH …\") — a computed query is not read. Write the query out, and pass the values it needs as its parameters ($0, $1, …)";
+    let (index, message) = match builtin.name {
+        "KG_EXISTS" | "KG_VALUE" => (0, QUERY),
+        "JOIN" => (1, "reads its separator only as text written in place (`JOIN(xs, \", \")`) — a computed one is not read"),
+        _ => return None,
+    };
+    let arg = &args.get(index)?.value;
+    if is_text_written_in_place(arg) { None } else { Some((arg, message)) }
+}
+
+fn is_text_written_in_place(e: &MExpr) -> bool {
+    match e {
+        MExpr::Paren { expr, .. } => is_text_written_in_place(expr),
+        MExpr::String { parts, .. } => parts.iter().all(|p| matches!(p, StringPart::Text(_))),
+        _ => false,
+    }
+}
+
+/// `editDistance`, over UTF-16 units as JavaScript strings index.
+fn edit_distance(a: &[u16], b: &[u16]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        prev.clone_from(&curr);
+    }
+    prev[b.len()]
+}
+
+/// `closestByEditDistance` (meta.ts).
+pub fn closest_by_edit_distance(value: &str, candidates: &[String]) -> Option<String> {
+    let v: Vec<u16> = value.encode_utf16().collect();
+    let mut best: Option<(&String, usize)> = None;
+    for candidate in candidates {
+        let distance = edit_distance(&v, &candidate.encode_utf16().collect::<Vec<_>>());
+        if best.is_none_or(|(_, d)| distance < d) {
+            best = Some((candidate, distance));
+        }
+    }
+    let (best, distance) = best?;
+    let threshold = 2.max(v.len().max(best.encode_utf16().count()) / 3);
+    (distance <= threshold || value.contains(best.as_str()) || best.contains(value)).then(|| best.clone())
+}
+
+impl Checker<'_> {
+    /// `Scope.functionNames`: every function in scope, innermost first.
+    fn function_names(&self, scope: ScopeId) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut at = Some(scope);
+        while let Some(id) = at {
+            let s = self.scopes.scope(id);
+            for symbol in s.symbols.values().map(|id| self.scopes.symbol(*id)) {
+                if (symbol.is_function() || symbol.types.pos.as_ref().is_some_and(|p| p.is_closure())) && !names.contains(&symbol.name) {
+                    names.push(symbol.name.clone());
+                }
+            }
+            at = s.parent;
+        }
+        names
+    }
+
+    /// `closestFunctionName`.
+    pub fn closest_function_name(&self, name: &str, scope: ScopeId) -> Option<String> {
+        let mut folded: Vec<(String, String)> = Vec::new();
+        let flat = DESCRIBED.iter().map(|(n, ..)| n.to_string()).filter(|n| !n.contains('.'));
+        for candidate in self.function_names(scope).into_iter().chain(flat) {
+            let lower = candidate.to_lowercase();
+            if !folded.iter().any(|(l, _)| *l == lower) {
+                folded.push((lower, candidate));
+            }
+        }
+        let keys: Vec<String> = folded.iter().map(|(l, _)| l.clone()).collect();
+        let closest = closest_by_edit_distance(&name.to_lowercase(), &keys)?;
+        folded.into_iter().find(|(l, _)| *l == closest).map(|(_, c)| c)
+    }
+
+    /// `unknownFunctionMessage`.
+    pub fn unknown_function_message(&self, name: &str, scope: ScopeId, corrected: Option<&str>) -> String {
+        let hint = match (self.closest_function_name(name, scope), corrected) {
+            (None, _) => String::new(),
+            (Some(closest), Some(corrected)) => format!(" — did you mean '{closest}'? Write '{corrected}'"),
+            (Some(closest), None) => format!(" — did you mean '{closest}'?"),
+        };
+        format!("Unknown function '{name}'{hint} — a call names a movement or function declared or imported here, or a built-in")
+    }
+
+    /// `checkSlotExpression` / `checkExpressionTree` (version 3): what the
+    /// lowering would otherwise decide silently about an expression's calls
+    /// and `IF`s.
+    pub fn check_slot_expression(&mut self, slot: &ExprSlot, scope: ScopeId, write_field: bool) {
+        if !since(self.version, 3) {
+            return;
+        }
+        let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
+        self.visit_expression_tree(&tree, false, TreeAt::Slot(slot), scope, write_field);
+    }
+
+    /// The calls in a block head's hops (version 3), read through the probe
+    /// the head is parsed as; every place is the head's.
+    pub fn check_head_expression(&mut self, probe: &str, span: Span, scope: ScopeId) {
+        if !since(self.version, 3) {
+            return;
+        }
+        let Ok(tree) = movement_parser::expr::parse_expression(probe) else { return };
+        self.visit_expression_tree(&tree, false, TreeAt::Head(span), scope, false);
+    }
+
+    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, at_: TreeAt, scope: ScopeId, write_field: bool) {
+        if let MExpr::If { else_: None, at, .. } = expr {
+            self.report(
+                codes::IF_WITHOUT_ELSE,
+                "this IF has no ELSE, so where its condition fails it is \"\" (empty text), whatever THEN gives — say what it is there: 'IF … THEN … ELSE … END'",
+                at_.span_of(*at),
+            );
+        }
+        if let MExpr::Call { callee, args, at } = expr {
+            match callee.as_ref() {
+                MExpr::Name { name, .. } => {
+                    let written = name.text.as_str();
+                    if per_member && self.runs_as_call(expr, scope) && !self.is_extract_call(written, scope) {
+                        self.report(codes::CALL_NESTED, sort_key_nested_message(written), at_.span_of(*at));
+                        return;
+                    }
+                    self.check_call_in_expression(expr, written, args, at_, scope, write_field);
+                }
+                MExpr::Member { object, property, .. } => {
+                    if let MExpr::Name { name, .. } = object.as_ref() {
+                        self.check_dotted_call(&name.text, &property.text, at_.span_of(*at), scope, write_field);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let key = sort_key_of(expr);
+        for child in expression_children(expr) {
+            let keyed = key.is_some_and(|k| std::ptr::eq(k, child));
+            self.visit_expression_tree(child, per_member || keyed, at_, scope, write_field);
+        }
+    }
+
+    fn is_extract_call(&self, written: &str, scope: ScopeId) -> bool {
+        matches!(self.resolve_callee(written, scope), Callee::Builtin(b) if builtin_form(b) == BuiltinForm::Extract)
+    }
+
+    /// `checkDottedCall`: `o.f(…)` where `f` is no built-in, outside a write
+    /// field (version 5).
+    fn check_dotted_call(&mut self, object: &str, key: &str, span: Span, scope: ScopeId, write_field: bool) {
+        if !since(self.version, 5) || write_field {
+            return;
+        }
+        if !matches!(self.scopes.resolve(scope, object), Resolution::Found(_)) || lookup_builtin(key).is_some() {
+            return;
+        }
+        self.report(
+            codes::FUNCTION_UNKNOWN,
+            format!("'{object}.{key}(…)' runs '{key}' in '{object}', and '{key}' is no built-in — there is nothing to run there. There are no methods: a dot on a record or map reads a field, and a closure is never held under a key. Call a function by name ('{key}({object})'), or a closure kept in a variable ('g = …', then 'g()')"),
+            span,
+        );
+    }
+
+    /// `checkCallInExpression`.
+    fn check_call_in_expression(
+        &mut self,
+        call: &MExpr,
+        written: &str,
+        args: &[movement_parser::tree::CallArg],
+        at_: TreeAt,
+        scope: ScopeId,
+        write_field: bool,
+    ) {
+        let span = at_.span_of(call.at());
+        match self.resolve_callee(written, scope) {
+            Callee::Builtin(builtin) => {
+                let form = builtin_form(builtin);
+                if form == BuiltinForm::Extract {
+                    return;
+                }
+                if form != BuiltinForm::Value {
+                    self.report(codes::CALL_NESTED, nested_message(written), span);
+                    return;
+                }
+                let (min, max) = builtin_arity(builtin);
+                let count = args.len();
+                if count < min || max.is_some_and(|max| count > max) {
+                    let expected = match max {
+                        Some(max) if max == min => format!("{min}"),
+                        None => format!("at least {min}"),
+                        Some(max) => format!("{min} to {max}"),
+                    };
+                    let plural = if max == Some(1) { "" } else { "s" };
+                    self.report(codes::BUILTIN_ARGS, format!("'{written}' takes {expected} argument{plural}, got {count} — {}", describe_builtin(builtin)), span);
+                    return;
+                }
+                if let Some(not_run) = builtin_not_run(builtin) {
+                    self.report(codes::BUILTIN_NOT_RUN, format!("'{written}' {not_run}"), span);
+                    return;
+                }
+                if let Some((arg, message)) = computed_arg_not_read(builtin, args) {
+                    self.report(codes::BUILTIN_ARGS, format!("'{written}' {message}"), at_.span_of(arg.at()));
+                }
+            }
+            Callee::Declared(declared) => {
+                let Resolution::Found(id) = self.scopes.resolve(scope, &declared) else { return };
+                let symbol = self.scopes.symbol(id).clone();
+                if symbol.is_function() || self.calls_closure(&symbol) {
+                    self.report(codes::CALL_NESTED, nested_message(written), span);
+                    return;
+                }
+                if let Some(message) = self.not_a_closure_message(&symbol, written) {
+                    self.report(codes::CALL_NOT_MOVEMENT, message, span);
+                    return;
+                }
+                self.report(codes::CALL_NOT_MOVEMENT, format!("'{written}' is {}, not a function — only functions are called", symbol.kind.describe()), span);
+            }
+            Callee::Unknown => {
+                if write_field {
+                    return;
+                }
+                let MExpr::Call { callee, at, .. } = call else { return };
+                let slot = match at_ {
+                    TreeAt::Slot(slot) => Some(slot),
+                    TreeAt::Head(_) => None,
+                };
+                let fix = slot.and_then(|slot| self.closest_function_name(written, scope).map(|to| (slot, to))).map(|(slot, to)| {
+                    let spelled = if to.chars().any(char::is_whitespace) { format!("`{to}`") } else { to };
+                    let units: Vec<u16> = slot.raw.encode_utf16().collect();
+                    let c = callee.at();
+                    let corrected = format!(
+                        "{}{spelled}{}",
+                        String::from_utf16_lossy(&units[at.start..c.start]),
+                        String::from_utf16_lossy(&units[c.end..at.end])
+                    );
+                    (corrected, serde_json::json!({ "edits": [{ "span": span_of_extent(slot, c), "text": spelled }] }))
+                });
+                let message = self.unknown_function_message(written, scope, fix.as_ref().map(|(c, _)| c.as_str()));
+                let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::FUNCTION_UNKNOWN, message, span);
+                diagnostic.fix = fix.map(|(_, edit)| edit);
+                self.push(diagnostic);
+            }
+        }
+    }
+
+    /// `notAClosureMessage`: why calling a name that is a value is refused
+    /// under version 5.
+    pub fn not_a_closure_message(&self, callee: &Symbol, written: &str) -> Option<String> {
+        if !since(self.version, 5) || !matches!(callee.kind, SymbolKind::Binding | SymbolKind::Param) {
+            return None;
+        }
+        if callee.types.pos.is_some() || self.calls_closure(callee) {
+            return None;
+        }
+        Some(match &callee.types.field {
+            None => format!("'{written}' is called, and nothing says it is a function — its type is unknown here. Call a closure whose type the program shows: one bound to a name ('g = label', then 'g()'), or a parameter typed as one ('f: <() => <text>>')"),
+            Some(ty) => {
+                let tail = if crate::types::field::may_be_closure(Some(ty)) { " — it may not be a closure" } else { ", not a function" };
+                format!("'{written}' is called, and it is {}{tail}. Only a closure is called: narrow it to one, or call one whose type the program shows", crate::types::field::describe_field_type(ty))
+            }
+        })
+    }
+}
+
+/// `callArgSpan`.
+fn call_arg_span(arg: &CallArg) -> Span {
+    match arg {
+        CallArg::Expr { expr, .. } => expr.span,
+        CallArg::Write { write, .. } => write.span,
+        CallArg::Node { node, .. } => node.span,
+        CallArg::Call { call, .. } => call.span,
+        CallArg::Closure { span, .. } | CallArg::Type { span, .. } => *span,
+    }
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+impl Checker<'_> {
+    /// The parameter names a movement declares, against its symbol.
+    pub fn note_movement_params(&mut self, movement: &MovementDeclaration, scope: ScopeId) {
+        if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied()
+            && self.scopes.symbol(id).kind == SymbolKind::Movement
+        {
+            self.movement_params.insert(id, movement.params.iter().map(|p| p.name.clone()).collect());
+        }
+    }
+
+    /// `checkCall`: a function's call — its callee, its arity, and its
+    /// arguments against the parameters they bind.
+    pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) {
+        let mut params = None;
+        let callee = self.callee_name(&call.callee, scope);
+        let resolution = self.scopes.resolve(scope, &callee);
+        // Before version 3 a built-in is not a callee (no standard library).
+        if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
+            match resolution {
+                Resolution::Found(id) => params = self.check_callee(call, id),
+                Resolution::Unknown
+                    if since(self.version, 3) && self.catalog.adapter(&callee).is_none() && self.catalog.plugin(&callee).is_none() =>
+                {
+                    let message = self.unknown_function_message(&call.callee, scope, None);
+                    self.report(codes::FUNCTION_UNKNOWN, message, call.span);
+                }
+                failure => self.report_resolution_failure(&callee, call.span, failure),
+            }
+        }
+        self.check_argument_bindings(&call.callee, &call.args, params.as_deref(), call.span, false);
+        self.check_call_args(&call.args, scope);
+    }
+
+    /// `listen to … fire <name>`: the name is a movement (a file import may be one).
+    pub fn check_listen_fires(&mut self, listen: &movement_parser::ast::ListenDeclaration, id: crate::scope::SymbolId) {
+        let kind = self.scopes.symbol(id).kind;
+        if kind != SymbolKind::FileImport && kind != SymbolKind::Movement {
+            self.report(
+                codes::CALL_NOT_MOVEMENT,
+                format!("'{}' is {}, not a movement — 'fire' names a movement declared in this file", listen.movement, kind.describe()),
+                listen.span,
+            );
+        }
+    }
+
+    /// `checkCallbackNamed`'s arguments: bound partially, as the rest are
+    /// what the callback is fired with.
+    pub fn check_callback_arguments(&mut self, movement: &str, args: &[CallArg], span: Span, scope: ScopeId) {
+        let callee = self.callee_name(movement, scope);
+        let params = match self.scopes.resolve(scope, &callee) {
+            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Movement => self.movement_params.get(&id).cloned(),
+            _ => None,
+        };
+        self.check_argument_bindings(movement, args, params.as_deref(), span, true);
+    }
+
+    /// The callee a call resolved to: the parameters its arguments bind, when known.
+    fn check_callee(&mut self, call: &CallStatement, id: crate::scope::SymbolId) -> Option<Vec<String>> {
+        let callee = self.scopes.symbol(id).clone();
+        let count = call.args.len();
+        if callee.kind == SymbolKind::Movement {
+            let params = self.movement_params.get(&id).cloned();
+            if let Some(params) = &params
+                && params.len() != count
+            {
+                self.report(codes::CALL_ARITY, format!("'{}' takes {} argument{}, got {count}", call.callee, params.len(), plural(params.len())), call.span);
+            }
+            return params;
+        }
+        if callee.kind == SymbolKind::Plugin {
+            return None;
+        }
+        if self.calls_closure(&callee) {
+            let closure = match (&callee.types.pos, &callee.types.field) {
+                (Some(crate::types::position::Position::Closure(c)), _) => Some(c.clone()),
+                (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
+                    crate::types::position::Position::Closure(c) => Some(c.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let closure = closure?;
+            let arity = closure.params.len();
+            if arity != count {
+                self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {count}", call.callee, plural(arity)), call.span);
+            }
+            return Some(closure.params.iter().map(|p| p.name.clone()).collect());
+        }
+        if let Some(message) = self.not_a_closure_message(&callee, &call.callee) {
+            self.report(codes::CALL_NOT_MOVEMENT, message, call.span);
+        } else if callee.kind != SymbolKind::FileImport {
+            self.report(
+                codes::CALL_NOT_MOVEMENT,
+                format!("'{}' is {}, not a movement — only movements are called", call.callee, callee.kind.describe()),
+                call.span,
+            );
+        }
+        None
+    }
+
+    /// `checkArgumentBindings`: named arguments given once, each naming a
+    /// parameter, and every parameter supplied.
+    fn check_argument_bindings(&mut self, callee: &str, args: &[CallArg], params: Option<&[String]>, span: Span, partial: bool) {
+        let mut seen: Vec<&str> = Vec::new();
+        for arg in args {
+            let Some(name) = arg.name() else { continue };
+            if seen.contains(&name) {
+                self.report(codes::CALL_ARG_DUPLICATE, format!("Duplicate argument '{name}' — each of '{callee}'s parameters is supplied once"), call_arg_span(arg));
+            }
+            seen.push(name);
+        }
+        let Some(params) = params else { return };
+        for arg in args {
+            if let Some(name) = arg.name()
+                && !params.iter().any(|p| p == name)
+            {
+                let list = if params.is_empty() { "(none)".to_string() } else { params.join(", ") };
+                self.report(codes::CALL_ARG_UNKNOWN, format!("'{name}' is not a parameter of '{callee}' — its parameters are: {list}"), call_arg_span(arg));
+            }
+        }
+        if partial {
+            return;
+        }
+        let supplied: Vec<&str> = args.iter().enumerate().filter_map(|(i, arg)| arg.name().or(params.get(i).map(String::as_str))).collect();
+        let missing: Vec<&String> = params.iter().filter(|p| !supplied.contains(&p.as_str())).collect();
+        if !missing.is_empty() {
+            let which = if missing.len() == 1 { "the argument" } else { "arguments" };
+            let listed = missing.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
+            let positional = args.first().is_some_and(|a| a.name().is_none());
+            let how = if positional { format!("pass one argument per parameter, in order: {callee}({})", params.join(", ")) } else { "supply every parameter by name".to_string() };
+            self.report(codes::CALL_ARG_MISSING, format!("'{callee}' is missing {which} {listed} — {how}"), span);
         }
     }
 }

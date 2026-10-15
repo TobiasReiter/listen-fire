@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    ArmExpression, AwaitExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CollectionOpExpression,
+    ArmExpression, AwaitExpression, AwaitSource, CallArg, CallbackSubject, ClosureExpression, CollectionOpExpression,
     CombinatorArms, CombinatorExpression, ConstructionCall, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
@@ -37,6 +37,8 @@ pub struct Checker<'c> {
     type_only: usize,
     /// Each catalog schema an instance was built from, read once.
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
+    /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
+    pub movement_params: std::collections::HashMap<crate::scope::SymbolId, Vec<String>>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -51,7 +53,7 @@ pub struct Bound {
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -100,6 +102,9 @@ impl<'c> Checker<'c> {
             }
             if let Some(existing) = self.declare_authored(scope, Symbol::new(name, kind, span), span) {
                 self.report_duplicate_declaration(name, existing, span);
+            }
+            if let Statement::Movement(movement) = statement {
+                self.note_movement_params(movement, scope);
             }
         }
     }
@@ -150,7 +155,9 @@ impl<'c> Checker<'c> {
                 };
                 self.check_listen_config(listen, adapter.as_deref(), scope);
                 let callee = self.callee_name(&listen.movement, scope);
-                self.resolve_reference(&callee, listen.span, scope);
+                if let Some(id) = self.resolve_reference(&callee, listen.span, scope) {
+                    self.check_listen_fires(listen, id);
+                }
             }
             Statement::Write(write) => self.check_write(&write.write, scope),
             Statement::Match(statement) => self.check_match(&statement.r#match, scope),
@@ -230,7 +237,10 @@ impl<'c> Checker<'c> {
                 match &callback.subject {
                     CallbackSubject::Inline { closure, .. } => self.check_closure(closure, scope, None),
                     // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
-                    CallbackSubject::Named { args, .. } => self.check_call_args(args, scope),
+                    CallbackSubject::Named { movement, args, span, .. } => {
+                        self.check_callback_arguments(movement, args, *span, scope);
+                        self.check_call_args(args, scope);
+                    }
                 }
                 // Only `once` is read as an expression: `ttl` is a duration
                 // literal, and any other key is refused by name.
@@ -257,7 +267,7 @@ impl<'c> Checker<'c> {
 
     /// The name a call or a listen fires: from version 3 a function written
     /// in another letter case is the same function.
-    fn callee_name(&self, written: &str, scope: ScopeId) -> String {
+    pub fn callee_name(&self, written: &str, scope: ScopeId) -> String {
         if matches!(self.scopes.resolve(scope, written), Resolution::Found(_)) || self.version < 3 {
             return written.to_string();
         }
@@ -267,6 +277,12 @@ impl<'c> Checker<'c> {
     /// `checkExprSlot`, the name half: a bare name resolves as written; any
     /// other slot is parsed and every name it reads resolves.
     pub fn check_expr_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        self.check_expr_slot_in(slot, scope, false);
+    }
+
+    /// `checkExprSlot`; `write_field` for a write's field value, whose
+    /// target may advertise functions of its own.
+    pub fn check_expr_slot_in(&mut self, slot: &ExprSlot, scope: ScopeId, write_field: bool) {
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if !is_literal_word(trimmed) {
@@ -275,7 +291,7 @@ impl<'c> Checker<'c> {
             return;
         }
         if let Some(hoisted) = self.hoist_nested_calls(slot, scope) {
-            return self.check_expr_slot(&hoisted, scope);
+            return self.check_expr_slot_in(&hoisted, scope, write_field);
         }
         let parsed = match expression_of_slot(slot) {
             Ok(parsed) => parsed,
@@ -287,6 +303,7 @@ impl<'c> Checker<'c> {
                 self.resolve_name(name, slot.span, scope);
             }
         }
+        self.check_slot_expression(slot, scope, write_field);
     }
 
     /// The config slots `checkListen` reads as expressions: every key the
@@ -321,6 +338,7 @@ impl<'c> Checker<'c> {
             Ok(condition) => condition,
             Err(error) => return self.report_slot_error(&error, slot),
         };
+        self.check_slot_expression(slot, scope, false);
         self.check_condition(&condition, slot, scope);
     }
 
@@ -382,6 +400,7 @@ impl<'c> Checker<'c> {
         if !self.scopes.has_own(scope, &movement.name) {
             self.check_function_name(&movement.name, movement.span, scope);
             self.declare_authored(scope, Symbol::new(&movement.name, SymbolKind::Movement, movement.span), movement.span);
+            self.note_movement_params(movement, scope);
         }
         let body = self.scopes.open(Some(scope));
         for param in &movement.params {
@@ -427,23 +446,7 @@ impl<'c> Checker<'c> {
         self.check_statement_list(&closure.body, body);
     }
 
-    pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) {
-        if !crate::families::names::is_builtin_name(&call.callee) {
-            let callee = self.callee_name(&call.callee, scope);
-            match self.scopes.resolve(scope, &callee) {
-                Resolution::Found(_) => {}
-                Resolution::Unknown
-                    if self.version >= 3 && self.catalog.adapter(&callee).is_none() && self.catalog.plugin(&callee).is_none() =>
-                {
-                    // MOV_FUNCTION_UNKNOWN: the calls family's.
-                }
-                failure => self.report_resolution_failure(&callee, call.span, failure),
-            }
-        }
-        self.check_call_args(&call.args, scope);
-    }
-
-    fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
+    pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
         for arg in args {
             match arg {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
@@ -485,7 +488,7 @@ impl<'c> Checker<'c> {
             self.report_resolution_failure(&bind.name, bind.span, failure);
         }
         for field in &write.fields {
-            self.check_expr_slot(&field.value, scope);
+            self.check_expr_slot_in(&field.value, scope, true);
         }
         for spread in write.spreads.iter().flatten() {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
@@ -633,6 +636,7 @@ impl<'c> Checker<'c> {
                     self.resolve_name(name, head.span, scope);
                 }
             }
+            self.check_head_expression(&probe, head.span, scope);
         }
         aliases
     }
