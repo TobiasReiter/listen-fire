@@ -364,7 +364,7 @@ impl Checker<'_> {
             let head = String::from_utf16_lossy(&units[..at.end]);
             match movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start) {
                 Ok(value) => {
-                    self.check_rvalue(&value, scope, None);
+                    self.check_rvalue(&value, scope, None, span);
                 }
                 Err(e) => self.report(codes::EXPR_PARSE, format!("{} (line {}, col {})", e.message, e.loc.line, e.loc.col), span),
             }
@@ -593,9 +593,18 @@ impl Checker<'_> {
 
     /// `checkRValue`'s call case: a built-in is the value, collection op or
     /// type query it computes.
-    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId) {
+    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) {
         match self.read_call(call, scope, CallPosition::Value) {
-            CallReading::Function => self.check_call(call, scope),
+            CallReading::Function => {
+                self.check_call(call, scope);
+                if self.callee_returns(&call.callee, scope) == Some(false) {
+                    self.report(
+                        codes::CALL_RETURNS_NOTHING,
+                        format!("'{0}' returns nothing, so there is no value to bind — a call's value is what it returns. Add a 'return' to '{0}', or call it as a statement.", call.callee),
+                        span,
+                    );
+                }
+            }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
             CallReading::Members(_) => {}
@@ -983,6 +992,8 @@ impl Checker<'_> {
             && self.scopes.symbol(id).kind == SymbolKind::Movement
         {
             self.movement_params.insert(id, movement.params.iter().map(|p| p.name.clone()).collect());
+            let returns = movement.return_type.is_some() || crate::families::closures::body_returns(&movement.body);
+            self.function_returns.insert(id, returns);
         }
     }
 
@@ -1158,6 +1169,58 @@ impl Checker<'_> {
                 block.head.hops_raw
             ),
             block.span,
+        );
+    }
+}
+
+impl Checker<'_> {
+    /// Whether the function a callee names hands a value back, when the
+    /// program shows its body (`calleeReturnKnown`).
+    pub fn callee_returns(&self, written: &str, scope: ScopeId) -> Option<bool> {
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return None };
+        let symbol = self.scopes.symbol(id);
+        if symbol.kind != SymbolKind::Movement && !self.calls_closure(symbol) {
+            return None;
+        }
+        self.function_returns.get(&id).copied()
+    }
+
+    /// `reportParamNeedsType`.
+    pub fn report_param_needs_type(&mut self, name: &str, span: Span, what: &str) {
+        self.report(
+            codes::PARAM_NEEDS_TYPE,
+            format!("'{name}' needs a type — {what} declares what it accepts, so a caller can be checked against it: write '{name}: <text>' (or whatever it takes). A parameter goes untyped only where the caller supplies the type, which is the function a collection op is given."),
+            span,
+        );
+    }
+}
+
+impl Checker<'_> {
+    /// `callInConstructPosition`: `name(arg: …)` is one surface form, and a
+    /// function's name there is a call, not a construction.
+    pub fn call_in_construct_position(&self, construct: &movement_parser::ast::ConstructionCall, scope: ScopeId) -> Option<CallStatement> {
+        let callee = self.callee_name(&construct.callee, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return None };
+        let symbol = self.scopes.symbol(id);
+        let value = since(self.version, 5) && matches!(symbol.kind, SymbolKind::Binding | SymbolKind::Param);
+        if !matches!(symbol.kind, SymbolKind::Movement | SymbolKind::Plugin) && !value && !self.calls_closure(symbol) {
+            return None;
+        }
+        Some(CallStatement {
+            callee: construct.callee.clone(),
+            args: construct.args.iter().map(|a| CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect(),
+            expression: None,
+            span: construct.span,
+        })
+    }
+
+    /// A construction handed back (`return crm(…)`): an instance is not a value.
+    pub fn report_construction_returned(&mut self, construct: &movement_parser::ast::ConstructionCall, span: Span) {
+        self.report(
+            codes::RETURN_NOT_A_VALUE,
+            format!("'{}(…)' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.", construct.callee),
+            span,
         );
     }
 }

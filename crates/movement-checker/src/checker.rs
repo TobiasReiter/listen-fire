@@ -5,8 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    ArmExpression, AwaitExpression, AwaitSource, CallArg, CallbackSubject, ClosureExpression, CollectionOpExpression,
-    CombinatorArms, CombinatorExpression, ConstructionCall, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    AwaitExpression, AwaitSource, CallArg, CallbackSubject, ClosureExpression, ConstructionCall, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -41,6 +40,9 @@ pub struct Checker<'c> {
     pub movement_params: std::collections::HashMap<crate::scope::SymbolId, Vec<String>>,
     /// The bodies being walked, innermost last, each collecting its `return`s.
     pub return_stack: Vec<crate::families::calls::ReturnCollector>,
+    /// Whether each function a call can vouch for hands a value back, by its
+    /// symbol: a movement's body, or a closure bound to a name.
+    pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -55,7 +57,7 @@ pub struct Bound {
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new(), function_returns: Default::default() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -132,9 +134,10 @@ impl<'c> Checker<'c> {
             Statement::Import(import) => self.check_import(import, scope),
             Statement::Assign(assign) => {
                 self.check_reserved_name(&assign.name, assign.span);
-                let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name));
+                let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name), assign.span);
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
                 self.type_assigned(&assign.name, &assign.value, scope);
+                self.note_closure_returns(&assign.name, &assign.value, scope);
             }
             Statement::Type(_) => {}
             Statement::Shape(shape) => {
@@ -195,23 +198,33 @@ impl<'c> Checker<'c> {
             }
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
             Statement::Return(statement) => {
-                self.check_rvalue(&statement.value, scope, None);
+                self.check_rvalue(&statement.value, scope, None, statement.span);
                 self.collect_return(statement.span);
             }
-            Statement::Combinator(statement) => self.check_combinator(&statement.combinator, scope),
+            Statement::Combinator(statement) => {
+                self.report_combinator_form(&statement.combinator, None);
+                self.check_combinator(&statement.combinator, scope);
+            }
             Statement::Collection(statement) => self.check_collection_op(&statement.collection, scope),
             Statement::Error(statement) => self.check_expr_slot(&statement.message, scope),
         }
     }
 
     /// `checkRValue`: the right-hand side of a binding or a `return`.
-    pub fn check_rvalue(&mut self, value: &RValue, scope: ScopeId, name: Option<&str>) -> Bound {
+    pub fn check_rvalue(&mut self, value: &RValue, scope: ScopeId, name: Option<&str>, span: Span) -> Bound {
         match value {
             RValue::Construct { construct } => {
+                if let Some(call) = self.call_in_construct_position(construct, scope) {
+                    self.check_call_rvalue(&call, scope, span);
+                    return Bound::default();
+                }
                 let adapter = self.check_construction(construct, scope);
+                if name.is_none() {
+                    self.report_construction_returned(construct, span);
+                }
                 return Bound { is_closure: false, is_instance: name.is_some(), adapter };
             }
-            RValue::Call { call } => self.check_call_rvalue(call, scope),
+            RValue::Call { call } => self.check_call_rvalue(call, scope, span),
             RValue::Write { write } => self.check_write(write, scope),
             RValue::Match { r#match } => self.check_match(r#match, scope),
             RValue::Link { link } => self.check_link(link, scope),
@@ -236,7 +249,10 @@ impl<'c> Checker<'c> {
                 }
             }
             RValue::Await { r#await } => self.check_await(r#await, scope, name),
-            RValue::Combinator { combinator } => self.check_combinator(combinator, scope),
+            RValue::Combinator { combinator } => {
+                self.report_combinator_form(combinator, None);
+                self.check_combinator(combinator, scope);
+            }
             RValue::Collection { collection } => self.check_collection_op(collection, scope),
             RValue::Members { .. } => {}
             RValue::InlineBlock { inline_block } => {
@@ -245,7 +261,9 @@ impl<'c> Checker<'c> {
             }
             RValue::Callback { callback } => {
                 match &callback.subject {
-                    CallbackSubject::Inline { closure, .. } => self.check_closure(closure, scope, None),
+                    CallbackSubject::Inline { closure, .. } => {
+                        self.check_closure_as(closure, scope, None, "a callback body", 0);
+                    }
                     // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
                     CallbackSubject::Named { movement, args, span, .. } => {
                         self.check_callback_arguments(movement, args, *span, scope);
@@ -259,7 +277,8 @@ impl<'c> Checker<'c> {
                 }
             }
             RValue::Closure { closure } => {
-                self.check_closure(closure, scope, name);
+                let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
+                self.check_closure_as(closure, scope, name, &label, 0);
                 return Bound { is_closure: true, ..Bound::default() };
             }
             RValue::Node { node } => self.check_node_literal(node, scope),
@@ -414,7 +433,10 @@ impl<'c> Checker<'c> {
         }
         let body = self.scopes.open(Some(scope));
         for param in &movement.params {
-            let Some(type_) = &param.type_ else { continue };
+            let Some(type_) = &param.type_ else {
+                self.report_param_needs_type(&param.name, param.span, &format!("'{}'", movement.name));
+                continue;
+            };
             self.check_param_type(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
@@ -441,9 +463,21 @@ impl<'c> Checker<'c> {
         self.resolve_name(&reference.graph, reference.span, scope);
     }
 
-    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) {
+    /// A closure whose caller supplies its parameters' types (a call's
+    /// argument): none of them needs one written.
+    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) -> Vec<Span> {
+        self.check_closure_as(closure, scope, self_name, "", usize::MAX)
+    }
+
+    /// `checkClosure`: `label` says what the closure is, and the caller
+    /// supplies the types of its first `supplied` parameters. What its
+    /// body returns, where.
+    pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Vec<Span> {
         let body = self.scopes.open(Some(scope));
-        for param in &closure.params {
+        for (index, param) in closure.params.iter().enumerate() {
+            if param.type_.is_none() && index >= supplied {
+                self.report_param_needs_type(&param.name, param.span, label);
+            }
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
@@ -453,7 +487,7 @@ impl<'c> Checker<'c> {
         if let Some(name) = self_name {
             self.declare_closure_self(name, closure, body);
         }
-        self.check_body(&closure.body, body, "the closure".to_string());
+        self.check_body(&closure.body, body, label.to_string())
     }
 
     pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
@@ -463,7 +497,9 @@ impl<'c> Checker<'c> {
                 CallArg::Write { write, .. } => self.check_write(write, scope),
                 CallArg::Node { node, .. } => self.check_node_literal(node, scope),
                 CallArg::Call { call, .. } => self.check_call_in_argument(call, scope),
-                CallArg::Closure { closure, .. } => self.check_closure(closure, scope, None),
+                CallArg::Closure { closure, .. } => {
+                    self.check_closure(closure, scope, None);
+                }
                 CallArg::Type { .. } => {}
             }
         }
@@ -683,51 +719,17 @@ impl<'c> Checker<'c> {
             AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
                 self.check_path_head(head, scope);
             }
-            AwaitSource::Combinator { combinator, .. } => self.check_combinator(combinator, scope),
+            AwaitSource::Combinator { combinator, .. } => {
+                self.report_combinator_form(combinator, Some(awaited.span));
+                self.check_combinator(combinator, scope);
+            }
             AwaitSource::Sleep { .. } => {}
             AwaitSource::Until { condition, .. } => match condition {
-                UntilCondition::Closure { closure } => self.check_closure(closure, scope, None),
+                UntilCondition::Closure { closure } => {
+                    self.check_closure_as(closure, scope, None, "this 'until' condition", 0);
+                }
                 UntilCondition::Expr { expr } => self.check_expr_slot(expr, scope),
             },
-        }
-    }
-
-    fn check_arm(&mut self, arm: &ArmExpression, scope: ScopeId) {
-        match arm {
-            ArmExpression::Closure { closure, .. } => self.check_closure(closure, scope, None),
-            ArmExpression::Ref { name, span } => {
-                let callee = self.callee_name(name, scope);
-                if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) =
-                    self.scopes.resolve(scope, &callee)
-                {
-                    self.report_resolution_failure(&callee, *span, failure);
-                }
-            }
-        }
-    }
-
-    fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) {
-        match &combinator.arms {
-            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => {
-                for arm in arms {
-                    self.check_arm(arm, scope);
-                }
-            }
-            CombinatorArms::Dynamic { expr, .. } => self.check_expr_slot(expr, scope),
-        }
-        if let Some(settings) = &combinator.settings {
-            self.check_expr_slot(settings, scope);
-        }
-    }
-
-    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
-        self.check_expr_slot(&op.source, scope);
-        if let Some(init) = &op.init {
-            self.check_expr_slot(init, scope);
-        }
-        self.check_arm(&op.r#fn, scope);
-        if let Some(config) = &op.config {
-            self.check_expr_slot(config, scope);
         }
     }
 }
