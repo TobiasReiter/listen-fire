@@ -35,15 +35,22 @@ struct Corpus {
     same_set: usize,
 }
 
+#[derive(serde::Deserialize)]
+struct SnapshotRow {
+    key: String,
+    snapshot: Box<serde_json::value::RawValue>,
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (work, out) = (&args[1], &args[2]);
     let families = families_of(&std::fs::read_to_string(std::path::Path::new(out).with_file_name("PORT.md")).expect("PORT.md"));
     let mut catalogs: HashMap<String, Result<CatalogSnapshot, String>> = HashMap::new();
     for line in std::fs::read_to_string(format!("{work}/snapshots.jsonl")).expect("snapshots.jsonl").lines() {
-        let row: Value = serde_json::from_str(line).expect("a snapshot row");
-        let key = row["key"].as_str().expect("a key").to_string();
-        catalogs.insert(key, CatalogSnapshot::load(&row["snapshot"].to_string()));
+        // Raw, so the snapshot keeps its key order: a `Value` here sorts every
+        // object's keys, and the catalog's order is what messages list.
+        let row: SnapshotRow = serde_json::from_str(line).expect("a snapshot row");
+        catalogs.insert(row.key, CatalogSnapshot::load(row.snapshot.get()));
     }
     let mut codes: BTreeMap<String, Tally> = BTreeMap::new();
     let mut corpora: BTreeMap<String, Corpus> = BTreeMap::new();
@@ -135,10 +142,12 @@ fn code(d: &Value) -> String {
     d["code"].as_str().unwrap_or("?").to_string()
 }
 
-/// Up to 12 per code, each with the source line its span starts on.
+/// Up to 12 per code (`PARITY_SAMPLES` to change it), each with the source
+/// line its span starts on.
 fn push_sample(samples: &mut BTreeMap<String, Vec<String>>, code: String, sample: String, source: &str, span: &Value) {
+    let cap = std::env::var("PARITY_SAMPLES").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
     let list = samples.entry(code).or_default();
-    if list.len() < 12 {
+    if list.len() < cap {
         let line = span["start"]["line"].as_u64().unwrap_or(1) as usize;
         let text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
         list.push(format!("{sample}\n  line {line}: {}", text.trim()));

@@ -37,6 +37,8 @@ pub struct Checker<'c> {
     type_only: usize,
     /// Each catalog schema an instance was built from, read once.
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
+    /// Checking for a move up from this version (`upgradingFrom`).
+    pub upgrading_from: Option<u32>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -47,11 +49,13 @@ pub struct Bound {
     pub is_instance: bool,
     /// For an instance: the adapter that constructed it.
     pub adapter: Option<String>,
+    /// The record a write, a match or a link hands back.
+    pub handle: Option<crate::types::Position>,
 }
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), upgrading_from: None }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -128,6 +132,9 @@ impl<'c> Checker<'c> {
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name));
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
                 self.type_assigned(&assign.name, &assign.value, scope);
+                if let Some(handle) = bound.handle {
+                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(handle), ..Default::default() });
+                }
             }
             Statement::Type(_) => {}
             Statement::Shape(shape) => {
@@ -152,34 +159,61 @@ impl<'c> Checker<'c> {
                 let callee = self.callee_name(&listen.movement, scope);
                 self.resolve_reference(&callee, listen.span, scope);
             }
-            Statement::Write(write) => self.check_write(&write.write, scope),
-            Statement::Match(statement) => self.check_match(&statement.r#match, scope),
+            Statement::Write(write) => {
+                self.check_write(&write.write, scope, None);
+            }
+            Statement::Match(statement) => {
+                self.check_match(&statement.r#match, scope);
+                self.check_match_rules(&statement.r#match, scope, None, false);
+                self.report_unnamed_match(statement.span);
+            }
             Statement::Call(call) => self.check_call(call, scope),
             Statement::Block(block) => self.check_traversal_block(&block.block, scope, None),
-            Statement::Link(link) => self.check_link(&link.link, scope),
+            Statement::Link(link) => {
+                self.check_link(&link.link, scope, None);
+            }
             Statement::Unlink(unlink) => {
                 self.resolve_name(&unlink.from, unlink.span, scope);
                 self.resolve_name(&unlink.to, unlink.span, scope);
+                self.check_bare_link_edge(&unlink.from, &unlink.edge, unlink.span, crate::families::writes::LinkVerb::Unlink, scope);
             }
             Statement::Delete(delete) => {
                 self.resolve_name(&delete.name, delete.span, scope);
+                self.check_delete_rules(&delete.name, delete.span, scope);
             }
             Statement::Refresh(refresh) => {
-                if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) =
-                    self.scopes.resolve(scope, &refresh.name)
-                {
-                    self.report_resolution_failure(&refresh.name, refresh.name_span, failure);
+                match self.scopes.resolve(scope, &refresh.name) {
+                    failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) => {
+                        self.report_resolution_failure(&refresh.name, refresh.name_span, failure)
+                    }
+                    _ => self.check_refresh_rules(&refresh.name, refresh.name_span, scope),
                 }
             }
             Statement::If(statement) => {
+                let mut all_prior_leave = true;
+                let mut arms_leave = Vec::new();
                 for arm in &statement.arms {
                     self.check_condition_slot(&arm.condition, scope);
                     let arm_scope = self.scopes.open(Some(scope));
+                    self.narrow_arm(&arm.condition, scope, arm_scope);
                     self.check_statement_list(&arm.body, arm_scope);
+                    let leaves = terminates(&arm.body, self.version);
+                    arms_leave.push(leaves);
+                    if all_prior_leave && leaves {
+                        self.narrow_fails(&arm.condition, scope, scope);
+                    }
+                    all_prior_leave = all_prior_leave && leaves;
                 }
                 if let Some(else_arm) = &statement.else_arm {
                     let else_scope = self.scopes.open(Some(scope));
+                    for arm in &statement.arms {
+                        self.narrow_fails(&arm.condition, else_scope, else_scope);
+                    }
                     self.check_statement_list(&else_arm.body, else_scope);
+                    let falls_through: Vec<usize> = arms_leave.iter().enumerate().filter(|(_, leaves)| !**leaves).map(|(i, _)| i).collect();
+                    if self.version >= 3 && falls_through.len() == 1 && terminates(&else_arm.body, self.version) {
+                        self.narrow_holds_slot(&statement.arms[falls_through[0]].condition, scope, scope);
+                    }
                 }
             }
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
@@ -197,12 +231,23 @@ impl<'c> Checker<'c> {
         match value {
             RValue::Construct { construct } => {
                 let adapter = self.check_construction(construct, scope);
-                return Bound { is_closure: false, is_instance: name.is_some(), adapter };
+                return Bound { is_closure: false, is_instance: name.is_some(), adapter, handle: None };
             }
             RValue::Call { call } => self.check_call(call, scope),
-            RValue::Write { write } => self.check_write(write, scope),
-            RValue::Match { r#match } => self.check_match(r#match, scope),
-            RValue::Link { link } => self.check_link(link, scope),
+            RValue::Write { write } => {
+                let handle = self.check_write(write, scope, name);
+                return Bound { handle, ..Bound::default() };
+            }
+            RValue::Match { r#match } => {
+                self.check_match(r#match, scope);
+                let handle = self.check_match_rules(r#match, scope, name, false);
+                let handle = if self.version >= 4 { handle.map(|h| crate::types::Position::MaybeEmpty(Box::new(h))) } else { handle };
+                return Bound { handle, ..Bound::default() };
+            }
+            RValue::Link { link } => {
+                let handle = self.check_link(link, scope, name);
+                return Bound { handle, ..Bound::default() };
+            }
             RValue::Extract { extract } => self.check_extract(extract, scope),
             RValue::ExtractCall { extract_call } => {
                 self.check_expr_slot(&extract_call.content, scope);
@@ -434,7 +479,9 @@ impl<'c> Checker<'c> {
         for arg in args {
             match arg {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
-                CallArg::Write { write, .. } => self.check_write(write, scope),
+                CallArg::Write { write, .. } => {
+                    self.check_write(write, scope, None);
+                }
                 CallArg::Node { node, .. } => self.check_node_literal(node, scope),
                 CallArg::Call { call, .. } => self.check_call(call, scope),
                 CallArg::Closure { closure, .. } => self.check_closure(closure, scope, None),
@@ -462,7 +509,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId) {
+    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>) -> Option<crate::types::Position> {
         self.check_target(&write.target, scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind
@@ -478,6 +525,7 @@ impl<'c> Checker<'c> {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
             self.resolve_name(root, spread.span, scope);
         }
+        self.check_write_rules(write, scope, binding)
     }
 
     fn check_match(&mut self, matched: &MatchExpression, scope: ScopeId) {
@@ -487,7 +535,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_link(&mut self, link: &movement_parser::ast::LinkExpression, scope: ScopeId) {
+    fn check_link(&mut self, link: &movement_parser::ast::LinkExpression, scope: ScopeId, binding: Option<&str>) -> Option<crate::types::Position> {
         self.resolve_name(&link.from, link.span, scope);
         match &link.to {
             LinkTarget::Handle { name } => {
@@ -495,6 +543,7 @@ impl<'c> Checker<'c> {
             }
             LinkTarget::Match { r#match, .. } => self.check_match(r#match, scope),
         }
+        self.check_link_rules(link, scope, binding)
     }
 
     fn check_extract(&mut self, extract: &ExtractExpression, scope: ScopeId) {
@@ -625,6 +674,7 @@ impl<'c> Checker<'c> {
     fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) {
         let aliases = self.check_path_head(&block.head, scope);
         let body = self.open_landing(scope, &aliases, block.head.span);
+        self.type_head_aliases(&block.head, scope, body, &aliases);
         self.check_statement_list(&block.body, body);
         let bound: Vec<String> = self
             .scopes
@@ -696,6 +746,19 @@ impl<'c> Checker<'c> {
             self.check_expr_slot(config, scope);
         }
     }
+}
+
+/// `terminates` (flow.ts): a list that always leaves — an `ERROR`, a
+/// `return` from version 3, or an `if` every arm of which leaves.
+fn terminates(statements: &[Statement], version: u32) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::Error(_) => true,
+        Statement::Return(_) => version >= 3,
+        Statement::If(statement) => {
+            statement.else_arm.as_ref().is_some_and(|e| terminates(&e.body, version)) && statement.arms.iter().all(|arm| terminates(&arm.body, version))
+        }
+        _ => false,
+    })
 }
 
 fn is_closure_type(type_: &ParamTypeRef) -> bool {

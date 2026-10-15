@@ -34,6 +34,7 @@ pub struct CheckOptions {
 pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: CheckOptions) -> Vec<Diagnostic> {
     let resolves_files = catalog.files.is_some();
     let mut checker = checker::Checker::new(catalog, options.language_version, resolves_files);
+    checker.upgrading_from = options.upgrading_from;
     checker.run(&program.statements);
     version::standing_diagnostic(options.language_version)
         .into_iter()
