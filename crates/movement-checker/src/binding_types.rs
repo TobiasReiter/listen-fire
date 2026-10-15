@@ -87,6 +87,14 @@ impl Checker<'_> {
                 }),
                 ..SymbolTypes::default()
             },
+            // From version 3 a positional call is also read as one expression
+            // (`n = ONLY(…)`), and `check_call` reads it so.
+            RValue::Call { call } if call.expression.is_some() => {
+                match call.expression.as_ref().and_then(|expr| self.type_of_bound_slot(expr, scope)) {
+                    Some(types) => types,
+                    None => return,
+                }
+            }
             RValue::Expr { expr } => match self.type_of_bound_slot(expr, scope) {
                 Some(types) => types,
                 None => return,
