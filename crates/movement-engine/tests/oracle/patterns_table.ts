@@ -403,10 +403,10 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'value_call_arg_record',
-    routes: 'refused',
-    note: "a call through a value (version 5) handing an argument that may hold a record, where a function a value may hold declares a typed parameter: admission reads a value-typed parameter as free of records, and which function the call runs is not known statically. The checker passes a COALESCE of a record and a number to a closure's number parameter through a COALESCE of closures; the TypeScript binds the record. Takes: which functions a call through a value may run, per call site",
+    routes: 'unreached',
+    note: "retired (main merge 18): a call through a value (version 5) handing an argument that may hold a record. Admission read a value-typed parameter as free of records, and the checker let a COALESCE of a record and a number through to a closure's number parameter. From version 5 the checker refuses a value that may be a record as any value parameter's argument (MOV_CALL_ARG_MAYBE_RECORD), and a COALESCE of closures (MOV_CLOSURE_NOT_DATA), so the engine never sees the program and admission no longer refuses it",
     programs: [
-      () => ({ body: '  a = (n: <number>) => n\n  co = write crm-[:companies]-> { name: "a" }\n  g = COALESCE(a, a)\n  x = g(COALESCE(co, 1))', version: 5 }),
+      () => ({ file: `function run(h: <(n: <number>) => <number>>) {\n  co = write crm-[:companies]-> { name: "a" }\n  return h(COALESCE(co, 1))\n}\n${m('  x = run((n: <number>) => n)')}`, movementName: 'm', version: 5, checks: false }),
     ],
   },
   {

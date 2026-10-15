@@ -1209,26 +1209,6 @@ impl<'p> Callees<'p> {
         concrete(&signature, &self.held_kinds).unwrap_or_else(|| vec![vec![Kind::Event; params.len()]])
     }
 
-    /// Whether a function a value may hold declares a parameter of a value
-    /// type (`.0`) or of a position (`.1`): what an argument holding a
-    /// record may reach through a call through a value.
-    fn value_params_typed(&self) -> (bool, bool) {
-        let params = self.value_closures.iter().flat_map(|c| c.params.iter()).chain(self.value_movements.iter().flat_map(|m| m.params.iter()));
-        let mut typed = (false, false);
-        for param in params.filter(|p| p.type_.is_some()) {
-            if self.takes_value(param) {
-                typed.0 = true;
-            } else {
-                typed.1 = true;
-            }
-        }
-        for import in &self.imported {
-            let (value, position) = import.callees.value_params_typed();
-            typed = (typed.0 || value, typed.1 || position);
-        }
-        typed
-    }
-
     /// What a call of `closure` hands back where the walk calling it did
     /// not walk its body: a closure written at file scope, or in another
     /// movement's body (one that movement's call handed back, `h = mk(2)`).
@@ -1421,9 +1401,10 @@ impl<'p> Callees<'p> {
 
     /// `isValueParam`. The checker holds every argument to a value
     /// parameter's type, which is never a record, so admission reads the
-    /// parameter as free of records — but the checker does not see a record
-    /// through `COALESCE` or `MULTI`, so every argument bound to one is held
-    /// to it as well (`call_arg_record`).
+    /// parameter as free of records — but before version 5 the checker does
+    /// not see a record through `COALESCE` or `MULTI` (from 5,
+    /// MOV_CALL_ARG_MAYBE_RECORD), so every argument bound to one is held to
+    /// it as well (`call_arg_record`).
     fn takes_value(&self, param: &ast::MovementParam) -> bool {
         // An imported movement's parameter names its own library's `type`s.
         let types = self.imported.iter().find(|i| i.declaration.params.as_ptr_range().contains(&std::ptr::from_ref(param))).map_or(&self.types, |i| &i.types);
@@ -3103,37 +3084,11 @@ impl Names<'_> {
     /// A call through a value: the function it runs may be any a value may
     /// hold (`Callees::value_closures`), each body walked where it is
     /// written. Each argument is walked as an expression; one that may hold
-    /// a record reaches a parameter typed by a value only through a hole
-    /// in the checker's reading (`COALESCE`), and a position's field by
-    /// field: so where such a function takes one, it is refused.
+    /// a record the checker refuses for a value parameter
+    /// (MOV_CALL_ARG_MAYBE_RECORD, from version 5, the only version with
+    /// calls through a value).
     fn value_call(&self, call: &CallStatement) -> Admitted {
-        self.call_args(&[], &call.args)?;
-        let (value_typed, position_typed) = self.callees.value_params_typed();
-        for arg in &call.args {
-            let refused = match arg {
-                CallArg::Expr { expr, .. } => self.may_hold_record_slot(expr) && (value_typed || (position_typed && !self.clean_record(expr))),
-                CallArg::Write { .. } | CallArg::Node { .. } => value_typed || position_typed,
-                CallArg::Call { call, .. } => !self.hands_over_clean(self.call_value_holder(call)) && (value_typed || position_typed),
-                CallArg::Closure { .. } | CallArg::Type { .. } => false,
-            };
-            if refused {
-                return refuse("value_call_arg_record");
-            }
-        }
-        Ok(())
-    }
-
-    /// What a call written as an argument hands back.
-    fn call_value_holder(&self, call: &CallStatement) -> Holder {
-        if self.callee(&call.callee).is_some() {
-            self.call_holders.iter().rev().find(|(at, _)| *at == call.span).map_or(Holder::Other, |(_, held)| *held)
-        } else if self.calls_closure(&call.callee) {
-            self.closure_holder(&call.callee)
-        } else if self.value_callee(&call.callee) {
-            self.callees.value_call_holder()
-        } else {
-            call.expression.as_ref().map_or(Holder::Other, |e| self.text_holder(&e.raw))
-        }
+        self.call_args(&[], &call.args)
     }
 
     /// A call's arguments, each walked as what it binds its parameter to.
@@ -6097,8 +6052,7 @@ mod tests {
     }
 
     /// A call through a value hands back what any function a value may hold
-    /// hands back; an argument that may hold a record reaches no parameter
-    /// typed by a value through one.
+    /// hands back.
     #[test]
     fn a_call_through_a_value_holds_what_its_functions_may() {
         let reasons = |body: &str| {
@@ -6109,8 +6063,6 @@ mod tests {
         assert!(!reasons(returns_record).is_empty(), "a record handed back through a value");
         let free = "  mk = () => { return () => { return \"a\" } }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
         assert_eq!(reasons(free), Vec::<String>::new());
-        let record_arg = "  a = (n: <number>) => n\n  co = write crm-[:companies]-> { name: \"a\" }\n  g = COALESCE(a, a)\n  x = g(COALESCE(co, 1))";
-        assert_eq!(reasons(record_arg), vec!["value_call_arg_record".to_string()]);
     }
 
     /// Closures as values (Dancing Wren, 5): every form closure_values
@@ -6133,8 +6085,6 @@ mod tests {
             ("namedFunctionBound", vec!["  g = one".into(), "  x = g()".into(), write("x: x")]),
             ("namedFunctionFromConcise", vec!["  mk = () => one".into(), "  h = mk()".into(), "  x = h()".into(), write("x: x")]),
             ("namedFunctionReturned", vec!["  h = pickOne()".into(), "  x = h()".into(), write("x: x")]),
-            ("ifOverClosures", vec!["  a = () => \"a\"".into(), "  c = TRUE".into(), "  g = IF c THEN one ELSE a END".into(), "  x = g()".into(), write("x: x")]),
-            ("coalesceOverClosures", vec!["  a = () => \"a\"".into(), "  g = COALESCE(one, a)".into(), "  x = g()".into(), write("x: x")]),
             ("closureInPlaceArgument", vec!["  k = 2".into(), "  x = run((n) => n + k)".into(), write("x: x")]),
             ("extraArgumentDropped", vec!["  x = run(() => 5)".into(), write("x: x")]),
             ("combinatorArrowBody", vec!["  g = () => race(() => \"first\")".into(), "  r = g()".into(), write("r: r")]),

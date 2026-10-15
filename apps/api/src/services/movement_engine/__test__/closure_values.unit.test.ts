@@ -591,8 +591,6 @@ describe('both engines: closures as values (version 5)', () => {
     namedFunctionBound: { body: ['  g = one', '  x = g()', write('x: x')], payload: { x: 'one' } },
     namedFunctionFromConcise: { body: ['  mk = () => one', '  h = mk()', '  x = h()', write('x: x')], payload: { x: 'one' } },
     namedFunctionReturned: { body: ['  h = pickOne()', '  x = h()', write('x: x')], payload: { x: 'one' } },
-    ifOverClosures: { body: ['  a = () => "a"', '  c = TRUE', '  g = IF c THEN one ELSE a END', '  x = g()', write('x: x')], payload: { x: 'one' } },
-    coalesceOverClosures: { body: ['  a = () => "a"', '  g = COALESCE(one, a)', '  x = g()', write('x: x')], payload: { x: 'one' } },
     closureInPlaceArgument: { body: ['  k = 2', '  x = run((n) => n + k)', write('x: x')], payload: { x: 22 } },
     extraArgumentDropped: { body: ['  x = run(() => 5)', write('x: x')], payload: { x: 5 } },
     combinatorArrowBody: { body: ['  g = () => race(() => "first")', '  r = g()', write('r: r')], payload: { r: ['first'] } },
