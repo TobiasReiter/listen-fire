@@ -1,0 +1,13 @@
+//! The flow family: not yet ported. Its codes (PORT.md has where the
+//! TypeScript raises each):
+//!
+//! - MOV_AWAIT_BAD_DURATION
+//! - MOV_AWAIT_BARE_WALK
+//! - MOV_AWAIT_IMPURE_CONDITION
+//! - MOV_AWAIT_NEEDS_CADENCE
+//! - MOV_AWAIT_NOT_AWAITABLE
+//! - MOV_HEAD_NEEDS_A_NAME
+//! - MOV_IF_WITHOUT_ELSE
+//! - MOV_UNTIL_CADENCE_TOO_SHORT
+//! - MOV_UNTIL_EDGE_WATCHABLE
+//! - MOV_WAIT_NOT_RESUMABLE

@@ -1,0 +1,15 @@
+//! The records family: not yet ported. Its codes (PORT.md has where the
+//! TypeScript raises each):
+//!
+//! - MOV_AT_RECORD_KEY
+//! - MOV_CALL_ARG_MAYBE_RECORD
+//! - MOV_CALL_ARG_OPAQUE_RECORD
+//! - MOV_FILE_IN_TEXT
+//! - MOV_HANDLE_FIELD_RETIRED
+//! - MOV_HANDLE_FILE_NOT_SENT
+//! - MOV_HANDLE_READ_FOUND
+//! - MOV_INTERNAL_UNTYPED_BINDING
+//! - MOV_RECEIPT_RECORD_SLOT
+//! - MOV_RECORD_NOT_A_VALUE
+//! - MOV_STDLIB_ARG_LAZY_EDGE
+//! - MOV_STDLIB_ARG_NOT_RECORD
