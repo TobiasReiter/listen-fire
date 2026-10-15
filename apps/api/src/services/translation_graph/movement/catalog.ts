@@ -33,7 +33,6 @@
 
 import {
   entryPositionKeyOf,
-  CATALOG_SNAPSHOT_VERSION,
   instanceSchemaKey,
   catalogSnapshotOf,
   maybeAbsent,
@@ -46,8 +45,6 @@ import {
   type AdapterSpec,
   type Catalog,
   type CatalogSnapshot,
-  type ConnectAction,
-  type ConstructionArg,
   type CredentialSpec,
   type SchemaFieldType,
   type InstanceSchema,
@@ -59,7 +56,7 @@ import {
 
 import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AdapterManifest, ConfigBlock } from 'movement-engine/services/translation_graph/adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { availableChatModels } from 'movement-engine/lib/models/map';
@@ -101,6 +98,12 @@ import {
   type AdapterSchemaProjection,
   type CredentialRow,
 } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import {
+  buildCatalogSnapshot,
+  constructionArgsOf,
+  triggerConfigVocabulary,
+  type CatalogAdapterInput,
+} from 'movement-engine/services/translation_graph/movement/catalog_snapshot';
 import { closeDemandOverChains, closeDemandOverWriteVariants, demandSeed } from './demand';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
@@ -378,131 +381,11 @@ export function registeredPluginSpecs(): Record<string, PluginSpec> {
 }
 
 /**
- * The `listen to <instance> { … }` config vocabulary per adapter — the
- * checker flags unknown keys (MOV_LISTEN_BAD_CONFIG) only where this is
- * declared, and validates VALUES where a key carries a closed set:
- *
- *   - adapters declaring an inbound routing-key config field accept that
- *     field's key (email's plus-suffix `key`, matched by
- *     `findTriggerByInboundKey`);
- *   - adapters declaring `subscribableEvents` accept an `events` key whose
- *     values are exactly those event names (`listen to crm { events:
- *     ["record.created"] } fire …`) — the same vocabulary
- *     `ensureEventSubscription` provisions externally;
- *   - adapter-declared `listenConfig` keys (the cron adapter's required,
- *     cron-format `schedule`) project as keys + required set + value
- *     formats.
- */
-function triggerConfigVocabulary(manifest: {
-  supportedTriggers?: readonly string[];
-  triggerConfig?: readonly ConfigBlock[];
-  subscribableEvents?: readonly string[];
-  defaultSubscribedEvents?: readonly string[];
-  listenConfig?: readonly {
-    key: string;
-    required?: boolean;
-    format?: NonNullable<AdapterSpec['triggerConfigFormats']>[string];
-  }[];
-}): Pick<
-  AdapterSpec,
-  | 'canFire'
-  | 'triggerConfig'
-  | 'triggerConfigOptions'
-  | 'triggerConfigRequired'
-  | 'triggerConfigRequiredWhy'
-  | 'triggerConfigFormats'
-  | 'defaultEvents'
-> {
-  const keys: string[] = [];
-  const options: Record<string, string[]> = {};
-  const required: string[] = [];
-  const why: Record<string, string> = {};
-  const formats: NonNullable<AdapterSpec['triggerConfigFormats']> = {};
-  // An adapter's inbound routing-key block (email's `key`) becomes a listen
-  // config key — routed generically off the block declaration, not a named
-  // forwarding-address flag. Presentation/action blocks carry no key.
-  //
-  // It is also REQUIRED: a routing key is how an inbound event finds its
-  // listener (`findTriggerByInboundKey` matches on it and nothing else), so a
-  // listen without one provisions a listener no event can ever be addressed
-  // to. That saved clean, with no address, and stayed silent forever.
-  for (const block of manifest.triggerConfig ?? []) {
-    if (
-      (block.kind === 'text' || block.kind === 'slug') &&
-      block.routingKey === true &&
-      !keys.includes(block.key)
-    ) {
-      keys.push(block.key);
-      required.push(block.key);
-      why[block.key] =
-        block.prefix !== undefined || block.suffix !== undefined
-          ? `the ${block.key} is this listener's address, ${block.prefix ?? ''}<${block.key}>${block.suffix ?? ''}; without one nothing can be sent to it and it never fires`
-          : `inbound events find this listener by its ${block.key}; without one nothing can reach it and it never fires`;
-    }
-  }
-  if (manifest.subscribableEvents !== undefined && manifest.subscribableEvents.length > 0) {
-    keys.push('events');
-    options.events = [...manifest.subscribableEvents];
-  }
-  for (const entry of manifest.listenConfig ?? []) {
-    if (!keys.includes(entry.key)) keys.push(entry.key);
-    if (entry.required && !required.includes(entry.key)) required.push(entry.key);
-    if (entry.format !== undefined) formats[entry.key] = entry.format;
-  }
-  return {
-    // A construction-free manifest fact: an adapter that names no trigger type
-    // has no inbound surface to listen to. Only `true` projects — see
-    // `AdapterSpec.canFire`.
-    ...((manifest.supportedTriggers ?? []).length > 0 ? { canFire: true } : {}),
-    ...(keys.length > 0 ? { triggerConfig: keys } : {}),
-    ...(Object.keys(options).length > 0 ? { triggerConfigOptions: options } : {}),
-    ...(required.length > 0 ? { triggerConfigRequired: required } : {}),
-    ...(Object.keys(why).length > 0 ? { triggerConfigRequiredWhy: why } : {}),
-    ...(Object.keys(formats).length > 0 ? { triggerConfigFormats: formats } : {}),
-    // The adapter's own no-selection dispatch default (whatsapp: messages
-    // only) — the checker types a config-less listen with it.
-    ...(manifest.defaultSubscribedEvents !== undefined &&
-    manifest.defaultSubscribedEvents.length > 0
-      ? { defaultEvents: [...manifest.defaultSubscribedEvents] }
-      : {}),
-  };
-}
-
-/**
  * A real `Catalog` over the host's static registries. Adapter existence
  * and construction arguments come from the manifests; plugins from the
  * transform registry. Credentials and the kg ontology are injected by
  * the caller (they are per-team data — see module header).
  */
-/**
- * A manifest's full construction signature: the credential (when it needs one)
- * folded in as a `kind: 'credential'` entry, plus every entry-position arg. The
- * single source all three catalog builders share so they can't drift — the
- * skeleton dropping position args is exactly the bug this consolidation kills.
- */
-function constructionArgsOf(
-  manifest: Pick<AdapterManifest, 'requiredCredentialType' | 'positionArgs'>,
-): ConstructionArg[] {
-  // A `credentials` slot exists ONLY for adapters that actually authenticate —
-  // those that declare a `requiredCredentialType`. Credential-free built-ins
-  // (email, manual, cron, kg) take no credential: the email adapter is
-  // constructed from teamId alone and ignores any `credentials:` arg, so
-  // advertising a slot would be a lie the author reaches for (and a no-op).
-  // When present, the credential slot is always required.
-  return [
-    ...(manifest.requiredCredentialType
-      ? [{ name: 'credentials', kind: 'credential' as const, required: true }]
-      : []),
-    ...(manifest.positionArgs ?? []).map((pa) => ({
-      name: pa.name,
-      kind: 'position' as const,
-      required: false,
-      optionsFromType: pa.optionsFrom,
-      ...(pa.label !== undefined ? { label: pa.label } : {}),
-    })),
-  ];
-}
-
 export function staticCatalogFromManifests(
   options: {
     /** Workspace credentials by import name — `{ acme_main: { adapter: 'attio' } }`. */
@@ -1558,92 +1441,12 @@ async function allTeamMovementSources(
 //
 // The checker is silent on unknown schemas, so diagnostics only tighten as the
 // filled snapshot replaces the skeleton — no error flicker.
+//
+// Both gather inputs from the database and live introspection, then hand them
+// to `buildCatalogSnapshot` (movement-engine) — the pure builder `lf` calls
+// with what it scanned from a project, so the two cannot project a manifest
+// differently.
 // ═══════════════════════════════════════════════════════════════════════════
-
-/** Pure assembly: prefetched pieces → a serializable snapshot. */
-export function toCatalogSnapshot(input: {
-  adapters: Record<
-    string,
-    {
-      constructionArgs?: ConstructionArg[];
-      /** Whether the adapter declares any trigger surface (see `AdapterSpec.canFire`). */
-      canFire?: boolean;
-      /** `listen` config-key vocabulary (see triggerConfigVocabulary). */
-      triggerConfig?: string[];
-      /** Per-key value vocabularies (the subscribable-event surface). */
-      triggerConfigOptions?: Record<string, string[]>;
-      /** Keys a listen must carry (the cron `schedule`, email's `key`). */
-      triggerConfigRequired?: string[];
-      /** Why each required key is required (see `AdapterSpec`). */
-      triggerConfigRequiredWhy?: Record<string, string>;
-      /** Per-key static value formats — DERIVED from movement-lang's own spec
-       *  rather than re-spelled, because a hand-mirrored copy of a union is a
-       *  copy that goes stale (this one did, the day `'fields'` was added). */
-      triggerConfigFormats?: AdapterSpec['triggerConfigFormats'];
-      /** Interactive "connect" actions the adapter offers (the "+" affordance). */
-      connectActions?: ConnectAction[];
-      /** How the adapter is connected: 'oauth' | 'key-entry' | 'intrinsic' |
-       *  'handshake' | 'app-only' (absent ⇒ no credential needed). */
-      connect?: 'oauth' | 'key-entry' | 'intrinsic' | 'handshake' | 'app-only';
-      /** What a listener on this adapter actually fires on (manifest prose). */
-      triggerExpectation?: string;
-      /** 'introspected' = describeInstance costs upstream API calls (scope
-       *  with `types`); 'static' = describing is free. */
-      schemaShape?: 'static' | 'introspected';
-      /** Instance schema per credential IMPORT name; `''` = credential-free. */
-      schemas: Record<string, InstanceSchema>;
-      /** Why a schema is missing, keyed like `schemas` — hover surfaces it. */
-      schemaNotes?: Record<string, string[]>;
-      /** Entry-position arg values, by credential import name then arg name. */
-      constructionArgOptions?: Record<string, Record<string, string[]>>;
-    }
-  >;
-  credentials: Record<string, CredentialSpec>;
-  plugins: Record<string, PluginSpec>;
-}): CatalogSnapshot {
-  const adapters: CatalogSnapshot['adapters'] = {};
-  for (const [slug, spec] of Object.entries(input.adapters)) {
-    adapters[slug] = {
-      constructionArgs: spec.constructionArgs ?? [
-        { name: 'credentials', kind: 'credential', required: true },
-      ],
-      // Must be forwarded: absence IS the "cannot fire" fact, so dropping it
-      // here would silently make every listen on a snapshot-loaded catalog an
-      // error rather than leaving it unchecked.
-      ...(spec.canFire !== undefined ? { canFire: spec.canFire } : {}),
-      ...(spec.triggerConfig !== undefined ? { triggerConfig: spec.triggerConfig } : {}),
-      ...(spec.triggerConfigOptions !== undefined
-        ? { triggerConfigOptions: spec.triggerConfigOptions }
-        : {}),
-      ...(spec.triggerConfigRequired !== undefined
-        ? { triggerConfigRequired: spec.triggerConfigRequired }
-        : {}),
-      ...(spec.triggerConfigRequiredWhy !== undefined
-        ? { triggerConfigRequiredWhy: spec.triggerConfigRequiredWhy }
-        : {}),
-      ...(spec.triggerConfigFormats !== undefined
-        ? { triggerConfigFormats: spec.triggerConfigFormats }
-        : {}),
-      ...(spec.connectActions !== undefined ? { connectActions: spec.connectActions } : {}),
-      ...(spec.connect !== undefined ? { connect: spec.connect } : {}),
-      ...(spec.triggerExpectation !== undefined
-        ? { triggerExpectation: spec.triggerExpectation }
-        : {}),
-      ...(spec.schemaShape !== undefined ? { schemaShape: spec.schemaShape } : {}),
-      schemas: spec.schemas,
-      ...(spec.schemaNotes !== undefined ? { schemaNotes: spec.schemaNotes } : {}),
-      ...(spec.constructionArgOptions !== undefined
-        ? { constructionArgOptions: spec.constructionArgOptions }
-        : {}),
-    };
-  }
-  return {
-    contractVersion: CATALOG_SNAPSHOT_VERSION,
-    adapters,
-    credentials: input.credentials,
-    plugins: input.plugins,
-  };
-}
 
 export interface TeamCatalogSnapshot {
   snapshot: CatalogSnapshot;
@@ -1738,7 +1541,9 @@ export function toAgentCatalogView(input: {
   };
 }
 
-type SnapshotAdapters = Parameters<typeof toCatalogSnapshot>[0]['adapters'];
+/** Adapter inputs to `buildCatalogSnapshot`, by slug, so the compile path's
+ *  schemas can be filled in before the snapshot is built. */
+type SnapshotAdapters = Map<string, CatalogAdapterInput & { schemas: Record<string, InstanceSchema> }>;
 
 /** Every manifest's adapter entry with no schemas yet — DB + manifests only. */
 function skeletonAdapters(input: {
@@ -1747,18 +1552,8 @@ function skeletonAdapters(input: {
   notes: string[];
 }): SnapshotAdapters {
   const { manifests, credentialRows, notes } = input;
-  const adapters: SnapshotAdapters = {};
+  const adapters: SnapshotAdapters = new Map();
   for (const manifest of manifests) {
-    // Connect affordances are now `action` blocks in the manifest's
-    // `construction` block list (config-blocks Phase 3). Project them into the
-    // catalog's `connectActions` shape (`{ kind, label }`) the editor / chat
-    // suggestion engine already consumes — `actionKind` IS the app-shipped
-    // handler id. The downstream `MovementCompletionItem.connectAction` output
-    // is unchanged; only the manifest SOURCE moved (connectActions → action
-    // blocks). The kind discriminant does all the branching.
-    const connectActions = (manifest.construction ?? [])
-      .filter((b): b is Extract<ConfigBlock, { kind: 'action' }> => b.kind === 'action')
-      .map((b) => ({ kind: b.actionKind, label: b.label }));
     // How this adapter is connected, surfaced up-front so an author never
     // authors toward (then fails to connect) an app-only adapter: reuse the
     // SAME derivation connectCredential applies — 'oauth'/'key-entry'/
@@ -1767,20 +1562,9 @@ function skeletonAdapters(input: {
     const declared = manifest.requiredCredentialType;
     const connect =
       declared === undefined ? undefined : isCredentialType(declared) ? connectMethodForType(declared) : 'app-only';
-    adapters[manifest.adapterType] = {
-      // The full construction signature — credential (if any) folded in, plus
-      // every position arg. The skeleton is the surface `listConnections` serves
-      // and the checker builds its Catalog from, so a dropped arg is both
-      // invisible to the author AND rejected as unknown when they reach for it.
-      // Shared with the static + live builders via `constructionArgsOf`.
-      constructionArgs: constructionArgsOf(manifest),
-      ...triggerConfigVocabulary(manifest),
-      ...(connectActions.length > 0 ? { connectActions } : {}),
+    const entry: CatalogAdapterInput & { schemas: Record<string, InstanceSchema> } = {
+      manifest,
       ...(connect !== undefined ? { connect } : {}),
-      ...(manifest.triggerExpectation !== undefined
-        ? { triggerExpectation: manifest.triggerExpectation }
-        : {}),
-      schemaShape: manifest.introspectedSchema ? ('introspected' as const) : ('static' as const),
       schemas: {},
     };
     if (
@@ -1791,8 +1575,9 @@ function skeletonAdapters(input: {
       notes.push(note);
       // Carry the reason in the snapshot itself so the editor's hover can
       // explain WHY this adapter's instances are untyped.
-      adapters[manifest.adapterType].schemaNotes = { '': [note] };
+      entry.schemaNotes = { '': [note] };
     }
+    adapters.set(manifest.adapterType, entry);
   }
   return adapters;
 }
@@ -1801,7 +1586,7 @@ function skeletonAdapters(input: {
  *  position-arg options. */
 function fillCompiledSchemas(adapters: SnapshotAdapters, live: TeamMovementCatalog): void {
   for (const instance of live.instanceSchemas) {
-    const adapter = adapters[instance.adapter];
+    const adapter = adapters.get(instance.adapter);
     if (!adapter) continue;
     adapter.schemas[
       instanceSchemaKey({
@@ -1816,7 +1601,7 @@ function fillCompiledSchemas(adapters: SnapshotAdapters, live: TeamMovementCatal
   // naming nothing WARNS instead of silently falling back to the
   // unpositioned surface.
   for (const [slug, byCredential] of Object.entries(live.positionArgOptions)) {
-    const adapter = adapters[slug];
+    const adapter = adapters.get(slug);
     if (adapter) adapter.constructionArgOptions = byCredential;
   }
 }
@@ -1853,11 +1638,13 @@ export async function runCatalogSnapshotForTeam(
   fillCompiledSchemas(adapters, live);
   const { credentials, credentialIds } = credentialsOf(live.credentialsByName);
   return {
-    snapshot: {
-      ...toCatalogSnapshot({ adapters, credentials, plugins: registeredPluginSpecs() }),
+    snapshot: buildCatalogSnapshot({
+      adapters: [...adapters.values()],
+      credentials,
+      plugins: registeredPluginSpecs(),
       files: Object.fromEntries([...fileSources].map(([name, source]) => [name, { source }])),
       models: availableChatModels(),
-    },
+    }),
     credentialIds,
     notes,
   };
@@ -1941,11 +1728,13 @@ export async function movementCatalogSnapshotForTeam(
   }
 
   return {
-    snapshot: {
-      ...toCatalogSnapshot({ adapters, credentials, plugins }),
+    snapshot: buildCatalogSnapshot({
+      adapters: [...adapters.values()],
+      credentials,
+      plugins,
       files,
       models: availableChatModels(),
-    },
+    }),
     notes,
     remoteConnections,
     ...(gaps.length > 0 ? { gaps } : {}),

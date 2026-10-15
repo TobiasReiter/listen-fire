@@ -10,14 +10,22 @@ import {
   checkProgram,
   diagnosticSeverity,
   fromCatalogSnapshot,
-  mockCatalogSnapshot,
+  instanceSchemaKey,
   parseProgram,
   resolveFileFromSnapshot,
   type CatalogSnapshot,
+  type CredentialSpec,
   type InstanceSchema,
   type LanguageVersion,
 } from 'movement-lang';
+import { z } from 'zod';
+import { triggerTypeSchema } from 'engine-contracts';
 import { collectFileListeners, type FileListener } from 'movement-engine/services/translation_graph/movement/file_listeners';
+import {
+  buildCatalogSnapshot,
+  type CatalogAdapterInput,
+} from 'movement-engine/services/translation_graph/movement/catalog_snapshot';
+import type { RunningExternal } from './externals';
 import type { Project } from './project';
 import type { Credential } from './secrets';
 
@@ -52,29 +60,50 @@ export function scanMovements(project: Project): MovementFile[] {
 }
 
 /**
- * The catalog a program is checked and run against: each adapter external's
- * schema, the credentials the secrets name, and the project's files (so a
- * file import resolves by path, as it does today).
+ * The catalog a program is checked and run against, built by the same builder
+ * the hosted product uses: each adapter external's manifest answer (what a
+ * listen on it may say) and schema, the credentials the secrets name, and the
+ * project's files (so a file import resolves by path, as it does today).
  */
 export function catalogOf(input: {
+  running: Map<string, RunningExternal>;
   schemas: Map<string, InstanceSchema>;
   credentials: Map<string, Credential>;
-  credentialed: Set<string>;
   files: MovementFile[];
 }): CatalogSnapshot {
-  const adapters: NonNullable<Parameters<typeof mockCatalogSnapshot>[0]['adapters']> = {};
-  for (const [name, schema] of input.schemas) {
-    adapters[name] = {
-      constructionArgs: input.credentialed.has(name) ? [{ name: 'credentials', kind: 'credential', required: true }] : [],
-      schema,
-    };
-  }
-  const credentials: Record<string, { adapters: string[] }> = {};
+  const credentials: Record<string, CredentialSpec> = {};
   for (const credential of input.credentials.values()) credentials[credential.name] = { adapters: [credential.external] };
-  return {
-    ...mockCatalogSnapshot({ adapters, credentials }),
+  const adapters: CatalogAdapterInput[] = [];
+  for (const [name, running] of input.running) {
+    // The hosted product holds a remote install's secret itself, so there it
+    // constructs credential-free; here the secrets file names it, so an
+    // external that authenticates takes the credential as an argument.
+    const credentialed = running.external.manifest.auth !== undefined;
+    const schema = input.schemas.get(name);
+    const schemas: Record<string, InstanceSchema> = {};
+    if (schema !== undefined) {
+      if (!credentialed) schemas[instanceSchemaKey({})] = schema;
+      for (const [credentialName, spec] of Object.entries(credentials)) {
+        if (credentialed && spec.adapters.includes(name)) schemas[instanceSchemaKey({ credentialName })] = schema;
+      }
+    }
+    adapters.push({
+      manifest: {
+        adapterType: name,
+        supportedTriggers: z.array(triggerTypeSchema).parse(running.supportedTriggers),
+        ...running.listen,
+        introspectedSchema: true,
+      },
+      constructionArgs: credentialed ? [{ name: 'credentials', kind: 'credential', required: true }] : [],
+      schemas,
+    });
+  }
+  return buildCatalogSnapshot({
+    adapters,
+    credentials,
+    plugins: {},
     files: Object.fromEntries(input.files.map((f) => [f.name, { source: f.source }])),
-  };
+  });
 }
 
 export interface FileDiagnostic {
