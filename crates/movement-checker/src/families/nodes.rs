@@ -517,6 +517,19 @@ impl Checker<'_> {
         }
     }
 
+    /// `conformsToDeclaredNode`: does `position` of `instance` structurally
+    /// satisfy the declaration? `None` when nobody could compare (an
+    /// undescribed position, a declaration whose schema did not resolve).
+    pub fn conforms_to_declared_node(&self, instance: &InstanceRef, position: &str, declaration: SymbolId) -> Option<bool> {
+        let declared = self.declared_node(declaration)?;
+        let schema = &declared.instance.schema;
+        if crate::types::declared::surface_not_enumerated(schema.positions.get(&declared.instance.name)) {
+            return None;
+        }
+        let surface = crate::types::declared::schema_surface(&instance.schema, position)?;
+        Some(crate::types::declared::surface_misfit(Some(&surface), schema, &declared.instance.name, false).is_none())
+    }
+
     /// `declaredRootPosition` of the declaration `symbol` names.
     pub fn declared_root(&self, symbol: SymbolId) -> Option<crate::types::Position> {
         self.declared_node(symbol).and_then(|d| crate::types::declared::declared_root_position(&d.instance))

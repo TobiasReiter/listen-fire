@@ -23,6 +23,28 @@ fn a_shaped_graph_built_from_a_spread_walks_its_declared_children() {
     assert_eq!(codes_at(source, 3), vec![]);
 }
 
+#[test]
+fn a_node_literal_argument_is_judged_by_structure() {
+    let source = "node Doc {\n  title: <text>\n}\nmovement takes(d: <Doc>) {\n}\nmovement main() {\n  takes(d: node { nope: \"x\" })\n}\n";
+    assert_eq!(codes_at(source, 3), vec![("MOV_NODE_ARG_SHAPE".into(), "'takes' expects Doc.Doc, and it has no `title`".into())]);
+}
+
+#[test]
+fn an_extends_cycle_names_the_chain() {
+    let source = "node A extends B {\n  a: <text>\n}\nnode B extends A {\n  b: <text>\n}\n";
+    let codes: Vec<String> = codes_at(source, 3).into_iter().map(|(c, _)| c).collect();
+    assert_eq!(codes, vec!["MOV_EXTENDS_CYCLE", "MOV_EXTENDS_CYCLE"]);
+}
+
+#[test]
+fn a_shaped_graph_needs_every_required_field() {
+    let source = "node Note {\n  text: <text>\n  tag: <text | null>\n}\nmovement main() {\n  g = graph<Note> { }\n}\n";
+    assert_eq!(
+        codes_at(source, 3),
+        vec![("MOV_GRAPH_FIELD_MISSING".into(), "<Note> needs `text` (text) and this graph doesn't write it — only a field declared '<T | null>' may be left out".into())]
+    );
+}
+
 /// Debugging aid: `NODES_CASE=<dir>` checks `<dir>/case.mov` against `<dir>/case.json`.
 #[test]
 fn debug_case() {

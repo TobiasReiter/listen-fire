@@ -165,8 +165,11 @@ pub fn surface_not_enumerated(position: Option<&PositionSchema>) -> bool {
 /// thunk, forced only when the required side asks.
 pub struct Surface<'a> {
     pub properties: Vec<(String, Option<Ty>)>,
-    pub edges: Vec<(String, Option<Box<dyn Fn() -> Option<Surface<'a>> + 'a>>)>,
+    pub edges: Vec<(String, Option<SurfaceThunk<'a>>)>,
 }
+
+/// An edge's landing surface, forced only when the required side asks.
+pub type SurfaceThunk<'a> = Box<dyn Fn() -> Option<Surface<'a>> + 'a>;
 
 /// `schemaSurface`: what a published schema offers at `position`.
 pub fn schema_surface<'a>(schema: &'a InstanceSchema, position: &str) -> Option<Surface<'a>> {
@@ -182,8 +185,8 @@ pub fn schema_surface<'a>(schema: &'a InstanceSchema, position: &str) -> Option<
             .iter()
             .map(|(name, edge)| {
                 let target = edge.target.clone();
-                let thunk: Option<Box<dyn Fn() -> Option<Surface<'a>> + 'a>> =
-                    schema.positions.contains_key(&target).then(|| Box::new(move || schema_surface(schema, &target)) as Box<dyn Fn() -> Option<Surface<'a>> + 'a>);
+                let thunk: Option<SurfaceThunk<'a>> =
+                    schema.positions.contains_key(&target).then(|| Box::new(move || schema_surface(schema, &target)) as SurfaceThunk<'a>);
                 (name.clone(), thunk)
             })
             .collect(),
@@ -209,7 +212,7 @@ fn local_surface<'a>(local: &'a LocalNode) -> Surface<'a> {
             .iter()
             .flatten()
             .map(|(name, edge)| {
-                let thunk = edge.target.as_ref().map(|target| Box::new(move || supplied_surface(target)) as Box<dyn Fn() -> Option<Surface<'a>> + 'a>);
+                let thunk = edge.target.as_ref().map(|target| Box::new(move || supplied_surface(target)) as SurfaceThunk<'a>);
                 (name.clone(), thunk)
             })
             .collect(),
