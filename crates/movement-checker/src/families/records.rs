@@ -40,6 +40,32 @@ pub fn report_handle_field_retired(typing: &mut Typing, property: &str) {
     );
 }
 
+/// `reportHandleReadFound`: a field read off a write's handle that the write
+/// did not set, in a check moving up across 4 — the same type, but from 4 the
+/// record as the write found it rather than what the system handed back.
+pub fn report_handle_read_found(typing: &mut Typing, root: &str, position: Option<&Position>, property: &str) {
+    let Some(at @ Position::Handle(handle)) = position else { return };
+    if !handle.written || handle.set_fields.as_ref().is_some_and(|set| set.contains(property)) {
+        return;
+    }
+    // A name only the write's result declares (the host's `externalId`) is the
+    // handle's own identity, the same on either side of 4. `url` is not.
+    let of_record = crate::types::position::position_schema_of_ref(at).is_some_and(|schema| schema.properties.contains_key(property));
+    if !of_record && property != "url" && handle.result_shape.contains_key(property) {
+        return;
+    }
+    if !typing.upgrade_crosses(4) {
+        return;
+    }
+    typing.report_upgrade(
+        codes::HANDLE_READ_FOUND,
+        format!(
+            "since {} '{property}' on '{root}' reads the record as the write found it; before, it read what the system handed back from the write (often nothing). If the program assumed the old reading, change it, then upgrade.",
+            crate::version::describe(4)
+        ),
+    );
+}
+
 // ── Standard-library arguments that read a record's fields ──
 
 /// `holdsSpelledFields`: the checker holds this record's fields in hand (a

@@ -56,6 +56,10 @@ pub trait TypeEnv {
     fn is_declared_graph(&self, _instance: &super::position::InstanceRef) -> bool {
         false
     }
+    /// `upgradingFrom`: the version a check for a move up starts from.
+    fn upgrading_from(&self) -> Option<u32> {
+        None
+    }
     /// Whether the host's zone database knows `zone`; `None` for a typing
     /// with no host behind it (one outside a check), which accuses nothing.
     fn is_zone(&self, _zone: &str) -> Option<bool> {
@@ -145,6 +149,19 @@ impl<'a> Typing<'a> {
         let mut diagnostic = Diagnostic::error(code, message, self.span);
         diagnostic.severity = Some(severity);
         self.diagnostics.push(diagnostic);
+    }
+
+    /// A warning said only because this check is for a move up (`'upgrade'`).
+    pub fn report_upgrade(&mut self, code: &str, message: impl Into<String>) {
+        let mut diagnostic = Diagnostic::error(code, message, self.span);
+        diagnostic.severity = Some(Severity::Warning);
+        diagnostic.upgrade = Some(true);
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// `upgradeCrosses`: this check is for a move up across version `n`.
+    pub fn upgrade_crosses(&self, n: u32) -> bool {
+        self.env.upgrading_from().is_some_and(|from| from < n && self.version >= n)
     }
 
     /// The type a node was read as (widened), once typed.
@@ -585,6 +602,9 @@ impl<'a> Typing<'a> {
                 }
                 if !steps.is_empty() && is_position_terminal(expression) {
                     return (Some(list_of(Ty::record(destination), self.last_ordering)), Vec::new());
+                }
+                if let (Some(root), true, Expression::Property { property_type_id }) = (alias_root, steps.is_empty(), &**expression) {
+                    crate::families::records::report_handle_read_found(self, root, destination.as_ref(), property_type_id);
                 }
                 (self.infer_at(expression, destination.as_ref()), Vec::new())
             }

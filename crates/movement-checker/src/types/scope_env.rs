@@ -33,6 +33,7 @@ pub struct ScopeEnv<'s> {
     pub scope: ScopeId,
     pub zones: &'s dyn crate::host::ZoneLookup,
     pub nodes: &'s crate::families::nodes::NodeState,
+    pub upgrading_from: Option<u32>,
 }
 
 impl ScopeEnv<'_> {
@@ -47,6 +48,10 @@ impl ScopeEnv<'_> {
 impl TypeEnv for ScopeEnv<'_> {
     fn is_declared_graph(&self, instance: &super::position::InstanceRef) -> bool {
         instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol))
+    }
+
+    fn upgrading_from(&self) -> Option<u32> {
+        self.upgrading_from
     }
 
     fn is_zone(&self, zone: &str) -> Option<bool> {
