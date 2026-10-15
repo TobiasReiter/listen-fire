@@ -744,32 +744,31 @@ impl<'a> Evaluator<'a> {
                 keys.push(member.clone());
                 continue;
             };
-            if record {
-                keys.push(self.ask_run(Ask::ScopedAt { expr: key.clone(), subject: member.clone() }).await?.value);
-                continue;
-            }
             if !dict {
                 return Err(EvalError::unsupported(
                     "reading SORT's key off this member",
                     "the key is read off a RECORD — bind the walk first (`entries = … { return e }`) and sort that, or sort plain values by themselves (`SORT(xs)`)",
                 ));
             }
-            keys.push(self.member_key(member, key)?);
+            match self.member_key(member, key) {
+                Some(value) if !record => keys.push(value),
+                _ => keys.push(self.ask_run(Ask::ScopedAt { expr: key.clone(), subject: member.clone() }).await?.value),
+            }
         }
         let order = crate::order_limit::sort_by_order_key(&keys, direction);
         Ok(Evaluated { value: Js::array(order.into_iter().map(|i| members[i].clone()).collect()), prov })
     }
 
-    /// A SORT key over one map: a bare name reads a value binding of that
-    /// name first (`scopedBinding`), else the map's key (`readBindingField`).
-    fn member_key(&self, member: &Js, key: &Expression) -> Result<Js, EvalError> {
-        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else {
-            return Err(EvalError::Fallback("a SORT key other than a field name".into()));
-        };
+    /// A SORT key over one map that is a bare name, read here: a value
+    /// binding of that name first (`scopedBinding`), else the map's key
+    /// (`readBindingField`). Any other key is the run's to read in the map's
+    /// scope.
+    fn member_key(&self, member: &Js, key: &Expression) -> Option<Js> {
+        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else { return None };
         if let Some(bound) = self.env.value(name) {
-            return Ok(bound.value);
+            return Some(bound.value);
         }
-        Ok(crate::record::project(member, name))
+        Some(crate::record::project(member, name))
     }
 
     async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {

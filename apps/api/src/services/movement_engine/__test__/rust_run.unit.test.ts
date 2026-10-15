@@ -588,7 +588,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  write crm-[:companies]-> bind co { name: "a" }'), 'write_bind'],
       // A collection op that runs members at once (chunk 7A Task 3 runs them one at a time).
       // The expression tail this engine does not run (chunk 6A Task 4 runs the rest).
-      [movement('  x = SORT([1], UPPER("a"))'), 'aggregate:sort_key'],
       [movement('  x = LLM_AGG(["a"], "sum it")'), 'aggregate:llm'],
       [movement('  if EXISTS(msg-[:files]->-[#transform]->) {\n    x = 1\n  }'), 'exists_step'],
       [movement('  x = msg-[:files]->-[#transform]->.`name`'), 'traversal_step'],

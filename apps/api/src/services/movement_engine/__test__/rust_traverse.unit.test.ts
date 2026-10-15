@@ -862,6 +862,22 @@ describe('the expression tail, on both engines', () => {
     expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
   });
 
+  it("ranks by a SORT key of any form, read in each member's scope, records and maps alike", async () => {
+    const { rust } = await agree({
+      body: [
+        '  cs = kg-[c:company]->',
+        '  byName = SORT(cs, LOWER(`name`), DESC)',
+        '  byRevenue = SORT(cs, COALESCE(`revenue`, 0) * -1)',
+        '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]',
+        '  ranked = SORT(rows, COALESCE(`s`, 0) * -1)',
+        '  write kg-[:note]-> { text: JOIN(MAP(byName, (c) => c.`name`), ",") }',
+        '  write kg-[:note]-> { text: JOIN(MAP(byRevenue, (c) => c.`name`), ",") }',
+        '  write kg-[:note]-> { text: JOIN(MAP(ranked, (r) => r.n), ",") }',
+      ].join('\n'),
+    });
+    expect(written(rust)).toEqual(['Umbrella,Initech,Hooli,Globex,Acme', 'Initech,Globex,Umbrella,Acme,Hooli', 'a,b,c']);
+  });
+
   it('reads a second name for the event, a landing and a handle as the record it names', async () => {
     await agree({
       body: [

@@ -4586,9 +4586,10 @@ impl Names<'_> {
             // A walk read as its records keeps its own readings (a binding's
             // whole right-hand side, `selection`); anywhere else it is refused.
             AggregationFunction::Only if crate::formula::spell(inner).is_none() || crate::eval::is_records_walk(inner) => refuse("aggregate:only"),
+            // The key is read in each member's own scope (`memberScope`).
             AggregationFunction::Sort => {
-                if order_by.is_some_and(|key| !matches!(key, Expression::Property { .. } | Expression::AliasRef { .. })) {
-                    return refuse("aggregate:sort_key");
+                if let Some(key) = order_by {
+                    self.walk(key, true)?;
                 }
                 self.walk(inner, scoped)
             }
@@ -5776,14 +5777,15 @@ mod tests {
         }
         for (body, reason) in [
             ("  d = extract from [msg.`text`] {\n    a: \"${@trigger}\"\n  }", "meta:trigger"),
-            ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
         }
         // A record named bare as a stage plugin's argument is handed its
-        // fields, as a plain call's argument is.
+        // fields, as a plain call's argument is; a SORT key of any form is
+        // read in each member's scope.
         for body in [
+            "  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }",
             "  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }",
             "  co = write crm-[:companies]-> { name: \"Acme\" }\n  d = extract from [msg.`text`] through [fetch_url(url: co)] {\n    a: \"a\"\n  }",
         ] {
