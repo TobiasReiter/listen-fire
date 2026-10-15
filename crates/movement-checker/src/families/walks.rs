@@ -52,10 +52,11 @@ const POSITION_SENTINEL: &str = "__movement_position__";
 
 /// Called by the type core after each edge step it types (`stepEdge`):
 /// `landing` is `None` when the walk had already lost its position.
-pub fn observe_step(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep, _landing: Option<&EdgeLanding>) {
+pub fn observe_step(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep, landing: Option<&EdgeLanding>) {
     if let Some(from) = from {
         report_step(typing, from, &step.edge_type_id, step.expression_filter.as_deref());
     }
+    crate::families::writes::report_write_only_edge(typing, from, step, landing);
 }
 
 /// `stepEdge`, the reporting half: what the TypeScript says while stepping
@@ -262,11 +263,12 @@ fn is_write_only(schema: &PositionSchema, property: &str) -> bool {
 }
 
 /// Called by the type core after each dot read off a record (`readProperty`).
-pub fn observe_read(typing: &mut Typing, position: Option<&Position>, property: &str, _ty: Option<&Ty>) {
+pub fn observe_read(typing: &mut Typing, position: Option<&Position>, property: &str, ty: Option<&Ty>) {
     if let Some(position) = position
         && property != POSITION_SENTINEL
     {
         report_read(typing, position, property);
+        crate::families::writes::report_write_only_property(typing, Some(position), property, ty);
     }
 }
 
@@ -1128,6 +1130,38 @@ impl crate::checker::Checker<'_> {
                 continue;
             }
             self.declare_narrowed(name, scope, into, Some(residual_union(&union, &remaining)));
+        }
+    }
+}
+
+impl crate::checker::Checker<'_> {
+    /// `checkWalkKeepsWhatIsWritten`, the hop half: what the lowering would
+    /// drop from a walk written in an expression. Not ported yet: the
+    /// `#transform` hop's message (it names the plugin's call), a retired
+    /// meta hop (version 5), and a walk ending in a resource hop.
+    pub fn check_walk_keeps_what_is_written(&mut self, hops: &[movement_parser::tree::Hop], span: movement_parser::ast::Span) {
+        for hop in hops {
+            let label = hop.label.text.as_str();
+            if label == "#transform" {
+                continue;
+            }
+            // `endingHop`: the label up to its first ':' or space.
+            let base = label.split(|c: char| c == ':' || c.is_whitespace()).next().unwrap_or(label);
+            if base == "#linked" {
+                self.report(codes::LINKED_HOP_RETIRED, crate::families::writes::linked_hop_retired_message(self.version), span);
+                continue;
+            }
+            // `isRetiredMetaHop`: from version 5 its own diagnostic, never the settings one.
+            if self.version >= 5 && label.starts_with('#') && label != "#extract" {
+                continue;
+            }
+            if hop.config.is_some() {
+                self.report(
+                    codes::HOP_CONFIG_UNREAD,
+                    format!("the settings '{{ … }}' on the hop '{label}' are not read — a hop takes no settings. Remove them, or say what they mean in the hop's WHERE"),
+                    span,
+                );
+            }
         }
     }
 }

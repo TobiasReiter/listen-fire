@@ -962,6 +962,9 @@ impl Checker<'_> {
     }
 
     fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, at_: TreeAt, scope: ScopeId, write_field: bool) {
+        if let MExpr::Path { hops, at, .. } = expr {
+            self.check_walk_keeps_what_is_written(hops, at_.span_of(*at));
+        }
         if let MExpr::If { else_: None, at, .. } = expr {
             self.report(
                 codes::IF_WITHOUT_ELSE,

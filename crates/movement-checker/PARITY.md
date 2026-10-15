@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **123 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 13862 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 10112 of 11435.
-- Rust side: 2.5s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **127 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 13884 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 10134 of 11435.
+- Rust side: 2.4s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 1930 | 1931 |
-| checks v1 | 1535 | 1329 | 1330 |
-| checks v2 | 1956 | 1685 | 1686 |
-| checks v3 | 2403 | 1987 | 1988 |
+| checks under v5 | 2360 | 1939 | 1940 |
+| checks v1 | 1535 | 1331 | 1332 |
+| checks v2 | 1956 | 1687 | 1688 |
+| checks v3 | 2403 | 1996 | 1997 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -36,8 +36,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | systems | 8 | 7 | 100 | 89 | 11 | 0 | 0 |
 | values | 22 | 7 | 1156 | 846 | 310 | 0 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
-| walks | 19 | 10 | 745 | 534 | 211 | 0 | 0 |
-| writes | 45 | 38 | 713 | 578 | 135 | 0 | 0 |
+| walks | 19 | 11 | 745 | 540 | 205 | 0 | 0 |
+| writes | 45 | 41 | 713 | 594 | 119 | 0 | 0 |
 
 ## By code
 
@@ -123,7 +123,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_GRAPH_SPREAD_UNTYPED | nodes | 2 | 0 | 2 | 0 | 0 |  |
 | MOV_HEAD_NEEDS_A_NAME | flow | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_HEAD_NOT_A_POSITION | walks | 24 | 16 | 8 | 0 | 0 |  |
-| MOV_HOP_CONFIG_UNREAD | walks | 6 | 0 | 6 | 0 | 0 |  |
+| MOV_HOP_CONFIG_UNREAD | walks | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_HOP_FILTER_ENGINE | walks | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_HOP_FILTER_RESIDUAL | walks | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_HOP_FILTER_UNSUPPORTED | walks | 16 | 16 | 0 | 0 | 0 | yes |
@@ -141,7 +141,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_JSON_OPAQUE | values | 56 | 52 | 4 | 0 | 0 |  |
 | MOV_LANGUAGE_VERSION_UNSUPPORTED | versions | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_LIMIT_NEEDS_ORDER | walks | 8 | 8 | 0 | 0 | 0 | yes |
-| MOV_LINKED_HOP_RETIRED | writes | 8 | 0 | 8 | 0 | 0 |  |
+| MOV_LINKED_HOP_RETIRED | writes | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_LINKED_NEEDS_TYPE | writes | 15 | 15 | 0 | 0 | 0 | yes |
 | MOV_LINKED_TYPE_MISMATCH | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_LINKED_UNKNOWN_EDGE | writes | 39 | 39 | 0 | 0 | 0 | yes |
@@ -251,8 +251,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_MAY_BE_EMPTY | writes | 101 | 44 | 57 | 0 | 0 |  |
 | MOV_WRITE_MISSING_REQUIRED_EDGE | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_MISSING_REQUIRED_FIELD | writes | 43 | 43 | 0 | 0 | 0 | yes |
-| MOV_WRITE_ONLY_EDGE | writes | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_WRITE_ONLY_PROPERTY | writes | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_WRITE_ONLY_EDGE | writes | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_WRITE_ONLY_PROPERTY | writes | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_WRITE_POSITION_NOT_RECORD | writes | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_WRITE_POSITION_NO_UPDATE | writes | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_WRITE_POSITION_UNIQUE | writes | 4 | 4 | 0 | 0 | 0 | yes |
