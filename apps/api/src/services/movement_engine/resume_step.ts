@@ -64,7 +64,7 @@ export async function loadRunContext(runId: TriggerRunId): Promise<RunContext | 
 }
 
 /** What one segment came to, as the core's drains read it. */
-export function stepOutcomeOf(outcome: MovementFiringOutcome): StepOutcome {
+function stepOutcomeOf(outcome: MovementFiringOutcome): StepOutcome {
   if (outcome.leaseLost === true) return { kind: 'leaseLost' };
   if (outcome.result === null) return { kind: 'failed', error: outcome.error ?? 'the segment failed' };
   const { result } = outcome;
