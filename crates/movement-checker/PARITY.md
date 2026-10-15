@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **192 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14836 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 11029 of 11435.
-- Rust side: 2.4s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **193 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 14844 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 11037 of 11435.
+- Rust side: 5.6s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2242 | 2246 |
+| checks under v5 | 2360 | 2246 | 2250 |
 | checks v1 | 1535 | 1457 | 1458 |
 | checks v2 | 1956 | 1864 | 1865 |
-| checks v3 | 2403 | 2285 | 2289 |
+| checks v3 | 2403 | 2289 | 2293 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -36,7 +36,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | systems | 8 | 8 | 100 | 100 | 0 | 0 | 0 |
 | values | 22 | 10 | 1156 | 967 | 189 | 0 | 0 |
 | versions | 2 | 2 | 7 | 7 | 0 | 0 | 0 |
-| walks | 19 | 15 | 745 | 646 | 99 | 0 | 0 |
+| walks | 19 | 16 | 745 | 654 | 91 | 0 | 0 |
 | writes | 45 | 43 | 713 | 645 | 68 | 0 | 0 |
 
 ## By code
@@ -219,7 +219,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_THROUGH_BAD_ARG | extraction | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_FORWARD_REF | extraction | 7 | 7 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_NOT_PLUGIN | extraction | 4 | 4 | 0 | 0 | 0 | yes |
-| MOV_TRANSFORM_HOP_RETIRED | walks | 8 | 0 | 8 | 0 | 0 |  |
+| MOV_TRANSFORM_HOP_RETIRED | walks | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_TRAVERSE_UNKNOWN_EDGE | walks | 111 | 76 | 35 | 0 | 0 |  |
 | MOV_UNDESCRIBED_POSITION | walks | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_UNIQUE_CONJUNCT_NEEDS_WHERE | writes | 18 | 18 | 0 | 0 | 0 | yes |
