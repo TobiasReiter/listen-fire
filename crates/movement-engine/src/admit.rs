@@ -3815,11 +3815,11 @@ impl Names<'_> {
                     return refuse("plugin_call");
                 }
                 for arg in &plugin.args {
+                    // A bare name the body binds as a value may name the
+                    // entity's field instead, decided at run time; one bound
+                    // to a record is handed its fields, as a plain call's is.
                     let bare = crate::js::trim(&arg.value.raw);
-                    if crate::js::is_identifier(bare) {
-                        if self.holds_other_than_value(bare) {
-                            return refuse("name_not_value");
-                        }
+                    if crate::js::is_identifier(bare) && !self.holds_other_than_value(bare) {
                         continue;
                     }
                     self.slot(&arg.value)?;
@@ -5777,10 +5777,17 @@ mod tests {
         for (body, reason) in [
             ("  d = extract from [msg.`text`] {\n    a: \"${@trigger}\"\n  }", "meta:trigger"),
             ("  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }", "aggregate:sort_key"),
-            ("  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }", "name_not_value"),
             ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
         ] {
             assert_eq!(with(body).as_deref(), Some(reason), "{body}");
+        }
+        // A record named bare as a stage plugin's argument is handed its
+        // fields, as a plain call's argument is.
+        for body in [
+            "  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }",
+            "  co = write crm-[:companies]-> { name: \"Acme\" }\n  d = extract from [msg.`text`] through [fetch_url(url: co)] {\n    a: \"a\"\n  }",
+        ] {
+            assert_eq!(with(body), None, "{body}");
         }
         // A tier is read off the run's input; `AI()` is the run's call.
         for body in ["  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "  x = AI(msg.`text`, \"thorough\")"] {

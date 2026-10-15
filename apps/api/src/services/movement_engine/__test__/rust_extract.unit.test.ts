@@ -615,6 +615,32 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     });
   });
 
+  it("hands a through stage's plugin a record named bare as its fields, as a plain call's argument is handed them", async () => {
+    const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+    const program = (before: readonly string[], arg: string) =>
+      [
+        'import { echo } from plugins',
+        'import { attio } from adapters',
+        'import { acme_main } from credentials',
+        'crm = attio(credentials: acme_main)',
+        'movement m(msg: <inbox-[:message]->>) {',
+        ...before,
+        `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`,
+        '    name: "the company"',
+        '  }',
+        '}',
+      ].join('\n');
+    const cases: Array<{ before: string[]; arg: string; replies: unknown[]; fields: Record<string, unknown> }> = [
+      { before: ['  co = write crm-[:companies]-> { name: "Acme" }'], arg: 'co', replies: [named], fields: { name: 'Acme' } },
+      { before: ['  e = extract from [msg.`text`] {', '    name: "the company"', '  }'], arg: 'e', replies: [named, named], fields: { name: 'Acme' } },
+      { before: ['  n = node { title: "t" }'], arg: 'n', replies: [named], fields: { title: 't' } },
+    ];
+    for (const c of cases) {
+      const ts = await agree({ source: program(c.before, c.arg), replies: c.replies }, { runsWhole: true });
+      expect(ts.invoked).toEqual([{ plugin: 'echo', config: { q: expect.objectContaining(c.fields) } }]);
+    }
+  });
+
   describe('a model reply holding a lone surrogate (transition artefacts row 9: read on, on both engines)', () => {
     const source = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
     // `JSON.parse`, so the surrogate is the reply's own. (A reply's own
