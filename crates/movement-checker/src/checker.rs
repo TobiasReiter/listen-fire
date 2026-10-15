@@ -18,7 +18,7 @@ use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
 use crate::types::field::{is_maybe_absent, strip_absent};
 use crate::types::narrowing::{PresenceProof, negative_presence_proofs, presence_proofs};
-use crate::types::position::{narrow_present, narrow_present_node};
+use crate::types::position::{LocalEdge, LocalNode, Position, narrow_present, narrow_present_node};
 use crate::families::names::spell_name;
 use crate::scope::{Resolution, ScopeId, Scopes, Symbol, SymbolKind};
 use movement_parser::lowering::condition::MovementCondition;
@@ -62,6 +62,8 @@ pub struct Bound {
     pub is_instance: bool,
     /// For an instance: the adapter that constructed it.
     pub adapter: Option<String>,
+    /// The record the value is, when checking it typed one (a node literal, a lazy walk).
+    pub pos: Option<Position>,
 }
 
 impl<'c> Checker<'c> {
@@ -143,6 +145,9 @@ impl<'c> Checker<'c> {
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name));
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
                 self.type_assigned(&assign.name, &assign.value, scope);
+                if let Some(pos) = bound.pos {
+                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
+                }
             }
             Statement::Type(_) => {}
             Statement::Shape(shape) => {
@@ -202,7 +207,7 @@ impl<'c> Checker<'c> {
         match value {
             RValue::Construct { construct } => {
                 let adapter = self.check_construction(construct, scope);
-                return Bound { is_closure: false, is_instance: name.is_some(), adapter };
+                return Bound { is_closure: false, is_instance: name.is_some(), adapter, pos: None };
             }
             RValue::Call { call } => self.check_call(call, scope),
             RValue::Write { write } => self.check_write(write, scope),
@@ -245,15 +250,22 @@ impl<'c> Checker<'c> {
                 self.check_closure(closure, scope, name);
                 return Bound { is_closure: true, ..Bound::default() };
             }
-            RValue::Node { node } => self.check_node_literal(node, scope),
+            RValue::Node { node } => {
+                let pos = self.check_node_literal(node, scope);
+                return Bound { pos, ..Bound::default() };
+            }
             RValue::Lazy { lazy } => {
                 let aliases = self.check_path_head(&lazy.head, scope);
                 let walk = self.type_head_walk(&lazy.head, scope);
-                if let Some(mapping) = &lazy.mapping {
-                    let landing = self.open_landing(scope, &aliases, lazy.head.span);
-                    self.type_head_aliases(landing, &walk);
-                    self.check_node_literal(mapping, landing);
-                }
+                let pos = match &lazy.mapping {
+                    Some(mapping) => {
+                        let landing = self.open_landing(scope, &aliases, lazy.head.span);
+                        self.type_head_aliases(landing, &walk);
+                        self.check_node_literal(mapping, landing)
+                    }
+                    None => walk.landed,
+                };
+                return Bound { pos, ..Bound::default() };
             }
             RValue::Expr { expr } => {
                 self.check_expr_slot_as(expr, scope, name.is_some());
@@ -603,7 +615,9 @@ impl<'c> Checker<'c> {
             match arg {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
                 CallArg::Write { write, .. } => self.check_write(write, scope),
-                CallArg::Node { node, .. } => self.check_node_literal(node, scope),
+                CallArg::Node { node, .. } => {
+                    self.check_node_literal(node, scope);
+                }
                 CallArg::Call { call, .. } => self.check_call(call, scope),
                 CallArg::Closure { closure, .. } => self.check_closure(closure, scope, None),
                 CallArg::Type { .. } => {}
@@ -717,27 +731,44 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) {
+    /// `checkNodeLiteral`: its names resolve and its values are checked; the
+    /// record it builds (a run-local node: each value entry a read, each
+    /// nested node, declared edge or walk an edge), when it is a plain node.
+    /// A `graph` literal is not typed here.
+    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) -> Option<Position> {
         if let Some(shape) = node.graph.as_ref().and_then(|g| g.shape.as_ref()) {
             self.resolve_name(&shape.name, shape.span, scope);
         }
+        let mut reads = indexmap::IndexMap::new();
+        let mut edges = indexmap::IndexMap::new();
         for entry in &node.entries {
             match entry {
-                NodeEntry::Value { value, .. } => self.check_expr_slot(value, scope),
-                NodeEntry::Nodes { nodes, .. } => {
-                    for nested in nodes {
-                        self.check_node_literal(nested, scope);
-                    }
+                NodeEntry::Value { name, value, .. } => {
+                    let typed = self.check_expr_slot_as(value, scope, false);
+                    reads.insert(name.clone(), typed.ty);
                 }
-                NodeEntry::Declared { .. } => {}
-                NodeEntry::Traversal { head, mapping, .. } => {
+                NodeEntry::Nodes { name, nodes, .. } => {
+                    let landings: Vec<Option<Position>> = nodes.iter().map(|nested| self.check_node_literal(nested, scope)).collect();
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target: Some(merge_landings(&landings, name)) });
+                }
+                NodeEntry::Declared { name, sequenced, .. } => {
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, sequenced.as_ref()), target: None });
+                }
+                NodeEntry::Traversal { name, head, mapping, .. } => {
                     let aliases = self.check_path_head(head, scope);
                     let walk = self.type_head_walk(head, scope);
-                    if let Some(mapping) = mapping {
-                        let landing = self.open_landing(scope, &aliases, head.span);
-                        self.type_head_aliases(landing, &walk);
-                        self.check_node_literal(mapping, landing);
-                    }
+                    let target = match mapping {
+                        Some(mapping) => {
+                            let landing = self.open_landing(scope, &aliases, head.span);
+                            self.type_head_aliases(landing, &walk);
+                            self.check_node_literal(mapping, landing).map(|mapped| match mapped {
+                                Position::Local(local) => Position::Local(LocalNode { label: format!("a '{name}' landing"), ..local }),
+                                other => other,
+                            })
+                        }
+                        None => walk.landed,
+                    };
+                    edges.insert(name.clone(), LocalEdge { schema: local_edge_schema(name, None), target });
                 }
             }
         }
@@ -745,6 +776,10 @@ impl<'c> Checker<'c> {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
             self.resolve_name(root, spread.span, scope);
         }
+        if node.graph.is_some() {
+            return None;
+        }
+        Some(Position::Local(LocalNode { label: "a node".to_string(), reads, edges: Some(edges), run_built: None, extracted: None }))
     }
 
     /// `landingScope`: the scope a walk's tail is read in, holding its hop aliases.
@@ -887,4 +922,44 @@ fn terminates(statements: &[Statement], version: u32) -> bool {
 
 fn is_closure_type(type_: &ParamTypeRef) -> bool {
     matches!(type_, ParamTypeRef::Value(ValueType::Closure { .. }))
+}
+
+/// A run-local edge's promise: readable, and nothing else; sequenced when its
+/// author said in what order.
+fn local_edge_schema(name: &str, sequenced: Option<&movement_parser::ast::EdgeSequencing>) -> movement_parser::catalog::types::EdgeSchema {
+    let mut schema = serde_json::json!({ "target": name, "readable": true });
+    if let Some(sequenced) = sequenced {
+        schema["sequenced"] = serde_json::to_value(sequenced).unwrap_or(serde_json::Value::Null);
+    }
+    serde_json::from_value(schema).unwrap_or_else(|_| crate::types::position::edge_schema_to(name))
+}
+
+/// `mergeLandings`, the typing half: the landings of a nested-node entry as
+/// one type — the reads every landing wrote (untyped where one could not be
+/// typed), the edges every landing has. (The disagreement it reports is the
+/// nodes family's.)
+fn merge_landings(landings: &[Option<Position>], name: &str) -> Position {
+    let label = format!("a '{name}' landing");
+    let empty = || Position::Local(LocalNode { label: label.clone(), reads: Default::default(), edges: None, run_built: None, extracted: None });
+    let locals: Vec<Option<&LocalNode>> = landings.iter().map(|l| match l { Some(Position::Local(local)) => Some(local), _ => None }).collect();
+    let Some(Some(first)) = locals.first() else { return empty() };
+    if locals.len() == 1 {
+        return Position::Local(LocalNode { label, ..(*first).clone() });
+    }
+    let rest = &locals[1..];
+    let mut reads = indexmap::IndexMap::new();
+    for (read, ty) in &first.reads {
+        if !rest.iter().all(|l| l.is_some_and(|l| l.reads.contains_key(read))) {
+            continue;
+        }
+        let all_typed = ty.is_some() && rest.iter().all(|l| l.is_some_and(|l| l.reads.get(read).is_some_and(Option::is_some)));
+        reads.insert(read.clone(), if all_typed { ty.clone() } else { None });
+    }
+    let mut edges = indexmap::IndexMap::new();
+    for (edge, local_edge) in first.edges.iter().flatten() {
+        if rest.iter().all(|l| l.is_some_and(|l| l.edges.as_ref().is_some_and(|e| e.contains_key(edge)))) {
+            edges.insert(edge.clone(), local_edge.clone());
+        }
+    }
+    Position::Local(LocalNode { label, reads, edges: Some(edges), run_built: None, extracted: None })
 }

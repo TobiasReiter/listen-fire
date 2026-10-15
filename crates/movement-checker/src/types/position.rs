@@ -78,7 +78,9 @@ pub struct ExtractNode {
 #[derive(Debug, Clone)]
 pub struct LocalEdge {
     pub schema: EdgeSchema,
-    pub target: Position,
+    /// `None` when the landing could not be typed: the edge is declared, and
+    /// walking it is untyped rather than unknown.
+    pub target: Option<Position>,
 }
 
 #[derive(Debug, Clone)]
@@ -570,7 +572,10 @@ pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
         },
         Position::Closure(_) => EdgeLanding::NotTraversable,
         Position::Local(local) => match local.edges.as_ref().and_then(|e| e.get(edge)) {
-            Some(local_edge) => EdgeLanding::Landed { landing: local_edge.target.clone(), edge: Some(local_edge.schema.clone()) },
+            Some(local_edge) => match &local_edge.target {
+                Some(landing) => EdgeLanding::Landed { landing: landing.clone(), edge: Some(local_edge.schema.clone()) },
+                None => EdgeLanding::Untyped { edge: Some(local_edge.schema.clone()) },
+            },
             None => EdgeLanding::Unknown { available: local.edges.as_ref().map(|e| e.keys().cloned().collect()).unwrap_or_default() },
         },
         Position::MaybeEmpty(of) => edge_landing(of, edge, version),
