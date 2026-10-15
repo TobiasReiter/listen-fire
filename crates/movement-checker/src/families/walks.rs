@@ -276,19 +276,36 @@ pub fn observe_read(typing: &mut Typing, position: Option<&Position>, property: 
     }
 }
 
+/// `refuseUnsentFile` (language version 5): a write handle's file field the
+/// write did not send holds the system's description of the file, not the file.
+fn refuse_unsent_file(typing: &mut Typing, handle: &crate::types::position::HandlePosition, property: &str, ty: &Ty) {
+    if typing.version < 5 || !handle.written || handle.set_fields.as_ref().is_some_and(|set| set.contains(property)) {
+        return;
+    }
+    if !crate::types::field::base_kinds(&crate::types::field::unwrap_list(crate::types::field::strip_absent(ty))).contains(&crate::types::field::BaseKind::File) {
+        return;
+    }
+    typing.report(
+        codes::HANDLE_FILE_NOT_SENT,
+        format!("'{property}' is a file this write did not send, so the write's handle holds the system's description of it, not the file — read the record back through its edge to get the file, as a walk read does (`h-[:Files]->`), or send the file in this write"),
+    );
+}
+
 /// `readProperty`, the reporting half. A write-only field is the writes
 /// family's (MOV_WRITE_ONLY_PROPERTY), an extracted node's the extraction
 /// family's, a retired handle field the records family's.
 fn report_read(typing: &mut Typing, position: &Position, property: &str) {
     match position {
         Position::Handle(h) => {
-            if h.result_shape.contains_key(property) {
+            if let Some(declared) = h.result_shape.get(property) {
+                refuse_unsent_file(typing, h, property, declared);
                 return;
             }
             let schema = position_schema_of_ref(position).map(|s| s.into_owned());
             if let Some(schema) = &schema
-                && schema.properties.contains_key(property)
+                && let Some(from_position) = schema.properties.get(property)
             {
+                refuse_unsent_file(typing, h, property, &Ty::from_schema(from_position));
                 report_ambiguous_property(typing, position, schema, property);
                 return;
             }

@@ -7,7 +7,15 @@ use movement_checker::{CheckOptions, check_source};
 use movement_parser::catalog::types::CatalogSnapshot;
 
 fn check(source: &str, version: u32) -> Vec<String> {
-    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
+    check_with(source, version, r#"{"adapters":{},"credentials":{},"plugins":{}}"#)
+}
+
+/// A system `box` with no credential: a `Doc` collection (`docs`) whose
+/// records carry a name and a file, both writable.
+const BOX: &str = r#"{"adapters":{"box":{"canFire":false,"constructionArgs":[],"schemas":{"":{"positions":{"Doc":{"properties":{"name":"text","attachment":"file"},"edges":{}}},"collections":{"docs":{"target":"Doc"}},"writableRoots":{"Doc":{"fields":{"name":"text","attachment":"file"},"requiredFields":[],"resultShape":{"externalId":"text"}}}}}}},"credentials":{},"plugins":{}}"#;
+
+fn check_with(source: &str, version: u32, snapshot: &str) -> Vec<String> {
+    let catalog = CatalogSnapshot::load(snapshot).unwrap();
     let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     check_source(source, &catalog, options)
         .unwrap()
@@ -44,4 +52,16 @@ fn a_written_value_type_names_value_types_and_holds_no_closure() {
             "MOV_UNKNOWN_TYPE_NAME 3:20-3:25 'nmber' is not a value type — a list or record type holds values: a primitive (text, number, boolean, date, datetime, file, json), a type you declare (`type nmber = <\"A\" | \"B\">`), or a list or record of them — did you mean 'number'?",
         ]
     );
+}
+
+#[test]
+fn a_file_the_write_did_not_send_is_not_read_off_its_handle_from_version_5() {
+    let source = "import { box } from adapters\nb = box()\nmovement m(f: <file>) {\n  h = write b-[:docs]-> { name: \"x\" }\n  a = h.attachment\n  k = write b-[:docs]-> { name: \"y\", attachment: f }\n  c = k.attachment\n  return a\n}\n";
+    assert_eq!(
+        check_with(source, 5, BOX),
+        [
+            "MOV_HANDLE_FILE_NOT_SENT 5:7-5:19 'attachment' is a file this write did not send, so the write's handle holds the system's description of it, not the file — read the record back through its edge to get the file, as a walk read does (`h-[:Files]->`), or send the file in this write",
+        ]
+    );
+    assert!(check_with(source, 4, BOX).is_empty());
 }
