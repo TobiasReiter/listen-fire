@@ -41,9 +41,16 @@ fn main() {
     let families = families_of(&std::fs::read_to_string(std::path::Path::new(out).with_file_name("PORT.md")).expect("PORT.md"));
     let mut catalogs: HashMap<String, Result<CatalogSnapshot, String>> = HashMap::new();
     for line in std::fs::read_to_string(format!("{work}/snapshots.jsonl")).expect("snapshots.jsonl").lines() {
-        let row: Value = serde_json::from_str(line).expect("a snapshot row");
-        let key = row["key"].as_str().expect("a key").to_string();
-        catalogs.insert(key, CatalogSnapshot::load(&row["snapshot"].to_string()));
+        // Raw, so the snapshot keeps the key order the TypeScript read (a
+        // `Value` round trip would sort every object's keys).
+        #[derive(serde::Deserialize)]
+        struct Row<'a> {
+            key: String,
+            #[serde(borrow)]
+            snapshot: &'a serde_json::value::RawValue,
+        }
+        let row: Row = serde_json::from_str(line).expect("a snapshot row");
+        catalogs.insert(row.key, CatalogSnapshot::load(row.snapshot.get()));
     }
     let mut codes: BTreeMap<String, Tally> = BTreeMap::new();
     let mut corpora: BTreeMap<String, Corpus> = BTreeMap::new();
@@ -137,8 +144,11 @@ fn code(d: &Value) -> String {
 
 /// Up to 12 per code, each with the source line its span starts on.
 fn push_sample(samples: &mut BTreeMap<String, Vec<String>>, code: String, sample: String, source: &str, span: &Value) {
+    if std::env::var("PARITY_NO_MISSING").is_ok() && sample.starts_with("MISSING") {
+        return;
+    }
     let list = samples.entry(code).or_default();
-    if list.len() < 12 {
+    if list.len() < std::env::var("PARITY_SAMPLES").ok().and_then(|n| n.parse().ok()).unwrap_or(12) {
         let line = span["start"]["line"].as_u64().unwrap_or(1) as usize;
         let text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
         list.push(format!("{sample}\n  line {line}: {}", text.trim()));

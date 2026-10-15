@@ -186,13 +186,20 @@ impl<'c> Checker<'c> {
                 }
             }
             Statement::If(statement) => {
+                // A failed bare `IS` rules its variant out of every later arm and the `else`.
+                let mut ruled_out = crate::families::walks::RuledOut::default();
                 for arm in &statement.arms {
-                    self.check_condition_slot(&arm.condition, scope);
                     let arm_scope = self.scopes.open(Some(scope));
+                    self.declare_eliminated(&ruled_out, scope, arm_scope);
+                    self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
                     self.check_statement_list(&arm.body, arm_scope);
+                    if let Ok(condition) = condition_of_slot(&arm.condition) {
+                        self.collect_is_elimination(&condition, scope, &mut ruled_out);
+                    }
                 }
                 if let Some(else_arm) = &statement.else_arm {
                     let else_scope = self.scopes.open(Some(scope));
+                    self.declare_eliminated(&ruled_out, scope, else_scope);
                     self.check_statement_list(&else_arm.body, else_scope);
                 }
             }
@@ -254,8 +261,10 @@ impl<'c> Checker<'c> {
             RValue::Node { node } => self.check_node_literal(node, scope),
             RValue::Lazy { lazy } => {
                 let aliases = self.check_path_head(&lazy.head, scope);
+                let walk = self.walk_head(&lazy.head, scope, false);
                 if let Some(mapping) = &lazy.mapping {
                     let landing = self.open_landing(scope, &aliases, lazy.head.span);
+                    self.type_hop_aliases(landing, &aliases, walk.as_ref());
                     self.check_node_literal(mapping, landing);
                 }
             }
@@ -290,18 +299,32 @@ impl<'c> Checker<'c> {
                 self.resolve_name(name, slot.span, scope);
             }
         }
+        self.report_slot_typing(&parsed, slot.span, scope);
+    }
+
+    /// `slotTyping(...).infer(parsed)`: what typing the slot reports.
+    fn report_slot_typing(&mut self, parsed: &movement_parser::lowering::expression::Expression, span: Span, scope: ScopeId) {
+        let diagnostics = {
+            let env = self.typing_env(scope);
+            let mut typing = crate::types::Typing::new(&env, self.version, span);
+            typing.infer(parsed);
+            typing.diagnostics
+        };
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
     }
 
     /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
     /// tests name a subject and a type.
-    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
+    fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         let Ok(condition) = condition_of_slot(slot) else { return };
-        self.check_condition(&condition, slot, scope);
+        self.check_condition(&condition, slot, scope, narrow_into);
     }
 
-    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId) {
+    fn check_condition(&mut self, condition: &MovementCondition, slot: &ExprSlot, scope: ScopeId, narrow_into: Option<ScopeId>) {
         match condition {
-            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope)),
+            MovementCondition::And { conjuncts } => conjuncts.iter().for_each(|c| self.check_condition(c, slot, scope, narrow_into)),
             MovementCondition::IsTest { subject_raw, type_ } => {
                 let subject = subject_raw.trim();
                 if is_bare_ident(subject) {
@@ -310,6 +333,7 @@ impl<'c> Checker<'c> {
                     self.check_expr_slot(&ExprSlot::plain(subject_raw.clone(), slot.span), scope);
                 }
                 self.resolve_name(&type_.graph, slot.span, scope);
+                self.check_is_test(subject_raw, type_, slot.span, scope, narrow_into);
             }
             MovementCondition::Expr { expr } => {
                 let names = collect_expression_names(expr);
@@ -318,6 +342,7 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
+                self.report_slot_typing(expr, slot.span, scope);
             }
         }
     }
@@ -336,6 +361,7 @@ impl<'c> Checker<'c> {
                 self.check_param_source(reference, graph);
                 self.note_dispatchable(movement, reference, graph, scope);
             }
+            self.report_param_position(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
@@ -368,6 +394,7 @@ impl<'c> Checker<'c> {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
+                self.report_param_position(type_, scope);
                 self.type_param(body, &param.name, type_, scope);
             }
         }
@@ -529,8 +556,10 @@ impl<'c> Checker<'c> {
                 NodeEntry::Declared { .. } => {}
                 NodeEntry::Traversal { head, mapping, .. } => {
                     let aliases = self.check_path_head(head, scope);
+                    let walk = self.walk_head(head, scope, false);
                     if let Some(mapping) = mapping {
                         let landing = self.open_landing(scope, &aliases, head.span);
+                        self.type_hop_aliases(landing, &aliases, walk.as_ref());
                         self.check_node_literal(mapping, landing);
                     }
                 }
@@ -586,6 +615,7 @@ impl<'c> Checker<'c> {
         if let Some(name) = &root_name {
             self.check_path_root_constructed(name, root_symbol, &head.hops_raw, head.span);
         }
+        self.report_head_not_a_position(head, scope);
         aliases
     }
 
@@ -593,7 +623,9 @@ impl<'c> Checker<'c> {
     /// aliases, and what it binds is remembered as escaped once it closes.
     fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) {
         let aliases = self.check_path_head(&block.head, scope);
+        let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
+        self.type_hop_aliases(body, &aliases, walk.as_ref());
         self.check_statement_list(&block.body, body);
         let bound: Vec<String> = self
             .scopes
@@ -617,6 +649,7 @@ impl<'c> Checker<'c> {
         match &awaited.source {
             AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
                 self.check_path_head(head, scope);
+                self.walk_head(head, scope, true);
             }
             AwaitSource::Combinator { combinator, .. } => self.check_combinator(combinator, scope),
             AwaitSource::Sleep { .. } => {}

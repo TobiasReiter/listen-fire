@@ -107,6 +107,8 @@ pub struct UnionPosition {
     pub variants: Vec<String>,
     pub narrows_event: Option<String>,
     pub display: Option<String>,
+    /// The event address a parameter type named it by (`positionFromAddress`).
+    pub address: Option<super::event_address::EventAddress>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +161,7 @@ pub fn position_ref_in(instance: &InstanceRef, name: &str) -> Option<Position> {
             variants: variants.clone(),
             narrows_event: None,
             display: None,
+            address: None,
         }));
     }
     instance.schema.positions.contains_key(name).then(|| Position::record(instance.clone(), name))
@@ -474,6 +477,19 @@ pub enum EdgeLanding {
     NotTraversable,
 }
 
+/// `refineSelected`: a hop whose WHERE the host registered a refinement for
+/// lands on that refinement, not the whole type.
+pub fn refine_selected(target: Position, filter: Option<&movement_parser::lowering::expression::Expression>) -> Position {
+    let (Some(filter), Position::Position(p)) = (filter, &target) else { return target };
+    let Some(refinements) = &p.instance.schema.refinements else { return target };
+    let Ok(filter) = serde_json::to_value(filter) else { return target };
+    let key = movement_parser::catalog::helpers::refinement_key(&p.position, &filter);
+    match refinements.get(&key).and_then(|refined| position_ref_in(&p.instance, refined)) {
+        Some(refined) => refined,
+        None => target,
+    }
+}
+
 /// The `@`-prefixed edges a write handle carries (`-[:@old]->`).
 pub fn is_artificial_edge(edge: &str) -> bool {
     edge.starts_with('@')
@@ -483,6 +499,14 @@ pub fn is_artificial_edge(edge: &str) -> bool {
 pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
     if edge.starts_with('#') && version >= 5 {
         return EdgeLanding::Untyped { edge: None };
+    }
+    // `stepArtificialEdge`: `@old` off a write's handle is the same kind of
+    // record; any other `@` edge lands nowhere (the walks family says why).
+    if is_artificial_edge(edge) && !matches!(from, Position::MaybeEmpty(_)) && version >= 4 {
+        return match from {
+            Position::Handle(h) if h.written && edge == "@old" => EdgeLanding::Landed { landing: from.clone(), edge: None },
+            _ => EdgeLanding::Untyped { edge: None },
+        };
     }
     match from {
         Position::Meta { instance } => match instance.schema.collections.get(edge) {

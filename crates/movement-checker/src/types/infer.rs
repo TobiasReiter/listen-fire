@@ -22,7 +22,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 use super::field::*;
 use super::narrowing::{PresenceProof, exists_subject, is_position_terminal, negative_presence_proofs, presence_proofs};
-use super::position::{EdgeLanding, Position, edge_landing, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
+use super::position::{EdgeLanding, Position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
 use super::stdlib::{bare_coercer_returns, lookup_builtin, movement_meta_key_type, stdlib_function_by_id};
 
 /// What the typing asks of the scope it types in (the TypeScript's
@@ -375,7 +375,9 @@ impl<'a> Typing<'a> {
                     let from = current.clone();
                     let landing = from.as_ref().map(|f| edge_landing(f, &edge.edge_type_id, self.version));
                     let (next, schema) = match &landing {
-                        Some(EdgeLanding::Landed { landing, edge }) => (Some(landing.clone()), edge.clone()),
+                        Some(EdgeLanding::Landed { landing, edge: schema }) => {
+                            (Some(refine_selected(landing.clone(), edge.expression_filter.as_deref())), schema.clone())
+                        }
                         Some(EdgeLanding::Untyped { edge }) => (None, edge.clone()),
                         _ => (None, None),
                     };
@@ -384,6 +386,7 @@ impl<'a> Typing<'a> {
                     ordering =
                         self.hop_ordering(from.as_ref(), edge.cardinality.as_ref().is_some_and(|c| c.order_by.is_some()), &edge.edge_type_id, schema.as_ref());
                     ordering_edge = Some(edge.edge_type_id.clone());
+                    crate::families::walks::observe_hop_order(self, edge, ordering);
                     if let Some(alias) = &edge.alias {
                         self.locals.insert(alias.clone(), next.clone());
                     }
@@ -393,6 +396,7 @@ impl<'a> Typing<'a> {
                     if let Some(order_by) = edge.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
                         self.infer_at(order_by, next.as_ref());
                     }
+                    crate::families::walks::observe_hop(self, from.as_ref(), edge, next.as_ref());
                     current = next;
                 }
                 TraversalStep::MetaEdge(meta) => {
@@ -602,7 +606,10 @@ impl<'a> Typing<'a> {
                 let types: Vec<Option<Ty>> = params.iter().map(|p| self.infer_at(p, position)).collect();
                 (matches!(expr, Expression::KgExists { .. }).then_some(Ty::Boolean), types)
             }
-            Expression::Meta { key: meta } => (movement_meta_key_type(meta), Vec::new()),
+            Expression::Meta { key: meta } => {
+                crate::families::walks::observe_meta(self, meta);
+                (movement_meta_key_type(meta), Vec::new())
+            }
             Expression::EdgeProperty { property_type_id } => {
                 if let Some(declared) = lookup_property_type(position, property_type_id) {
                     return (Some(declared), Vec::new());
