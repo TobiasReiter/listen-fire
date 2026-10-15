@@ -131,8 +131,10 @@ export async function drainRun(
   return 'done';
 }
 
-/** A step that failed, was cancelled or lost its lease ends the drain. */
-async function afterStep(
+/** What one segment's outcome does to the run: a failure or a cancel tears
+ *  it down and ends the drain, a lost lease ends it leaving every row. Also
+ *  for an entry that is not a drain (a run's first firing). */
+export async function afterStep(
   host: RunHost,
   input: { runId: string; fence?: string; outcome: StepOutcome },
 ): Promise<'continue' | 'done' | 'leaseLost'> {
