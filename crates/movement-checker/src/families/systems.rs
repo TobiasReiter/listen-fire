@@ -12,7 +12,7 @@
 //! `checkMovement`, `checkPathHead`; typing.ts `aiTierDiagnostics`.
 
 use indexmap::IndexMap;
-use movement_parser::ast::{CallArg, CallStatement, ConstructionCall, ExprSlot, ParamTypeRef, Span, TypeRef};
+use movement_parser::ast::{ConstructionCall, ExprSlot, ParamTypeRef, Span, TypeRef};
 use movement_parser::catalog::helpers::{credential_arg_of, unwrap_credential_arg};
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::catalog::types::{InstanceSchema, JsMap};
@@ -61,22 +61,6 @@ pub struct Constructed {
 }
 
 impl Checker<'_> {
-    /// `callInConstructPosition`: `doc = email_to_doc(m: msg)` is a call when
-    /// the name it invokes is a function, not a construction.
-    pub fn call_in_construct_position(&self, construct: &ConstructionCall, scope: ScopeId) -> Option<CallStatement> {
-        let Resolution::Found(id) = self.scopes.resolve(scope, &self.callee_name(&construct.callee, scope)) else { return None };
-        let symbol = self.scopes.symbol(id);
-        let value = self.version >= 5 && matches!(symbol.kind, SymbolKind::Binding | SymbolKind::Param);
-        // TODO(type-core): `calledClosure` reads the symbol's closure type; the
-        // flag is its stand-in (a closure is called from version 3).
-        let closure = self.version >= 3 && symbol.is_closure;
-        if !matches!(symbol.kind, SymbolKind::Movement | SymbolKind::Plugin) && !value && !closure {
-            return None;
-        }
-        let args = construct.args.iter().map(|a| CallArg::Expr { name: Some(a.name.clone()), expr: a.value.clone() }).collect();
-        Some(CallStatement { callee: construct.callee.clone(), args, expression: None, span: construct.span })
-    }
-
     /// `checkConstruction`: the adapter, credential and schema a construction
     /// builds, its arguments checked against the adapter's signature.
     pub fn check_construction(&mut self, construct: &ConstructionCall, scope: ScopeId) -> Constructed {

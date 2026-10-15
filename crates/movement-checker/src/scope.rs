@@ -136,7 +136,7 @@ impl Scopes {
         SymbolId(self.symbols.len() - 1)
     }
 
-    fn chain(&self, from: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
+    pub fn chain(&self, from: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
         std::iter::successors(Some(from), move |id| self.scopes[id.0].parent)
     }
 

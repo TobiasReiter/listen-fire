@@ -803,16 +803,20 @@ impl Checker<'_> {
                 for param in &closure.params {
                     self.check_callback_param_type(param.type_.as_ref(), &param.name, Some(scope), None);
                 }
-                self.check_closure(closure, scope, None);
+                let (_, suspends) = self.check_closure_walked(closure, scope, None, "a callback body", 0);
+                if suspends {
+                    self.refuse_unresumable_wait("a callback body", closure.span);
+                }
+                self.absorb_suspend(suspends);
             }
-            CallbackSubject::Named { movement, args, name_span, .. } => self.check_callback_named(movement, args, *name_span, scope),
+            CallbackSubject::Named { movement, args, name_span, span } => self.check_callback_named(movement, args, *name_span, *span, scope),
         }
         self.check_callback_config(&callback.config, scope);
     }
 
     /// `checkCallbackNamed`: a movement deferred by name; the parameters its
     /// arguments leave out are the callback's fire-time signature.
-    fn check_callback_named(&mut self, movement: &str, args: &[CallArg], name_span: Span, scope: ScopeId) {
+    fn check_callback_named(&mut self, movement: &str, args: &[CallArg], name_span: Span, span: Span, scope: ScopeId) {
         let callee = match self.scopes.resolve(scope, &self.callee_name(movement, scope)) {
             Resolution::Found(id) => Some(id),
             _ => None,
@@ -831,8 +835,8 @@ impl Checker<'_> {
             };
             self.report(codes::CALLBACK_NOT_MOVEMENT, message, name_span);
         }
-        // TODO(calls): `checkArgumentBindings` and `checkCallArg` belong to the
-        // calls family; until then each argument's names are resolved.
+        self.check_callback_suspends(movement, name_span, scope);
+        self.check_callback_arguments(movement, args, span, scope);
         self.check_call_args(args, scope);
         if kind != Some(SymbolKind::Movement) {
             return;

@@ -1,0 +1,45 @@
+//! The calls, closures and flow families on their own programs. Parity with
+//! the TypeScript checker is the harness's job (parity/run.sh); these pin
+//! the rules the families add to the walk.
+
+use movement_checker::{CheckOptions, check_source};
+use movement_parser::catalog::types::CatalogSnapshot;
+
+fn codes(source: &str, version: u32) -> Vec<(String, String)> {
+    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
+    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None };
+    check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code, d.message)).collect()
+}
+
+fn has(found: &[(String, String)], code: &str) -> bool {
+    found.iter().any(|(c, _)| c == code)
+}
+
+#[test]
+fn binding_a_call_of_a_movement_that_returns_nothing_is_refused() {
+    let source = "movement lists(e: <number>) {\n  names = [1]\n}\nmovement main(e: <number>) {\n  x = lists(e: e)\n}";
+    let found = codes(source, 1);
+    assert!(has(&found, "MOV_CALL_RETURNS_NOTHING"), "{found:?}");
+}
+
+#[test]
+fn a_callback_that_reaches_a_wait_through_a_movement_is_refused() {
+    let source = "movement waits(n: <number>) {\n  await sleep(1h)\n  return n\n}\nmovement main(e: <number>) {\n  cb = callback(waits)\n}";
+    assert!(has(&codes(source, 3), "MOV_WAIT_NOT_RESUMABLE"));
+    assert!(!has(&codes(source, 2), "MOV_WAIT_NOT_RESUMABLE"));
+}
+
+#[test]
+fn movements_calling_each_other_declare_what_they_return() {
+    let source = "function ping(n: <number>) {\n  if n == 0 {\n    return 0\n  }\n  return pong(n - 1)\n}\nfunction pong(n: <number>): <number> {\n  return ping(n)\n}";
+    let found = codes(source, 3);
+    let recursive: Vec<_> = found.iter().filter(|(c, _)| c == "MOV_RECURSIVE_RETURN_TYPE").collect();
+    assert_eq!(recursive.len(), 1, "{found:?}");
+    assert!(recursive[0].1.contains("(ping → pong → ping)"), "{found:?}");
+}
+
+#[test]
+fn a_closure_that_calls_itself_and_returns_nothing_binds_nothing() {
+    let source = "movement main(e: <number>) {\n  tick = (n: <number>) => {\n    if n > 0 {\n      y = tick(n - 1)\n    }\n  }\n  tick(2)\n}";
+    assert!(has(&codes(source, 3), "MOV_CALL_RETURNS_NOTHING"));
+}
