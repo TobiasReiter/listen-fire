@@ -597,7 +597,6 @@ describe('a whole run in the Rust engine', () => {
       [movement('  crm-[b:bags]-> {\n    write b-[:#foo]-> { name: "a" }\n  }'), 'traversal_meta_edge'],
       [movement('  write crm-[:companies]-> { unique by (`name` CONTAINS "a") name: "a" }'), 'unique_by_without_key'],
       [movement('  g = graph { owner: msg }'), 'node_event_entry'],
-      [movement('  x = msg.`subject` WITHIN "7d"'), 'within_compare'],
       // Main's v0.10.2–v0.10.9 constructs (rust_language_changes.unit.test.ts runs each on both engines).
       // A call of a plugin the snapshot does not describe, in each of its spellings.
       [`import { fetch_url } from plugins\n${movement('  x = fetch_url(url: msg.`text`)')}`, 'plugin_call'],
@@ -631,7 +630,7 @@ describe('a whole run in the Rust engine', () => {
     expect(resolved).toEqual([]);
     expect(rustRunStats).toMatchObject({
       notAdmitted: { write_bind: 1 },
-      allReasons: { write_bind: 1, traversal_meta_edge: 1, within_compare: 1 },
+      allReasons: { write_bind: 1, traversal_meta_edge: 1 },
       declined: {},
       hostCalls: {},
     });

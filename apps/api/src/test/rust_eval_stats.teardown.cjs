@@ -241,7 +241,9 @@ const RAN_WHOLE_FLOOR = { v1: 1033, v2: 1270, v3: 2239, v4: 2272 };
 // KEYBY: `AT(grouped, …)` over a GROUPBY of records, which admission read as
 // anything; it now reads a map of lists of records); evaluator not admitted
 // v3 128 to 67 (that run's expressions, asked of the evaluator while the
-// TypeScript ran it).
+// TypeScript ran it). The v5 probe's closings (2026-10-15): a WITHIN is
+// compared in the Rust engine, measured from the host clock, so
+// `builtins.compare` is no longer a request and its hand-backs are 0.
 const CEILINGS = {
   v1: {
     refused: 0,
@@ -261,7 +263,7 @@ const CEILINGS = {
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
-    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
     evaluatorNotAdmitted: 47,
     mirroredFailure: 7,
   },
@@ -272,7 +274,7 @@ const CEILINGS = {
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
-    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
     evaluatorNotAdmitted: 67,
     mirroredFailure: 5,
   },
@@ -283,7 +285,7 @@ const CEILINGS = {
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
-    handBacks: { 'builtins.function': 0, 'builtins.compare': 5, fallback: 0 },
+    handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
     evaluatorNotAdmitted: 79,
     mirroredFailure: 7,
   },

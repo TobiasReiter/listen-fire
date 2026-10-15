@@ -24,19 +24,33 @@ import {
   type EngineProtocol,
   type EngineStep,
 } from '../rust_engine';
-import { admissionVerdicts, dryRunDurationSummary, resetRustRunStats, rustRunStats, setDryRunClock } from '../rust_stats';
+import {
+  admissionVerdicts,
+  dryRunDurationSummary,
+  resetRustRunStats,
+  rustRunStats,
+  setDryRunClock,
+} from '../rust_stats';
 import { credentialIdsFor, makeTestHost } from '../test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000d1');
 
 const emailSchema: InstanceSchema = {
   positions: { message: { properties: { subject: 'text', text: 'text' }, edges: {} } },
-  collections: {},
-  writableRoots: {},
+  collections: { messages: { target: 'message' } },
+  writableRoots: {
+    message: { fields: { subject: 'text' }, resultShape: { externalId: 'text', subject: 'text' } },
+  },
+  supportsInPlaceUpdate: true,
 };
 
 const catalog = mockCatalogSnapshot({
-  adapters: { email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema } },
+  adapters: {
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: emailSchema,
+    },
+  },
   credentials: { dealflow_inbox: { adapters: ['email'] } },
 });
 
@@ -52,30 +66,45 @@ const program = (...body: string[]) =>
 
 /** Admitted by the Rust engine. */
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
-/** Refused by its admission: a `WITHIN` comparison (which may stay refused
- *  by name: no corpus run reaches it). */
-const WITHIN = ['  recent = msg.`subject` WITHIN "7d"'];
-const REFUSED = program(...WITHIN, '  return msg.`subject`');
-/** Refused for two reasons: the `WITHIN`, and a bound write. */
-const REFUSED_TWICE = program(...WITHIN, '  write inbox-[:message]-> bind msg { subject: "a" }', '  return msg.`subject`');
+/** Refused by its admission: a bound write (which the checker lets by
+ *  before version 5). */
+const BOUND_WRITE = '  write inbox-[:messages]-> bind msg { subject: "a" }';
+const REFUSED = program(BOUND_WRITE, '  return msg.`subject`');
+/** Refused for two reasons: a `#` hop, and the bound write. */
+const REFUSED_TWICE = program('  n = COUNT(msg-[:#foo]->)', BOUND_WRITE, '  return msg.`subject`');
 
-const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
+const event: TriggerEvent = {
+  pipelineInputId: 'pi-dry-run',
+  adapterType: 'email',
+  triggerType: 'webhook',
+  payload: { subject: 'Acme', text: 'hi' },
+};
 
 function fakeEmail(): Adapter {
   return {
     adapterType: 'email',
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     describe: async () => null,
     resolveEntity: async () => ({ candidates: [] }),
     getFieldValue: async (input) => {
       const data = positionData(input.position);
-      return typeof data === 'object' && data !== null ? Reflect.get(data, input.fieldId) : undefined;
+      return typeof data === 'object' && data !== null
+        ? Reflect.get(data, input.fieldId)
+        : undefined;
     },
     getRelated: async () => [],
     createRecord: async () => ({ adapterType: 'email', externalId: 'r1', data: {} }),
-    updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
+    updateRecord: async (input) => ({
+      adapterType: 'email',
+      externalId: input.externalId,
+      data: {},
+      association: containerAssociation(input),
+    }),
     deleteRecord: async () => ({}),
   };
 }
@@ -122,12 +151,20 @@ function failingEveryRequest(host: EngineHost): { host: EngineHost; asked: strin
  *  point, kept by version, and these programs' reasons are the same under 4. */
 async function failingSegment(source: string, runId?: string) {
   const working = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
-  const context = await openRunContext({ host: working, teamId: TEAM_ID, languageVersion: 3, spend: {} });
+  const context = await openRunContext({
+    host: working,
+    teamId: TEAM_ID,
+    languageVersion: 3,
+    spend: {},
+  });
   const { host, asked } = failingEveryRequest(working);
   return { segment: { input: inputOf(source, host, runId), context }, asked };
 }
 
-async function underEngine<T>(engine: 'ts' | 'rust' | undefined, body: () => Promise<T>): Promise<T> {
+async function underEngine<T>(
+  engine: 'ts' | 'rust' | undefined,
+  body: () => Promise<T>,
+): Promise<T> {
   const previous = process.env.MOVEMENT_ENGINE;
   if (engine === undefined) delete process.env.MOVEMENT_ENGINE;
   else process.env.MOVEMENT_ENGINE = engine;
@@ -176,22 +213,45 @@ describe('the admission dry run, through the real artifact', () => {
 
     expect(refused.asked).toEqual([]);
     expect(admitted.asked).toEqual([]);
-    const tally = { sampled: 2, admitted: 1, first: { within_compare: 1 }, all: { within_compare: 1 } };
-    expect(rustRunStats.dryRun).toEqual({ firings: 2, faults: 0, ...tally, byVersion: { '3': tally }, byRoute: { run: tally, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
+    const tally = { sampled: 2, admitted: 1, first: { write_bind: 1 }, all: { write_bind: 1 } };
+    expect(rustRunStats.dryRun).toEqual({
+      firings: 2,
+      faults: 0,
+      ...tally,
+      byVersion: { '3': tally },
+      byRoute: {
+        run: tally,
+        resume: { sampled: 0, admitted: 0, first: {}, all: {} },
+        settle: { sampled: 0, admitted: 0, first: {}, all: {} },
+        fire: { sampled: 0, admitted: 0, first: {}, all: {} },
+      },
+    });
     expect(admissionVerdicts).toEqual([
-      { runId: 'run-refused', languageVersion: 3, reasons: ['within_compare'] },
+      { runId: 'run-refused', languageVersion: 3, reasons: ['write_bind'] },
       { runId: 'run-admitted', languageVersion: 3, reasons: [] },
     ]);
     // Only the dry run's own counters move: no segment was routed, nothing ran in Rust.
-    expect(rustRunStats).toMatchObject({ routed: 0, admitted: 0, ranWhole: 0, notAdmitted: {}, declined: {}, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({
+      routed: 0,
+      admitted: 0,
+      ranWhole: 0,
+      notAdmitted: {},
+      declined: {},
+      hostCalls: {},
+    });
   });
 
   it('counts every reason the walk meets, not only the first', async () => {
     const { segment, asked } = await failingSegment(REFUSED_TWICE, 'run-twice');
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
-    expect(rustRunStats.dryRun).toMatchObject({ first: { within_compare: 1 }, all: { within_compare: 1, write_bind: 1 } });
-    expect(admissionVerdicts).toEqual([{ runId: 'run-twice', languageVersion: 3, reasons: ['within_compare', 'write_bind'] }]);
+    expect(rustRunStats.dryRun).toMatchObject({
+      first: { traversal_meta_edge: 1 },
+      all: { traversal_meta_edge: 1, write_bind: 1 },
+    });
+    expect(admissionVerdicts).toEqual([
+      { runId: 'run-twice', languageVersion: 3, reasons: ['traversal_meta_edge', 'write_bind'] },
+    ]);
   });
 
   // A real run leaves a slot this engine's lowering misses to its check
@@ -199,7 +259,13 @@ describe('the admission dry run, through the real artifact', () => {
   it('names a slot the lowering misses, which a real run leaves to its check', async () => {
     // A namespaced member the language does not have (the checker refuses it).
     const missed = program('  x = TEXT.CHUNKS(msg.`subject`)');
-    const { segment, asked } = await failingSegment(missed.replace('inbox = email(credentials: dealflow_inbox)', 'inbox = email(credentials: dealflow_inbox)\ncrm = email(credentials: dealflow_inbox)'), 'run-missed');
+    const { segment, asked } = await failingSegment(
+      missed.replace(
+        'inbox = email(credentials: dealflow_inbox)',
+        'inbox = email(credentials: dealflow_inbox)\ncrm = email(credentials: dealflow_inbox)',
+      ),
+      'run-missed',
+    );
     dryAdmitRun(segment);
     expect(asked).toEqual([]);
     expect(rustRunStats.dryRun.first).toEqual({ expression_does_not_lower: 1 });
@@ -219,11 +285,16 @@ describe('the admission dry run, through the real artifact', () => {
       finish: () => undefined,
     };
     const state = { version: 1 } as never;
-    dryAdmitResume({ input: { ...segment.input, state, answer: 'yes' }, context: segment.context }, engine);
+    dryAdmitResume(
+      { input: { ...segment.input, state, answer: 'yes' }, context: segment.context },
+      engine,
+    );
     expect(asked).toEqual([]);
     expect(starts).toHaveLength(1);
     // The state crosses on the eval wire, as a real resume's does.
-    expect(starts[0]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]], answer: 'yes' } });
+    expect(starts[0]).toMatchObject({
+      resume: { state: ['o', 0, [['version', 1]]], answer: 'yes' },
+    });
     expect(rustRunStats.dryRun.first).toEqual({ park_state: 1 });
   });
 
@@ -244,12 +315,27 @@ describe('the admission dry run, through the real artifact', () => {
       finish: () => undefined,
     };
     const state = { version: 1 } as never;
-    dryAdmitSettle({ input: { ...segment.input, state, frameAddress: 's0' }, context: segment.context }, engine);
-    dryAdmitFire({ input: { ...segment.input, state, values: { ok: true }, callIndex: 2 }, context: segment.context }, engine);
+    dryAdmitSettle(
+      { input: { ...segment.input, state, frameAddress: 's0' }, context: segment.context },
+      engine,
+    );
+    dryAdmitFire(
+      {
+        input: { ...segment.input, state, values: { ok: true }, callIndex: 2 },
+        context: segment.context,
+      },
+      engine,
+    );
     expect(asked).toEqual([]);
     expect(starts).toHaveLength(2);
-    expect(starts[0]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]] }, settle: { frameAddress: 's0' } });
-    expect(starts[1]).toMatchObject({ resume: { state: ['o', 0, [['version', 1]]] }, fire: { values: ['o', expect.any(Number), [['ok', true]]], callIndex: 2 } });
+    expect(starts[0]).toMatchObject({
+      resume: { state: ['o', 0, [['version', 1]]] },
+      settle: { frameAddress: 's0' },
+    });
+    expect(starts[1]).toMatchObject({
+      resume: { state: ['o', 0, [['version', 1]]] },
+      fire: { values: ['o', expect.any(Number), [['ok', true]]], callIndex: 2 },
+    });
     expect(rustRunStats.dryRun).toMatchObject({ sampled: 2, first: { resume_state_version: 2 } });
     expect(admissionVerdicts).toEqual([
       { runId: 'run-parked', languageVersion: 3, reasons: ['resume_state_version'] },
@@ -261,20 +347,49 @@ describe('the admission dry run, through the real artifact', () => {
 describe('a run the TypeScript engine runs', () => {
   it('runs as it would without the dry run, and the dry run counts it', async () => {
     const run = (source: string) =>
-      underEngine('ts', () => runMovement(inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+      // The bound write fails mid-run (a bind to the event), alike with or
+      // without the dry run.
+      underEngine('ts', () =>
+        runMovement({
+          ...inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } })),
+          languageVersion: 3,
+        }),
+      ).catch((error: unknown) => String(error));
     process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY = '0';
     const withoutDryRun = await run(REFUSED);
     expect(rustRunStats.dryRun.sampled).toBe(0);
     delete process.env.MOVEMENT_ENGINE_DRY_RUN_EVERY;
     const withDryRun = await run(REFUSED);
     expect(withDryRun).toEqual(withoutDryRun);
-    expect(rustRunStats.dryRun).toMatchObject({ firings: 2, sampled: 1, admitted: 0, faults: 0, first: { within_compare: 1 } });
+    expect(rustRunStats.dryRun).toMatchObject({
+      firings: 2,
+      sampled: 1,
+      admitted: 0,
+      faults: 0,
+      first: { write_bind: 1 },
+    });
   });
 
   it('is never asked about under MOVEMENT_ENGINE=rust: an admitted run moves no dry run counter', async () => {
-    await underEngine('rust', () => runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+    await underEngine('rust', () =>
+      runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))),
+    );
     expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1 });
-    expect(rustRunStats.dryRun).toEqual({ firings: 0, sampled: 0, admitted: 0, faults: 0, first: {}, all: {}, byVersion: {}, byRoute: { run: { sampled: 0, admitted: 0, first: {}, all: {} }, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
+    expect(rustRunStats.dryRun).toEqual({
+      firings: 0,
+      sampled: 0,
+      admitted: 0,
+      faults: 0,
+      first: {},
+      all: {},
+      byVersion: {},
+      byRoute: {
+        run: { sampled: 0, admitted: 0, first: {}, all: {} },
+        resume: { sampled: 0, admitted: 0, first: {}, all: {} },
+        settle: { sampled: 0, admitted: 0, first: {}, all: {} },
+        fire: { sampled: 0, admitted: 0, first: {}, all: {} },
+      },
+    });
     expect(admissionVerdicts).toEqual([]);
   });
 
@@ -317,7 +432,9 @@ describe('the dry run against an engine double', () => {
 
   it("never answers an admitted run's first request, and finishes the segment there", async () => {
     const { segment } = await failingSegment(ADMITTED);
-    const { engine, log } = startingWith({ pending: [{ id: 0, family: 'check', method: 'program', args: {} }] });
+    const { engine, log } = startingWith({
+      pending: [{ id: 0, family: 'check', method: 'program', args: {} }],
+    });
     dryAdmitRun(segment, engine);
     expect(log).toEqual({ started: 1, answered: 0, finished: 1 });
     expect(rustRunStats.dryRun).toMatchObject({ sampled: 1, admitted: 1 });
@@ -325,13 +442,23 @@ describe('the dry run against an engine double', () => {
 
   it('counts every reason the engine names, once each, and the first as first', async () => {
     const { segment } = await failingSegment(ADMITTED, 'run-2');
-    const { engine } = startingWith({ done: { refused: 'expression:llm', reasons: ['expression:llm', 'statement:call', 'plugin_call', 'statement:call'] } });
+    const { engine } = startingWith({
+      done: {
+        refused: 'expression:llm',
+        reasons: ['expression:llm', 'statement:call', 'plugin_call', 'statement:call'],
+      },
+    });
     dryAdmitRun(segment, engine);
     expect(rustRunStats.dryRun).toMatchObject({
       first: { 'expression:llm': 1 },
       all: { 'expression:llm': 1, 'statement:call': 1, plugin_call: 1 },
     });
-    expect(admissionVerdicts[0]?.reasons).toEqual(['expression:llm', 'statement:call', 'plugin_call', 'statement:call']);
+    expect(admissionVerdicts[0]?.reasons).toEqual([
+      'expression:llm',
+      'statement:call',
+      'plugin_call',
+      'statement:call',
+    ]);
   });
 
   it('asks about one firing in MOVEMENT_ENGINE_DRY_RUN_EVERY', async () => {
@@ -347,7 +474,11 @@ describe('the dry run against an engine double', () => {
     expect(admissionDryRunEvery({})).toBe(1);
     expect(admissionDryRunEvery({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '0' })).toBe(0);
     expect(admissionDryRunEvery({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '10' })).toBe(10);
-    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '0.5' })).toThrow('MOVEMENT_ENGINE_DRY_RUN_EVERY is "0.5"');
-    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '-1' })).toThrow('MOVEMENT_ENGINE_DRY_RUN_EVERY is "-1"');
+    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '0.5' })).toThrow(
+      'MOVEMENT_ENGINE_DRY_RUN_EVERY is "0.5"',
+    );
+    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE_DRY_RUN_EVERY: '-1' })).toThrow(
+      'MOVEMENT_ENGINE_DRY_RUN_EVERY is "-1"',
+    );
   });
 });

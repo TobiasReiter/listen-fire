@@ -23,8 +23,9 @@ pub fn compare_to_null(op: FilterOperator, value: &Js) -> bool {
 }
 
 /// `compareValues`, a date text read in `local` (the run's zone, as V8 reads
-/// one in its process's). `within` reads the wall clock, which this unit
-/// does not have: it is answered by TypeScript.
+/// one in its process's). `within` measures from the host's clock, which
+/// this unit does not have: it is handed back, and answered by `within`
+/// once the caller has asked the clock.
 pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZone<'_>) -> Result<bool, EvalError> {
     Ok(match op {
         FilterOperator::Eq => match (left, right) {
@@ -49,8 +50,48 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZon
             (Js::Array(list), _) => list.items().iter().any(|item| js::same_value_zero(item, right)),
             _ => false,
         },
-        FilterOperator::Within => return Err(EvalError::Fallback("WITHIN reads the wall clock".into())),
+        FilterOperator::Within => return Err(EvalError::Fallback("WITHIN reads the host's clock".into())),
     })
+}
+
+/// `compareValues`' `within`: `left`'s instant is at most `right` old as of
+/// `now` (epoch ms, the host clock's answer). A left that reads as no
+/// instant, or a right that reads as no duration, is false, never thrown.
+pub fn within(left: &Js, right: &Js, now: f64, local: LocalZone<'_>) -> bool {
+    match (to_epoch_ms(left, local), duration_to_ms(right)) {
+        (Some(ts), Some(ms)) => now - ts <= ms,
+        _ => false,
+    }
+}
+
+/// `durationToMs`: a number is milliseconds already (finite only); a text
+/// is `/^(\d+(?:\.\d+)?)\s*([smhdw])$/i` once trimmed; anything else none.
+fn duration_to_ms(spec: &Js) -> Option<f64> {
+    let text = match spec {
+        Js::Number(n) => return n.is_finite().then_some(*n),
+        Js::String(s) => s.as_form().to_string(),
+        _ => return None,
+    };
+    let text = js::trim(&text);
+    let unit = text.chars().last()?;
+    let per = match unit.to_ascii_lowercase() {
+        's' => 1_000.0,
+        'm' => 60_000.0,
+        'h' => 3_600_000.0,
+        'd' => 86_400_000.0,
+        'w' => 604_800_000.0,
+        _ => return None,
+    };
+    let amount = text[..text.len() - unit.len_utf8()].trim_end_matches(js::is_js_space);
+    let (whole, fraction) = match amount.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (amount, None),
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole) || fraction.is_some_and(|f| !digits(f)) {
+        return None;
+    }
+    amount.parse::<f64>().ok().map(|n| n * per)
 }
 
 /// Order-insensitive equality of two lists as sets (SameValueZero members).
@@ -408,6 +449,30 @@ mod tests {
         assert!(gt(s("a 1"), s("Item 5 of 9")));
         // Only one does: as text.
         assert!(compare_values(&s("a 1"), FilterOperator::Lt, &s("b"), LocalZone::UTC).unwrap());
+    }
+
+    #[test]
+    fn within_measures_an_instant_against_a_duration_from_now() {
+        let now = 1_767_225_600_000.0; // 2026-01-01T00:00:00Z
+        let within = |l: Js, r: Js| within(&l, &r, now, LocalZone::UTC);
+        assert!(within(s("2025-12-30"), s("7d")));
+        assert!(!within(s("2025-12-20"), s("7d")));
+        assert!(within(s("2025-12-25T00:00:00Z"), s(" 1 W ")));
+        assert!(within(s("2025-12-31T12:00:00Z"), s("0.5d")));
+        assert!(within(Js::Number(now - 1_000.0), Js::Number(1_000.0)));
+        assert!(within(s("2025-12-31T23:59:30Z"), s("30 s")));
+        // The duration is `\d+(.\d+)?` then a unit, nothing else.
+        for bad in ["7", "d", "7dd", "-7d", ".5d", "5.d", "7 days", "７d", "7ſ"] {
+            assert!(!within(s("2025-12-31"), s(bad)), "{bad}");
+        }
+        assert!(!within(s("2025-12-31"), Js::Number(f64::INFINITY)));
+        assert!(!within(s("not a date"), s("7d")));
+        assert!(!within(Js::Null, s("7d")));
+        // `new Date(true)` is 1 ms past the epoch.
+        assert!(!within(Js::Bool(true), s("1d")));
+        // A future instant is within any duration.
+        assert!(within(s("2027-01-01"), s("1s")));
+        assert!(matches!(compare_values(&s("x"), FilterOperator::Within, &s("1d"), LocalZone::UTC), Err(EvalError::Fallback(_))));
     }
 
     #[test]

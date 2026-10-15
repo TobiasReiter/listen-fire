@@ -862,6 +862,27 @@ describe('the expression tail, on both engines', () => {
     expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
   });
 
+  it("measures a WITHIN from the host's clock, a value's, a condition's and a hop's WHERE's alike", async () => {
+    const body = [
+      '  if "2025-12-30" WITHIN "7d" {',
+      '    write kg-[:note]-> { text: "recent" }',
+      '  }',
+      '  if "2025-12-20" WITHIN "7d" {',
+      '    write kg-[:note]-> { text: "stale" }',
+      '  }',
+      '  x = msg.`subject` WITHIN "7d"',
+      '  write kg-[:note]-> { text: "${x}" }',
+      '  kg-[c:company WHERE `revenue` WITHIN "99999w"]-> {',
+      '    write kg-[:note]-> { text: c.`name` }',
+      '  }',
+    ].join('\n');
+    const { rust } = await agree({ body });
+    expect(written(rust)).toEqual(['recent', 'false', 'Acme', 'Globex', 'Initech', 'Umbrella']);
+    // The hop's WHERE is pure, so it is handed to the adapter as the
+    // TypeScript hands it; the engine decides it itself all the same.
+    expect(calls(rust).filter(([m, input]) => m === 'getRelated' && input.where !== undefined)).toHaveLength(1);
+  });
+
   it("ranks by a SORT key of any form, read in each member's scope, records and maps alike", async () => {
     const { rust } = await agree({
       body: [

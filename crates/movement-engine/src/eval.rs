@@ -156,8 +156,9 @@ pub enum Ask {
     /// A built-in this engine does not reproduce for these arguments: the
     /// TypeScript member answers.
     Function { id: String, args: Vec<Js> },
-    /// The shared comparator, likewise.
-    Compare { op: FilterOperator, left: Js, right: Js },
+    /// A `WITHIN`, measured from the host's clock (`compareValues`'
+    /// `within`): the only comparison `compare_values` hands back.
+    Within { left: Js, right: Js },
     /// A bare name inside a hop's WHERE or ORDER BY (a position-scoped
     /// evaluation) that no value binding answers: the landed record's field.
     /// `edge` for the bracket grammar's `edge_property`, which reads the
@@ -446,8 +447,7 @@ impl<'a> Evaluator<'a> {
                     return Ok(Evaluated { value: Js::Bool(same), prov: self.union(&[&l.prov, &r.prov]) });
                 }
                 let value = self
-                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Compare {
-                        op: *op,
+                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Within {
                         left: l.value.clone(),
                         right: r.value.clone(),
                     })

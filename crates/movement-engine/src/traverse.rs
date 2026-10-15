@@ -53,7 +53,6 @@ use crate::eval::{ErrorClass, EvalError, Evaluated, Prov};
 use crate::executor::join_all;
 use crate::host::{self, Instance, ResolveAdapter, Role};
 use crate::js::{self, Js};
-use crate::js_date;
 use crate::order_limit::{self, Substitution};
 use crate::extract::emission::Emission;
 use crate::run::{Failure, Flow, Run, Scoped, Stop};
@@ -1213,11 +1212,9 @@ impl Run<'_> {
             let read = |name: &str| reads.get(name).cloned().unwrap_or(Js::Undefined);
             // The host's clock is asked once per conjunct that reaches a
             // `WITHIN` (expression.ts `decideWithClock`), not per `WITHIN`.
-            let now: RefCell<Option<String>> = RefCell::new(None);
+            let now: RefCell<Option<f64>> = RefCell::new(None);
             let now = &now;
-            let ask = |op: FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
-                Box::pin(async move { self.compare(op, l, r, now).await })
-            };
+            let ask = |_: FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> { Box::pin(async move { self.within(l, r, now).await }) };
             last = crate::filter::evaluate_predicate_with(conjunct, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone() })
                 .await
                 .map_err(|e| Failure::of_eval(e, "the Rust engine does not reproduce it"))?;
@@ -1327,28 +1324,16 @@ impl Run<'_> {
         }
     }
 
-    /// The shared comparator for a reading `compare_values` hands back, in a
-    /// pure predicate's decision; a `WITHIN` measures from `now`, the host's
-    /// clock asked the first time the decision reaches one.
-    pub(crate) async fn compare(
-        &self,
-        op: FilterOperator,
-        left: Js,
-        right: Js,
-        now: &RefCell<Option<String>>,
-    ) -> Result<bool, EvalError> {
-        let within = matches!(op, FilterOperator::Within);
-        if within && now.borrow().is_none() {
-            let asked = self.clock_now().await.map_err(Failure::into_eval)?;
-            *now.borrow_mut() = Some(js_date::to_iso_string(asked));
-        }
-        let request = self.compare_request_at(op, &left, &right, if within { now.borrow().clone() } else { None }.as_deref()).map_err(Failure::into_eval)?;
-        let answer = self.ask(request).await.map_err(Failure::into_eval)?.unwrap_or(Json::Null);
-        let value = answer
-            .get("value")
-            .and_then(|v| self.wire.decode(v).ok())
-            .ok_or_else(|| EvalError::engine("MOVENG_RUNTIME", format!("the comparator answered {answer}")))?;
-        Ok(value.truthy())
+    /// A `WITHIN` in a pure predicate's decision (the one comparison
+    /// `compare_values` hands back), measured from `now`: the host's clock,
+    /// asked the first time the decision reaches one.
+    pub(crate) async fn within(&self, left: Js, right: Js, now: &RefCell<Option<f64>>) -> Result<bool, EvalError> {
+        let at = match *now.borrow() {
+            Some(at) => at,
+            None => self.clock_now().await.map_err(Failure::into_eval)?,
+        };
+        *now.borrow_mut() = Some(at);
+        Ok(crate::filter::within(&left, &right, at, self.local_zone()))
     }
 
     /// A name a position-scoped evaluation reads off its landed record

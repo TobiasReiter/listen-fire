@@ -588,17 +588,6 @@ pub mod builtins {
             args: json!({ "id": id, "args": args, "now": now, "languageVersion": language_version }),
         }
     }
-
-    /// The shared comparator (`compareValues`), likewise. `now` (an ISO
-    /// 8601 instant, the host clock's answer) is what a `WITHIN` measures
-    /// recency from, and only a `WITHIN` carries it.
-    pub fn compare(op: &str, left: Json, right: Json, now: Option<&str>) -> Request {
-        let mut args = json!({ "op": op, "left": left, "right": right });
-        if let Some(now) = now {
-            args["now"] = json!(now);
-        }
-        Request { family: Family::Builtins, method: "compare".into(), args }
-    }
 }
 
 pub mod log {
@@ -710,9 +699,6 @@ mod tests {
         assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "2026-01-01T00:00:01.000Z" }))), Some(1_767_225_601_000.0));
         assert_eq!(clock::instant_of(Some(&json!({ "nowIso": "soon" }))), None);
         assert_eq!(clock::instant_of(Some(&json!({ "now": "2026-01-01T00:00:01.000Z" }))), None);
-        let within = builtins::compare("within", json!(1), json!("1d"), Some("2026-01-01T00:00:00.000Z"));
-        assert_eq!(within.args["now"], json!("2026-01-01T00:00:00.000Z"));
-        assert!(builtins::compare("eq", json!(1), json!(1), None).args.get("now").is_none());
         let check = check::program("src", 3, None);
         assert_eq!((check.family.as_str(), check.method.as_str()), ("check", "program"));
         assert_eq!(check.args, json!({ "source": "src", "languageVersion": 3 }));

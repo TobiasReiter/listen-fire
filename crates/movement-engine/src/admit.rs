@@ -4485,7 +4485,6 @@ impl Names<'_> {
                 self.walk(then, scoped)?;
                 self.walk(else_, scoped)
             }
-            Expression::Compare { op: FilterOperator::Within, .. } => refuse("within_compare"),
             Expression::Compare { left, right, .. } | Expression::Arithmetic { left, right, .. } => {
                 self.walk(left, scoped)?;
                 self.walk(right, scoped)
@@ -5278,7 +5277,7 @@ mod tests {
         let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
         assert_eq!(
             reasons_of(&source, "m", 3),
-            ["meta:trigger", "within_compare", "expression_does_not_lower", "statement:call"]
+            ["meta:trigger", "expression_does_not_lower", "statement:call"]
         );
         assert_eq!(refused(body).as_deref(), Some("meta:trigger"));
         // The file's reasons come first, then each movement's, in source order.
@@ -5297,6 +5296,9 @@ mod tests {
             // The event spread is a record's, and a member spread reads a record's field.
             "  g = graph { ...msg }\n  co = write crm-[:companies]-> { name: \"a\" }\n  h = graph { ...co.`meta` }",
             "  x = NUMBER.FORMAT(1200000, \"compact\")\n  y = { a: [1, -2] }\n  z = y.`a`",
+            // A WITHIN measures from the host's clock, a hop's WHERE's too.
+            "  x = msg.`subject` WITHIN \"7d\"\n  if \"2025-12-30\" WITHIN \"7d\" {\n    y = 1\n  }",
+            "  crm-[c:companies WHERE `name` WITHIN \"7d\"]-> {\n    y = 1\n  }",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
@@ -5310,7 +5312,6 @@ mod tests {
             ("  crm-[:#foo]-> {\n    y = 1\n  }", "traversal_meta_edge"),
             ("  write crm-[:#foo]-> { name: \"a\" }", "traversal_meta_edge"),
             ("  x = TEXT.CHUNKS(msg.`subject`)", "expression_does_not_lower"),
-            ("  x = msg.`subject` WITHIN \"7d\"", "within_compare"),
             ("  x = 1\n  x = write crm-[:companies]-> { name: \"a\" }", "name_rebound"),
             ("  inbox = 1", "name_shadowed"),
             ("  msg = 1", "name_shadowed"),
