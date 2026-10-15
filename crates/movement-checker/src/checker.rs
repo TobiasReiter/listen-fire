@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    AwaitExpression, AwaitSource, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    AwaitExpression, AwaitSource, ClosureExpression, ExprSlot, ExtractExpression,
     LinkTarget, MatchExpression, MovementDeclaration, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -49,7 +49,6 @@ pub struct Checker<'c> {
     /// The host's zone database.
     pub zones: &'c dyn crate::host::ZoneLookup,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
-    pub movement_params: std::collections::HashMap<crate::scope::SymbolId, Vec<String>>,
     /// The bodies being walked, innermost last, each collecting its `return`s.
     pub return_stack: Vec<crate::families::calls::ReturnCollector>,
     /// Whether each function a call can vouch for hands a value back, by its
@@ -67,11 +66,13 @@ pub struct Checker<'c> {
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
 #[derive(Default, Clone, Copy)]
-pub struct SlotOptions {
+pub struct SlotOptions<'f> {
     /// The value is kept as written (`holdsValue`): typed exactly, not read.
     pub holds_value: bool,
     /// A write's field value, whose target may advertise functions of its own.
     pub write_field: bool,
+    /// A `through` stage's argument: the fields it may (and may not yet) read.
+    pub fields: Option<&'f crate::families::extraction::ThroughFields>,
 }
 
 /// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
@@ -116,7 +117,6 @@ impl<'c> Checker<'c> {
             imports: Default::default(),
             schemas: Default::default(),
             upgrading_from: options.upgrading_from,
-            movement_params: Default::default(),
             return_stack: Vec::new(),
             function_returns: Default::default(),
             selves: Default::default(),
@@ -210,7 +210,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_statement(&mut self, statement: &Statement, scope: ScopeId) {
+    pub(crate) fn check_statement(&mut self, statement: &Statement, scope: ScopeId) {
         match statement {
             Statement::Import(import) => self.check_import(import, scope),
             Statement::Assign(assign) => {
@@ -226,6 +226,7 @@ impl<'c> Checker<'c> {
                 if let Some(returned) = &bound.returned {
                     self.set_types(scope, &assign.name, crate::families::arg_fit::types_of_return(returned));
                 }
+                self.note_shape_alias(&assign.name, &assign.value, scope);
                 if let Some(pos) = bound.pos {
                     self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
                 }
@@ -324,19 +325,7 @@ impl<'c> Checker<'c> {
                 return Bound { pos: handle, ..Bound::default() };
             }
             RValue::Extract { extract } => self.check_extract(extract, scope),
-            RValue::ExtractCall { extract_call } => {
-                self.check_expr_slot(&extract_call.content, scope);
-                match &extract_call.shape {
-                    ExtractCallShape::Named { name, span } => {
-                        self.resolve_name(name, *span, scope);
-                    }
-                    ExtractCallShape::Inline { .. } => {}
-                    ExtractCallShape::Computed { expr, .. } => self.check_expr_slot(expr, scope),
-                }
-                if let Some(config) = &extract_call.config {
-                    self.check_expr_slot(config, scope);
-                }
-            }
+            RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
             RValue::Block { block } => {
                 let returns = self.check_traversal_block(block, scope, name);
                 if !returns {
@@ -419,14 +408,14 @@ impl<'c> Checker<'c> {
     /// its nested calls hoisted out, is parsed, every name it reads resolves,
     /// and it is typed, what the typing reports surfacing here.
     pub fn check_expr_slot_with(&mut self, slot: &ExprSlot, scope: ScopeId, options: SlotOptions) -> SlotTyped {
-        let SlotOptions { holds_value, write_field } = options;
+        let SlotOptions { holds_value, write_field, fields } = options;
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if is_literal_word(trimmed) {
                 let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
                 return SlotTyped { expr: None, ty, may_hold: None };
             }
-            self.resolve_name(trimmed, slot.span, scope);
+            self.resolve_name_with_fields(trimmed, slot.span, scope, fields);
             let bound = {
                 let env = self.typing_env(scope);
                 Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
@@ -448,7 +437,7 @@ impl<'c> Checker<'c> {
         let names = collect_expression_names(&parsed);
         for name in names.distinct_refs() {
             if !names.aliases.contains(name) {
-                self.resolve_name(name, slot.span, scope);
+                self.resolve_name_with_fields(name, slot.span, scope, fields);
             }
         }
         self.check_slot_expression(slot, scope, write_field);
@@ -786,37 +775,8 @@ impl<'c> Checker<'c> {
         for input in &extract.from {
             self.check_expr_slot(input, scope);
         }
-        self.check_extract_stages(&extract.stages, scope);
-    }
-
-    fn check_extract_stages(&mut self, stages: &[ExtractStage], scope: ScopeId) {
-        for stage in stages {
-            for call in stage.through.iter().flatten() {
-                self.resolve_name(&call.plugin, call.span, scope);
-            }
-            for field in &stage.fields {
-                self.check_expr_slot(&field.description, scope);
-            }
-            for child in &stage.children {
-                match child {
-                    ExtractNode::Declared(node) => {
-                        if let failure @ (Resolution::Pending | Resolution::Escaped { .. } | Resolution::Unknown) =
-                            self.scopes.resolve(scope, &node.declared.type_)
-                        {
-                            self.report_resolution_failure(&node.declared.type_, node.declared.span, failure);
-                        }
-                        if let Some(description) = &node.description {
-                            self.check_expr_slot(description, scope);
-                        }
-                        self.check_extract_stages(&node.stages, scope)
-                    }
-                    ExtractNode::Inline(node) => {
-                        self.check_expr_slot(&node.description, scope);
-                        self.check_extract_stages(&node.stages, scope)
-                    }
-                }
-            }
-        }
+        self.check_extract_stages(&extract.stages, scope, &Default::default(), None);
+        self.resolve_extract_annotations(&extract.stages, scope);
     }
 
     /// `landingScope`: the scope a walk's tail is read in, holding its hop aliases.
@@ -864,8 +824,9 @@ impl<'c> Checker<'c> {
                 }
             }
             self.report_block_read_back(&names, scope, head.span);
-            self.check_head_expression(&probe, head.span, scope);
+            self.check_head_expression(&probe, head, scope);
         }
+        self.check_head_resources(head, &probe, root_name.as_deref(), scope);
         if let Some(name) = &root_name {
             self.check_path_root_constructed(name, root_symbol, &head.hops_raw, head.span);
         }

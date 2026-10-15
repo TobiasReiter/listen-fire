@@ -146,6 +146,11 @@ pub struct ExtractField {
     pub reads_as_present_text: bool,
     /// An annotation was written (`annotationRaw`), resolved or not.
     pub annotated: bool,
+    /// Where the field is declared: an annotation's nudges point here.
+    pub span: movement_parser::ast::Span,
+    /// The targets an annotation was already suggested for (`suggested`), so
+    /// repeated writes say it once.
+    pub suggested: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 /// `ExtractNodeType`: a node of an extract result graph.
@@ -154,9 +159,9 @@ pub struct ExtractNode {
     pub name: String,
     pub properties: IndexMap<String, ExtractField>,
     pub children: IndexMap<String, Rc<ExtractNode>>,
-    /// A node whose fields and nested nodes a `node` declaration states
-    /// (`node entry: <Entry>`). Reading its declared schema is the nodes
-    /// family's (`shapeToSchema`); until then everything off it is untyped.
+    /// A node taking a declaration as its shape (`node entry: <Entry>`) whose
+    /// declaration is not fully known here (it extends a name only the file
+    /// it was imported from binds): everything off it is untyped.
     pub declared: bool,
 }
 

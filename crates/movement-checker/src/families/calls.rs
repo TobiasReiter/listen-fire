@@ -415,6 +415,24 @@ fn member_read_calls(tree: &MExpr, into: &mut Vec<At>) {
     }
 }
 
+/// `headHopsExtent`: an extent of a head's probe, placed in the file when it
+/// lies within the hops, which the probe carries verbatim and which end where
+/// the head does. A chain over several lines has no exact place.
+fn head_hops_extent(head: &movement_parser::ast::PathHead, probe_len: usize, at: At) -> Option<Span> {
+    if head.hops_raw.contains('\n') {
+        return None;
+    }
+    let hops_len = head.hops_raw.encode_utf16().count();
+    // The probe is the root, the hops, then the probe's own field read.
+    let offset = probe_len - ".`__movement_head_probe__`".len() - hops_len;
+    if at.start < offset || at.end > offset + hops_len {
+        return None;
+    }
+    let end = head.span.end;
+    let hops = ExprSlot::plain(head.hops_raw.clone(), Span { start: Loc { line: end.line, col: end.col.saturating_sub(hops_len) }, end });
+    Some(span_of_extent(&hops, At { start: at.start - offset, end: at.end - offset }))
+}
+
 /// `spanOfExtent`.
 pub fn span_of_extent(slot: &ExprSlot, at: At) -> Span {
     Span { start: span_within(slot, Some(at.start)).start, end: span_within(slot, Some(at.end)).start }
@@ -482,32 +500,18 @@ impl Checker<'_> {
     /// spells, and the slot comes back reading those names in the calls'
     /// places. None when the slot holds no such call.
     pub fn hoist_nested_calls(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<ExprSlot> {
-        if !since(self.version, 3) {
-            return None;
-        }
-        let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
-        let mut read = Vec::new();
-        member_read_calls(&tree, &mut read);
-        let mut calls = Vec::new();
-        nested_calls(&tree, &|call| read.contains(&call.at()) || self.runs_as_call(call, scope), &mut calls);
-        if calls.is_empty() {
-            return None;
-        }
+        let (calls, rewritten) = self.nested_call_rewrite(slot, scope)?;
         let units: Vec<u16> = slot.raw.encode_utf16().collect();
-        let mut rewritten: Vec<u16> = Vec::with_capacity(units.len());
-        let mut from = 0;
-        for call in calls {
-            let at = call.at();
-            let span = span_of_extent(slot, at);
-            let name = nested_call_name(span);
+        for HoistedCall { at, span, name } in calls {
             let head = String::from_utf16_lossy(&units[..at.end]);
             let mut bound = crate::checker::Bound::default();
-            match movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start) {
+            let parsed = movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start);
+            match &parsed {
                 Ok(value) => {
                     self.open_effect_frame();
-                    bound = self.check_rvalue(&value, scope, None, span);
+                    bound = self.check_rvalue(value, scope, None, span);
                     let row = self.close_effect_frame();
-                    let callee = match &value {
+                    let callee = match value {
                         RValue::Call { call } => Some(&call.callee),
                         RValue::Construct { construct } => Some(&construct.callee),
                         _ => None,
@@ -523,19 +527,48 @@ impl Checker<'_> {
                 }
                 Err(e) => self.report(codes::EXPR_PARSE, format!("{} (line {}, col {})", e.message, e.loc.line, e.loc.col), span),
             }
-            let mut hoisted = Symbol::new(&name, SymbolKind::Binding, span);
-            // The name holds what the call hands back (`boundCallShape`).
+            let symbol = self.scopes.add_symbol(Symbol::new(&name, SymbolKind::Binding, span));
+            self.scopes.declare(scope, symbol);
+            // The name holds what the call hands back, as a binding of it
+            // would (`boundCallShape`), typed in the order a binding is.
+            if let Ok(value) = &parsed {
+                self.type_assigned(&name, value, scope);
+            }
             if let Some(returned) = &bound.returned {
-                hoisted.types = crate::families::arg_fit::types_of_return(returned);
+                self.set_types(scope, &name, crate::families::arg_fit::types_of_return(returned));
             }
             if let Some(pos) = bound.pos {
-                hoisted.types.pos = Some(pos);
+                self.set_types(scope, &name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
             }
-            let symbol = self.scopes.add_symbol(hoisted);
-            self.scopes.declare(scope, symbol);
+        }
+        Some(rewritten)
+    }
+
+    /// `hoistNestedCalls`, the rewrite: each call an expression runs (in
+    /// source order), where it is and the name it is hoisted to, and the slot
+    /// with each call replaced by its name — padded to the call's length so
+    /// every later offset into the text is the original's.
+    pub fn nested_call_rewrite(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Vec<HoistedCall>, ExprSlot)> {
+        if !since(self.version, 3) {
+            return None;
+        }
+        let tree = movement_parser::expr::parse_expression(&slot.raw).ok()?;
+        let mut read = Vec::new();
+        member_read_calls(&tree, &mut read);
+        let mut calls = Vec::new();
+        nested_calls(&tree, &|call| read.contains(&call.at()) || self.runs_as_call(call, scope), &mut calls);
+        if calls.is_empty() {
+            return None;
+        }
+        let units: Vec<u16> = slot.raw.encode_utf16().collect();
+        let mut rewritten: Vec<u16> = Vec::with_capacity(units.len());
+        let mut from = 0;
+        let mut hoisted = Vec::new();
+        for call in calls {
+            let at = call.at();
+            let span = span_of_extent(slot, at);
+            let name = nested_call_name(span);
             rewritten.extend_from_slice(&units[from..at.start]);
-            // The name in the call's place, padded to the call's length so
-            // every later offset into the text is the original's.
             let spelled: Vec<u16> = format!("`{name}`").encode_utf16().collect();
             let extent = &units[at.start..at.end];
             rewritten.extend_from_slice(&spelled);
@@ -543,10 +576,18 @@ impl Checker<'_> {
                 rewritten.push(if *unit == u16::from(b'\n') { *unit } else { u16::from(b' ') });
             }
             from = at.end;
+            hoisted.push(HoistedCall { at, span, name });
         }
         rewritten.extend_from_slice(&units[from..]);
-        Some(ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span))
+        Some((hoisted, ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span)))
     }
+}
+
+/// A call hoisted out of an expression: where it is, and the name it gets.
+pub struct HoistedCall {
+    pub at: At,
+    pub span: Span,
+    pub name: String,
 }
 
 /// `closureOfValue`: a value that is a closure (every member of a union one).
@@ -788,14 +829,24 @@ impl Checker<'_> {
 #[derive(Clone, Copy)]
 pub enum TreeAt<'s> {
     Slot(&'s ExprSlot),
-    Head(Span),
+    /// A block head, read through its probe (`probe_len` UTF-16 units).
+    Head { head: &'s movement_parser::ast::PathHead, probe_len: usize },
 }
 
 impl TreeAt<'_> {
     fn span_of(&self, at: At) -> Span {
         match self {
             TreeAt::Slot(slot) => span_within(slot, Some(at.start)),
-            TreeAt::Head(span) => *span,
+            TreeAt::Head { head, .. } => head.span,
+        }
+    }
+
+    /// `extentOf`: where an extent of the tree is exactly, when it has one
+    /// place in the file — what an exact rewrite needs.
+    pub fn extent_of(&self, at: At) -> Option<Span> {
+        match self {
+            TreeAt::Slot(slot) => Some(span_of_extent(slot, at)),
+            TreeAt::Head { head, probe_len } => head_hops_extent(head, *probe_len, at),
         }
     }
 }
@@ -964,22 +1015,33 @@ impl Checker<'_> {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
-        self.visit_expression_tree(&tree, false, TreeAt::Slot(slot), scope, write_field);
+        self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
 
     /// The calls in a block head's hops (version 3), read through the probe
     /// the head is parsed as; every place is the head's.
-    pub fn check_head_expression(&mut self, probe: &str, span: Span, scope: ScopeId) {
+    pub fn check_head_expression(&mut self, probe: &str, head: &movement_parser::ast::PathHead, scope: ScopeId) {
         if !since(self.version, 3) {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(probe) else { return };
-        self.visit_expression_tree(&tree, false, TreeAt::Head(span), scope, false);
+        // The probe reads a field off the head's walk; that walk is the head.
+        let walk = match &tree {
+            MExpr::Member { object, .. } => Some(object.as_ref() as *const MExpr),
+            _ => None,
+        };
+        let at_ = TreeAt::Head { head, probe_len: probe.encode_utf16().count() };
+        self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
     }
 
-    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, at_: TreeAt, scope: ScopeId, write_field: bool) {
-        if let MExpr::Path { hops, at, .. } = expr {
+    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, in_resource_where: bool, place: (TreeAt, Option<*const MExpr>), scope: ScopeId, write_field: bool) {
+        let (at_, head) = place;
+        if let MExpr::Path { root, hops, at } = expr {
             self.check_walk_keeps_what_is_written(hops, at_.span_of(*at));
+            self.check_resource_walk(root.as_deref(), hops, at_.span_of(*at), head == Some(expr as *const MExpr));
+        }
+        if let MExpr::Special { text, at } = expr {
+            self.check_special_record_read(text, at_.span_of(*at), at_.extent_of(*at), in_resource_where);
         }
         if let MExpr::If { else_: None, at, .. } = expr {
             self.report(
@@ -1007,9 +1069,15 @@ impl Checker<'_> {
             }
         }
         let key = sort_key_of(expr);
+        // A resource hop's WHERE reads the resource's own fields by bare name.
+        let resource_wheres: Vec<&MExpr> = match expr {
+            MExpr::Path { hops, .. } => hops.iter().filter(|h| crate::families::extraction::is_resource_hop(h)).filter_map(|h| h.where_.as_ref()).collect(),
+            _ => Vec::new(),
+        };
         for child in expression_children(expr) {
             let keyed = key.is_some_and(|k| std::ptr::eq(k, child));
-            self.visit_expression_tree(child, per_member || keyed, at_, scope, write_field);
+            let in_where = in_resource_where || resource_wheres.iter().any(|w| std::ptr::eq(*w, child));
+            self.visit_expression_tree(child, per_member || keyed, in_where, place, scope, write_field);
         }
     }
 
@@ -1094,7 +1162,7 @@ impl Checker<'_> {
                 let MExpr::Call { callee, at, .. } = call else { return };
                 let slot = match at_ {
                     TreeAt::Slot(slot) => Some(slot),
-                    TreeAt::Head(_) => None,
+                    TreeAt::Head { .. } => None,
                 };
                 let fix = slot.and_then(|slot| self.closest_function_name(written, scope).map(|to| (slot, to))).map(|(slot, to)| {
                     let spelled = if to.chars().any(char::is_whitespace) { format!("`{to}`") } else { to };
@@ -1135,7 +1203,7 @@ impl Checker<'_> {
 }
 
 /// `callArgSpan`.
-pub fn call_arg_span(arg: &CallArg) -> Span {
+pub(crate) fn call_arg_span(arg: &CallArg) -> Span {
     match arg {
         CallArg::Expr { expr, .. } => expr.span,
         CallArg::Write { write, .. } => write.span,
@@ -1150,12 +1218,11 @@ fn plural(n: usize) -> &'static str {
 }
 
 impl Checker<'_> {
-    /// The parameter names a movement declares, against its symbol.
+    /// What a movement declares, against its symbol, for its calls.
     pub fn note_movement_params(&mut self, movement: &MovementDeclaration, scope: ScopeId) {
         if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied()
             && self.scopes.symbol(id).kind == SymbolKind::Movement
         {
-            self.movement_params.insert(id, movement.params.iter().map(|p| p.name.clone()).collect());
             self.register_movement(id, movement, scope);
             let returns = movement.return_type.is_some() || crate::families::closures::body_returns(&movement.body);
             self.function_returns.insert(id, returns);
@@ -1237,13 +1304,13 @@ impl Checker<'_> {
         let count = call.args.len();
         if callee.kind == SymbolKind::Movement {
             self.call_movement(id);
-            let params = self.movement_params.get(&id).cloned();
+            let params = self.movement_declared_params(id);
             if let Some(params) = &params
                 && params.len() != count
             {
                 self.report(codes::CALL_ARITY, format!("'{}' takes {} argument{}, got {count}", call.callee, params.len(), plural(params.len())), call.span);
             }
-            return (params.and_then(|_| self.movement_declared_params(id)), self.movement_return(id));
+            return (params, self.movement_return(id));
         }
         if callee.kind == SymbolKind::Plugin {
             return (None, self.check_plugin_application(call, id, scope));

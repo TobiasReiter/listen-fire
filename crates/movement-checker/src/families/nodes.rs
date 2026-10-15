@@ -65,6 +65,12 @@ impl NodeState {
     }
 }
 
+/// Why an annotation names no type: a report, or a name that did not resolve.
+pub enum TypeNameRefusal {
+    Report(&'static str, String),
+    Resolution(Resolution),
+}
+
 pub const PRIMITIVE_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
 
 impl Checker<'_> {
@@ -285,11 +291,34 @@ impl Checker<'_> {
     /// declaration is written, patching the schema. Version 1 resolved only
     /// borrowed paths here.
     fn resolve_shape_field_types(&mut self, node: &ShapeNode, key: &str, schema: &mut InstanceSchema, scope: ScopeId) {
+        let mut refusals = Vec::new();
+        self.apply_shape_field_types(node, key, schema, scope, &mut refusals);
+        for (refusal, span, written) in refusals {
+            match refusal {
+                TypeNameRefusal::Report(code, message) => self.report(code, message, span),
+                TypeNameRefusal::Resolution(failure) => {
+                    let graph = written.split('.').next().unwrap_or(&written).to_string();
+                    self.report_resolution_failure(&graph, span, failure);
+                }
+            }
+        }
+    }
+
+    /// `resolveShapeFieldTypes`' reading: each field's annotation resolved
+    /// into the schema, and the ones that name no type collected in order.
+    fn apply_shape_field_types(&self, node: &ShapeNode, key: &str, schema: &mut InstanceSchema, scope: ScopeId, refusals: &mut Vec<(TypeNameRefusal, Span, String)>) {
         for field in &node.fields {
             if self.version < 2 && !field.type_.contains('.') {
                 continue;
             }
-            let Some(resolved) = self.resolve_named_type(&field.type_, field.span, scope) else { continue };
+            let resolved = match self.named_type(&field.type_, scope) {
+                Ok(Some(resolved)) => resolved,
+                Ok(None) => continue,
+                Err(refusal) => {
+                    refusals.push((refusal, field.span, field.type_.clone()));
+                    continue;
+                }
+            };
             if let Some(position) = schema.positions.get_mut(key) {
                 let resolved = if field.nullable == Some(true) { schema_maybe_absent(resolved) } else { resolved };
                 position.properties.insert(field.name.clone(), resolved.clone());
@@ -300,12 +329,20 @@ impl Checker<'_> {
             }
         }
         for child in &node.children {
-            self.resolve_shape_field_types(child, &format!("{key}.{}", child.name), schema, scope);
+            self.apply_shape_field_types(child, &format!("{key}.{}", child.name), schema, scope, refusals);
         }
     }
 
+    /// A declaration written in place (`extract(content, node X { … })`), as
+    /// its statement would settle it, for typing alone.
+    pub fn settled_schema_of(&self, shape: &ShapeDeclaration, scope: ScopeId) -> InstanceSchema {
+        let mut schema = self.schema_of_shape(shape, scope);
+        self.apply_shape_field_types(&shape.root, &shape.name, &mut schema, scope, &mut Vec::new());
+        schema
+    }
+
     /// The schema a graph symbol carries: an instance's, or a node declaration's.
-    fn graph_schema(&self, symbol: SymbolId) -> Option<std::rc::Rc<InstanceSchema>> {
+    pub fn graph_schema(&self, symbol: SymbolId) -> Option<std::rc::Rc<InstanceSchema>> {
         let s = self.scopes.symbol(symbol);
         match s.kind {
             SymbolKind::Shape => self.nodes.declared(symbol).map(|d| d.instance.schema.clone()),
@@ -318,63 +355,70 @@ impl Checker<'_> {
     }
 
     /// `resolveNamedType`: an annotation — a primitive, a refinement the
-    /// program declares, or a borrowed `<instance>.<root>.<field>` path.
+    /// program declares, or a borrowed `<instance>.<root>.<field>` path —
+    /// reporting what it names that is none of them.
     pub fn resolve_named_type(&mut self, written: &str, span: Span, scope: ScopeId) -> Option<SchemaFieldType> {
+        match self.named_type(written, scope) {
+            Ok(found) => found,
+            Err(TypeNameRefusal::Resolution(failure)) => {
+                let graph = written.split('.').next().unwrap_or(written).to_string();
+                self.report_resolution_failure(&graph, span, failure);
+                None
+            }
+            Err(TypeNameRefusal::Report(code, message)) => {
+                self.report(code, message, span);
+                None
+            }
+        }
+    }
+
+    /// `resolveNamedType`'s reading, reporting nothing: `Ok(None)` for a graph
+    /// in scope whose schema is not known (it stays silent).
+    pub fn named_type(&self, written: &str, scope: ScopeId) -> Result<Option<SchemaFieldType>, TypeNameRefusal> {
         if !written.contains('.') {
             if let Some(primitive) = movement_parser::catalog::helpers::parse_field_type_name(Some(written)) {
-                return Some(primitive);
+                return Ok(Some(primitive));
             }
             if let Some(declared) = self.declared_schema_type_in(written, scope) {
-                return Some(declared);
+                return Ok(Some(declared));
             }
             let names = self.type_names_in_scope(scope);
-            self.report(
+            return Err(TypeNameRefusal::Report(
                 codes::UNKNOWN_TYPE_NAME,
                 format!(
                     "'{written}' is not a type — annotate with a primitive ({}), a type you declare (`type {written} = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>){}",
                     PRIMITIVE_TYPE_NAMES.join(", "),
                     crate::meta::did_you_mean(written, &names)
                 ),
-                span,
-            );
-            return None;
+            ));
         }
         let segments: Vec<&str> = written.split('.').collect();
         let [graph, root, field] = segments[..] else {
-            self.report(
+            return Err(TypeNameRefusal::Report(
                 codes::BORROW_MALFORMED,
                 format!(
                     "'{written}' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"
                 ),
-                span,
-            );
-            return None;
+            ));
         };
         let id = match self.scopes.resolve(scope, graph) {
             Resolution::Found(id) => id,
             Resolution::Unknown => {
-                self.report(
+                return Err(TypeNameRefusal::Report(
                     codes::BORROW_UNKNOWN_GRAPH,
                     format!("Unknown name '{graph}' in the borrowed type '{written}' — a borrowed type starts at a constructed instance, a declared node, or kg"),
-                    span,
-                );
-                return None;
+                ));
             }
-            failure => {
-                self.report_resolution_failure(graph, span, failure);
-                return None;
-            }
+            failure => return Err(TypeNameRefusal::Resolution(failure)),
         };
         let kind = self.scopes.symbol(id).kind;
         if !matches!(kind, SymbolKind::Instance | SymbolKind::Shape) {
-            self.report(
+            return Err(TypeNameRefusal::Report(
                 codes::BORROW_UNKNOWN_GRAPH,
                 format!("'{graph}' is {} — a borrowed type starts at a constructed instance, a declared node, or kg", kind.describe()),
-                span,
-            );
-            return None;
+            ));
         }
-        let schema = self.graph_schema(id)?;
+        let Some(schema) = self.graph_schema(id) else { return Ok(None) };
         let readable = schema.positions.get(root).map(|p| &p.properties);
         let writable = schema.writable_roots.get(root).map(|r| &r.fields);
         if readable.is_none() && writable.is_none() {
@@ -385,8 +429,7 @@ impl Checker<'_> {
                 }
             }
             let listed = if available.is_empty() { String::new() } else { format!(" — it has: {}", available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")) };
-            self.report(codes::BORROW_UNKNOWN_ROOT, format!("'{graph}' has no '{root}' to borrow from{listed}"), span);
-            return None;
+            return Err(TypeNameRefusal::Report(codes::BORROW_UNKNOWN_ROOT, format!("'{graph}' has no '{root}' to borrow from{listed}")));
         }
         let mut fields: Vec<(&String, &SchemaFieldType)> = readable.into_iter().flat_map(|p| p.iter()).collect();
         for (name, ty) in writable.into_iter().flat_map(|w| w.iter()) {
@@ -396,11 +439,15 @@ impl Checker<'_> {
             }
         }
         if let Some((_, ty)) = fields.iter().find(|(n, _)| n.as_str() == field) {
-            return Some((*ty).clone());
+            return Ok(Some((*ty).clone()));
         }
         let listed = if fields.is_empty() { String::new() } else { format!(" — it has: {}", fields.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")) };
-        self.report(codes::BORROW_UNKNOWN_FIELD, format!("'{graph}.{root}' has no field '{field}'{listed}"), span);
-        None
+        Err(TypeNameRefusal::Report(codes::BORROW_UNKNOWN_FIELD, format!("'{graph}.{root}' has no field '{field}'{listed}")))
+    }
+
+    /// An annotation's type, for typing alone (nothing reported).
+    pub fn annotation_type(&self, written: &str, scope: ScopeId) -> Option<Ty> {
+        self.named_type(written, scope).ok().flatten().map(|t| Ty::from_schema(&t))
     }
 
     /// `checkMembers`: `MEMBERS(<T>)` lists a closed set's values, in the
@@ -433,30 +480,6 @@ impl Checker<'_> {
             return None;
         }
         Some(crate::types::Ty::list(named))
-    }
-
-    /// `declaredExtractGraph`: an extraction node that takes a declaration as
-    /// its shape — the declaration's fields (typed where it resolved them)
-    /// and nested nodes, then the `through` stages on top. Untyped (`declared`)
-    /// when the name is no node declaration.
-    pub fn declared_extract_graph(&self, node: &movement_parser::ast::DeclaredExtractNode, scope: ScopeId) -> crate::types::position::ExtractNode {
-        use crate::types::position::ExtractNode;
-        let shape = match self.scopes.resolve(scope, &node.declared.type_) {
-            Resolution::Found(id) => self.declared_node(id).cloned(),
-            _ => None,
-        };
-        let mut graph = match &shape {
-            Some(shape) => shape_extract_graph(&node.name, &shape.declaration.root, &shape.declaration.name, &shape.instance.schema),
-            None => ExtractNode { name: node.name.clone(), properties: Default::default(), children: Default::default(), declared: true },
-        };
-        let staged = self.extract_graph(&node.name, &node.stages, false, scope);
-        for (name, child) in staged.children {
-            graph.children.insert(name, child);
-        }
-        for (name, field) in staged.properties {
-            graph.properties.insert(name, field);
-        }
-        graph
     }
 
     /// `typeNamesInScope`: the primitives, then every `type` declared in scope.
@@ -820,21 +843,6 @@ fn empty_local(label: &str) -> Position {
 
 /// `shapeExtractGraph`: one node of a declaration, read as the extract node
 /// it describes; `key` is its position in the declaration's schema.
-fn shape_extract_graph(name: &str, shape: &ShapeNode, key: &str, schema: &InstanceSchema) -> crate::types::position::ExtractNode {
-    use crate::types::position::{ExtractField, ExtractNode};
-    let mut graph = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared: false };
-    for child in &shape.children {
-        graph.children.insert(child.name.clone(), std::rc::Rc::new(shape_extract_graph(&child.name, child, &format!("{key}.{}", child.name), schema)));
-    }
-    let properties = schema.positions.get(key).map(|p| &p.properties);
-    for field in &shape.fields {
-        let explicit = properties.and_then(|p| p.get(&field.name)).map(|t| crate::types::field::strip_absent(&Ty::from_schema(t)).clone());
-        let nullable = field.nullable == Some(true);
-        let reads_as_present_text = !nullable && matches!(explicit, Some(Ty::Text));
-        graph.properties.insert(field.name.clone(), ExtractField { explicit, reads_as_present_text, annotated: true });
-    }
-    graph
-}
 
 /// `structuralMisfit`: what a supplied record lacks that the required
 /// position (or every variant of a required union) declares.

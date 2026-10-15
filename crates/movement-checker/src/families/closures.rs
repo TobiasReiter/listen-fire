@@ -316,7 +316,7 @@ impl Checker<'_> {
         let symbol = self.scopes.symbol(id).clone();
         if symbol.kind == SymbolKind::Movement {
             self.call_movement(id);
-            if let Some(params) = self.movement_params.get(&id).cloned()
+            if let Some(params) = self.listens.movement_info(id).map(|info| info.params.iter().map(|p| p.name.clone()).collect::<Vec<_>>())
                 && params.len() != expected
             {
                 self.report_arm_arity(kind, expected, params.len(), params.first().map(String::as_str), span);

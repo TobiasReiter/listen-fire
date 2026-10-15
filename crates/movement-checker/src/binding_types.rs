@@ -85,6 +85,10 @@ impl Checker<'_> {
     /// record (`bareNodeSymbol`), and anything else binds the value as written
     /// (`holdsValue`: a list literal stays the tuple it is).
     fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<SymbolTypes> {
+        // The slot as it was checked: each call it runs already hoisted to a name.
+        if let Some((_, hoisted)) = self.nested_call_rewrite(slot, scope) {
+            return self.type_of_bound_slot(&hoisted, scope);
+        }
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
         let mut typing = Typing::new(&env, self.version, slot.span);
@@ -123,11 +127,12 @@ impl Checker<'_> {
             RValue::Construct { construct } => self.instance_types(name, construct, scope),
             RValue::Extract { extract } => SymbolTypes {
                 pos: Some(Position::Extract {
-                    node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, false, scope)),
+                    node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, scope)),
                     present: Default::default(),
                 }),
                 ..SymbolTypes::default()
             },
+            RValue::ExtractCall { extract_call } => SymbolTypes { field: self.extract_call_type(extract_call, scope), ..SymbolTypes::default() },
             // From version 3 a positional call is also read as one expression
             // (`n = ONLY(…)`), and `check_call` reads it so.
             RValue::Call { call } if call.expression.is_some() => {
@@ -146,32 +151,6 @@ impl Checker<'_> {
             _ => return,
         };
         self.set_types(scope, name, types);
-    }
-
-    /// `buildExtractGraph`, the typing half: every field a node declares across
-    /// its stages (a later stage's re-declaration wins), and its nested nodes.
-    /// A node that takes a declaration as its shape starts from the
-    /// declaration (`declared_extract_graph`, the nodes family's).
-    pub(crate) fn extract_graph(&self, name: &str, stages: &[movement_parser::ast::ExtractStage], declared: bool, scope: ScopeId) -> crate::types::position::ExtractNode {
-        use crate::types::position::{ExtractField, ExtractNode};
-        use movement_parser::ast::ExtractNode as Node;
-        let mut node = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared };
-        for stage in stages {
-            for child in &stage.children {
-                let built = match child {
-                    Node::Inline(inline) => self.extract_graph(&inline.name, &inline.stages, false, scope),
-                    Node::Declared(declared) => self.declared_extract_graph(declared, scope),
-                };
-                node.children.insert(built.name.clone(), Rc::new(built));
-            }
-            for field in &stage.fields {
-                let explicit = field.type_.as_deref().filter(|t| !t.contains('.')).and_then(|t| Ty::from_scalar_name(t).or_else(|| self.declared_type_in(t, scope)));
-                let nullable = field.nullable == Some(true);
-                let reads_as_present_text = !nullable && (matches!(explicit, Some(Ty::Text)) || (explicit.is_none() && field.type_.is_none()));
-                node.properties.insert(field.name.clone(), ExtractField { explicit, reads_as_present_text, annotated: field.type_.is_some() });
-            }
-        }
-        node
     }
 
     /// An instance: the schema its construction picks.

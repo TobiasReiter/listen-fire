@@ -120,13 +120,13 @@ pub fn types_of_return(returned: &ReturnShape) -> SymbolTypes {
 impl Checker<'_> {
     /// `movementParams`: a movement's parameters with the types they declare,
     /// resolved where the movement is declared. An unannotated one has none.
+    /// An imported movement carries the library's declaration.
     pub fn movement_declared_params(&self, id: SymbolId) -> Option<Vec<ClosureParam>> {
-        let (movement, scope) = self.movement_declaration(id)?;
+        let info = self.listens.movement_info(id)?;
         Some(
-            movement
-                .params
+            info.params
                 .iter()
-                .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, scope)).unwrap_or_default() })
+                .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, info.decl_scope)).unwrap_or_default() })
                 .collect(),
         )
     }
@@ -270,7 +270,7 @@ impl Checker<'_> {
     }
 
     /// `bareSlotPositionType`: the record a bare name denotes.
-    fn bare_slot_position_type(&self, slot: &ExprSlot, scope: ScopeId) -> Option<Position> {
+    pub(crate) fn bare_slot_position_type(&self, slot: &ExprSlot, scope: ScopeId) -> Option<Position> {
         let trimmed = slot.raw.trim();
         if !is_bare_ident(trimmed) {
             return None;
