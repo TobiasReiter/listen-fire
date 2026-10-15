@@ -8,37 +8,14 @@
 // touch them.
 
 import { sql } from 'kysely';
+import { failRun, settleIfCancelRequested } from 'movement-engine/services/run_host/rules';
+import { logger } from 'movement-engine/services/logger';
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
-import { getAutomationsQb, getQb } from '../../lib/kysely';
-import { clearJoins } from '../movement_engine/join_pending';
-import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await_correlation';
-import { awaitKeepers } from '../translation_graph/adapters/packages';
-import { revokeRunCallbacks } from '../movement_engine/callback_store';
+import { getAutomationsQb } from '../../lib/kysely';
+import { hostedRunHost } from '../movement_engine/run_host';
 import { withRunLease } from '../movement_engine/run_lease';
-import { logger } from 'movement-engine/services/logger';
-
-/**
- * Settle a run that has been stamped `cancel_requested_at` (operator abort, or
- * a cancel that raced a park/resume) — the shared tail-check helper used by the
- * park sink and every resume driver to close the cancel-vs-park/resume race
- * (runs-cancel task 3). Reads the stamped `cancel_reason` back so the run's
- * `failure_reason` matches what the operator actually requested, then reuses
- * `failRunAndCancelRequests` unchanged (still valid on a `parked` run — the
- * park row this call is settling gets dropped along with everything else).
- */
-export async function settleCancelledRun(runId: TriggerRunId): Promise<void> {
-  const row = await getAutomationsQb(['trigger_run'])
-    .selectFrom('trigger_run')
-    .select('cancel_reason')
-    .where('id', '=', runId)
-    .executeTakeFirst();
-  await failRunAndCancelRequests({
-    runId,
-    message: row?.cancel_reason ?? 'Cancelled by an operator',
-  });
-}
 
 /**
  * Settle a parked run that can NEVER resume — its pinned `movement_version` is
@@ -133,7 +110,9 @@ export async function settleStampedParkedRuns(): Promise<void> {
     try {
       // Under the run's lease; a run another instance is stepping is that
       // holder's to settle (its cancel gate sees the stamp), or the next pass's.
-      await withRunLease(row.run_id, () => settleCancelledRun(row.run_id));
+      await withRunLease(row.run_id, (lease) =>
+        settleIfCancelRequested(hostedRunHost(), { runId: row.run_id, fence: lease.token }),
+      );
     } catch (err) {
       logger.error('[RunFailure] settling a stamped parked run failed', {
         runId: row.run_id,
@@ -162,38 +141,15 @@ export async function stampCancelRequested(
   return row !== undefined;
 }
 
-export async function failRunAndCancelRequests(input: {
-  runId: TriggerRunId;
-  message: string;
-}): Promise<void> {
-  await getAutomationsQb(['trigger_run'])
-    .updateTable('trigger_run')
-    .set({ status: 'failed', failed_at: sql`now()`, failure_reason: input.message })
-    .where('id', '=', input.runId)
-    .where('status', 'in', ['running', 'parked'])
-    .execute();
-
-  await getAutomationsQb(['parked_run']).deleteFrom('parked_run').where('run_id', '=', input.runId).execute();
-  await clearJoins(input.runId);
-
-  // An ask this run was waiting on is CLOSED with the run: the run is over, so
-  // nothing is left to consume an answer, and leaving the ask `open` would leave
-  // its link offering a live form and promising a workflow that has already
-  // settled. (This closes an ask the run ASKED and still awaited — an ask
-  // already answered is untouched by the store's `WHERE state = 'open'` guard.)
-  for (const keeper of awaitKeepers()) await keeper.abandon({ runId: input.runId });
-
-  // The ONE cancellation signal to every remaining in-flight AWAIT of the run
-  // (P17): drop EVERY awaitable adapter's correlation entries in one
-  // adapter-agnostic reap (one generic table, no per-adapter fan-out). A Slack
-  // thread reply still lands as data — that record is a conversation the run
-  // does not own, unlike an ask, which the run minted and is the only consumer of.
-  await dropAwaitCorrelationsForRun(input.runId);
-
-  // Ruling (b), callback-primitive layer 1: a run that ends — here by failure /
-  // cancel / unresumability — revokes its outstanding callbacks. Unlike an ask
-  // (whose record outlives the run), a callback IS the run's own capability: a
-  // late tap gets the closed-request-wins ack because there is nothing left to
-  // resume into.
-  await revokeRunCallbacks(input.runId);
+/**
+ * Fail the run and tear its live state down (the run host's `failRun`): the
+ * run row → `failed` with `message`, every parked leaf and join dropped, every
+ * ask the run was still awaiting closed (the run minted it and was its only
+ * consumer, so an `open` ask outliving its run is a link promising a workflow
+ * that is over), every correlation dropped (a Slack reply still lands as
+ * data), and its outstanding callbacks revoked. Prior external writes STAY
+ * committed (P14).
+ */
+export async function failRunAndCancelRequests(input: { runId: TriggerRunId; message: string }): Promise<void> {
+  await failRun(hostedRunHost(), input);
 }

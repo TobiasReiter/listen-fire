@@ -62,7 +62,6 @@ import { positionData } from 'movement-engine/services/translation_graph/types';
 
 import type { Adapter, DiscriminableEvent, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 
-import { loadCorrelatedParks, registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 import { dispatchEventHandler, registerDispatchWork } from '../../translation_graph/triggers/dispatch_event';
 import { registerAwaitWork } from '../../movement_engine/await_resume';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../work/drain';
@@ -73,6 +72,7 @@ import { linkedObjectRefreshHandler, registerLinkedObjectWork } from '../linked_
 import { logger } from 'movement-engine/services/logger';
 import { runHarnessDelivery } from '../../work/harness';
 import { claimDueWork, completeWork } from '../../work/store';
+import { postgresRunHostStore } from '../../movement_engine/run_host_store';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -586,7 +586,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       .values({ run_id: runId, address: 'await-reply', state: JSON.stringify(timerPark.state), park_reason: 'await' })
       .execute();
     const correlationKey = 'C123:1700000000.000100';
-    await registerAwaitCorrelation({ adapterType: 'slack', correlationKey, runId, teamId, address: 'await-reply' });
+    await postgresRunHostStore.correlations.correlate({ adapterType: 'slack', correlationKey, runId, teamId, address: 'await-reply' });
     mockedResume.mockResolvedValue({ result: { parked: false } });
 
     const subscriptionId = await seedSubscription(teamId, 'SLACK');
@@ -604,7 +604,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     await drainUntilIdle({ owner: 'test' });
 
     expect(mockedResume).toHaveBeenCalledWith(expect.objectContaining({ runId, reenter: true }));
-    expect(await loadCorrelatedParks({ adapterType: 'slack', teamId, correlationKey })).toEqual([]);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'slack', teamId, correlationKey })).toEqual([]);
     const awaitPark = await getAutomationsQb(['parked_run'])
       .selectFrom('parked_run')
       .where('run_id', '=', runId)

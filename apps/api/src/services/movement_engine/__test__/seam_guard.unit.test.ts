@@ -119,16 +119,17 @@ const HOST_SIDE_FILES = [
   'callback_store.ts',
   'cancel_gate.ts',
   'host_kit.ts',
-  'join_pending.ts',
-  'lease_fence.ts',
   'limit_pause.ts',
+  'limit_resume.ts',
   'park_sink.ts',
+  'resume_step.ts',
   'run_engine_record.ts',
+  'run_host.ts',
+  'run_host_store.ts',
   'run_lease.ts',
   'single_flight.ts',
   'test_host.ts',
   'timer_resume.ts',
-  'timer_wake.ts',
 ];
 
 /** The host-side modules that turn a file descriptor into bytes, or bytes

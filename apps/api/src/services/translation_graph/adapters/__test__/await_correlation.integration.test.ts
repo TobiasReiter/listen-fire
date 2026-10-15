@@ -10,12 +10,9 @@ import type { TriggerRunId } from '../../../../generated/kysely/automations/Trig
 
 import { getAutomationsQb, getCoreQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
-import {
-  registerAwaitCorrelation,
-  loadCorrelatedParks,
-  dropAwaitCorrelation,
-  dropAwaitCorrelationsForRun,
-} from '../await_correlation';
+import { postgresRunHostStore } from '../../../movement_engine/run_host_store';
+
+const { correlations } = postgresRunHostStore;
 
 async function makeTeam(): Promise<TeamId> {
   const teamId = randomUUID() as TeamId;
@@ -56,8 +53,8 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
     await cleanupTeam(teamId);
   });
 
-  it('registers a park and loadCorrelatedParks finds it by adapter identity', async () => {
-    await registerAwaitCorrelation({
+  it('registers a park and the correlated lookup finds it by adapter identity', async () => {
+    await correlations.correlate({
       adapterType: 'ask',
       correlationKey: 'ask-123',
       runId,
@@ -65,7 +62,7 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
       address: 's0',
     });
 
-    const found = await loadCorrelatedParks({
+    const found = await correlations.correlated({
       adapterType: 'ask',
       teamId,
       correlationKey: 'ask-123',
@@ -74,12 +71,12 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
 
     // A different correlation key finds nothing.
     expect(
-      await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'ask-999' }),
+      await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'ask-999' }),
     ).toEqual([]);
   });
 
   it('registration is idempotent on (run, address) — a re-park rewrites the same row', async () => {
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'slack',
       correlationKey: 'C1:1000.0001',
       runId,
@@ -88,7 +85,7 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
     });
     // The same leaf re-parks (re-enters the SAME await) with a fresh correlation
     // identity — the row is rewritten in place, not duplicated.
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'slack',
       correlationKey: 'C1:2000.0002',
       runId,
@@ -96,14 +93,14 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
       address: 's0',
     });
 
-    const old = await loadCorrelatedParks({
+    const old = await correlations.correlated({
       adapterType: 'slack',
       teamId,
       correlationKey: 'C1:1000.0001',
     });
     expect(old).toEqual([]);
 
-    const fresh = await loadCorrelatedParks({
+    const fresh = await correlations.correlated({
       adapterType: 'slack',
       teamId,
       correlationKey: 'C1:2000.0002',
@@ -118,10 +115,10 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
     expect(rows).toHaveLength(1); // rewritten, not duplicated
   });
 
-  it('loadCorrelatedParks is team-scoped — another team never sees this correlation', async () => {
+  it('the correlated lookup is team-scoped — another team never sees this correlation', async () => {
     const otherTeam = await makeTeam();
     try {
-      await registerAwaitCorrelation({
+      await correlations.correlate({
         adapterType: 'ask',
         correlationKey: 'shared-key',
         runId,
@@ -130,29 +127,29 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
       });
 
       expect(
-        await loadCorrelatedParks({
+        await correlations.correlated({
           adapterType: 'ask',
           teamId: otherTeam,
           correlationKey: 'shared-key',
         }),
       ).toEqual([]);
       expect(
-        await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'shared-key' }),
+        await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'shared-key' }),
       ).toEqual([{ runId, teamId, address: 's0' }]);
     } finally {
       await cleanupTeam(otherTeam);
     }
   });
 
-  it('dropAwaitCorrelation removes exactly one park, leaving its siblings', async () => {
-    await registerAwaitCorrelation({
+  it("dropping one park's correlation removes exactly one park, leaving its siblings", async () => {
+    await correlations.correlate({
       adapterType: 'ask',
       correlationKey: 'ask-a',
       runId,
       teamId,
       address: 's0',
     });
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'ask',
       correlationKey: 'ask-b',
       runId,
@@ -160,27 +157,27 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
       address: 's1',
     });
 
-    await dropAwaitCorrelation({ runId, address: 's0' });
+    await correlations.drop({ runId, address: 's0' });
 
     expect(
-      await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'ask-a' }),
+      await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'ask-a' }),
     ).toEqual([]);
     expect(
-      await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'ask-b' }),
+      await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'ask-b' }),
     ).toEqual([{ runId, teamId, address: 's1' }]);
   });
 
-  it('dropAwaitCorrelationsForRun reaps every adapter of one run in one call (run death, F7)', async () => {
+  it("dropping a run's correlations reaps every adapter of one run in one call (run death, F7)", async () => {
     // The multi-adapter case: a fan-out with an open ask AND a Slack reply
     // watch-point in flight for the SAME run.
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'ask',
       correlationKey: 'ask-x',
       runId,
       teamId,
       address: 's0',
     });
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'slack',
       correlationKey: 'C1:1000.0001',
       runId,
@@ -190,7 +187,7 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
 
     // A second, unrelated run's correlation must survive the first run's reap.
     const otherRun = await makeRun(teamId);
-    await registerAwaitCorrelation({
+    await correlations.correlate({
       adapterType: 'ask',
       correlationKey: 'ask-y',
       runId: otherRun,
@@ -198,13 +195,13 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
       address: 's0',
     });
 
-    await dropAwaitCorrelationsForRun(runId);
+    await correlations.dropRun({ runId });
 
     expect(
-      await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'ask-x' }),
+      await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'ask-x' }),
     ).toEqual([]);
     expect(
-      await loadCorrelatedParks({
+      await correlations.correlated({
         adapterType: 'slack',
         teamId,
         correlationKey: 'C1:1000.0001',
@@ -212,7 +209,7 @@ describe('adapter_await — the generic correlation map (real DB)', () => {
     ).toEqual([]);
     // The other run's ask correlation is untouched.
     expect(
-      await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'ask-y' }),
+      await correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'ask-y' }),
     ).toEqual([{ runId: otherRun, teamId, address: 's0' }]);
 
     const remaining = await getAutomationsQb(['adapter_await'])

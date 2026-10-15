@@ -19,7 +19,7 @@ import { sql } from 'kysely';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { CALLBACK_ID_PREFIX, callbackUrl, claimCallbackFire, coerceCallbackValues, getCallback, isCallbackId, listRunCallbacks, markCallbackBodyStarted, mintCallback, readCallbackCalls, revokeRunCallbacks } from '../callback_store';
 import { CALLBACK_AWAIT_TYPE, type CallbackParamSpec } from 'engine-contracts';
-import { loadResolvableCallbackAwaits } from '../callback_sink';
+import { callbackAwaitKeeper } from '../callback_sink';
 
 let teamId: TeamId;
 let runId: TriggerRunId;
@@ -310,7 +310,7 @@ describe('the backstop wake — a callback with a recorded call is resolvable', 
     const record = await mint();
     await correlate(record.id, 's1');
 
-    expect(await loadResolvableCallbackAwaits({ runId })).toEqual([]);
+    expect(await callbackAwaitKeeper.loadResolvable({ runId })).toEqual([]);
   });
 
   it('a recorded call whose body has not started does not resolve the park: the awaiter waits for the body', async () => {
@@ -318,7 +318,7 @@ describe('the backstop wake — a callback with a recorded call is resolvable', 
     await correlate(record.id, 's1');
     await claimCallbackFire({ id: record.id, values: {} });
 
-    expect(await loadResolvableCallbackAwaits({ runId })).toEqual([]);
+    expect(await callbackAwaitKeeper.loadResolvable({ runId })).toEqual([]);
   });
 
   it('a FIRED callback’s park is resolvable once its body started — so a lost wake nudge cannot strand the run', async () => {
@@ -327,7 +327,7 @@ describe('the backstop wake — a callback with a recorded call is resolvable', 
     await claimCallbackFire({ id: record.id, values: {} });
     await markCallbackBodyStarted({ id: record.id, callIndex: 0 });
 
-    const resolvable = await loadResolvableCallbackAwaits({ runId });
+    const resolvable = await callbackAwaitKeeper.loadResolvable({ runId });
     expect(resolvable).toEqual([{ runId, teamId, address: 's1' }]);
   });
 });

@@ -26,12 +26,11 @@ import { cleanupTeam } from '../../../../../test/harness/cleanup';
 import { getAutomationsQb, getCoreQb } from '../../../../../lib/kysely';
 import { makeRecorderParkSink } from '../../../../movement_engine/park_sink';
 import { settleRunsParkedOnTriggers } from '../../../../interaction/run_failure';
-import { claimRunLease, releaseRunLease } from '../../../../movement_engine/run_lease';
 import { asksRouter } from '../../../../../interfaces/rest/asks';
 import { answerAskByToken } from '../answer_door';
-import { registerAwaitCorrelation } from '../../await_correlation';
 import { ASK_ADAPTER_TYPE } from '../type';
 import { createAsk, getAsk, type AskRecord } from '../store';
+import { postgresRunHostStore } from '../../../../movement_engine/run_host_store';
 
 // The link page's own harness — the closed rendering is a user-facing promise,
 // so it is asserted over real HTTP through the real router, not by calling the
@@ -126,7 +125,7 @@ async function askParkedAt(address: string): Promise<AskRecord> {
       state: JSON.stringify({ version: 1, address, scopeChain: [] }),
     } as any)
     .execute();
-  await registerAwaitCorrelation({ adapterType: ASK_ADAPTER_TYPE, correlationKey: ask.id, runId, teamId, address });
+  await postgresRunHostStore.correlations.correlate({ adapterType: ASK_ADAPTER_TYPE, correlationKey: ask.id, runId, teamId, address });
   return ask;
 }
 
@@ -243,7 +242,7 @@ describe('retiring a listener closes the asks its stranded runs were awaiting', 
 
   it('a run another instance is resuming is stamped for that resume to settle, not torn down under it', async () => {
     const ask = await askParkedAt('s2');
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     const reason = 'The listener that started this run was removed';
 
     await settleRunsParkedOnTriggers({ triggerIds: [triggerId], reason });
@@ -258,12 +257,12 @@ describe('retiring a listener closes the asks its stranded runs were awaiting', 
     expect(run.cancel_reason).toBe(reason);
     // Its leaves and its ask are the holder's to settle.
     expect((await getAsk(ask.id))?.state).toBe('open');
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
   });
 
   it('a run whose leaf another instance is resuming is stamped, not missed', async () => {
     await askParkedAt('s2');
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     await getAutomationsQb(['parked_run']).updateTable('parked_run').set({ status: 'resuming' }).where('run_id', '=', runId).execute();
     const reason = 'The listener that started this run was removed';
 
@@ -275,7 +274,7 @@ describe('retiring a listener closes the asks its stranded runs were awaiting', 
       .select(['status', 'cancel_reason'])
       .executeTakeFirstOrThrow();
     expect(run).toEqual({ status: 'parked', cancel_reason: reason });
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
   });
 
   it('leaves an ask answered BEFORE the settle exactly as it was', async () => {

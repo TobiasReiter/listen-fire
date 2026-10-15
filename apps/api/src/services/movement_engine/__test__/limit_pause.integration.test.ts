@@ -66,7 +66,7 @@ jest.mock('../../../lib/prompts/execute', () => {
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { resumeRun } from '../../interaction/operator';
-import { claimRunLease, releaseRunLease, RunBusy } from '../run_lease';
+import { RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
 
 import { cleanupTeam } from '../../../test/harness/cleanup';
@@ -84,6 +84,7 @@ import { containerAssociation } from 'movement-engine/services/translation_graph
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { postgresRunHostStore } from '../run_host_store';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -400,10 +401,10 @@ describe('a run paused at its cost cap (real DB)', () => {
 
     // Another process stepping the run: the resume is refused as busy, and
     // nothing moves.
-    const elsewhere = await claimRunLease(run.id, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId: run.id, ttlMs: 60_000 });
     await expect(resumeRun({ runId: run.id, teamId })).rejects.toBeInstanceOf(RunBusy);
     expect(mockFetched).toEqual(['a']);
-    await releaseRunLease(run.id, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId: run.id, token: elsewhere!.token });
 
     const resumed = await resumeRun({ runId: run.id, teamId });
     expect(resumed).toEqual({ runId: run.id, resumed: 1 });

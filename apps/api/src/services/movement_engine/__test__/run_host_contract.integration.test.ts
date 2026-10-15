@@ -4,10 +4,12 @@
 // live state goes with them.
 
 import { randomUUID } from 'node:crypto';
+
 import { runHostContractCases } from 'movement-engine/services/run_host/contract';
 
-import { getAutomationsQb } from '../../../lib/kysely';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
+
+import { getAutomationsQb } from '../../../lib/kysely';
 import { postgresRunHostStore } from '../run_host_store';
 
 const TEAM_ID = randomUUID();

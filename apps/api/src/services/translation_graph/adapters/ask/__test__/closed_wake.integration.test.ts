@@ -33,7 +33,6 @@ import { TriggerRunRecorder } from '../../../runs/trigger_run';
 import { registerAwaitWork } from '../../../../movement_engine/await_resume';
 import { enqueueAwaitWake } from '../../../../movement_engine/await_wake';
 import { drainUntilIdle, inProcessNotifier, resetWorkHandlersForTests, setWorkNotifier } from '../../../../work/drain';
-import { loadCorrelatedParks, registerAwaitCorrelation } from '../../await_correlation';
 import { askClosedSweepHandler, registerAskClosedSweepWork } from '../closed_sweep';
 import { cancelAskAndWake } from '../answer_door';
 import { notifyEngineOfSettledAsks } from '../../../../asks/in_process_notifier';
@@ -41,6 +40,7 @@ import { resetAskSettledNotifierForTests } from '../notifier';
 import { AskAdapter } from '../index';
 import { ASK_ADAPTER_TYPE } from '../type';
 import { answerAsk, cancelAsk, createAsk, type AskRecord } from '../store';
+import { postgresRunHostStore } from '../../../../movement_engine/run_host_store';
 
 const SOURCE = 'go = manual()';
 const ADDRESS = 'await-ask';
@@ -145,7 +145,7 @@ async function runParkedOnAsk(): Promise<{ runId: TriggerRunId; ask: AskRecord }
       state: JSON.stringify({ version: 1, address: ADDRESS, bindingName: null, scopeChain: [{ bindings: {} }] }),
     } as any)
     .execute();
-  await registerAwaitCorrelation({ adapterType: ASK_ADAPTER_TYPE, correlationKey: ask.id, runId, teamId, address: ADDRESS });
+  await postgresRunHostStore.correlations.correlate({ adapterType: ASK_ADAPTER_TYPE, correlationKey: ask.id, runId, teamId, address: ADDRESS });
   return { runId, ask };
 }
 
@@ -194,7 +194,7 @@ describe('a closed ask wakes the run parked on it', () => {
     expect(resumeMovementFiringMock).toHaveBeenCalledTimes(1);
     expect(resumeMovementFiringMock).toHaveBeenCalledWith(expect.objectContaining({ runId, reenter: true }));
     expect(seen).toEqual([{ status: 'empty' }]);
-    expect(await loadCorrelatedParks({ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id })).toEqual([]);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id })).toEqual([]);
     const park = await getAutomationsQb(['parked_run'])
       .selectFrom('parked_run')
       .where('run_id', '=', runId)
@@ -237,6 +237,6 @@ describe('a closed ask wakes the run parked on it', () => {
 
     await drainUntilIdle({ owner: 'test', teamId });
     expect(seen).toEqual([{ status: 'empty' }]);
-    expect(await loadCorrelatedParks({ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id })).toEqual([]);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: ASK_ADAPTER_TYPE, teamId, correlationKey: ask.id })).toEqual([]);
   });
 });

@@ -1,28 +1,28 @@
 // When a held run lease counts as lost, on the holder's own clock. The SQL is
-// the integration test's; here each statement's answer is scripted, and time
-// is jest's, so the renewal ticks and the deadline are exact.
+// the integration test's; here each lease statement's answer is scripted, and
+// time is jest's, so the renewal ticks and the deadline are exact.
 
 const answers: Array<() => Promise<unknown>> = [];
 
-function fakeQb(): unknown {
-  return new Proxy(() => undefined, {
-    get(_target, prop) {
-      if (prop === 'then') return undefined;
-      if (prop === 'executeTakeFirst') {
-        return () => {
-          const next = answers.shift();
-          return next ? next() : Promise.resolve(undefined);
-        };
-      }
-      if (prop === 'execute') return async () => [];
-      return () => fakeQb();
-    },
-  });
+function next(): Promise<unknown> {
+  const answer = answers.shift();
+  return answer ? answer() : Promise.resolve(undefined);
 }
 
-jest.mock('../../../lib/kysely', () => ({
-  getAutomationsQb: () => fakeQb(),
+jest.mock('../run_host_store', () => ({
+  postgresRunHostStore: {
+    leases: {
+      claim: async () => ((await next()) === undefined ? null : { token: 'token-1' }),
+      renew: async () => (await next()) !== undefined,
+      release: async () => {},
+    },
+  },
+  triggerRunIdOf: (id: string) => id,
 }));
+jest.mock('../../translation_graph/adapters/packages', () => ({ awaitKeepers: () => [] }));
+jest.mock('../callback_sink', () => ({ callbackAwaitKeeper: {} }));
+jest.mock('../callback_store', () => ({ revokeRunCallbacks: jest.fn() }));
+jest.mock('../../../lib/kysely', () => ({ getAutomationsQb: jest.fn() }));
 jest.mock('movement-engine/services/logger', () => ({
   logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));

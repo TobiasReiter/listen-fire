@@ -24,9 +24,9 @@ export interface HeldRunLease {
 
 export interface LeaseOptions {
   ttlMs?: number;
-  /** Runs before the lease is given back (the hosted product lands the
+  /** Runs before the run's lease is given back (the hosted product lands the
    *  segment's engine record first, so a queued resume reads it). */
-  beforeRelease?: () => Promise<void>;
+  beforeRelease?: (runId: string) => Promise<void>;
   /** A lease the holder lost, or a renewal that failed. */
   warn?: (message: string, fields: Record<string, unknown>) => void;
 }
@@ -85,7 +85,7 @@ export async function takeRunLease(
     release: async () => {
       released = true;
       clearInterval(timer);
-      if (opts.beforeRelease !== undefined) await opts.beforeRelease();
+      if (opts.beforeRelease !== undefined) await opts.beforeRelease(runId);
       try {
         await leases.release({ runId, token });
       } catch (error) {

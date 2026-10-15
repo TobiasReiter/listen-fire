@@ -7,25 +7,20 @@ import { randomUUID } from 'node:crypto';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
-import {
-  claimRunLease,
-  claimParkedLeaf,
-  finishResumedLeaf,
-  releaseRunLease,
-  renewRunLease,
-  returnLeavesOfLapsedLeases,
-  takeRunLease,
-  withRunLease,
-} from '../run_lease';
+import { takeRunLease, withRunLease } from '../run_lease';
+import { postgresRunHostStore, returnLeavesOfLapsedLeases } from '../run_host_store';
 
 type RunLeaseModule = typeof import('../run_lease');
+type RunHostStoreModule = typeof import('../run_host_store');
 
-/** The same module loaded afresh: its own kysely pool and its own owner, the
- *  way a second process would hold them. */
-function secondProcess(): RunLeaseModule {
-  let loaded: RunLeaseModule | undefined;
+const { leases, parks } = postgresRunHostStore;
+
+/** The same modules loaded afresh: their own kysely pool and their own owner,
+ *  the way a second process would hold them. */
+function secondProcess(): RunLeaseModule & RunHostStoreModule {
+  let loaded: (RunLeaseModule & RunHostStoreModule) | undefined;
   jest.isolateModules(() => {
-    loaded = jest.requireActual<RunLeaseModule>('../run_lease');
+    loaded = { ...jest.requireActual<RunLeaseModule>('../run_lease'), ...jest.requireActual<RunHostStoreModule>('../run_host_store') };
   });
   if (loaded === undefined) throw new Error('test: the second process did not load');
   return loaded;
@@ -78,53 +73,52 @@ afterAll(async () => {
 describe('the run lease', () => {
   it('is claimed while free, refused while held, and claimable again once released', async () => {
     const runId = await seedRun();
-    const first = await claimRunLease(runId, { owner: 'a', ttlMs: 60_000 });
+    const first = await leases.claim({ runId, ttlMs: 60_000 });
     expect(first).not.toBeNull();
-    expect(await claimRunLease(runId, { owner: 'b', ttlMs: 60_000 })).toBeNull();
-    expect((await leaseOf(runId)).lease_owner).toBe('a');
+    expect(await leases.claim({ runId, ttlMs: 60_000 })).toBeNull();
 
     // A stale token releases nothing.
-    await releaseRunLease(runId, randomUUID());
+    await leases.release({ runId, token: randomUUID() });
     expect((await leaseOf(runId)).lease_token).toBe(first?.token);
 
-    await releaseRunLease(runId, first!.token);
+    await leases.release({ runId, token: first!.token });
     expect(await leaseOf(runId)).toMatchObject({ lease_owner: null, lease_until: null, lease_token: null });
-    expect(await claimRunLease(runId, { owner: 'b', ttlMs: 60_000 })).not.toBeNull();
+    expect(await leases.claim({ runId, ttlMs: 60_000 })).not.toBeNull();
   });
 
   it('renews only for its own token, extending the lease and stamping the heartbeat in one statement', async () => {
     const runId = await seedRun();
-    const lease = await claimRunLease(runId, { owner: 'a', ttlMs: 1_000 });
+    const lease = await leases.claim({ runId, ttlMs: 1_000 });
     const before = await leaseOf(runId);
     expect(before.last_heartbeat_at).toBeNull();
 
-    expect(await renewRunLease(runId, lease!.token, 60_000)).toBe(true);
+    expect(await leases.renew({ runId, token: lease!.token, ttlMs: 60_000 })).toBe(true);
     const after = await leaseOf(runId);
     expect(after.lease_until!.getTime()).toBeGreaterThan(before.lease_until!.getTime() + 30_000);
     expect(after.last_heartbeat_at).not.toBeNull();
 
-    expect(await renewRunLease(runId, randomUUID(), 60_000)).toBe(false);
+    expect(await leases.renew({ runId, token: randomUUID(), ttlMs: 60_000 })).toBe(false);
   });
 
   it('a lapsed lease cannot be revived by its own token', async () => {
     const runId = await seedRun();
-    const lapsed = await claimRunLease(runId, { owner: 'stalled', ttlMs: 1 });
+    const lapsed = await leases.claim({ runId, ttlMs: 1 });
     await wait(20);
-    expect(await renewRunLease(runId, lapsed!.token, 60_000)).toBe(false);
+    expect(await leases.renew({ runId, token: lapsed!.token, ttlMs: 60_000 })).toBe(false);
     // Still free for anyone to claim.
-    expect(await claimRunLease(runId, { owner: 'next', ttlMs: 60_000 })).not.toBeNull();
+    expect(await leases.claim({ runId, ttlMs: 60_000 })).not.toBeNull();
   });
 
   it('lapses by expiry: another holder claims it, and the old token can neither renew nor release it', async () => {
     const runId = await seedRun();
-    const stale = await claimRunLease(runId, { owner: 'crashed', ttlMs: 1 });
+    const stale = await leases.claim({ runId, ttlMs: 1 });
     await wait(20);
 
-    const fresh = await claimRunLease(runId, { owner: 'next', ttlMs: 60_000 });
+    const fresh = await leases.claim({ runId, ttlMs: 60_000 });
     expect(fresh).not.toBeNull();
-    expect(await renewRunLease(runId, stale!.token, 60_000)).toBe(false);
-    await releaseRunLease(runId, stale!.token);
-    expect(await leaseOf(runId)).toMatchObject({ lease_owner: 'next', lease_token: fresh!.token });
+    expect(await leases.renew({ runId, token: stale!.token, ttlMs: 60_000 })).toBe(false);
+    await leases.release({ runId, token: stale!.token });
+    expect(await leaseOf(runId)).toMatchObject({ lease_token: fresh!.token });
   });
 
   it('two processes claiming at once: exactly one wins', async () => {
@@ -132,8 +126,8 @@ describe('the run lease', () => {
     for (let round = 0; round < 10; round++) {
       const runId = await seedRun();
       const claims = await Promise.all([
-        claimRunLease(runId, { owner: 'here', ttlMs: 60_000 }),
-        other.claimRunLease(runId, { owner: 'there', ttlMs: 60_000 }),
+        leases.claim({ runId, ttlMs: 60_000 }),
+        other.postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 }),
       ]);
       expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
     }
@@ -163,21 +157,21 @@ describe('leaves claimed under the lease', () => {
     await park(runId, 's0', 'parked');
     await park(runId, 's1', 'parked');
 
-    expect(await claimParkedLeaf({ runId, address: 's0' })).toEqual({ state: { address: 's0' } });
-    expect(await claimParkedLeaf({ runId, address: 's0' })).toBeNull();
+    expect(await parks.claimLeaf({ runId, address: 's0' })).toEqual({ state: { address: 's0' }, reason: 'await' });
+    expect(await parks.claimLeaf({ runId, address: 's0' })).toBeNull();
     expect(await statusOf(runId, 's0')).toBe('resuming');
-    await finishResumedLeaf(runId, 's0');
+    await parks.finishLeaf({ runId, address: 's0' });
     expect(await statusOf(runId, 's0')).toBeUndefined();
 
     // s1's step parked again at the same address: its row is `parked` again.
-    await claimParkedLeaf({ runId, address: 's1' });
+    await parks.claimLeaf({ runId, address: 's1' });
     await getAutomationsQb(['parked_run'])
       .updateTable('parked_run')
       .set({ status: 'parked' })
       .where('run_id', '=', runId)
       .where('address', '=', 's1')
       .execute();
-    await finishResumedLeaf(runId, 's1');
+    await parks.finishLeaf({ runId, address: 's1' });
     expect(await statusOf(runId, 's1')).toBe('parked');
   });
 
@@ -192,10 +186,11 @@ describe('leaves claimed under the lease', () => {
   it('the orphan sweep parks again the leaves of lapsed or free leases, never of a live one', async () => {
     const lapsed = await seedRun();
     const live = await seedRun();
+    // Leased first: taking a lease itself returns a dead holder's leaves.
+    await leases.claim({ runId: lapsed, ttlMs: 1 });
+    await leases.claim({ runId: live, ttlMs: 60_000 });
     await park(lapsed, 's0', 'resuming');
     await park(live, 's0', 'resuming');
-    await claimRunLease(lapsed, { owner: 'crashed', ttlMs: 1 });
-    await claimRunLease(live, { owner: 'alive', ttlMs: 60_000 });
     await wait(20);
 
     await returnLeavesOfLapsedLeases();

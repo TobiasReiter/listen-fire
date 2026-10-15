@@ -12,10 +12,9 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { makeRecorderParkSink } from '../park_sink';
 import { enqueueAwaitWake } from '../await_wake';
-import { loadCorrelatedParks } from '../../translation_graph/adapters/await_correlation';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
-import { claimParkedLeaf, claimRunLease, finishResumedLeaf, RunLeaseLost } from '../run_lease';
-import { dropRunLeaves } from '../lease_fence';
+import { RunLeaseLost } from '../run_lease';
+import { postgresRunHostStore } from '../run_host_store';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
 
 let teamId: TeamId;
@@ -162,7 +161,7 @@ describe('commitAwaitPark', () => {
     });
 
     expect(
-      await loadCorrelatedParks({ adapterType: 'slack', teamId, correlationKey: 'C123:1700000000.000100' }),
+      await postgresRunHostStore.correlations.correlated({ adapterType: 'slack', teamId, correlationKey: 'C123:1700000000.000100' }),
     ).toEqual([{ runId, teamId, address: 's1' }]);
     const park = await getAutomationsQb(['parked_run'])
       .selectFrom('parked_run')
@@ -197,7 +196,7 @@ describe('commitAwaitPark', () => {
 
     expect(result.parked).toBe(true);
     expect(awaiting.checks).toBe(2);
-    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-1' })).toHaveLength(1);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'req-1' })).toHaveLength(1);
     expect(await awaitWakes()).toEqual([{ payload: { adapterType: 'ask', teamId, correlationKey: 'req-1' } }]);
   });
 });
@@ -214,7 +213,7 @@ describe('a park under a lease that lapsed', () => {
   });
 
   it("is refused: a stale token's park commit writes nothing, and the new holder's row stands", async () => {
-    const current = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    const current = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     expect(current).not.toBeNull();
     const fresh = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: current!.token } });
     const stale = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: randomUUID() } });
@@ -236,28 +235,28 @@ describe('a park under a lease that lapsed', () => {
       .select(['address', 'state'])
       .execute();
     expect(rows).toEqual([{ address: 's0', state: { ...STATE, by: 'new' } }]);
-    expect(await loadCorrelatedParks({ adapterType: 'ask', teamId, correlationKey: 'req-9' })).toEqual([]);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'req-9' })).toEqual([]);
     const joins = await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('frame_address').execute();
     expect(joins).toEqual([]);
   });
 
   it("a stale holder's finish of a claimed leaf, and its sweep of the run, leave the new holder's rows alone", async () => {
-    const current = await claimRunLease(runId, { owner: 'the-new-holder', ttlMs: 60_000 });
+    const current = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     const sink = makeRecorderParkSink(makeStubRecorder({ teamId, runId }), { lease: { token: current!.token } });
     await sink.commitTimerPark({ address: 's0', state: STATE, wakeAt: new Date().toISOString() });
     await sink.recordJoin({ frameAddress: 's', parkedChildren: 1 });
-    expect(await claimParkedLeaf({ runId, address: 's0' })).not.toBeNull();
+    expect(await postgresRunHostStore.parks.claimLeaf({ runId, address: 's0' })).not.toBeNull();
     const stale = { token: randomUUID() };
 
-    await finishResumedLeaf(runId, 's0', stale);
-    await dropRunLeaves(runId, stale);
+    await postgresRunHostStore.parks.finishLeaf({ runId, address: 's0', fence: stale.token });
+    await postgresRunHostStore.leases.dropRunState({ runId, fence: stale.token });
     const left = await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('status').execute();
     expect(left).toEqual([{ status: 'resuming' }]);
     expect(await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('pending').execute()).toEqual([{ pending: 1 }]);
 
     // The holder itself finishes the leaf and sweeps the run.
-    await finishResumedLeaf(runId, 's0', current!);
-    await dropRunLeaves(runId, current!);
+    await postgresRunHostStore.parks.finishLeaf({ runId, address: 's0', fence: current!.token });
+    await postgresRunHostStore.leases.dropRunState({ runId, fence: current!.token });
     expect(await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('id').execute()).toEqual([]);
     expect(await getAutomationsQb(['join_pending']).selectFrom('join_pending').where('run_id', '=', runId).select('pending').execute()).toEqual([]);
   });

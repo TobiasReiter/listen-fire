@@ -14,28 +14,24 @@
 // row, made due at once, which runs it once the run is free; a row whose body
 // already started does nothing.
 
-import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
+import { z } from 'zod';
+import { logger } from 'movement-engine/services/logger';
+import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 
 import type { Kysely, QueryExecutorProvider } from 'kysely';
-import { z } from 'zod';
-
-import { getQb, getAutomationsQb } from '../../lib/kysely';
-import { SECOND } from '../../constants';
-import type { LanguageVersion } from 'movement-lang';
-import { loadPinnedVersion } from '../translation_graph/movement/version_store';
-import { logger } from 'movement-engine/services/logger';
-import { loadTriggerById } from '../translation_graph/storage/tg_table';
-import { triggerEventSchema, type TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import { fireCallbackFiring } from '../translation_graph/movement/execute';
-import { loadCorrelatedParks } from '../translation_graph/adapters/await_correlation';
-import { drainRunAwaits, runResumeSlot } from './await_resume';
-import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import type { WorkHandler } from '../work/kinds';
+import type { CallbackParamSpec } from 'engine-contracts';
+
+import { getAutomationsQb } from '../../lib/kysely';
+import { SECOND } from '../../constants';
+import { fireCallbackFiring } from '../translation_graph/movement/execute';
+import { drainRunAwaits, runResumeSlot } from './await_resume';
+import { loadRunContext } from './resume_step';
+import { postgresRunHostStore } from './run_host_store';
+import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import { enqueueAwaitWake } from './await_wake';
-import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 import {
   claimCallbackFire,
   coerceCallbackValues,
@@ -44,7 +40,7 @@ import {
   markCallbackBodyStarted,
   type CallbackRecord,
 } from './callback_store';
-import type { CallbackParamSpec } from 'engine-contracts';
+
 
 /** How long after a fire its durable rows (the body's, the wake's) come due.
  *  The body and the prompt wake run in this process right after the claim;
@@ -375,10 +371,11 @@ async function executeFire(
 ): Promise<'ran' | 'not_started'> {
   try {
     const context = await loadRunContext(callback.runId);
-    if (context === null) {
+    if ('unresumable' in context) {
       logger.error('[Callback] fired callback has no resumable run context', {
         callbackId: callback.id,
         runId: callback.runId,
+        reason: context.unresumable,
       });
     } else {
       // Marked before the body starts: at most once after start, a crash
@@ -432,7 +429,7 @@ async function executeFire(
   // Wake the awaiters LAST: the call is on the ledger, and a body that wrote
   // something the awaiting continuation reads has already written it.
   try {
-    const parks = await loadCorrelatedParks({
+    const parks = await postgresRunHostStore.correlations.correlated({
       adapterType: CALLBACK_AWAIT_TYPE,
       teamId: callback.teamId,
       correlationKey: callback.id,
@@ -445,43 +442,4 @@ async function executeFire(
     });
   }
   return 'ran';
-}
-
-interface RunContext {
-  triggerId: string;
-  triggerName: string;
-  firedMovementName: string | null;
-  movementId: string;
-  movementVersionId: string | null;
-  pinnedSource: string;
-  pinnedLanguageVersion: LanguageVersion;
-  event: TriggerEvent;
-  triggerType: TriggerRunTriggerType;
-}
-
-/** Everything a fire needs to re-enter the run: its pinned source (P11 — the
- *  stored entry point addresses THAT AST), its trigger, its inbound event. */
-async function loadRunContext(runId: TriggerRunId): Promise<RunContext | null> {
-  const run = await getAutomationsQb(['trigger_run'])
-    .selectFrom('trigger_run')
-    .where('id', '=', runId)
-    .select(['trigger_id', 'trigger_type', 'trigger_payload', 'movement_version_id'])
-    .executeTakeFirst();
-  if (!run || !run.trigger_payload) return null;
-  const trigger = await loadTriggerById(run.trigger_id);
-  if (!trigger || !trigger.movementId) return null;
-  if (!run.movement_version_id) return null;
-  const version = await loadPinnedVersion(run.movement_version_id);
-  if (!version) return null;
-  return {
-    triggerId: run.trigger_id,
-    triggerName: trigger.name,
-    firedMovementName: trigger.firedMovementName,
-    movementId: trigger.movementId,
-    movementVersionId: run.movement_version_id,
-    pinnedSource: version.source,
-    pinnedLanguageVersion: version.languageVersion,
-    event: triggerEventSchema.parse(run.trigger_payload) as TriggerEvent,
-    triggerType: run.trigger_type as TriggerRunTriggerType,
-  };
 }

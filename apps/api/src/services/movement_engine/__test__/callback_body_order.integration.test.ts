@@ -35,12 +35,12 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import { registerTimerWork, settleCancelledTimersHandler } from '../timer_resume';
 import { drainUntilIdle, resetWorkHandlersForTests } from '../../work/drain';
 import * as runLease from '../run_lease';
-import { claimRunLease, releaseRunLease } from '../run_lease';
 import { fireCallback, registerCallbackFireWork } from '../callback_fire';
 import { registerAwaitWork, resumeAwaitsForCorrelation } from '../await_resume';
 import { getCallback, listRunCallbacks } from '../callback_store';
 import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 import { testWorkContext } from '../../../test/harness/work';
+import { postgresRunHostStore } from '../run_host_store';
 
 const mockedCatalog = runCatalogSnapshotForTeam as jest.Mock;
 const mockedResolve = resolveAdapter as jest.Mock;
@@ -362,12 +362,12 @@ describe('a callback body and the await on its call (real engine, real DB)', () 
 
   it('a queued body and a backstop wake: the awaiter does not resume before the body ran', async () => {
     const { runId, callbackId } = await awaitParkedRun(teamId);
-    const elsewhere = await claimRunLease(runId, { owner: 'another-instance', ttlMs: 60_000 });
+    const elsewhere = await postgresRunHostStore.leases.claim({ runId, ttlMs: 60_000 });
     expect(elsewhere).not.toBeNull();
 
     const outcome = await fireCallback({ id: callbackId, values: {} });
     expect(outcome).toMatchObject({ kind: 'recorded', queued: true });
-    await releaseRunLease(runId, elsewhere!.token);
+    await postgresRunHostStore.leases.release({ runId, token: elsewhere!.token });
 
     // The backstop wake reaches the run first: the call is on the ledger, but
     // its body has not started, so the await has nothing to resolve on.

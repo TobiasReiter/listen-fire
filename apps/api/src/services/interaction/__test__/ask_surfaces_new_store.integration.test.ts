@@ -23,7 +23,7 @@ import {
 import { listOpenAsksForTeam, answerForTeam } from '../answer_surfaces';
 import { describeRunAwaits } from '../../movement_engine/await_description';
 import { notifyEngineOfSettledAsks } from '../../asks/in_process_notifier';
-import { registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
+import { postgresRunHostStore } from '../../movement_engine/run_host_store';
 
 async function makeTeam(): Promise<TeamId> {
   const teamId = randomUUID() as TeamId;
@@ -93,7 +93,7 @@ describe('chunk F — new-store ask surfaces (real DB)', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .values({ run_id: runId, address: 'await-ask', status: 'parked', park_reason: 'await', state: '{}' } as any)
         .execute();
-      await registerAwaitCorrelation({ adapterType: 'ask', correlationKey: ask.id, runId, teamId, address: 'await-ask' });
+      await postgresRunHostStore.correlations.correlate({ adapterType: 'ask', correlationKey: ask.id, runId, teamId, address: 'await-ask' });
 
       await answerAskRecordForTeam({ askId: ask.id, answer: 'true', teamId });
 

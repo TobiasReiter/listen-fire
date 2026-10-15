@@ -50,7 +50,6 @@ import { RemoteAdapterManifestInput } from '../../../services/translation_graph/
 import { installRemoteAdapterFromManifest } from '../../../services/translation_graph/adapters/remote/install';
 import { upsertRemoteAdapter } from '../../../services/translation_graph/adapters/remote/store';
 import { mintRemoteCredential } from '../../../services/credentials/remote_credential';
-import { loadCorrelatedParks, registerAwaitCorrelation } from '../../../services/translation_graph/adapters/await_correlation';
 import { syncListenSubscriptions } from '../../../services/translation_graph/movement/listen_subscriptions';
 import { mintMovementVersionIfChanged } from '../../../services/translation_graph/movement/version_store';
 import { resumeMovementFiring } from '../../../services/translation_graph/movement/execute';
@@ -65,6 +64,7 @@ import {
 import { signRemoteDelivery, REMOTE_SIGNATURE_HEADER } from 'movement-engine/services/webhook_sync/remote_inbound';
 import { webhookSyncRouter } from '../webhookSync';
 import { adapterDoorsRouter } from '../adapterDoors';
+import { postgresRunHostStore } from '../../../services/movement_engine/run_host_store';
 
 const mockedResume = resumeMovementFiring as jest.Mock;
 
@@ -323,7 +323,7 @@ describe('the remote owns the URL: wake', () => {
       .insertInto('parked_run')
       .values({ run_id: runId, address: 'await-thread', state: JSON.stringify({}), park_reason: 'await' })
       .execute();
-    await registerAwaitCorrelation({
+    await postgresRunHostStore.correlations.correlate({
       adapterType: FAKE_CRM_ADAPTER_TYPE,
       correlationKey: fakeCrmThreadKey(thread),
       runId,
@@ -351,7 +351,7 @@ describe('the remote owns the URL: wake', () => {
 
     expect(mockedResume).toHaveBeenCalledWith(expect.objectContaining({ runId, reenter: true }));
     expect(
-      await loadCorrelatedParks({ adapterType: FAKE_CRM_ADAPTER_TYPE, teamId, correlationKey: fakeCrmThreadKey('t1') }),
+      await postgresRunHostStore.correlations.correlated({ adapterType: FAKE_CRM_ADAPTER_TYPE, teamId, correlationKey: fakeCrmThreadKey('t1') }),
     ).toEqual([]);
     expect(await workRows(teamId)).toEqual([]);
   });

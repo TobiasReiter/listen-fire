@@ -31,9 +31,9 @@ import type { MovementId } from '../../../generated/kysely/automations/Movement'
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
-import { registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 import { enqueueAwaitWake } from '../await_wake';
 import { ensurePeriodicWork } from '../../work/store';
+import { postgresRunHostStore } from '../run_host_store';
 
 type Drain = typeof import('../../work/drain');
 type AwaitResume = typeof import('../await_resume');
@@ -152,7 +152,7 @@ async function runParkedOnReply(): Promise<{ runId: TriggerRunId; correlationKey
     } as any)
     .execute();
   const correlationKey = `C1:${randomUUID()}`;
-  await registerAwaitCorrelation({ adapterType: ADAPTER, correlationKey, runId, teamId, address: ADDRESS });
+  await postgresRunHostStore.correlations.correlate({ adapterType: ADAPTER, correlationKey, runId, teamId, address: ADDRESS });
   return { runId, correlationKey };
 }
 

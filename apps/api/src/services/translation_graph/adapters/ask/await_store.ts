@@ -7,12 +7,12 @@
 // sweep reads here for the parks a lost wake left behind. Correlation, NOT
 // stability — the ask id IS the identity, stored as the row's `correlation_key`.
 
-import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { AskId } from '../../../../generated/kysely/asks/Ask';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
+import type { CorrelatedAwait } from 'movement-engine/services/run_host/store';
 
-import { getAsksQb, getAutomationsQb, getQb } from '../../../../lib/kysely';
-import { dropAwaitCorrelation, type ResolvableAwait } from '../await_correlation';
+import { getAsksQb, getAutomationsQb } from '../../../../lib/kysely';
+import { postgresRunHostStore } from '../../../movement_engine/run_host_store';
 import { ASK_ADAPTER_TYPE } from './type';
 import { askIdSchema, cancelAsk } from './store';
 
@@ -39,7 +39,7 @@ import { askIdSchema, cancelAsk } from './store';
 export async function abandonAskAwaits(input: {
   runId: TriggerRunId;
   /** The parks to withdraw. Omit to withdraw EVERY ask park of the run. */
-  addresses?: string[];
+  addresses?: readonly string[];
 }): Promise<void> {
   if (input.addresses !== undefined && input.addresses.length === 0) return;
 
@@ -48,13 +48,13 @@ export async function abandonAskAwaits(input: {
     .where('adapter_type', '=', ASK_ADAPTER_TYPE)
     .where('run_id', '=', input.runId);
   if (input.addresses !== undefined) {
-    corr = corr.where('address', 'in', input.addresses);
+    corr = corr.where('address', 'in', [...input.addresses]);
   }
   const rows = await corr.select(['address', 'correlation_key']).execute();
   if (rows.length === 0) return;
 
   for (const row of rows) {
-    await dropAwaitCorrelation({ runId: input.runId, address: row.address });
+    await postgresRunHostStore.correlations.drop({ runId: input.runId, address: row.address });
   }
   for (const askId of new Set(rows.map((r) => r.correlation_key))) {
     await cancelAsk({ id: askId as AskId });
@@ -63,7 +63,7 @@ export async function abandonAskAwaits(input: {
 
 /** One resolvable ask await park: an `adapter_await` row (ask) whose ask has
  *  SETTLED (answered / expired), so the engine can drive its run forward. */
-export type ResolvableAskAwait = ResolvableAwait;
+export type ResolvableAskAwait = CorrelatedAwait;
 
 /**
  * Every ask await park whose ask has SETTLED — the ask half of the resume
@@ -101,9 +101,7 @@ export async function loadResolvableAskAwaits(
 
   return rows
     .filter((r) => settledIds.has(r.correlation_key))
-    // `adapter_await.team_id` is an opaque tenant uuid (D3 dropped the FK, and
-    // with it the brand); naming it as core's team id is the boundary conversion.
-    .map((r) => ({ runId: r.run_id, teamId: r.team_id as TeamId, address: r.address }));
+    .map((r) => ({ runId: r.run_id, teamId: r.team_id, address: r.address }));
 }
 
 /** One page of the closed sweep: the wakes it found, and where the next page

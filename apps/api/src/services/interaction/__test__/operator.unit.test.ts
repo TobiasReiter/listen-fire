@@ -51,7 +51,7 @@ jest.mock('../../movement_engine/run_lease', () => ({
     leaseHeldElsewhere ? { kind: 'busy' } : { kind: 'held', value: await fn() },
 }));
 const resumeLimitPausedRun = jest.fn();
-jest.mock('../../movement_engine/limit_pause', () => ({
+jest.mock('../../movement_engine/limit_resume', () => ({
   resumeLimitPausedRun: (...args: unknown[]) => resumeLimitPausedRun(...args),
 }));
 jest.mock('../run_failure', () => ({

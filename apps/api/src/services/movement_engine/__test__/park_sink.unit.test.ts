@@ -27,17 +27,29 @@ jest.mock('../../../lib/kysely', () => ({
   getQb: () => makeQb(),
   getAutomationsQb: () => makeQb(),
 }));
-jest.mock('../../translation_graph/adapters/await_correlation', () => ({
-  registerAwaitCorrelation: jest.fn(async () => {
-    writes.push('insert adapter_await');
-  }),
-  dropAwaitCorrelation: jest.fn(),
+// The backend, recording what each write lands in.
+jest.mock('../run_host_store', () => ({
+  postgresRunHostStore: {
+    parks: {
+      putLeaf: jest.fn(async () => {
+        writes.push('insert parked_run');
+      }),
+    },
+    correlations: {
+      correlate: jest.fn(async () => {
+        writes.push('insert adapter_await');
+      }),
+      drop: jest.fn(),
+    },
+    work: { enqueue: jest.fn() },
+  },
+  triggerRunIdOf: (id: string) => id,
 }));
-jest.mock('../../interaction/run_failure', () => ({ settleCancelledRun: jest.fn() }));
 jest.mock('../../translation_graph/adapters/packages', () => ({ awaitKeepers: () => [] }));
-jest.mock('../timer_wake', () => ({ armTimerWake: jest.fn() }));
+jest.mock('../callback_sink', () => ({ callbackAwaitKeeper: { adapterType: 'callback', loadResolvable: jest.fn(), abandon: jest.fn() } }));
+jest.mock('../callback_store', () => ({ revokeRunCallbacks: jest.fn() }));
+jest.mock('../run_engine_record', () => ({ settleRunEngineRecord: jest.fn() }));
 jest.mock('../limit_pause', () => ({ markRunLimitPaused: jest.fn() }));
-jest.mock('../join_pending', () => ({}));
 
 import { makeRecorderParkSink } from '../park_sink';
 import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
