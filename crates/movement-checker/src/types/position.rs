@@ -308,6 +308,9 @@ pub struct RecordPosition {
     /// Fields a guard in scope has proven present.
     pub present: BTreeSet<String>,
     pub run_built: bool,
+    /// The record is a function's parameter: what its body needs of it is
+    /// filed here (`FieldsNeed`).
+    pub parameter: Option<NeedRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +322,7 @@ pub struct UnionPosition {
     pub display: Option<String>,
     /// The event address a parameter type named it by (`positionFromAddress`).
     pub address: Option<super::event_address::EventAddress>,
+    pub parameter: Option<NeedRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -354,6 +358,7 @@ impl Position {
             display: None,
             present: BTreeSet::new(),
             run_built: false,
+            parameter: None,
         })
     }
 
@@ -372,6 +377,7 @@ pub fn position_ref_in(instance: &InstanceRef, name: &str) -> Option<Position> {
             narrows_event: None,
             display: None,
             address: None,
+            parameter: None,
         }));
     }
     instance.schema.positions.contains_key(name).then(|| Position::record(instance.clone(), name))
@@ -811,5 +817,153 @@ pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
             None => EdgeLanding::Unknown { available: local.edges.as_ref().map(|e| e.keys().cloned().collect()).unwrap_or_default() },
         },
         Position::MaybeEmpty(of) => edge_landing(of, edge, version),
+    }
+}
+
+// ── What a function's body needs of a record parameter ──
+
+/// A parameter's need cell, shared by every walk of the body that declares it.
+pub type NeedRef = Rc<std::cell::RefCell<FieldsNeed>>;
+
+/// `FieldsNeed`: what a function's body needs of a record parameter — its
+/// fields in hand (a consumer that reads every field, as TEXT.SERIALISE or a
+/// spread does). One cell per parameter, carried on the parameter's position
+/// type, so a name bound to the parameter, a list holding it or a closure over
+/// it records here too. A parameter passed on to another function's
+/// parameter takes on that one's requirement (`passed_to`), read when a call
+/// site asks — so a cycle of calls needs no fixpoint.
+#[derive(Default)]
+pub struct FieldsNeed {
+    pub function: String,
+    pub param: String,
+    /// The first consumer in the body that needs the fields in hand.
+    pub consumer: Option<String>,
+    pub passed_to: Vec<(NeedRef, String)>,
+    /// The cell for the records reached THROUGH the parameter's edges, at
+    /// any depth.
+    pub reached: Option<NeedRef>,
+    /// This cell is a parameter's `reached` cell.
+    pub through_edges: bool,
+}
+
+impl std::fmt::Debug for FieldsNeed {
+    // Cells refer to one another in cycles: name the parameter only.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FieldsNeed({}.{})", self.function, self.param)
+    }
+}
+
+/// `FieldsReach`: what a requirement is asked of — the record handed over
+/// itself, or the records reached through its edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldsReach {
+    Record,
+    Reached,
+}
+
+/// `fieldsNeededBy`: why `need`'s parameter needs the fields of its record
+/// (or of what is reached through it) in hand, if it does — directly, or
+/// through the parameters it is passed on to.
+pub fn fields_needed_by(need: &NeedRef, reach: FieldsReach, seen: &mut Vec<(NeedRef, FieldsReach)>) -> Option<String> {
+    let cell = need.borrow();
+    // A reached cell stands for every depth below the parameter.
+    let asked = if cell.through_edges { FieldsReach::Record } else { reach };
+    if seen.iter().any(|(n, r)| Rc::ptr_eq(n, need) && *r == asked) {
+        return None;
+    }
+    seen.push((need.clone(), asked));
+    if asked == FieldsReach::Record
+        && let Some(consumer) = &cell.consumer
+    {
+        return Some(if cell.through_edges { format!("reaches a record through '{}' and {consumer}", cell.param) } else { consumer.clone() });
+    }
+    if asked == FieldsReach::Reached
+        && let Some(reached) = &cell.reached
+        && let Some(why) = fields_needed_by(reached, FieldsReach::Record, seen)
+    {
+        return Some(why);
+    }
+    let onward_reaches: &[FieldsReach] = if cell.through_edges { &[FieldsReach::Record, FieldsReach::Reached] } else { std::slice::from_ref(&asked) };
+    for (onward, at) in &cell.passed_to {
+        for onward_reach in onward_reaches {
+            if let Some(why) = fields_needed_by(onward, *onward_reach, seen) {
+                return Some(format!("{at}, and '{}' {why}", onward.borrow().function));
+            }
+        }
+    }
+    None
+}
+
+/// `parameterNeedOf`: the parameter cell a position carries, through a gate.
+pub fn parameter_need_of(position: Option<&Position>) -> Option<NeedRef> {
+    match position? {
+        Position::MaybeEmpty(of) => parameter_need_of(Some(of)),
+        Position::Position(record) => record.parameter.clone(),
+        Position::Union(union) => union.parameter.clone(),
+        _ => None,
+    }
+}
+
+/// `noteFieldsNeeded`: files that `position`'s record — when it is a
+/// function's parameter — has its fields read by `consumer`.
+pub fn note_fields_needed(position: Option<&Position>, consumer: impl FnOnce() -> String) {
+    if let Some(need) = parameter_need_of(position) {
+        let mut cell = need.borrow_mut();
+        if cell.consumer.is_none() {
+            cell.consumer = Some(consumer());
+        }
+    }
+}
+
+/// `reachedThrough`: the cell for what is reached through `need`'s
+/// parameter — made on first ask; a reached cell is its own.
+fn reached_through(need: &NeedRef) -> NeedRef {
+    if need.borrow().through_edges {
+        return need.clone();
+    }
+    let mut cell = need.borrow_mut();
+    let (function, param) = (cell.function.clone(), cell.param.clone());
+    cell.reached
+        .get_or_insert_with(|| Rc::new(std::cell::RefCell::new(FieldsNeed { function, param, through_edges: true, ..FieldsNeed::default() })))
+        .clone()
+}
+
+/// `withParameterOf`: `landing`, walked from `from`, carrying the cell for
+/// what is reached through `from`'s parameter.
+pub fn with_parameter_of(from: Option<&Position>, landing: Option<Position>) -> Option<Position> {
+    let Some(need) = parameter_need_of(from) else { return landing };
+    Some(match landing? {
+        Position::MaybeEmpty(of) => Position::MaybeEmpty(Box::new(with_parameter_of(from, Some(*of.clone())).unwrap_or(*of))),
+        Position::Position(record) => Position::Position(RecordPosition { parameter: Some(reached_through(&need)), ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: Some(reached_through(&need)), ..union }),
+        other => other,
+    })
+}
+
+/// `asParameter`: `position` as the type of parameter `param` of `function`,
+/// carrying the parameter's cell (made on first ask, kept in `cells`). Only a
+/// position or a union names a record a caller hands over.
+pub fn as_parameter(position: Position, cells: &mut std::collections::HashMap<String, NeedRef>, function: &str, param: &str) -> Position {
+    if !matches!(position, Position::Position(_) | Position::Union(_)) {
+        return position;
+    }
+    let need = cells
+        .entry(param.to_string())
+        .or_insert_with(|| Rc::new(std::cell::RefCell::new(FieldsNeed { function: function.to_string(), param: param.to_string(), ..FieldsNeed::default() })))
+        .clone();
+    match position {
+        Position::Position(record) => Position::Position(RecordPosition { parameter: Some(need), ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: Some(need), ..union }),
+        other => other,
+    }
+}
+
+/// `withoutParameter`: the record once it has left the body.
+pub fn without_parameter(position: Position) -> Position {
+    match position {
+        Position::MaybeEmpty(of) => Position::MaybeEmpty(Box::new(without_parameter(*of))),
+        Position::Position(record) => Position::Position(RecordPosition { parameter: None, ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: None, ..union }),
+        other => other,
     }
 }

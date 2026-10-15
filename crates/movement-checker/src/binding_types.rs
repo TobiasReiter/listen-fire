@@ -265,9 +265,19 @@ impl Checker<'_> {
     }
 
     /// A parameter: the plane its declared type puts it on.
-    pub fn type_param(&mut self, body: ScopeId, name: &str, type_: &ParamTypeRef, declared_in: ScopeId) {
-        let plane = self.plane_type_of(type_, declared_in);
+    pub fn type_param(&mut self, body: ScopeId, name: &str, type_: &ParamTypeRef, declared_in: ScopeId, of: &ParamOf) {
+        let plane = self.parameter_plane(of, name, self.plane_type_of(type_, declared_in));
         self.set_types(body, name, SymbolTypes { pos: plane.pos.map(|p| *p), field: plane.field, ..SymbolTypes::default() });
+    }
+
+    /// `asParameter` on a parameter's plane: a record parameter carries its
+    /// function's cell for it, shared by every walk of the body.
+    pub fn parameter_plane(&self, of: &ParamOf, param: &str, plane: PlaneType) -> PlaneType {
+        let (Some(pos), Some(owner)) = (plane.pos.as_ref(), of.owner) else { return plane };
+        let pos = (**pos).clone();
+        let mut needs = self.param_needs.borrow_mut();
+        let cells = needs.entry(owner).or_default();
+        PlaneType { pos: Some(Box::new(crate::types::position::as_parameter(pos, cells, &of.function, param))), field: plane.field }
     }
 
     /// `planeTypeOf`: a written type, on whichever plane it lives.
@@ -360,10 +370,14 @@ impl Checker<'_> {
     /// returns, where no return type is written, is the closures family's to
     /// infer (`returns` stays untyped).
     pub fn closure_type(&self, closure: &ClosureExpression, scope: ScopeId) -> Option<ClosureType> {
+        let of = ParamOf::closure(closure, None);
         let params = closure
             .params
             .iter()
-            .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, scope)).unwrap_or_default() })
+            .map(|param| ClosureParam {
+                name: param.name.clone(),
+                plane: param.type_.as_ref().map(|t| self.parameter_plane(&of, &param.name, self.plane_type_of(t, scope))).unwrap_or_default(),
+            })
             .collect();
         let returns = match &closure.return_type {
             Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, scope), may_hold: None },
@@ -442,3 +456,29 @@ fn aggregated_bare_path(expr: &Expression) -> Option<(Option<&str>, &[movement_p
 }
 
 
+
+/// Whose parameter a cell is (`FieldsNeed`'s owner): a declared function, or a
+/// closure by where it is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NeedOwner {
+    Function(crate::scope::SymbolId),
+    Closure([usize; 4]),
+}
+
+/// The function a parameter belongs to, for its need cell.
+pub struct ParamOf {
+    /// `None` where the function has no symbol to file under.
+    pub owner: Option<NeedOwner>,
+    /// How a diagnostic names the function.
+    pub function: String,
+}
+
+impl ParamOf {
+    pub fn closure(closure: &ClosureExpression, self_name: Option<&str>) -> ParamOf {
+        let span = closure.span;
+        ParamOf {
+            owner: Some(NeedOwner::Closure([span.start.line, span.start.col, span.end.line, span.end.col])),
+            function: self_name.unwrap_or("the closure").to_string(),
+        }
+    }
+}

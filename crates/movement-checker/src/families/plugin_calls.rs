@@ -232,7 +232,8 @@ impl Checker<'_> {
             // none may be a file, and a record whose fields are read from its
             // system one at a time has none to hand.
             let whole = held.or_else(|| record.map(|r| HeldHandle { steps: Vec::new(), handle: Ty::record(Some(r.clone())), may: false }));
-            let Some(problem) = whole.and_then(|whole| self.record_as_fields_problem(whole)) else { return };
+            let purpose = format!("hands it to '{callee}' as '{name}', which takes every field (line {})", span.start.line);
+            let Some(problem) = whole.and_then(|whole| self.record_as_fields_problem(whole, &purpose)) else { return };
             if problem.is_file() {
                 self.report(codes::CALL_ARG_TYPE, handle_in_plugin_arg_message(callee, name, &problem), span);
                 return;
@@ -274,13 +275,14 @@ impl Checker<'_> {
     /// `recordAsFieldsProblem`: a record handed over as its fields — a file
     /// among them, or a record whose fields its system reads one at a time
     /// (the problem); `None` where the program holds them in hand.
-    fn record_as_fields_problem(&self, held: HeldHandle) -> Option<HeldHandle> {
+    fn record_as_fields_problem(&self, held: HeldHandle, purpose: &str) -> Option<HeldHandle> {
         let Ty::Record(Some(position)) = strip_absent(&held.handle) else { return None };
         let walk = crate::types::field::HeldWalk { steps: held.steps.clone(), accepts_record: true, accepts_file: false };
         if let Some(file_field) = crate::types::field::handle_spread_of(Some(&held.handle), &walk) {
             return Some(HeldHandle { may: file_field.may || held.may, ..file_field });
         }
         if self.holds_fields_in_hand(position) {
+            crate::types::position::note_fields_needed(Some(position), || purpose.to_string());
             return None;
         }
         Some(held)

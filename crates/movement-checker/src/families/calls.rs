@@ -1343,6 +1343,13 @@ impl Checker<'_> {
         }
     }
 
+    /// The function a movement's parameter belongs to, for its need cell.
+    pub fn movement_param_of(&self, name: &str, scope: ScopeId) -> crate::binding_types::ParamOf {
+        let id = self.scopes.scope(scope).symbols.get(name).copied();
+        let owner = id.map(|id| crate::binding_types::NeedOwner::Function(self.declared_id(id)));
+        crate::binding_types::ParamOf { owner, function: name.to_string() }
+    }
+
     /// A movement's declaration and the scope it is declared in.
     pub fn movement_declaration(&self, id: SymbolId) -> Option<(Rc<MovementDeclaration>, ScopeId)> {
         self.inference.declarations.get(&self.declared_id(id)).map(|(m, scope)| (m.clone(), *scope))
@@ -1660,7 +1667,7 @@ impl Checker<'_> {
     }
 
     /// The symbol a movement's declaration is filed under.
-    fn declared_id(&self, id: SymbolId) -> SymbolId {
+    pub(crate) fn declared_id(&self, id: SymbolId) -> SymbolId {
         self.inference.adopted.get(&id).copied().unwrap_or(id)
     }
 
@@ -1724,7 +1731,8 @@ impl Checker<'_> {
             let is_closure = matches!(&param.type_, Some(movement_parser::ast::ParamTypeRef::Value(movement_parser::ast::ValueType::Closure { .. })));
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
-                self.type_param(body, &param.name, type_, declared_in);
+                let of = crate::binding_types::ParamOf { owner: Some(crate::binding_types::NeedOwner::Function(id)), function: movement.name.clone() };
+                self.type_param(body, &param.name, type_, declared_in, &of);
             }
         }
         let what = format!("'{}'", movement.name);
@@ -1746,6 +1754,9 @@ impl Checker<'_> {
         // A node the body builds is labelled by whose value it is, which is
         // the useful text at a call site; nothing else about its type changes.
         let mut returned = walked.value;
+        // A parameter handed back is the caller's record again: what this
+        // body needs of it was said at the call that handed it over.
+        returned.plane.pos = returned.plane.pos.map(|pos| Box::new(crate::types::position::without_parameter(*pos)));
         if let Some(Position::Local(local)) = returned.plane.pos.as_deref_mut() {
             local.label = format!("the value of '{}'", movement.name);
         }

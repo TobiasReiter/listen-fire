@@ -199,7 +199,10 @@ impl Checker<'_> {
     /// version 5 a declaration that does not take what a return may hold is
     /// not refused where it is written, so the call still carries it.
     pub fn closure_returns(&self, closure: &ClosureExpression, inferred: ReturnShape, scope: ScopeId) -> ReturnShape {
-        let Some(written) = closure.return_type.as_ref().filter(|_| since(self.version, 3)) else { return inferred };
+        let Some(written) = closure.return_type.as_ref().filter(|_| since(self.version, 3)) else {
+            let pos = inferred.plane.pos.map(|pos| Box::new(crate::types::position::without_parameter(*pos)));
+            return ReturnShape { plane: PlaneType { pos, ..inferred.plane }, ..inferred };
+        };
         let plane = self.plane_type_of(written, scope);
         let may_hold = inferred.may_hold.filter(|held| !since(self.version, 5) && shows_more_handles(held, plane.field.as_ref()));
         ReturnShape { returns: true, plane, may_hold }

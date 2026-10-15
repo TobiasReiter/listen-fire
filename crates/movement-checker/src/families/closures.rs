@@ -72,6 +72,8 @@ fn edit(start: Loc, end: Loc, text: &str) -> serde_json::Value {
 /// What a collection op hands its function (`CollectionMembers`): each
 /// member, REDUCE's starting value, and what each may hold beyond its type.
 struct Members {
+    /// REDUCE hands its starting value first.
+    reduce: bool,
     element: Option<Ty>,
     element_may_hold: Option<Ty>,
     carried: Option<Ty>,
@@ -477,6 +479,7 @@ impl Checker<'_> {
             );
         }
         let members = Members {
+            reduce: op.op == CollectionOp::Reduce,
             element: element.clone(),
             element_may_hold: source.may_hold.as_ref().and_then(crate::types::field::collection_element_of),
             carried: init.as_ref().and_then(|i| i.ty.clone()),
@@ -506,16 +509,19 @@ impl Checker<'_> {
                     );
                 }
                 // A parameter left untyped takes the member's type.
+                let of = crate::binding_types::ParamOf::closure(closure, None);
                 let bound: Vec<(ClosureParam, bool)> = closure
                     .params
                     .iter()
                     .enumerate()
                     .map(|(index, param)| match &param.type_ {
-                        Some(written) => (ClosureParam { name: param.name.clone(), plane: self.plane_type_of(written, scope) }, true),
+                        Some(written) => (ClosureParam { name: param.name.clone(), plane: self.parameter_plane(&of, &param.name, self.plane_type_of(written, scope)) }, true),
                         None => (ClosureParam { name: param.name.clone(), plane: supplied.get(index).cloned().unwrap_or_default() }, false),
                     })
                     .collect();
-                self.check_members_fit_params(op, spelling, &format!("the function for '{spelling}'"), &bound, &members);
+                let callee = format!("the function for '{spelling}'");
+                self.check_members_fields_in_hand(spelling, &callee, &bound, &members, *span);
+                self.check_members_fit_params(op, spelling, &callee, &bound, &members);
                 self.absorb_suspend(suspends);
                 let returns = Some(!returned.returns.is_empty() || closure.return_type.is_some());
                 (returns, self.closure_returns(closure, returned.value, scope))
@@ -523,7 +529,9 @@ impl Checker<'_> {
             ArmExpression::Ref { name, span } => {
                 let returns = self.check_named_arm(name, *span, spelling, scope, arity);
                 let named: Vec<(ClosureParam, bool)> = self.named_function_params(name, scope).into_iter().map(|param| (param, true)).collect();
-                self.check_members_fit_params(op, spelling, &format!("'{name}'"), &named, &members);
+                let callee = format!("'{name}'");
+                self.check_members_fields_in_hand(spelling, &callee, &named, &members, *span);
+                self.check_members_fit_params(op, spelling, &callee, &named, &members);
                 (returns, self.named_function_return(name, scope))
             }
         };
@@ -567,14 +575,45 @@ impl Checker<'_> {
 
     /// The parameters of a function named as an op's function, with the
     /// types they are written with.
-    fn named_function_params(&self, written: &str, scope: ScopeId) -> Vec<ClosureParam> {
+    fn named_function_params(&mut self, written: &str, scope: ScopeId) -> Vec<ClosureParam> {
         let callee = self.callee_name(written, scope);
         let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return Vec::new() };
+        // What a function's body needs of each record parameter is learned
+        // on the inference walk, which a declared return type otherwise skips.
+        if self.scopes.symbol(id).kind == SymbolKind::Movement {
+            self.infer_movement(id);
+        }
         let symbol = self.scopes.symbol(id);
         match &symbol.types.pos {
             Some(crate::types::position::Position::Closure(closure)) => closure.params.clone(),
             _ if symbol.kind == SymbolKind::Movement => self.movement_declared_params(id).unwrap_or_default(),
             _ => Vec::new(),
+        }
+    }
+
+    /// `checkMembersFieldsInHand`: the members a collection op binds to its
+    /// function's parameters, against what the function's body needs of each
+    /// record parameter — the call-site check, where the op makes the call.
+    fn check_members_fields_in_hand(&mut self, spelling: &str, callee: &str, params: &[(ClosureParam, bool)], members: &Members, span: Span) {
+        let supplied = [members.carried.as_ref(), members.element.as_ref()];
+        let supplied: &[Option<&Ty>] = if members.reduce { &supplied } else { &supplied[1..] };
+        for (index, (param, _)) in params.iter().enumerate() {
+            let need = crate::types::position::parameter_need_of(param.plane.pos.as_deref());
+            let member = supplied.get(index).copied().flatten().and_then(|ty| crate::types::field::record_in(Some(ty)).flatten());
+            let (Some(need), Some(member)) = (need, member) else { continue };
+            let at = format!("hands it to {callee} as '{}' (line {})", need.borrow().param, span.start.line);
+            let Some(shortfall) = self.fields_in_hand_shortfall(&need, &member, &at) else { continue };
+            self.report(
+                codes::CALL_ARG_OPAQUE_RECORD,
+                format!(
+                    "{callee} needs every field of {} in hand — its body {} — and '{spelling}' hands it each member of the collection, {}, {}. Copy the fields it needs into records the program holds first ('MAP(…, (r) => {{ return node {{ name: r.name, … }} }})'), or have the function read the fields it uses one by one",
+                    shortfall.what,
+                    shortfall.why,
+                    crate::types::position::describe_position(&member),
+                    shortfall.whose
+                ),
+                span,
+            );
         }
     }
 

@@ -55,6 +55,8 @@ pub struct Checker<'c> {
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
+    /// Each function's record parameters' need cells (`FieldsNeed`).
+    pub param_needs: std::cell::RefCell<std::collections::HashMap<crate::binding_types::NeedOwner, std::collections::HashMap<String, crate::types::position::NeedRef>>>,
     /// Functions declared with a name, typed as the closures they are when
     /// read as values (version 5).
     pub function_values: std::collections::HashMap<crate::scope::SymbolId, crate::types::position::ClosureType>,
@@ -144,6 +146,7 @@ impl<'c> Checker<'c> {
             function_returns: Default::default(),
             reported_receipts: Default::default(),
             function_values: Default::default(),
+            param_needs: Default::default(),
             selves: Default::default(),
             effects: Default::default(),
             inference: Default::default(),
@@ -685,7 +688,8 @@ impl<'c> Checker<'c> {
             }
             self.report_param_position(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
-            self.type_param(body, &param.name, type_, scope);
+            let of = self.movement_param_of(&movement.name, scope);
+            self.type_param(body, &param.name, type_, scope, &of);
         }
         self.open_effect_frame();
         let what = format!("'{}'", movement.name);
@@ -763,7 +767,7 @@ impl<'c> Checker<'c> {
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
                 self.report_param_position(type_, scope);
-                self.type_param(body, &param.name, type_, scope);
+                self.type_param(body, &param.name, type_, scope, &crate::binding_types::ParamOf::closure(closure, self_name));
             } else if let Some(given) = types.get(index) {
                 let types = crate::types::scope_env::SymbolTypes { pos: given.pos.as_deref().cloned(), field: given.field.clone(), ..Default::default() };
                 self.set_types(body, &param.name, types);

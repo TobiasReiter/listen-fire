@@ -22,7 +22,7 @@ use crate::families::walks::OLD_EDGE;
 use crate::types::field::{Ty, describe_field_type, is_dict, is_record, record_in, strip_absent, union_members};
 use crate::types::infer::{Typing, holds_fields_in_hand};
 use crate::types::narrowing::bare_name;
-use crate::types::position::Position;
+use crate::types::position::{InstanceRef, Position};
 use crate::types::stdlib::Builtin;
 
 /// `RETIRED_HANDLE_FIELDS`: what a write's handle no longer carries from version 4.
@@ -70,13 +70,21 @@ pub fn report_handle_read_found(typing: &mut Typing, root: &str, position: Optio
 
 /// `holdsSpelledFields`: the checker holds this record's fields in hand (a
 /// node literal, an extraction, a write's own result, a declared shape's
-/// graph) rather than a system's schema describing them.
-// The parameter field-needs note (`noteFieldsNeeded`) is not ported: the type
-// core carries no parameter cell yet.
-fn holds_spelled_fields(typing: &Typing, position: Option<&Position>) -> bool {
+/// graph) rather than a system's schema describing them. A parameter's
+/// declared shape holds its fields here; whether the record a caller hands
+/// over does is that caller's to show, so `consumer` is filed as its need.
+pub fn holds_spelled_fields(typing: &Typing, position: Option<&Position>, consumer: &str) -> bool {
+    let held = holds_fields_in_hand_here(typing, position);
+    if held {
+        crate::types::position::note_fields_needed(position, || format!("{consumer} (line {})", typing.span.start.line));
+    }
+    held
+}
+
+fn holds_fields_in_hand_here(typing: &Typing, position: Option<&Position>) -> bool {
     match position {
         None => false,
-        Some(Position::MaybeEmpty(of)) => holds_spelled_fields(typing, Some(of)),
+        Some(Position::MaybeEmpty(of)) => holds_fields_in_hand_here(typing, Some(of)),
         Some(Position::Position(record)) => typing.env.is_declared_graph(&record.instance),
         Some(Position::Union(union)) => typing.env.is_declared_graph(&union.instance),
         Some(other) => holds_fields_in_hand(other),
@@ -120,7 +128,7 @@ pub fn check_stdlib_record_arg(typing: &mut Typing, function: &Builtin, args: &[
         return;
     }
     let position = record_in(Some(&stripped)).flatten();
-    if !holds_spelled_fields(typing, position.as_ref()) {
+    if !holds_spelled_fields(typing, position.as_ref(), &format!("reads every field of it with `{}`", function.name)) {
         not_spelled_out(typing, function);
     }
 }
@@ -131,7 +139,7 @@ pub fn check_stdlib_whole_value_arg(typing: &mut Typing, function: &Builtin, typ
     let Some(index) = whole_value_arg_index(function) else { return };
     let Some(Some(ty)) = types.get(index) else { return };
     let Some(position) = record_in(Some(ty)) else { return };
-    if !holds_spelled_fields(typing, position.as_ref()) {
+    if !holds_spelled_fields(typing, position.as_ref(), &format!("writes it out with `{}`", function.name)) {
         typing.report(
             codes::STDLIB_ARG_NOT_RECORD,
             format!(
@@ -144,7 +152,8 @@ pub fn check_stdlib_whole_value_arg(typing: &mut Typing, function: &Builtin, typ
     let Some(position) = position else { return };
     // A graph holding references holds the real records, so one read live
     // from a system is refused through the graph as it is on its own.
-    if let Some(edge) = live_reference_within(typing, &position) {
+    let consumer = || format!("writes out a graph holding it with `{}` (line {})", function.name, typing.span.start.line);
+    if let Some(edge) = live_reference_within(&position, &|instance| typing.env.is_declared_graph(instance), &consumer) {
         typing.report(
             codes::STDLIB_ARG_NOT_RECORD,
             format!(
@@ -166,9 +175,10 @@ pub fn check_stdlib_whole_value_arg(typing: &mut Typing, function: &Builtin, typ
 }
 
 /// `liveReferenceWithin`: the first reference edge, at any depth inside a
-/// run-local node, that holds records read live from a system.
-// The parameter field-needs note (`onParameter`) is not ported, as above.
-fn live_reference_within(typing: &Typing, position: &Position) -> Option<String> {
+/// run-local node, that holds records read live from a system. Every record
+/// held by reference whose fields ARE in hand — a function's parameter among
+/// them — files `consumer` as its need.
+pub fn live_reference_within(position: &Position, is_declared: &dyn Fn(&InstanceRef) -> bool, consumer: &dyn Fn() -> String) -> Option<String> {
     let Position::Local(local) = (match position {
         Position::MaybeEmpty(of) => of.as_ref(),
         other => other,
@@ -181,15 +191,18 @@ fn live_reference_within(typing: &Typing, position: &Position) -> Option<String>
             other => other.as_ref(),
         };
         let live = match target {
-            Some(Position::Position(record)) => !typing.env.is_declared_graph(&record.instance),
-            Some(Position::Union(union)) => !typing.env.is_declared_graph(&union.instance),
-            Some(Position::Meta { instance }) => !typing.env.is_declared_graph(instance),
+            Some(Position::Position(record)) => !is_declared(&record.instance),
+            Some(Position::Union(union)) => !is_declared(&union.instance),
+            Some(Position::Meta { instance }) => !is_declared(instance),
             _ => false,
         };
         if edge.references && live {
             return Some(name.clone());
         }
-        if let Some(nested) = edge.target.as_ref().and_then(|t| live_reference_within(typing, t)) {
+        if edge.references {
+            crate::types::position::note_fields_needed(target, consumer);
+        }
+        if let Some(nested) = edge.target.as_ref().and_then(|t| live_reference_within(t, is_declared, consumer)) {
             return Some(nested);
         }
     }

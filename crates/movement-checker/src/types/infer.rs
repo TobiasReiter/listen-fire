@@ -455,9 +455,13 @@ impl<'a> Typing<'a> {
                     let from = current.clone();
                     let landing = from.as_ref().map(|f| edge_landing(f, &edge.edge_type_id, self.version));
                     let (next, schema) = match &landing {
-                        Some(EdgeLanding::Landed { landing, edge: schema }) => {
-                            (Some(refine_selected(landing.clone(), edge.expression_filter.as_deref())), schema.clone())
-                        }
+                        // A record reached through a function's parameter is the
+                        // caller's record's child: what the body needs of it is
+                        // the parameter's need.
+                        Some(EdgeLanding::Landed { landing, edge: schema }) => (
+                            super::position::with_parameter_of(from.as_ref(), Some(refine_selected(landing.clone(), edge.expression_filter.as_deref()))),
+                            schema.clone(),
+                        ),
                         Some(EdgeLanding::Untyped { edge }) => (None, edge.clone()),
                         _ => (None, None),
                     };
@@ -923,7 +927,9 @@ impl<'a> Typing<'a> {
                             read_types.push(Some((**of).clone()));
                             continue;
                         }
-                        Ty::Record(Some(record)) if holds_fields_in_hand(record) => super::position::record_field_types(record),
+                        Ty::Record(Some(record)) if crate::families::records::holds_spelled_fields(self, Some(record), "copies its fields into a map with '...'") => {
+                            super::position::record_field_types(record)
+                        }
                         present => {
                             crate::families::values::map_spread_not_keyed(self, present);
                             keys_named = false;

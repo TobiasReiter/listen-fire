@@ -421,6 +421,7 @@ impl Checker<'_> {
         if let Some(position) = &position
             && let Some(fields) = known_fields_of(position)
         {
+            crate::types::position::note_fields_needed(Some(position), || format!("writes every field of it with '...{}' (line {})", spread.source, spread.span.start.line));
             return Some(fields);
         }
         // A declared extract node's fields are its declaration's (the nodes

@@ -882,6 +882,150 @@
      "priced": false
     }
    }
+  },
+  "opaque": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {
+      "": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text",
+          "tag": "text"
+         },
+         "edges": {
+          "child": {
+           "target": "person",
+           "writable": true
+          }
+         }
+        },
+        "person": {
+         "properties": {
+          "first": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        }
+       },
+       "supportsInPlaceUpdate": true,
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text",
+          "tag": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text",
+          "tag": "text"
+         }
+        }
+       }
+      }
+     }
+    },
+    "sheets": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {
+      "": {
+       "positions": {
+        "row": {
+         "properties": {
+          "v": "text",
+          "name": "text",
+          "tag": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "rows": {
+         "target": "row"
+        }
+       },
+       "writableRoots": {
+        "row": {
+         "fields": {
+          "v": "text",
+          "name": "text",
+          "tag": "text"
+         },
+         "resultShape": {
+          "externalId": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {},
+   "plugins": {
+    "summarise": {
+     "args": [
+      "data"
+     ],
+     "argTypes": {
+      "data": "json"
+     },
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "relay": {
+     "args": [
+      "data"
+     ],
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    },
+    "shout": {
+     "args": [
+      "data"
+     ],
+     "argTypes": {
+      "data": "text"
+     },
+     "requiredArgs": [
+      "data"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     },
+     "priced": false
+    }
+   }
   }
  },
  "cases": [
@@ -1943,6 +2087,397 @@
    "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { k: \"x\", up: f })\n}",
    "expected": [
     "MOV_CALL_ARG_TYPE 9:23-9:40 'summarise' takes structured data for 'data', and 'data.up' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('up: READ(f)')."
+   ]
+  },
+  {
+   "name": "opaque record: serialising body refuses a traversed system record",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use_ser(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:16-15:17 'use_ser' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use_ser' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a body reading one field takes a system record",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_name(e: <Entry>) {\n  write sink-[:rows]-> { v: e.name }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use_name(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: run-built, node literal and extracted pass",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement run2(go: <src>) {\n  deduped = node { entries: <Entry> order by arrival }\n  a = write deduped-[:entries]-> { name: \"Acme\", tag: \"a\" }\n  use_ser(e: a)\n  deduped-[x:entries]-> {\n    use_ser(e: x)\n  }\n  use_ser(e: node { name: \"n\", tag: \"t\" })\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 13:1-13:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a system write's own result passes",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement run2(go: <src>) {\n  w = write src-[:companies]-> { name: \"Gamma\", tag: \"g\" }\n  use_ser(e: w)\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 13:1-13:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a pick of a traversal is opaque",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement run2(go: <src>) {\n  x = FIRST(src-[:companies ORDER BY name]->)\n  if x == null { ERROR(\"none\") }\n  use_ser(e: x)\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:14-16:15 'use_ser' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use_ser' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: TEXT.PAIRS needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.PAIRS(e) }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:12-15:13 'use' needs every field of 'e' in hand — its body reads every field of it with `TEXT.PAIRS` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a map spread needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  m = { ...e, k: \"1\" }\n  write sink-[:rows]-> { v: m.k }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body copies its fields into a map with '...' (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a write spread needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  write sink-[:rows]-> { ...e }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:12-15:13 'use' needs every field of 'e' in hand — its body writes every field of it with '...e' (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: an alias needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  y = e\n  write sink-[:rows]-> { v: TEXT.SERIALISE(y, \"JSON\") }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 12) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a list holding it needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE([e], \"JSON\") }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:12-15:13 'use' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a closure over it needs the fields",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  vs = MAP([e], (r) => { return TEXT.SERIALISE(r, \"JSON\") })\n  write sink-[:rows]-> { v: JOIN(vs, \",\") }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: passing the parameter on carries the need",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement outer(r: <Entry>) {\n  use_ser(e: r)\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    outer(r: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 18:14-18:15 'outer' needs every field of 'r' in hand — its body passes it to 'use_ser' as 'e' (line 14), and 'use_ser' writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'outer' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 16:1-16:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a call above the declaration",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    outer(r: c)\n  }\n}\nmovement outer(r: <Entry>) {\n  use_ser(e: r)\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 12:14-12:15 'outer' needs every field of 'r' in hand — its body passes it to 'use_ser' as 'e' (line 16), and 'use_ser' writes it out with `TEXT.SERIALISE` (line 19) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'outer' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a call cycle",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nfunction ping(e: <Entry>, n: <number>) {\n  if n > 0 { pong(e: e, n: n - 1) }\n}\nfunction pong(e: <Entry>, n: <number>) {\n  if n > 0 { ping(e: e, n: n - 1) }\n  write sink-[:rows]-> { v: TEXT.PAIRS(e) }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    ping(e: c, n: 2)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 19:13-19:14 'ping' needs every field of 'e' in hand — its body passes it to 'pong' as 'e' (line 11), and 'pong' reads every field of it with `TEXT.PAIRS` (line 15) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'ping' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 17:1-17:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: morning recap shape",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Deal {\n  name: <text>\n  tag: <text>\n}\nmovement upsert_deal(d: <Deal>) {\n  write sink-[:rows]-> { ...d }\n}\nmovement recap(go: <src>) {\n  entries = node { deals: <Deal> order by arrival }\n  write entries-[:deals]-> { name: \"Acme\", tag: \"a\" }\n  entries-[d:deals]-> {\n    upsert_deal(d: d)\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 17:1-17:1 'recap' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire recap"
+   ]
+  },
+  {
+   "name": "opaque record: version 1",
+   "snapshot": "opaque",
+   "version": 1,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.PAIRS(e) }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use_ser(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:16-15:17 'use_ser' needs every field of 'e' in hand — its body reads every field of it with `TEXT.PAIRS` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use_ser' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: version 2",
+   "snapshot": "opaque",
+   "version": 2,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.PAIRS(e) }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use_ser(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:16-15:17 'use_ser' needs every field of 'e' in hand — its body reads every field of it with `TEXT.PAIRS` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use_ser' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: block head over child serialised",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement use(e: <Holder>) {\n  e-[k:child]-> {\n    write sink-[:rows]-> { v: TEXT.SERIALISE(k, \"JSON\") }\n  }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 23:12-23:13 'use' needs every field of the records 'e' leads to in hand — its body reaches a record through 'e' and writes it out with `TEXT.SERIALISE` (line 18) — and this argument is src.company, whose linked records are the system's, read one field at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 21:1-21:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: MAP over child serialised",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement use(e: <Holder>) {\n  vs = MAP(e-[:child ORDER BY first]->, (k) => { return TEXT.SERIALISE(k, \"JSON\") })\n  write sink-[:rows]-> { v: JOIN(vs, \",\") }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 22:12-22:13 'use' needs every field of the records 'e' leads to in hand — its body reaches a record through 'e' and writes it out with `TEXT.SERIALISE` (line 17) — and this argument is src.company, whose linked records are the system's, read one field at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 20:1-20:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: child field read one at a time",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement use(e: <Holder>) {\n  e-[k:child]-> {\n    write sink-[:rows]-> { v: k.first }\n  }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 21:1-21:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: plugin json arg given a system record",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    s = summarise(data: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 12:25-12:26 'summarise' takes every field of the record it is given as 'data', and this is src.company, whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: plugin json arg given held records",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  deduped = node { entries: <Entry> order by arrival }\n  a = write deduped-[:entries]-> { name: \"Acme\", tag: \"a\" }\n  s1 = summarise(data: a)\n  src-[c:companies]-> {\n    s2 = summarise(data: { name: c.name })\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a function handing its parameter to a plugin",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  s = summarise(data: e)\n  write sink-[:rows]-> { v: s }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a named closure serialising its parameter",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  f = (e: <Entry>) => {\n    write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n  }\n  src-[c:companies]-> {\n    f(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 15:10-15:11 'f' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 12) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'f' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: closures reading and serialising",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  f = (e: <Entry>) => {\n    write sink-[:rows]-> { v: e.name }\n  }\n  g = (e: <Entry>) => {\n    write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n  }\n  deduped = node { entries: <Entry> order by arrival }\n  a = write deduped-[:entries]-> { name: \"Acme\", tag: \"a\" }\n  g(e: a)\n  src-[c:companies]-> {\n    f(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a closure passing its parameter on",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use_ser(e: <Entry>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(e, \"JSON\") }\n}\nmovement run2(go: <src>) {\n  f = (r: <Entry>) => {\n    use_ser(e: r)\n  }\n  src-[c:companies]-> {\n    f(r: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 18:10-18:11 'f' needs every field of 'r' in hand — its body passes it to 'use_ser' as 'e' (line 15), and 'use_ser' writes it out with `TEXT.SERIALISE` (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'f' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a closure handing its parameter back",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  f = (e: <Entry>) => {\n    return e\n  }\n  deduped = node { entries: <Entry> order by arrival }\n  a = write deduped-[:entries]-> { name: \"Acme\", tag: \"a\" }\n  b = f(e: a)\n  write sink-[:rows]-> { v: TEXT.SERIALISE(b, \"JSON\") }\n  src-[c:companies]-> {\n    f(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a system write's children are the system's",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement ser_child(e: <Holder>) {\n  e-[k:child]-> {\n    write sink-[:rows]-> { v: TEXT.SERIALISE(k, \"JSON\") }\n  }\n}\nmovement run2(go: <src>) {\n  w = write src-[:companies]-> { name: \"Gamma\", tag: \"g\" }\n  ser_child(e: w)\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 23:16-23:17 'ser_child' needs every field of the records 'e' leads to in hand — its body reaches a record through 'e' and writes it out with `TEXT.SERIALISE` (line 18) — and this argument is a src.company handle, whose linked records are the system's, read one field at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'ser_child' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 21:1-21:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: run-built children are held",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement ser_child(e: <Holder>) {\n  e-[k:child]-> {\n    write sink-[:rows]-> { v: TEXT.SERIALISE(k, \"JSON\") }\n  }\n}\nmovement run2(go: <src>) {\n  deduped = node { entries: <Holder> order by arrival }\n  a = write deduped-[:entries]-> { name: \"Acme\" }\n  write a-[:child]-> { first: \"Ann\" }\n  ser_child(e: a)\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 21:1-21:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a write's child read one field at a time",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nmovement read_child(e: <Holder>) {\n  e-[k:child]-> {\n    write sink-[:rows]-> { v: k.first }\n  }\n}\nmovement run2(go: <src>) {\n  w = write src-[:companies]-> { name: \"Gamma\", tag: \"g\" }\n  read_child(e: w)\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 21:1-21:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a child passed on to a serialiser",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nnode Holder {\n  name: <text>\n  node child {\n    first: <text>\n  }\n}\nnode Person {\n  first: <text>\n}\nmovement ser_one(k: <Person>) {\n  write sink-[:rows]-> { v: TEXT.SERIALISE(k, \"JSON\") }\n}\nmovement walk(e: <Holder>) {\n  e-[k:child]-> {\n    ser_one(k: k)\n  }\n}\nmovement run2(go: <src>) {\n  w = write src-[:companies]-> { name: \"Gamma\", tag: \"g\" }\n  walk(e: w)\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 29:11-29:12 'walk' needs every field of the records 'e' leads to in hand — its body passes it to 'ser_one' as 'k' (line 24), and 'ser_one' writes it out with `TEXT.SERIALISE` (line 20) — and this argument is a src.company handle, whose linked records are the system's, read one field at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'walk' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 27:1-27:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a serialising closure over a system collection",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  vs = MAP(src-[:companies ORDER BY name]->, (e: <Entry>) => { return TEXT.SERIALISE(e, \"JSON\") })\n  write sink-[:rows]-> { v: JOIN(vs, \",\") }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 11:46-11:98 the function for 'MAP' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and 'MAP' hands it each member of the collection, src.company, whose fields are read from its system one at a time. Copy the fields it needs into records the program holds first ('MAP(…, (r) => { return node { name: r.name, … } })'), or have the function read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: field-reading and run-built collections pass",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  names = MAP(src-[:companies ORDER BY name]->, (e: <Entry>) => { return e.name })\n  deduped = node { entries: <Entry> order by arrival }\n  write deduped-[:entries]-> { name: \"Acme\", tag: \"a\" }\n  vs = MAP(deduped-[:entries]->, (e: <Entry>) => { return TEXT.SERIALISE(e, \"JSON\") })\n  write sink-[:rows]-> { v: JOIN(vs, \",\") }\n  write sink-[:rows]-> { v: JOIN(names, \",\") }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a named closure handed to the op",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  f = (e: <Entry>) => { return TEXT.SERIALISE(e, \"JSON\") }\n  vs = MAP(src-[:companies ORDER BY name]->, f)\n  write sink-[:rows]-> { v: JOIN(vs, \",\") }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 12:46-12:47 'f' needs every field of 'e' in hand — its body writes it out with `TEXT.SERIALISE` (line 11) — and 'MAP' hands it each member of the collection, src.company, whose fields are read from its system one at a time. Copy the fields it needs into records the program holds first ('MAP(…, (r) => { return node { name: r.name, … } })'), or have the function read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: FILTER and REDUCE bind their member",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  kept = FILTER(src-[:companies ORDER BY name]->, (e: <Entry>) => { return TEXT.PAIRS(e) != \"\" })\n  folded = REDUCE(src-[:companies ORDER BY name]->, \"\", (acc, e: <Entry>) => { return \"${acc}${TEXT.PAIRS(e)}\" })\n  write sink-[:rows]-> { v: folded }\n  write sink-[:rows]-> { v: \"${COUNT(kept)}\" }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 11:51-11:97 the function for 'FILTER' needs every field of 'e' in hand — its body reads every field of it with `TEXT.PAIRS` (line 11) — and 'FILTER' hands it each member of the collection, src.company, whose fields are read from its system one at a time. Copy the fields it needs into records the program holds first ('MAP(…, (r) => { return node { name: r.name, … } })'), or have the function read the fields it uses one by one",
+    "MOV_CALL_ARG_OPAQUE_RECORD 12:57-12:113 the function for 'REDUCE' needs every field of 'e' in hand — its body reads every field of it with `TEXT.PAIRS` (line 12) — and 'REDUCE' hands it each member of the collection, src.company, whose fields are read from its system one at a time. Copy the fields it needs into records the program holds first ('MAP(…, (r) => { return node { name: r.name, … } })'), or have the function read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a system record through a function's call to a json arg",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nfunction first_company(go: <src>) {\n  return FIRST(src-[:companies ORDER BY name]->)\n}\nmovement run2(go: <src>) {\n  s = summarise(data: first_company(go: go))\n  write sink-[:rows]-> { v: s }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 14:23-14:44 'summarise' takes every field of the record it is given as 'data', and this is src.company (which may be empty), whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')",
+    "MOV_LISTEN_MISSING 10:1-10:1 'first_company' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire first_company",
+    "MOV_LISTEN_MISSING 13:1-13:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: shout given a node literal",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  s = shout(data: node { name: \"n\", tag: \"t\" })\n  write sink-[:rows]-> { v: s }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 11:19-11:47 'shout' takes text for 'data', and this is a 'node { … }' literal written in place — a record, and a plugin's arguments are values. Pass one of the values it would hold ('data: …')",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: relay given a write in place",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement run2(go: <src>) {\n  s = relay(data: write src-[:companies]-> { name: \"Gamma\", tag: \"g\" })\n  write sink-[:rows]-> { v: s }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 11:19-11:71 'relay' takes a value for 'data', and this is a write written in place — a record, and a plugin's arguments are values. Run the write first ('r = write …') and pass 'data: r' or one of its fields ('data: r.name')",
+    "MOV_LISTEN_MISSING 10:1-10:1 'run2' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run2"
+   ]
+  },
+  {
+   "name": "opaque record: a function parameter to a json plugin (v3)",
+   "snapshot": "opaque",
+   "version": 3,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  s = summarise(data: e)\n  write sink-[:rows]-> { v: s }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "opaque record: a function parameter to a json plugin (v5)",
+   "snapshot": "opaque",
+   "version": 5,
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  s = summarise(data: e)\n  write sink-[:rows]-> { v: s }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
    ]
   }
  ]

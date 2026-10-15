@@ -963,6 +963,7 @@ fn residual_union(union: &crate::types::position::UnionPosition, remaining: &[St
         narrows_event: None,
         display: Some(display),
         address: None,
+        parameter: union.parameter.clone(),
     })
 }
 

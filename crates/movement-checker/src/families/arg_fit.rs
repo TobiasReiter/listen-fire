@@ -57,8 +57,15 @@ impl ArgFit<'_> {
     }
 }
 
+/// What a record falls short of a parameter's need by (`fieldsInHandShortfall`).
+pub struct Shortfall {
+    pub what: String,
+    pub why: String,
+    pub whose: &'static str,
+}
+
 /// `describeArgPlace`: a positional argument is named for the author.
-fn describe_arg_place(fit: &ArgFit) -> String {
+pub(crate) fn describe_arg_place(fit: &ArgFit) -> String {
     if !fit.positional {
         return String::new();
     }
@@ -137,10 +144,15 @@ impl Checker<'_> {
     /// An imported movement carries the library's declaration.
     pub fn movement_declared_params(&self, id: SymbolId) -> Option<Vec<ClosureParam>> {
         let info = self.listens.movement_info(id)?;
+        let function = self.movement_declaration(id).map_or_else(|| self.scopes.symbol(id).name.clone(), |(movement, _)| movement.name.clone());
+        let of = crate::binding_types::ParamOf { owner: Some(crate::binding_types::NeedOwner::Function(self.declared_id(id))), function };
         Some(
             info.params
                 .iter()
-                .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, info.decl_scope)).unwrap_or_default() })
+                .map(|param| ClosureParam {
+                    name: param.name.clone(),
+                    plane: param.type_.as_ref().map(|t| self.parameter_plane(&of, &param.name, self.plane_type_of(t, info.decl_scope))).unwrap_or_default(),
+                })
                 .collect(),
         )
     }
@@ -193,14 +205,20 @@ impl Checker<'_> {
                 let handle = self.check_write(write, scope, None, true);
                 match fit.field_type() {
                     Some(param) => self.check_value_arg_fit(fit, param, handle.map(record_of).as_ref(), ValueArg::at(write.span)),
-                    None => self.check_call_arg_fit(fit, handle.as_ref(), fit.pos_type(), write.span),
+                    None => {
+                        self.check_call_arg_fit(fit, handle.as_ref(), fit.pos_type(), write.span);
+                        self.check_arg_fields_in_hand(fit, handle.as_ref(), write.span);
+                    }
                 }
             }
             CallArg::Node { node, .. } => {
                 let synthesised = self.check_node_literal(node, scope);
                 match fit.field_type() {
                     Some(param) => self.check_value_arg_fit(fit, param, synthesised.map(record_of).as_ref(), ValueArg::at(node.span)),
-                    None => self.check_call_arg_fit(fit, synthesised.as_ref(), fit.pos_type(), node.span),
+                    None => {
+                        self.check_call_arg_fit(fit, synthesised.as_ref(), fit.pos_type(), node.span);
+                        self.check_arg_fields_in_hand(fit, synthesised.as_ref(), node.span);
+                    }
                 }
             }
             CallArg::Closure { closure, span, .. } if since(self.version, 5) => {
@@ -264,6 +282,7 @@ impl Checker<'_> {
                         self.refuse_maybe_record_for_position(fit, &[value.may_hold.as_ref(), value.plane.field.as_ref()], call.span, &format!("{}(…)", call.callee));
                     }
                     self.check_call_arg_fit(fit, pos, fit.pos_type(), call.span);
+                    self.check_arg_fields_in_hand(fit, pos, call.span);
                 }
             },
         }
@@ -305,8 +324,78 @@ impl Checker<'_> {
             self.refuse_maybe_record_for_position(fit, &[typed.may_hold.as_ref(), typed.ty.as_ref()], expr.span, expr.raw.trim());
         }
         self.check_call_arg_fit(fit, arg_type.as_ref(), fit.pos_type(), expr.span);
-        // `checkArgFieldsInHand` (MOV_CALL_ARG_OPAQUE_RECORD) needs the
-        // parameter field-needs cell, which the type core does not carry.
+        let arg = arg_type.or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
+        self.check_arg_fields_in_hand(fit, arg.as_ref(), expr.span);
+    }
+
+    /// `checkArgFieldsInHand`: a record argument against what the callee's
+    /// body needs of it (`FieldsNeed`) — TypeScript's parameter-versus-
+    /// argument check, on whether the record's fields are in hand. The
+    /// calling function's own parameter, passed on, takes on the callee's
+    /// need instead: its callers answer for it.
+    fn check_arg_fields_in_hand(&mut self, fit: &ArgFit, arg: Option<&Position>, span: Span) {
+        let (Some(need), Some(arg)) = (crate::types::position::parameter_need_of(fit.pos_type()), arg) else { return };
+        let param = need.borrow().param.clone();
+        let Some(shortfall) = self.fields_in_hand_shortfall(&need, arg, &format!("passes it to '{}' as '{param}' (line {})", fit.callee, span.start.line)) else { return };
+        self.report(
+            codes::CALL_ARG_OPAQUE_RECORD,
+            format!(
+                "'{callee}' needs every field of {} in hand — its body {} — and this argument is {}, {}{}. Copy the fields it needs into a record the program holds and pass that ('node {{ name: r.name, … }}'), or have '{callee}' read the fields it uses one by one",
+                shortfall.what,
+                shortfall.why,
+                describe_position(arg),
+                shortfall.whose,
+                describe_arg_place(fit),
+                callee = fit.callee
+            ),
+            span,
+        );
+    }
+
+    /// `fieldsInHandShortfall`: what `record` falls short of `need` by, if
+    /// anything — the fields of the record itself, or of the records reached
+    /// through its edges. A record that is itself a parameter of the function
+    /// being checked, with its fields in hand there, files `need` as its own
+    /// (`passedTo`, said `at`).
+    pub(crate) fn fields_in_hand_shortfall(&self, need: &crate::types::position::NeedRef, record: &Position, at: &str) -> Option<Shortfall> {
+        use crate::types::position::{FieldsReach, fields_needed_by, parameter_need_of};
+        let in_hand = self.holds_fields_in_hand(record);
+        let own = parameter_need_of(Some(record));
+        if in_hand && let Some(own) = own {
+            let already = std::rc::Rc::ptr_eq(&own, need) || own.borrow().passed_to.iter().any(|(onward, _)| std::rc::Rc::ptr_eq(onward, need));
+            if !already {
+                own.borrow_mut().passed_to.push((need.clone(), at.to_string()));
+            }
+            return None;
+        }
+        let param = need.borrow().param.clone();
+        let why = if in_hand { None } else { fields_needed_by(need, FieldsReach::Record, &mut Vec::new()) };
+        if let Some(why) = why {
+            return Some(Shortfall { what: format!("'{param}'"), why, whose: "whose fields are read from its system one at a time" });
+        }
+        if self.holds_reached_fields_in_hand(record) {
+            return None;
+        }
+        let why = fields_needed_by(need, FieldsReach::Reached, &mut Vec::new())?;
+        Some(Shortfall { what: format!("the records '{param}' leads to"), why, whose: "whose linked records are the system's, read one field at a time" })
+    }
+
+    /// `holdsReachedFieldsInHand`: does the checker hold the fields of the
+    /// records reached through this record's edges? A walked child of a
+    /// system's record is the system's record; a record the run built (or
+    /// extracted, or a declared shape's) holds its children, unless it holds
+    /// a system's records by reference.
+    fn holds_reached_fields_in_hand(&self, position: &Position) -> bool {
+        let declared = |instance: &crate::types::position::InstanceRef| instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol));
+        match position {
+            Position::Extract { .. } => true,
+            Position::Local(_) => crate::families::records::live_reference_within(position, &declared, &String::new).is_none(),
+            Position::MaybeEmpty(of) => self.holds_reached_fields_in_hand(of),
+            Position::Handle(handle) => declared(&handle.instance),
+            Position::Position(record) => declared(&record.instance),
+            Position::Union(union) => declared(&union.instance),
+            Position::Meta { .. } | Position::Closure(_) => false,
+        }
     }
 
     /// `bareSlotPositionType`: the record a bare name denotes.
