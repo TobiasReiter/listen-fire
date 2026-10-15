@@ -720,20 +720,32 @@ impl<'c> Checker<'c> {
 
     fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {
         match &awaited.source {
-            AwaitSource::Traversal { head, .. } | AwaitSource::First { head, .. } => {
+            AwaitSource::Traversal { head, span } => {
+                self.check_awaited_head(head, Some(*span));
+                self.check_path_head(head, scope);
+            }
+            AwaitSource::First { head, .. } => {
+                self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
                 self.check_combinator(combinator, scope);
             }
-            AwaitSource::Sleep { .. } => {}
-            AwaitSource::Until { condition, .. } => match condition {
-                UntilCondition::Closure { closure } => {
-                    self.check_closure_as(closure, scope, None, "this 'until' condition", 0);
+            AwaitSource::Sleep { duration, .. } => self.check_sleep_duration(duration),
+            AwaitSource::Until { condition, every, .. } => {
+                if let Some(every) = every {
+                    self.check_until_cadence(every);
                 }
-                UntilCondition::Expr { expr } => self.check_expr_slot(expr, scope),
-            },
+                match condition {
+                    UntilCondition::Closure { closure } => {
+                        self.check_until_params(closure);
+                        self.check_until_purity(&closure.body);
+                        self.check_closure_as(closure, scope, None, "this 'until' condition", 0);
+                    }
+                    UntilCondition::Expr { expr } => self.check_expr_slot(expr, scope),
+                }
+            }
         }
     }
 }

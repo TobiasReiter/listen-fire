@@ -2,8 +2,8 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **30 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 950 of 15246; 0 extra in Rust.
+- Codes at parity: **35 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 986 of 15246; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 1115 of 11435.
 - Rust side: 4.8s; 0 records the Rust parser or catalog refused; 0 panics.
 
@@ -27,7 +27,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | calls | 26 | 11 | 476 | 313 | 162 | 0 | 1 |
 | closures | 14 | 9 | 305 | 259 | 46 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
-| flow | 10 | 1 | 78 | 6 | 72 | 0 | 0 |
+| flow | 10 | 6 | 78 | 42 | 36 | 0 | 0 |
 | imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
 | listens | 12 | 0 | 10671 | 0 | 10671 | 0 | 0 |
 | names | 9 | 7 | 371 | 355 | 16 | 0 | 0 |
@@ -48,9 +48,9 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_AI_TIER_LEGACY | systems | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_AMBIGUOUS_PROPERTY | walks | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_ARITH_NON_NUMERIC | values | 79 | 0 | 79 | 0 | 0 |  |
-| MOV_AWAIT_BAD_DURATION | flow | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_AWAIT_BARE_WALK | flow | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_AWAIT_IMPURE_CONDITION | flow | 12 | 0 | 12 | 0 | 0 |  |
+| MOV_AWAIT_BAD_DURATION | flow | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_AWAIT_BARE_WALK | flow | 12 | 12 | 0 | 0 | 0 | yes |
+| MOV_AWAIT_IMPURE_CONDITION | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_AWAIT_NEEDS_CADENCE | flow | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_AWAIT_NOT_AWAITABLE | flow | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_BLOCK_READ_BACK_RETIRED | closures | 12 | 0 | 12 | 0 | 0 |  |
@@ -121,7 +121,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_GRAPH_SHAPE | nodes | 2 | 0 | 2 | 0 | 0 |  |
 | MOV_GRAPH_SPREAD_NOT_MAP | nodes | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_GRAPH_SPREAD_UNTYPED | nodes | 2 | 0 | 2 | 0 | 0 |  |
-| MOV_HEAD_NEEDS_A_NAME | flow | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_HEAD_NEEDS_A_NAME | flow | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_HEAD_NOT_A_POSITION | walks | 24 | 0 | 24 | 0 | 0 |  |
 | MOV_HOP_CONFIG_UNREAD | walks | 6 | 0 | 6 | 0 | 0 |  |
 | MOV_HOP_FILTER_ENGINE | walks | 8 | 0 | 8 | 0 | 0 |  |
@@ -232,7 +232,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNKNOWN_PROPERTY | walks | 286 | 0 | 286 | 0 | 0 |  |
 | MOV_UNKNOWN_TYPE_NAME | nodes | 23 | 0 | 23 | 0 | 0 |  |
 | MOV_UNREACHABLE_BRANCH | walks | 28 | 0 | 28 | 0 | 0 |  |
-| MOV_UNTIL_CADENCE_TOO_SHORT | flow | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_UNTIL_CADENCE_TOO_SHORT | flow | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_USE_BEFORE_BIND | names | 19 | 15 | 4 | 0 | 0 |  |
 | MOV_VALUE_UNLISTED | values | 20 | 0 | 20 | 0 | 0 |  |
