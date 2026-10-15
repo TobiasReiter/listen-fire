@@ -154,7 +154,7 @@ impl<'c> Checker<'c> {
             }
             Statement::Write(write) => self.check_write(&write.write, scope),
             Statement::Match(statement) => self.check_match(&statement.r#match, scope),
-            Statement::Call(call) => self.check_call(call, scope),
+            Statement::Call(call) => self.check_call_statement(call, scope),
             Statement::Block(block) => self.check_traversal_block(&block.block, scope, None),
             Statement::Link(link) => self.check_link(&link.link, scope),
             Statement::Unlink(unlink) => {
@@ -199,7 +199,7 @@ impl<'c> Checker<'c> {
                 let adapter = self.check_construction(construct, scope);
                 return Bound { is_closure: false, is_instance: name.is_some(), adapter };
             }
-            RValue::Call { call } => self.check_call(call, scope),
+            RValue::Call { call } => self.check_call_rvalue(call, scope),
             RValue::Write { write } => self.check_write(write, scope),
             RValue::Match { r#match } => self.check_match(r#match, scope),
             RValue::Link { link } => self.check_link(link, scope),
@@ -232,7 +232,9 @@ impl<'c> Checker<'c> {
                     // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
                     CallbackSubject::Named { args, .. } => self.check_call_args(args, scope),
                 }
-                for arg in &callback.config {
+                // Only `once` is read as an expression: `ttl` is a duration
+                // literal, and any other key is refused by name.
+                for arg in callback.config.iter().filter(|arg| arg.name == "once") {
                     self.check_expr_slot(&arg.value, scope);
                 }
             }
@@ -272,7 +274,13 @@ impl<'c> Checker<'c> {
             }
             return;
         }
-        let Ok(parsed) = expression_of_slot(slot) else { return };
+        if let Some(hoisted) = self.hoist_nested_calls(slot, scope) {
+            return self.check_expr_slot(&hoisted, scope);
+        }
+        let parsed = match expression_of_slot(slot) {
+            Ok(parsed) => parsed,
+            Err(error) => return self.report_slot_error(&error, slot),
+        };
         let names = collect_expression_names(&parsed);
         for name in names.distinct_refs() {
             if !names.aliases.contains(name) {
@@ -306,7 +314,13 @@ impl<'c> Checker<'c> {
     /// `checkConditionSlot`, the name half: an `if` condition, whose `IS`
     /// tests name a subject and a type.
     fn check_condition_slot(&mut self, slot: &ExprSlot, scope: ScopeId) {
-        let Ok(condition) = condition_of_slot(slot) else { return };
+        if let Some(hoisted) = self.hoist_nested_calls(slot, scope) {
+            return self.check_condition_slot(&hoisted, scope);
+        }
+        let condition = match condition_of_slot(slot) {
+            Ok(condition) => condition,
+            Err(error) => return self.report_slot_error(&error, slot),
+        };
         self.check_condition(&condition, slot, scope);
     }
 
@@ -398,7 +412,7 @@ impl<'c> Checker<'c> {
         self.resolve_name(&reference.graph, reference.span, scope);
     }
 
-    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, _self_name: Option<&str>) {
+    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) {
         let body = self.scopes.open(Some(scope));
         for param in &closure.params {
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
@@ -407,14 +421,13 @@ impl<'c> Checker<'c> {
                 self.type_param(body, &param.name, type_, scope);
             }
         }
+        if let Some(name) = self_name {
+            self.declare_closure_self(name, closure, body);
+        }
         self.check_statement_list(&closure.body, body);
     }
 
-    fn check_call(&mut self, call: &CallStatement, scope: ScopeId) {
-        if let Some(expression) = &call.expression {
-            self.check_expr_slot(expression, scope);
-            return;
-        }
+    pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) {
         if !crate::families::names::is_builtin_name(&call.callee) {
             let callee = self.callee_name(&call.callee, scope);
             match self.scopes.resolve(scope, &callee) {
@@ -436,7 +449,7 @@ impl<'c> Checker<'c> {
                 CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
                 CallArg::Write { write, .. } => self.check_write(write, scope),
                 CallArg::Node { node, .. } => self.check_node_literal(node, scope),
-                CallArg::Call { call, .. } => self.check_call(call, scope),
+                CallArg::Call { call, .. } => self.check_call_in_argument(call, scope),
                 CallArg::Closure { closure, .. } => self.check_closure(closure, scope, None),
                 CallArg::Type { .. } => {}
             }
@@ -605,7 +618,11 @@ impl<'c> Checker<'c> {
             Some(PathRoot::Expression { .. }) => EXPRESSION_ROOT_PROBE.to_string(),
         };
         let probe = format!("{root}{}.`__movement_head_probe__`", head.hops_raw);
-        if let Ok(parsed) = expression_of_text(&probe) {
+        let parsed = expression_of_text(&probe);
+        if let Err(error) = &parsed {
+            self.report_head_parse_error(error, head.span);
+        }
+        if let Ok(parsed) = parsed {
             let names = collect_expression_names(&parsed);
             for name in names.distinct_refs() {
                 let local = aliases.iter().any(|a| a == name)
@@ -686,7 +703,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
+    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
         self.check_expr_slot(&op.source, scope);
         if let Some(init) = &op.init {
             self.check_expr_slot(init, scope);

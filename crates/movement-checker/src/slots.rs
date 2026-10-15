@@ -15,6 +15,21 @@ use movement_parser::scan::scan_name;
 pub struct SlotError {
     pub message: String,
     pub code: Option<String>,
+    /// The UTF-16 offset into the text the grammar refused at; a lowering
+    /// refusal has none.
+    pub pos: Option<usize>,
+    /// A closure written as a list's element or a map's value.
+    pub held_as_data: Option<movement_parser::lowering::HeldAsData>,
+}
+
+impl SlotError {
+    fn syntax(e: &movement_parser::lexer::SyntaxError) -> Self {
+        SlotError { message: e.message.clone(), code: None, pos: Some(e.pos), held_as_data: None }
+    }
+
+    fn lowering(e: &movement_parser::lowering::LoweringRefusal) -> Self {
+        SlotError { message: e.message.clone(), code: e.code.clone(), pos: None, held_as_data: e.held_as_data }
+    }
 }
 
 /// `expressionOfSlot`.
@@ -24,14 +39,14 @@ pub fn expression_of_slot(slot: &ExprSlot) -> Result<Expression, SlotError> {
 
 /// `conditionOfSlot`: the slot as an `if` condition.
 pub fn condition_of_slot(slot: &ExprSlot) -> Result<movement_parser::lowering::condition::MovementCondition, SlotError> {
-    let tree = parse_expression(&slot.raw).map_err(|e| SlotError { message: e.message.clone(), code: None })?;
-    movement_parser::lowering::lower_condition(&tree, &slot.raw).map_err(|e| SlotError { message: e.message.clone(), code: e.code.clone() })
+    let tree = parse_expression(&slot.raw).map_err(|e| SlotError::syntax(&e))?;
+    movement_parser::lowering::lower_condition(&tree, &slot.raw).map_err(|e| SlotError::lowering(&e))
 }
 
 /// `parseMovementExpression`: a text that is not a slot.
 pub fn expression_of_text(raw: &str) -> Result<Expression, SlotError> {
-    let tree = parse_expression(raw).map_err(|e| SlotError { message: e.message.clone(), code: None })?;
-    lower_expression(&tree, raw).map_err(|e| SlotError { message: e.message.clone(), code: e.code.clone() })
+    let tree = parse_expression(raw).map_err(|e| SlotError::syntax(&e))?;
+    lower_expression(&tree, raw).map_err(|e| SlotError::lowering(&e))
 }
 
 /// `BARE_IDENT`.

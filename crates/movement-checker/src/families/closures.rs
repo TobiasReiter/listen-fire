@@ -16,3 +16,24 @@
 //! - MOV_COMBINATOR_NO_AWAIT
 //! - MOV_INLINE_BLOCK_RETIRED
 //! - MOV_PARALLEL_RETIRED
+
+
+use movement_parser::ast::ClosureExpression;
+use movement_parser::version::since;
+
+use crate::checker::Checker;
+use crate::scope::{ScopeId, Symbol, SymbolKind};
+
+impl Checker<'_> {
+    /// `declareClosureSelf`: a closure bound to a name may call itself by
+    /// that name (version 3); a parameter of the same name shadows it.
+    pub fn declare_closure_self(&mut self, name: &str, closure: &ClosureExpression, body: ScopeId) {
+        if !since(self.version, 3) || closure.params.iter().any(|p| p.name == name) {
+            return;
+        }
+        let mut symbol = Symbol::new(name, SymbolKind::Binding, closure.span);
+        symbol.is_closure = true;
+        let id = self.scopes.add_symbol(symbol);
+        self.scopes.declare(body, id);
+    }
+}
