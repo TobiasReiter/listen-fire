@@ -7,7 +7,7 @@ use movement_parser::catalog::types::CatalogSnapshot;
 
 fn codes(source: &str, version: u32) -> Vec<(String, String)> {
     let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
-    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None };
+    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code, d.message)).collect()
 }
 

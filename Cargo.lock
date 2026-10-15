@@ -355,6 +355,8 @@ name = "movement-checker"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "jiff",
+ "jiff-tzdb",
  "movement-parser",
  "serde",
  "serde_json",

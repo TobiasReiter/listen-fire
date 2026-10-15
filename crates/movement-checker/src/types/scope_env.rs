@@ -31,6 +31,7 @@ pub struct SymbolTypes {
 pub struct ScopeEnv<'s> {
     pub scopes: &'s Scopes,
     pub scope: ScopeId,
+    pub zones: &'s dyn crate::host::ZoneLookup,
 }
 
 impl ScopeEnv<'_> {
@@ -43,6 +44,10 @@ impl ScopeEnv<'_> {
 }
 
 impl TypeEnv for ScopeEnv<'_> {
+    fn is_zone(&self, zone: &str) -> Option<bool> {
+        Some(self.zones.is_zone(zone))
+    }
+
     fn resolve_root(&self, name: &str) -> Option<Position> {
         self.types(name)?.pos.clone()
     }

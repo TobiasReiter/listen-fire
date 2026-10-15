@@ -153,6 +153,17 @@ pub fn current() -> &'static dyn EnvServices {
     }
 }
 
+/// The checker's zone database (`movement_checker::host::ZoneLookup`): a
+/// zone is one `Intl` accepts exactly when it can read an instant there,
+/// which is `isValidTimeZone`'s own probe (constructing the formatter).
+pub struct EnvZones;
+
+impl movement_checker::host::ZoneLookup for EnvZones {
+    fn is_zone(&self, zone: &str) -> bool {
+        current().tz_convert("1970-01-01T00:00:00.000Z", zone).is_some()
+    }
+}
+
 /// A native build without `native-env`: no zone database, URL parser or
 /// Unicode data to answer from.
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-env")))]

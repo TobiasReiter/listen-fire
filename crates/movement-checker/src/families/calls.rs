@@ -162,7 +162,7 @@ pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Positi
 struct LiteralArg {
     index: usize,
     what: &'static str,
-    check: fn(&str) -> Option<String>,
+    check: fn(&str, &dyn crate::types::infer::TypeEnv) -> Option<String>,
 }
 
 /// `literalArgs` of each standard-library function that has them, with its
@@ -198,7 +198,7 @@ fn check_stdlib_literal_args(typing: &mut Typing, id: &str, args: &[Expression])
             );
             continue;
         };
-        if let Some(problem) = (literal.check)(written) {
+        if let Some(problem) = (literal.check)(written, typing.env) {
             typing.report(codes::STDLIB_ARG_INVALID, problem);
         }
     }
@@ -208,7 +208,7 @@ const DATE_FORMAT_TOKENS: &[&str] = &["YYYY", "YY", "MMMM", "MMM", "MM", "M", "D
 
 /// `checkDateFormatPattern`: every run of letters splits, where the letter
 /// changes, into tokens.
-fn check_date_format_pattern(pattern: &str) -> Option<String> {
+fn check_date_format_pattern(pattern: &str, _env: &dyn crate::types::infer::TypeEnv) -> Option<String> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -254,14 +254,18 @@ fn closest_date_format_token(run: &str) -> Option<&'static str> {
     same_letter.into_iter().reduce(|best, t| if t.len().abs_diff(length) < best.len().abs_diff(length) { t } else { best })
 }
 
-/// `checkTimeZone` needs the IANA zone database, which this crate does not
-/// carry: a written zone is taken as it stands.
-fn check_time_zone(_zone: &str) -> Option<String> {
-    None
+/// `checkTimeZone`: a zone the host's zone database knows.
+fn check_time_zone(zone: &str, env: &dyn crate::types::infer::TypeEnv) -> Option<String> {
+    match env.is_zone(zone) {
+        Some(known) if zone.is_empty() || !known => {
+            Some(format!("'{zone}' is not a recognised IANA time zone (e.g. \"Europe/London\", \"America/New_York\", \"UTC\")"))
+        }
+        _ => None,
+    }
 }
 
 /// `wallClockTimeError`: a 24-hour `HH:mm` reading.
-fn check_wall_clock_time(time: &str) -> Option<String> {
+fn check_wall_clock_time(time: &str, _env: &dyn crate::types::infer::TypeEnv) -> Option<String> {
     let b = time.trim().as_bytes();
     let ok = b.len() == 5
         && b[2] == b':'
@@ -270,7 +274,7 @@ fn check_wall_clock_time(time: &str) -> Option<String> {
     (!ok).then(|| format!("'{time}' is not a time of day — write it as 24-hour HH:mm (e.g. \"07:00\", \"18:30\")"))
 }
 
-fn check_serialise_format(format: &str) -> Option<String> {
+fn check_serialise_format(format: &str, _env: &dyn crate::types::infer::TypeEnv) -> Option<String> {
     if format == "JSON" {
         return None;
     }
@@ -278,7 +282,7 @@ fn check_serialise_format(format: &str) -> Option<String> {
     Some(format!("'{format}' isn't a format TEXT.SERIALISE writes — {near}the formats are \"JSON\"."))
 }
 
-fn check_number_format_style(style: &str) -> Option<String> {
+fn check_number_format_style(style: &str, _env: &dyn crate::types::infer::TypeEnv) -> Option<String> {
     (!matches!(style, "compact" | "grouped")).then(|| format!("'{style}' isn't a number format style — write \"compact\" or \"grouped\"."))
 }
 

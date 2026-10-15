@@ -51,6 +51,11 @@ pub trait TypeEnv {
     fn is_many_valued_name(&self, _name: &str) -> bool {
         false
     }
+    /// Whether the host's zone database knows `zone`; `None` for a typing
+    /// with no host behind it (one outside a check), which accuses nothing.
+    fn is_zone(&self, _zone: &str) -> Option<bool> {
+        None
+    }
 }
 
 /// An environment with nothing in it.

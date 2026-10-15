@@ -46,6 +46,8 @@ pub struct Checker<'c> {
     pub imports: crate::families::imports::ImportState,
     /// Checking for a move up from this version (`upgradingFrom`).
     pub upgrading_from: Option<u32>,
+    /// The host's zone database.
+    pub zones: &'c dyn crate::host::ZoneLookup,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
     pub movement_params: std::collections::HashMap<crate::scope::SymbolId, Vec<String>>,
     /// The bodies being walked, innermost last, each collecting its `return`s.
@@ -97,10 +99,11 @@ pub struct Bound {
 }
 
 impl<'c> Checker<'c> {
-    pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
+    pub fn new(catalog: &'c CatalogSnapshot, options: &crate::CheckOptions<'c>, resolves_files: bool) -> Self {
         Checker {
             catalog,
-            version,
+            version: options.language_version,
+            zones: options.zones,
             resolves_files,
             scopes: Scopes::default(),
             diagnostics: Vec::new(),
@@ -108,7 +111,7 @@ impl<'c> Checker<'c> {
             listens: Default::default(),
             imports: Default::default(),
             schemas: Default::default(),
-            upgrading_from: None,
+            upgrading_from: options.upgrading_from,
             movement_params: Default::default(),
             return_stack: Vec::new(),
             function_returns: Default::default(),

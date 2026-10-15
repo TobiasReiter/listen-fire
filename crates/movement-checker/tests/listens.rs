@@ -10,7 +10,7 @@ const CRON: &str = r#""cron":{"constructionArgs":[],"canFire":true,"triggerConfi
 fn check(source: &str, files: &str) -> Vec<Diagnostic> {
     let snapshot = format!(r#"{{"adapters":{{{CRON}}},"credentials":{{}},"plugins":{{}}{files}}}"#);
     let catalog = CatalogSnapshot::load(&snapshot).unwrap();
-    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None };
+    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     check_source(source, &catalog, options).unwrap()
 }
 
@@ -43,4 +43,27 @@ fn a_library_is_checked_once_and_its_errors_surface_at_the_import() {
     assert!(found[0].message.starts_with("\"lib/a\" does not export 'nope'"), "{}", found[0].message);
     assert!(found[1].message.starts_with("\"lib/a\" line 2: Unknown name 'nowhere'"), "{}", found[1].message);
     assert_eq!(found[1].span.start.line, 1);
+}
+
+/// A host whose zone database holds one zone.
+struct OneZone(&'static str);
+
+impl movement_checker::host::ZoneLookup for OneZone {
+    fn is_zone(&self, zone: &str) -> bool {
+        zone == self.0
+    }
+}
+
+#[test]
+fn a_cron_time_zone_is_the_hosts_to_recognise() {
+    let source = "import { cron } from adapters\nt = cron()\nmovement digest(e: <t-[:Tick]->>) {}\nlisten to t { schedule: \"0 9 * * 1\", timezone: \"Narnia/Cair\" } fire digest";
+    let snapshot = format!(r#"{{"adapters":{{{CRON}}},"credentials":{{}},"plugins":{{}}}}"#);
+    let catalog = CatalogSnapshot::load(&snapshot).unwrap();
+    let with = |zones: &dyn movement_checker::host::ZoneLookup| {
+        check_source(source, &catalog, CheckOptions { language_version: 3, upgrading_from: None, parse_version: None, zones }).unwrap()
+    };
+    let refused = with(&movement_checker::host::native::NativeZones);
+    assert_eq!(codes(&refused), ["MOV_LISTEN_BAD_CONFIG"]);
+    assert!(refused[0].message.starts_with("'Narnia/Cair' is not a recognised IANA time zone"), "{}", refused[0].message);
+    assert!(with(&OneZone("Narnia/Cair")).is_empty());
 }

@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **127 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 13884 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 10134 of 11435.
-- Rust side: 2.4s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **129 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 13892 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 10142 of 11435.
+- Rust side: 2.3s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 1939 | 1940 |
-| checks v1 | 1535 | 1331 | 1332 |
-| checks v2 | 1956 | 1687 | 1688 |
-| checks v3 | 2403 | 1996 | 1997 |
+| checks under v5 | 2360 | 1941 | 1942 |
+| checks v1 | 1535 | 1333 | 1334 |
+| checks v2 | 1956 | 1689 | 1690 |
+| checks v3 | 2403 | 1998 | 1999 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -24,12 +24,12 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| calls | 26 | 15 | 476 | 362 | 114 | 0 | 0 |
+| calls | 26 | 16 | 476 | 366 | 110 | 0 | 0 |
 | closures | 14 | 12 | 305 | 281 | 24 | 0 | 0 |
 | extraction | 20 | 1 | 207 | 7 | 200 | 0 | 0 |
 | flow | 10 | 8 | 78 | 70 | 8 | 0 | 0 |
 | imports | 5 | 5 | 44 | 44 | 0 | 0 | 0 |
-| listens | 12 | 11 | 10671 | 10667 | 4 | 0 | 0 |
+| listens | 12 | 12 | 10671 | 10671 | 0 | 0 | 0 |
 | names | 9 | 8 | 371 | 367 | 4 | 0 | 0 |
 | nodes | 25 | 0 | 314 | 4 | 310 | 0 | 0 |
 | records | 3 | 0 | 59 | 8 | 51 | 0 | 0 |
@@ -148,7 +148,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_LINK_MATCH_BODY_RETIRED | writes | 15 | 15 | 0 | 0 | 0 | yes |
 | MOV_LINK_UNSUPPORTED_EDGE | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_ALIAS_DUPLICATE | listens | 4 | 4 | 0 | 0 | 0 | yes |
-| MOV_LISTEN_BAD_CONFIG | listens | 138 | 134 | 4 | 0 | 0 |  |
+| MOV_LISTEN_BAD_CONFIG | listens | 138 | 138 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_CANNOT_FIRE | listens | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_DUPLICATE | listens | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_FILE_LEVEL | listens | 4 | 4 | 0 | 0 | 0 | yes |
@@ -208,7 +208,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_SORT_KEY_ON_WALK | values | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_SORT_NEEDS_KEY | values | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_SORT_NOT_COLLECTION | values | 4 | 4 | 0 | 0 | 0 | yes |
-| MOV_STDLIB_ARG_INVALID | calls | 23 | 19 | 4 | 0 | 0 |  |
+| MOV_STDLIB_ARG_INVALID | calls | 23 | 23 | 0 | 0 | 0 | yes |
 | MOV_STDLIB_ARG_LAZY_EDGE | records | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_STDLIB_ARG_NOT_LITERAL | calls | 17 | 17 | 0 | 0 | 0 | yes |
 | MOV_STDLIB_ARG_NOT_RECORD | records | 26 | 0 | 26 | 0 | 0 |  |

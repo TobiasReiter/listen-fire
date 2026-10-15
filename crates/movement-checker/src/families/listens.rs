@@ -754,16 +754,22 @@ impl Checker<'_> {
                 ),
             },
             Some(TriggerConfigFormat::Timezone) => {
-                if !matches!(static_string_values(&arg.value).as_deref(), Some([_])) {
-                    self.report(
+                match static_string_values(&arg.value).as_deref() {
+                    Some([zone]) => {
+                        if let Some(problem) = crate::host::time_zone_error(self.zones, zone) {
+                            self.report(
+                                codes::LISTEN_BAD_CONFIG,
+                                format!("{problem}. The schedule then fires at that local wall-clock time, with daylight-savings handled for you"),
+                                span,
+                            );
+                        }
+                    }
+                    _ => self.report(
                         codes::LISTEN_BAD_CONFIG,
                         format!("'{}' takes one quoted IANA time zone — e.g. {}: \"Europe/London\"", arg.name, arg.name),
                         span,
-                    );
+                    ),
                 }
-                // TODO(timezone): `cronTimezoneError` asks the runtime's zone
-                // database (Intl); this crate has none on wasm, so a zone is
-                // not yet checked against it.
             }
             Some(TriggerConfigFormat::Strings) => {
                 let values = static_string_values(&arg.value);

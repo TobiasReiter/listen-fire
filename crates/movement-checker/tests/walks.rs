@@ -11,7 +11,7 @@ fn walk_codes(body: &str) -> Vec<(String, String)> {
         "import {{ registry }} from adapters\nimport {{ public_registry as pr }} from credentials\nreg = registry(credentials: pr)\nmovement main(e: <reg-[:entity]->>) {{\n{body}\n}}\n"
     );
     let catalog = CatalogSnapshot::load(CATALOG).unwrap();
-    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None };
+    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     check_source(&source, &catalog, options)
         .unwrap()
         .into_iter()
@@ -36,7 +36,7 @@ fn a_hop_alias_reads_the_position_it_landed_on() {
 fn a_parameter_type_names_a_position_the_schema_has() {
     let source = "import { registry } from adapters\nimport { public_registry } from credentials\nreg = registry(credentials: public_registry)\nmovement main(e: <reg-[:Entity]->>) {\n}\n";
     let catalog = CatalogSnapshot::load(CATALOG).unwrap();
-    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None };
+    let options = CheckOptions { language_version: 3, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     let codes: Vec<String> = check_source(source, &catalog, options).unwrap().into_iter().map(|d| d.message).collect();
     assert!(codes.contains(&"'reg' has no position type 'Entity' — it has: entity, holding".to_string()), "{codes:?}");
 }

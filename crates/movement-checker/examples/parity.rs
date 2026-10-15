@@ -65,7 +65,7 @@ fn main() {
         let options = CheckOptions {
             language_version: version,
             upgrading_from: record["upgradingFrom"].as_u64().map(|v| v as u32),
-            parse_version: record["parseVersion"].as_u64().map(|v| v as u32),
+            parse_version: record["parseVersion"].as_u64().map(|v| v as u32), zones: &movement_checker::host::native::NativeZones,
         };
         let ts: Vec<Value> = record["ts"].as_array().expect("ts diagnostics").clone();
         let corpus = corpora.entry(record["corpus"].as_str().unwrap_or("?").to_string()).or_default();
@@ -74,7 +74,7 @@ fn main() {
             refused += 1;
             continue;
         };
-        let rust = match std::panic::catch_unwind(|| check_source(source, catalog, options)) {
+        let rust = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_source(source, catalog, options))) {
             Ok(Ok(diagnostics)) => diagnostics.iter().map(|d| serde_json::to_value(d).expect("a diagnostic")).collect::<Vec<_>>(),
             Ok(Err(_)) => {
                 refused += 1;
