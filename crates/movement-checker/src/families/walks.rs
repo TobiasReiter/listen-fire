@@ -920,11 +920,8 @@ fn narrowing_example(u: &crate::types::position::UnionPosition, carrying: &[&Str
 // ── IS-test narrowing (`checkCondition`'s isTest case, `checkIf`'s
 // elimination down the arms) ──
 
-/// What the failed `IS` tests above an arm ruled out, per subject name;
-/// `None` where a declared node's test ruled out what this port cannot yet
-/// work out (conformance is the nodes family's), so the subject goes untyped
-/// rather than wrong.
-pub type RuledOut = indexmap::IndexMap<String, Option<Vec<String>>>;
+/// What the failed `IS` tests above an arm ruled out, per subject name.
+pub type RuledOut = indexmap::IndexMap<String, Vec<String>>;
 
 /// `residualUnion`: a union with only `remaining` left; one left is that position.
 fn residual_union(union: &crate::types::position::UnionPosition, remaining: &[String]) -> Position {
@@ -1023,12 +1020,16 @@ impl crate::checker::Checker<'_> {
                 );
                 return;
             }
-            // Which members conform is the nodes family's to answer; until
-            // then the arm reads the subject untyped rather than wrongly.
+            // A structural test: the arm keeps every member that conforms
+            // (or that nothing could compare).
             if let Some(into) = narrow_into
-                && self.union_of(subject, scope).is_some()
+                && let Some(union) = self.union_of(subject, scope)
             {
-                self.declare_narrowed(subject, scope, into, None);
+                let conforming: Vec<String> =
+                    union.variants.iter().filter(|v| self.conforms_to_declared_node(&union.instance, v, graph_id) != Some(false)).cloned().collect();
+                if conforming.len() != union.variants.len() {
+                    self.declare_narrowed(subject, scope, into, Some(residual_union(&union, &conforming)));
+                }
             }
             return;
         }
@@ -1100,8 +1101,17 @@ impl crate::checker::Checker<'_> {
         let Some(union) = self.union_of(subject, scope) else { return };
         let Resolution::Found(graph) = self.scopes.resolve(scope, &type_.graph) else { return };
         if self.scopes.symbol(graph).kind == crate::scope::SymbolKind::Shape {
-            if type_.position.is_none() && type_.hops_raw.is_none() {
-                ruled_out.insert(subject.to_string(), None);
+            if type_.position.is_some() || type_.hops_raw.is_some() {
+                return;
+            }
+            // Only a member proved to conform is ruled out by the failure.
+            let conforming: Vec<String> =
+                union.variants.iter().filter(|v| self.conforms_to_declared_node(&union.instance, v, graph) == Some(true)).cloned().collect();
+            let eliminated = ruled_out.entry(subject.to_string()).or_default();
+            for variant in conforming {
+                if !eliminated.contains(&variant) {
+                    eliminated.push(variant);
+                }
             }
             return;
         }
@@ -1110,9 +1120,8 @@ impl crate::checker::Checker<'_> {
             return;
         }
         let Some(variant) = ruled_out_variant(type_, &union) else { return };
-        if let Some(eliminated) = ruled_out.entry(subject.to_string()).or_insert_with(|| Some(Vec::new()))
-            && !eliminated.contains(&variant)
-        {
+        let eliminated = ruled_out.entry(subject.to_string()).or_default();
+        if !eliminated.contains(&variant) {
             eliminated.push(variant);
         }
     }
@@ -1121,10 +1130,6 @@ impl crate::checker::Checker<'_> {
     pub fn declare_eliminated(&mut self, ruled_out: &RuledOut, scope: ScopeId, into: ScopeId) {
         for (name, eliminated) in ruled_out {
             let Some(union) = self.union_of(name, scope) else { continue };
-            let Some(eliminated) = eliminated else {
-                self.declare_narrowed(name, scope, into, None);
-                continue;
-            };
             let remaining: Vec<String> = union.variants.iter().filter(|v| !eliminated.contains(v)).cloned().collect();
             if remaining.len() == union.variants.len() {
                 continue;

@@ -739,7 +739,9 @@ impl Checker<'_> {
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Members(_) => {}
+            CallReading::Members(members) => {
+                self.check_members(&members, scope);
+            }
         }
     }
 
@@ -756,7 +758,9 @@ impl Checker<'_> {
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
-            CallReading::Members(_) => {}
+            CallReading::Members(members) => {
+                self.check_members(&members, scope);
+            }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
         }
     }
@@ -1170,7 +1174,10 @@ impl Checker<'_> {
             }
         }
         self.check_argument_bindings(&call.callee, &call.args, params.as_deref(), call.span, false);
-        self.check_call_args(&call.args, scope);
+        let arg_types = self.check_call_args_typed(&call.args, scope);
+        if let Resolution::Found(id) = self.scopes.resolve(scope, &callee) {
+            self.check_call_arg_fits(&call.callee, id, &call.args, &arg_types);
+        }
     }
 
     /// `checkCallbackNamed`'s arguments: bound partially, as the rest are
