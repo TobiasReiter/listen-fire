@@ -143,6 +143,9 @@ impl Checker<'_> {
         if let Some(pos) = &bound.pos {
             types = Some(SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
         }
+        if let Some((returned, ordering)) = &bound.collected {
+            types = Some(collected_types(returned, *ordering));
+        }
         types
     }
 
@@ -370,6 +373,21 @@ pub(crate) fn symbol_position(types: &SymbolTypes) -> Option<Position> {
         Some(Ty::Record(Some(position))) => Some((**position).clone()),
         _ => None,
     })
+}
+
+/// `planeOfReturn` for a traversal-headed block: what each walk of the body
+/// returned, collected — a list of values, or the returned record (records
+/// are many already, so the plurality lives on the name, with its order).
+fn collected_types(returned: &ReturnShape, ordering: crate::types::field::CollectionOrder) -> SymbolTypes {
+    use crate::types::field::list_of;
+    let may_hold = returned.may_hold.clone().map(|held| list_of(held, ordering));
+    if let Some(field) = &returned.plane.field {
+        return SymbolTypes { field: Some(list_of(field.clone(), ordering)), may_hold, ..SymbolTypes::default() };
+    }
+    if let Some(pos) = &returned.plane.pos {
+        return SymbolTypes { pos: Some((**pos).clone()), plural: Some(ordering), ..SymbolTypes::default() };
+    }
+    SymbolTypes { may_hold, ..SymbolTypes::default() }
 }
 
 /// `spellValueType`: a written value type as the author wrote it.

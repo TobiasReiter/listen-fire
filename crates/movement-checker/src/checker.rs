@@ -104,6 +104,9 @@ pub struct Bound {
     pub returned: Option<crate::types::position::ReturnShape>,
     /// For a closure: what its body was found to hand back.
     pub closure_returns: Option<crate::types::position::ReturnShape>,
+    /// For a traversal-headed block: what each walk of its body hands back,
+    /// collected in the order its head walks.
+    pub collected: Option<(crate::types::position::ReturnShape, crate::types::field::CollectionOrder)>,
 }
 
 impl<'c> Checker<'c> {
@@ -325,10 +328,12 @@ impl<'c> Checker<'c> {
             RValue::Extract { extract } => self.check_extract(extract, scope),
             RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
             RValue::Block { block } => {
-                let returns = self.check_traversal_block(block, scope, name);
-                if !returns {
+                let (returned, ordering) = self.check_traversal_block(block, scope, name);
+                if !returned.returns {
                     self.report_block_returns_nothing(block, name);
+                    return Bound::default();
                 }
+                return Bound { collected: Some((returned, ordering)), ..Bound::default() };
             }
             RValue::Await { r#await } => self.check_await(r#await, scope, name),
             RValue::Combinator { combinator } => {
@@ -844,14 +849,14 @@ impl<'c> Checker<'c> {
 
     /// `checkTraversalBlock`: the body runs in its own scope holding the hop
     /// aliases, and what it binds is remembered as escaped once it closes.
-    /// Whether the block's body hands a value back.
-    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> bool {
+    /// What the block's body hands back, and the order its head walks in.
+    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> (crate::types::position::ReturnShape, crate::types::field::CollectionOrder) {
         let aliases = self.check_path_head(&block.head, scope);
         let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
         self.type_hop_aliases(body, &aliases, walk.as_ref());
         let what = assigned.map_or_else(|| "this block".to_string(), |name| format!("the block bound to '{name}'"));
-        let returns = self.check_body(&block.body, body, what).returns;
+        let returned = self.check_body(&block.body, body, what).value;
         let bound: Vec<String> = self
             .scopes
             .scope(body)
@@ -868,7 +873,7 @@ impl<'c> Checker<'c> {
         for (name, block_name) in inner {
             self.scopes.scope_mut(scope).escaped.entry(name).or_insert(block_name);
         }
-        !returns.is_empty()
+        (returned, walk.map_or(crate::types::field::CollectionOrder::Unknown, |w| w.ordering))
     }
 
     fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {
