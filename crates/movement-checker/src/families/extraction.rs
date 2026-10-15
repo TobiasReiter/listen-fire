@@ -866,3 +866,55 @@ fn borrowed_annotation_spelling(path: &str) -> String {
         _ => path.to_string(),
     }
 }
+
+// ── Built-ins an extraction's content goes through ──
+
+/// An extraction call written inside an expression: from version 3 it runs a
+/// model once per landing or member, so it is bound first.
+pub fn observe_function(typing: &mut Typing, function: &str) {
+    let spelled = match function {
+        "extract" => "extract",
+        "extractone" => "extractOne",
+        _ => return,
+    };
+    if typing.version >= 3 {
+        typing.report(
+            codes::EXTRACT_CALL_NESTED,
+            format!("'{spelled}(…)' runs a model over its content, and a walk's WHERE is read once per landing (a SORT key once per member) — bind it first, then use the name: `found = {spelled}(content, Shape)`"),
+        );
+    }
+}
+
+/// `typeReadCall`: `READ(file)` is the file's text, or nothing; only a file
+/// has bytes to read.
+pub fn type_read_call(typing: &mut Typing, args: &[Option<Ty>]) -> Option<Ty> {
+    if let Some(Some(arg)) = args.first()
+        && !matches!(strip_absent(arg), Ty::File)
+    {
+        typing.report(
+            codes::READ_NOT_FILE,
+            format!(
+                "READ(file) reads a file's text, and this is {} — name the file itself (an attachment's file field), or drop the READ if you already have the text.",
+                describe_field_type(strip_absent(arg))
+            ),
+        );
+    }
+    Some(maybe_absent(Ty::Text))
+}
+
+/// `typeChunksCall`: `CHUNKS(text, { … })` is always a list of text; only a
+/// text has pieces.
+pub fn type_chunks_call(typing: &mut Typing, args: &[Option<Ty>]) -> Ty {
+    if let Some(Some(arg)) = args.first()
+        && !matches!(strip_absent(arg), Ty::Text)
+    {
+        typing.report(
+            codes::CHUNKS_NOT_TEXT,
+            format!(
+                "CHUNKS(text, {{ size | entities, overlap }}) cuts a text into pieces, and this is {} — read the text out of it first (a file's text is READ(file)).",
+                describe_field_type(strip_absent(arg))
+            ),
+        );
+    }
+    Ty::list(Ty::Text)
+}

@@ -732,8 +732,11 @@ impl<'a> Typing<'a> {
     }
 
     fn function_type(&mut self, function: &str, args: &[Option<Ty>]) -> Option<Ty> {
+        crate::families::extraction::observe_function(self, function);
         match function {
             "file" => return Some(Ty::File),
+            "read" => return crate::families::extraction::type_read_call(self, args),
+            "chunks" => return Some(crate::families::extraction::type_chunks_call(self, args)),
             "coalesce" => return coalesce_type(args),
             "multi" => return multi_type(args),
             _ => {}
