@@ -301,24 +301,21 @@ impl Checker<'_> {
                 && field.semantics != Some(FieldWriteMode::Fill)
                 && !is_maybe_absent(target_type.as_ref())
             {
-                let value_type = value_type.as_ref().unwrap_or_else(|| unreachable!("maybe absent is a type"));
-                if let Some(spread) = &field.spread {
-                    self.report(
-                        codes::ABSENT_REQUIRED,
-                        format!(
-                            "'{}' on {root_description} needs a value, but '...{spread}' writes '{spread}.{}', which may be absent ({}). Spread it set-if-empty ('?...{spread}'), or write '{}' on its own line with a value that is always there",
-                            field.name,
-                            field.name,
-                            describe_field_type(value_type),
-                            field.name
-                        ),
-                        field.value.span,
-                    );
-                } else {
-                    let may_leave_unset = matches!(write.target, WriteTarget::Position { .. })
-                        || !root.as_ref().and_then(|r| r.required_fields.as_ref()).is_some_and(|r| r.contains(&field.name));
-                    let identifies = write.unique_by.iter().any(|clause| identity::unique_clause_refs(clause).is_some_and(|refs| refs.contains(&field.name)));
-                    self.report_absent_write_field(field, value_type, &root_description, may_leave_unset, identifies);
+                let may_leave_unset = matches!(write.target, WriteTarget::Position { .. })
+                    || !root.as_ref().and_then(|r| r.required_fields.as_ref()).is_some_and(|r| r.contains(&field.name));
+                let identifies = field.spread.is_none()
+                    && write.unique_by.iter().any(|clause| identity::unique_clause_refs(clause).is_some_and(|refs| refs.contains(&field.name)));
+                let entry = FieldEntry { name: field.name.clone(), value: field.value.clone().into_owned(), semantics: field.semantics, span: field.span };
+                if let Some(diagnostic) = crate::families::values::write_field_absence(crate::families::values::WriteFieldAbsence {
+                    field: &entry,
+                    spread: field.spread.as_deref(),
+                    target_type: target_type.as_ref(),
+                    value_type: value_type.as_ref(),
+                    root_description: &root_description,
+                    may_leave_unset,
+                    identifies,
+                }) {
+                    self.push(diagnostic);
                 }
             }
             if field.semantics == Some(FieldWriteMode::Fill) && is_maybe_absent(value_type.as_ref()) {
@@ -1206,44 +1203,6 @@ impl Checker<'_> {
         matches!(self.scopes.symbol(id).types.pos, Some(Position::Handle(_))).then(|| trimmed.to_string())
     }
 
-    /// `reportAbsentWriteField`: a maybe-absent value in a plain write field.
-    fn report_absent_write_field(&mut self, field: &Field, value_type: &Ty, description: &str, may_leave_unset: bool, identifies: bool) {
-        let raw = field.value.raw.trim().to_string();
-        let label = spell_name(&field.name);
-        let lead = format!("'{}' on {description} needs a value, but '{raw}' may be absent ({})", field.name, describe_field_type(value_type));
-        if identifies {
-            self.report(
-                codes::ABSENT_REQUIRED,
-                format!("{lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if {raw} != null {{ … }}'"),
-                field.value.span,
-            );
-            return;
-        }
-        let unset = may_leave_unset.then(|| format!("'{label} ?: {raw}' to leave it unset when absent"));
-        let Some(fallback) = fallback_literal(strip_absent(value_type)) else {
-            let either = match &unset {
-                Some(unset) => format!("Write {unset}, or"),
-                None => "Either".to_string(),
-            };
-            self.report(
-                codes::ABSENT_REQUIRED,
-                format!(
-                    "{lead} — it comes from a branch that might not have run, or an answer that might not be there. {either} test it with '==' and write inside that branch, or gate on it first ('r-[x:…]-> {{ write … }}')"
-                ),
-                field.value.span,
-            );
-            return;
-        };
-        let coalesced = format!("COALESCE({raw}, {fallback})");
-        let or_unset = unset.map(|u| format!(", or {u}")).unwrap_or_default();
-        let mut diagnostic = Diagnostic::error(
-            codes::ABSENT_REQUIRED,
-            format!("{lead} — write '{label}: {coalesced}' to fall back to a value that is always there{or_unset}"),
-            field.value.span,
-        );
-        diagnostic.fix = Some(serde_json::json!({ "edits": [{ "span": field.value.span, "text": coalesced }] }));
-        self.push(diagnostic);
-    }
 
     /// `reportFieldValueType`: a value the field's type does not take.
     fn report_field_value_type(&mut self, field_name: &str, subject: &str, target: Option<&Ty>, value: Option<&Ty>, span: Span, fit: FieldFit) {
@@ -1656,17 +1615,6 @@ fn write_bind_retired_message(name: &str) -> String {
     format!(
         "'bind {name}' is retired — a write no longer keeps a hidden link to a record in another system, which no system could show or change. Store the link explicitly, in the system that holds it: a field there that carries {name}'s identity, which the next write finds the record by ('write crm-[:Companies]-> {{ unique by (`Source Id`), `Source Id`: …, … }}'), or an edge there. Then drop 'bind {name}'"
     )
-}
-
-/// `fallbackLiteral`: a value of the type that is always there.
-fn fallback_literal(ty: &Ty) -> Option<&'static str> {
-    Some(match ty {
-        Ty::Text => "\"unknown\"",
-        Ty::Number => "0",
-        Ty::Boolean => "false",
-        Ty::List { .. } => "[]",
-        _ => return None,
-    })
 }
 
 /// `textRepair` (conformance.ts).
