@@ -164,8 +164,10 @@ impl Checker<'_> {
         let name = if is_bare_ident(trimmed) && !is_literal_word(trimmed) { Some(trimmed) } else { parsed.and_then(crate::types::narrowing::bare_name) }?;
         let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
         let symbol = self.scopes.symbol(id);
-        // TODO(calls): `functionAsValue` — a function named as a value is on the record plane too.
-        let on_record_plane = symbol.types.pos.is_some() || symbol.types.is_record;
+        // A function declared with a name is a closure value from version 5
+        // (`functionAsValue`), on the record plane too.
+        let function_value = symbol.kind == crate::scope::SymbolKind::Movement && movement_parser::version::since(self.version, 5);
+        let on_record_plane = symbol.types.pos.is_some() || symbol.types.is_record || function_value;
         (on_record_plane && symbol.types.plural.is_none()).then(|| symbol.kind.describe())
     }
 

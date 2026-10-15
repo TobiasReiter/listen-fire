@@ -55,6 +55,9 @@ pub struct Checker<'c> {
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
+    /// Functions declared with a name, typed as the closures they are when
+    /// read as values (version 5).
+    pub function_values: std::collections::HashMap<crate::scope::SymbolId, crate::types::position::ClosureType>,
     /// Receipts already warned about (MOV_RECEIPT_RECORD_SLOT).
     pub reported_receipts: std::collections::HashSet<crate::scope::SymbolId>,
     /// Closures that call themselves by name without declaring what they return.
@@ -133,6 +136,7 @@ impl<'c> Checker<'c> {
             return_stack: Vec::new(),
             function_returns: Default::default(),
             reported_receipts: Default::default(),
+            function_values: Default::default(),
             selves: Default::default(),
             effects: Default::default(),
             inference: Default::default(),
@@ -455,6 +459,7 @@ impl<'c> Checker<'c> {
                 return SlotTyped { expr: None, ty, may_hold: None };
             }
             self.resolve_name_with_fields(trimmed, slot.span, scope, fields);
+            self.type_function_values([trimmed], scope);
             let bound = {
                 let env = self.typing_env(scope);
                 Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
@@ -481,6 +486,7 @@ impl<'c> Checker<'c> {
         }
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
+        self.type_function_values(names.distinct_refs(), scope);
         let (ty, may_hold, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, slot.span);
@@ -611,6 +617,7 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
+                self.type_function_values(names.distinct_refs(), scope);
                 let (ty, diagnostics, watchable) = {
                     let env = self.typing_env(scope);
                     let mut typing = Typing::new(&env, self.version, slot.span);

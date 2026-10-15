@@ -30,7 +30,7 @@
 use movement_parser::ast::{RValue, MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
 use movement_parser::lowering::expression::{Expression, StaticValue};
-use movement_parser::version::since;
+use movement_parser::version::{before, since};
 
 use movement_parser::tree::{At, MExpr, MapMember, StringPart};
 
@@ -77,7 +77,7 @@ pub enum Callee {
 
 use crate::types::field::Ty;
 use crate::types::infer::Typing;
-use crate::types::position::{ClosureParam, Position, ReturnShape};
+use crate::types::position::{ClosureParam, ClosureType, PlaneType, Position, ReturnShape, describe_position};
 
 /// Called by the type core after the values family's `observe`, for every
 /// node: a built-in call's argument rules (`checkBuiltinArgs`,
@@ -590,6 +590,25 @@ pub fn closure_of_value(ty: &Ty) -> bool {
         Ty::Record(Some(position)) => position.is_closure(),
         Ty::Union(members) => !members.is_empty() && members.iter().all(closure_of_value),
         _ => false,
+    }
+}
+
+/// `closuresOfValue`: the closures a value is — a record of closure type, or
+/// a union of them; `None` when it may be something else.
+pub fn closures_of_value(ty: &Ty) -> Option<Vec<ClosureType>> {
+    match ty {
+        Ty::Record(Some(position)) => match position.as_ref() {
+            Position::Closure(closure) => Some(vec![closure.clone()]),
+            _ => None,
+        },
+        Ty::Union(members) => {
+            let mut found: Vec<ClosureType> = Vec::new();
+            for member in members {
+                found.extend(closures_of_value(member)?);
+            }
+            (!found.is_empty()).then_some(found)
+        }
+        _ => None,
     }
 }
 
@@ -1280,11 +1299,47 @@ impl Checker<'_> {
         }
         match (&symbol.types.pos, &symbol.types.field) {
             (Some(Position::Closure(c)), _) => Some(c.clone()),
-            (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
-                Position::Closure(c) => Some(c.clone()),
-                _ => None,
-            },
+            // From version 5 a closure is a value like any other, so a name
+            // whose value is one, or one of several, is called as TypeScript
+            // calls `f: (() => A) | (() => B)`.
+            (None, Some(ty)) => closures_of_value(ty).map(|closures| crate::types::position::one_of_closures(&closures, true)),
             _ => None,
+        }
+    }
+
+    /// `functionAsValue`: a function declared with a name, read as a value
+    /// (version 5), is a closure like any other, as a TypeScript function
+    /// declaration is — its parameters and what calling it returns. One type
+    /// per declaration once its body is known; while that body is still
+    /// being walked, the type is worked out afresh at each read.
+    pub fn function_as_value(&mut self, id: SymbolId) -> Option<crate::types::position::ClosureType> {
+        if self.scopes.symbol(id).kind != SymbolKind::Movement || before(self.version, 5) {
+            return None;
+        }
+        if let Some(known) = self.function_values.get(&id) {
+            return Some(known.clone());
+        }
+        let params = self.movement_declared_params(id).unwrap_or_default();
+        let returns = self.movement_return(id);
+        let written_at = self.scopes.symbol(id).span;
+        let closure = crate::types::position::ClosureType::new("a closure", params, returns, Some(written_at));
+        if self.inference.inferred.get(&self.declared_id(id)) != Some(&false) {
+            self.function_values.insert(id, closure.clone());
+        }
+        Some(closure)
+    }
+
+    /// Types each function among `names` the typing about to run reads as a value.
+    pub fn type_function_values<'n>(&mut self, names: impl IntoIterator<Item = &'n str>, scope: ScopeId) {
+        if before(self.version, 5) {
+            return;
+        }
+        for name in names {
+            if let Resolution::Found(id) = self.scopes.resolve(scope, name)
+                && self.scopes.symbol(id).kind == SymbolKind::Movement
+            {
+                self.function_as_value(id);
+            }
         }
     }
 
@@ -1316,11 +1371,8 @@ impl Checker<'_> {
             let suspends = self.closure_suspends(id);
             self.absorb_suspend(suspends);
             let Some(closure) = self.called_closure(id) else { return (None, ReturnShape::default()) };
-            let arity = closure.params.len();
-            if arity != count {
-                self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {count}", call.callee, plural(arity)), call.span);
-            }
-            return (Some(closure.params), closure.returns);
+            let params = self.closure_call_params(call, &closure);
+            return (Some(params), closure.returns);
         }
         if let Some(message) = self.not_a_closure_message(&callee, &call.callee) {
             self.report(codes::CALL_NOT_MOVEMENT, message, call.span);
@@ -1332,6 +1384,103 @@ impl Checker<'_> {
             );
         }
         (None, ReturnShape::default())
+    }
+
+    /// `closureCallParams`: the parameters a call through a closure value is
+    /// held to, its arity checked. One of several closures is called as
+    /// TypeScript calls a union of function types: every candidate's arity,
+    /// and an argument that fits every candidate's parameter. Before version 5
+    /// the closures a body's returns hand back are called as the first of
+    /// them, so what version 5 holds the call to is an upgrade warning.
+    fn closure_call_params(&mut self, call: &CallStatement, closure: &ClosureType) -> Vec<ClosureParam> {
+        let candidates: Vec<ClosureType> = closure.candidates().into_iter().cloned().collect();
+        let given = call.args.len();
+        let strict = candidates.len() == 1 || since(self.version, 5);
+        let say = |this: &mut Self, code: &str, message: String| {
+            if strict {
+                this.report(code, message, call.span);
+            } else {
+                this.report_upgrade_warning(
+                    code,
+                    format!("{message}. Before {} the call is typed by the first; from it, this is refused", crate::version::describe(5)),
+                    call.span,
+                );
+            }
+        };
+        let mut arities: Vec<usize> = Vec::new();
+        for candidate in &candidates {
+            if !arities.contains(&candidate.params.len()) {
+                arities.push(candidate.params.len());
+            }
+        }
+        if !strict && closure.params.len() != given {
+            let arity = closure.params.len();
+            self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {given}", call.callee, plural(arity)), call.span);
+        } else if arities.iter().any(|&arity| arity != given) {
+            let arity = if let [only] = arities.as_slice() {
+                format!("takes {only} argument{}", plural(*only))
+            } else {
+                format!("may be any of several closures, taking {} arguments", arities.iter().map(usize::to_string).collect::<Vec<_>>().join(" or "))
+            };
+            say(self, codes::CALL_ARITY, format!("'{}' {arity}, got {given}", call.callee));
+        }
+        if candidates.len() == 1 {
+            return closure.params.clone();
+        }
+        if !strict {
+            self.warn_later_closure_returns(call, &candidates);
+        }
+        if arities.len() != 1 {
+            return closure.params.clone();
+        }
+        let mut disagreements = Vec::new();
+        let held = params_of_candidates(&candidates, |index, first, second| disagreements.push((index, first.clone(), second.clone())));
+        for (index, first, second) in disagreements {
+            let describe = |param: Option<&ClosureParam>| match param {
+                Some(ClosureParam { plane: PlaneType { field: Some(field), .. }, .. }) => describe_field_type(field),
+                Some(ClosureParam { plane: PlaneType { pos: Some(pos), .. }, .. }) => describe_position(pos),
+                _ => "anything".to_string(),
+            };
+            let (a, b) = (first.params.get(index), second.params.get(index));
+            let name = |p: Option<&ClosureParam>| p.map_or_else(|| "undefined".to_string(), |p| p.name.clone());
+            say(
+                self,
+                codes::CALL_ARG_TYPE,
+                format!(
+                    "'{}' may be any of several closures, and two disagree about argument {}: {} takes {} for '{}', and {} takes {} for '{}'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known",
+                    call.callee,
+                    index + 1,
+                    describe_position(&Position::Closure(first.clone())),
+                    describe(a),
+                    name(a),
+                    describe_position(&Position::Closure(second.clone())),
+                    describe(b),
+                    name(b),
+                ),
+            );
+        }
+        if strict { held } else { closure.params.clone() }
+    }
+
+    /// Before version 5: a later candidate may hand back a record the first —
+    /// which types the call — does not. From 5 the call is any of their
+    /// returns, so each use of it is checked as one that may be that record.
+    fn warn_later_closure_returns(&mut self, call: &CallStatement, candidates: &[ClosureType]) {
+        let first = &candidates[0].returns;
+        let every = crate::types::position::union_returns(&candidates.iter().map(|c| c.returns.clone()).collect::<Vec<_>>());
+        let shown = first.may_hold.clone().or_else(|| first.plane.field.clone()).or_else(|| crate::types::field::record_value_of(first.plane.pos.as_deref()));
+        let held = every.may_hold.as_ref().or(every.plane.field.as_ref());
+        let Some(hidden) = crate::types::field::handle_within(held, &crate::types::field::HeldWalk::taken_by(shown.as_ref())) else { return };
+        self.report_upgrade_warning(
+            codes::CALL_CLOSURE_RETURNS,
+            format!(
+                "'{}' may be any of several closures, and calling one other than the first may hand back {}. Before {} the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused",
+                call.callee,
+                describe_field_type(&hidden.handle),
+                crate::version::describe(5)
+            ),
+            call.span,
+        );
     }
 
     /// `checkArgumentBindings`: named arguments given once, each naming a
@@ -1711,4 +1860,41 @@ impl Checker<'_> {
         }
         self.inference.cycles[cycle].closed = true;
     }
+}
+
+/// `paramTakesAll`: does every argument `narrow` takes fit `wide` too? An
+/// untyped parameter takes anything; a value and a record parameter share no
+/// argument.
+fn param_takes_all(narrow: &PlaneType, wide: &PlaneType) -> bool {
+    match (narrow, wide) {
+        (_, PlaneType { field: None, pos: None }) => true,
+        (PlaneType { field: Some(n), .. }, PlaneType { field: Some(w), .. }) => crate::types::field::field_assignable(n, w),
+        (PlaneType { pos: Some(n), .. }, PlaneType { pos: Some(w), .. }) => crate::types::position::positions_match(n, w) != Some(false),
+        _ => false,
+    }
+}
+
+/// `paramsOfCandidates`: the parameters a call of one of several closures is
+/// held to — TypeScript's rule for a union of function types. Each place
+/// takes the candidate parameter every other one takes too; where none is
+/// that narrow, `disagree` names two candidates and the place is left untyped.
+fn params_of_candidates(candidates: &[ClosureType], mut disagree: impl FnMut(usize, &ClosureType, &ClosureType)) -> Vec<ClosureParam> {
+    let Some(first) = candidates.first() else { return Vec::new() };
+    let untyped = PlaneType::default();
+    first
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, own)| {
+            let at: Vec<Option<&ClosureParam>> = candidates.iter().map(|c| c.params.get(index)).collect();
+            let narrowest = at.iter().flatten().find(|param| at.iter().all(|other| other.is_none_or(|other| param_takes_all(&param.plane, &other.plane))));
+            if let Some(narrowest) = narrowest {
+                return (*narrowest).clone();
+            }
+            let plane_at = |i: usize| at[i].map_or(&untyped, |p| &p.plane);
+            let first_off = (1..candidates.len()).find(|&i| !param_takes_all(&own.plane, plane_at(i)) && !param_takes_all(plane_at(i), &own.plane));
+            disagree(index, first, &candidates[first_off.unwrap_or(1)]);
+            ClosureParam { name: own.name.clone(), plane: PlaneType::default() }
+        })
+        .collect()
 }

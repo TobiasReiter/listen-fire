@@ -136,6 +136,113 @@ pub struct ClosureType {
     pub label: String,
     pub params: Vec<ClosureParam>,
     pub returns: ReturnShape,
+    /// Where the closure is written (a closure, or a function declared with
+    /// a name): one closure however often it is read. `None` for one typed by
+    /// an annotation.
+    pub written_at: Option<movement_parser::ast::Span>,
+    /// The closures one of several closures stands for (`closureCandidates`);
+    /// empty for a single closure.
+    pub candidates: Vec<ClosureType>,
+}
+
+impl ClosureType {
+    pub fn new(label: impl Into<String>, params: Vec<ClosureParam>, returns: ReturnShape, written_at: Option<movement_parser::ast::Span>) -> Self {
+        ClosureType { label: label.into(), params, returns, written_at, candidates: Vec::new() }
+    }
+
+    /// `candidatesOf`: the closures a call of this one may run.
+    pub fn candidates(&self) -> Vec<&ClosureType> {
+        if self.candidates.is_empty() { vec![self] } else { self.candidates.iter().collect() }
+    }
+
+    fn same_closure(&self, other: &ClosureType) -> bool {
+        self.written_at.is_some() && self.written_at == other.written_at
+    }
+}
+
+/// `oneOfClosures`: several closures any one of which a value may be — a
+/// list's members, a body whose returns hand back different closures.
+/// Calling it is calling any of them, as TypeScript calls a union of function
+/// types: its value is the union of what they return, and a call is held to
+/// every candidate's parameters (the ones it carries are the first's, as a
+/// placeholder). `typed_by_every` false is the rule before version 5 for a
+/// body's returns: the call is typed by the first closure alone, the others
+/// kept so the call can warn where version 5 holds it to them.
+pub fn one_of_closures(closures: &[ClosureType], typed_by_every: bool) -> ClosureType {
+    let mut flat: Vec<ClosureType> = Vec::new();
+    for closure in closures {
+        for candidate in closure.candidates() {
+            if !flat.iter().any(|seen| seen.same_closure(candidate)) {
+                flat.push(candidate.clone());
+            }
+        }
+    }
+    if flat.len() == 1 {
+        return flat.pop().expect("one closure");
+    }
+    let first = &flat[0];
+    let mut merged = if typed_by_every {
+        let returns: Vec<ReturnShape> = flat.iter().map(|c| c.returns.clone()).collect();
+        ClosureType::new("one of several closures", first.params.clone(), union_returns(&returns), None)
+    } else {
+        ClosureType { candidates: Vec::new(), ..first.clone() }
+    };
+    merged.candidates = flat;
+    merged
+}
+
+/// `unionReturns`: what calling one of several closures hands back —
+/// TypeScript's union of their return types. A type all of them agree on is
+/// the call's type; records alone are their union; anything else has no one
+/// type, and what it may hold travels as `may_hold`.
+pub fn union_returns(shapes: &[ReturnShape]) -> ReturnShape {
+    let returning: Vec<&ReturnShape> = shapes.iter().filter(|shape| shape.returns).collect();
+    let Some(first) = returning.first() else { return ReturnShape::default() };
+    let only_position = |shape: &ReturnShape| shape.plane.field.is_none() && shape.may_hold.is_none() && shape.plane.pos.is_some();
+    if returning.iter().all(|shape| {
+        only_position(shape)
+            && field_type_equals(&Ty::record(shape.plane.pos.as_deref().cloned()), &Ty::record(first.plane.pos.as_deref().cloned()))
+    }) {
+        return ReturnShape { returns: true, plane: PlaneType { pos: first.plane.pos.clone(), field: None }, may_hold: None };
+    }
+    let mut arms: Vec<Ty> = Vec::new();
+    fn add(arm: &Ty, arms: &mut Vec<Ty>) {
+        if let Ty::Union(members) = arm {
+            members.iter().for_each(|m| add(m, arms));
+            return;
+        }
+        if !arms.iter().any(|seen| field_type_equals(seen, arm)) {
+            arms.push(arm.clone());
+        }
+    }
+    let mut unknown = false;
+    for shape in &returning {
+        let arm = shape.may_hold.clone().or_else(|| shape.plane.field.clone()).or_else(|| super::field::record_value_of(shape.plane.pos.as_deref()));
+        match arm {
+            Some(arm) => add(&arm, &mut arms),
+            None => unknown = true,
+        }
+    }
+    let one_arm = arms.len() == 1;
+    let union = match arms.len() {
+        0 => None,
+        1 => arms.pop(),
+        _ => Some(Ty::Union(arms)),
+    };
+    let typed = match &union {
+        Some(union) if !unknown => {
+            if one_arm || super::field::records_alone(Some(union)).is_some() {
+                Some(union.clone())
+            } else if returning.iter().all(|shape| shape.plane.field.as_ref().zip(first.plane.field.as_ref()).is_some_and(|(a, b)| field_type_equals(a, b))) {
+                first.plane.field.clone()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let may_hold = union.filter(|union| super::field::shows_more_handles(union, typed.as_ref()));
+    ReturnShape { returns: true, plane: PlaneType { field: typed, pos: None }, may_hold }
 }
 
 /// One field of an extracted node (`ExtractFieldInfo`, the part typing reads).

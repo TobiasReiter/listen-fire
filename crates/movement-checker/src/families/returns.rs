@@ -152,6 +152,21 @@ impl Checker<'_> {
                 later.span,
             );
         }
+        // Returns that each hand back a closure are one of several closures: a
+        // call of the value is held to every one of them, and is any of their
+        // returns — not the first's alone.
+        let closures: Vec<crate::types::position::ClosureType> = collector
+            .returns
+            .iter()
+            .filter_map(|returned| match (&returned.shape.plane.field, &returned.shape.may_hold, returned.shape.plane.pos.as_deref()) {
+                (None, None, Some(Position::Closure(closure))) => Some(closure.clone()),
+                _ => None,
+            })
+            .collect();
+        if closures.len() > 1 && closures.len() == collector.returns.len() {
+            let merged = crate::types::position::one_of_closures(&closures, since(self.version, 5));
+            return ReturnShape { returns: true, plane: PlaneType { pos: Some(Box::new(Position::Closure(merged))), field: None }, may_hold: None };
+        }
         // TypeScript's return type is the union of its returns: the type
         // stays the first's, and the union travels as a walk input (never a
         // type, so it is not made canonical), flattened and deduplicated.

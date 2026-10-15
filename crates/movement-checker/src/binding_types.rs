@@ -26,7 +26,7 @@ use crate::types::{TypeEnv, Typing};
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
     pub fn typing_env(&self, scope: ScopeId) -> ScopeEnv<'_> {
-        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from }
+        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from, function_values: &self.function_values }
     }
 
     /// An expression slot's type in `scope`, and what it may hold where its
@@ -350,7 +350,7 @@ impl Checker<'_> {
                     return None;
                 }
                 let label = format!("a closure <{}>", spell_value_type(value));
-                let closure = ClosureType { label, params: planes, returns: ReturnShape { returns: true, plane: returned, may_hold: None } };
+                let closure = ClosureType::new(label, planes, ReturnShape { returns: true, plane: returned, may_hold: None }, None);
                 Some(Ty::record(Some(Position::Closure(closure))))
             }
         }
@@ -369,7 +369,7 @@ impl Checker<'_> {
             Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, scope), may_hold: None },
             None => ReturnShape { returns: true, ..ReturnShape::default() },
         };
-        Some(ClosureType { label: "a closure".to_string(), params, returns })
+        Some(ClosureType::new("a closure", params, returns, Some(closure.span)))
     }
 }
 

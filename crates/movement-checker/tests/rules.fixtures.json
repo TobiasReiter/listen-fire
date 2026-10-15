@@ -630,6 +630,74 @@
      }
     }
    }
+  },
+  "cands": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "crm_cred": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text"
+         },
+         "edges": {}
+        },
+        "note": {
+         "properties": {
+          "title": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        },
+        "notes": {
+         "target": "note"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        },
+        "note": {
+         "fields": {
+          "title": "text"
+         },
+         "resultShape": {
+          "externalId": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "crm_cred": {
+     "adapters": [
+      "attio"
+     ]
+    }
+   },
+   "plugins": {}
   }
  },
  "cases": [
@@ -1060,6 +1128,177 @@
    "version": 5,
    "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  ok = await until(() => { return 3 }, every: 5m)\n  write crm-[:notes]-> { title: ok }\n  b = await until(() => { return msg }, every: 5m)\n  write crm-[:notes]-> { title: b.subject }\n}\nlisten to inbox fire main\n",
    "expected": []
+  },
+  {
+   "name": "closure candidates: a record the first named function returns (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return made\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 23:33-23:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "closure candidates: a record a later named function returns (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return made\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 23:33-23:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "closure candidates: a record a later closure literal returns (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return () => made()\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 25:33-25:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "closure candidates: every candidate arity (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return pair\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n}",
+   "expected": [
+    "MOV_CALL_ARITY 22:7-22:10 'g' may be any of several closures, taking 0 or 2 arguments, got 0"
+   ]
+  },
+  {
+   "name": "closure candidates: parameters no argument fits (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <text>) => n\n  }\n  g = mk()\n  x = g(1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 24:7-24:11 'g' may be any of several closures, and two disagree about argument 1: a closure returning number takes number for 'n', and a closure returning text takes text for 'n'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known"
+   ]
+  },
+  {
+   "name": "closure candidates: the narrowest parameter (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <number>) => n\n  }\n  g = mk()\n  x = g(\"a\")\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 24:9-24:12 'g' expects number for 'n' (argument 1), but this argument is text"
+   ]
+  },
+  {
+   "name": "closure candidates: candidates that agree (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": []
+  },
+  {
+   "name": "closure candidates: a declared return narrows (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>): <() => <text>> {\n  if c {\n    return made\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_RETURN_TYPE 16:5-16:16 'mk' declares it returns <() => <text>>, but this returns a closure returning a crm.company handle"
+   ]
+  },
+  {
+   "name": "closure candidates: a later record returned (v3)",
+   "snapshot": "cands",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return () => made()\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_CALL_CLOSURE_RETURNS 24:7-24:10 'g' may be any of several closures, and calling one other than the first may hand back a crm.company handle. Before \"Dancing Wren\" (5) the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: a later arity (v3)",
+   "snapshot": "cands",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return (a: <number>) => a\n  }\n  g = mk()\n  x = g()\n}",
+   "expected": [
+    "MOV_CALL_ARITY 24:7-24:10 'g' may be any of several closures, taking 0 or 1 arguments, got 0. Before \"Dancing Wren\" (5) the call is typed by the first; from it, this is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: a later parameter type (v3)",
+   "snapshot": "cands",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <text>) => n\n  }\n  g = mk()\n  x = g(1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 24:7-24:11 'g' may be any of several closures, and two disagree about argument 1: a closure returning number takes number for 'n', and a closure returning text takes text for 'n'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known. Before \"Dancing Wren\" (5) the call is typed by the first; from it, this is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: the first record returned (v3)",
+   "snapshot": "cands",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => made()\n    }\n    return () => \"x\"\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 25:33-25:34 'title' on crm.note is text, and this is a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "closure candidates: the first arity (v3)",
+   "snapshot": "cands",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (a: <number>) => a\n    }\n    return () => \"x\"\n  }\n  g = mk()\n  x = g()\n}",
+   "expected": [
+    "MOV_CALL_ARITY 24:7-24:10 'g' takes 1 argument, got 0",
+    "MOV_CALL_ARG_MISSING 24:7-24:10 'g' is missing the argument 'a' — supply every parameter by name"
+   ]
+  },
+  {
+   "name": "closure candidates: a later record returned (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return () => made()\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_CALL_CLOSURE_RETURNS 24:7-24:10 'g' may be any of several closures, and calling one other than the first may hand back a crm.company handle. Before \"Dancing Wren\" (5) the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: a later arity (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return (a: <number>) => a\n  }\n  g = mk()\n  x = g()\n}",
+   "expected": [
+    "MOV_CALL_ARITY 24:7-24:10 'g' may be any of several closures, taking 0 or 1 arguments, got 0. Before \"Dancing Wren\" (5) the call is typed by the first; from it, this is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: a later parameter type (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <text>) => n\n  }\n  g = mk()\n  x = g(1)\n}",
+   "expected": [
+    "MOV_CALL_ARG_TYPE 24:7-24:11 'g' may be any of several closures, and two disagree about argument 1: a closure returning number takes number for 'n', and a closure returning text takes text for 'n'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known. Before \"Dancing Wren\" (5) the call is typed by the first; from it, this is refused"
+   ]
+  },
+  {
+   "name": "closure candidates: the first record returned (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => made()\n    }\n    return () => \"x\"\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 25:33-25:34 'title' on crm.note is text, and this is a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
+  },
+  {
+   "name": "closure candidates: the first arity (v4)",
+   "snapshot": "cands",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (a: <number>) => a\n    }\n    return () => \"x\"\n  }\n  g = mk()\n  x = g()\n}",
+   "expected": [
+    "MOV_CALL_ARITY 24:7-24:10 'g' takes 1 argument, got 0",
+    "MOV_CALL_ARG_MISSING 24:7-24:10 'g' is missing the argument 'a' — supply every parameter by name"
+   ]
+  },
+  {
+   "name": "closure candidates: a named function aliased and returned as a value (v5)",
+   "snapshot": "cands",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction pick() {\n  return label\n}\nmovement m() {\n  f = made\n  y = f()\n  write crm-[:notes]-> { title: y }\n  h = pick()\n  z = h()\n  write crm-[:notes]-> { title: z }\n}",
+   "expected": [
+    "MOV_WRITE_FIELD_TYPE 20:33-20:34 'title' on crm.note is text, and this is a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
+   ]
   }
  ]
 }

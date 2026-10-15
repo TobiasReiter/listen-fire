@@ -37,6 +37,9 @@ pub struct ScopeEnv<'s> {
     pub zones: &'s dyn crate::host::ZoneLookup,
     pub nodes: &'s crate::families::nodes::NodeState,
     pub upgrading_from: Option<u32>,
+    /// Each function declared with a name read as a value (version 5,
+    /// `functionAsValue`), typed before the typing that reads it.
+    pub function_values: &'s std::collections::HashMap<crate::scope::SymbolId, super::position::ClosureType>,
 }
 
 impl ScopeEnv<'_> {
@@ -62,7 +65,8 @@ impl TypeEnv for ScopeEnv<'_> {
     }
 
     fn resolve_root(&self, name: &str) -> Option<Position> {
-        self.types(name)?.pos.clone()
+        let Resolution::Found(id) = self.scopes.resolve(self.scope, name) else { return None };
+        self.scopes.symbol(id).types.pos.clone().or_else(|| self.function_values.get(&id).cloned().map(Position::Closure))
     }
 
     fn resolve_scalar(&self, name: &str) -> Option<Ty> {
