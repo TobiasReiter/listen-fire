@@ -38,7 +38,7 @@ import { \`Log Lead\`, Lead as \`Inbound Lead\` } from "lib/intake-routines"
 \`\`\`
 
 - \`adapters\` — adapter *types*, the kinds of system you can construct.
-- \`credentials\` — your workspace's stored connections, by name.
+- \`credentials\` — your workspace's stored connections, by name, named only in a construction.
 - \`plugins\` — functions the platform ships, called with named arguments: \`page = fetch_url(url: c.website)\`.
 - A quoted path — automations and record structures from another saved file. Only declarations it marks \`export\` are importable, and \`as\` renames locally.
 
@@ -53,7 +53,7 @@ crm   = attio(credentials: acme_main)
 inbox = email()
 \`\`\`
 
-A credential is typed: an Attio credential cannot construct a Slack instance. Some sources are credential-free and construct with no arguments. Which record types and fields an instance offers depends on the workspace behind the credentials, so the schema is only known once it is constructed — which is why automations construct the instances they use rather than receiving them. A \`node\` you declare needs no construction: it names a structure, not a system.
+A credential is only ever named here, as the \`credentials:\` argument; the host resolves it when the instance is used. It is never a value: read anywhere else (bound to a name, in a string, compared, passed on) it is refused. A credential is typed: an Attio credential cannot construct a Slack instance. Some sources are credential-free and construct with no arguments. Which record types and fields an instance offers depends on the workspace behind the credentials, so the schema is only known once it is constructed — which is why automations construct the instances they use rather than receiving them. A \`node\` you declare needs no construction: it names a structure, not a system.
 
 Every construction takes \`dry_run\` as well:
 

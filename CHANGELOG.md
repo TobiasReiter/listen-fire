@@ -131,6 +131,15 @@ guide](docs/language/dancing-wren-migration.md).
 - The bundled store's credential is a new file in the config volume, `objectstore_password`;
   `minio_password` is left where it is for option (a) and the copy.
 
+### Security
+
+- A credential is never a value, on every language version (`MOV_CREDENTIAL_NOT_A_VALUE`). Its name
+  is allowed only as the `credentials:` argument where an integration is set up; the host resolves
+  it there. Every other use is refused when you save: bound to a name, read with a dot, put in a
+  string or a prompt, compared (with a null test too), passed to a function or a plugin, returned,
+  or written into a field. Why: it is a security boundary, and every such use already failed at
+  run time. The engine also stops answering a null test on a credential without reading it.
+
 ### Changed
 
 - From language version 5, a dotted call of a function that is no built-in (`o.nope()`) is
