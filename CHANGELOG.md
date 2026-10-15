@@ -73,6 +73,13 @@ guide](docs/language/dancing-wren-migration.md).
   under 3 and 4 each is a warning that blocks the move up (`MOV_CALL_ARITY`, `MOV_CALL_ARG_TYPE`,
   `MOV_CALL_CLOSURE_RETURNS`). A declared return type (`): <() => <text>>`) narrows the closures
   to it.
+- **A collection op's members are held to its function's parameters** (`MOV_CALL_ARG_TYPE`,
+  `MOV_CALL_ARG_MAYBE_RECORD`): `MAP(["a"], (n: <number>) => n)`, or a function by name, under
+  `MAP`, `FILTER`, `GROUPBY`, `KEYBY` and `REDUCE` (whose starting value is held to its
+  accumulator). Why: the op calls the function with each member, and TypeScript refuses
+  `["a"].map((n: number) => n)`. Under 3 and 4 nothing compared them and the op ran with the member
+  as it was (a sum over text came out `NaN`), so under 3 and 4 it is a warning that blocks the move
+  up. Type the parameter as the members are, or leave it untyped to take their type.
 - **A record a `race` arm hands back reads as that record** (and so does a slot of `all`, which
   replaces `parallel`). `AT(r, 0).name`, or `h = AT(r, 0)` then `h.name`, reads the record
   the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4

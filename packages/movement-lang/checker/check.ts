@@ -1405,6 +1405,23 @@ interface ArgFit {
   index: number;
   /** Written without its parameter's name — so the diagnostic says it. */
   positional: boolean;
+  /** Who makes the call and what it hands, where no author wrote a call: a
+   *  collection op hands each member to its function. */
+  caller?: { callee: string; argument: string };
+}
+
+/** The callee as a diagnostic names it. */
+function calleeWords(fit: ArgFit): string {
+  return fit.caller?.callee ?? `'${fit.callee}'`;
+}
+
+/** What a collection op hands its function: each member, and REDUCE's
+ *  starting value — their types, and what each may hold beyond them. */
+interface CollectionMembers {
+  element: FieldType | undefined;
+  carried: FieldType | undefined;
+  elementMayHold: FieldType | undefined;
+  carriedMayHold: FieldType | undefined;
 }
 
 /** Where a positional argument binds, for a diagnostic: the author did not
@@ -7520,7 +7537,12 @@ class Checker {
     }
 
     const carried = expr.op === 'reduce' ? (init?.valueType) : undefined;
-    const shape = this.checkCollectionFunction(expr, spelling, scope, element, carried);
+    const shape = this.checkCollectionFunction(expr, spelling, scope, {
+      element,
+      carried,
+      elementMayHold: source.mayHold !== undefined ? collectionElementOf(source.mayHold) : undefined,
+      carriedMayHold: init?.mayHold,
+    });
     // What the function hands back, on whichever plane it handed it back on. A
     // record is a value type, so a closure that returns one (`(p) => { return
     // extract … }`, `(t) => { return t }`) answers in the same currency as one
@@ -7613,9 +7635,9 @@ class Checker {
     expr: CollectionOpExpression,
     spelling: string,
     scope: Scope,
-    element: FieldType | undefined,
-    carried: FieldType | undefined,
+    members: CollectionMembers,
   ): ReturnShape {
+    const { element, carried } = members;
     const supplied = expr.op === 'reduce'
       ? [{ fieldType: carried }, { fieldType: element }]
       : [{ fieldType: element }];
@@ -7630,6 +7652,7 @@ class Checker {
         suppliedParams: supplied,
       });
       this.checkMembersFieldsInHand(spelling, `the function for '${spelling}'`, bound, supplied, expr.fn.span);
+      this.checkMembersFitParams(expr, spelling, { callee: `the function for '${spelling}'`, params: bound }, members);
       this.absorbCollectionRow(effects, spelling, expr.fn.span);
       if (expr.op === 'map' && !returns.returns) return MAP_SLOT_ABSENT;
       this.requireCollectionReturn(returns, spelling, expr.fn.span);
@@ -7647,9 +7670,82 @@ class Checker {
       ? (this.movementParams(symbol) ?? []).map(param => ({ name: param.name, ...param.type }))
       : [];
     this.checkMembersFieldsInHand(spelling, `'${expr.fn.name}'`, namedParams, supplied, expr.fn.span);
+    this.checkMembersFitParams(expr, spelling, { callee: `'${expr.fn.name}'`, params: namedParams }, members);
     if (expr.op === 'map' && !named.returns) return MAP_SLOT_ABSENT;
     this.requireCollectionReturn(named, spelling, expr.fn.span);
     return named;
+  }
+
+  /**
+   * The members a collection op binds to its function's parameters, against
+   * the types those parameters are written with — the call-site fit
+   * (`checkValueArgFit`, `refuseMaybeRecordForValue`, `checkCallArgFit`) where
+   * the op, not the author, makes the call: TypeScript's `["a"].map((n:
+   * number) => n)` is refused. REDUCE's starting value is held to its
+   * accumulator, each member to the parameter after it. A parameter left
+   * untyped takes the member's type, so there is nothing to compare.
+   *
+   * From version 5. Before it nothing compared them and the op ran, handing
+   * the function whatever the member was; so an older pin is warned, and the
+   * warning blocks the move up.
+   */
+  private checkMembersFitParams(
+    expr: CollectionOpExpression,
+    spelling: string,
+    fn: { callee: string; params: ReadonlyArray<ClosureParam> },
+    members: CollectionMembers,
+  ): void {
+    if (before(this.languageVersion, 3)) return;
+    const reduce = expr.op === 'reduce';
+    const given = reduce
+      ? [
+          { type: members.carried, mayHold: members.carriedMayHold, argument: 'its starting value', span: expr.init?.span ?? expr.span },
+          { type: members.element, mayHold: members.elementMayHold, argument: 'each member', span: expr.source.span },
+        ]
+      : [{ type: members.element, mayHold: members.elementMayHold, argument: 'each member', span: expr.source.span }];
+    this.asUpgradeWarningsBefore5(() => {
+      for (const [index, supplied] of given.entries()) {
+        const param = fn.params[index];
+        if (param === undefined) continue;
+        const fit: ArgFit = {
+          callee: fn.callee,
+          param: { name: param.name, type: param },
+          index,
+          positional: true,
+          caller: { callee: fn.callee, argument: `${supplied.argument} '${spelling}' hands it` },
+        };
+        if (param.fieldType !== undefined) {
+          const record = recordIn(supplied.type)?.position;
+          if (record === undefined) {
+            this.refuseMaybeRecordForValue(fit, param.fieldType, { valueType: supplied.type, mayHold: supplied.mayHold, span: supplied.span, written: '' });
+          }
+          this.checkValueArgFit(fit, param.fieldType, supplied.type, { span: supplied.span });
+          continue;
+        }
+        if (param.posType !== undefined) this.checkCallArgFit(fit, recordIn(supplied.type)?.position, param.posType, supplied.span);
+      }
+    }, 'the function is handed the member as it is');
+  }
+
+  /**
+   * Runs checks whose refusals are new under version 5: before it, each error
+   * they report is an upgrade warning instead, saying what the older version
+   * did (`then`) — and the warning blocks the move up.
+   */
+  private asUpgradeWarningsBefore5(run: () => void, then: string): void {
+    const from = this.diagnostics.length;
+    run();
+    if (since(this.languageVersion, 5)) return;
+    for (let i = from; i < this.diagnostics.length; i++) {
+      const diagnostic = this.diagnostics[i]!;
+      if (diagnostic.severity !== undefined) continue;
+      this.diagnostics[i] = {
+        ...diagnostic,
+        message: `${diagnostic.message}. Before ${describeLanguageVersion(5)} ${then}; from it, this is refused`,
+        severity: 'warning',
+        upgrade: true,
+      };
+    }
   }
 
   /**
@@ -11385,7 +11481,7 @@ class Checker {
     const file = variantOf(hidden.handle).kind === 'file';
     const where = steps === '' ? `may be ${describeFieldType(hidden.handle)}` : `may hold ${describeFieldType(hidden.handle)} at '${steps}'`;
     const repair = file ? "pass its text ('READ(f)')" : "narrow it to the record with IS and pass a field off it ('r.`Name`')";
-    const message = `'${fit.callee}' expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but '${arg.written}' ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
+    const message = `${calleeWords(fit)} expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but ${fit.caller?.argument ?? `'${arg.written}'`} ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
     if (since(this.languageVersion, 5)) {
       this.report(DiagnosticCodes.CALL_ARG_MAYBE_RECORD, message, arg.span);
       return;
@@ -11413,7 +11509,8 @@ class Checker {
   ): void {
     if (argType === undefined) return;
     const { span } = options;
-    const expected = `'${fit.callee}' expects ${describeFieldType(paramType)}${describeArgPlace(fit)}`;
+    const expected = `${calleeWords(fit)} expects ${describeFieldType(paramType)}${describeArgPlace(fit)}`;
+    const argument = fit.caller?.argument ?? 'this argument';
     // A string LITERAL is its own type — `"warm"` is `"warm"`, which TypeScript
     // assigns to `"brisk" | "warm"` — so against a closed set it is a
     // membership check, with the enum's own did-you-mean.
@@ -11422,7 +11519,7 @@ class Checker {
     if (isMaybeAbsent(argType) && !isMaybeAbsent(paramType)) {
       this.report(
         DiagnosticCodes.CALL_ARG_TYPE,
-        `${expected}, but this argument may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{ key?: … }')`,
+        `${expected}, but ${argument} may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{ key?: … }')`,
         span,
       );
       return;
@@ -11441,7 +11538,7 @@ class Checker {
           : undefined;
       this.reportWithFix({
         code: DiagnosticCodes.CALL_ARG_TYPE,
-        message: `${expected}, but this argument is ${describeFieldType(arg)}${asList !== undefined ? ` — pass it as a list: '${asList.text}'` : ''}`,
+        message: `${expected}, but ${argument} is ${describeFieldType(arg)}${asList !== undefined ? ` — pass it as a list: '${asList.text}'` : ''}`,
         span,
         ...(asList !== undefined ? { fix: { edits: [asList] } } : {}),
       });
