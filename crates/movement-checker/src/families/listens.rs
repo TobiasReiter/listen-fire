@@ -57,7 +57,7 @@ pub struct ListenState {
     /// (`ScopeSymbol.movement`).
     movements: HashMap<SymbolId, MovementInfo>,
     /// Each node declaration's symbol and what it declares.
-    // TODO(type-core): the nodes family's declared schema (`shapeToSchema`,
+    // TODO(nodes): the nodes family's declared schema (`shapeToSchema`,
     // `extends` folded in) replaces this.
     shapes: HashMap<SymbolId, ShapeDeclaration>,
 }
@@ -500,7 +500,7 @@ impl Checker<'_> {
         written: &str,
         statement: &ListenDeclaration,
     ) {
-        // TODO(type-core): a node that extends another is the nodes family's to fold.
+        // TODO(nodes): a node that extends another is the nodes family's to fold.
         if shape.extends.is_some() {
             return;
         }
@@ -566,7 +566,7 @@ impl Checker<'_> {
                 self.report(codes::LISTEN_SHAPE_MISMATCH, message, statement.span);
                 continue;
             };
-            if field_assignable(source, &declared) == Some(false) {
+            if !crate::types::field::field_assignable(&crate::types::field::Ty::from_schema(source), &crate::types::field::Ty::from_schema(&declared)) {
                 let describe = |t: &movement_parser::catalog::types::FieldType| {
                     movement_parser::catalog::helpers::describe_field_type(t).unwrap_or_default()
                 };
@@ -604,23 +604,12 @@ impl Checker<'_> {
         let mut pinned: Vec<(String, String)> = Vec::new();
         for key in keys {
             let Some((_, value)) = pins.iter().find(|(k, _)| k == key) else { return };
-            let Some(options) = values.get(&event_types::narrowing_prefix_key(&pinned)).and_then(|v| v.get(key)) else { return };
-            // TODO(type-core): `checkEnumLiteral` is the values family's; this is
-            // its closed-enum half, which is all an address pin can be.
-            if options.is_empty() {
-                return self.report(
-                    codes::ENUM_EMPTY_DOMAIN,
-                    "This field has no values to choose from — the connected system currently offers none, so its option set is empty. No value can satisfy it, which makes this impossible rather than mistaken: it is not a typo, and no spelling would work. Nothing can use this field until an option exists.",
-                    span_for(key),
-                );
-            }
-            if !options.contains(value) {
-                let mut message =
-                    format!("\"{value}\" isn't a value of enum ({}) — expected one of: {}.", options.join(" | "), options.join(" | "));
-                if let Some(closest) = crate::meta::closest_by_edit_distance(value, options) {
-                    message.push_str(&format!(" Did you mean \"{closest}\"?"));
-                }
-                return self.report(codes::ENUM_UNKNOWN_VALUE, message, span_for(key));
+            let Some(options) = values.get(&crate::types::event_address::narrowing_prefix_key(&pinned)).and_then(|v| v.get(key)) else { return };
+            let domain = crate::types::field::Ty::Enum { options: options.clone(), open: None };
+            if let Some(found) = crate::families::values::check_enum_literal(value, &domain) {
+                let mut diagnostic = crate::diagnostic::Diagnostic::error(found.code, found.message, span_for(key));
+                diagnostic.severity = found.severity;
+                return self.push(diagnostic);
             }
             pinned.push((key.clone(), value.clone()));
         }
@@ -1111,7 +1100,7 @@ fn surface_not_enumerated(position: &movement_parser::catalog::types::PositionSc
 }
 
 /// A declared node's field type, as `shapeToSchema` reads it.
-// TODO(type-core): a declared `type` the field names resolves to its enum there.
+// TODO(nodes): `shapeToSchema` resolves a field naming a declared `type` to its enum.
 fn declared_field_type(field: &movement_parser::ast::ShapeField) -> movement_parser::catalog::types::FieldType {
     use movement_parser::catalog::types::{Composite, FieldType, Scalar};
     let named = parse_field_type_name(Some(&field.type_)).unwrap_or(FieldType::Scalar(Scalar::Text));
@@ -1119,27 +1108,6 @@ fn declared_field_type(field: &movement_parser::ast::ShapeField) -> movement_par
         return FieldType::Composite(Composite::MaybeAbsent { of: Box::new(named) });
     }
     named
-}
-
-/// `fieldAssignable`, for the cases a declared node's scalar fields meet;
-/// `None` where only the type core can tell (silent, as unknown is).
-// TODO(type-core): the full rule (unions, tuples, closures, categories).
-fn field_assignable(source: &movement_parser::catalog::types::FieldType, target: &movement_parser::catalog::types::FieldType) -> Option<bool> {
-    use movement_parser::catalog::types::{Composite, FieldType, Scalar};
-    let strip = |t: &FieldType| match t {
-        FieldType::Composite(Composite::MaybeAbsent { of }) => (**of).clone(),
-        other => other.clone(),
-    };
-    let (source, target) = (strip(source), strip(target));
-    if source == target {
-        return Some(true);
-    }
-    match (&source, &target) {
-        (FieldType::Composite(Composite::Enum { .. }), FieldType::Scalar(Scalar::Text)) => Some(true),
-        (_, FieldType::Composite(Composite::Enum { .. })) => Some(false),
-        (FieldType::Scalar(Scalar::Json), _) => Some(false),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

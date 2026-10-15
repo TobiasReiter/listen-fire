@@ -72,14 +72,6 @@ impl Address {
     }
 }
 
-/// `narrowingPrefixKey`: what the walk has pinned so far.
-pub fn narrowing_prefix_key(pins: &[(String, String)]) -> String {
-    let mut sorted = pins.to_vec();
-    sorted.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
-    let pairs: Vec<[&str; 2]> = sorted.iter().map(|(k, v)| [k.as_str(), v.as_str()]).collect();
-    serde_json::to_string(&pairs).expect("strings always serialise")
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     /// The instance itself (`<inst>`).

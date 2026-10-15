@@ -295,9 +295,7 @@ pub fn static_string_literal_of(slot: &ExprSlot) -> Option<String> {
 }
 
 /// Whether a parameter's written type names a value rather than a position
-/// (`movementParamValueType` is defined).
-// TODO(type-core): the TypeScript asks whether a declared `type` is an enum;
-// any declared type stands in for that here.
+/// (`movementParamValueType` is defined): a scalar, or a declared enum.
 pub fn is_value_param_type(checker: &Checker<'_>, type_: &ParamTypeRef, scope: ScopeId) -> bool {
     if checker.version < 3 {
         return false;
@@ -309,5 +307,5 @@ pub fn is_value_param_type(checker: &Checker<'_>, type_: &ParamTypeRef, scope: S
     if movement_parser::catalog::helpers::parse_field_type_name(Some(&reference.graph)).is_some() {
         return true;
     }
-    matches!(checker.scopes.resolve(scope, &reference.graph), Resolution::Found(id) if checker.scopes.symbol(id).kind == SymbolKind::Type)
+    checker.declared_type_in(&reference.graph, scope).is_some()
 }
