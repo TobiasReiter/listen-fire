@@ -3,6 +3,7 @@
 //! the `Checker`; a family not yet ported reports nothing, and the parity
 //! harness counts what it misses.
 
+pub mod arg_fit;
 pub mod calls;
 pub mod closures;
 pub mod extraction;

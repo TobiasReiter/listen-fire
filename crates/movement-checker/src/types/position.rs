@@ -12,18 +12,91 @@ use movement_parser::catalog::types::{EdgeSchema, InstanceSchema, JsMap, Positio
 use super::field::{Ty, field_type_equals, maybe_absent, strip_absent, is_maybe_absent};
 
 /// `InstanceRef`: one constructed instance. Two refs are the same instance
-/// exactly when they are the same `Rc` (the TypeScript's `token`).
+/// when they are the same `Rc`, or when both are constructions of one system
+/// address (the TypeScript's `token`).
 #[derive(Debug)]
 pub struct Instance {
     pub name: String,
     /// Shared between instances built from one catalog schema.
     pub schema: Rc<InstanceSchema>,
+    /// `None` when an argument is not a literal: the construction is then a
+    /// system of its own.
+    pub address: Option<SystemAddress>,
+}
+
+/// `SystemAddress`: a constructed system's identity — its adapter, its
+/// credential and the values of its literal arguments (by name, sorted; each
+/// value as `JSON.stringify` spells it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemAddress {
+    pub adapter: String,
+    pub credential: Option<String>,
+    pub args: Vec<(String, String)>,
 }
 
 pub type InstanceRef = Rc<Instance>;
 
 pub fn same_instance(a: &InstanceRef, b: &InstanceRef) -> bool {
-    Rc::ptr_eq(a, b)
+    Rc::ptr_eq(a, b) || matches!((&a.address, &b.address), (Some(x), Some(y)) if x == y)
+}
+
+/// `systemDifference`: ` — these are two different systems: …`, naming what
+/// differs, when a record of one system is handed where another's is
+/// expected; empty when the two are one system or not both instances.
+pub fn system_difference(arg: &Position, param: &Position) -> String {
+    let (Some(a), Some(b)) = (instance_of_position(arg), instance_of_position(param)) else { return String::new() };
+    if same_instance(a, b) {
+        return String::new();
+    }
+    match (&a.address, &b.address) {
+        (Some(x), Some(y)) => {
+            if x.adapter != y.adapter {
+                return format!(" — these are two different systems: one is {}, the other {}", y.adapter, x.adapter);
+            }
+            if x.credential != y.credential {
+                return format!(
+                    " — these are two different systems: one is reached with the credential '{}', the other with '{}'",
+                    y.credential.as_deref().unwrap_or("(none)"),
+                    x.credential.as_deref().unwrap_or("(none)")
+                );
+            }
+            let value_of = |address: &SystemAddress, name: &str| {
+                address.args.iter().find(|(n, _)| n == name).map_or("(not given)".to_string(), |(_, v)| v.clone())
+            };
+            let mut names: Vec<&str> = Vec::new();
+            for (name, _) in x.args.iter().chain(&y.args) {
+                if !names.contains(&name.as_str()) {
+                    names.push(name);
+                }
+            }
+            match names.into_iter().find(|name| value_of(x, name) != value_of(y, name)) {
+                Some(differing) => format!(
+                    " — these are two different systems: one is constructed with '{differing}: {}', the other with '{differing}: {}'",
+                    value_of(y, differing),
+                    value_of(x, differing)
+                ),
+                None => " — these are two different systems".to_string(),
+            }
+        }
+        _ => {
+            let unaddressed = [b, a].into_iter().find(|i| i.address.is_none()).expect("one is unaddressed");
+            format!(
+                " — these are two different systems as far as the checker can tell: '{}' is constructed with an argument that is not a literal, so its address is not known until it runs — write its construction arguments as literals to make it the same system",
+                unaddressed.name
+            )
+        }
+    }
+}
+
+/// The instance a position names (`'instance' in position`).
+fn instance_of_position(position: &Position) -> Option<&InstanceRef> {
+    match position {
+        Position::Meta { instance } => Some(instance),
+        Position::Position(p) => Some(&p.instance),
+        Position::Union(u) => Some(&u.instance),
+        Position::Handle(h) => Some(&h.instance),
+        Position::Extract { .. } | Position::Closure(_) | Position::MaybeEmpty(_) | Position::Local(_) => None,
+    }
 }
 
 /// A type on whichever plane it lives; both absent is untyped.

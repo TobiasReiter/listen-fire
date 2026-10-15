@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
+    AwaitExpression, AwaitSource, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression, ExtractNode, ExtractStage,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -686,25 +686,6 @@ impl<'c> Checker<'c> {
         (returns, suspends)
     }
 
-    pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
-        for arg in args {
-            match arg {
-                CallArg::Expr { expr, .. } => self.check_expr_slot(expr, scope),
-                CallArg::Write { write, .. } => {
-                    self.check_write(write, scope, None, true);
-                }
-                CallArg::Node { node, .. } => {
-                    self.check_node_literal(node, scope);
-                }
-                CallArg::Call { call, .. } => self.check_call_in_argument(call, scope),
-                CallArg::Closure { closure, .. } => {
-                    self.check_closure(closure, scope, None);
-                }
-                CallArg::Type { .. } => {}
-            }
-        }
-    }
-
     fn check_target(&mut self, target: &WriteTarget, scope: ScopeId) {
         match target {
             WriteTarget::Linked { path, .. } => {
@@ -724,7 +705,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
+    pub(crate) fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
         self.check_target(&write.target, scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind
@@ -823,7 +804,7 @@ impl<'c> Checker<'c> {
     /// record it builds (a run-local node: each value entry a read, each
     /// nested node, declared edge or walk an edge), when it is a plain node.
     /// A `graph` literal is not typed here.
-    fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) -> Option<Position> {
+    pub(crate) fn check_node_literal(&mut self, node: &NodeLiteral, scope: ScopeId) -> Option<Position> {
         if let Some(shape) = node.graph.as_ref().and_then(|g| g.shape.as_ref()) {
             self.resolve_name(&shape.name, shape.span, scope);
         }

@@ -10,13 +10,13 @@ use std::rc::Rc;
 
 use movement_parser::ast::{ClosureExpression, ConstructionCall, ExprSlot, ParamTypeRef, PathHead, PathRoot, RValue, TypeRef, ValueType};
 use movement_parser::catalog::snapshot::Args;
-use movement_parser::lowering::expression::{Expression, TraversalStep};
+use movement_parser::lowering::expression::{Expression, StaticValue, TraversalStep};
 
 use crate::checker::Checker;
 use crate::scope::{Resolution, ScopeId, SymbolKind};
 use crate::slots::expression_of_slot;
 use crate::types::field::{Ty, maybe_absent, strip_absent, unify_value_types};
-use crate::types::position::{ClosureParam, ClosureType, Instance, PlaneType, Position, ReturnShape, position_ref_in};
+use crate::types::position::{ClosureParam, ClosureType, Instance, PlaneType, Position, ReturnShape, SystemAddress, position_ref_in};
 use crate::types::scope_env::{ScopeEnv, SymbolTypes};
 use crate::types::field::is_maybe_absent;
 use crate::types::narrowing::PresenceProof;
@@ -194,8 +194,30 @@ impl Checker<'_> {
             .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
-        let instance = Rc::new(Instance { name: name.to_string(), schema });
+        let address = self.address_of(&adapter, credential_arg.as_deref(), construct, scope);
+        let instance = Rc::new(Instance { name: name.to_string(), schema, address });
         SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() }
+    }
+
+    /// `addressTokenOf`: the system a construction reaches — its adapter, its
+    /// credential and the values of its other arguments — when every one of
+    /// those is a literal.
+    fn address_of(&self, adapter: &str, credential_arg: Option<&str>, construct: &ConstructionCall, scope: ScopeId) -> Option<SystemAddress> {
+        let credential_name = credential_arg.unwrap_or("credentials");
+        let credential = construct.args.iter().find(|a| a.name == credential_name).map(|a| self.imported_credential_name(a.value.raw.trim(), scope));
+        let mut args = Vec::new();
+        for arg in construct.args.iter().filter(|a| Some(a.name.as_str()) != credential_arg) {
+            let Ok(Expression::Static { value }) = expression_of_slot(&arg.value) else { return None };
+            let spelled = match value {
+                StaticValue::String(text) => serde_json::to_string(&text).ok()?,
+                StaticValue::Number(n) => serde_json::to_string(&n).ok()?,
+                StaticValue::Bool(b) => b.to_string(),
+                StaticValue::Null => "null".to_string(),
+            };
+            args.push((arg.name.clone(), spelled));
+        }
+        args.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
+        Some(SystemAddress { adapter: adapter.to_string(), credential, args })
     }
 
     /// `checkPathHead`, the typing half: where a head's walk starts (a record
@@ -338,7 +360,7 @@ impl Checker<'_> {
 }
 
 /// `positionTypeOf`: the record a name holds on the arrow plane, or as a value.
-fn symbol_position(types: &SymbolTypes) -> Option<Position> {
+pub(crate) fn symbol_position(types: &SymbolTypes) -> Option<Position> {
     types.pos.clone().or_else(|| match &types.field {
         Some(Ty::Record(Some(position))) => Some((**position).clone()),
         _ => None,

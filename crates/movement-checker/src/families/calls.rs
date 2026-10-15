@@ -1171,23 +1171,47 @@ impl Checker<'_> {
                 failure => self.report_resolution_failure(&callee, call.span, failure),
             }
         }
-        self.check_argument_bindings(&call.callee, &call.args, params.as_deref(), call.span, false);
-        self.check_call_args(&call.args, scope);
+        let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
+        self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
+        self.check_call_args(&call.callee, &call.args, params.as_deref(), scope);
     }
 
     /// `checkCallbackNamed`'s arguments: bound partially, as the rest are
-    /// what the callback is fired with.
+    /// what the callback is fired with, and each held to its parameter.
     pub fn check_callback_arguments(&mut self, movement: &str, args: &[CallArg], span: Span, scope: ScopeId) {
         let callee = self.callee_name(movement, scope);
         let params = match self.scopes.resolve(scope, &callee) {
-            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Movement => self.movement_params.get(&id).cloned(),
+            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Movement => self.movement_declared_params(id),
             _ => None,
         };
-        self.check_argument_bindings(movement, args, params.as_deref(), span, true);
+        let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
+        self.check_argument_bindings(movement, args, names.as_deref(), span, true);
+        self.check_call_args(movement, args, params.as_deref(), scope);
+    }
+
+    /// The closure a callable name holds, as its signature says.
+    pub fn called_closure(&self, id: SymbolId) -> Option<crate::types::position::ClosureType> {
+        let symbol = self.scopes.symbol(id);
+        if !self.calls_closure(symbol) {
+            return None;
+        }
+        match (&symbol.types.pos, &symbol.types.field) {
+            (Some(Position::Closure(c)), _) => Some(c.clone()),
+            (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
+                Position::Closure(c) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A movement's declaration and the scope it is declared in.
+    pub fn movement_declaration(&self, id: SymbolId) -> Option<(Rc<MovementDeclaration>, ScopeId)> {
+        self.inference.declarations.get(&id).map(|(m, scope)| (m.clone(), *scope))
     }
 
     /// The callee a call resolved to: the parameters its arguments bind, when known.
-    fn check_callee(&mut self, call: &CallStatement, id: crate::scope::SymbolId) -> Option<Vec<String>> {
+    fn check_callee(&mut self, call: &CallStatement, id: crate::scope::SymbolId) -> Option<Vec<crate::types::position::ClosureParam>> {
         let callee = self.scopes.symbol(id).clone();
         let count = call.args.len();
         if callee.kind == SymbolKind::Movement {
@@ -1198,7 +1222,7 @@ impl Checker<'_> {
             {
                 self.report(codes::CALL_ARITY, format!("'{}' takes {} argument{}, got {count}", call.callee, params.len(), plural(params.len())), call.span);
             }
-            return params;
+            return params.and_then(|_| self.movement_declared_params(id));
         }
         if callee.kind == SymbolKind::Plugin {
             return None;
@@ -1207,20 +1231,12 @@ impl Checker<'_> {
             self.note_self_call(id, call.span);
             let suspends = self.closure_suspends(id);
             self.absorb_suspend(suspends);
-            let closure = match (&callee.types.pos, &callee.types.field) {
-                (Some(crate::types::position::Position::Closure(c)), _) => Some(c.clone()),
-                (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
-                    crate::types::position::Position::Closure(c) => Some(c.clone()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let closure = closure?;
+            let closure = self.called_closure(id)?;
             let arity = closure.params.len();
             if arity != count {
                 self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {count}", call.callee, plural(arity)), call.span);
             }
-            return Some(closure.params.iter().map(|p| p.name.clone()).collect());
+            return Some(closure.params);
         }
         if let Some(message) = self.not_a_closure_message(&callee, &call.callee) {
             self.report(codes::CALL_NOT_MOVEMENT, message, call.span);
