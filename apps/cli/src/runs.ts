@@ -25,15 +25,21 @@ import {
   type External,
   type RunningExternal,
 } from './externals';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { LOCAL_TENANT, localHost, tenant } from './host';
+import { enqueueAwaitWake, timerWorkKey } from './parks';
 import type { Project } from './project';
-import { loadSecrets, type Credential } from './secrets';
+import { loadSecrets, requireCredentials, type Credential } from './secrets';
 import { catalogOf, collectListens, scanMovements, type Listen, type MovementFile } from './sources';
-import { State } from './state';
+import { LEASE_TTL_MS, State, type ClaimedWork, type ParkRow } from './state';
 
-/** Which engine runs a language version: 5 and later on Rust, 1–4 on TypeScript. */
-function engineFor(languageVersion: LanguageVersion): 'rust' | 'ts' {
-  return languageVersion >= 5 ? 'rust' : 'ts';
+/** lf runs every language version on the Rust engine, and only there: a
+ *  program the Rust engine refuses fails with its reason, never falling back
+ *  to the TypeScript engine. The engine reads its route from the process
+ *  environment, so lf sets it before any run. */
+function forceRustEngine(): void {
+  process.env.MOVEMENT_ENGINE = 'rust';
+  process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
 }
 
 export interface Session {
@@ -48,15 +54,34 @@ export interface Session {
   close(): void;
 }
 
-export async function openSession(project: Project, options: { ephemeral: boolean; start: boolean }): Promise<Session> {
-  // Every run takes the engine its pinned language version runs on.
-  process.env.MOVEMENT_ENGINE ??= 'by-version';
+/** `LF_CLOCK_AHEAD_MS`: what is due is judged this far ahead of the wall
+ *  clock, so a developer (or a test) sees a timer wake without waiting for
+ *  it. Leases and the engine's own clock stay on the wall clock. */
+function dueClockOffset(env: NodeJS.ProcessEnv): number {
+  const raw = env.LF_CLOCK_AHEAD_MS;
+  if (raw === undefined || raw === '') return 0;
+  const parsed = z.coerce.number().int().nonnegative().safeParse(raw);
+  if (!parsed.success) throw new Error(`LF_CLOCK_AHEAD_MS is "${raw}": it must be a whole number of milliseconds`);
+  return parsed.data;
+}
+
+export async function openSession(
+  project: Project,
+  options: {
+    ephemeral: boolean;
+    start: boolean;
+    /** Where `lf serve` takes pushes, handed to the externals it starts. */
+    hostUrl?: string;
+  },
+): Promise<Session> {
+  forceRustEngine();
   const credentials = loadSecrets(project);
+  if (options.start) requireCredentials(project, credentials);
   const externals = scanExternals(project);
   const running = options.start
-    ? await startExternals({ project, externals, credentials, tenant: LOCAL_TENANT })
+    ? await startExternals({ project, externals, credentials, tenant: LOCAL_TENANT, ...(options.hostUrl !== undefined ? { hostUrl: options.hostUrl } : {}) })
     : new Map<string, RunningExternal>();
-  const state = State.open(project, { ephemeral: options.ephemeral });
+  const state = State.open(project, { ephemeral: options.ephemeral, dueClockOffsetMs: dueClockOffset(process.env) });
   const close = () => {
     for (const r of running.values()) r.stop();
     state.close();
@@ -168,27 +193,92 @@ async function runListen(session: Session, input: { runId: string; listen: Liste
   );
 }
 
+/** A fresh firing, run under its run's lease. */
+async function settle(
+  session: Session,
+  run: { runId: string; file: string; movement: string },
+  go: () => Promise<MovementRunResult>,
+): Promise<RunOutcome> {
+  const stepped = await withRunLease(session.state, run.runId, async () => {
+    let result: MovementRunResult;
+    try {
+      result = await go();
+    } catch (error) {
+      return failRun(session, run, error);
+    }
+    return settleStep(session, run, { writes: result.writes.length });
+  });
+  // A fresh run's row is new: nobody else can hold its lease.
+  if (stepped.kind === 'busy') throw new RunBusy(run.runId);
+  return stepped.value;
+}
+
+/** A run whose lease another process holds (it is being stepped there). */
+export class RunBusy extends Error {
+  constructor(readonly runId: string) {
+    super(`run ${runId} is being stepped by another lf process right now; try again in a moment`);
+    this.name = 'RunBusy';
+  }
+}
+
+/** Step `runId` while holding its lease: one process steps a run at a time,
+ *  whichever lf (`serve`, `resume`) asks. */
+async function withRunLease<T>(state: State, runId: string, step: () => Promise<T>): Promise<{ kind: 'held'; value: T } | { kind: 'busy' }> {
+  const lease = state.claimRunLease(runId);
+  if (lease === null) return { kind: 'busy' };
+  const renew = setInterval(() => state.renewRunLease(runId, lease.token), LEASE_TTL_MS / 3);
+  renew.unref();
+  try {
+    return { kind: 'held', value: await step() };
+  } finally {
+    clearInterval(renew);
+    state.releaseRunLease(runId, lease.token);
+  }
+}
+
+/** Which of a parked run's leaves a step resumes. */
+type LeafChoice = { kind: 'every' } | { kind: 'dueTimers' } | { kind: 'addresses'; addresses: readonly string[] };
+
+function leavesOf(state: State, runId: string, choice: LeafChoice): ParkRow[] {
+  switch (choice.kind) {
+    case 'every':
+      return state.parks(runId).filter((p) => p.status === 'parked');
+    case 'dueTimers':
+      return state.dueTimerParks(runId);
+    case 'addresses':
+      return state.parks(runId).filter((p) => p.status === 'parked' && choice.addresses.includes(p.address));
+    default:
+      return neverAsAny(choice);
+  }
+}
+
 /**
- * Continue a parked run: each of its parks, in order. A timer park is resumed
- * now whatever its wake time (one-shot `lf resume` does not wait); an await
- * park re-enters to re-check its condition live.
+ * Continue a parked run: each chosen leaf is claimed, then resumed. A timer
+ * steps past its sleep (an `until` re-checks); an await or a suspension
+ * re-enters to re-check live. The claimed row goes once its step is over,
+ * unless the step parked again at the same address. The run is complete only
+ * when no join waits and no leaf is left parked. Null when the run is not
+ * parked or none of the chosen leaves is.
  */
-export async function resumeRun(session: Session, runId: string): Promise<RunOutcome> {
+async function stepParkedRun(session: Session, runId: string, choice: LeafChoice): Promise<RunOutcome | null> {
   const { state } = session;
   const run = state.run(runId);
   if (run === undefined) throw new Error(`no run ${runId}`);
-  if (run.status !== 'parked') throw new Error(`run ${runId} is ${run.status}, not parked`);
+  if (run.status !== 'parked') return null;
+  const leaves = leavesOf(state, runId, choice);
+  if (leaves.length === 0) return null;
   const facts = RunFacts.parse(JSON.parse(run.input));
-  const parks = state.parks(runId);
-  if (parks.length === 0) throw new Error(`run ${runId} is parked but has no park recorded`);
-  let outcome: RunOutcome | undefined;
-  for (const park of parks) {
-    state.dropPark(park.id);
-    state.markRunning(runId);
-    const parkedState = JSON.parse(park.state) as ParkedScopeState;
-    const host = localHost({ ...sessionParts(session), runId });
-    outcome = await settle(session, { runId, file: run.file, movement: run.movement }, () =>
-      resumeMovement({
+  const named = { runId, file: run.file, movement: run.movement };
+  state.markRunning(runId);
+  let writes = 0;
+  for (const leaf of leaves) {
+    const claimed = state.claimPark(runId, leaf.address);
+    if (claimed === null) continue;
+    const parkedState = JSON.parse(claimed.state) as ParkedScopeState;
+    const reenter = claimed.kind !== 'timer' || parkedState.until === true;
+    let result: MovementRunResult;
+    try {
+      result = await resumeMovement({
         source: facts.source,
         languageVersion: facts.languageVersion as LanguageVersion,
         movementName: facts.movementName,
@@ -199,14 +289,69 @@ export async function resumeRun(session: Session, runId: string): Promise<RunOut
         firedAt: facts.firedAt,
         runId,
         state: parkedState,
-        parkedOnEngine: park.engine === 'ts' ? 'ts' : 'rust',
-        ...(park.kind === 'await' || parkedState.until === true ? { reenter: true } : {}),
-        host,
-      }),
-    );
+        parkedOnEngine: 'rust',
+        ...(reenter ? { reenter: true } : {}),
+        host: localHost({ ...sessionParts(session), runId }),
+      });
+    } catch (error) {
+      return failRun(session, named, error);
+    }
+    writes += result.writes.length;
+    state.finishPark(runId, leaf.address);
   }
-  if (outcome === undefined) throw new Error(`run ${runId}: nothing resumed`);
-  return outcome;
+  return settleStep(session, named, { writes });
+}
+
+/** Where a run stands once a segment is over: complete when nothing waits on
+ *  it (its joins cleared), parked otherwise, with its next timer armed. */
+function settleStep(session: Session, run: { runId: string; file: string; movement: string }, input: { writes: number }): RunOutcome {
+  const { state } = session;
+  const at = new Date().toISOString();
+  if (state.runQuiescent(run.runId)) {
+    state.clearJoins(run.runId);
+    state.settleRun(run.runId, 'completed', { writes: input.writes }, at);
+    return { ...run, status: 'completed', writes: input.writes, traceEntries: state.trace(run.runId).length };
+  }
+  state.settleRun(run.runId, 'parked', { writes: input.writes }, at);
+  const nextWake = state.nextTimerWake(run.runId);
+  if (nextWake !== null) state.enqueue({ kind: 'resume_timer', key: timerWorkKey(run.runId), payload: { runId: run.runId }, dueAt: nextWake });
+  return { ...run, status: 'parked', writes: input.writes, traceEntries: state.trace(run.runId).length };
+}
+
+/** An error anywhere fails the whole run: its leaves and joins go (nothing
+ *  will resume them); the writes it made stand. */
+function failRun(session: Session, run: { runId: string; file: string; movement: string }, error: unknown): RunOutcome {
+  const cause = runFailureCause(error);
+  const message = cause instanceof Error ? cause.message : String(cause);
+  session.state.dropRunLeaves(run.runId);
+  session.state.settleRun(run.runId, 'failed', { error: message }, new Date().toISOString());
+  return { ...run, status: 'failed', writes: 0, traceEntries: session.state.trace(run.runId).length, error: message };
+}
+
+/** `lf resume <run>`: every parked leaf of the run, now (a timer early). */
+export async function resumeRun(session: Session, runId: string): Promise<RunOutcome> {
+  const run = session.state.run(runId);
+  if (run === undefined) throw new Error(`no run ${runId}`);
+  if (run.status !== 'parked') throw new Error(`run ${runId} is ${run.status}, not parked`);
+  const stepped = await withRunLease(session.state, runId, () => stepParkedRun(session, runId, { kind: 'every' }));
+  if (stepped.kind === 'busy') throw new RunBusy(runId);
+  if (stepped.value === null) throw new Error(`run ${runId} is parked but has no parked leaf`);
+  return stepped.value;
+}
+
+/**
+ * `lf resume` with no run: drain the due work (timers due, wakes queued),
+ * then step every leaf still parked, now — a timer early, an await
+ * re-entered to re-check live.
+ */
+export async function resumeAll(session: Session): Promise<RunOutcome[]> {
+  const outcomes = await drainWork(session);
+  for (const runId of parkedRuns(session)) {
+    const stepped = await withRunLease(session.state, runId, () => stepParkedRun(session, runId, { kind: 'every' }));
+    if (stepped.kind === 'busy') throw new RunBusy(runId);
+    if (stepped.value !== null) outcomes.push(stepped.value);
+  }
+  return outcomes;
 }
 
 /** Every parked run id. */
@@ -214,22 +359,61 @@ export function parkedRuns(session: Session): string[] {
   return session.state.runs(1000).filter((r) => r.status === 'parked').map((r) => r.id);
 }
 
-async function settle(
-  session: Session,
-  run: { runId: string; file: string; movement: string },
-  go: () => Promise<MovementRunResult>,
-): Promise<RunOutcome> {
-  const at = new Date().toISOString();
-  try {
-    const result = await go();
-    const status = result.parked === true ? 'parked' : 'completed';
-    session.state.settleRun(run.runId, status, { writes: result.writes, parkedAddress: result.parkedAddress }, at);
-    return { ...run, status, writes: result.writes.length, traceEntries: session.state.trace(run.runId).length };
-  } catch (error) {
-    const cause = runFailureCause(error);
-    const message = cause instanceof Error ? cause.message : String(cause);
-    session.state.settleRun(run.runId, 'failed', { error: message }, at);
-    return { ...run, status: 'failed', writes: 0, traceEntries: session.state.trace(run.runId).length, error: message };
+const ResumeTimerPayload = z.object({ runId: z.string() });
+const WakeAwaitPayload = z.object({ adapterType: z.string(), correlationKey: z.string() });
+
+/** How long a work row waits before it is tried again: when its run was held
+ *  elsewhere, and when it failed. */
+const BUSY_RETRY_MS = 5_000;
+const FAILED_RETRY_MS = 30_000;
+
+/**
+ * Drain the work queue once: every due row is leased, done, and completed
+ * (or released for a retry when its run is held elsewhere or it failed). A
+ * `resume_timer` steps its run's due timers; a `wake_await` steps every
+ * await parked on its key.
+ */
+export async function drainWork(session: Session, options: { log?: (line: string) => void } = {}): Promise<RunOutcome[]> {
+  const { state } = session;
+  const outcomes: RunOutcome[] = [];
+  for (const work of state.claimDue()) {
+    try {
+      const done = await doWork(session, work);
+      outcomes.push(...done.outcomes);
+      if (done.busy) state.releaseWork({ ...work, dueAt: new Date(Date.now() + BUSY_RETRY_MS).toISOString() });
+      else state.completeWork(work);
+    } catch (error) {
+      options.log?.(`work ${work.key} failed: ${error instanceof Error ? error.message : String(error)}`);
+      state.releaseWork({ ...work, dueAt: new Date(Date.now() + FAILED_RETRY_MS).toISOString() });
+    }
+  }
+  return outcomes;
+}
+
+async function doWork(session: Session, work: ClaimedWork): Promise<{ busy: boolean; outcomes: RunOutcome[] }> {
+  switch (work.kind) {
+    case 'resume_timer': {
+      const { runId } = ResumeTimerPayload.parse(work.payload);
+      if (session.state.run(runId) === undefined) return { busy: false, outcomes: [] };
+      const stepped = await withRunLease(session.state, runId, () => stepParkedRun(session, runId, { kind: 'dueTimers' }));
+      if (stepped.kind === 'busy') return { busy: true, outcomes: [] };
+      return { busy: false, outcomes: stepped.value === null ? [] : [stepped.value] };
+    }
+    case 'wake_await': {
+      const wake = WakeAwaitPayload.parse(work.payload);
+      const byRun = new Map<string, string[]>();
+      for (const park of session.state.awaitParks(wake)) byRun.set(park.run_id, [...(byRun.get(park.run_id) ?? []), park.address]);
+      let busy = false;
+      const outcomes: RunOutcome[] = [];
+      for (const [runId, addresses] of byRun) {
+        const stepped = await withRunLease(session.state, runId, () => stepParkedRun(session, runId, { kind: 'addresses', addresses }));
+        if (stepped.kind === 'busy') busy = true;
+        else if (stepped.value !== null) outcomes.push(stepped.value);
+      }
+      return { busy, outcomes };
+    }
+    default:
+      return neverAsAny(work.kind);
   }
 }
 
@@ -239,7 +423,7 @@ function sessionParts(session: Session) {
     state: session.state,
     externals: session.running,
     credentials: session.credentials,
-    engine: engineFor(session.project.languageVersion),
+    engine: 'rust' as const,
   };
 }
 
@@ -283,6 +467,17 @@ export async function receiveWebhook(
     await rpc({ running, credential, method: 'preprocessInbound', params: { raw }, tenant: LOCAL_TENANT }),
     { method: 'preprocessInbound', adapter: input.external },
   );
+  // The keys this delivery resolves, independent of any listen: a comment on
+  // a thread wakes the awaits parked on it whether or not a movement listens
+  // for comments.
+  if (running.methods.includes('wakeKeys')) {
+    const keys = parseWireResult(
+      METHODS.wakeKeys.result,
+      await rpc({ running, credential, method: 'wakeKeys', params: { raw }, tenant: LOCAL_TENANT }),
+      { method: 'wakeKeys', adapter: input.external },
+    );
+    for (const correlationKey of keys) enqueueAwaitWake(session.state, { adapterType: input.external, correlationKey });
+  }
   const outcomes: RunOutcome[] = [];
   for (const event of parsed.events) outcomes.push(...(await fireEvent(session, { external: input.external, event: event as DiscriminableEvent })));
   return outcomes;

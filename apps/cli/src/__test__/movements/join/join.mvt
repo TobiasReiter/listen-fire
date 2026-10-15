@@ -1,0 +1,20 @@
+import { acme_crm } from adapters
+import { acme } from credentials
+
+crm = acme_crm(credentials: acme)
+
+# Two arms wait, an hour and two; what each returns is used after the join.
+movement both(company: <crm-[:Company]->>) {
+  r = all(() => {
+    await sleep(1h)
+    return "early"
+  }, () => {
+    await sleep(2h)
+    return "late"
+  })
+  first = AT(r, 0)
+  second = AT(r, 1)
+  write crm-[:Company]-> { Name: "${first} ${second} ${company.Name}" }
+}
+
+listen to crm {} fire both

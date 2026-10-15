@@ -117,12 +117,15 @@ export async function startExternals(input: {
   externals: External[];
   credentials: Map<string, Credential>;
   tenant: string;
+  /** Where the host takes an external's pushes (`lf serve`), handed to a
+   *  started external as LF_HOST_URL. */
+  hostUrl?: string;
 }): Promise<Map<string, RunningExternal>> {
   const running = new Map<string, RunningExternal>();
   try {
     for (const external of input.externals) {
       if (external.manifest.kind !== 'adapter') continue;
-      const { baseUrl, stop } = await reach(input.project, external);
+      const { baseUrl, stop } = await reach(input.project, external, input.hostUrl);
       const shell: RunningExternal = {
         external,
         baseUrl,
@@ -163,13 +166,13 @@ export function credentialFor(credentials: Map<string, Credential>, external: st
   return undefined;
 }
 
-async function reach(project: Project, external: External): Promise<{ baseUrl: string; stop: () => void }> {
+async function reach(project: Project, external: External, hostUrl: string | undefined): Promise<{ baseUrl: string; stop: () => void }> {
   if (external.manifest.url !== undefined) return { baseUrl: external.manifest.url, stop: () => {} };
   const [command, ...args] = external.manifest.command ?? [];
   if (command === undefined) throw new Error(`external "${external.manifest.name}" has no command`);
   const stateDir = join(project.lfDir, 'externals', external.manifest.name);
   mkdirSync(stateDir, { recursive: true });
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '', PORT: '0' };
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '', PORT: '0', ...(hostUrl !== undefined ? { LF_HOST_URL: hostUrl } : {}) };
   for (const [key, value] of Object.entries(external.manifest.env)) env[key] = value.replaceAll('{lf}', project.lfDir);
   const child = spawn(command, args, { cwd: external.dir, env, stdio: ['ignore', 'pipe', 'inherit'] });
   const port = await listeningPort(child, external.manifest.name);

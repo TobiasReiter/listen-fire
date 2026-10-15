@@ -5,6 +5,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type LinkedObjectSource from '../../../generated/kysely/knowledge/LinkedObjectSource';
 
 import { getKnowledgeQb } from '../../../lib/kysely';
+import { normalizeAdapterType } from 'movement-engine/services/translation_graph/adapter_type';
 
 // unified linked object model
 
@@ -21,16 +22,7 @@ import { getKnowledgeQb } from '../../../lib/kysely';
  * normalisation landed are migrated by the
  * `*_lowercase_linked_object_adapter_type` migration.
  */
-export function normalizeAdapterType(adapterType: string): string {
-  // Convert PipelineInputType / ExternalServiceType enum values (uppercase,
-  // underscore-separated) into the canonical adapter id (lowercase,
-  // hyphen-separated) the registry uses. Single-word providers (ATTIO,
-  // AFFINITY) collapse to `attio`, `affinity`; compound names like
-  // NATIVE_VALUATIONS become `native-valuations`. Match the registry's
-  // exported `*_ADAPTER_TYPE` constants and the `MutationSource.adapterType`
-  // field carried through every change.
-  return adapterType.toLowerCase().replace(/_/g, '-');
-}
+export { normalizeAdapterType };
 
 interface LinkedObjectRow {
   id: string;

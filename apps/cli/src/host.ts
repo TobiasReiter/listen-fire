@@ -19,21 +19,24 @@ import {
   WALL_CLOCK,
 } from 'movement-engine/services/movement_engine/host_kit';
 import { InMemoryWriteLocks, segmentWriteLocks } from 'movement-engine/services/write_locks/write_locks';
-import type { ParkSink } from 'movement-engine/services/movement_engine/run';
 import { rpc, type RunningExternal } from './externals';
+import { localFileText } from './files';
 import { modelCalls } from './models';
+import { localParkFamily } from './parks';
 import type { Project } from './project';
-import type { Credential } from './secrets';
+import { withCredential, type Credential } from './secrets';
 import type { State } from './state';
 
 /** The one tenant a local project is. */
 export const LOCAL_TENANT = 'local';
 
-/** The developer running lf, as the principal an event acts as. STUB: one
- *  identity for every event; no mapping from an event's actor to a user. */
-export function localIdentity(env: NodeJS.ProcessEnv = process.env): ActingPrincipal {
-  const name = env.LF_USER ?? userInfo().username;
-  return { principal: { id: `local:${name}`, display: name }, email: env.LF_USER_EMAIL ?? `${name}@localhost` };
+/** The developer running lf, as the principal an event acts as: LF_USER /
+ *  LF_USER_EMAIL, else lf.yaml's `user`, else the OS user. STUB: one identity
+ *  for every event; no mapping from an event's actor to a user. The only host
+ *  call that takes the acting principal is `lookup.resolveActingUser`. */
+export function localIdentity(configured: Project['user'] = {}, env: NodeJS.ProcessEnv = process.env): ActingPrincipal {
+  const name = env.LF_USER ?? configured.name ?? userInfo().username;
+  return { principal: { id: `local:${name}`, display: name }, email: env.LF_USER_EMAIL ?? configured.email ?? `${name}@localhost` };
 }
 
 export interface LocalHostParts {
@@ -41,8 +44,9 @@ export interface LocalHostParts {
   state: State;
   externals: Map<string, RunningExternal>;
   credentials: Map<string, Credential>;
-  /** The engine a parked run's state was written by, stamped on each park. */
-  engine: 'rust' | 'ts';
+  /** The engine a parked run's state was written by, stamped on each park:
+   *  always Rust, the only engine lf runs. */
+  engine: 'rust';
 }
 
 /**
@@ -63,27 +67,6 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
     },
   });
 
-  const parkSink: ParkSink = {
-    recordJoin: async ({ frameAddress, parkedChildren }) => state.recordJoin(parts.runId, frameAddress, parkedChildren),
-    commitTimerPark: async ({ address, state: parked, wakeAt }) => {
-      state.addPark({ run_id: parts.runId, kind: 'timer', address, wake_at: wakeAt, adapter_type: null, correlation_key: null, state: JSON.stringify(parked), engine: parts.engine });
-      state.enqueue('resume', wakeAt, { runId: parts.runId });
-    },
-    commitAwaitPark: async ({ address, state: parked, adapterType, correlationKey }) => {
-      state.addPark({ run_id: parts.runId, kind: 'await', address, wake_at: null, adapter_type: adapterType, correlation_key: correlationKey, state: JSON.stringify(parked), engine: parts.engine });
-    },
-    decrementJoin: async ({ frameAddress }) => state.decrementJoin(parts.runId, frameAddress),
-    // THIN: branch exports of a parked join are not persisted yet, so a run
-    // whose parked combinator arms export values resumes without them.
-    persistBranchExport: async () => {},
-    collectBranchExports: async () => [],
-    cancelSubtrees: async ({ subtreeAddresses }) => state.dropParks(parts.runId, subtreeAddresses),
-    commitSuspension: async ({ address, state: parked }) => {
-      state.addPark({ run_id: parts.runId, kind: 'suspension', address, wake_at: null, adapter_type: null, correlation_key: null, state: JSON.stringify(parked), engine: parts.engine });
-    },
-  };
-
-  const bindings = new Map<string, unknown>();
   const models = modelCalls(credentials);
 
   return {
@@ -122,7 +105,9 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
         const held = instances.get(instance);
         if (held === undefined) throw new Error(`no adapter instance '${instance}' in this segment`);
         try {
-          const raw = await rpc({ running: held.running, credential: held.credential, method, params: args, tenant: LOCAL_TENANT });
+          const raw = await withCredential(held.credential, () =>
+            rpc({ running: held.running, credential: held.credential, method, params: args, tenant: LOCAL_TENANT }),
+          );
           const schema = (METHODS as Record<string, { result: Parameters<typeof parseWireResult>[0] } | undefined>)[method]?.result;
           const result = schema !== undefined ? parseWireResult(schema, raw, { method, adapter: held.running.external.manifest.name }) : raw;
           return { result } as Awaited<ReturnType<EngineHost['adapters']['call']>>;
@@ -132,37 +117,10 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
       },
     },
     llm: models,
-    park: {
-      sink: {
-        recordJoin: ({ segmentId: _s, ...input }) => parkSink.recordJoin(input),
-        commitTimerPark: ({ segmentId: _s, ...input }) => parkSink.commitTimerPark(input),
-        commitAwaitPark: ({ segmentId: _s, ...input }) => parkSink.commitAwaitPark(input),
-        decrementJoin: ({ segmentId: _s, ...input }) => parkSink.decrementJoin(input),
-        persistBranchExport: ({ segmentId: _s, ...input }) => parkSink.persistBranchExport(input),
-        collectBranchExports: ({ segmentId: _s, ...input }) => parkSink.collectBranchExports(input),
-        cancelSubtrees: ({ segmentId: _s, ...input }) => parkSink.cancelSubtrees(input),
-        commitSuspension: ({ segmentId: _s, ...input }) => parkSink.commitSuspension!(input),
-      },
-      // STUB: an await's wake is not queued; `lf resume` re-enters await
-      // parks, and the external's push door (`/hooks/<external>/wake`) is
-      // not served yet.
-      wake: async () => {},
-      // THIN: record bindings live for the process only.
-      bindings: {
-        record: async ({ from, to }) => {
-          bindings.set(JSON.stringify(from), to);
-        },
-        findBoundCounterpart: async () => null,
-        delete: async ({ from }) => {
-          bindings.delete(JSON.stringify(from));
-        },
-      },
-    },
+    park: localParkFamily({ state, runId: parts.runId, engine: parts.engine }),
     control: { cancel: NEVER_CANCELLED },
     files: {
-      resolveFileText: async () => {
-        throw new Error('reading a file\'s text is not built in lf yet (files.resolveFileText)');
-      },
+      resolveFileText: async ({ file }) => localFileText(project, file),
       // The object store is a folder. THIN: a "pdf" is stored as its text.
       render: async ({ content, type }) => {
         const dir = join(project.lfDir, 'files');
@@ -177,7 +135,7 @@ export function localHost(parts: LocalHostParts & { runId: string }): EngineHost
         };
       },
     },
-    lookup: { resolveActingUser: async () => localIdentity() },
+    lookup: { resolveActingUser: async () => localIdentity(project.user) },
     locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },
     trace: {
       append: async ({ entries }) => state.appendTrace(parts.runId, entries),
