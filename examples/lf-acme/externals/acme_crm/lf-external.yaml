@@ -1,0 +1,16 @@
+# An installed external: what it is and how the host reaches it.
+name: acme_crm
+kind: adapter            # adapter (protocol 2 process) | plugin (manifest only; not yet served)
+protocol: 2
+# Started by the host with PORT=0 in its environment; it prints "listening <port>".
+command: [node, server.mjs]
+# url: http://127.0.0.1:5557/   # instead of command: reach an adapter already running
+auth: { kind: bearer, field: token }   # which secret field the host sends on each call
+webhook:
+  # How the host verifies a delivery at /hooks/acme_crm/<install>: HMAC-SHA256
+  # of the raw body, hex, in this header, keyed by this secret field.
+  signature: hmac-sha256
+  header: x-listen-fire-signature
+  secretField: webhook_secret
+env:
+  ACME_CRM_STATE: "{lf}/externals/acme_crm/state.json"

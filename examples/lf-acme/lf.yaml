@@ -1,0 +1,4 @@
+# The project file. `engine` pins the engine version this project runs on.
+engine: 0.11.0
+movements: movements
+externals: externals

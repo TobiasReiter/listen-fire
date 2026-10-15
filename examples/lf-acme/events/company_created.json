@@ -1,0 +1,10 @@
+{
+  "external": "acme_crm",
+  "event": {
+    "payload": { "id": "c-1", "Name": "Vireo Robotics" },
+    "externalId": "c-1",
+    "eventType": "company.created",
+    "changeType": "create",
+    "recordType": "Company"
+  }
+}
