@@ -43,6 +43,8 @@ pub struct Checker<'c> {
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
+    /// Closures that call themselves by name without declaring what they return.
+    pub selves: crate::families::closures::Selves,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -57,7 +59,7 @@ pub struct Bound {
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new(), function_returns: Default::default() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new(), function_returns: Default::default(), selves: Default::default() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -484,10 +486,12 @@ impl<'c> Checker<'c> {
                 self.type_param(body, &param.name, type_, scope);
             }
         }
-        if let Some(name) = self_name {
-            self.declare_closure_self(name, closure, body);
+        let own = self_name.and_then(|name| self.declare_closure_self(name, closure, body));
+        let returns = self.check_body(&closure.body, body, label.to_string());
+        if let Some(own) = own {
+            self.close_closure_self(own, returns.is_empty());
         }
-        self.check_body(&closure.body, body, label.to_string())
+        returns
     }
 
     pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {

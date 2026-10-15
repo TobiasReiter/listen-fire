@@ -28,7 +28,7 @@ use serde_json::json;
 use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
-use crate::scope::{Resolution, ScopeId, Symbol, SymbolKind};
+use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
 
 /// Whether a body hands a value back: a `return` at its own level or in an
 /// `if` arm (a block, a closure or a movement inside it returns for itself).
@@ -76,15 +76,83 @@ fn arm_span(arm: &ArmExpression) -> Span {
 impl Checker<'_> {
     /// `declareClosureSelf`: a closure bound to a name may call itself by
     /// that name (version 3); a parameter of the same name shadows it.
-    pub fn declare_closure_self(&mut self, name: &str, closure: &ClosureExpression, body: ScopeId) {
+    pub fn declare_closure_self(&mut self, name: &str, closure: &ClosureExpression, body: ScopeId) -> Option<SymbolId> {
         if !since(self.version, 3) || closure.params.iter().any(|p| p.name == name) {
-            return;
+            return None;
         }
         let mut symbol = Symbol::new(name, SymbolKind::Binding, closure.span);
         symbol.is_closure = true;
         let id = self.scopes.add_symbol(symbol);
         self.scopes.declare(body, id);
+        if closure.return_type.is_some() {
+            self.function_returns.insert(id, true);
+        } else {
+            self.selves.undeclared.insert(id);
+        }
+        Some(id)
     }
+
+    /// `noteUndeclaredSelfCall`: the first call through a closure's own name,
+    /// when that closure declared nothing.
+    pub fn note_self_call(&mut self, id: SymbolId, span: Span) {
+        if self.selves.undeclared.contains(&id) {
+            self.selves.first_call.entry(id).or_insert(span);
+        }
+    }
+
+    /// A self-call whose value is used: whether it binds anything is known
+    /// once the body has been walked.
+    pub fn note_bound_self_call(&mut self, written: &str, span: Span, scope: ScopeId) {
+        let callee = self.callee_name(written, scope);
+        if let Resolution::Found(id) = self.scopes.resolve(scope, &callee)
+            && self.selves.undeclared.contains(&id)
+        {
+            self.selves.bound_calls.entry(id).or_default().push((written.to_string(), span));
+        }
+    }
+
+    /// The closure's body has been walked: a self-call needed the type being
+    /// worked out, unless the body hands nothing back, when its bound
+    /// self-calls bound nothing.
+    pub fn close_closure_self(&mut self, id: SymbolId, returns_nothing: bool) {
+        let name = self.scopes.symbol(id).name.clone();
+        if let Some(span) = self.selves.first_call.get(&id).copied()
+            && !returns_nothing
+        {
+            self.report(
+                codes::RECURSIVE_RETURN_TYPE,
+                recursive_return_type_message(&name, &[&name, &name], &format!("{name} = (…): <number> => …")),
+                span,
+            );
+        }
+        if returns_nothing {
+            for (callee, span) in self.selves.bound_calls.get(&id).cloned().unwrap_or_default() {
+                self.report_call_returns_nothing(&callee, span);
+            }
+        }
+    }
+}
+
+/// The self-names of closures that declared no return type, and how they
+/// were called while their bodies were walked.
+#[derive(Default)]
+pub struct Selves {
+    pub undeclared: std::collections::HashSet<SymbolId>,
+    pub first_call: std::collections::HashMap<SymbolId, Span>,
+    pub bound_calls: std::collections::HashMap<SymbolId, Vec<(String, Span)>>,
+}
+
+/// `recursiveReturnTypeMessage`.
+pub fn recursive_return_type_message(name: &str, chain: &[&str], example: &str) -> String {
+    let around = if chain.len() <= 2 {
+        "calls itself".to_string()
+    } else {
+        format!("calls itself through {}", chain[1..chain.len() - 1].iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", "))
+    };
+    format!(
+        "'{name}' {around} ({}), so it declares what it returns, as TypeScript requires — what its body returns cannot be worked out from a body that needs its own answer. Write the type after the parameters: '{example}'",
+        chain.join(" → ")
+    )
 }
 
 impl Checker<'_> {

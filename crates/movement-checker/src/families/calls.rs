@@ -597,12 +597,9 @@ impl Checker<'_> {
         match self.read_call(call, scope, CallPosition::Value) {
             CallReading::Function => {
                 self.check_call(call, scope);
+                self.note_bound_self_call(&call.callee, span, scope);
                 if self.callee_returns(&call.callee, scope) == Some(false) {
-                    self.report(
-                        codes::CALL_RETURNS_NOTHING,
-                        format!("'{0}' returns nothing, so there is no value to bind — a call's value is what it returns. Add a 'return' to '{0}', or call it as a statement.", call.callee),
-                        span,
-                    );
+                    self.report_call_returns_nothing(&call.callee, span);
                 }
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
@@ -1060,6 +1057,7 @@ impl Checker<'_> {
             return None;
         }
         if self.calls_closure(&callee) {
+            self.note_self_call(id, call.span);
             let closure = match (&callee.types.pos, &callee.types.field) {
                 (Some(crate::types::position::Position::Closure(c)), _) => Some(c.clone()),
                 (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
@@ -1184,6 +1182,15 @@ impl Checker<'_> {
             return None;
         }
         self.function_returns.get(&id).copied()
+    }
+
+    /// `reportCallReturnsNothing`.
+    pub fn report_call_returns_nothing(&mut self, callee: &str, span: Span) {
+        self.report(
+            codes::CALL_RETURNS_NOTHING,
+            format!("'{callee}' returns nothing, so there is no value to bind — a call's value is what it returns. Add a 'return' to '{callee}', or call it as a statement."),
+            span,
+        );
     }
 
     /// `reportParamNeedsType`.
