@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **142 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14051 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 10291 of 11435.
+- Codes at parity: **145 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 14097 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 10337 of 11435.
 - Rust side: 2.3s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 1994 | 1995 |
-| checks v1 | 1535 | 1347 | 1348 |
-| checks v2 | 1956 | 1718 | 1719 |
-| checks v3 | 2403 | 2051 | 2052 |
+| checks under v5 | 2360 | 2005 | 2006 |
+| checks v1 | 1535 | 1360 | 1361 |
+| checks v2 | 1956 | 1729 | 1730 |
+| checks v3 | 2403 | 2062 | 2063 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -26,7 +26,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 |---|---|---|---|---|---|---|---|
 | calls | 26 | 19 | 476 | 376 | 100 | 0 | 0 |
 | closures | 14 | 12 | 305 | 281 | 24 | 0 | 0 |
-| extraction | 20 | 10 | 207 | 97 | 110 | 0 | 0 |
+| extraction | 20 | 13 | 207 | 143 | 64 | 0 | 0 |
 | flow | 10 | 8 | 78 | 70 | 8 | 0 | 0 |
 | imports | 5 | 5 | 44 | 44 | 0 | 0 | 0 |
 | listens | 12 | 12 | 10671 | 10671 | 0 | 0 | 0 |
@@ -100,7 +100,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_EXTENDS_CYCLE | nodes | 9 | 0 | 9 | 0 | 0 |  |
 | MOV_EXTENDS_NOT_A_NODE | nodes | 3 | 0 | 3 | 0 | 0 |  |
 | MOV_EXTENDS_REDEFINES | nodes | 6 | 0 | 6 | 0 | 0 |  |
-| MOV_EXTRACT_ANNOTATE | extraction | 12 | 0 | 12 | 0 | 0 |  |
+| MOV_EXTRACT_ANNOTATE | extraction | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_CALL_NESTED | extraction | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_EXTRACT_CONFIG | extraction | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_CONTENT | extraction | 18 | 14 | 4 | 0 | 0 |  |
@@ -108,8 +108,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_EXTRACT_NEEDS_ANNOTATION | extraction | 7 | 7 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_SHAPE_COMPUTED | extraction | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_SHAPE_NOT_DECLARED | extraction | 3 | 3 | 0 | 0 | 0 | yes |
-| MOV_EXTRACT_TYPE_CONFLICT | extraction | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_EXTRACT_UNKNOWN_FIELD | extraction | 22 | 0 | 22 | 0 | 0 |  |
+| MOV_EXTRACT_TYPE_CONFLICT | extraction | 12 | 12 | 0 | 0 | 0 | yes |
+| MOV_EXTRACT_UNKNOWN_FIELD | extraction | 22 | 22 | 0 | 0 | 0 | yes |
 | MOV_FOLD_NEEDS_ORDER | values | 109 | 85 | 24 | 0 | 0 |  |
 | MOV_FUNCTION_NAME_COLLISION | names | 10 | 10 | 0 | 0 | 0 | yes |
 | MOV_FUNCTION_UNKNOWN | calls | 14 | 14 | 0 | 0 | 0 | yes |

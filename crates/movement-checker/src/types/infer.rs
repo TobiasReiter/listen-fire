@@ -22,7 +22,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 use super::field::*;
 use super::narrowing::{PresenceProof, exists_subject, is_position_terminal, negative_presence_proofs, presence_proofs};
-use super::position::{EdgeLanding, Position, describe_position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
+use super::position::{EdgeLanding, Position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
 use super::stdlib::{bare_coercer_returns, lookup_builtin, movement_meta_key_type, stdlib_function_by_id};
 
 /// What the typing asks of the scope it types in (the TypeScript's
@@ -466,47 +466,9 @@ impl<'a> Typing<'a> {
         ty
     }
 
-    /// `readExtractField`, the typing half (the extraction family reports an
-    /// unknown field): a typed field may not have been found, so it reads
-    /// `T | absent`; text is handed over as `""` when not found, so it is
-    /// present. An unannotated field is text, so written into a field text
-    /// cannot be it is refused, naming the annotation (the version 1
-    /// suggestion and the option-set nudge are the extraction family's).
+    /// `readExtractField` (the extraction family's).
     fn read_extract_field(&mut self, node: &super::position::ExtractNode, property: &str) -> Option<Ty> {
-        let field = node.properties.get(property)?;
-        if let Some(explicit) = &field.explicit {
-            if self.version < 2 {
-                return Some(maybe_absent(explicit.clone()));
-            }
-            return Some(if field.reads_as_present_text { Ty::Text } else { maybe_absent(explicit.clone()) });
-        }
-        if field.annotated || self.version < 2 {
-            return None;
-        }
-        let Some((target, path)) = self.write_target.clone() else { return Some(Ty::Text) };
-        if let Some(BaseKind::Text | BaseKind::Json | BaseKind::Absent | BaseKind::Record) = base_kind(&target) {
-            return Some(Ty::Text);
-        }
-        let primitive = describe_field_type(&super::field::unwrap_list(&target));
-        let borrow = path.as_deref().map(|path| {
-            let segments: Vec<&str> = path.split('.').collect();
-            let spelled = match segments.as_slice() {
-                [graph, position, field] => format!("{graph}-[:{position}]->.`{field}`"),
-                _ => path.to_string(),
-            };
-            format!(" (or borrow the field's own type: `{property}: <{spelled}> \"…\"`)")
-        });
-        let node_label = describe_position(&Position::Extract { node: std::rc::Rc::new(node.clone()), present: Default::default() });
-        self.report(
-            crate::codes::EXTRACT_NEEDS_ANNOTATION,
-            format!(
-                "'{property}' on {node_label} is text — a field with no annotation asks the model for words — and it is written into a {} field{}. Annotate it so the model answers a {primitive}: `{property}: <{primitive}> \"…\"`{}. An annotated {primitive} may not be found, so write it with '?:' (set-if-empty), or fall back with COALESCE.",
-                describe_field_type(&target),
-                path.as_deref().map(|p| format!(" ({p})")).unwrap_or_default(),
-                borrow.unwrap_or_default()
-            ),
-        );
-        None
+        crate::families::extraction::read_extract_field(self, node, property)
     }
 
     /// `dictMemberRead`: `d.key` off a name holding a dict.

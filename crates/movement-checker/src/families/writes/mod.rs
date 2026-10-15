@@ -1182,7 +1182,7 @@ impl Checker<'_> {
             let ty = typing.infer(&expr);
             let may_hold = typing.may_hold_type(&expr);
             // The slot's other typing diagnostics are reported where it is checked.
-            let refused: Vec<_> = typing.diagnostics.into_iter().filter(|d| d.code == codes::EXTRACT_NEEDS_ANNOTATION).collect();
+            let refused: Vec<_> = typing.diagnostics.into_iter().filter(|d| crate::families::extraction::reads_write_target(&d.code)).collect();
             (ty, may_hold, refused)
         };
         for diagnostic in refused {

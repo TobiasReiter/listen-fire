@@ -41,7 +41,10 @@ use crate::codes;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
 use crate::meta::did_you_mean;
 use crate::slots::{expression_of_slot, is_bare_ident, is_literal_word};
-use crate::types::field::{Ty, describe_field_type, maybe_absent, strip_absent};
+use crate::diagnostic::{Diagnostic, Severity};
+use crate::types::Typing;
+use crate::types::field::{BaseKind, Ty, base_kind, describe_field_type, field_assignable, field_type_compatible, maybe_absent, strip_absent, unwrap_list};
+use crate::types::position::EXTRACT_ROOT_NAME;
 use movement_parser::ast::ExprSlot;
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
 use crate::types::position::{ExtractField, ExtractNode as ExtractNodeType, LocalEdge, LocalNode, Position};
@@ -179,6 +182,18 @@ impl Checker<'_> {
         let Some(declaration) = self.listens.shapes.get(&shape).filter(|_| self.scopes.symbol(shape).kind == SymbolKind::Shape).cloned() else { return };
         if let Some(alias) = self.scopes.scope(scope).symbols.get(name).copied() {
             self.listens.shapes.insert(alias, declaration);
+        }
+    }
+
+    /// Whether every declaration `shape` extends resolves from here. One
+    /// imported from another file may extend a name only that file binds;
+    /// what it reads as is then not known here.
+    // TODO(nodes): fold `extends` where the declaration is made.
+    fn bases_known(&self, shape: &ShapeDeclaration, scope: ScopeId, depth: usize) -> bool {
+        let Some(base) = &shape.extends else { return true };
+        match self.scopes.resolve(scope, &base.name) {
+            Resolution::Found(id) if depth < 16 => self.listens.shapes.get(&id).is_some_and(|b| self.bases_known(b, scope, depth + 1)),
+            _ => false,
         }
     }
 
@@ -426,14 +441,15 @@ impl Checker<'_> {
     /// `declaredExtractGraph`: a node taking a declaration as its shape — the
     /// declaration is its first stage, the `through` stages apply on top.
     fn declared_extract_graph(&self, node: &DeclaredExtractNode, scope: ScopeId) -> ExtractNodeType {
-        let shape = match self.scopes.resolve(scope, &node.declared.type_) {
-            Resolution::Found(id) => self.declared_extract_shape(id, scope),
-            _ => None,
+        let (shape, known) = match self.scopes.resolve(scope, &node.declared.type_) {
+            Resolution::Found(id) => (self.declared_extract_shape(id, scope), self.listens.shapes.get(&id).is_none_or(|s| self.bases_known(s, scope, 0))),
+            _ => (None, true),
         };
         let mut graph = match shape {
             Some(shape) => self.shape_extract_graph(&node.name, &shape.root, scope),
             None => empty_extract_node(&node.name),
         };
+        graph.declared = !known;
         self.apply_extract_stages(&mut graph, &node.stages, scope);
         graph
     }
@@ -460,7 +476,7 @@ impl Checker<'_> {
     pub fn extract_call_type(&self, call: &ExtractCallExpression, scope: ScopeId) -> Option<Ty> {
         let declaration = match &call.shape {
             ExtractCallShape::Named { name, .. } => match self.scopes.resolve(scope, name) {
-                Resolution::Found(id) => self.declared_extract_shape(id, scope)?,
+                Resolution::Found(id) => self.declared_extract_shape(id, scope).filter(|s| self.bases_known(s, scope, 0))?,
                 _ => return None,
             },
             ExtractCallShape::Inline { declaration, .. } => declaration.clone(),
@@ -699,5 +715,154 @@ fn extract_content_item_problem(ty: &Ty, which: &str) -> Option<String> {
             describe_field_type(ty)
         )),
         Ty::MaybeAbsent(of) => extract_content_item_problem(of, which),
+    }
+}
+
+// ── Reading an extracted field ──
+
+/// `readExtractField`: a dot read off an extracted node. A typed field may
+/// not have been found, so it reads `T | absent`; text is handed over as `""`
+/// when not found, so it is present. An annotation the write target
+/// contradicts is refused at the annotation; an unannotated field written
+/// into a target that needs something text cannot be is refused, and one
+/// written into an option set earns the nudge to annotate it.
+pub fn read_extract_field(typing: &mut Typing, node: &ExtractNodeType, property: &str) -> Option<Ty> {
+    if node.declared {
+        return None;
+    }
+    let node_label = if node.name == EXTRACT_ROOT_NAME { "the extract result".to_string() } else { format!("the extracted node '{}'", node.name) };
+    let Some(field) = node.properties.get(property) else {
+        let available: Vec<&str> = node.properties.keys().map(String::as_str).collect();
+        let list = if available.is_empty() { String::new() } else { format!(" — it declares: {}", available.join(", ")) };
+        typing.report(codes::EXTRACT_UNKNOWN_FIELD, format!("'{property}' is not a field of {node_label}{list}"));
+        return None;
+    };
+    let write_target = typing.write_target.clone();
+    if let Some(explicit) = &field.explicit {
+        let annotated = unwrap_list(explicit);
+        if let Some((target, path)) = &write_target
+            && field_type_compatible(explicit, target)
+            && target_constrains_extraction(target)
+            && !field_assignable(&annotated, &unwrap_list(target))
+        {
+            let unwrapped = unwrap_list(target);
+            let enum_options = match &unwrapped {
+                Ty::Enum { options, .. } => Some(options),
+                _ => None,
+            };
+            let into = path.as_ref().map(|p| format!(" {p},")).unwrap_or_default();
+            let mismatch = match enum_options {
+                Some(options) => format!(
+                    "a field whose options are ({}) — {}",
+                    options.join(" | "),
+                    if matches!(annotated, Ty::Enum { .. }) { "the option sets differ".to_string() } else { format!("{} isn't constrained to them", describe_field_type(&annotated)) }
+                ),
+                None => format!("a {} field — the annotation doesn't constrain the extraction to that type", describe_field_type(target)),
+            };
+            let borrow = path
+                .as_ref()
+                .map(|p| {
+                    format!(
+                        "; borrow the target's {} (`{property}: <{}> \"…\"`) or align the annotation",
+                        if enum_options.is_some() { "options" } else { "type" },
+                        borrowed_annotation_spelling(p)
+                    )
+                })
+                .unwrap_or_default();
+            typing.diagnostics.push(Diagnostic::error(
+                codes::EXTRACT_TYPE_CONFLICT,
+                format!("'{property}' on {node_label} is annotated as {}, but it is written into{into} {mismatch}{borrow}", describe_field_type(explicit)),
+                field.span,
+            ));
+        }
+        // Version 1: every annotated field is optional, text included.
+        if typing.version < 2 {
+            return Some(maybe_absent(explicit.clone()));
+        }
+        return Some(if field.reads_as_present_text { Ty::Text } else { maybe_absent(explicit.clone()) });
+    }
+    // An annotation that did not resolve here stays untyped and unremarked.
+    if field.annotated {
+        return None;
+    }
+    if typing.version < 2 {
+        if let Some((target, path)) = &write_target
+            && !matches!(strip_absent(target), Ty::Text | Ty::Json)
+        {
+            suggest_annotation(typing, field, property, &node_label, target, path.as_deref());
+        }
+        return None;
+    }
+    let Some((target, path)) = write_target else { return Some(Ty::Text) };
+    match base_kind(&target) {
+        Some(BaseKind::Text | BaseKind::Json | BaseKind::Absent) => {
+            if matches!(unwrap_list(&target), Ty::Enum { .. }) {
+                suggest_annotation(typing, field, property, &node_label, &target, path.as_deref());
+            }
+            return Some(Ty::Text);
+        }
+        Some(BaseKind::Record) => return Some(Ty::Text),
+        _ => {}
+    }
+    let primitive = describe_field_type(&unwrap_list(&target));
+    let borrow = path.as_deref().map(|p| format!(" (or borrow the field's own type: `{property}: <{}> \"…\"`)", borrowed_annotation_spelling(p))).unwrap_or_default();
+    typing.report(
+        codes::EXTRACT_NEEDS_ANNOTATION,
+        format!(
+            "'{property}' on {node_label} is text — a field with no annotation asks the model for words — and it is written into a {} field{}. Annotate it so the model answers a {primitive}: `{property}: <{primitive}> \"…\"`{borrow}. An annotated {primitive} may not be found, so write it with '?:' (set-if-empty), or fall back with COALESCE.",
+            describe_field_type(&target),
+            path.as_deref().map(|p| format!(" ({p})")).unwrap_or_default(),
+        ),
+    );
+    None
+}
+
+/// The extraction diagnostics a read raises only against the field it is
+/// written into: the write's own typing of the value reports them.
+pub fn reads_write_target(code: &str) -> bool {
+    [codes::EXTRACT_NEEDS_ANNOTATION, codes::EXTRACT_TYPE_CONFLICT, codes::EXTRACT_ANNOTATE].contains(&code)
+}
+
+/// `suggestAnnotation`: the info nudge toward an annotation that would add a
+/// constraint, said once per field and target.
+fn suggest_annotation(typing: &mut Typing, field: &ExtractField, property: &str, node_label: &str, target: &Ty, path: Option<&str>) {
+    let annotation = match (path, target) {
+        (Some(path), _) => path.to_string(),
+        (None, Ty::Text | Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::File | Ty::Json | Ty::Absent) => describe_field_type(target),
+        _ => return,
+    };
+    if !field.suggested.borrow_mut().insert(annotation.clone()) {
+        return;
+    }
+    let mut diagnostic = Diagnostic::error(
+        codes::EXTRACT_ANNOTATE,
+        format!(
+            "'{property}' on {node_label} flows into a {} field{} — annotate it as such (`{property}: <{}> \"…\"`) so the extraction is constrained by the target's type; only explicit annotations constrain extraction. An annotated field reads as its type OR absent, so discharge that in the same edit — write the target field with '?:' (set-if-empty), wrap the read in COALESCE, or guard on it — since a plain field is refused a value that may be absent",
+            describe_field_type(target),
+            path.map(|p| format!(" ({p})")).unwrap_or_default(),
+            borrowed_annotation_spelling(&annotation),
+        ),
+        field.span,
+    );
+    diagnostic.severity = Some(Severity::Info);
+    typing.diagnostics.push(diagnostic);
+}
+
+/// `targetConstrainsExtraction`: a target an annotation could be wrong for —
+/// a closed option set, or a type text is not.
+fn target_constrains_extraction(target: &Ty) -> bool {
+    match unwrap_list(target) {
+        Ty::Enum { open, .. } => open.is_none(),
+        Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::File | Ty::Absent => true,
+        Ty::Union(members) => members.iter().any(target_constrains_extraction),
+        _ => false,
+    }
+}
+
+/// `borrowedAnnotationSpelling`: `<instance>.<root>.<field>` as it is written.
+fn borrowed_annotation_spelling(path: &str) -> String {
+    match path.split('.').collect::<Vec<_>>().as_slice() {
+        [graph, root, field] => format!("{graph}-[:{root}]->.`{field}`"),
+        _ => path.to_string(),
     }
 }
