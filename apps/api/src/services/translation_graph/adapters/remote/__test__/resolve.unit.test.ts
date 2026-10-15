@@ -153,23 +153,23 @@ describe('resolveAdapter — remote fallback', () => {
   it('resolves when the run names the install\'s own credential', async () => {
     const own = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', own));
-    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme-crm' });
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', own));
+    mockCredRow.mockResolvedValue({ id: 'cred-1', credentials: Buffer.from('enc'), app_id: 'acme_crm' });
     mockDecryptToken.mockResolvedValue(JSON.stringify({ secret: 's' }));
-    mockCreateRemoteAdapter.mockReturnValue({ adapterType: 'acme-crm' });
+    mockCreateRemoteAdapter.mockReturnValue({ adapterType: 'acme_crm' });
 
-    await resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM, credentialsId: own });
+    await resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM, credentialsId: own });
 
     expect(mockCreateRemoteAdapter).toHaveBeenCalledTimes(1);
   });
 
   it('fails loudly when the run names a credential other than the install\'s own', async () => {
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme-crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
 
     await expect(
-      resolveAdapter({ adapterType: 'acme-crm', teamId: TEAM, credentialsId: 'ffffffff-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
-    ).rejects.toThrow(/"acme-crm" serves only its own installed credential/);
+      resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM, credentialsId: 'ffffffff-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
+    ).rejects.toThrow(/"acme_crm" serves only its own installed credential/);
     expect(mockDecryptToken).not.toHaveBeenCalled();
     expect(mockCreateRemoteAdapter).not.toHaveBeenCalled();
   });

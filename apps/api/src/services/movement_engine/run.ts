@@ -4138,11 +4138,13 @@ class Interpreter {
           // below). The checker rejects a bare import used as a position
           // source or `listen to`, so the runtime never needs the old lazy
           // binding (spec plans/2026-06-24-required-instantiation/0_spec.md).
+          // The credential mark is not parked (`what` is): a resume
+          // re-derives it here, from the re-parsed import.
           env.declare(
             alias ?? name,
             binding(
               statement.source.namespace === 'credentials'
-                ? { kind: 'opaque', what: 'a credential', credential: true }
+                ? { kind: 'opaque', what: 'import', credential: true }
                 : { kind: 'opaque', what: 'import' },
             ),
           );

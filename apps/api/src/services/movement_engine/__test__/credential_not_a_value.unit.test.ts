@@ -9,17 +9,16 @@
 import { binding, Environment, evalMovementExpr } from '../expression';
 import { runMovement } from '../run';
 import { MovementEngineError } from '../errors';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import { parseMovementExpression, type LanguageVersion } from 'movement-lang';
+import { makeTestHost } from '../test_host';
+import { tenantIdOf } from 'engine-contracts';
+import { mockCatalogSnapshot, parseMovementExpression, type LanguageVersion } from 'movement-lang';
 
 const VERSIONS: LanguageVersion[] = [1, 2, 3, 4, 5];
 
 async function evaluate(raw: string, languageVersion: LanguageVersion): Promise<unknown> {
   const env = new Environment();
   // As the run binds `import { acme } from credentials`.
-  env.declare('acme', binding({ kind: 'opaque', what: 'a credential', credential: true }));
+  env.declare('acme', binding({ kind: 'opaque', what: 'import', credential: true }));
   env.declare('attio', binding({ kind: 'opaque', what: 'import' }));
   return (await evalMovementExpr(parseMovementExpression(raw), { env, languageVersion })).value;
 }
@@ -38,36 +37,62 @@ describe.each(VERSIONS)('the engine under version %s', (version) => {
     await expect(codeOf(evaluate(raw, version))).resolves.toBe('MOVENG_UNSUPPORTED');
   });
 
+  // The Rust engine's run test pins the same message (run.rs
+  // `a_null_test_of_a_credential_is_refused_not_answered`).
+  it('says what it refused, as the Rust engine does', async () => {
+    await expect(evaluate('acme == null', version)).rejects.toThrow(
+      "reading 'acme' (an import) as a bare value is not supported by the movement engine yet",
+    );
+  });
+
   it('another import keeps its answer', async () => {
     await expect(evaluate('attio != null', version)).resolves.toBe(true);
   });
 });
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000041' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000041');
+
+const catalog = mockCatalogSnapshot({
+  adapters: {
+    email: {
+      constructionArgs: [],
+      schema: {
+        positions: { message: { properties: { subject: 'text' }, edges: {} } },
+        collections: {},
+        writableRoots: {},
+      },
+    },
+  },
+  credentials: { acme: { adapters: ['attio'] } },
+});
 
 describe.each(VERSIONS)('a run under version %s', (version) => {
   it('fails at the check, naming the refusal', async () => {
-    const source = `import { manual } from adapters
+    const source = `import { email } from adapters
 import { acme } from credentials
-runs = manual()
-movement m(go: <runs-[:Invocation]->>) {
+inbox = email()
+movement m(msg: <inbox-[:message]->>) {
   if acme != null { ERROR("reached") }
 }
-listen to runs {} fire m
 `;
     const run = runMovement({
       source,
       event: {
-        pipelineInputId: 'trigger:manual-cred',
-        adapterType: 'manual',
+        pipelineInputId: 'trigger:email-cred',
+        adapterType: 'email',
         triggerType: 'webhook',
-        payload: { firedAt: new Date().toISOString() },
+        payload: {},
         occurredAt: new Date().toISOString(),
       },
       teamId: TEAM_ID,
-      catalog: staticCatalogFromManifests({ credentials: { acme: { adapters: ['attio'] } } }),
-      resolveAdapter: () => createManualAdapter({ teamId: TEAM_ID }),
-      dryRun: false,
+      catalog,
+      host: makeTestHost({
+        adapters: {
+          resolve: () => {
+            throw new Error('test: the check refuses the run before any adapter');
+          },
+        },
+      }),
       languageVersion: version,
     });
     await expect(run).rejects.toMatchObject({
