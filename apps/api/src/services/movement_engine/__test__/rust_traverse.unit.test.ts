@@ -15,11 +15,12 @@ import type { Expression } from '#shared/expression/types';
 import type { Adapter, GetRelatedInput, RelatedResult } from '../../translation_graph/adapter';
 import { containerAssociation } from '../../translation_graph/adapter';
 import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
+import type { ParkedScopeState } from '../serialize';
 import type { TriggerEvent } from '../../translation_graph/triggers/types';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from '../../translation_graph/types';
 import { MovementEngineError } from '../errors';
 import type { MovementTraceEntry } from '../expression';
-import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
+import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type MovementRunResult } from '../run';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from '../test_host';
 
@@ -961,6 +962,70 @@ describe('the expression tail, on both engines', () => {
       expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
       expect(ts.state).toContain('"read":{"instanceName":"kg"}');
     }
+  });
+
+  // Henry's ruling (2026-10-15): the event in a graph literal is held as the
+  // record it is, by reference, as any other record there is.
+  it('holds the event in a graph as its record, read, parked and resumed as the TypeScript engine does', async () => {
+    const before = [
+      '  g = graph { title: "t", owner: msg, inner: { from: msg } }',
+      '  g-[o:owner]-> {',
+      '    write kg-[:note]-> { text: "${g.`title`} ${o.`subject`}" }',
+      '  }',
+    ];
+    const after = ['  g-[i:inner]->-[f:from]-> {', '    write kg-[:note]-> { text: f.`text` }', '  }'];
+    const whole = await agree({ body: [...before, ...after].join('\n'), languageVersion: 5 });
+    expect(written(whole.rust)).toEqual(['t Seed', 'Late']);
+
+    const body = [...before, '  await sleep(1h)', ...after].join('\n');
+    const base = {
+      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+      languageVersion: 5 as const,
+      event: webhook({ subject: 'Seed', text: 'Late' }),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+      firedAt: '2026-05-01T09:00:00.000Z',
+    };
+    const hostFor = (park: ReturnType<typeof makeFakeParkSink>) => {
+      const graph = fakeGraph();
+      return makeTestHost({
+        adapters: { resolve: (request) => (request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter) },
+        park: { sink: park.sink },
+      });
+    };
+    async function onEngine<T>(engine: 'ts' | 'rust', act: () => Promise<T>): Promise<T> {
+      const previous = process.env.MOVEMENT_ENGINE;
+      process.env.MOVEMENT_ENGINE = engine;
+      try {
+        return await act();
+      } finally {
+        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+        else process.env.MOVEMENT_ENGINE = previous;
+      }
+    }
+    const parkOn = (engine: 'ts' | 'rust') =>
+      onEngine(engine, async () => {
+        const park = makeFakeParkSink();
+        await runMovement({ ...base, host: hostFor(park) });
+        expect(park.timerParks).toHaveLength(1);
+        return JSON.stringify(park.timerParks[0]?.state);
+      });
+    const ts = await parkOn('ts');
+    resetRustRunStats();
+    const rust = await parkOn('rust');
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0 });
+    expect(rust).toBe(ts);
+    // Either engine resumes either park to the same writes.
+    const resumed: string[] = [];
+    for (const engine of ['ts', 'rust'] as const) {
+      for (const state of [ts, rust]) {
+        const result = await onEngine(engine, () => resumeMovement({ ...base, state: JSON.parse(state) as ParkedScopeState, host: hostFor(makeFakeParkSink()) }));
+        resumed.push(JSON.stringify({ writes: result.writes, trace: result.trace }));
+      }
+    }
+    expect(new Set(resumed).size).toBe(1);
+    expect(JSON.parse(resumed[0] ?? '{}').writes).toHaveLength(1);
   });
 
   it('tests a record IS of a kind, from the run alone', async () => {

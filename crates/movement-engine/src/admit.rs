@@ -4104,8 +4104,10 @@ impl Names<'_> {
         for entry in &literal.entries {
             match entry {
                 NodeEntry::Value { value, .. } => {
+                    // In a graph the event is a record like any other: held
+                    // on the edge as its source position (`referencedRecords`).
                     let bare = crate::js::trim(&value.raw);
-                    if graph && records(bare) {
+                    if graph && (records(bare) || self.events.contains(bare)) {
                         continue;
                     }
                     if self.events.contains(bare) {
@@ -5299,6 +5301,8 @@ mod tests {
             // A WITHIN measures from the host's clock, a hop's WHERE's too.
             "  x = msg.`subject` WITHIN \"7d\"\n  if \"2025-12-30\" WITHIN \"7d\" {\n    y = 1\n  }",
             "  crm-[c:companies WHERE `name` WITHIN \"7d\"]-> {\n    y = 1\n  }",
+            // The event in a graph is held as its source position.
+            "  g = graph { owner: msg }\n  h = graph { title: \"t\", source: msg, inner: { from: msg } }",
         ] {
             assert_eq!(refused(body), None, "{body}");
         }
@@ -5318,7 +5322,7 @@ mod tests {
             ("  write crm-[:companies]-> bind co { name: \"a\" }", "write_bind"),
             ("  write crm-[:companies]-> { unique by (`name` == \"a\" AND msg-[:replies]->.`y` == 1) name: \"a\" }", "unique_by_reads_beyond_candidate"),
             ("  write crm-[:companies]-> { unique by (`name` CONTAINS \"a\") name: \"a\" }", "unique_by_without_key"),
-            ("  g = graph { owner: msg }", "node_event_entry"),
+            ("  n = node { owner: msg }", "node_event_entry"),
             ("  x = MAP([1], { concurrency: \"many\" }, (v) => { return v })", "rvalue:collection"),
             ("  MAP([1], { batch: 4 }, (v) => { return v })", "statement:collection"),
             ("  x = 1\n  r = x(2)", "function_call"),
