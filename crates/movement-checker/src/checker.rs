@@ -763,6 +763,7 @@ impl<'c> Checker<'c> {
             self.check_expr_slot(input, scope);
         }
         self.check_extract_stages(&extract.stages, scope, &Default::default(), None);
+        self.resolve_extract_annotations(&extract.stages, scope);
     }
 
     /// `checkShapeDescriptions`: a node declaration's words may interpolate names.

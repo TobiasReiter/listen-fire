@@ -1211,3 +1211,140 @@ pub fn type_options_map(typing: &mut Typing, arg: &Expression, contract: &Option
     }
     None
 }
+
+// ── Annotations: what an extract field's `<…>` names ──
+
+/// `PRIMITIVE_TYPE_NAMES`.
+const PRIMITIVE_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
+
+impl Checker<'_> {
+    /// The annotations `buildExtractGraph` resolves, in the order it meets
+    /// them: per stage, the nested nodes first, then the stage's fields.
+    pub fn resolve_extract_annotations(&mut self, stages: &[ExtractStage], scope: ScopeId) {
+        for stage in stages {
+            for child in &stage.children {
+                let stages = match child {
+                    ExtractNode::Inline(inline) => &inline.stages,
+                    ExtractNode::Declared(declared) => &declared.stages,
+                };
+                self.resolve_extract_annotations(stages, scope);
+            }
+            for field in &stage.fields {
+                if let Some(written) = &field.type_ {
+                    self.resolve_named_type(written, field.span, scope);
+                }
+            }
+        }
+    }
+
+    /// `resolveNamedType`: an annotation resolved — a primitive, a type the
+    /// program declares, or a borrowed `<instance>.<root>.<field>` — reporting
+    /// what it names that is none of them. A graph in scope whose schema is
+    /// not known stays silent.
+    pub fn resolve_named_type(&mut self, written: &str, span: Span, scope: ScopeId) -> Option<Ty> {
+        let Some(segments) = borrowed_type_segments(Some(written)) else {
+            if let Some(found) = Ty::from_scalar_name(written).or_else(|| self.declared_type_in(written, scope)) {
+                return Some(found);
+            }
+            let names = self.type_names_in_scope(scope);
+            self.report(
+                codes::UNKNOWN_TYPE_NAME,
+                format!(
+                    "'{written}' is not a type — annotate with a primitive ({}), a type you declare (`type {written} = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>){}",
+                    PRIMITIVE_TYPE_NAMES.join(", "),
+                    did_you_mean(written, &names)
+                ),
+                span,
+            );
+            return None;
+        };
+        let [graph, root, field] = segments.as_slice() else {
+            self.report(
+                codes::BORROW_MALFORMED,
+                format!("'{written}' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"),
+                span,
+            );
+            return None;
+        };
+        let id = match self.scopes.resolve(scope, graph) {
+            Resolution::Found(id) => id,
+            Resolution::Unknown => {
+                self.report(
+                    codes::BORROW_UNKNOWN_GRAPH,
+                    format!("Unknown name '{graph}' in the borrowed type '{written}' — a borrowed type starts at a constructed instance, a declared node, or kg"),
+                    span,
+                );
+                return None;
+            }
+            failure => {
+                self.report_resolution_failure(graph, span, failure);
+                return None;
+            }
+        };
+        let symbol = self.scopes.symbol(id);
+        if !matches!(symbol.kind, SymbolKind::Instance | SymbolKind::Shape) {
+            let kind = symbol.kind.describe();
+            self.report(
+                codes::BORROW_UNKNOWN_GRAPH,
+                format!("'{graph}' is {kind} — a borrowed type starts at a constructed instance, a declared node, or kg"),
+                span,
+            );
+            return None;
+        }
+        // TODO(nodes): a declared node's schema (`shapeToSchema`); until the
+        // nodes family builds one, a type borrowed from one stays silent.
+        let Some(Position::Meta { instance }) = &symbol.types.pos else { return None };
+        let schema = instance.schema.clone();
+        let Some(fields) = borrowable_fields_of(&schema, root) else {
+            let mut available: Vec<&str> = schema.writable_roots.keys().map(String::as_str).collect();
+            for key in schema.positions.keys() {
+                if !available.contains(&key.as_str()) {
+                    available.push(key);
+                }
+            }
+            let list = if available.is_empty() { String::new() } else { format!(" — it has: {}", available.join(", ")) };
+            self.report(codes::BORROW_UNKNOWN_ROOT, format!("'{graph}' has no '{root}' to borrow from{list}"), span);
+            return None;
+        };
+        match fields.iter().find(|(name, _)| name == field) {
+            Some((_, ty)) => Some(Ty::from_schema(ty)),
+            None => {
+                let available: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+                let list = if available.is_empty() { String::new() } else { format!(" — it has: {}", available.join(", ")) };
+                self.report(codes::BORROW_UNKNOWN_FIELD, format!("'{graph}.{root}' has no field '{field}'{list}"), span);
+                None
+            }
+        }
+    }
+
+    /// `typeNamesInScope`: the primitives, then every type declared in scope.
+    fn type_names_in_scope(&self, scope: ScopeId) -> Vec<String> {
+        let mut names: Vec<String> = PRIMITIVE_TYPE_NAMES.iter().map(|n| n.to_string()).collect();
+        for id in self.scopes.chain(scope) {
+            for symbol in self.scopes.scope(id).symbols.values().map(|s| self.scopes.symbol(*s)) {
+                if symbol.kind == SymbolKind::Type && !names.contains(&symbol.name) {
+                    names.push(symbol.name.clone());
+                }
+            }
+        }
+        names
+    }
+}
+
+/// `borrowableFieldsOf`: a root's readable fields, then its writable ones
+/// (a writable one wins its name), or nothing when it has neither.
+fn borrowable_fields_of(schema: &InstanceSchema, root: &str) -> Option<Vec<(String, movement_parser::catalog::types::SchemaFieldType)>> {
+    let writable = schema.writable_roots.get(root).map(|w| &w.fields);
+    let readable = schema.positions.get(root).map(|p| &p.properties);
+    if writable.is_none() && readable.is_none() {
+        return None;
+    }
+    let mut fields: Vec<(String, movement_parser::catalog::types::SchemaFieldType)> = Vec::new();
+    for (name, ty) in readable.into_iter().flat_map(|r| r.iter()).chain(writable.into_iter().flat_map(|w| w.iter())) {
+        match fields.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = ty.clone(),
+            None => fields.push((name.clone(), ty.clone())),
+        }
+    }
+    Some(fields)
+}
