@@ -50,9 +50,14 @@ use crate::types::position::{Position, lookup_property_type};
 /// conditional's condition, then and else).
 pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Position>, operands: &[Option<Ty>], _ty: Option<&Ty>) {
     match expr {
-        Expression::Concat { .. } => {
+        Expression::Concat { parts } => {
             for part in operands {
                 require_transparent(typing, part.as_ref(), "combined into text");
+            }
+            if typing.version >= 5 {
+                for (part, ty) in parts.iter().zip(operands) {
+                    refuse_file_in_text(typing, part, ty.as_ref());
+                }
             }
         }
         Expression::Arithmetic { op, left, right } => {
@@ -129,6 +134,24 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
         }
         _ => {}
     }
+}
+
+/// `refuseFileInText` (language version 5): a file, or one arm that may be
+/// one, has no text form but the one READ gives.
+fn refuse_file_in_text(typing: &mut Typing, part: &Expression, ty: Option<&Ty>) {
+    let may = typing.may_hold_type(part);
+    let holds_file = |t: Option<&Ty>| t.is_some_and(|t| crate::types::field::base_kinds(t).contains(&crate::types::field::BaseKind::File));
+    if !holds_file(ty) && !holds_file(may.as_ref()) {
+        return;
+    }
+    let definite = ty.is_some_and(|t| matches!(strip_absent(t), Ty::File));
+    typing.report(
+        codes::FILE_IN_TEXT,
+        format!(
+            "this {} a file, and a file is not text, so it can't be combined into text — its text is READ(f) ('${{COALESCE(READ(f), \"\")}}'), or write the file into a field that holds files",
+            if definite { "is" } else { "may be" }
+        ),
+    );
 }
 
 /// A closure among a value expression's operands (language version 5): the

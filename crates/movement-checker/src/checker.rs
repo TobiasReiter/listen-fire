@@ -645,7 +645,7 @@ impl<'c> Checker<'c> {
 
     /// A parameter's type: a graph's name resolves; a value type names nothing.
     /// What the graph's name resolved to.
-    fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
+    pub(crate) fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
         let ParamTypeRef::Name(reference) = type_ else { return None };
         if reference.position.is_none() && reference.hops_raw.is_none() && self.version >= 3 {
             if SCALAR_TYPE_NAMES.contains(&reference.graph.as_str()) {

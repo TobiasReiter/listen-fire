@@ -522,9 +522,14 @@ impl Checker<'_> {
                 }
             }
             ValueType::Closure { params, returns, .. } => {
+                // `closureParamShape`: a value type reports as one; a name that
+                // is no value type resolves as a graph's.
                 let report_plane = |this: &mut Self, type_: &ParamTypeRef| -> bool {
-                    if let ParamTypeRef::Value(value) = type_ {
-                        this.report_value_type(value, scope);
+                    match type_ {
+                        ParamTypeRef::Value(value) => this.report_value_type(value, scope),
+                        ParamTypeRef::Name(_) => {
+                            this.check_param_type(type_, scope);
+                        }
                     }
                     let plane = this.plane_type_of(type_, scope);
                     plane.field.is_some() || plane.pos.is_some()
