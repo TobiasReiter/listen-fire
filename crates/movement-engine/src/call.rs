@@ -107,7 +107,7 @@ impl Run<'_> {
                 // One function sort: a plugin's call, its value what the
                 // plugin declared it hands back (`executePluginCall`).
                 Some(Binding::Plugin(_)) => return Ok(Some(self.invoke_plugin(&call.callee, &call.args, scope, at, path).await?)),
-                Some(Binding::Opaque) => {
+                Some(Binding::Opaque { .. }) => {
                     return Err(Stop::Thrown(Failure::unsupported(
                         &format!("calling the import '{}'", call.callee),
                         "this run has no file resolver — its catalog snapshot carries no files (or declare the movement in this file)",

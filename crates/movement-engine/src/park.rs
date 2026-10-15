@@ -476,7 +476,9 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         }
         Binding::Event => object_of(vec![kind("event")]),
         Binding::Instance(instance) => object_of(vec![kind("instance"), ("instance", identity(instance))]),
-        Binding::Opaque => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
+        // A credential's mark is not parked: a resume re-derives it from the
+        // re-parsed import, by its slot name, as it does the binding.
+        Binding::Opaque { .. } => object_of(vec![kind("opaque"), ("what", Js::str("import")), ("name", Js::str(name))]),
         // Code refs: the name, and the library it is declared in, where a
         // resume finds it again (serialize.ts `declaringFile`).
         Binding::Movement(movement) => object_of(with_file(vec![kind("movement"), ("name", Js::str(movement.name.clone()))], &movement.file)),

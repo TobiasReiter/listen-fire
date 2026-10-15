@@ -2090,7 +2090,7 @@ pub fn describe_binding(binding: &Binding) -> String {
         Binding::Value(_) => "a value binding",
         Binding::Event => "the movement parameter (the event position)",
         Binding::Instance(_) => "a constructed adapter instance",
-        Binding::Opaque => "an import",
+        Binding::Opaque { .. } => "an import",
         Binding::Movement(_) => "a movement declaration",
         Binding::Shape(_) => "a shape declaration",
         Binding::Plugin(_) => "a plugin",

@@ -139,6 +139,8 @@ guide](docs/language/dancing-wren-migration.md).
   string or a prompt, compared (with a null test too), passed to a function or a plugin, returned,
   or written into a field. Why: it is a security boundary, and every such use already failed at
   run time. The engine also stops answering a null test on a credential without reading it.
+  `MOVEMENT_ENGINE=rust` does the same. The Rust engine also no longer hands out the name of the
+  credential an integration was set up with, should an integration ever be held as a value.
 
 ### Changed
 

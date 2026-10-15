@@ -351,7 +351,7 @@ impl Run<'_> {
         let MExpr::Name { name, .. } = callee.as_ref() else { return false };
         let written = &name.text;
         if let Some(binding) = scope.resolve(written) {
-            return matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque | Binding::Closure(_));
+            return matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Closure(_));
         }
         if self.version() < 3 {
             return false;

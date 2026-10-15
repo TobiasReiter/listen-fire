@@ -1035,11 +1035,12 @@ impl Run<'_> {
         match statement {
             Statement::Import(import) => {
                 let plugins = matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "plugins");
+                let credential = matches!(&import.source, ast::ImportSource::Builtin { namespace } if namespace == "credentials");
                 for name in &import.names {
                     if let Some(alias) = &name.alias {
                         self.import_originals.borrow_mut().push((alias.clone(), name.name.clone()));
                     }
-                    let binding = if plugins { Binding::Plugin(name.name.clone()) } else { Binding::Opaque };
+                    let binding = if plugins { Binding::Plugin(name.name.clone()) } else { Binding::Opaque { credential } };
                     file.declare(name.alias.clone().unwrap_or_else(|| name.name.clone()), binding);
                 }
             }
@@ -1588,7 +1589,7 @@ impl Run<'_> {
             | Binding::ShapePosition(_)
             | Binding::Resource(_) => true,
             Binding::Shape(_) => self.version() >= 3,
-            Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque => false,
+            Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } => false,
         }
     }
 
@@ -2773,6 +2774,54 @@ mod tests {
         assert!(reads(input.clone()) > 0);
         input.as_object_mut().unwrap().remove("localZone");
         assert_eq!(reads(input), 0);
+    }
+
+    /// A null test of a credential reads it, and is refused as every other
+    /// read of one is, on every version, with the TypeScript engine's error
+    /// (`presenceCompare` there); another import is still present by being
+    /// bound. The checker refuses the program first; this is the engine's own
+    /// line behind it.
+    #[test]
+    fn a_null_test_of_a_credential_is_refused_not_answered() {
+        for version in 1..=5 {
+            for test in ["acme == null", "acme != null"] {
+                let source = format!("import {{ email }} from adapters\nimport {{ acme }} from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  if {test} {{ return 1 }}\n  return 2\n}}");
+                let mut input = segment_input(&source, json!(["o", 1, []]), &[]);
+                input["languageVersion"] = json!(version);
+                let (done, _) = drive_input(input, plain_host(json!({})));
+                let error = if done.get("thrown").is_some() { &done["thrown"] } else { &done["failed"]["error"] };
+                assert_eq!(error["code"], json!("MOVENG_UNSUPPORTED"), "v{version} {test}: {done}");
+                assert_eq!(error["message"], json!("reading 'acme' (an import) as a bare value is not supported by the movement engine yet"), "v{version} {test}: {done}");
+            }
+            let source = "import { email, attio } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  if attio != null {\n    ERROR(\"present\")\n  }\n}";
+            let mut input = segment_input(source, json!(["o", 1, []]), &[]);
+            input["languageVersion"] = json!(version);
+            let (done, _) = drive_input(input, plain_host(json!({})));
+            let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
+            assert!(message.contains("present"), "v{version}: {done}");
+        }
+    }
+
+    /// A credential import parks as any import does, as the TypeScript
+    /// engine writes it: its mark is re-derived on resume from the re-parsed
+    /// import, never stored.
+    #[test]
+    fn a_credential_import_parks_as_any_import_does() {
+        let source = "import { email } from adapters\nimport { acme } from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
+        let host = plain_host(json!({}));
+        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+            match (request.family, request.method.as_str()) {
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                ("park.sink", "commitTimerPark") => json!({}),
+                _ => host(request),
+            }
+        });
+        assert!(done.get("result").is_some(), "{done}");
+        let park = seen.iter().find(|r| r.method == "commitTimerPark").expect("the sleep parked");
+        let state = env::json_of_js(&env::decode(&park.args["state"]).unwrap());
+        let file = &state["scopeChain"][0]["bindings"];
+        assert_eq!(file["acme"], json!({ "kind": "opaque", "what": "import", "name": "acme" }));
+        assert_eq!(file["email"], json!({ "kind": "opaque", "what": "import", "name": "email" }));
     }
 
     const SLEEPS: &str = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";

@@ -20,7 +20,9 @@ pub enum Binding {
     /// A constructed adapter instance (`kind: 'instance'`).
     Instance(Rc<InstanceBinding>),
     /// An import that is not an instance until constructed (`kind: 'opaque'`).
-    Opaque,
+    /// A credential import is marked: it is never a value in any sense, so no
+    /// read short-cuts past the refusal every other read gets.
+    Opaque { credential: bool },
     /// A movement a file declares (`kind: 'movement'`): the root's, or one
     /// a library exports, which runs in its library's own scope.
     Movement(Rc<MovementRef>),
@@ -543,7 +545,7 @@ impl Scope {
     pub fn resolve_function(&self, name: &str) -> Option<String> {
         let folded = crate::js::to_lower_case(name);
         let own = self.bindings.borrow().iter().find_map(|(bound, binding)| {
-            let callable = matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque | Binding::Closure(_));
+            let callable = matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Closure(_));
             (callable && crate::js::to_lower_case(bound) == folded).then(|| bound.clone())
         });
         own.or_else(|| self.parent.as_ref().and_then(|p| p.resolve_function(name)))
@@ -608,9 +610,10 @@ impl Names for Scope {
         matches!(self.resolve(name), Some(Binding::Event))
     }
 
-    /// `binding.kind !== 'value'`.
+    /// `binding.kind !== 'value'`, but never a credential: its null test reads
+    /// it, and is refused as every other read of it is.
     fn binds_non_value(&self, name: &str) -> bool {
-        self.resolve(name).is_some_and(|binding| !matches!(binding, Binding::Value(_)))
+        self.resolve(name).is_some_and(|binding| !matches!(binding, Binding::Value(_) | Binding::Opaque { credential: true }))
     }
 }
 

@@ -26,7 +26,7 @@ pub fn kind_of(binding: &Binding) -> String {
         Binding::Value(_) => "value",
         Binding::Event => "event",
         Binding::Instance(_) => "instance",
-        Binding::Opaque => "opaque",
+        Binding::Opaque { .. } => "opaque",
         Binding::Movement(_) => "movement",
         Binding::Shape(_) => "shape",
         Binding::Plugin(_) => "plugin",
@@ -193,7 +193,7 @@ pub fn is_position(binding: &Binding) -> bool {
         | Binding::Callback(_)
         | Binding::ShapePosition(_)
         | Binding::Resource(_) => true,
-        Binding::Instance(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
+        Binding::Instance(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Tuple(_) | Binding::Closure(_) => false,
     }
 }
 
@@ -204,7 +204,7 @@ pub fn is_one_record(binding: &Binding) -> bool {
     match binding {
         Binding::Handle(_) | Binding::Extracted { .. } | Binding::Landed(_) | Binding::Node(_) | Binding::Callback(_) | Binding::ShapePosition(_) | Binding::Resource(_) => true,
         Binding::Event | Binding::Instance(_) | Binding::Positions(_) | Binding::Value(_) | Binding::Shape(_) | Binding::Movement(_) | Binding::LazyWalk(_)
-        | Binding::Plugin(_) | Binding::Opaque | Binding::Tuple(_) | Binding::Closure(_) => false,
+        | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Tuple(_) | Binding::Closure(_) => false,
     }
 }
 
@@ -248,9 +248,8 @@ pub fn own_property(binding: &Binding, key: &str) -> Result<Js, EvalError> {
         (Binding::LazyWalk(_), "walk") => internal("walk"),
         (Binding::Instance(instance), "name") => Ok(Js::str(instance.name.clone())),
         (Binding::Instance(instance), "adapterSlug") => Ok(Js::str(instance.adapter_slug.clone())),
-        (Binding::Instance(instance), "credentialName") if instance.credential_name.is_some() => {
-            Ok(instance.credential_name.clone().map_or(Js::Null, Js::str))
-        }
+        // Never its credential's name: a credential is never a value, so an
+        // instance held as one does not hand it out.
         (Binding::Instance(_), what @ ("constructionConfig" | "schema")) => internal(what),
         (Binding::Plugin(name), "plugin") => Ok(Js::str(name.clone())),
         (Binding::Movement(_), what @ ("declaration" | "fileEnv")) => internal(what),
@@ -424,7 +423,7 @@ pub fn fields_of(binding: &Binding) -> Result<JsObject, EvalError> {
         | Binding::Shape(_)
         | Binding::Movement(_)
         | Binding::Plugin(_)
-        | Binding::Opaque
+        | Binding::Opaque { .. }
         | Binding::Tuple(_)
         | Binding::Closure(_) => {
             return Err(unsupported(&format!("reading every field of {}", describe(binding)), None));
@@ -548,6 +547,24 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An instance held as a value hands out its name and its adapter, never
+    /// the name of the credential it was set up with.
+    #[test]
+    fn an_instance_never_hands_out_its_credential_name() {
+        let instance = crate::bindings::InstanceBinding {
+            name: "crm".into(),
+            adapter_slug: "attio".into(),
+            credential_name: Some("acme".into()),
+            construction_config: Vec::new(),
+            schema: None,
+        };
+        let record = Binding::Instance(std::rc::Rc::new(instance));
+        assert!(matches!(own_property(&record, "name").unwrap(), Js::String(name) if name.as_form() == "crm"));
+        assert!(matches!(own_property(&record, "adapterSlug").unwrap(), Js::String(slug) if slug.as_form() == "attio"));
+        assert!(matches!(own_property(&record, "credentialName").unwrap(), Js::Null));
+        assert!(matches!(get(&held(record), "credentialName").unwrap(), Js::Undefined));
+    }
 
     /// A dict is data whatever its `kind` says: a binding kind, an
     /// `Object.prototype` name, anything.
