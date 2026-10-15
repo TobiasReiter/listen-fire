@@ -974,6 +974,92 @@
     "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
     "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
    ]
+  },
+  {
+   "name": "a receipt's record slot read across 5 warns once",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  n = AT(r, 0).Name\n  m = AT(r, 0) == null\n  k = AT(r, 1)\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_PARALLEL_RETIRED 8:7-14:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run",
+    "MOV_RECEIPT_RECORD_SLOT 15:7-15:15 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`AT(r, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
+   ]
+  },
+  {
+   "name": "a race receipt's record slot bound to a name, across 5",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await race([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  h = AT(r, 0)\n  n = h.Name\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_COMBINATOR_ARMS_ARE_ARGUMENTS 8:18-14:4 'race' takes its functions as arguments, not in a list — a closure is not data, so there is no list of them to pass. Write 'race(f, g)'",
+    "MOV_COMBINATOR_NO_AWAIT 8:7-14:5 'await' marks where the run itself parks — a sleep, an until, an answer read — and 'race(…)' does not park by itself: its arms may, and the run parks where they do. Write 'race(…)' without 'await'",
+    "MOV_RECEIPT_RECORD_SLOT 15:7-15:15 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`AT(r, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
+   ]
+  },
+  {
+   "name": "a receipt whose arms hand back values is silent across 5",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => \"one\",\n    () => 2,\n  ])\n  n = AT(r, 0)\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_PARALLEL_RETIRED 8:7-11:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run"
+   ]
+  },
+  {
+   "name": "an arm handing back a list of records is silent across 5",
+   "snapshot": "old_edge",
+   "version": 5,
+   "upgradingFrom": 4,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return [a, a]\n    },\n    () => 2,\n  ])\n  n = AT(r, 0)\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_PARALLEL_RETIRED 8:7-14:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run"
+   ]
+  },
+  {
+   "name": "a receipt's record slot is silent on a move up across 4",
+   "snapshot": "old_edge",
+   "version": 4,
+   "upgradingFrom": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  n = AT(r, 0).Name\n}\nlisten to inbox fire main\n",
+   "expected": []
+  },
+  {
+   "name": "all's receipt types each slot under 5",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  )\n  n = AT(r, 0).Name\n  t = AT(r, 1) + \"x\"\n  write crm-[:notes]-> { title: AT(r, 1) }\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ARITH_NON_NUMERIC 16:7-16:21 An arithmetic operation requires numeric operands — the right side of '+' is text. Build the string with \"${…}\" interpolation instead."
+   ]
+  },
+  {
+   "name": "all with onError warn leaves each slot maybe absent",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(() => \"one\", () => 2, { onError: \"warn\" })\n  write crm-[:notes]-> { title: AT(r, 0) }\n  write crm-[:notes]-> { title: AT(r, 1) }\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_ABSENT_REQUIRED 9:33-9:41 'title' on crm.note needs a value, but 'AT(r, 0)' may be absent (text (or absent)) — write 'title: COALESCE(AT(r, 0), \"unknown\")' to fall back to a value that is always there, or 'title ?: AT(r, 0)' to leave it unset when absent (see handbook: front#maybe-absent)",
+    "MOV_ABSENT_REQUIRED 10:33-10:41 'title' on crm.note needs a value, but 'AT(r, 1)' may be absent (number (or absent)) — write 'title: COALESCE(AT(r, 1), 0)' to fall back to a value that is always there, or 'title ?: AT(r, 1)' to leave it unset when absent (see handbook: front#maybe-absent)"
+   ]
+  },
+  {
+   "name": "an arm returning a closure is no data in the receipt",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(() => { return () => 1 }, () => 2)\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_CLOSURE_NOT_DATA 8:11-8:35 'all' keeps what each arm returns in its answer, and this arm returns a closure, and a closure is not data — keep it in a variable ('g = …', called as 'g()') or pass it as an argument ('all(f, g)', 'MAP(xs, (x) => …)')"
+   ]
+  },
+  {
+   "name": "an until with an inline closure condition binds what it returns",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  ok = await until(() => { return 3 }, every: 5m)\n  write crm-[:notes]-> { title: ok }\n  b = await until(() => { return msg }, every: 5m)\n  write crm-[:notes]-> { title: b.subject }\n}\nlisten to inbox fire main\n",
+   "expected": []
   }
  ]
 }

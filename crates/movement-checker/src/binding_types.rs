@@ -145,6 +145,10 @@ impl Checker<'_> {
         } else if bound.record {
             types = Some(SymbolTypes { is_record: true, ..SymbolTypes::default() });
         }
+        if let Some(receipt) = &bound.receipt {
+            let may_hold = receipt.may_hold.clone().filter(|held| crate::types::field::shows_more_handles(held, receipt.ty.as_ref()));
+            types = Some(SymbolTypes { field: receipt.ty.clone(), may_hold, receipt_holds_record: receipt.holds_record, ..SymbolTypes::default() });
+        }
         if let Some((returned, ordering)) = &bound.collected {
             types = Some(collected_types(returned, *ordering));
         }

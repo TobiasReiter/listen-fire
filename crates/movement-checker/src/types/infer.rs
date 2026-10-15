@@ -56,6 +56,10 @@ pub trait TypeEnv {
     fn is_declared_graph(&self, _instance: &super::position::InstanceRef) -> bool {
         false
     }
+    /// `isRecordReceipt`: a combinator's answer one of whose arms hands back a record.
+    fn is_record_receipt(&self, _name: &str) -> bool {
+        false
+    }
     /// `upgradingFrom`: the version a check for a move up starts from.
     fn upgrading_from(&self) -> Option<u32> {
         None
@@ -102,6 +106,9 @@ pub struct Typing<'a> {
     /// Edges read bare that their source would announce (`onWatchableRead`):
     /// whoever polls decides whether that is worth saying.
     pub watchable_reads: Vec<String>,
+    /// The receipt each MOV_RECEIPT_RECORD_SLOT in `diagnostics` names, in
+    /// order: whoever surfaces them warns once per receipt.
+    pub receipt_reads: Vec<String>,
     /// The field a write puts this value into (`WriteTargetRef`): its type,
     /// and its borrowable spelling (`crm.companies.stage`) when known.
     pub write_target: Option<(Ty, Option<String>)>,
@@ -129,6 +136,7 @@ impl<'a> Typing<'a> {
             last_ordering: CollectionOrder::Unknown,
             last_ordering_edge: None,
             watchable_reads: Vec::new(),
+            receipt_reads: Vec::new(),
             diagnostics: Vec::new(),
             write_target: None,
             narrowed_scalars: HashMap::new(),
@@ -220,6 +228,23 @@ impl<'a> Typing<'a> {
             Some(order) => list_of(record, order),
             None => record,
         })
+    }
+
+    /// `bareNameType` as the walker reads it: a read of a combinator's
+    /// answer one of whose arms hands back a record is warned on a move up
+    /// across 5 (`reportReceiptRecordSlot`) — that slot read null before.
+    fn read_bare_name(&mut self, name: &str) -> Option<Ty> {
+        if self.env.is_record_receipt(name) && self.upgrade_crosses(5) {
+            self.report_upgrade(
+                crate::codes::RECEIPT_RECORD_SLOT,
+                format!(
+                    "since {} a record an arm hands back reads as that record through '{name}' (`AT({name}, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.",
+                    crate::version::describe(5)
+                ),
+            );
+            self.receipt_reads.push(name.to_string());
+        }
+        self.bare_name_type(name)
     }
 
     /// `walkStart`: where a walk off `name` starts.
@@ -580,7 +605,7 @@ impl<'a> Typing<'a> {
             Expression::Property { property_type_id } => match position {
                 None => {
                     self.bare_names.insert(key(expr), property_type_id.clone());
-                    (self.bare_name_type(property_type_id), Vec::new())
+                    (self.read_bare_name(property_type_id), Vec::new())
                 }
                 Some(_) => (self.read_property(position, property_type_id), Vec::new()),
             },
@@ -713,7 +738,7 @@ impl<'a> Typing<'a> {
             }
             Expression::AliasRef { name } => {
                 self.bare_names.insert(key(expr), name.clone());
-                (self.bare_name_type(name), Vec::new())
+                (self.read_bare_name(name), Vec::new())
             }
             Expression::ParentResult { .. }
             | Expression::ActionResult { .. }

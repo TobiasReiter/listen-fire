@@ -69,6 +69,48 @@ fn edit(start: Loc, end: Loc, text: &str) -> serde_json::Value {
     json!({ "span": Span { start, end }, "text": text })
 }
 
+/// A combinator's answer (`checkCombinator`'s value): its type, what its
+/// slots may hold beyond that type (`combinatorMayHold`), and whether an arm
+/// hands back a record (`receiptHoldsRecord`).
+#[derive(Debug, Clone, Default)]
+pub struct Receipt {
+    pub ty: Option<Ty>,
+    pub may_hold: Option<Ty>,
+    pub holds_record: bool,
+}
+
+/// `combinatorMayLeaveSlotsNull`: a race settles on its first arm; an `all`
+/// whose `onError` lets a failed arm through leaves that slot empty.
+fn combinator_may_leave_slots_null(combinator: &CombinatorExpression) -> bool {
+    if combinator.kind == CombinatorKind::Race {
+        return true;
+    }
+    let Some(settings) = &combinator.settings else { return false };
+    let Ok(parsed) = crate::slots::expression_of_slot(settings) else { return false };
+    crate::families::collection_config::on_error_lets_through(&parsed, crate::families::collection_config::ALL_SETTING_KEYS)
+}
+
+/// `receiptMayHold`: each slot as what its arm's returns may hold, or the
+/// record it hands back, which the tuple cannot type.
+fn receipt_may_hold(nullable: bool, slots: &[ReturnShape]) -> Ty {
+    Ty::Tuple {
+        of: slots
+            .iter()
+            .map(|slot| {
+                if !slot.returns {
+                    return Some(Ty::Absent);
+                }
+                let held = slot.may_hold.clone().or_else(|| slot.plane.field.clone()).or_else(|| match slot.plane.pos.as_deref() {
+                    Some(crate::types::position::Position::Closure(_)) | None => None,
+                    Some(position) => Some(Ty::record(Some(position.clone()))),
+                })?;
+                Some(if nullable { crate::types::field::maybe_absent(held) } else { held })
+            })
+            .collect(),
+        rest: None,
+    }
+}
+
 fn arm_span(arm: &ArmExpression) -> Span {
     match arm {
         ArmExpression::Closure { span, .. } | ArmExpression::Ref { span, .. } => *span,
@@ -274,35 +316,77 @@ impl Checker<'_> {
         }
     }
 
-    pub fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) {
+    /// `checkCombinator`: the arms are functions the combinator calls, so it
+    /// parks, and its answer is positional — one slot per arm written down,
+    /// each what that arm returned (`T | null` where a slot may be left
+    /// empty: a race, or an `onError` that lets a failed arm through). Arms
+    /// built at run time give an answer nobody can type.
+    pub fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) -> Receipt {
         let kind = kind_name(combinator.kind);
         // Running arms concurrently is still running them: the combinator
         // waits, so it parks.
         self.flag_suspend();
-        match &combinator.arms {
-            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => {
-                for arm in arms {
-                    self.check_arm(arm, kind, scope, 0);
+        let arms = match &combinator.arms {
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
+            CombinatorArms::Dynamic { expr, .. } => {
+                self.check_expr_slot(expr, scope);
+                return Receipt::default();
+            }
+        };
+        let nullable = combinator_may_leave_slots_null(combinator);
+        let slots: Vec<ReturnShape> = arms.iter().map(|arm| self.check_arm(arm, kind, scope, 0)).collect();
+        // A closure is not data (version 5): an arm that hands one back would
+        // keep it in the answer.
+        if since(self.version, 5) {
+            for (arm, slot) in arms.iter().zip(&slots) {
+                let closure = matches!(slot.plane.pos.as_deref(), Some(crate::types::position::Position::Closure(_)))
+                    || crate::types::field::may_be_closure(slot.plane.field.as_ref())
+                    || crate::types::field::may_be_closure(slot.may_hold.as_ref());
+                if slot.returns && closure {
+                    self.report(
+                        codes::CLOSURE_NOT_DATA,
+                        crate::types::field::closure_not_data_message(&format!("'{kind}' keeps what each arm returns in its answer, and this arm returns")),
+                        arm_span(arm),
+                    );
                 }
             }
-            CombinatorArms::Dynamic { expr, .. } => self.check_expr_slot(expr, scope),
         }
+        let holds_record = slots.iter().any(|slot| slot.returns && (slot.plane.pos.is_some() || crate::types::field::is_record(slot.plane.field.as_ref())));
+        let may_hold = receipt_may_hold(nullable, &slots);
+        let ty = Ty::Tuple {
+            of: slots
+                .iter()
+                .map(|slot| {
+                    // An arm that hands nothing back is an always-null slot under
+                    // every combinator: a join cannot invent a value the arm never made.
+                    if !slot.returns {
+                        return Some(Ty::Absent);
+                    }
+                    let field = slot.plane.field.clone()?;
+                    Some(if nullable { crate::types::field::maybe_absent(field) } else { field })
+                })
+                .collect(),
+            rest: None,
+        };
+        Receipt { ty: Some(ty), may_hold: Some(may_hold), holds_record }
     }
 
-    /// `checkArm`: a closure written in place, or the name of a function. The
-    /// caller supplies `expected` arguments. Whether it hands a value back,
-    /// when that is known.
-    fn check_arm(&mut self, arm: &ArmExpression, kind: &str, scope: ScopeId, expected: usize) -> Option<bool> {
+    /// `checkArm`: a closure written in place, or the name of a function; the
+    /// combinator calls it with nothing, and what it returns is its slot.
+    fn check_arm(&mut self, arm: &ArmExpression, kind: &str, scope: ScopeId, expected: usize) -> ReturnShape {
         match arm {
             ArmExpression::Closure { closure, span } => {
-                let (returns, suspends) = self.check_closure_walked(closure, scope, None, &format!("an arm of '{kind}'"), 0);
+                let (body, suspends) = self.check_closure_walked(closure, scope, None, &format!("an arm of '{kind}'"), 0);
                 if closure.params.len() != expected {
                     self.report_arm_arity(kind, expected, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
                 self.absorb_suspend(suspends);
-                Some(!returns.returns.is_empty() || closure.return_type.is_some())
+                self.closure_returns(closure, body.value, scope)
             }
-            ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, kind, scope, expected),
+            ArmExpression::Ref { name, span } => {
+                self.check_named_arm(name, *span, kind, scope, expected);
+                self.named_function_return(name, scope)
+            }
         }
     }
 

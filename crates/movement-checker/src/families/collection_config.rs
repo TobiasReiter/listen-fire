@@ -82,6 +82,18 @@ pub fn collection_config_problems(record: &Expression, spelling: &str, keys: &[&
     problems
 }
 
+/// Whether a settings record reads and its `onError` lets a failed member
+/// through (anything but the default "error").
+pub fn on_error_lets_through(record: &Expression, keys: &[&str]) -> bool {
+    if !collection_config_problems(record, "", keys).is_empty() {
+        return false;
+    }
+    let Expression::Object { entries } = record else { return false };
+    entries.iter().any(|entry| {
+        matches!(entry, ObjectMember::Entry { key, value: Expression::Static { value: StaticValue::String(on_error) } } if key == "onError" && on_error != "error")
+    })
+}
+
 fn read_on_error(value: &Expression, spelling: &str, problems: &mut Vec<String>) {
     let choices = ON_ERROR.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
     let Expression::Static { value: StaticValue::String(written) } = value else {

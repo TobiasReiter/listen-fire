@@ -55,6 +55,8 @@ pub struct Checker<'c> {
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
+    /// Receipts already warned about (MOV_RECEIPT_RECORD_SLOT).
+    pub reported_receipts: std::collections::HashSet<crate::scope::SymbolId>,
     /// Closures that call themselves by name without declaring what they return.
     pub selves: crate::families::closures::Selves,
     /// Whether each open body may wait, and what each named function does.
@@ -110,6 +112,8 @@ pub struct Bound {
     /// Bound on the node plane with a record nobody could type
     /// (`bindingPlane: 'node'` and no `posType`).
     pub record: bool,
+    /// For a combinator: its answer, one slot per arm.
+    pub receipt: Option<crate::families::closures::Receipt>,
 }
 
 impl<'c> Checker<'c> {
@@ -128,6 +132,7 @@ impl<'c> Checker<'c> {
             upgrading_from: options.upgrading_from,
             return_stack: Vec::new(),
             function_returns: Default::default(),
+            reported_receipts: Default::default(),
             selves: Default::default(),
             effects: Default::default(),
             inference: Default::default(),
@@ -138,6 +143,24 @@ impl<'c> Checker<'c> {
     pub fn push(&mut self, diagnostic: Diagnostic) {
         if self.type_only == 0 {
             self.diagnostics.push(diagnostic);
+        }
+    }
+
+    /// What a typing reported, surfaced: a receipt's record-slot warning
+    /// once per receipt however many times it is read.
+    pub fn push_typed(&mut self, (diagnostics, receipt_reads): (Vec<Diagnostic>, Vec<String>), scope: ScopeId) {
+        let mut receipts = receipt_reads.into_iter();
+        for diagnostic in diagnostics {
+            if diagnostic.code == crate::codes::RECEIPT_RECORD_SLOT {
+                let receipt = receipts.next().and_then(|name| match self.scopes.resolve(scope, &name) {
+                    Resolution::Found(id) => Some(id),
+                    _ => None,
+                });
+                if self.type_only > 0 || receipt.is_some_and(|id| !self.reported_receipts.insert(id)) {
+                    continue;
+                }
+            }
+            self.push(diagnostic);
         }
     }
 
@@ -343,7 +366,8 @@ impl<'c> Checker<'c> {
             RValue::Await { r#await } => return self.check_await(r#await, scope, name),
             RValue::Combinator { combinator } => {
                 self.report_combinator_form(combinator, None);
-                self.check_combinator(combinator, scope);
+                let receipt = self.check_combinator(combinator, scope);
+                return Bound { receipt: Some(receipt), ..Bound::default() };
             }
             RValue::Collection { collection } => {
                 let returned = self.check_collection_op(collection, scope);
@@ -462,12 +486,10 @@ impl<'c> Checker<'c> {
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            (ty, may_hold, typing.diagnostics, typing.watchable_reads)
+            (ty, may_hold, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
         };
         self.effects.note_watchable_reads(&watchable);
-        for diagnostic in diagnostics {
-            self.push(diagnostic);
-        }
+        self.push_typed(diagnostics, scope);
         SlotTyped { expr: Some(parsed), ty, may_hold }
     }
 
@@ -593,12 +615,10 @@ impl<'c> Checker<'c> {
                     let env = self.typing_env(scope);
                     let mut typing = Typing::new(&env, self.version, slot.span);
                     let ty = typing.infer(expr);
-                    (ty, typing.diagnostics, typing.watchable_reads)
+                    (ty, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
                 };
                 self.effects.note_watchable_reads(&watchable);
-                for diagnostic in diagnostics {
-                    self.push(diagnostic);
-                }
+                self.push_typed(diagnostics, scope);
                 // Gating on a structured value is always true, never a decision.
                 if let Some(message) = crate::families::values::json_opaque_message(ty.as_ref(), "used as a condition") {
                     self.report(crate::codes::JSON_OPAQUE, message, slot.span);
@@ -916,7 +936,8 @@ impl<'c> Checker<'c> {
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
-                self.check_combinator(combinator, scope);
+                let receipt = self.check_combinator(combinator, scope);
+                return Bound { receipt: Some(receipt), ..Bound::default() };
             }
             AwaitSource::Sleep { duration, .. } => {
                 self.check_sleep_duration(duration);
@@ -939,12 +960,12 @@ impl<'c> Checker<'c> {
                     UntilCondition::Closure { closure } => {
                         this.check_until_params(closure);
                         let impure = this.check_until_purity(&closure.body);
-                        let (_, suspends) = this.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
+                        let (body, suspends) = this.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
                         this.absorb_suspend(suspends);
                         if suspends && !impure {
                             this.refuse_unresumable_wait("this 'until' condition", closure.span);
                         }
-                        Bound::default()
+                        until_bound(&this.closure_returns(closure, body.value, scope))
                     }
                     UntilCondition::Expr { expr } => {
                         let typed = this.check_expr_slot_with(expr, scope, SlotOptions::default());
@@ -957,12 +978,11 @@ impl<'c> Checker<'c> {
                             }
                         }
                         let plane = crate::types::position::PlaneType { field: typed.ty, pos: None };
-                        return until_bound(&crate::types::position::ReturnShape { returns: true, plane, may_hold: None });
+                        until_bound(&crate::types::position::ReturnShape { returns: true, plane, may_hold: None })
                     }
-                });
+                })
             }
         }
-        Bound::default()
     }
 }
 
@@ -974,12 +994,11 @@ fn awaited_walk(walk: Option<crate::families::walks::HeadWalk>) -> Bound {
     Bound { pos: Some(if resolves_empty { Position::MaybeEmpty(Box::new(landed)) } else { landed }), ..Bound::default() }
 }
 
-/// An `until` binds what its condition returns, where that is typed. An
-/// untyped condition stays untyped here: an inline closure's return is not
-/// inferred yet, so saying "a record" would be a claim the TypeScript does not make.
+/// An `until` binds what its condition returns; a condition nobody can type
+/// binds on the node plane, as an untyped await does.
 fn until_bound(returns: &crate::types::position::ReturnShape) -> Bound {
     if returns.plane.field.is_none() && returns.plane.pos.is_none() {
-        return Bound::default();
+        return Bound { record: true, ..Bound::default() };
     }
     Bound { returned: Some(returns.clone()), ..Bound::default() }
 }
