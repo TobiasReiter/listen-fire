@@ -79,7 +79,7 @@ pub enum Callee {
 
 use crate::types::field::Ty;
 use crate::types::infer::Typing;
-use crate::types::position::Position;
+use crate::types::position::{ClosureParam, Position, ReturnShape};
 
 /// Called by the type core after the values family's `observe`, for every
 /// node: a built-in call's argument rules (`checkBuiltinArgs`,
@@ -501,10 +501,11 @@ impl Checker<'_> {
             let span = span_of_extent(slot, at);
             let name = nested_call_name(span);
             let head = String::from_utf16_lossy(&units[..at.end]);
+            let mut bound = crate::checker::Bound::default();
             match movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start) {
                 Ok(value) => {
                     self.open_effect_frame();
-                    self.check_rvalue(&value, scope, None, span);
+                    bound = self.check_rvalue(&value, scope, None, span);
                     let row = self.close_effect_frame();
                     let callee = match &value {
                         RValue::Call { call } => Some(&call.callee),
@@ -522,7 +523,15 @@ impl Checker<'_> {
                 }
                 Err(e) => self.report(codes::EXPR_PARSE, format!("{} (line {}, col {})", e.message, e.loc.line, e.loc.col), span),
             }
-            let symbol = self.scopes.add_symbol(Symbol::new(&name, SymbolKind::Binding, span));
+            let mut hoisted = Symbol::new(&name, SymbolKind::Binding, span);
+            // The name holds what the call hands back (`boundCallShape`).
+            if let Some(returned) = &bound.returned {
+                hoisted.types = crate::families::arg_fit::types_of_return(returned);
+            }
+            if let Some(pos) = bound.pos {
+                hoisted.types.pos = Some(pos);
+            }
+            let symbol = self.scopes.add_symbol(hoisted);
             self.scopes.declare(scope, symbol);
             rewritten.extend_from_slice(&units[from..at.start]);
             // The name in the call's place, padded to the call's length so
@@ -737,7 +746,9 @@ impl Checker<'_> {
     /// The call statement (`checkStatement`'s call case).
     pub fn check_call_statement(&mut self, call: &CallStatement, scope: ScopeId) {
         match self.read_call(call, scope, CallPosition::Statement) {
-            CallReading::Function => self.check_call(call, scope),
+            CallReading::Function => {
+                self.check_call(call, scope);
+            }
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
@@ -747,29 +758,24 @@ impl Checker<'_> {
 
     /// `checkRValue`'s call case: a built-in is the value, collection op or
     /// type query it computes.
-    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) {
+    /// What a function's call hands back, where it binds (`boundCallShape`'s
+    /// value); `None` for a built-in read as what it computes.
+    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) -> Option<crate::types::position::ReturnShape> {
         match self.read_call(call, scope, CallPosition::Value) {
             CallReading::Function => {
-                self.check_call(call, scope);
+                let returned = self.check_call(call, scope);
                 self.note_bound_self_call(&call.callee, span, scope);
                 if self.callee_returns(&call.callee, scope) == Some(false) {
                     self.report_call_returns_nothing(&call.callee, span);
                 }
+                return Some(returned);
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
             CallReading::Members(_) => {}
             CallReading::Refused { code, message, span } => self.report(code, message, span),
         }
-    }
-
-    /// `checkCallArg`'s call case: a built-in called here is the value it computes.
-    pub fn check_call_in_argument(&mut self, call: &CallStatement, scope: ScopeId) {
-        match self.read_call(call, scope, CallPosition::Argument) {
-            CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Refused { code, message, span } => self.report(code, message, span),
-            _ => self.check_call(call, scope),
-        }
+        None
     }
 }
 
@@ -1125,7 +1131,7 @@ impl Checker<'_> {
 }
 
 /// `callArgSpan`.
-fn call_arg_span(arg: &CallArg) -> Span {
+pub fn call_arg_span(arg: &CallArg) -> Span {
     match arg {
         CallArg::Expr { expr, .. } => expr.span,
         CallArg::Write { write, .. } => write.span,
@@ -1154,14 +1160,15 @@ impl Checker<'_> {
 
     /// `checkCall`: a function's call — its callee, its arity, and its
     /// arguments against the parameters they bind.
-    pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) {
+    pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) -> crate::types::position::ReturnShape {
         let mut params = None;
+        let mut value = crate::types::position::ReturnShape::default();
         let callee = self.callee_name(&call.callee, scope);
         let resolution = self.scopes.resolve(scope, &callee);
         // Before version 3 a built-in is not a callee (no standard library).
         if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
             match resolution {
-                Resolution::Found(id) => params = self.check_callee(call, id),
+                Resolution::Found(id) => (params, value) = self.check_callee(call, id, scope),
                 Resolution::Unknown
                     if since(self.version, 3) && self.catalog.adapter(&callee).is_none() && self.catalog.plugin(&callee).is_none() =>
                 {
@@ -1173,7 +1180,16 @@ impl Checker<'_> {
         }
         let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
         self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
-        self.check_call_args(&call.callee, &call.args, params.as_deref(), scope);
+        // A plugin's argument values are held to what it declares it takes.
+        let plugin = match self.scopes.resolve(scope, &callee) {
+            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Plugin => {
+                Some(self.plugin_spec_of(id, &call.callee).and_then(|s| s.arg_types.clone()))
+            }
+            _ => None,
+        };
+        let plugin = plugin.as_ref().map(|declared| crate::families::plugin_calls::PluginArgTypes { declared: declared.as_ref() });
+        self.check_call_args(&call.callee, &call.args, params.as_deref(), plugin.as_ref(), scope);
+        value
     }
 
     /// `checkCallbackNamed`'s arguments: bound partially, as the rest are
@@ -1186,7 +1202,7 @@ impl Checker<'_> {
         };
         let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
         self.check_argument_bindings(movement, args, names.as_deref(), span, true);
-        self.check_call_args(movement, args, params.as_deref(), scope);
+        self.check_call_args(movement, args, params.as_deref(), None, scope);
     }
 
     /// The closure a callable name holds, as its signature says.
@@ -1210,8 +1226,9 @@ impl Checker<'_> {
         self.inference.declarations.get(&id).map(|(m, scope)| (m.clone(), *scope))
     }
 
-    /// The callee a call resolved to: the parameters its arguments bind, when known.
-    fn check_callee(&mut self, call: &CallStatement, id: crate::scope::SymbolId) -> Option<Vec<crate::types::position::ClosureParam>> {
+    /// The callee a call resolved to: the parameters its arguments bind, when
+    /// known, and what the call hands back.
+    fn check_callee(&mut self, call: &CallStatement, id: crate::scope::SymbolId, scope: ScopeId) -> (Option<Vec<ClosureParam>>, ReturnShape) {
         let callee = self.scopes.symbol(id).clone();
         let count = call.args.len();
         if callee.kind == SymbolKind::Movement {
@@ -1222,21 +1239,21 @@ impl Checker<'_> {
             {
                 self.report(codes::CALL_ARITY, format!("'{}' takes {} argument{}, got {count}", call.callee, params.len(), plural(params.len())), call.span);
             }
-            return params.and_then(|_| self.movement_declared_params(id));
+            return (params.and_then(|_| self.movement_declared_params(id)), self.movement_return(id));
         }
         if callee.kind == SymbolKind::Plugin {
-            return None;
+            return (None, self.check_plugin_application(call, id, scope));
         }
         if self.calls_closure(&callee) {
             self.note_self_call(id, call.span);
             let suspends = self.closure_suspends(id);
             self.absorb_suspend(suspends);
-            let closure = self.called_closure(id)?;
+            let Some(closure) = self.called_closure(id) else { return (None, ReturnShape::default()) };
             let arity = closure.params.len();
             if arity != count {
                 self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {count}", call.callee, plural(arity)), call.span);
             }
-            return Some(closure.params);
+            return (Some(closure.params), closure.returns);
         }
         if let Some(message) = self.not_a_closure_message(&callee, &call.callee) {
             self.report(codes::CALL_NOT_MOVEMENT, message, call.span);
@@ -1247,7 +1264,7 @@ impl Checker<'_> {
                 call.span,
             );
         }
-        None
+        (None, ReturnShape::default())
     }
 
     /// `checkArgumentBindings`: named arguments given once, each naming a

@@ -12,6 +12,7 @@ pub mod imports;
 pub mod listens;
 pub mod names;
 pub mod nodes;
+pub mod plugin_calls;
 pub mod records;
 pub mod systems;
 pub mod values;

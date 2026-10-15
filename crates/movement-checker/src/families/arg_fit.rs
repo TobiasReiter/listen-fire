@@ -12,9 +12,11 @@ use movement_parser::version::since;
 use crate::checker::Checker;
 use crate::codes;
 use crate::families::calls::CallReading;
+use crate::families::plugin_calls::PluginArgTypes;
 use crate::meta::did_you_mean;
-use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
+use crate::scope::{Resolution, ScopeId, SymbolId};
 use crate::slots::is_bare_ident;
+use crate::types::scope_env::SymbolTypes;
 use crate::types::field::{
     Ty, describe_field_type, field_assignable, holds_records, is_maybe_absent, mixes_record_with_value, strip_absent,
     values_beside_record,
@@ -27,6 +29,8 @@ pub struct ArgFit<'a> {
     pub param: Option<&'a ClosureParam>,
     pub index: usize,
     pub positional: bool,
+    /// A plugin's call: its arguments are held to what it declares.
+    pub plugin: Option<&'a PluginArgTypes<'a>>,
 }
 
 impl ArgFit<'_> {
@@ -97,6 +101,22 @@ fn list_argument_rewrite(slot: &ExprSlot) -> String {
     if raw.contains("->") { format!("[...{raw}]") } else { format!("[{raw}]") }
 }
 
+/// `planeOfReturn` for a call's value: a name bound to it is on the plane
+/// the callee's `return` was written on; a return nobody could type binds
+/// neither.
+pub fn types_of_return(returned: &ReturnShape) -> SymbolTypes {
+    if !returned.returns {
+        return SymbolTypes::default();
+    }
+    if let Some(field) = &returned.plane.field {
+        return SymbolTypes { field: Some(field.clone()), may_hold: returned.may_hold.clone(), ..SymbolTypes::default() };
+    }
+    if let Some(pos) = &returned.plane.pos {
+        return SymbolTypes { pos: Some((**pos).clone()), ..SymbolTypes::default() };
+    }
+    SymbolTypes { may_hold: returned.may_hold.clone(), ..SymbolTypes::default() }
+}
+
 impl Checker<'_> {
     /// `movementParams`: a movement's parameters with the types they declare,
     /// resolved where the movement is declared. An unannotated one has none.
@@ -111,36 +131,28 @@ impl Checker<'_> {
         )
     }
 
-    /// What a call of `callee` hands back, where the checker can say: a
-    /// movement's declared return (version 3), a closure's return. A
-    /// movement's body is not inferred for it here.
+    /// `movementReturnType`, where the checker can say: what a movement
+    /// declares it returns (version 3). Its body is not inferred for it here.
     // TODO(calls): `inferMovement`'s return shape, and a linked file import's.
-    pub fn call_value(&self, callee: &str, scope: ScopeId) -> ReturnShape {
-        let name = self.callee_name(callee, scope);
-        let Resolution::Found(id) = self.scopes.resolve(scope, &name) else { return ReturnShape::default() };
-        let symbol = self.scopes.symbol(id);
-        if symbol.kind == SymbolKind::Movement {
-            let Some((movement, declared_in)) = self.movement_declaration(id) else { return ReturnShape::default() };
-            return match &movement.return_type {
-                Some(written) if since(self.version, 3) => ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None },
-                _ => ReturnShape::default(),
-            };
-        }
-        match self.called_closure(id) {
-            Some(closure) => closure.returns,
-            None => ReturnShape::default(),
+    pub fn movement_return(&self, id: SymbolId) -> ReturnShape {
+        match self.movement_declaration(id) {
+            Some((movement, declared_in)) if since(self.version, 3) => match &movement.return_type {
+                Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None },
+                None => ReturnShape::default(),
+            },
+            _ => ReturnShape::default(),
         }
     }
 
     /// Each argument checked, and held to the parameter it binds — by name,
     /// or by its place among `params`.
-    pub fn check_call_args(&mut self, callee: &str, args: &[CallArg], params: Option<&[ClosureParam]>, scope: ScopeId) {
+    pub fn check_call_args(&mut self, callee: &str, args: &[CallArg], params: Option<&[ClosureParam]>, plugin: Option<&PluginArgTypes>, scope: ScopeId) {
         for (index, arg) in args.iter().enumerate() {
             let param = params.and_then(|params| {
                 let name = arg.name().or_else(|| params.get(index).map(|p| p.name.as_str()))?;
                 params.iter().find(|p| p.name == name)
             });
-            let fit = ArgFit { callee, param, index, positional: arg.name().is_none() };
+            let fit = ArgFit { callee, param, index, positional: arg.name().is_none(), plugin };
             self.check_call_arg(&fit, arg, scope);
         }
     }
@@ -148,7 +160,7 @@ impl Checker<'_> {
     /// `checkCallArg`: one argument, in its own right and against its parameter.
     fn check_call_arg(&mut self, fit: &ArgFit, arg: &CallArg, scope: ScopeId) {
         match arg {
-            CallArg::Expr { expr, .. } => self.check_expr_arg(fit, expr, scope),
+            CallArg::Expr { expr, name } => self.check_expr_arg(fit, name.as_deref(), expr, scope),
             CallArg::Write { write, .. } => {
                 let handle = self.check_write(write, scope, None, true);
                 match fit.field_type() {
@@ -164,6 +176,16 @@ impl Checker<'_> {
                 }
             }
             CallArg::Closure { closure, span, .. } if since(self.version, 5) => {
+                // A plugin's argument is never closure-typed: the mismatch is
+                // the error, so the closure is not checked against nothing.
+                if fit.plugin.is_some() {
+                    self.report(
+                        codes::CALL_ARG_TYPE,
+                        format!("The argument{} to '{}' is a function written in place, and a plugin takes a value, not a function", describe_arg_place(fit), fit.callee),
+                        *span,
+                    );
+                    return;
+                }
                 let label = format!("the argument{} to '{}'", describe_arg_place(fit), fit.callee);
                 // The parameter's closure type supplies the types its
                 // parameters leave out (contextual typing).
@@ -200,11 +222,10 @@ impl Checker<'_> {
             }
             CallArg::Call { call, .. } => match self.read_call(call, scope, crate::families::calls::CallPosition::Argument) {
                 // A built-in called here is the value it computes.
-                CallReading::Value(expr) => self.check_expr_arg(fit, &expr, scope),
+                CallReading::Value(expr) => self.check_expr_arg(fit, arg.name(), &expr, scope),
                 CallReading::Refused { code, message, span } => self.report(code, message, span),
                 _ => {
-                    self.check_call(call, scope);
-                    let value = self.call_value(&call.callee, scope);
+                    let value = self.check_call(call, scope);
                     if let Some(param) = fit.field_type() {
                         self.check_value_arg_fit(fit, param, value_of_return(&value).as_ref(), ValueArg::at(call.span));
                         return;
@@ -221,9 +242,17 @@ impl Checker<'_> {
     }
 
     /// `checkCallArg`'s expression case.
-    fn check_expr_arg(&mut self, fit: &ArgFit, expr: &ExprSlot, scope: ScopeId) {
+    fn check_expr_arg(&mut self, fit: &ArgFit, name: Option<&str>, expr: &ExprSlot, scope: ScopeId) {
         let typed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions::default());
         let arg_type = self.bare_slot_position_type(expr, scope);
+        // A plugin's named argument: a value against what the plugin takes
+        // (a positional one is refused where the call is checked).
+        if let (Some(plugin), Some(name)) = (fit.plugin, name) {
+            let declared = plugin.declared.and_then(|d| d.0.get(name));
+            let record = arg_type.clone().or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
+            self.check_plugin_arg_value(fit.callee, declared, name, record.as_ref(), typed.ty.as_ref(), expr.span);
+            return;
+        }
         if let Some(param) = fit.field_type() {
             // TODO(records): `refuseMaybeRecordForValue` (MOV_CALL_ARG_MAYBE_RECORD for a value parameter).
             let value = arg_type.clone().map(record_of).or(typed.ty);

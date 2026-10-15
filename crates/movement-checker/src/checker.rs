@@ -96,6 +96,8 @@ pub struct Bound {
     pub pos: Option<Position>,
     /// For a closure: whether calling it may wait.
     pub closure_suspends: bool,
+    /// For a function's call: what it hands back.
+    pub returned: Option<crate::types::position::ReturnShape>,
 }
 
 impl<'c> Checker<'c> {
@@ -209,6 +211,9 @@ impl<'c> Checker<'c> {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
                 self.type_assigned(&assign.name, &assign.value, scope);
+                if let Some(returned) = &bound.returned {
+                    self.set_types(scope, &assign.name, crate::families::arg_fit::types_of_return(returned));
+                }
                 if let Some(pos) = bound.pos {
                     self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
                 }
@@ -283,8 +288,8 @@ impl<'c> Checker<'c> {
         match value {
             RValue::Construct { construct } => {
                 if let Some(call) = self.call_in_construct_position(construct, scope) {
-                    self.check_call_rvalue(&call, scope, span);
-                    return Bound::default();
+                    let returned = self.check_call_rvalue(&call, scope, span);
+                    return Bound { returned, ..Bound::default() };
                 }
                 let constructed = self.check_construction(construct, scope);
                 let adapter = constructed.adapter.clone();
@@ -294,7 +299,10 @@ impl<'c> Checker<'c> {
                 }
                 return Bound { is_instance: name.is_some(), adapter, instance, ..Bound::default() };
             }
-            RValue::Call { call } => self.check_call_rvalue(call, scope, span),
+            RValue::Call { call } => {
+                let returned = self.check_call_rvalue(call, scope, span);
+                return Bound { returned, ..Bound::default() };
+            }
             RValue::Write { write } => {
                 let handle = self.check_write(write, scope, name, name.is_some());
                 return Bound { pos: handle, ..Bound::default() };
