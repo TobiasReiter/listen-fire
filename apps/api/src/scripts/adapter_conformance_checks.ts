@@ -1,6 +1,7 @@
 // The adapter conformance checks and their report. The command line lives in
 // `adapter_conformance.ts`; the host double in `adapter_conformance_host.ts`.
 
+import { hostedDocumentStore } from '../services/translation_graph/engine/files/retrieve';
 import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
@@ -29,7 +30,7 @@ import {
   type RemoteAdapter,
   type RemoteAdapterConfig,
   type RemoteManifest,
-} from '../services/translation_graph/adapters/remote';
+} from 'movement-engine/services/translation_graph/adapters/remote';
 import { makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 import { isUuid, startHostDouble, type HostDouble } from './adapter_conformance_host';
 
@@ -265,7 +266,7 @@ export async function runConformance(options: ConformanceOptions): Promise<Check
     return `lists all ${REQUIRED_METHODS.length} required methods`;
   });
 
-  const adapter = createRemoteAdapter({
+  const adapter = createRemoteAdapter({ documents: hostedDocumentStore,
     config: { ...config, adapterType },
     secret,
     cacheScopeId: 'adapter-conformance',

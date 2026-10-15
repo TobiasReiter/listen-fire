@@ -72,27 +72,26 @@ import type {
   EnsureEventSubscriptionInput,
   EventSubscriptionRegistration,
   RemoveEventSubscriptionInput,
-} from 'movement-engine/services/translation_graph/adapter';
+} from '../../adapter';
 import type {
   AwaitableCapability,
   AwaitPoint,
   AwaitResolution,
-} from 'movement-engine/services/translation_graph/awaitable';
+} from '../../awaitable';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
-import type { TriggerEvent, TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
+} from '../../types';
+import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
-import type { AuthStrategy } from 'movement-engine/services/translation_graph/protocol/client';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { AuthStrategy } from '../../protocol/client';
 import type { MethodName } from 'engine-contracts';
 
-import { authHeader, postRpc, parseWireResult } from 'movement-engine/services/translation_graph/protocol/client';
-import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
-import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import { exposeFile } from '../../engine/files/expose';
+import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
+import { DOCUMENT_STORE_OWNER, type DocumentStore } from '../../engine/files/document_store';
+import { fileOwner, hasFileSource, redeemFileRef } from '../../engine/files/redeem';
+import { countAdapterCall } from '../../segment_scope';
 import {
   fileDescriptorOf,
   isFileValue,
@@ -103,7 +102,7 @@ import {
   writeParentLinks,
   type EarlierFileSource,
   type FileSource,
-} from 'movement-engine/services/translation_graph/adapter';
+} from '../../adapter';
 
 /**
  * A remote's catalog could not be read for the field a read answered, so
@@ -123,8 +122,8 @@ export class RemoteDescribeFailed extends Error {
 export interface RemoteAdapterConfig {
   /** Slug the engine routes on. */
   adapterType: string;
-  /** The team whose install this is — sent with every call. */
-  teamId: TeamId;
+  /** The tenant whose install this is — sent with every call. */
+  teamId: string;
   baseUrl: string;
   authStrategy: AuthStrategy;
   credentialsId: string;
@@ -217,6 +216,10 @@ export interface RemoteAdapterInput {
   secret: string;
   cacheScopeId: string;
   manifest: RemoteManifest;
+  /** The host's document store: a file this side holds is redeemed from it
+   *  (or from the instance that owns it) and exposed through it at a URL the
+   *  remote server fetches. */
+  documents: DocumentStore;
 }
 
 export class RemoteAdapter implements Adapter {
@@ -238,11 +241,13 @@ export class RemoteAdapter implements Adapter {
   private readonly secret: string;
   private readonly cacheScopeId: string;
   private readonly advertised: ReadonlySet<string>;
+  private readonly documents: DocumentStore;
 
   constructor(input: RemoteAdapterInput) {
     this.config = input.config;
     this.secret = input.secret;
     this.cacheScopeId = input.cacheScopeId;
+    this.documents = input.documents;
     this.adapterType = input.manifest.adapterType;
     this.supportedTriggers = input.manifest.supportedTriggers;
     this._runtimeCapabilities = input.manifest.runtimeCapabilities;
@@ -259,6 +264,7 @@ export class RemoteAdapter implements Adapter {
     method: M,
     params: unknown,
   ): Promise<ReturnType<(typeof METHODS)[M]['result']['parse']>> {
+    countAdapterCall('remote');
     const result = await postRpc({
       baseUrl: this.config.baseUrl,
       auth: authHeader(this.config.authStrategy, this.secret),
@@ -423,7 +429,7 @@ export class RemoteAdapter implements Adapter {
 
   /**
    * Deep-walk a write value, replacing every FileRef with a WIRE FileRef whose
-   * bytes are exposed at a short-lived Listen-Fire URL (`exposeFile` → S3). Raw bytes
+   * bytes are exposed at a short-lived URL by the host's document store. Raw bytes
    * can't cross the JSON envelope, so the remote server fetches the bytes from
    * `url` instead. Non-FileRef values pass through; an already-exposed FileRef
    * (carrying `url`) keeps it.
@@ -457,11 +463,13 @@ export class RemoteAdapter implements Adapter {
       // Already exposed (e.g. re-sent off the wire) — keep its URL.
       wire.url = ref.url;
     } else if (hasFileSource(ref)) {
-      const resolved = await streamFileRef(ref, { teamId: this.config.teamId });
-      const exposed = await exposeFile({
+      const resolved = await redeemFileRef(ref, { tenantId: this.config.teamId, documents: this.documents });
+      const contentType = resolved.contentType ?? ref.contentType;
+      const exposed = await this.documents.expose({
         stream: resolved.stream,
-        filename: ref.name,
-        contentType: resolved.contentType ?? ref.contentType,
+        ...(ref.name !== undefined ? { filename: ref.name } : {}),
+        ...(contentType !== undefined ? { contentType } : {}),
+        tenantId: this.config.teamId,
       });
       wire.url = exposed.url;
       if (wire.contentType === undefined && resolved.contentType !== undefined) {

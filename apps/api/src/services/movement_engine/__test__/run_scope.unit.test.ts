@@ -23,7 +23,7 @@ import {
   openSegment,
   segmentScopedCalls,
   withSegment,
-} from '../../translation_graph/segment_scope';
+} from 'movement-engine/services/translation_graph/segment_scope';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const ENV_VAR = 'AFFINITY_MAX_CALLS_PER_RUN';

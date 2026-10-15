@@ -25,7 +25,7 @@ import type { FileRef } from 'movement-engine/services/translation_graph/adapter
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { documentStoreFileRef, teamDocumentKeyPrefix } from '../engine/files/document_store';
+import { documentStoreFileRef, teamDocumentKeyPrefix } from 'movement-engine/services/translation_graph/engine/files/document_store';
 
 /** The team's `files.render`: its artifacts are stored under the team's key
  *  prefix, which is what makes them the team's to read again. */

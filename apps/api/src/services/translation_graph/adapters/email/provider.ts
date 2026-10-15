@@ -23,7 +23,7 @@ import type { ResolveFileRefResult } from 'movement-engine/services/translation_
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';
 import { mintAttachmentDownloadUrl, parseResendAttachmentHandle } from './resend';
-import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
+import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
 
 type EmailProviderSlug = 'mailgun' | 'resend';
 

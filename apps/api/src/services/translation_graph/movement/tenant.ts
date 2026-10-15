@@ -11,7 +11,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 
 /** A team id is the team row's key, a Postgres `uuid`: any GUID-shaped hex
  *  string, whatever its version bits. */
-const teamKeySchema = z.custom<TeamId>((value) => z.guid().safeParse(value).success);
+export const teamKeySchema = z.custom<TeamId>((value) => z.guid().safeParse(value).success);
 
 /** The tenant a team's runs are for. */
 export function tenantOfTeam(teamId: TeamId): TenantId {

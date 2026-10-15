@@ -38,7 +38,7 @@ import { jsPDF } from 'jspdf';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
-import { FileOutsideTeamError } from '../../engine/files/file_outside_team';
+import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
 import { makeFileTextResolver } from '../file_text';
 import { services } from '../../../../adapters/registry';
 import { LlmUsageContext } from '../../../../lib/llm_usage';

@@ -17,7 +17,7 @@ import {
   type LanguageRelease,
 } from 'movement-lang';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import { currentLanguageVersion, hostSegments, segmentScopedCalls } from '../../translation_graph/segment_scope';
+import { currentLanguageVersion, hostSegments, segmentScopedCalls } from 'movement-engine/services/translation_graph/segment_scope';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { diagnoseMovementSource } from '../../translation_graph/movement/authoring';

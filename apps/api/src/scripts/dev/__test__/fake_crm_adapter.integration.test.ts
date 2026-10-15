@@ -12,11 +12,12 @@
 // `.integration.test.ts` suffix because that config's testMatch owns real-
 // transport tests (real socket, real HTTP round-trip).
 
+import { hostedDocumentStore } from '../../../services/translation_graph/engine/files/retrieve';
 import http from 'node:http';
 
 import type { AddressInfo } from 'node:net';
 import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
-import type { RemoteAdapterConfig } from '../../../services/translation_graph/adapters/remote';
+import type { RemoteAdapterConfig } from 'movement-engine/services/translation_graph/adapters/remote';
 import type { FakeCrmServer } from '../fake_crm_adapter';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
@@ -25,7 +26,7 @@ import {
   createRemoteAdapter,
   fetchRemoteManifest,
   RemoteAdapter,
-} from '../../../services/translation_graph/adapters/remote';
+} from 'movement-engine/services/translation_graph/adapters/remote';
 import { makeMetaPosition, positionData } from 'movement-engine/services/translation_graph/types';
 import {
   FAKE_CRM_ADAPTER_TYPE,
@@ -67,7 +68,7 @@ describe('Fake CRM RemoteAdapter round-trip (over real HTTP, no Postgres)', () =
 
     // Manifest fetch over real HTTP — proves the install-time handshake.
     const manifest = await fetchRemoteManifest(config, SECRET);
-    remote = createRemoteAdapter({
+    remote = createRemoteAdapter({ documents: hostedDocumentStore,
       config,
       secret: SECRET,
       cacheScopeId: 'fake-crm-scope',
@@ -120,7 +121,7 @@ describe('Fake CRM pages a traversal over the wire', () => {
       credentialsId: 'test',
     };
     const manifest = await fetchRemoteManifest(config, SECRET);
-    remote = createRemoteAdapter({ config, secret: SECRET, cacheScopeId: 'fake-crm-paging', manifest });
+    remote = createRemoteAdapter({ documents: hostedDocumentStore, config, secret: SECRET, cacheScopeId: 'fake-crm-paging', manifest });
   });
 
   afterAll(async () => {
@@ -229,7 +230,7 @@ describe('resolveEntity bare-array tolerance (over real HTTP)', () => {
       credentialsId: 'test',
     };
     const manifest = await fetchRemoteManifest(config, SECRET);
-    remote = createRemoteAdapter({ config, secret: SECRET, cacheScopeId: 'scope', manifest });
+    remote = createRemoteAdapter({ documents: hostedDocumentStore, config, secret: SECRET, cacheScopeId: 'scope', manifest });
   });
 
   afterAll(async () => {
@@ -258,7 +259,7 @@ async function remoteFor(server: FakeCrmServer, cacheScopeId: string): Promise<R
     credentialsId: 'test',
   };
   const manifest = await fetchRemoteManifest(config, SECRET);
-  return createRemoteAdapter({ config, secret: SECRET, cacheScopeId, manifest });
+  return createRemoteAdapter({ documents: hostedDocumentStore, config, secret: SECRET, cacheScopeId, manifest });
 }
 
 // The comment thread is the awaitable edge: pending (keyed on the thread) until

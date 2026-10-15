@@ -13,11 +13,8 @@ import { z } from 'zod';
 import { METHODS, WireListenDeclarations, WireManifestProtocolVersion } from 'engine-contracts';
 import { authHeader, parseWireResult, postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import {
-  schemaEntryPointSchema,
-  schemaTypeDescriptorSchema,
-  type SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+import type { RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 import type { InstanceSchema } from 'movement-lang';
 import type { Project } from './project';
 import type { Credential } from './secrets';
@@ -208,38 +205,23 @@ function listeningPort(child: ChildProcess, name: string): Promise<number> {
 
 /**
  * One external's schema, the way the hosted product projects it: its entry
- * points and one `describe` per entry point, projected by the same function
- * (`instanceSchemaFromDescriptors`). THIN: no demand rounds, no positioned
- * instances, no narrowing — the hosted catalog's live walk does those.
+ * points and one `describe` per entry point, asked through the same remote
+ * adapter and projected by the same function (`instanceSchemaFromDescriptors`).
+ * THIN: no demand rounds, no positioned instances, no narrowing — the hosted
+ * catalog's live walk does those.
  */
-export async function describeExternal(input: {
-  running: RunningExternal;
-  credential: Credential | undefined;
-  tenant: string;
-}): Promise<InstanceSchema> {
-  const name = input.running.external.manifest.name;
-  const call = (method: string, params: unknown) =>
-    rpc({ running: input.running, credential: input.credential, method, params, tenant: input.tenant });
-  // Validated against the domain schemas, not only the wire's looser ones:
-  // the projection reads every field.
-  const entries = parseWireResult(
-    z.array(schemaEntryPointSchema),
-    await call('listEntryPoints', {}),
-    { method: 'listEntryPoints', adapter: name },
-  );
+export async function describeExternal(adapter: RemoteAdapter): Promise<InstanceSchema> {
+  const entries = await adapter.listEntryPoints();
   const descriptors = new Map<string, SchemaTypeDescriptor>();
   for (const entry of entries) {
-    const descriptor = parseWireResult(schemaTypeDescriptorSchema.nullable(), await call('describe', { typeId: entry.typeId }), {
-      method: 'describe',
-      adapter: name,
-    });
+    const descriptor = await adapter.describe(entry.typeId);
     if (descriptor !== null) descriptors.set(entry.typeId, descriptor);
   }
   return instanceSchemaFromDescriptors({
-    adapterType: name,
+    adapterType: adapter.adapterType,
     entries,
     descriptors,
-    supportsInPlaceUpdate: input.running.methods.includes('updateRecord'),
+    supportsInPlaceUpdate: typeof adapter.updateRecord === 'function',
   }).schema;
 }
 

@@ -4,8 +4,9 @@
 // re-wrapping of paged streams + manifest-gated optional methods. Names on the
 // wire are the caller's natural names, forwarded untranslated.
 
+import { hostedDocumentStore } from '../../../engine/files/retrieve';
 import type { FileRef, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
-import type { RemoteAdapterConfig, RemoteManifest } from '../index';
+import type { RemoteAdapterConfig, RemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
 
 import { streamFileRef } from '../../../engine/files/retrieve';
 
@@ -17,7 +18,7 @@ jest.mock('movement-engine/services/translation_graph/protocol/client', () => {
 });
 
 import { postRpc } from 'movement-engine/services/translation_graph/protocol/client';
-import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from '../index';
+import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
@@ -79,7 +80,7 @@ function manifest(methods: readonly string[] = ALL_METHODS): RemoteManifest {
 }
 
 function buildAdapter(methods: readonly string[] = ALL_METHODS): RemoteAdapter {
-  return createRemoteAdapter({
+  return createRemoteAdapter({ documents: hostedDocumentStore,
     config,
     secret: 's3cr3t',
     cacheScopeId: CACHE_SCOPE,
@@ -136,7 +137,7 @@ describe('RemoteAdapter manifest props', () => {
   });
 
   it('exposes webhookEventTypeId from the manifest (static config, no RPC)', () => {
-    const adapter = createRemoteAdapter({
+    const adapter = createRemoteAdapter({ documents: hostedDocumentStore,
       config,
       secret: 's3cr3t',
       cacheScopeId: CACHE_SCOPE,

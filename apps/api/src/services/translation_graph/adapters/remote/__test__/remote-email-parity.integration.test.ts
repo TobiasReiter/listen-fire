@@ -29,6 +29,7 @@
 // exercised method is DB-free — but it runs under the integration jest
 // config because that config's testMatch owns `*.integration.test.ts`.
 
+import { hostedDocumentStore } from '../../../engine/files/retrieve';
 import http from 'node:http';
 
 import type { AddressInfo } from 'node:net';
@@ -37,7 +38,7 @@ import type { EmailAdapter, EmailPayload } from '../../email';
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { RemoteAdapterConfig } from '../index';
+import type { RemoteAdapterConfig } from 'movement-engine/services/translation_graph/adapters/remote';
 
 import {
   createEmailAdapter,
@@ -64,7 +65,7 @@ import {
   createRemoteAdapter,
   fetchRemoteManifest,
   RemoteAdapter,
-} from '../index';
+} from 'movement-engine/services/translation_graph/adapters/remote';
 
 
 const TEST_TEAM_ID = '00000000-0000-0000-0000-000000000001' as TeamId;
@@ -145,7 +146,7 @@ describe('RemoteAdapter ⟷ in-process email adapter parity (over real HTTP)', (
 
     // Manifest fetch over real HTTP — proves the install-time handshake.
     const manifest = await fetchRemoteManifest(config, TEST_SECRET);
-    remote = createRemoteAdapter({
+    remote = createRemoteAdapter({ documents: hostedDocumentStore,
       config,
       secret: TEST_SECRET,
       cacheScopeId: 'test-scope',
@@ -377,7 +378,7 @@ describe('RemoteAdapter buildability for a webhook adapter (static manifest conf
       credentialsId: 'test',
     };
     const manifest = await fetchRemoteManifest(config, TEST_SECRET);
-    remote = createRemoteAdapter({
+    remote = createRemoteAdapter({ documents: hostedDocumentStore,
       config,
       secret: TEST_SECRET,
       cacheScopeId: 'poly-scope',

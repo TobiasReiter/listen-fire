@@ -10,7 +10,7 @@ import { runFields } from '../../../lib/llm_usage';
 import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from 'movement-engine/lib/run_cost';
 import { DocumentService } from '../../document';
 import { logger } from 'movement-engine/services/logger';
-import { documentStoreFileRef } from '../engine/files/document_store';
+import { documentStoreFileRef } from 'movement-engine/services/translation_graph/engine/files/document_store';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
 import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
 

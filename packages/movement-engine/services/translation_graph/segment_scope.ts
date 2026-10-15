@@ -32,29 +32,34 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
-import type { TeamId } from '../../generated/kysely/core/Team';
-import type { EngineHost, SegmentOpening } from 'movement-engine/services/movement_engine/host';
+import { tenantIdOf, type TenantId } from 'engine-contracts';
 
-import { NO_BUDGET_LIMIT, type CostLine } from 'movement-engine/lib/run_cost';
-import { SpendMeter, underSpendMeter } from 'movement-engine/lib/run_spend';
-import { logger } from 'movement-engine/services/logger';
-import { adapterErrorOf, type ClassifyHostError } from 'movement-engine/services/translation_graph/engine/adapter_table';
-import { teamOfTenant, tenantOfTeam } from './movement/tenant';
+import type { EngineHost, SegmentOpening } from '../movement_engine/host';
+
+import { NO_BUDGET_LIMIT, type CostLine } from '../../lib/run_cost';
+import { SpendMeter, underSpendMeter } from '../../lib/run_spend';
+import { logger } from '../logger';
+import { adapterErrorOf, type ClassifyHostError } from './engine/adapter_table';
 
 /** The systems that count against a ceiling. One entry per system that has its
  *  own env var below; a system not listed here is simply not capped. */
-export type AdapterCallSystem = 'affinity';
+export type AdapterCallSystem = 'affinity' | 'remote';
 
 const CEILING_ENV_VAR: Record<AdapterCallSystem, string> = {
   affinity: 'AFFINITY_MAX_CALLS_PER_RUN',
+  remote: 'REMOTE_ADAPTER_MAX_CALLS_PER_RUN',
 };
 
+// A remote adapter (an external speaking the adapter protocol) is a third
+// party like any other: an unnarrowed walk through it spirals the same way.
 const DEFAULT_CEILING: Record<AdapterCallSystem, number> = {
   affinity: 2000,
+  remote: 2000,
 };
 
 const SYSTEM_LABEL: Record<AdapterCallSystem, string> = {
   affinity: 'Affinity',
+  remote: 'Remote adapter',
 };
 
 /** Read per call so ops (and tests) can move the ceiling without a restart.
@@ -184,7 +189,7 @@ class SegmentScope {
   readonly spend = new SpendMeter(NO_BUDGET_LIMIT);
 
   constructor(
-    readonly teamId: TeamId,
+    readonly tenantId: TenantId,
     readonly languageVersion: LanguageVersion,
     readonly runId: string | undefined,
   ) {}
@@ -205,7 +210,7 @@ function segmentNamed(segmentId: string): SegmentScope {
  *  the host's to check, before it opens one (`openSegmentWith`). */
 export async function openSegment(input: Omit<SegmentOpening, 'hostFamiliesVersion'>): Promise<{ segmentId: string }> {
   const segmentId = randomUUID();
-  openSegments.set(segmentId, new SegmentScope(teamOfTenant(input.teamId), input.languageVersion, input.runId));
+  openSegments.set(segmentId, new SegmentScope(input.teamId, input.languageVersion, input.runId));
   return { segmentId };
 }
 
@@ -234,11 +239,11 @@ export function inSegment<T>(segmentId: string, fn: () => T): T {
 /** Open a segment, run `fn` inside it, close it — for code that is a segment
  *  of its own rather than a run's (scripts, tests of the scope itself). */
 export async function withSegment<T>(
-  input: Omit<Partial<SegmentOpening>, 'teamId'> & { teamId: TeamId },
+  input: Omit<Partial<SegmentOpening>, 'teamId'> & { teamId: string },
   fn: () => Promise<T>,
 ): Promise<T> {
   const { segmentId } = await openSegment({
-    teamId: tenantOfTeam(input.teamId),
+    teamId: tenantIdOf(input.teamId),
     languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
   });

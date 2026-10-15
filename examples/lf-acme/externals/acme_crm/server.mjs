@@ -3,8 +3,9 @@
 // fake_crm_adapter.ts) as a plain process, so it shows an external can be any
 // program that answers the protocol over HTTP.
 //
-// One record type, `Company { Name, Description }`, and one event,
-// `company.created`, delivered as `{ companies: [{ id, Name }] }`. Companies
+// One record type, `Company { Name, Description }`, and two events a listen
+// may choose, `company.created` and `company.updated`; a webhook delivers
+// created companies as `{ companies: [{ id, Name }] }`. Companies
 // written through it are kept in the file named by ACME_CRM_STATE, so a test
 // (or a developer) can see a write land.
 
@@ -16,6 +17,7 @@ const statePath = process.env.ACME_CRM_STATE;
 
 const COMPANY = 'Company';
 const COMPANY_CREATED = 'company.created';
+const COMPANY_UPDATED = 'company.updated';
 
 function readState() {
   if (statePath && existsSync(statePath)) return JSON.parse(readFileSync(statePath, 'utf8'));
@@ -33,6 +35,7 @@ const COMPANY_DESCRIPTOR = {
   fields: [
     { fieldId: 'Name', displayName: 'Name', kind: 'string', writable: true, required: true },
     { fieldId: 'Description', displayName: 'Description', kind: 'string', writable: true, required: false },
+    { fieldId: 'Report', displayName: 'Report', kind: 'file', writable: true, required: false },
   ],
   references: [],
 };
@@ -42,6 +45,8 @@ const METHODS = {
     protocolVersion: 2,
     adapterType: 'acme_crm',
     supportedTriggers: ['webhook'],
+    // What a listen on this CRM may say: `events: [...]` from this list.
+    subscribableEvents: [COMPANY_CREATED, COMPANY_UPDATED],
     runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
     methods: Object.keys(METHODS).filter((m) => m !== 'manifest'),
   }),
@@ -63,7 +68,8 @@ const METHODS = {
     return data && typeof data === 'object' ? (data[fieldId] ?? null) : null;
   },
   getRelated: () => [],
-  createRecord: ({ recordType, fields }) => {
+  createRecord: async ({ recordType, fields: written }) => {
+    const fields = await withFileContents(written);
     const state = readState();
     const externalId = `company-${state.companies.length + 1}`;
     state.companies.push({ externalId, fields });
@@ -88,8 +94,24 @@ const METHODS = {
       recordType: COMPANY,
     })),
   }),
-  listEventTypes: () => [{ tag: COMPANY_CREATED, positionType: COMPANY }],
+  listEventTypes: () => [
+    { tag: COMPANY_CREATED, positionType: COMPANY },
+    { tag: COMPANY_UPDATED, positionType: COMPANY },
+  ],
 };
+
+// A file arrives as a descriptor whose bytes the host exposed at a URL (they
+// cannot ride the JSON envelope): fetch them, and keep their text.
+async function withFileContents(fields) {
+  const out = {};
+  for (const [name, value] of Object.entries(fields ?? {})) {
+    if (value && typeof value === 'object' && value.__brand === 'FileRef' && typeof value.url === 'string') {
+      const res = await fetch(value.url);
+      out[name] = { name: value.name ?? null, contentType: value.contentType ?? null, text: await res.text() };
+    } else out[name] = value;
+  }
+  return out;
+}
 
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' });

@@ -25,7 +25,7 @@ jest.mock('../../../services/context', () => ({
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { AffinityAPIClient } from '../apiClient';
-import { withSegment } from '../../../services/translation_graph/segment_scope';
+import { withSegment } from 'movement-engine/services/translation_graph/segment_scope';
 
 /** One run segment's host scope, as the engine opens it for a run. */
 const inARun = <T>(fn: () => Promise<T>) =>

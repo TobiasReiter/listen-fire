@@ -133,7 +133,7 @@ const HOST_SIDE_FILES = [
 
 /** The host-side modules that turn a file descriptor into bytes, or bytes
  *  into a URL. */
-const BYTE_READERS = ['retrieve', 'expose', 'fetch-stream'];
+const BYTE_READERS = ['retrieve', 'redeem', 'expose', 'fetch-stream'];
 
 /** Module paths are relative to apps/api/src, without extension. */
 const FORBIDDEN: Array<{ matches: (module: string) => boolean; reason: string }> = [
