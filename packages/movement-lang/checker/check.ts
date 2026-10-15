@@ -640,12 +640,6 @@ export const DiagnosticCodes = {
    *  a function parameter whose body needs every field in hand (it
    *  serialises, spreads or passes on the record to one that does). */
   CALL_ARG_OPAQUE_RECORD: 'MOV_CALL_ARG_OPAQUE_RECORD',
-  /** From version 5: a value that MAY be a record and may be something else
-   *  (`COALESCE(org, "x")`, a function that returns either) handed to a
-   *  parameter that takes a record position — TypeScript's `Org | string` is no
-   *  `Org`. Earlier versions let it through, and Rust admission refuses it at
-   *  run time. */
-  CALL_ARG_MAYBE_RECORD: 'MOV_CALL_ARG_MAYBE_RECORD',
   /** Before version 5, an upgrade warning only: a call of a closure a body
    *  hands back on one of several paths is typed by the first path's closure,
    *  and a later one may hand back a record the first does not. From 5 the

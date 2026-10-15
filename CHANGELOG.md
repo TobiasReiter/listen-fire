@@ -61,7 +61,9 @@ guide](docs/language/dancing-wren-migration.md).
   and the call ran with the record where the number was typed (a sum over it came out `NaN`), so
   the refusal is new under 5. Under 3 and 4 it is a warning that blocks the move up. Narrow it to
   the record with `IS` and pass a field off it, or fill every arm with a value. A plugin argument
-  and a written field already refused it on every version.
+  and a written field already refused it on every version. A built-in's argument that takes a value
+  is held to the same rule: `ROUND(COALESCE(co, 1))`, `UPPER(COALESCE(co, "b"))`. Under 3 and 4 the
+  built-in ran on the record as it was (`NaN`, `"[OBJECT OBJECT]"`), so there it is a warning too.
 - **A call of one of several closures is held to every one of them**: a function or closure
   whose returns hand back different closures (`return made` on one path, `return label` on
   another), then `g = mk()` and `g()`. The call takes only what every closure takes (each arity,

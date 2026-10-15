@@ -138,6 +138,7 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 - The same value handed to a parameter typed as a VALUE (`function f(n: <number>)`, then `f(COALESCE(org, 1))`, `f(IF cond THEN org ELSE 1 END)`, or a name bound to either) is `MOV_CALL_ARG_MAYBE_RECORD` too, through a function by name, a closure in a variable, or a list handed to `<number[]>`.
 - Why: `Org | number` is no `number`. Under versions 3 and 4 the check said nothing and the call ran: the record arrived where the number was typed, and a sum over it came out `NaN`. So under 3 and 4 it is a warning that blocks the move up, and the refusal is new under 5.
 - Narrow it to the record with `IS` and pass a field off it (`f(COALESCE(org.size, 1))`), or fill every arm with a value.
+- A built-in whose argument takes a value is held to the same rule: `ROUND(COALESCE(org, 1))` and `UPPER(COALESCE(org, "b"))` are `MOV_CALL_ARG_MAYBE_RECORD`. Under 3 and 4 the built-in ran on the record as it was (`ROUND` gave `NaN`, `UPPER` gave `"[OBJECT OBJECT]"`), so there it is a warning that blocks the move up.
 - A collection op calls its function with each member, so each member is an argument too: `MAP(["a"], (n: <number>) => n)` is `MOV_CALL_ARG_TYPE` (TypeScript refuses `["a"].map((n: number) => n)`), and a member that may be a record, handed to a value parameter, is `MOV_CALL_ARG_MAYBE_RECORD`. The same holds for `FILTER`, `GROUPBY`, `KEYBY`, a function passed by name, and `REDUCE`, whose starting value is held to its accumulator. Under 3 and 4 the op ran with each member as it was (a sum over text came out `NaN`), so there it is a warning that blocks the move up. Type the parameter as the members are, or leave it untyped to take their type.
 
 ## 9. A record a combinator arm hands back reads as itself
@@ -267,7 +268,7 @@ r = all(a, () => { … })
 
 | Code | Where |
 | --- | --- |
-| `MOV_CALL_ARG_MAYBE_RECORD` | [A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter) (a value parameter, a collection op's member included) |
+| `MOV_CALL_ARG_MAYBE_RECORD` | [A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter) (a value parameter, a collection op's member and a built-in's argument included) |
 | `MOV_CALL_ARITY` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (a call of one of several closures names every arity) |
 | `MOV_CALL_ARG_TYPE` | [A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return) (a closure that does not fit a closure type); [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (two of several closures whose parameters share no argument); [A value that may be a record is no record parameter](#8-a-value-that-may-be-a-record-is-no-record-parameter) (a collection op's member against its function's parameter) |
 | `MOV_CALL_CLOSURE_RETURNS` | [A value that is a closure is called](#12-a-value-that-is-a-closure-is-called) (warning under 3 and 4: a later closure may hand back a record the first does not) |

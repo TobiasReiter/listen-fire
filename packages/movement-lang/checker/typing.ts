@@ -43,6 +43,7 @@ import {
   READ_SIGNATURE,
   stdlibFunctionById,
   type BuiltinOptionsSpec,
+  type BuiltinParam,
   type BuiltinParamType,
   type StdlibFunctionSpec,
 } from '../expression/stdlib';
@@ -431,6 +432,15 @@ export const TypedDiagnosticCodes = {
    *  `UPPER(record)`, `ROUND("ten")` (language version 3; the signatures are
    *  the standard-library scope's, checker/standard_library.ts). */
   BUILTIN_ARG_TYPE: 'MOV_BUILTIN_ARG_TYPE',
+  /** From version 5: a value that MAY be a record and may be something else
+   *  (`COALESCE(org, "x")`, a function that returns either) handed to a
+   *  parameter that does not take one — a record position, a value parameter,
+   *  a collection op's function or a built-in's argument. TypeScript's
+   *  `Org | string` is no `Org`, and `Org | number` no `number`. Before 5 a
+   *  value parameter or a built-in let it through and the call ran (an
+   *  upgrade warning there); Rust admission refuses a record position's at
+   *  run time. */
+  CALL_ARG_MAYBE_RECORD: 'MOV_CALL_ARG_MAYBE_RECORD',
   /** `READ(x)` where `x` is not a file. READ turns a FILE into its text, and
    *  nothing else has bytes to read — a text argument is either a value the
    *  author already has (so the call does nothing) or the wrong name. The
@@ -1260,6 +1270,23 @@ function readsAsValue(param: BuiltinParamType): boolean {
       return false;
     default:
       return neverAsAny(param);
+  }
+}
+
+/** The records and files a value may be itself, not inside a list or a map:
+ *  the members of what it may hold, absence and unions seen through. */
+function topLevelHandles(type: FieldType | undefined): FieldType[] {
+  if (type === undefined) return [];
+  const variant = variantOf(stripAbsent(type));
+  switch (variant.kind) {
+    case 'record':
+      return [variant];
+    case 'file':
+      return ['file'];
+    case 'union':
+      return variant.of.flatMap(topLevelHandles);
+    default:
+      return [];
   }
 }
 
@@ -5147,7 +5174,7 @@ export class ExpressionTyping {
         for (const d of aiTierDiagnostics(expr.tier)) this.report(d.code, d.message, d.severity);
         if (expr.promptExpression) {
           const prompt = this.inferAt(expr.promptExpression, position);
-          if (ai !== undefined) this.checkBuiltinArgs(ai, [prompt]);
+          if (ai !== undefined) this.checkBuiltinArgs(ai, [{ type: prompt, expr: expr.promptExpression }]);
         }
         return undefined;
       }
@@ -5200,7 +5227,7 @@ export class ExpressionTyping {
           )) {
             return undefined;
           }
-          this.checkBuiltinArgs(builtin, args);
+          this.checkBuiltinArgs(builtin, expr.args.map((arg, i) => ({ type: args[i], expr: arg })));
         }
         if (expr.fn === FILE_FUNCTION_ID) return 'file';
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
@@ -5302,18 +5329,51 @@ export class ExpressionTyping {
    * type stays silent, as everywhere in this layer; how many arguments there
    * are is the call walk's (it sees the call before lowering reshapes it).
    */
-  private checkBuiltinArgs(builtin: Builtin, args: ReadonlyArray<FieldType | undefined>): void {
+  private checkBuiltinArgs(builtin: Builtin, args: ReadonlyArray<{ type: FieldType | undefined; expr: Expression }>): void {
     if (before(this.options.languageVersion, 3)) return;
-    args.forEach((type, index) => {
+    args.forEach(({ type, expr }, index) => {
       const param = builtinParamAt(builtin, index);
-      if (param === undefined || type === undefined || !readsAsValue(param.type)) return;
-      if (this.requireTransparent(type, `handed to ${builtin.name}`)) return;
+      if (param === undefined || !readsAsValue(param.type)) return;
+      if (type !== undefined && this.requireTransparent(type, `handed to ${builtin.name}`)) return;
+      if (this.refuseMaybeRecordForBuiltin(builtin, param, { type, expr })) return;
+      if (type === undefined) return;
       if (paramAccepts(param.type, type)) return;
       this.report(
         TypedDiagnosticCodes.BUILTIN_ARG_TYPE,
         `${builtin.name}'s '${param.name}' takes ${describeParamType(param.type)}, and this is ${describeFieldType(stripAbsent(type))} — ${describeBuiltin(builtin)}`,
       );
     });
+  }
+
+  /**
+   * A value that MAY be a record (or a file) and may be something else —
+   * `ROUND(COALESCE(org, 1))` — handed to a built-in's argument that does not
+   * take one. Its type is unknown (no union mixes a record with a value), so
+   * the kind check alone is silent; what it may hold says it, as it does for
+   * a function's value parameter. From version 5; before it the built-in ran
+   * on the record as it was, so an older pin is warned, and the warning
+   * blocks the move up. Returns true when it fired.
+   */
+  private refuseMaybeRecordForBuiltin(builtin: Builtin, param: BuiltinParam, arg: { type: FieldType | undefined; expr: Expression }): boolean {
+    const taken = param.type === 'file' ? 'file' : undefined;
+    const shown = arg.type !== undefined ? baseKinds(arg.type) : [];
+    const hidden = topLevelHandles(this.mayHoldType(arg.expr)).find(handle => {
+      const kind = handle === 'file' ? 'file' : 'record';
+      return kind !== taken && !shown.includes(kind);
+    });
+    if (hidden === undefined) return false;
+    const file = hidden === 'file';
+    const message = `${builtin.name}'s '${param.name}' takes ${describeParamType(param.type)}, but this may be ${describeFieldType(hidden)} — ${file ? 'a file' : 'a record'}, not a value, and such a union is not ${describeParamType(param.type)}, as in TypeScript. ${file ? "Pass its text ('READ(f)')" : "Narrow it to the record with IS and pass a field off it ('r.`Name`')"}, or fill every arm with a value`;
+    if (since(this.options.languageVersion, 5)) {
+      this.report(TypedDiagnosticCodes.CALL_ARG_MAYBE_RECORD, message);
+    } else {
+      this.report(
+        TypedDiagnosticCodes.CALL_ARG_MAYBE_RECORD,
+        `${message}. Before ${describeLanguageVersion(5)} ${builtin.name} runs on the ${file ? 'file' : 'record'} as it is; from it, this is refused`,
+        'upgrade',
+      );
+    }
+    return true;
   }
 
   /**
