@@ -404,9 +404,9 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'value_call_arg_record',
     routes: 'refused',
-    note: "a call through a value (version 5) handing an argument that may hold a record, where a function a value may hold declares a typed parameter: admission reads a value-typed parameter as free of records, and which function the call runs is not known statically. The checker passes a COALESCE of a record and a number to a closure's number parameter through a list's member; the TypeScript binds the record. Takes: which functions a call through a value may run, per call site",
+    note: "a call through a value (version 5) handing an argument that may hold a record, where a function a value may hold declares a typed parameter: admission reads a value-typed parameter as free of records, and which function the call runs is not known statically. The checker passes a COALESCE of a record and a number to a closure's number parameter through a COALESCE of closures; the TypeScript binds the record. Takes: which functions a call through a value may run, per call site",
     programs: [
-      () => ({ body: '  fs = [(n: <number>) => n]\n  co = write crm-[:companies]-> { name: "a" }\n  g = AT(fs, 0)\n  x = g(COALESCE(co, 1))', version: 5 }),
+      () => ({ body: '  a = (n: <number>) => n\n  co = write crm-[:companies]-> { name: "a" }\n  g = COALESCE(a, a)\n  x = g(COALESCE(co, 1))', version: 5 }),
     ],
   },
   {
@@ -503,7 +503,7 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'function_call',
     routes: 'whole',
-    note: "closed by chunk 7A Task 6: a bound call of a closure bound to a name runs on Rust (a returned one, and in a library function, since PLAN-08B Task 2); refused by name only where the program binds closures of one name that differ in what their parameters take, which needs the callee's parameters read at run time; from version 5 a call through a value (a parameter, a member, `box.g`, a function read as a value) runs too",
+    note: "closed by chunk 7A Task 6: a bound call of a closure bound to a name runs on Rust (a returned one, and in a library function, since PLAN-08B Task 2); refused by name only where the program binds closures of one name that differ in what their parameters take, which needs the callee's parameters read at run time; from version 5 a call through a value (a parameter, a closure a call hands back, a function read as a value) runs too",
     programs: [
       (pick) => ({ body: `  f = (n: <number>) => {\n    return n + ${pick([1, 2, 5])}\n  }\n  y = f(2)\n  write crm-[:notes]-> { body: "\${y}" }` }),
       () => ({ body: '  base = 5\n  f = (n: <number>) => n + base\n  y = f(n: 3)\n  write crm-[:notes]-> { body: "${y}" }' }),
@@ -517,11 +517,11 @@ export const PATTERNS: Pattern[] = [
       }),
       () => ({ body: '  f = (n: <number>) => {\n    return n\n  }\n  y = f(1, 2)\n  write crm-[:notes]-> { body: "${y}" }', checks: false, routes: 'unreached' }),
       // Closures as values (Dancing Wren, 5): a call through a value — a
-      // list's member read with AT, a value's member (`box.g`), a function
-      // bound to a name — runs on Rust; before 5 the checker refuses a
-      // closure written as a list's member.
-      () => ({ body: '  fs = [() => { return "a" }, () => { return msg.`subject` }]\n  g = AT(fs, 1)\n  x = g()\n  write crm-[:notes]-> { body: COALESCE(x, "none") }', version: 5, routes: 'whole' }),
-      () => ({ body: '  shout = (t: <text>) => UPPER(t)\n  box = { g: shout }\n  write crm-[:notes]-> { body: box.g("hi") }', version: 5, routes: 'whole' }),
+      // closure a call hands back, a function bound to a name — runs on
+      // Rust; a closure is not data, so the checker refuses one written as
+      // a list's member under 5, and before 5 as well.
+      () => ({ body: '  mk = () => { return () => { return msg.`subject` } }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { body: COALESCE(x, "none") }', version: 5, routes: 'whole' }),
+      () => ({ body: '  fs = [() => { return "a" }, () => { return msg.`subject` }]\n  g = AT(fs, 1)\n  x = g()\n  write crm-[:notes]-> { body: COALESCE(x, "none") }', version: 5, checks: false, routes: 'unreached' }),
       () => ({ file: `function one() {\n  return "one"\n}\n${m('  g = one\n  write crm-[:notes]-> { body: g() }')}`, movementName: 'm', version: 5, routes: 'whole' }),
       () => ({ body: '  fs = [() => { return "a" }, () => { return msg.`subject` }]\n  g = AT(fs, 1)\n  x = g()\n  write crm-[:notes]-> { body: COALESCE(x, "none") }', version: 4, checks: false, routes: 'unreached' }),
     ],
@@ -529,15 +529,15 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'rvalue:closure',
     routes: 'unreached',
-    note: "a closure written where a value goes (a list's member, a movement call's argument): the checker refuses both (MOV_EXPR_CLOSURE_POSITION, MOV_CALL_ARG_TYPE); a closure bound to a name, held in a map, or written in a collection op runs since chunk 7A Task 3; from version 5 a closure is a value, a list's member or a function's argument written in place, and runs",
+    note: "a closure written where a value goes (a list's member, a movement call's argument): the checker refuses both (MOV_EXPR_CLOSURE_POSITION, MOV_CALL_ARG_TYPE); a closure bound to a name, held in a map, or written in a collection op runs since chunk 7A Task 3; from version 5 a closure is a value, a function's argument written in place, and runs; a closure is not data, so a list's member stays refused (MOV_CLOSURE_NOT_DATA)",
     programs: [
       () => ({ body: '  fs = [(v: <number>) => v + 1]\n  x = COUNT(fs)', checks: false, routes: 'unreached' }),
       () => ({ body: '  inc = (v: <number>) => v + 1\n  held = { f: inc }\n  x = 1', routes: 'whole' }),
       () => ({ file: `movement apply(e: <inbox-[:message]->>, f: <text>) {\n  return 1\n}\n${m('  r = apply(e: msg, f: (v: <text>) => UPPER(v))')}`, movementName: 'm', checks: false }),
       // Closures as values (Dancing Wren, 5): written in place as an
-      // argument, and as a list's members; version 4 refuses the list.
+      // argument; a list's members are refused under 5 and 4 alike.
       () => ({ file: `function run(h: <(n: <number>) => <number>>) {\n  return h(20)\n}\n${m('  k = 2\n  x = run((n) => n + k)\n  write crm-[:notes]-> { body: "${x}" }')}`, movementName: 'm', version: 5, routes: 'whole' }),
-      () => ({ body: '  k = 3\n  r = MAP([() => k, () => k * 2], (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5, routes: 'whole' }),
+      () => ({ body: '  k = 3\n  r = MAP([() => k, () => k * 2], (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5, checks: false, routes: 'unreached' }),
       () => ({ body: '  k = 3\n  r = MAP([() => k, () => k * 2], (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 4, checks: false, routes: 'unreached' }),
     ],
   },
@@ -564,13 +564,13 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'expression_closure',
     routes: 'whole',
-    note: 'closed by PLAN-08A group C: a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`) runs, staged at its place in its slot; a closure where nothing stages one (a `unique by` condition) the checker refuses; from version 5 a list element closure is read by the name the lowering gives it and runs, a park inside it too',
+    note: 'closed by PLAN-08A group C: a collection op written inside an expression (`{ all: MAP(xs, (x) => …) }`) runs, staged at its place in its slot; a closure where nothing stages one (a `unique by` condition) the checker refuses; under version 5 a closure in a list is not data, which the checker refuses (MOV_CLOSURE_NOT_DATA)',
     programs: [
       () => ({ body: '  names = { all: MAP([msg.`subject`, "beta"], (s) => UPPER(s)) }\n  write crm-[:notes]-> { body: COALESCE(AT(names.all, 1), "none") }', routes: 'whole' }),
       () => ({ body: '  if COUNT(FILTER([msg.`subject`], (s) => s != "")) > 0 {\n    write crm-[:notes]-> { body: "some" }\n  }', routes: 'whole' }),
       () => ({ body: '  write crm-[c:companies]-> { unique by (`name` == AT(MAP([1], (v) => v), 0)) name: "a" }', checks: false, routes: 'unreached' }),
-      // A park inside a list element closure a MAP calls (version 5).
-      () => ({ body: '  r = MAP([() => {\n    await sleep(1h)\n    return 1\n  }, () => 2], (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5, routes: 'whole' }),
+      // A closure in a list is not data (version 5).
+      () => ({ body: '  r = MAP([() => {\n    await sleep(1h)\n    return 1\n  }, () => 2], (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5, checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -1430,24 +1430,29 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'statement:combinator',
     routes: 'whole',
-    note: 'closed in chunk 7A Task 4: parallel and race as statements',
+    note: 'closed in chunk 7A Task 4: parallel and race as statements; under version 5, all and race with their arms as arguments',
     programs: [
       () => ({ body: '  await parallel([() => {\n    write crm-[:notes]-> { body: "a" }\n  }, () => {\n    write crm-[:notes]-> { body: "b" }\n  }])' }),
       (pick) => ({ body: `  await race([() => {\n    write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  }])` }),
+      () => ({ body: '  all(() => {\n    write crm-[:notes]-> { body: "a" }\n  }, () => {\n    write crm-[:notes]-> { body: "b" }\n  })', version: 5 }),
+      (pick) => ({ body: `  race(() => {\n    write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  })`, version: 5 }),
     ],
   },
   {
     reason: 'rvalue:combinator',
     routes: 'whole',
-    note: 'closed in chunk 7A Task 4: a combinator bound, one slot per arm; `parallel` retired under version 5, where MAP over closures answers as it did',
+    note: 'closed in chunk 7A Task 4: a combinator bound, one slot per arm; `parallel` retired under version 5, where `all` answers as it did, its settings (`concurrency`, `onError`) included',
     programs: [
       () => ({ body: '  r = await parallel([() => {\n    return 1\n  }, () => {\n    return msg.`subject`\n  }])\n  write crm-[:notes]-> { body: "x", payload: r }' }),
       () => ({ body: '  r = await race([() => {\n    write crm-[:notes]-> { body: "won" }\n    return "a"\n  }, () => {\n    return "b"\n  }])' }),
       // `parallel` is retired under Dancing Wren (5): it runs under 4, the
-      // parser refuses it under 5, and MAP over closures answers as it did.
+      // checker refuses it under 5, and `all` answers as it did.
       () => ({ body: '  r = await parallel([() => {\n    return 1\n  }, () => {\n    return msg.`subject`\n  }])\n  write crm-[:notes]-> { body: "x", payload: r }', version: 4 }),
       () => ({ body: '  r = await parallel([() => {\n    return 1\n  }, () => {\n    return msg.`subject`\n  }])\n  write crm-[:notes]-> { body: "x", payload: r }', version: 5, checks: false, routes: 'unreached' }),
-      () => ({ body: '  r = MAP([() => {\n    return 1\n  }, () => {\n    return msg.`subject`\n  }], { concurrency: 2 }, (f) => f())\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5 }),
+      () => ({ body: '  r = all(() => {\n    return 1\n  }, () => {\n    return msg.`subject`\n  })\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5 }),
+      () => ({ body: '  r = all(() => {\n    await sleep(1h)\n    return 1\n  }, () => {\n    write crm-[:notes]-> { body: "second" }\n    return msg.`subject`\n  }, { concurrency: 1 })\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5 }),
+      () => ({ body: '  r = all(() => {\n    ERROR("boom")\n  }, () => {\n    return msg.`subject`\n  }, { onError: "warn" })\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5 }),
+      () => ({ body: '  r = race(() => {\n    await sleep(1h)\n    return 1\n  }, () => {\n    return msg.`subject`\n  })\n  write crm-[:notes]-> { body: "x", payload: { r: r } }', version: 5, looser: 'its arms run concurrently: the kit matches the requests of each arm, not one order across arms (as under version 4, `await race([…])` with the same arms)' }),
     ],
   },
   {

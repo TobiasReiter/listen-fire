@@ -195,10 +195,12 @@ function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>
   };
 }
 
-/** The join over `arms` under `version`: `parallel` before 5, the MAP that
- *  replaced it from 5. */
-const joined = (version: number, arms: string): string =>
-  version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await parallel(${arms})`;
+/** `line` as `version` spells its combinators: from 5 the arms are the
+ *  call's arguments, there is no `await`, and `parallel` is `all`. */
+const spelledFor = (version: number, line: string): string =>
+  version >= 5
+    ? line.replace(/await (parallel|race)\(\[(.*)\]\)/, (_, kind: string, arms: string) => `${kind === 'parallel' ? 'all' : 'race'}(${arms})`)
+    : line;
 
 async function start(source: string, parks: Sink) {
   const kg = makeKgFake();
@@ -729,18 +731,35 @@ describe('both engines: a body closure holds its scope by reference', () => {
 
   for (const version of [4, 5]) {
     it(`v${version}: closures a parked MAP member returned write the outer handle, and every way round ends as the unparked run (M-1)`, async () => {
-      const body = (park: boolean): string[] => [
-        '  a = write graph-[:note]-> { body: "one" }',
-        '  fs = MAP([1, 2], (n) => {',
-        ...(park ? ['    await sleep(1h)'] : []),
-        '    return () => {',
-        '      write a { body: CONCAT("v", n) }',
-        '      return a.body',
-        '    }',
-        '  })',
-        `  r = ${joined(version, 'fs')}`,
-        '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
-      ];
+      // From 5 a closure is not data: a maker hands each closure to a
+      // variable, and `all` runs them.
+      const body = (park: boolean): string[] => version < 5
+        ? [
+            '  a = write graph-[:note]-> { body: "one" }',
+            '  fs = MAP([1, 2], (n) => {',
+            ...(park ? ['    await sleep(1h)'] : []),
+            '    return () => {',
+            '      write a { body: CONCAT("v", n) }',
+            '      return a.body',
+            '    }',
+            '  })',
+            '  r = await parallel(fs)',
+            '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
+          ]
+        : [
+            '  a = write graph-[:note]-> { body: "one" }',
+            '  mk = (n: <number>) => {',
+            ...(park ? ['    await sleep(1h)'] : []),
+            '    return () => {',
+            '      write a { body: CONCAT("v", n) }',
+            '      return a.body',
+            '    }',
+            '  }',
+            '  f1 = mk(1)',
+            '  f2 = mk(2)',
+            '  r = all(f1, f2)',
+            '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
+          ];
       for (const engine of ENGINES) {
         const { kg } = await startOn(engine, program(body(false)), makeParkSink(), { version });
         expect(payloadOf(kg.creates)).toEqual({ r: ['v1', 'v2'], after: 'v2' });
@@ -866,9 +885,14 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
       '  await race([f, g])',
       done,
     ],
+  };
+  // Before 5 the closure comes out of a MAP member and `parallel` runs the
+  // list; from 5 a closure is not data, so a maker hands it to a variable.
+  const cycle = (version: number, inner: string[]): string[] => version < 5
+    ? ['  k = 7', '  fs = MAP([1], (n) => {', ...inner, '  })', '  await sleep(1h)', '  await parallel(fs)', done]
+    : ['  k = 7', '  outer = (n: <number>) => {', ...inner, '  }', '  f = outer(1)', '  await sleep(1h)', '  all(f)', done];
+  const cycles: Record<string, string[]> = {
     scopeCycleTwo: [
-      '  k = 7',
-      '  fs = MAP([1], (n) => {',
       '    mk = () => {',
       '      return () => {',
       '        write graph-[:note]-> { payload: { v: n + k } }',
@@ -877,14 +901,8 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
       '    }',
       '    g = mk()',
       '    return g',
-      '  })',
-      '  await sleep(1h)',
-      '  await parallel(fs)',
-      done,
     ],
     scopeCycleThree: [
-      '  k = 7',
-      '  fs = MAP([1], (n) => {',
       '    mk = () => {',
       '      mk2 = () => {',
       '        return () => {',
@@ -897,10 +915,6 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
       '    }',
       '    g = mk()',
       '    return g',
-      '  })',
-      '  await sleep(1h)',
-      '  await parallel(fs)',
-      done,
     ],
   };
   const expectedBodies: Record<string, string[]> = {
@@ -910,9 +924,10 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
     raceOfClosures: ['f'],
   };
   for (const version of [4, 5]) {
-    for (const [name, body] of Object.entries(cases)) {
+    const bodies = { ...cases, ...Object.fromEntries(Object.entries(cycles).map(([name, inner]) => [name, cycle(version, inner)])) };
+    for (const [name, body] of Object.entries(bodies)) {
       it(`v${version} ${name}: the same bytes and answer every way round`, async () => {
-        const end = await acrossEngines(program(body.map((line) => line.replace(/await parallel\((.*)\)$/, (_, arms: string) => joined(version, arms)))), { version });
+        const end = await acrossEngines(program(body.map((line) => spelledFor(version, line))), { version });
         expect(end.payload).toEqual(name.startsWith('scopeCycle') ? { v: 8 } : { done: 1 });
         const written = (end.creates as Array<{ fields?: Record<string, unknown> }>).flatMap((c) => (c.fields?.body !== undefined ? [c.fields.body as string] : []));
         if (expectedBodies[name] !== undefined) expect(written).toEqual(expectedBodies[name]);
@@ -980,9 +995,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
 });
 
 describe('both engines: a receipt of text-returning NAMED arms is a plain value (admit.rs receipt_holder)', () => {
-  // `parallel` is retired under 5: the MAP that replaced it, calling each arm.
-  const join = (combinator: string, arms: string, version: number): string =>
-    combinator === 'parallel' && version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await ${combinator}(${arms})`;
+  const join = (combinator: string, arms: string, version: number): string => spelledFor(version, `await ${combinator}(${arms})`);
   const movementProgram = (combinator: string, sink: string, version: number): string =>
     program([`  r = ${join(combinator, '[one, two]', version)}`, `  write graph-[:note]-> ${sink}`]).replace(
       'movement recap',

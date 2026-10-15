@@ -208,7 +208,8 @@ const BODY_KEYWORDS: MovementCompletionItem[] = [
   { label: 'write', insert: 'write ', kind: 'keyword', detail: 'write a record' },
   { label: 'match', insert: 'match ', kind: 'keyword', detail: 'find a record by identity — name it (`x = match …`): the record, or absent when nothing matches' },
   { label: 'if', insert: 'if ', kind: 'keyword', detail: 'branch' },
-  { label: 'parallel', insert: 'parallel {', kind: 'keyword', detail: 'run statements concurrently' },
+  // The editor writes the current language version, whose join is `all`.
+  { label: 'all', insert: 'all(', kind: 'keyword', detail: 'run functions concurrently — `r = all(f, () => { … })`: one slot per function, in order' },
   { label: 'link', insert: 'link ', kind: 'keyword', detail: 'connect two records you hold — find one first (`to = match …`), then `if to != null { link a -[:e]-> to }`' },
 ];
 
@@ -282,7 +283,8 @@ const KEYWORD_HOVERS: Record<string, string> = {
   write: 'write — create or update a record; a match (see unique by) updates instead of duplicating',
   if: 'if — branch on a condition; an IS test narrows the position inside the arm',
   else: 'else — taken when the preceding if conditions are all false',
-  parallel: 'parallel — run the enclosed statements concurrently; their bindings come into scope after the block',
+  parallel: 'parallel — the join before language version 5: `r = await parallel([f, g])`. From 5 it is `all(f, g)`',
+  all: 'all — run functions concurrently and hand back one slot per function, in order: `r = all(f, () => { … }, { concurrency: 2 })` (language version 5)',
   match: 'match — find an existing record by its unique by identity and bind it; never creates or writes. On a miss the rest of the block is skipped',
   link: 'link — connect two records with an edge: one you hold (`link a -[:e]-> b`), or one a match body finds (`link a -[:e]-> { … }`, which is match then link)',
   unlink: 'unlink — remove an edge between two records',
@@ -293,7 +295,7 @@ const KEYWORD_HOVERS: Record<string, string> = {
   node: 'node — anonymous (`node { … }`) builds a record in memory; named at the top level (`node Doc { … }`) declares a reusable structure a parameter can name, nesting `node <edge name> { … }` for related records; inside an extract, an entity to pull out: node company: "…" { field: "…" }',
   through: 'through — run a plugin pipeline over an extract stage before the next stage',
   await: 'await — durably wait on a wake source, then resume: answer = await q-[:Response]-> (an ask), or await sleep(2d)',
-  race: 'race — run branches concurrently and proceed at the first completion, cancelling the rest: race({ … }, { … })',
+  race: 'race — run functions concurrently and proceed at the first to finish, cancelling the rest: `r = race(q, () => { await sleep(4h) })`; the winner\'s slot holds what it returned',
 };
 
 export function getMovementCompletions(

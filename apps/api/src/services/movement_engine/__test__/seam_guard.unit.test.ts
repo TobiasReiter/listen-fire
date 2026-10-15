@@ -1470,23 +1470,23 @@ describe('every family crosses as JSON', () => {
     expect(recorded).toHaveLength(1);
   });
 
-  familyRun('parks: a callback and its ledger, a concurrent MAP join, a race settled', async () => {
+  familyRun('parks: a callback and its ledger, an all join, a race settled', async () => {
     const parks = joiningParkSink();
     const h = roundTrip(
       [
         '  cb = callback({ write crm-[:notes]-> { title: "called" } }, { ttl: 2d })',
         '  cb-[c:Called]-> { write crm-[:notes]-> { title: c.At } }',
-        '  r = MAP([',
+        '  r = all(',
         '    () => { await sleep(1h)',
         '      return "a" },',
         '    () => { await sleep(2h)',
         '      return "b" },',
-        '  ], { concurrency: 2 }, (f) => f())',
-        '  w = await race([',
+        '  )',
+        '  w = race(',
         '    () => { await sleep(1h)',
         '      return "first" },',
         '    () => { await sleep(30d) },',
-        '  ])',
+        '  )',
         '  write crm-[:notes]-> { title: "${AT(r, 0)}${AT(r, 1)} ${AT(w, 0)}" }',
       ],
       {

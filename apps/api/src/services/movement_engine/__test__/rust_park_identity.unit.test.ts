@@ -16,6 +16,7 @@
 //     reference and parks by name (`fileClosure`), so a park stays small
 //     however many a file declares.
 
+import { spelledForVersion5 } from './combinator_spelling';
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 
@@ -310,13 +311,14 @@ describe('one write handle two names hold, across a park, on both engines (B7)',
     expect(state).not.toContain('"id"');
   });
 
-  it('inside a branch that completes on the resume: its export is one park, #return first', async () => {
+  it.each([4, 5] as const)('inside a branch that completes on the resume: its export is one park, #return first (version %i)', async (languageVersion) => {
     // Arm 0 parks before its return; arm 1 completes. Arm 0 completing on
     // the resume writes its whole scope as its export. `parallel` is retired
-    // from version 5: version 4 is the last that has it.
+    // from version 5, where `all` is the same join.
+    const spelled = (source: string): string => (languageVersion === 5 ? spelledForVersion5(source) : source);
     const { resumed } = await parkAndResume({
-      languageVersion: 4,
-      source: movement(
+      languageVersion,
+      source: spelled(movement(
         '  r = await parallel([',
         '    () => {',
         '      a = write crm-[:companies]-> { name: "arm 0" }',
@@ -331,7 +333,7 @@ describe('one write handle two names hold, across a park, on both engines (B7)',
         '    }',
         '  ])',
         '  write crm-[:notes]-> { body: CONCAT("joined/", AT(r, 1)) }',
-      ),
+      )),
     });
     const exported = String(resumed.exported);
     expect(exported).toContain('"exports":{"#return":');
@@ -603,17 +605,17 @@ describe('a reference read before its descriptor, and names like a descriptor me
 // B16: a `parallel` receipt's slot holding the record an arm handed back. From
 // version 5 `AT(r, i)` reads that record, as it does off a list literal; before
 // 5 it read null, and a program pinned there still does. Version 5 retired
-// `parallel`: its form there is a concurrent MAP calling each closure.
+// `parallel`: its form there is `all`.
 describe("a combinator receipt's record slot, on both engines (B16)", () => {
   const arms = (languageVersion: 4 | 5, park: boolean) => [
-    languageVersion === 4 ? '  r = await parallel([' : '  r = MAP([',
+    languageVersion === 4 ? '  r = await parallel([' : '  r = all(',
     '    () => {',
     '      a = write crm-[:companies]-> { name: "arm 0" }',
     ...(park ? ['      await sleep(1h)'] : []),
     '      return a',
     '    },',
     '    () => 2',
-    languageVersion === 4 ? '  ])' : '  ], { concurrency: 2 }, (f) => f())',
+    languageVersion === 4 ? '  ])' : '  )',
     '  h = AT(r, 0)',
     '  write crm-[:notes]-> { body: CONCAT(COALESCE(AT(r, 0).name, "none"), "/", COALESCE(h.name, "none"), "/", IF AT(r, 0) == null THEN "missing" ELSE "held" END, "/", AT(r, 1)) }',
   ];

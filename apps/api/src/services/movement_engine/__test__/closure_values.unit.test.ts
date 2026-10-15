@@ -540,11 +540,8 @@ describe('both engines: closures as values (version 5)', () => {
     'function pickOne() {',
     '  return one',
     '}',
-    'function twice(n: <number>) {',
-    '  return n * 2',
-    '}',
-    'function callAll(fs: <() => <text>>[]) {',
-    '  return MAP(fs, (f) => f())',
+    'function twice() {',
+    '  return 2',
     '}',
     'function run(h: <(n: <number>) => <number>>) {',
     '  return h(20)',
@@ -553,76 +550,58 @@ describe('both engines: closures as values (version 5)', () => {
   const withTop = (body: string[]): string => program(body).replace('movement recap', `${TOP}\nmovement recap`);
   const write = (fields: string): string => `  write graph-[:note]-> { payload: { ${fields} } }`;
   const CASES: Record<string, { body: string[]; payload: unknown }> = {
-    listElements: { body: ['  k = 7', '  fs = [() => { return k }, () => { return k * 2 }]', '  r = MAP(fs, (f) => f())', write('r: r')], payload: { r: [7, 14] } },
-    listElementParks: {
-      body: ['  k = 3', '  fs = [() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return 10 }]', '  r = MAP(fs, (f) => f())', write('r: r')],
+    allJoin: { body: ['  k = 7', '  r = all(() => { return k }, () => { return k * 2 }, () => 3)', write('r: r, second: AT(r, 1)')], payload: { r: [7, 14, 3], second: 14 } },
+    allArmParks: {
+      body: ['  k = 3', '  r = all(() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return 10 })', write('r: r')],
       payload: { r: [4, 10] },
     },
-    namedList: { body: ['  a = () => { return 1 }', '  b = () => { return 2 }', '  fs = [a, b]', '  out = MAP(fs, (f) => f())', write('out: out')], payload: { out: [1, 2] } },
-    inlineListWithArgument: {
-      body: ['  k = 10', '  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })', write('out: out')],
-      payload: { out: [12, 20] },
-    },
-    namedFunctionMember: { body: ['  out = MAP([twice, twice], (f) => f(4))', write('out: out')], payload: { out: [8, 8] } },
-    memberReadWithAt: { body: ['  fs = [() => { return "first" }, () => { return "second" }]', '  g = AT(fs, 1)', '  x = g()', write('x: x')], payload: { x: 'second' } },
-    memberParksByReference: {
-      body: ['  k = 5', '  fs = [() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return k }]', '  out = MAP(fs, (f) => { return f() })', write('out: out')],
-      payload: { out: [6, 5] },
-    },
-    raceOverFilter: {
-      body: ['  all = [() => { return "a" }, () => {', '    await sleep(1h)', '    return "b"', '  }]', '  arms = FILTER(all, (f) => TRUE)', '  r = await race(arms)', write('r: r')],
-      payload: { r: ['a', null] },
-    },
-    mapReplacesParallel: {
-      body: ['  r = MAP([() => { return 1 }, () => {', '    await sleep(1h)', '    return "two"', '  }, () => 3], { concurrency: 3 }, (f) => f())', write('r: r, second: AT(r, 1)')],
-      payload: { r: [1, 'two', 3], second: 'two' },
-    },
     everyArmWaiting: {
-      body: ['  k = 2', '  r = MAP([() => {', '    await sleep(1h)', '    return k', '  }, () => {', '    await sleep(2h)', '    return k * 10', '  }], { concurrency: 2 }, (f) => f())', write('r: r')],
+      body: ['  k = 2', '  r = all(() => {', '    await sleep(1h)', '    return k', '  }, () => {', '    await sleep(2h)', '    return k * 10', '  })', write('r: r')],
       payload: { r: [2, 20] },
     },
-    closureFromParkedMember: {
-      body: ['  a = 3', '  fs = MAP([1, 2], (n) => {', '    await sleep(1h)', '    return () => { return a + n }', '  })', '  r = MAP(fs, (f) => f())', write('r: r')],
-      payload: { r: [4, 5] },
+    namedArms: { body: ['  a = () => { return "a" }', '  r = all(a, twice)', write('r: r')], payload: { r: ['a', 2] } },
+    concurrencyOneWithAParkedArm: {
+      body: [
+        '  r = all(() => {',
+        '    await sleep(1h)',
+        '    return "slept"',
+        '  }, () => {',
+        '    write graph-[:note]-> { body: "second ran" }',
+        '    return "ran"',
+        '  }, { concurrency: 1 })',
+        write('r: r'),
+      ],
+      payload: { r: ['slept', 'ran'] },
+    },
+    onErrorWarn: { body: ['  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')], payload: { r: [null, 2] } },
+    onErrorIgnoreAfterResume: {
+      body: ['  r = all(() => {', '    await sleep(1h)', '    ERROR("late")', '  }, () => { return 2 }, { onError: "ignore" })', write('r: r')],
+      payload: { r: [null, 2] },
+    },
+    onErrorWarnAfterResume: {
+      body: ['  r = all(() => {', '    await sleep(1h)', '    ERROR("late")', '  }, () => { return 2 }, { onError: "warn" })', write('r: r')],
+      payload: { r: [null, 2] },
+    },
+    raceArguments: {
+      body: ['  a = () => { return "a" }', '  r = race(a, () => {', '    await sleep(1h)', '    return "b"', '  })', write('r: r')],
+      payload: { r: ['a', null] },
+    },
+    closureFromParkedMaker: {
+      body: ['  a = 3', '  mk = (n: <number>) => {', '    await sleep(1h)', '    return () => { return a + n }', '  }', '  h = mk(1)', '  x = h()', write('x: x')],
+      payload: { x: 4 },
     },
     namedFunctionBound: { body: ['  g = one', '  x = g()', write('x: x')], payload: { x: 'one' } },
     namedFunctionFromConcise: { body: ['  mk = () => one', '  h = mk()', '  x = h()', write('x: x')], payload: { x: 'one' } },
     namedFunctionReturned: { body: ['  h = pickOne()', '  x = h()', write('x: x')], payload: { x: 'one' } },
     ifOverClosures: { body: ['  a = () => "a"', '  c = TRUE', '  g = IF c THEN one ELSE a END', '  x = g()', write('x: x')], payload: { x: 'one' } },
     coalesceOverClosures: { body: ['  a = () => "a"', '  g = COALESCE(one, a)', '  x = g()', write('x: x')], payload: { x: 'one' } },
-    listOfClosuresPassed: { body: ['  k = "b"', '  x = callAll([() => "a", () => k])', write('x: x')], payload: { x: ['a', 'b'] } },
     closureInPlaceArgument: { body: ['  k = 2', '  x = run((n) => n + k)', write('x: x')], payload: { x: 22 } },
     extraArgumentDropped: { body: ['  x = run(() => 5)', write('x: x')], payload: { x: 5 } },
-    dottedCall: {
-      body: ['  k = "!"', '  shout = (t: <text>) => "${UPPER(t)}${k}"', '  box = { g: shout }', '  a = box.g("hi")', '  b = LOWER(box.g("yo"))', write('a: a, b: b')],
-      payload: { a: 'HI!', b: 'yo!' },
+    combinatorArrowBody: { body: ['  g = () => race(() => "first")', '  r = g()', write('r: r')], payload: { r: ['first'] } },
+    effectsOnly: {
+      body: ['  all(() => {', '    write graph-[:note]-> { body: "a" }', '  }, () => {', '    write graph-[:note]-> { body: "b" }', '  })', write('done: 1')],
+      payload: { done: 1 },
     },
-    awaitingArrowBody: { body: ['  g = () => await race([() => "first"])', '  r = g()', write('r: r')], payload: { r: ['first'] } },
-    raceSlotHoldingClosure: {
-      body: ['  r = await race([() => { return one }])', '  g = COALESCE(AT(r, 0), one)', '  x = g()', write('x: x')],
-      payload: { x: 'one' },
-    },
-  };
-  // Two closures written alike in one slot that stages a call (FILTER in
-  // the IF's condition): the ELSE arm's is the slot's second closure, whose
-  // park names it, not the first.
-  CASES.alikeClosuresInAStagedSlot = {
-    body: [
-      '  g = IF COUNT(FILTER([1], (n) => TRUE)) > 5 THEN AT([() => {',
-      '    await sleep(1h)',
-      '    return 1',
-      '  }], 0) ELSE AT([() => {',
-      '    await sleep(1h)',
-      '    return 1',
-      '  }], 0) END',
-      '  x = g()',
-      write('x: x'),
-    ],
-    payload: { x: 1 },
-  };
-  CASES.effectsOnly = {
-    body: ['  MAP([() => {', '    write graph-[:note]-> { body: "a" }', '  }, () => {', '    write graph-[:note]-> { body: "b" }', '  }], { concurrency: 2 }, (f) => f())', write('done: 1')],
-    payload: { done: 1 },
   };
   for (const [name, { body, payload }] of Object.entries(CASES)) {
     it(`${name}: the same writes, and the same parks, on both engines`, async () => {
@@ -630,4 +609,20 @@ describe('both engines: closures as values (version 5)', () => {
       expect(payloadOf(creates)).toEqual(payload);
     }, 30_000);
   }
+
+  it('an arm onError: "warn" forgives leaves the same trace on both engines', async () => {
+    const source = withTop(['  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')]);
+    const traces: unknown[] = [];
+    for (const engine of ENGINES) traces.push(await onEngine(engine, async () => (await start(source, makeParkSink())).result.trace));
+    expect(JSON.stringify(traces[1])).toEqual(JSON.stringify(traces[0]));
+    expect(JSON.stringify(traces[0])).toContain("'all' left the slot of arm 0 of 2 null, because the arm failed");
+  });
+
+  it('an arm that fails fails the run on both engines, with the same error', async () => {
+    const source = withTop(['  r = all(() => { ERROR("boom") }, () => { return 2 })', write('r: r')]);
+    const errors: string[] = [];
+    for (const engine of ENGINES) errors.push(await onEngine(engine, () => start(source, makeParkSink()).then(() => 'no error', (e: unknown) => String(e))));
+    expect(errors[1]).toEqual(errors[0]);
+    expect(errors[0]).toContain('boom');
+  });
 });

@@ -5,6 +5,7 @@
 // the writes the adapter received, and every call the park sink and the
 // callback store received, in order, each state key for key.
 
+import { spelledForVersion5 } from './combinator_spelling';
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
 import { tenantIdOf, type CallbackCall } from 'engine-contracts';
 
@@ -312,7 +313,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
  *  engines run both. */
 async function agree(c: Case) {
   if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
-  return agreeUnder(c);
+  const current = c.languageVersion === undefined || c.languageVersion >= 5;
+  return agreeUnder(current ? { ...c, source: spelledForVersion5(c.source) } : c);
 }
 
 /** A case written as versions before 5 (Dancing Wren) read it — `parallel`,
@@ -320,7 +322,12 @@ async function agree(c: Case) {
  *  under version 3 and under version 4. */
 async function agreeThroughVersion4(c: Case) {
   await agreeUnder({ ...c, languageVersion: 3 });
-  return agreeUnder({ ...c, languageVersion: 4 });
+  const four = await agreeUnder({ ...c, languageVersion: 4 });
+  // Arms written down are version 5's `all(…)` / `race(…)`, which both
+  // engines run the same too.
+  const v5 = spelledForVersion5(c.source);
+  if (!/await (parallel|race)\(/.test(v5)) await agreeUnder({ ...c, source: v5, languageVersion: 5 });
+  return four;
 }
 
 async function agreeUnder(c: Case) {
@@ -616,8 +623,9 @@ describe('parks resumed across the engines', () => {
     ]);
     // The TypeScript engine's settlement is put to the dry run, by its route.
     resetRustRunStats();
-    await runOn('ts', { source: RACE, resume: parkAt(parked.ts, first), deferRaceSettlement: true });
-    await runOn('ts', { source: RACE, resume: parkAt(parked.ts, first), settle: 's0' });
+    // Unpinned is the current version, which spells the race with its arms as arguments.
+    await runOn('ts', { source: spelledForVersion5(RACE), resume: parkAt(parked.ts, first), deferRaceSettlement: true });
+    await runOn('ts', { source: spelledForVersion5(RACE), resume: parkAt(parked.ts, first), settle: 's0' });
     expect(rustRunStats.dryRun.byRoute.resume.sampled).toBe(1);
     expect(rustRunStats.dryRun.byRoute.settle.sampled).toBe(1);
     // Settled once: the loser cancelled, the continuation run.

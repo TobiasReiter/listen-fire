@@ -281,17 +281,17 @@ movement intake(msg: <inbox-[:message]->>) {
 }
 `);
     const all = labels(result);
-    expect(all).toEqual(expect.arrayContaining(['write', 'if', 'parallel', 'link']));
+    expect(all).toEqual(expect.arrayContaining(['write', 'if', 'all', 'link']));
     expect(all).toContain('msg');
   });
 
   it('filters keywords by the typed prefix', () => {
     const result = completionsAt(`${HEADER}
 movement intake(msg: <inbox-[:message]->>) {
-  par¦
+  wr¦
 }
 `);
-    expect(labels(result)).toEqual(['parallel']);
+    expect(labels(result)).toEqual(['write']);
   });
 });
 
