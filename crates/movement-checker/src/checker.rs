@@ -5,7 +5,7 @@
 //! scope, and in which order.
 
 use movement_parser::ast::{
-    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractCallShape, ExtractExpression,
+    AwaitExpression, AwaitSource, CallArg, ClosureExpression, ExprSlot, ExtractExpression,
     LinkTarget, MatchExpression, ShapeNode, MovementDeclaration, NodeEntry, NodeLiteral, ParamTypeRef, PathHead, PathRoot, RValue, Span,
     Statement, TraversalBlock, UntilCondition, ValueType, WriteExpression, WriteTarget,
 };
@@ -198,7 +198,7 @@ impl<'c> Checker<'c> {
         }
     }
 
-    fn check_statement(&mut self, statement: &Statement, scope: ScopeId) {
+    pub(crate) fn check_statement(&mut self, statement: &Statement, scope: ScopeId) {
         match statement {
             Statement::Import(import) => self.check_import(import, scope),
             Statement::Assign(assign) => {
@@ -211,6 +211,7 @@ impl<'c> Checker<'c> {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
                 self.type_assigned(&assign.name, &assign.value, scope);
+                self.note_shape_alias(&assign.name, &assign.value, scope);
                 if let Some(pos) = bound.pos {
                     self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
                 }
@@ -312,19 +313,7 @@ impl<'c> Checker<'c> {
                 return Bound { pos: handle, ..Bound::default() };
             }
             RValue::Extract { extract } => self.check_extract(extract, scope),
-            RValue::ExtractCall { extract_call } => {
-                self.check_expr_slot(&extract_call.content, scope);
-                match &extract_call.shape {
-                    ExtractCallShape::Named { name, span } => {
-                        self.resolve_name(name, *span, scope);
-                    }
-                    ExtractCallShape::Inline { .. } => {}
-                    ExtractCallShape::Computed { expr, .. } => self.check_expr_slot(expr, scope),
-                }
-                if let Some(config) = &extract_call.config {
-                    self.check_expr_slot(config, scope);
-                }
-            }
+            RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
             RValue::Block { block } => {
                 let returns = self.check_traversal_block(block, scope, name);
                 if !returns {

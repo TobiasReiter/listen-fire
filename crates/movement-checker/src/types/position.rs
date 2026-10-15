@@ -64,6 +64,11 @@ pub struct ExtractField {
     pub reads_as_present_text: bool,
     /// An annotation was written (`annotationRaw`), resolved or not.
     pub annotated: bool,
+    /// Where the field is declared: an annotation's nudges point here.
+    pub span: movement_parser::ast::Span,
+    /// The targets an annotation was already suggested for (`suggested`), so
+    /// repeated writes say it once.
+    pub suggested: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 /// `ExtractNodeType`: a node of an extract result graph.

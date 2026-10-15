@@ -26,12 +26,25 @@
 
 use std::collections::HashSet;
 
-use movement_parser::ast::{CallStatement, ExtractNode, ExtractStage, PluginCall, ShapeDeclaration, ShapeNode, Span};
+use std::rc::Rc;
+
+use indexmap::IndexMap;
+use movement_parser::ast::{
+    CallStatement, DeclaredExtractNode, ExtractCallExpression, ExtractCallFinds, ExtractCallShape, ExtractNode, ExtractStage, PluginCall,
+    ShapeDeclaration, ShapeNode, Span,
+};
+use movement_parser::catalog::helpers::{borrowed_type_segments, resolve_borrowed_field};
 use movement_parser::catalog::types::PluginSpec;
 
 use crate::checker::{Checker, SlotOptions};
 use crate::codes;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
+use crate::meta::did_you_mean;
+use crate::slots::{expression_of_slot, is_bare_ident, is_literal_word};
+use crate::types::field::{Ty, describe_field_type, maybe_absent, strip_absent};
+use movement_parser::ast::ExprSlot;
+use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
+use crate::types::position::{ExtractField, ExtractNode as ExtractNodeType, LocalEdge, LocalNode, Position};
 
 /// `ThroughFieldsContext`: the names a `through` stage's arguments may read
 /// besides the scope's — the fields of the node's earlier stages and its
@@ -143,12 +156,47 @@ impl Checker<'_> {
     }
 
     /// The node declaration a symbol is (`declaredExtractShape`), when it is one.
-    pub fn declared_extract_shape(&self, id: SymbolId) -> Option<ShapeDeclaration> {
-        if self.scopes.symbol(id).kind != SymbolKind::Shape {
+    pub fn declared_extract_shape(&self, id: SymbolId, scope: ScopeId) -> Option<ShapeDeclaration> {
+        if !matches!(self.scopes.symbol(id).kind, SymbolKind::Shape | SymbolKind::Binding) {
             return None;
         }
         // TODO(nodes): the declaration's schema (`shapeToSchema`) types its fields.
-        self.listens.shapes.get(&id).cloned()
+        let shape = self.listens.shapes.get(&id)?;
+        Some(self.inherited_declaration(shape, scope, 0))
+    }
+
+    /// `S = Company`: from version 3 a declaration's name read as a value is
+    /// the shape itself, a second name for it.
+    // TODO(nodes): the TypeScript binds the name as a shape (`kind: 'shape'`);
+    // here only the extraction reads it as one.
+    pub fn note_shape_alias(&mut self, name: &str, value: &movement_parser::ast::RValue, scope: ScopeId) {
+        let movement_parser::ast::RValue::Expr { expr } = value else { return };
+        let written = expr.raw.trim();
+        if self.version < 3 || !is_bare_ident(written) {
+            return;
+        }
+        let Resolution::Found(shape) = self.scopes.resolve(scope, written) else { return };
+        let Some(declaration) = self.listens.shapes.get(&shape).filter(|_| self.scopes.symbol(shape).kind == SymbolKind::Shape).cloned() else { return };
+        if let Some(alias) = self.scopes.scope(scope).symbols.get(name).copied() {
+            self.listens.shapes.insert(alias, declaration);
+        }
+    }
+
+    /// `inheritDeclaration`: `node X extends Y { … }` as the tree it stands
+    /// for — Y's fields and nested nodes, then X's own.
+    // TODO(nodes): the nodes family folds `extends` where it builds the schema.
+    fn inherited_declaration(&self, shape: &ShapeDeclaration, scope: ScopeId, depth: usize) -> ShapeDeclaration {
+        let Some(base) = &shape.extends else { return shape.clone() };
+        let base = match self.scopes.resolve(scope, &base.name) {
+            Resolution::Found(id) if depth < 16 => self.listens.shapes.get(&id).map(|b| self.inherited_declaration(b, scope, depth + 1)),
+            _ => None,
+        };
+        let Some(base) = base else { return shape.clone() };
+        let mut folded = shape.clone();
+        folded.root.description = shape.root.description.clone().or(base.root.description.clone());
+        folded.root.fields = base.root.fields.iter().chain(&shape.root.fields).cloned().collect();
+        folded.root.children = base.root.children.iter().chain(&shape.root.children).cloned().collect();
+        folded
     }
 
     /// `resolveExtractShape`: the declaration `node entry: <Entry>` takes as
@@ -162,7 +210,7 @@ impl Checker<'_> {
                 return None;
             }
         };
-        let shape = self.declared_extract_shape(id);
+        let shape = self.declared_extract_shape(id, scope);
         if shape.is_none() {
             let kind = self.scopes.symbol(id).kind.describe();
             self.report(
@@ -320,4 +368,336 @@ fn report_plugin_missing_args(checker: &mut Checker, name: &str, spec: Option<&P
     }
     let which = if missing.len() == 1 { "the required argument" } else { "required arguments" };
     checker.report(codes::THROUGH_ARG_MISSING, format!("'{name}' is missing {which} {}", missing.join(", ")), span);
+}
+
+// ── The extract result graph: what an extraction hands back ──
+
+/// One extracted field as typing reads it.
+fn extract_field(explicit: Option<Ty>, annotated: bool, nullable: bool, span: Span) -> ExtractField {
+    let reads_as_present_text = !nullable && (matches!(explicit, Some(Ty::Text)) || (explicit.is_none() && !annotated));
+    ExtractField { explicit, reads_as_present_text, annotated, span, suggested: Default::default() }
+}
+
+fn empty_extract_node(name: &str) -> ExtractNodeType {
+    ExtractNodeType { name: name.to_string(), properties: Default::default(), children: Default::default(), declared: false }
+}
+
+impl Checker<'_> {
+    /// An annotation's type, as `resolveNamedType` resolves it: a primitive, a
+    /// type the program declares, or a borrowed `<instance>.<root>.<field>`.
+    /// Typing only: what it reports when the name resolves to nothing is the
+    /// nodes family's (MOV_UNKNOWN_TYPE_NAME, MOV_BORROW_*).
+    pub fn annotation_type(&self, written: &str, scope: ScopeId) -> Option<Ty> {
+        let Some(segments) = borrowed_type_segments(Some(written)) else {
+            return Ty::from_scalar_name(written).or_else(|| self.declared_type_in(written, scope));
+        };
+        let [graph, root, field] = segments.as_slice() else { return None };
+        let Resolution::Found(id) = self.scopes.resolve(scope, graph) else { return None };
+        // TODO(nodes): a declared node as the graph a type is borrowed from.
+        let Some(Position::Meta { instance }) = &self.scopes.symbol(id).types.pos else { return None };
+        resolve_borrowed_field(&instance.schema, root, field).map(Ty::from_schema)
+    }
+
+    /// `buildExtractGraph`, the typing half: every field a node declares
+    /// across its stages (a later stage's re-declaration wins), and its nested
+    /// nodes.
+    pub fn extract_graph(&self, name: &str, stages: &[ExtractStage], scope: ScopeId) -> ExtractNodeType {
+        let mut node = empty_extract_node(name);
+        self.apply_extract_stages(&mut node, stages, scope);
+        node
+    }
+
+    fn apply_extract_stages(&self, node: &mut ExtractNodeType, stages: &[ExtractStage], scope: ScopeId) {
+        for stage in stages {
+            for child in &stage.children {
+                let (name, graph) = match child {
+                    ExtractNode::Inline(inline) => (&inline.name, self.extract_graph(&inline.name, &inline.stages, scope)),
+                    ExtractNode::Declared(declared) => (&declared.name, self.declared_extract_graph(declared, scope)),
+                };
+                node.children.insert(name.clone(), Rc::new(graph));
+            }
+            for field in &stage.fields {
+                let explicit = field.type_.as_deref().and_then(|t| self.annotation_type(t, scope));
+                node.properties.insert(field.name.clone(), extract_field(explicit, field.type_.is_some(), field.nullable == Some(true), field.span));
+            }
+        }
+    }
+
+    /// `declaredExtractGraph`: a node taking a declaration as its shape — the
+    /// declaration is its first stage, the `through` stages apply on top.
+    fn declared_extract_graph(&self, node: &DeclaredExtractNode, scope: ScopeId) -> ExtractNodeType {
+        let shape = match self.scopes.resolve(scope, &node.declared.type_) {
+            Resolution::Found(id) => self.declared_extract_shape(id, scope),
+            _ => None,
+        };
+        let mut graph = match shape {
+            Some(shape) => self.shape_extract_graph(&node.name, &shape.root, scope),
+            None => empty_extract_node(&node.name),
+        };
+        self.apply_extract_stages(&mut graph, &node.stages, scope);
+        graph
+    }
+
+    /// `shapeExtractGraph`: one node of a declaration, read as the extract
+    /// node it describes. A field's type is the one the declaration's schema
+    /// gives it: an annotation that resolves to nothing reads as text.
+    // TODO(nodes): read it off the declaration's schema (`shapeToSchema`,
+    // `extends` folded in) once the nodes family builds one.
+    fn shape_extract_graph(&self, name: &str, shape: &ShapeNode, scope: ScopeId) -> ExtractNodeType {
+        let mut graph = empty_extract_node(name);
+        for child in &shape.children {
+            graph.children.insert(child.name.clone(), Rc::new(self.shape_extract_graph(&child.name, child, scope)));
+        }
+        for field in &shape.fields {
+            let explicit = self.annotation_type(&field.type_, scope).unwrap_or(Ty::Text);
+            graph.properties.insert(field.name.clone(), extract_field(Some(explicit), true, field.nullable == Some(true), field.span));
+        }
+        graph
+    }
+
+    /// What `extract(…)` / `extractOne(…)` hands back: the shape's records, in
+    /// the order the content gave them, or the one it describes (or none).
+    pub fn extract_call_type(&self, call: &ExtractCallExpression, scope: ScopeId) -> Option<Ty> {
+        let declaration = match &call.shape {
+            ExtractCallShape::Named { name, .. } => match self.scopes.resolve(scope, name) {
+                Resolution::Found(id) => self.declared_extract_shape(id, scope)?,
+                _ => return None,
+            },
+            ExtractCallShape::Inline { declaration, .. } => declaration.clone(),
+            ExtractCallShape::Computed { .. } => return None,
+        };
+        let node = self.shape_extract_graph(&declaration.name, &declaration.root, scope);
+        let record = Ty::Record(Some(Box::new(extracted_record_type(&node))));
+        Some(match call.finds {
+            ExtractCallFinds::Each => Ty::list(record),
+            ExtractCallFinds::One => maybe_absent(record),
+        })
+    }
+}
+
+/// `extractedRecordType`: one record `extract(content, Shape)` hands back — a
+/// run-local record whose fields read by the keyword's rule, each nested
+/// node an edge of records of its own, in the content's order.
+fn extracted_record_type(node: &ExtractNodeType) -> Position {
+    let mut reads = IndexMap::new();
+    let mut fields = IndexMap::new();
+    for (name, field) in &node.properties {
+        fields.insert(name.clone(), field.explicit.clone().unwrap_or(Ty::Text));
+        let read = if field.reads_as_present_text { Some(Ty::Text) } else { field.explicit.clone().map(maybe_absent) };
+        reads.insert(name.clone(), read);
+    }
+    let mut edges = IndexMap::new();
+    for (name, child) in &node.children {
+        let schema = serde_json::from_value(serde_json::json!({ "target": name, "readable": true, "sequenced": "document" }))
+            .unwrap_or_else(|_| crate::types::position::edge_schema_to(name));
+        edges.insert(name.clone(), LocalEdge { schema, target: Some(extracted_record_type(child)) });
+    }
+    Position::Local(LocalNode { label: format!("an extracted '{}' record", node.name), reads, edges: Some(edges), run_built: None, extracted: Some(fields) })
+}
+
+// ── The extraction call: `extract(content, Shape, { … })` ──
+
+/// The settings `extract(…)` takes, each with what it is for (extract_config.ts `SETTINGS`).
+const SETTINGS: &[(&str, &str)] = &[
+    ("tier", "how much the job is worth: 'quick', 'careful', 'thorough'"),
+    ("model", "a model this deployment can reach, by its name ('claude-opus-5'), in place of the tier's"),
+    ("effort", "how hard that model thinks: 'low', 'medium', 'high', 'xhigh', in place of the tier's"),
+];
+const AI_TIERS: &[&str] = &["quick", "careful", "thorough"];
+const AI_TIER_ALIASES: &[&str] = &["smart"];
+const AI_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
+
+impl Checker<'_> {
+    /// `checkExtractCall`: the content, the settings, and the shape.
+    pub fn check_extract_call(&mut self, call: &ExtractCallExpression, scope: ScopeId) {
+        self.check_extract_call_content(&call.content, scope);
+        if let Some(config) = &call.config {
+            self.check_extract_call_config(config);
+        }
+        self.resolve_extract_call_shape(&call.shape, scope);
+    }
+
+    /// `resolveExtractCallShape`: the declaration the shape argument names or
+    /// writes in place — refused, with the fix, when it is anything else.
+    fn resolve_extract_call_shape(&mut self, shape: &ExtractCallShape, scope: ScopeId) {
+        match shape {
+            ExtractCallShape::Inline { declaration, .. } => {
+                // Written in the argument, it names the shape for this call and nothing after it.
+                let own = self.scopes.open(Some(scope));
+                self.check_statement(&movement_parser::ast::Statement::Shape(declaration.clone()), own);
+            }
+            ExtractCallShape::Named { name, span } => {
+                let id = match self.scopes.resolve(scope, name) {
+                    Resolution::Found(id) => id,
+                    failure => return self.report_resolution_failure(name, *span, failure),
+                };
+                let kind = self.scopes.symbol(id).kind;
+                if self.declared_extract_shape(id, scope).is_none() && kind != SymbolKind::Shape {
+                    self.report(
+                        codes::EXTRACT_SHAPE_COMPUTED,
+                        format!(
+                            "'{name}' is {}, and 'extract' takes a node declaration — the records it hands back are of that shape, so the shape has to be known when the program is checked. Declare it (`node {name}: \"…\" {{ … }}`) and pass its name, or write it in place.",
+                            kind.describe()
+                        ),
+                        *span,
+                    );
+                }
+            }
+            ExtractCallShape::Computed { expr, span } => {
+                self.check_expr_slot(expr, scope);
+                self.report(
+                    codes::EXTRACT_SHAPE_COMPUTED,
+                    "'extract' takes a node declaration by its name (`extract(content, Company)`) or written in place (`extract(content, node Company: \"…\" { … })`) — the records it hands back are of that shape, so a shape worked out at run time types nothing",
+                    *span,
+                );
+            }
+        }
+    }
+
+    /// `checkExtractCallContent`: the content is a list of text and files. It
+    /// is held, not read, so each item is judged on its own.
+    fn check_extract_call_content(&mut self, content: &ExprSlot, scope: ScopeId) {
+        let typed = self.check_expr_slot_as(content, scope, true);
+        let written = content.raw.trim();
+        let name = if is_bare_ident(written) && !is_literal_word(written) {
+            Some(written)
+        } else {
+            typed.expr.as_ref().and_then(crate::types::narrowing::bare_name)
+        };
+        if let Some(name) = name
+            && self.is_node_plane_name(name, scope)
+        {
+            self.report(
+                codes::EXTRACT_CONTENT,
+                format!("'{written}' is a record, and 'extract' reads text and files — render it as text and put it in the content list: `extract([TEXT.SERIALISE({written}, 'JSON')], …)`"),
+                content.span,
+            );
+            return;
+        }
+        let Some(ty) = typed.ty else { return };
+        if let Some(problem) = extract_content_problem(&ty, written) {
+            self.report(codes::EXTRACT_CONTENT, problem, content.span);
+        }
+    }
+
+    /// `nodePlaneSymbol`: whether `name` is bound to a record rather than a value.
+    fn is_node_plane_name(&self, name: &str, scope: ScopeId) -> bool {
+        let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return false };
+        let symbol = self.scopes.symbol(id);
+        symbol.types.pos.is_some() || symbol.types.is_record || symbol.is_closure
+    }
+
+    /// `checkExtractCallConfig`: the settings record is read, not typed.
+    fn check_extract_call_config(&mut self, config: &ExprSlot) {
+        let parsed = match expression_of_slot(config) {
+            Ok(parsed) => parsed,
+            Err(error) => return self.report_slot_error(&error, config),
+        };
+        for problem in read_extract_call_config(&parsed, self.catalog.models()) {
+            self.report(codes::EXTRACT_CONFIG, problem, config.span);
+        }
+    }
+}
+
+/// `readExtractCallConfig`, its problems: the settings written out one by
+/// one, each a word written down, each one the platform knows.
+fn read_extract_call_config(record: &Expression, models: Option<&[String]>) -> Vec<String> {
+    let inventory = SETTINGS.iter().map(|(key, summary)| format!("{key} — {summary}")).collect::<Vec<_>>().join("; ");
+    let Expression::Object { entries } = record else {
+        return vec![format!(
+            "'extract' takes its settings as a record written in place — `extract(content, Shape, {{ tier: 'careful' }})`. The settings are: {inventory}"
+        )];
+    };
+    let keys: Vec<&str> = SETTINGS.iter().map(|(key, _)| *key).collect();
+    let mut problems = Vec::new();
+    let mut written: Vec<(&str, &Expression)> = Vec::new();
+    for entry in entries {
+        match entry {
+            ObjectMember::Spread(_) => {
+                problems.push(format!("'extract' takes its settings written out one by one — a spread ('...') is not accepted here. The settings are: {inventory}"))
+            }
+            ObjectMember::Entry { key, .. } if !keys.contains(&key.as_str()) => {
+                problems.push(format!("'extract' has no setting '{key}'{}. The settings are: {inventory}", did_you_mean(key, &keys)))
+            }
+            ObjectMember::Entry { key, .. } if written.iter().any(|(k, _)| k == key) => problems.push(format!("'extract' is given '{key}' twice — write it once")),
+            ObjectMember::Entry { key, value } => written.push((key, value)),
+        }
+    }
+    let word = |key: &str, problems: &mut Vec<String>| -> Option<String> {
+        let (_, value) = written.iter().find(|(k, _)| *k == key)?;
+        match value {
+            Expression::Static { value: StaticValue::String(word) } => Some(word.clone()),
+            _ => {
+                problems.push(format!("'extract': '{key}' is written down, not worked out — write {key}: '…' as a quoted word"));
+                None
+            }
+        }
+    };
+    let quoted = |words: &[&str]| words.iter().map(|w| format!("'{w}'")).collect::<Vec<_>>().join(", ");
+    if let Some(tier) = word("tier", &mut problems)
+        && !AI_TIERS.contains(&tier.as_str())
+        && !AI_TIER_ALIASES.contains(&tier.as_str())
+    {
+        problems.push(format!("'extract': there is no tier '{tier}'{} — write one of {}", did_you_mean(&tier, AI_TIERS), quoted(AI_TIERS)));
+    }
+    if let Some(effort) = word("effort", &mut problems)
+        && !AI_EFFORTS.contains(&effort.as_str())
+    {
+        problems.push(format!("'extract': there is no effort '{effort}'{} — write one of {}", did_you_mean(&effort, AI_EFFORTS), quoted(AI_EFFORTS)));
+    }
+    if let Some(model) = word("model", &mut problems)
+        && let Some(models) = models
+        && !models.contains(&model)
+    {
+        problems.push(if models.is_empty() {
+            format!("'extract': this deployment reaches no model it can name, so '{model}' cannot be asked for here — drop 'model' and let the tier choose")
+        } else {
+            let reached = models.iter().map(|m| format!("'{m}'")).collect::<Vec<_>>().join(", ");
+            format!("'extract': '{model}' is not a model this deployment reaches{} — it reaches {reached}", did_you_mean(&model, models))
+        });
+    }
+    problems
+}
+
+/// `extractContentProblem`: why `extract` cannot read this content as it is.
+fn extract_content_problem(ty: &Ty, written: &str) -> Option<String> {
+    match strip_absent(ty) {
+        Ty::List { of, .. } => extract_content_item_problem(of, "each item"),
+        Ty::Tuple { of, rest } => {
+            for (index, slot) in of.iter().enumerate() {
+                if let Some(slot) = slot
+                    && let Some(problem) = extract_content_item_problem(slot, &format!("item {index}"))
+                {
+                    return Some(problem);
+                }
+            }
+            rest.as_ref().and_then(|r| r.of.as_deref()).and_then(|of| extract_content_item_problem(of, "each item the spread adds"))
+        }
+        Ty::Record(_) => Some(format!(
+            "'extract' reads text and files, and this is a record — render it as text in the content list: `extract([TEXT.SERIALISE({written}, 'JSON')], …)`"
+        )),
+        _ => Some(format!("'extract' reads a LIST of text and files, and this is {} — write it as a list: `extract([{written}], …)`", describe_field_type(ty))),
+    }
+}
+
+fn extract_content_item_problem(ty: &Ty, which: &str) -> Option<String> {
+    match strip_absent(ty) {
+        Ty::Text | Ty::Enum { .. } | Ty::File | Ty::Absent => None,
+        Ty::Union(members) => members.iter().find_map(|m| extract_content_item_problem(m, which)),
+        Ty::Record(_) => Some(format!(
+            "{which} of the content is a record, and 'extract' reads text and files — render the record as text first: `TEXT.SERIALISE(record, 'JSON')`"
+        )),
+        Ty::Dict { .. } | Ty::Json => Some(format!(
+            "{which} of the content is {}, and 'extract' reads text and files — render it as text first: `TEXT.SERIALISE(value, 'JSON')`",
+            describe_field_type(ty)
+        )),
+        Ty::List { .. } | Ty::Tuple { .. } => {
+            Some(format!("{which} of the content is itself a list — spread it into the content so each of its items is one item: `[a, ...items]`"))
+        }
+        Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime => Some(format!(
+            "{which} of the content is {}, and 'extract' reads text and files — write it into text (`\"… ${{value}} …\"`) or render it with `TEXT.SERIALISE(value, 'JSON')`",
+            describe_field_type(ty)
+        )),
+        Ty::MaybeAbsent(of) => extract_content_item_problem(of, which),
+    }
 }

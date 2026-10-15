@@ -123,11 +123,12 @@ impl Checker<'_> {
             RValue::Construct { construct } => self.instance_types(name, construct, scope),
             RValue::Extract { extract } => SymbolTypes {
                 pos: Some(Position::Extract {
-                    node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, false, scope)),
+                    node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, scope)),
                     present: Default::default(),
                 }),
                 ..SymbolTypes::default()
             },
+            RValue::ExtractCall { extract_call } => SymbolTypes { field: self.extract_call_type(extract_call, scope), ..SymbolTypes::default() },
             // From version 3 a positional call is also read as one expression
             // (`n = ONLY(…)`), and `check_call` reads it so.
             RValue::Call { call } if call.expression.is_some() => {
@@ -146,31 +147,6 @@ impl Checker<'_> {
             _ => return,
         };
         self.set_types(scope, name, types);
-    }
-
-    /// `buildExtractGraph`, the typing half: every field a node declares across
-    /// its stages (a later stage's re-declaration wins), and its nested nodes.
-    /// A node that takes a declaration as its shape is not read through it here.
-    fn extract_graph(&self, name: &str, stages: &[movement_parser::ast::ExtractStage], declared: bool, scope: ScopeId) -> crate::types::position::ExtractNode {
-        use crate::types::position::{ExtractField, ExtractNode};
-        use movement_parser::ast::ExtractNode as Node;
-        let mut node = ExtractNode { name: name.to_string(), properties: Default::default(), children: Default::default(), declared };
-        for stage in stages {
-            for child in &stage.children {
-                let (child_name, child_stages, declared) = match child {
-                    Node::Inline(inline) => (&inline.name, &inline.stages, false),
-                    Node::Declared(declared) => (&declared.name, &declared.stages, true),
-                };
-                node.children.insert(child_name.clone(), Rc::new(self.extract_graph(child_name, child_stages, declared, scope)));
-            }
-            for field in &stage.fields {
-                let explicit = field.type_.as_deref().filter(|t| !t.contains('.')).and_then(|t| Ty::from_scalar_name(t).or_else(|| self.declared_type_in(t, scope)));
-                let nullable = field.nullable == Some(true);
-                let reads_as_present_text = !nullable && (matches!(explicit, Some(Ty::Text)) || (explicit.is_none() && field.type_.is_none()));
-                node.properties.insert(field.name.clone(), ExtractField { explicit, reads_as_present_text, annotated: field.type_.is_some() });
-            }
-        }
-        node
     }
 
     /// An instance: the schema its construction picks.
