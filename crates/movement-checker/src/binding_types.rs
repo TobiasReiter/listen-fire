@@ -201,7 +201,7 @@ impl Checker<'_> {
             let mut typing = Typing::new(&env, self.version, head.span);
             let landed = typing.walk_steps(Some(start), &steps, awaited);
             let aliases = typing.locals.iter().map(|(name, pos)| (name.clone(), pos.clone())).collect();
-            (HeadWalk { landed, aliases, ordering: typing.last_ordering }, typing.diagnostics)
+            (HeadWalk { landed, aliases }, typing.diagnostics)
         };
         for diagnostic in diagnostics {
             self.push(diagnostic);
@@ -404,16 +404,10 @@ fn position_from_address(instance: &crate::types::InstanceRef, hops_raw: &str) -
     })
 }
 
-/// What typing a head's walk found: where it landed, each hop alias's
-/// landing, and the order its records come in.
+/// What typing a head's walk found: where it landed, and each hop alias's landing.
+#[derive(Default)]
 pub struct HeadWalk {
     pub landed: Option<Position>,
     pub aliases: Vec<(String, Option<Position>)>,
-    pub ordering: crate::types::field::CollectionOrder,
 }
 
-impl Default for HeadWalk {
-    fn default() -> Self {
-        HeadWalk { landed: None, aliases: Vec::new(), ordering: crate::types::field::CollectionOrder::Unknown }
-    }
-}

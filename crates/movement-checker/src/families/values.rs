@@ -1268,3 +1268,88 @@ impl crate::checker::Checker<'_> {
         }
     }
 }
+
+/// What a write field's absence rule needs of the write around it: the
+/// writes family resolves the target, this family judges the value.
+pub struct WriteFieldAbsence<'a> {
+    pub field: &'a movement_parser::ast::FieldEntry,
+    /// The spread the field was written by (`...v`), when it was.
+    pub spread: Option<&'a str>,
+    /// The field's declared type on the target (`root.fields[name]`), when known.
+    pub target_type: Option<&'a Ty>,
+    /// The field's value as its slot typed it.
+    pub value_type: Option<&'a Ty>,
+    /// `graph.type`, or the target as the write describes it.
+    pub root_description: &'a str,
+    /// An update, or a field the target does not require on create.
+    pub may_leave_unset: bool,
+    /// The field is part of the write's `unique by` identity.
+    pub identifies: bool,
+}
+
+/// `checkWrite`'s require-present rule for one field: a value that may be
+/// absent can't fill a plain field (`?:` is its home), unless the field itself
+/// may be absent. `None` when the field takes the value.
+pub fn write_field_absence(input: WriteFieldAbsence) -> Option<crate::diagnostic::Diagnostic> {
+    let value_type = input.value_type.filter(|t| is_maybe_absent(Some(t)))?;
+    if matches!(input.field.semantics, Some(movement_parser::ast::FieldWriteMode::Fill)) || is_maybe_absent(input.target_type) {
+        return None;
+    }
+    let field = input.field;
+    let span = field.value.span;
+    let described = describe_field_type(value_type);
+    if let Some(spread) = input.spread {
+        return Some(crate::diagnostic::Diagnostic::error(
+            codes::ABSENT_REQUIRED,
+            format!(
+                "'{}' on {} needs a value, but '...{spread}' writes '{spread}.{}', which may be absent ({described}). Spread it set-if-empty ('?...{spread}'), or write '{}' on its own line with a value that is always there",
+                field.name, input.root_description, field.name, field.name
+            ),
+            span,
+        ));
+    }
+    let raw = field.value.raw.trim();
+    let label = crate::families::names::spell_name(&field.name);
+    let lead = format!("'{}' on {} needs a value, but '{raw}' may be absent ({described})", field.name, input.root_description);
+    if input.identifies {
+        return Some(crate::diagnostic::Diagnostic::error(
+            codes::ABSENT_REQUIRED,
+            format!("{lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if {raw} != null {{ … }}'"),
+            span,
+        ));
+    }
+    let unset = input.may_leave_unset.then(|| format!("'{label} ?: {raw}' to leave it unset when absent"));
+    let Some(fallback) = fallback_literal(strip_absent(value_type)) else {
+        let lead_in = match &unset {
+            Some(unset) => format!("Write {unset}, or"),
+            None => "Either".to_string(),
+        };
+        return Some(crate::diagnostic::Diagnostic::error(
+            codes::ABSENT_REQUIRED,
+            format!("{lead} — it comes from a branch that might not have run, or an answer that might not be there. {lead_in} test it with '==' and write inside that branch, or gate on it first ('r-[x:…]-> {{ write … }}')"),
+            span,
+        ));
+    };
+    let coalesced = format!("COALESCE({raw}, {fallback})");
+    let mut diagnostic = crate::diagnostic::Diagnostic::error(
+        codes::ABSENT_REQUIRED,
+        format!(
+            "{lead} — write '{label}: {coalesced}' to fall back to a value that is always there{}",
+            unset.map_or(String::new(), |u| format!(", or {u}"))
+        ),
+        span,
+    );
+    diagnostic.fix = Some(serde_json::json!({ "edits": [{ "span": span, "text": coalesced }] }));
+    Some(diagnostic)
+}
+
+/// `fallbackLiteral`: a value of this type that is always there.
+fn fallback_literal(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::Text => Some("\"unknown\""),
+        Ty::Number => Some("0"),
+        Ty::Boolean => Some("false"),
+        Ty::List { .. } => Some("[]"),
+        _ => None,
+    }
+}
