@@ -21,7 +21,7 @@ import {
 import type { Loc, Span } from '../parser/ast';
 import { spellParamType } from '../parser/ast';
 import { MovementParseError, parseProgram } from '../parser/parse';
-import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from '../language_version';
+import { CURRENT_LANGUAGE_VERSION, since, type LanguageVersion } from '../language_version';
 import { CLOSER, opensHop, scanName, skipOpaque } from '../parser/scan';
 import {
   checkProgram,
@@ -208,10 +208,15 @@ const BODY_KEYWORDS: MovementCompletionItem[] = [
   { label: 'write', insert: 'write ', kind: 'keyword', detail: 'write a record' },
   { label: 'match', insert: 'match ', kind: 'keyword', detail: 'find a record by identity — name it (`x = match …`): the record, or absent when nothing matches' },
   { label: 'if', insert: 'if ', kind: 'keyword', detail: 'branch' },
-  // The editor writes the current language version, whose join is `all`.
-  { label: 'all', insert: 'all(', kind: 'keyword', detail: 'run functions concurrently — `r = all(f, () => { … })`: one slot per function, in order' },
   { label: 'link', insert: 'link ', kind: 'keyword', detail: 'connect two records you hold — find one first (`to = match …`), then `if to != null { link a -[:e]-> to }`' },
 ];
+
+/** The concurrent join is spelled `parallel {` before language version 5 and `all(` from it. */
+function joinKeyword(languageVersion: LanguageVersion): MovementCompletionItem {
+  return since(languageVersion, 5)
+    ? { label: 'all', insert: 'all(', kind: 'keyword', detail: 'run functions concurrently — `r = all(f, () => { … })`: one slot per function, in order' }
+    : { label: 'parallel', insert: 'parallel {', kind: 'keyword', detail: 'run statements concurrently' };
+}
 
 /**
  * The ambient "meta-fields" — values a movement can read in any expression
@@ -302,6 +307,7 @@ export function getMovementCompletions(
   source: string,
   offset: number,
   snapshot: CatalogSnapshot,
+  options?: { languageVersion?: LanguageVersion },
 ): MovementCompletions {
   const clamped = Math.max(0, Math.min(offset, source.length));
   const before = source.slice(0, clamped);
@@ -717,7 +723,7 @@ export function getMovementCompletions(
   if (blankLine) {
     const frame = analysis.frameAt(loc);
     const items: MovementCompletionItem[] =
-      frame === undefined || frame.kind === 'file' ? [...FILE_KEYWORDS] : [...BODY_KEYWORDS];
+      frame === undefined || frame.kind === 'file' ? [...FILE_KEYWORDS] : [...BODY_KEYWORDS, joinKeyword(options?.languageVersion ?? CURRENT_LANGUAGE_VERSION)];
     if (frame !== undefined && frame.kind !== 'file') {
       for (const symbol of scope.values()) {
         if (symbol.kind === 'movement') {
