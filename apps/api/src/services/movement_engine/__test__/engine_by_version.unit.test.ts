@@ -44,12 +44,14 @@ const program = (...body: string[]) =>
 
 /** Admitted by the Rust engine. */
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
-/** Refused by its admission: a `WITHIN` comparison. */
-const REFUSED = program('  recent = msg.`subject` WITHIN "7d"', '  return msg.`subject`');
 /** Parks on a timer, and returns once woken. */
 const SLEEPS = program('  subject = msg.`subject`', '  await sleep(1h)', '  return UPPER(subject)');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-by-version', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
+/** Declined at the wire whatever the program says (a `Map` does not cross as
+ *  itself), so the Rust engine gives the same reason under every language version. */
+const UNWIREABLE_EVENT: TriggerEvent = { ...event, payload: { subject: 'Acme', text: 'hi', seen: new Map() } };
+const declined = (...args: Parameters<typeof inputOf>): RunMovementInput => ({ ...inputOf(...args), event: UNWIREABLE_EVENT });
 
 function fakeEmail(): Adapter {
   return {
@@ -219,27 +221,27 @@ describe('a run under by-version', () => {
   });
 
   it('fails a version-5 run the Rust engine refuses, loudly, with the reason, running nothing on TypeScript', async () => {
-    const failure = await under(BY_VERSION, () => runMovement(inputOf(REFUSED, 5, 'run-refused'))).catch((error: unknown) => error);
+    const failure = await under(BY_VERSION, () => runMovement(declined(ADMITTED, 5, 'run-refused'))).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(MovementEngineError);
-    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'within_compare' } });
+    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'event_does_not_cross' } });
     expect(String(failure)).toBe(
-      'MovementEngineError: MOVENG_UNSUPPORTED: the Rust engine does not run this movement (within_compare), and under MOVEMENT_ENGINE=by-version its language version runs only on the Rust engine (MOVEMENT_ENGINE_V5_ON_TS=true runs it on the TypeScript engine)',
+      'MovementEngineError: MOVENG_UNSUPPORTED: the Rust engine does not run this movement (event_does_not_cross), and under MOVEMENT_ENGINE=by-version its language version runs only on the Rust engine (MOVEMENT_ENGINE_V5_ON_TS=true runs it on the TypeScript engine)',
     );
-    expect(recorded).toEqual([{ runId: 'run-refused', engine: 'rust', reason: 'within_compare' }]);
+    expect(recorded).toEqual([{ runId: 'run-refused', engine: 'rust', reason: 'event_does_not_cross' }]);
   });
 
   it('runs a version-4 program Rust would refuse on TypeScript, as it always ran', async () => {
-    const result = await under(BY_VERSION, () => runMovement(inputOf(REFUSED, 4, 'run-v4-refused')));
+    const result = await under(BY_VERSION, () => runMovement(declined(ADMITTED, 4, 'run-v4-refused')));
     expect(result.movementName).toBe('m');
     expect(rustRunStats.routed).toBe(0);
   });
 
   it('runs version 5 on TypeScript under the switch, and the dry run counts it', async () => {
-    const result = await under(SWITCHED, () => runMovement(inputOf(REFUSED, 5, 'run-switched')));
+    const result = await under(SWITCHED, () => runMovement(declined(ADMITTED, 5, 'run-switched')));
     expect(result.movementName).toBe('m');
     expect(rustRunStats.routed).toBe(0);
-    expect(rustRunStats.dryRun).toMatchObject({ firings: 1, sampled: 1, first: { within_compare: 1 } });
-    expect(recorded).toEqual([{ runId: 'run-switched', engine: 'ts', reason: 'within_compare' }]);
+    expect(rustRunStats.dryRun).toMatchObject({ firings: 1, sampled: 1, first: { event_does_not_cross: 1 } });
+    expect(recorded).toEqual([{ runId: 'run-switched', engine: 'ts', reason: 'event_does_not_cross' }]);
   });
 });
 

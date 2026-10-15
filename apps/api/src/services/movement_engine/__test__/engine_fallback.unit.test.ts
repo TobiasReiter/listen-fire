@@ -43,12 +43,11 @@ const program = (...body: string[]) =>
 
 /** Admitted by the Rust engine. */
 const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
-/** Refused by its admission: a `WITHIN` comparison (which may stay refused
- *  by name: no corpus run reaches it). */
-const WITHIN = ['  recent = msg.`subject` WITHIN "7d"'];
-const REFUSED = program(...WITHIN, '  return msg.`subject`');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
+/** Declined at the wire whatever the program says (a `Map` does not cross as
+ *  itself), so the Rust engine gives the same reason under every language version. */
+const UNWIREABLE_EVENT: TriggerEvent = { ...event, payload: { subject: 'Acme', text: 'hi', seen: new Map() } };
 
 function fakeEmail(): Adapter {
   return {
@@ -100,8 +99,8 @@ async function underConfig<T>(config: { engine?: 'ts' | 'rust'; fallback?: 'ts' 
 
 const recorded: RunEngineRecord[] = [];
 
-const run = (source: string, runId = 'run-1') =>
-  runMovement(inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }), runId));
+const run = (source: string, runId = 'run-1', runEvent: TriggerEvent = event) =>
+  runMovement({ ...inputOf(source, makeTestHost({ adapters: { resolve: () => fakeEmail() } }), runId), event: runEvent });
 
 beforeEach(() => {
   resetRustRunStats();
@@ -130,10 +129,10 @@ describe('the engine settings, checked at boot', () => {
 
 describe('the engine a run records', () => {
   it('records ts and the first reason Rust would refuse it for, under MOVEMENT_ENGINE=ts', async () => {
-    await underConfig({ engine: 'ts' }, () => run(REFUSED, 'run-refused'));
+    await underConfig({ engine: 'ts' }, () => run(ADMITTED, 'run-refused', UNWIREABLE_EVENT));
     await underConfig({ engine: 'ts' }, () => run(ADMITTED, 'run-admitted'));
     expect(recorded).toEqual([
-      { runId: 'run-refused', engine: 'ts', reason: 'within_compare' },
+      { runId: 'run-refused', engine: 'ts', reason: 'event_does_not_cross' },
       { runId: 'run-admitted', engine: 'ts', reason: 'admitted' },
     ]);
   });
@@ -144,9 +143,9 @@ describe('the engine a run records', () => {
   });
 
   it('records ts and the refusal for a run the Rust engine refused and TypeScript ran', async () => {
-    const result = await underConfig({ engine: 'rust', fallback: 'ts' }, () => run(REFUSED));
+    const result = await underConfig({ engine: 'rust', fallback: 'ts' }, () => run(ADMITTED, 'run-1', UNWIREABLE_EVENT));
     expect(result.movementName).toBe('m');
-    expect(recorded).toEqual([{ runId: 'run-1', engine: 'ts', reason: 'within_compare' }]);
+    expect(recorded).toEqual([{ runId: 'run-1', engine: 'ts', reason: 'event_does_not_cross' }]);
   });
 
   it('records nothing for a run with no id', async () => {
@@ -157,13 +156,13 @@ describe('the engine a run records', () => {
 
 describe('MOVEMENT_ENGINE_FALLBACK=none', () => {
   it('fails a refused run with the reason, and runs nothing on TypeScript', async () => {
-    const failure = await underConfig({ engine: 'rust', fallback: 'none' }, () => run(REFUSED)).catch((error: unknown) => error);
+    const failure = await underConfig({ engine: 'rust', fallback: 'none' }, () => run(ADMITTED, 'run-1', UNWIREABLE_EVENT)).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(MovementEngineError);
-    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'within_compare' } });
+    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'event_does_not_cross' } });
     expect(String(failure)).toBe(
-      'MovementEngineError: MOVENG_UNSUPPORTED: the Rust engine does not run this movement (within_compare), and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it',
+      'MovementEngineError: MOVENG_UNSUPPORTED: the Rust engine does not run this movement (event_does_not_cross), and MOVEMENT_ENGINE_FALLBACK=none leaves no other engine to run it',
     );
-    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: 'within_compare' }]);
+    expect(recorded).toEqual([{ runId: 'run-1', engine: 'rust', reason: 'event_does_not_cross' }]);
   });
 
   it('runs a run the Rust engine admits as it does with a fallback', async () => {
@@ -175,10 +174,10 @@ describe('MOVEMENT_ENGINE_FALLBACK=none', () => {
   it('fails a resume the Rust engine refuses, and records the refusal', async () => {
     const host = makeTestHost({ adapters: { resolve: () => fakeEmail() } });
     const failure = await underConfig({ engine: 'rust', fallback: 'none' }, () =>
-      resumeMovement({ ...inputOf(REFUSED, host, 'run-resume'), state: { version: 1 } as never, answer: true }),
+      resumeMovement({ ...inputOf(ADMITTED, host, 'run-resume'), event: UNWIREABLE_EVENT, state: { version: 1 } as never, answer: true }),
     ).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'within_compare' } });
-    expect(recorded).toEqual([{ runId: 'run-resume', engine: 'rust', reason: 'within_compare' }]);
+    expect(failure).toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason: 'event_does_not_cross' } });
+    expect(recorded).toEqual([{ runId: 'run-resume', engine: 'rust', reason: 'event_does_not_cross' }]);
   });
 
   it('fails a run the engine admits and then declines, recording the decline', async () => {
