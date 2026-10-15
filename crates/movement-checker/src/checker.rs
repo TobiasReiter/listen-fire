@@ -33,7 +33,7 @@ pub struct Checker<'c> {
     pub scopes: Scopes,
     pub diagnostics: Vec<Diagnostic>,
     /// Depth of type-only walks, which report nothing.
-    type_only: usize,
+    pub type_only: usize,
     /// Each catalog schema an instance was built from, read once.
     pub schemas: std::collections::HashMap<usize, std::rc::Rc<movement_parser::catalog::types::InstanceSchema>>,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
@@ -45,6 +45,10 @@ pub struct Checker<'c> {
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
     /// Closures that call themselves by name without declaring what they return.
     pub selves: crate::families::closures::Selves,
+    /// Whether each open body may wait, and what each named function does.
+    pub effects: crate::families::flow::Effects,
+    /// Movement bodies walked to learn what a call to them returns and does.
+    pub inference: crate::families::calls::Inference,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -55,11 +59,13 @@ pub struct Bound {
     pub is_instance: bool,
     /// For an instance: the adapter that constructed it.
     pub adapter: Option<String>,
+    /// For a closure: whether calling it may wait.
+    pub closure_suspends: bool,
 }
 
 impl<'c> Checker<'c> {
     pub fn new(catalog: &'c CatalogSnapshot, version: u32, resolves_files: bool) -> Self {
-        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new(), function_returns: Default::default(), selves: Default::default() }
+        Checker { catalog, version, resolves_files, scopes: Scopes::default(), diagnostics: Vec::new(), type_only: 0, schemas: Default::default(), movement_params: Default::default(), return_stack: Vec::new(), function_returns: Default::default(), selves: Default::default(), effects: Default::default(), inference: Default::default() }
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -138,6 +144,11 @@ impl<'c> Checker<'c> {
                 self.check_reserved_name(&assign.name, assign.span);
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name), assign.span);
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
+                if bound.is_closure
+                    && let Some(id) = self.scopes.scope(scope).symbols.get(&assign.name).copied()
+                {
+                    self.effects.closures.insert(id, bound.closure_suspends);
+                }
                 self.type_assigned(&assign.name, &assign.value, scope);
                 self.note_closure_returns(&assign.name, &assign.value, scope);
             }
@@ -224,7 +235,7 @@ impl<'c> Checker<'c> {
                 if name.is_none() {
                     self.report_construction_returned(construct, span);
                 }
-                return Bound { is_closure: false, is_instance: name.is_some(), adapter };
+                return Bound { is_instance: name.is_some(), adapter, ..Bound::default() };
             }
             RValue::Call { call } => self.check_call_rvalue(call, scope, span),
             RValue::Write { write } => self.check_write(write, scope),
@@ -264,10 +275,15 @@ impl<'c> Checker<'c> {
             RValue::Callback { callback } => {
                 match &callback.subject {
                     CallbackSubject::Inline { closure, .. } => {
-                        self.check_closure_as(closure, scope, None, "a callback body", 0);
+                        let (_, suspends) = self.check_closure_walked(closure, scope, None, "a callback body", 0);
+                        if suspends {
+                            self.refuse_unresumable_wait("a callback body", closure.span);
+                        }
+                        self.absorb_suspend(suspends);
                     }
                     // An unknown name here is MOV_CALLBACK_NOT_MOVEMENT: the listens family's.
-                    CallbackSubject::Named { movement, args, span, .. } => {
+                    CallbackSubject::Named { movement, args, span, name_span } => {
+                        self.check_callback_suspends(movement, *name_span, scope);
                         self.check_callback_arguments(movement, args, *span, scope);
                         self.check_call_args(args, scope);
                     }
@@ -280,8 +296,8 @@ impl<'c> Checker<'c> {
             }
             RValue::Closure { closure } => {
                 let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
-                self.check_closure_as(closure, scope, name, &label, 0);
-                return Bound { is_closure: true, ..Bound::default() };
+                let (_, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
+                return Bound { is_closure: true, closure_suspends: suspends, ..Bound::default() };
             }
             RValue::Node { node } => self.check_node_literal(node, scope),
             RValue::Lazy { lazy } => {
@@ -443,9 +459,17 @@ impl<'c> Checker<'c> {
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             self.type_param(body, &param.name, type_, scope);
         }
-        self.check_body(&movement.body, body, format!("'{}'", movement.name));
+        self.open_effect_frame();
+        let returns = self.check_body(&movement.body, body, format!("'{}'", movement.name));
+        let row = self.close_effect_frame();
         if let Some(returns) = &movement.return_type {
             self.check_param_type(returns, scope);
+        }
+        if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied()
+            && self.scopes.symbol(id).kind == SymbolKind::Movement
+        {
+            self.record_movement_row(id, row);
+            self.report_movement_cycle(id, movement, !returns.is_empty());
         }
     }
 
@@ -475,6 +499,12 @@ impl<'c> Checker<'c> {
     /// supplies the types of its first `supplied` parameters. What its
     /// body returns, where.
     pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Vec<Span> {
+        self.check_closure_walked(closure, scope, self_name, label, supplied).0
+    }
+
+    /// `checkClosure`, with whether calling the closure may wait: its body
+    /// is its own function, so what it does is not the writer's.
+    pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Vec<Span>, bool) {
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
@@ -487,11 +517,13 @@ impl<'c> Checker<'c> {
             }
         }
         let own = self_name.and_then(|name| self.declare_closure_self(name, closure, body));
+        self.open_effect_frame();
         let returns = self.check_body(&closure.body, body, label.to_string());
+        let suspends = self.close_effect_frame();
         if let Some(own) = own {
             self.close_closure_self(own, returns.is_empty());
         }
-        returns
+        (returns, suspends)
     }
 
     pub fn check_call_args(&mut self, args: &[CallArg], scope: ScopeId) {
@@ -719,6 +751,7 @@ impl<'c> Checker<'c> {
     }
 
     fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {
+        self.flag_suspend();
         match &awaited.source {
             AwaitSource::Traversal { head, span } => {
                 self.check_awaited_head(head, Some(*span));
@@ -742,10 +775,20 @@ impl<'c> Checker<'c> {
                 match condition {
                     UntilCondition::Closure { closure } => {
                         self.check_until_params(closure);
-                        self.check_until_purity(&closure.body);
-                        self.check_closure_as(closure, scope, None, "this 'until' condition", 0);
+                        let impure = self.check_until_purity(&closure.body);
+                        let (_, suspends) = self.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
+                        self.absorb_suspend(suspends);
+                        if suspends && !impure {
+                            self.refuse_unresumable_wait("this 'until' condition", closure.span);
+                        }
                     }
-                    UntilCondition::Expr { expr } => self.check_expr_slot(expr, scope),
+                    UntilCondition::Expr { expr } => {
+                        self.check_expr_slot(expr, scope);
+                        if let Resolution::Found(id) = self.scopes.resolve(scope, expr.raw.trim()) {
+                            let suspends = self.closure_suspends(id);
+                            self.absorb_suspend(suspends);
+                        }
+                    }
                 }
             }
         }

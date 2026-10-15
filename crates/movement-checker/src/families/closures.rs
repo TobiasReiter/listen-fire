@@ -243,6 +243,9 @@ impl Checker<'_> {
 
     pub fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) {
         let kind = kind_name(combinator.kind);
+        // Running arms concurrently is still running them: the combinator
+        // waits, so it parks.
+        self.flag_suspend();
         match &combinator.arms {
             CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => {
                 for arm in arms {
@@ -262,10 +265,11 @@ impl Checker<'_> {
     fn check_arm(&mut self, arm: &ArmExpression, kind: &str, scope: ScopeId, expected: usize) -> Option<bool> {
         match arm {
             ArmExpression::Closure { closure, span } => {
-                let returns = self.check_closure_as(closure, scope, None, &format!("an arm of '{kind}'"), 0);
+                let (returns, suspends) = self.check_closure_walked(closure, scope, None, &format!("an arm of '{kind}'"), 0);
                 if closure.params.len() != expected {
                     self.report_arm_arity(kind, expected, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
+                self.absorb_suspend(suspends);
                 Some(!returns.is_empty() || closure.return_type.is_some())
             }
             ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, kind, scope, expected),
@@ -283,6 +287,7 @@ impl Checker<'_> {
         };
         let symbol = self.scopes.symbol(id).clone();
         if symbol.kind == SymbolKind::Movement {
+            self.call_movement(id);
             if let Some(params) = self.movement_params.get(&id).cloned()
                 && params.len() != expected
             {
@@ -291,6 +296,8 @@ impl Checker<'_> {
             return self.function_returns.get(&id).copied();
         }
         if let Some(crate::types::position::Position::Closure(closure)) = &symbol.types.pos {
+            let suspends = self.closure_suspends(id);
+            self.absorb_suspend(suspends);
             if closure.params.len() != expected {
                 self.report_arm_arity(kind, expected, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), span);
             }
@@ -343,7 +350,15 @@ impl Checker<'_> {
                 if closure.params.len() != arity {
                     self.report_arm_arity(spelling, arity, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
-                let returned = self.check_closure_as(closure, scope, None, &format!("the function for '{spelling}'"), arity);
+                let (returned, suspends) = self.check_closure_walked(closure, scope, None, &format!("the function for '{spelling}'"), arity);
+                if suspends && before(self.version, 3) {
+                    self.report(
+                        codes::COLLECTION_OP_SUSPENDS,
+                        format!("the function for '{spelling}' waits ('await'), and '{spelling}' runs it over every member to build one value — there is no answer for what the collection is while it waits. Wait outside it: walk the positions in a traversal-headed block, or run the waits together with 'await parallel([…])'."),
+                        *span,
+                    );
+                }
+                self.absorb_suspend(suspends);
                 Some(!returned.is_empty() || closure.return_type.is_some())
             }
             ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, spelling, scope, arity),

@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **35 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 990 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 1115 of 11435.
-- Rust side: 5.3s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **38 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 1014 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 1135 of 11435.
+- Rust side: 6.6s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 334 | 334 |
+| checks under v5 | 2360 | 344 | 344 |
 | checks v1 | 1535 | 185 | 185 |
 | checks v2 | 1956 | 238 | 238 |
-| checks v3 | 2403 | 353 | 353 |
+| checks v3 | 2403 | 363 | 363 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 0 | 0 |
 | oracle parallel | 398 | 0 | 0 |
@@ -24,10 +24,10 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| calls | 26 | 11 | 476 | 313 | 162 | 0 | 1 |
-| closures | 14 | 9 | 305 | 259 | 46 | 0 | 0 |
+| calls | 26 | 12 | 476 | 323 | 152 | 0 | 1 |
+| closures | 14 | 10 | 305 | 261 | 44 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
-| flow | 10 | 6 | 78 | 46 | 32 | 0 | 0 |
+| flow | 10 | 7 | 78 | 58 | 20 | 0 | 0 |
 | imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
 | listens | 12 | 0 | 10671 | 0 | 10671 | 0 | 0 |
 | names | 9 | 7 | 371 | 355 | 16 | 0 | 0 |
@@ -78,7 +78,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_COLLECTION_OP_CONFIG | closures | 14 | 0 | 14 | 0 | 0 |  |
 | MOV_COLLECTION_OP_NOT_A_COLLECTION | closures | 10 | 0 | 10 | 0 | 0 |  |
 | MOV_COLLECTION_OP_RETURNS_NOTHING | closures | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_COLLECTION_OP_SUSPENDS | closures | 2 | 0 | 2 | 0 | 0 |  |
+| MOV_COLLECTION_OP_SUSPENDS | closures | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_COMBINATOR_ARMS_ARE_ARGUMENTS | closures | 30 | 30 | 0 | 0 | 0 | yes |
 | MOV_COMBINATOR_ARM_NOT_FUNCTION | closures | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_COMBINATOR_ARM_TAKES_NOTHING | closures | 4 | 4 | 0 | 0 | 0 | yes |
@@ -166,7 +166,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_META_UNKNOWN_KEY | walks | 16 | 0 | 16 | 0 | 0 |  |
 | MOV_NAME_UNRESOLVED | names | 246 | 234 | 12 | 0 | 0 |  |
 | MOV_NARROWING | walks | 84 | 0 | 84 | 0 | 0 |  |
-| MOV_NESTED_CALL_SUSPENDS | calls | 6 | 0 | 6 | 0 | 0 |  |
+| MOV_NESTED_CALL_SUSPENDS | calls | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_NODE_ARG_SHAPE | nodes | 77 | 0 | 77 | 0 | 0 |  |
 | MOV_NODE_EDGE_DEFERRED | nodes | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_NODE_EDGE_UNDECLARED | nodes | 24 | 0 | 24 | 0 | 0 |  |
@@ -192,7 +192,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_READ_NOT_FILE | extraction | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_REBOUND_NAME | names | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_RECORD_NOT_A_VALUE | records | 29 | 0 | 29 | 0 | 0 |  |
-| MOV_RECURSIVE_RETURN_TYPE | calls | 8 | 2 | 6 | 0 | 0 |  |
+| MOV_RECURSIVE_RETURN_TYPE | calls | 8 | 6 | 2 | 0 | 0 |  |
 | MOV_REFRESH_UNSTABLE | writes | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_RESERVED_NAME | names | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_RESOURCES_NOT_EXTRACTED | extraction | 24 | 0 | 24 | 0 | 0 |  |
@@ -236,7 +236,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_USE_BEFORE_BIND | names | 19 | 15 | 4 | 0 | 0 |  |
 | MOV_VALUE_UNLISTED | values | 20 | 0 | 20 | 0 | 0 |  |
-| MOV_WAIT_NOT_RESUMABLE | flow | 12 | 0 | 12 | 0 | 0 |  |
+| MOV_WAIT_NOT_RESUMABLE | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_APPEND_NOT_MULTI | writes | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_WRITE_BIND_NOT_RECORD | writes | 3 | 0 | 3 | 0 | 0 |  |
 | MOV_WRITE_BIND_NO_UPDATE | writes | 5 | 0 | 5 | 0 | 0 |  |

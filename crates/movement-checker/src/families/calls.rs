@@ -29,16 +29,19 @@
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
 
-use movement_parser::ast::{MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
+use movement_parser::ast::{RValue, MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
 use movement_parser::lowering::expression::Expression;
 use movement_parser::version::since;
 
 use movement_parser::tree::{At, MExpr, MapMember, StringPart};
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use crate::checker::Checker;
 use crate::codes;
-use crate::scope::{Resolution, ScopeId, Symbol, SymbolKind};
+use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
 use crate::slots::SlotError;
 use crate::types::stdlib::{Builtin, lookup_builtin};
 
@@ -364,7 +367,22 @@ impl Checker<'_> {
             let head = String::from_utf16_lossy(&units[..at.end]);
             match movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start) {
                 Ok(value) => {
+                    self.open_effect_frame();
                     self.check_rvalue(&value, scope, None, span);
+                    let row = self.close_effect_frame();
+                    let callee = match &value {
+                        RValue::Call { call } => Some(&call.callee),
+                        RValue::Construct { construct } => Some(&construct.callee),
+                        _ => None,
+                    };
+                    if row && let Some(callee) = callee {
+                        self.report(
+                            codes::NESTED_CALL_SUSPENDS,
+                            format!("'{callee}' may wait ('await'), and a wait parks the run where it is written — inside an expression there is no place to come back to. Call it on its own line and use the name: `answer = {callee}(…)`"),
+                            span,
+                        );
+                    }
+                    self.absorb_suspend(row);
                 }
                 Err(e) => self.report(codes::EXPR_PARSE, format!("{} (line {}, col {})", e.message, e.loc.line, e.loc.col), span),
             }
@@ -989,6 +1007,7 @@ impl Checker<'_> {
             && self.scopes.symbol(id).kind == SymbolKind::Movement
         {
             self.movement_params.insert(id, movement.params.iter().map(|p| p.name.clone()).collect());
+            self.register_movement(id, movement, scope);
             let returns = movement.return_type.is_some() || crate::families::closures::body_returns(&movement.body);
             self.function_returns.insert(id, returns);
         }
@@ -1045,6 +1064,7 @@ impl Checker<'_> {
         let callee = self.scopes.symbol(id).clone();
         let count = call.args.len();
         if callee.kind == SymbolKind::Movement {
+            self.call_movement(id);
             let params = self.movement_params.get(&id).cloned();
             if let Some(params) = &params
                 && params.len() != count
@@ -1058,6 +1078,8 @@ impl Checker<'_> {
         }
         if self.calls_closure(&callee) {
             self.note_self_call(id, call.span);
+            let suspends = self.closure_suspends(id);
+            self.absorb_suspend(suspends);
             let closure = match (&callee.types.pos, &callee.types.field) {
                 (Some(crate::types::position::Position::Closure(c)), _) => Some(c.clone()),
                 (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
@@ -1229,5 +1251,234 @@ impl Checker<'_> {
             format!("'{}(…)' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.", construct.callee),
             span,
         );
+    }
+}
+
+/// One strongly connected component of the call graph: movements that can
+/// each reach the others (`CallCycle`, call_cycles.ts).
+struct CallCycle {
+    members: Vec<SymbolId>,
+    /// Each walked member's own body's flag, calls into the component left out.
+    rows: Vec<(SymbolId, bool)>,
+    closed: bool,
+    /// The stack depth of the member entered first: the component closes
+    /// when that walk finishes.
+    root_depth: usize,
+    /// The first loop found, by name (`even → odd → even`), for messages.
+    chain: Vec<String>,
+}
+
+impl CallCycle {
+    /// `chainFrom`: the loop rotated to start and end at `name`.
+    fn chain_from(&self, name: &str) -> Vec<String> {
+        let ring = &self.chain[..self.chain.len().saturating_sub(1)];
+        let Some(at) = ring.iter().position(|n| n == name) else { return self.chain.clone() };
+        let mut rotated: Vec<String> = ring[at..].iter().chain(ring[..at].iter()).cloned().collect();
+        rotated.push(name.to_string());
+        rotated
+    }
+}
+
+/// What a movement's body hands back and whether it may wait, learned by
+/// walking it type-only when a call reaches it (`inferMovement`), and the
+/// stack of bodies being so walked, where call cycles are found
+/// (`InferenceStack`: Tarjan's algorithm run on the checker's own recursion).
+#[derive(Default)]
+pub struct Inference {
+    declarations: HashMap<SymbolId, (Rc<MovementDeclaration>, ScopeId)>,
+    /// Started (false) or finished (true).
+    inferred: HashMap<SymbolId, bool>,
+    /// Whether each movement's body may wait, once known.
+    suspends: HashMap<SymbolId, bool>,
+    walking: HashMap<SymbolId, usize>,
+    cycle_of: HashMap<SymbolId, usize>,
+    cycles: Vec<CallCycle>,
+    stack: Vec<SymbolId>,
+}
+
+impl Checker<'_> {
+    /// A movement declaration, kept so a call above it can walk its body.
+    pub fn register_movement(&mut self, id: SymbolId, movement: &MovementDeclaration, scope: ScopeId) {
+        self.inference.declarations.entry(id).or_insert_with(|| (Rc::new(movement.clone()), scope));
+    }
+
+    /// A call reaches movement `id`: what it returns is inferred from its
+    /// body unless declared (from version 5 the declaration is the answer),
+    /// and what it does is the caller's.
+    pub fn call_movement(&mut self, id: SymbolId) {
+        let declared = self.inference.declarations.get(&id).is_some_and(|(m, _)| m.return_type.is_some()) && since(self.version, 3);
+        if !(declared && since(self.version, 5)) {
+            self.infer_movement(id);
+        }
+        let suspends = self.movement_suspends(id);
+        self.absorb_suspend(suspends);
+    }
+
+    /// `movementEffects`, the suspend flag of it.
+    pub fn movement_suspends(&mut self, id: SymbolId) -> bool {
+        if !self.inference.declarations.contains_key(&id) {
+            return false;
+        }
+        if since(self.version, 3) && self.reaches(id) {
+            return false;
+        }
+        if let Some(known) = self.inference.suspends.get(&id) {
+            return *known;
+        }
+        if !self.inference.inferred.contains_key(&id) {
+            self.infer_movement(id);
+        }
+        if since(self.version, 3) && self.reaches(id) {
+            return false;
+        }
+        self.inference.suspends.get(&id).copied().unwrap_or(false)
+    }
+
+    /// `inferMovement`: walks the body type-only, reporting nothing.
+    fn infer_movement(&mut self, id: SymbolId) {
+        match self.inference.inferred.get(&id) {
+            Some(true) => return,
+            Some(false) => {
+                if since(self.version, 3) {
+                    self.reaches(id);
+                }
+                return;
+            }
+            None => {}
+        }
+        let Some((movement, declared_in)) = self.inference.declarations.get(&id).cloned() else { return };
+        self.inference.inferred.insert(id, false);
+        let body = self.scopes.open(Some(declared_in));
+        self.type_only += 1;
+        for param in &movement.params {
+            let is_closure = matches!(&param.type_, Some(movement_parser::ast::ParamTypeRef::Value(movement_parser::ast::ValueType::Closure { .. })));
+            self.declare_param(body, &param.name, param.span, is_closure);
+            if let Some(type_) = &param.type_ {
+                self.type_param(body, &param.name, type_, declared_in);
+            }
+        }
+        let what = format!("'{}'", movement.name);
+        if since(self.version, 3) {
+            self.enter_inference(id);
+            self.open_effect_frame();
+            self.check_body(&movement.body, body, what);
+            let row = self.close_effect_frame();
+            self.leave_inference(id, row);
+        } else {
+            self.open_effect_frame();
+            self.check_body(&movement.body, body, what);
+            let row = self.close_effect_frame();
+            self.record_movement_row(id, row);
+        }
+        self.type_only -= 1;
+        self.inference.inferred.insert(id, true);
+    }
+
+    /// `recordMovementRow`: the row filed on the declaration, unless the
+    /// movement is in a call cycle, whose members share the cycle's.
+    pub fn record_movement_row(&mut self, id: SymbolId, row: bool) {
+        if !self.inference.cycle_of.contains_key(&id) {
+            self.inference.suspends.insert(id, row);
+        }
+    }
+
+    /// `checkMovement`'s cycle half: a movement in a call cycle declares
+    /// what it returns, unless its body returns nothing.
+    pub fn report_movement_cycle(&mut self, id: SymbolId, movement: &MovementDeclaration, returns: bool) {
+        let Some(cycle) = self.inference.cycle_of.get(&id).copied() else { return };
+        if movement.return_type.is_some() || !returns || !since(self.version, 3) {
+            return;
+        }
+        let chain = self.inference.cycles[cycle].chain_from(&movement.name);
+        let chain: Vec<&str> = chain.iter().map(String::as_str).collect();
+        self.report(
+            codes::RECURSIVE_RETURN_TYPE,
+            crate::families::closures::recursive_return_type_message(&movement.name, &chain, &format!("function {}(…): <number> {{ … }}", movement.name)),
+            Span { start: movement.span.start, end: movement.span.start },
+        );
+    }
+
+    fn enter_inference(&mut self, id: SymbolId) {
+        self.inference.walking.insert(id, self.inference.stack.len());
+        self.inference.stack.push(id);
+    }
+
+    /// `reaches`: true when reaching `target` closes a loop — it is still
+    /// being walked, or belongs to a component still open — and then every
+    /// body on the stack from the component's first member up is in it.
+    fn reaches(&mut self, target: SymbolId) -> bool {
+        let open = self.inference.cycle_of.get(&target).copied().filter(|c| !self.inference.cycles[*c].closed);
+        let walking = self.inference.walking.get(&target).copied();
+        if walking.is_none() && open.is_none() {
+            return false;
+        }
+        let root_depth = walking.unwrap_or(usize::MAX).min(open.map_or(usize::MAX, |c| self.inference.cycles[c].root_depth));
+        let cycle = match open {
+            Some(cycle) => cycle,
+            None => {
+                let from = walking.unwrap_or(root_depth);
+                let mut chain: Vec<String> = self.inference.stack[from..].iter().map(|m| self.scopes.symbol(*m).name.clone()).collect();
+                chain.push(self.scopes.symbol(target).name.clone());
+                self.inference.cycles.push(CallCycle { members: Vec::new(), rows: Vec::new(), closed: false, root_depth, chain });
+                self.inference.cycles.len() - 1
+            }
+        };
+        let cycle_root = &mut self.inference.cycles[cycle].root_depth;
+        *cycle_root = (*cycle_root).min(root_depth);
+        for depth in root_depth..self.inference.stack.len() {
+            let member = self.inference.stack[depth];
+            self.join_cycle(cycle, member);
+        }
+        self.join_cycle(cycle, target);
+        true
+    }
+
+    fn join_cycle(&mut self, cycle: usize, member: SymbolId) {
+        let other = self.inference.cycle_of.get(&member).copied();
+        if other == Some(cycle) {
+            return;
+        }
+        // Two loops that share a function are one component.
+        if let Some(other) = other
+            && !self.inference.cycles[other].closed
+        {
+            let merged = std::mem::take(&mut self.inference.cycles[other].members);
+            let rows = std::mem::take(&mut self.inference.cycles[other].rows);
+            let other_root = self.inference.cycles[other].root_depth;
+            let target = &mut self.inference.cycles[cycle];
+            target.root_depth = target.root_depth.min(other_root);
+            for each in merged {
+                if !target.members.contains(&each) {
+                    target.members.push(each);
+                }
+                self.inference.cycle_of.insert(each, cycle);
+            }
+            self.inference.cycles[cycle].rows.extend(rows);
+        }
+        self.inference.cycle_of.insert(member, cycle);
+        if !self.inference.cycles[cycle].members.contains(&member) {
+            self.inference.cycles[cycle].members.push(member);
+        }
+    }
+
+    /// `leave`: outside any component the row is the movement's; inside one
+    /// it waits for the component to close, when every member gets the union.
+    fn leave_inference(&mut self, id: SymbolId, row: bool) {
+        let depth = self.inference.walking.remove(&id);
+        self.inference.stack.pop();
+        let cycle = self.inference.cycle_of.get(&id).copied();
+        let Some(cycle) = cycle.filter(|c| !self.inference.cycles[*c].closed) else {
+            self.inference.suspends.insert(id, row);
+            return;
+        };
+        self.inference.cycles[cycle].rows.push((id, row));
+        if depth != Some(self.inference.cycles[cycle].root_depth) {
+            return;
+        }
+        let shared = self.inference.cycles[cycle].rows.iter().any(|(_, r)| *r);
+        for member in self.inference.cycles[cycle].members.clone() {
+            self.inference.suspends.insert(member, shared);
+        }
+        self.inference.cycles[cycle].closed = true;
     }
 }

@@ -18,7 +18,7 @@ use movement_parser::version::before;
 use movement_parser::lowering::expression::{Expression, TraversalStep};
 
 use crate::checker::Checker;
-use crate::scope::ScopeId;
+use crate::scope::{ScopeId, SymbolId};
 use crate::types::field::record_head_position;
 use crate::types::infer::Typing;
 use crate::codes;
@@ -233,6 +233,21 @@ impl Checker<'_> {
         }
     }
 
+    /// A movement deferred by name schedules the run a call would: what it
+    /// does is this movement's, and it may not wait.
+    pub fn check_callback_suspends(&mut self, movement: &str, name_span: Span, scope: ScopeId) {
+        let callee = self.callee_name(movement, scope);
+        let crate::scope::Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return };
+        if self.scopes.symbol(id).kind != crate::scope::SymbolKind::Movement {
+            return;
+        }
+        let suspends = self.movement_suspends(id);
+        self.absorb_suspend(suspends);
+        if suspends {
+            self.refuse_unresumable_wait(&format!("'{movement}', run as a callback"), name_span);
+        }
+    }
+
     /// `refuseUnresumableWait`: a wait where the run cannot come back to it
     /// (refused from version 3).
     pub fn refuse_unresumable_wait(&mut self, where_: &str, span: Span) {
@@ -254,4 +269,47 @@ impl Checker<'_> {
 fn statement_span(statement: &Statement) -> Option<Span> {
     let tree = serde_json::to_value(statement).ok()?;
     serde_json::from_value(tree.get("span")?.clone()).ok()
+}
+
+/// What the open function bodies may do, as far as parking goes: a body that
+/// may wait (`await`, a combinator, or a call to a function that waits)
+/// suspends. The rest of the TypeScript's effect row (reads, writes, `ai`,
+/// `now`) is not modelled.
+#[derive(Default)]
+pub struct Effects {
+    /// One flag per function body being walked, innermost last.
+    frames: Vec<bool>,
+    /// Whether each closure bound to a name may wait when called.
+    pub closures: std::collections::HashMap<SymbolId, bool>,
+}
+
+impl Checker<'_> {
+    /// `withEffectFrame`'s opening half: a body whose effects are its own.
+    pub fn open_effect_frame(&mut self) {
+        self.effects.frames.push(false);
+    }
+
+    /// Whether the body walked since the matching open may wait.
+    pub fn close_effect_frame(&mut self) -> bool {
+        self.effects.frames.pop().unwrap_or(false)
+    }
+
+    /// The run may park here (`flag('suspend')`).
+    pub fn flag_suspend(&mut self) {
+        if let Some(top) = self.effects.frames.last_mut() {
+            *top = true;
+        }
+    }
+
+    /// What a called or scheduled function does is the caller's too.
+    pub fn absorb_suspend(&mut self, suspends: bool) {
+        if suspends {
+            self.flag_suspend();
+        }
+    }
+
+    /// Whether calling the closure a name holds may wait.
+    pub fn closure_suspends(&self, id: SymbolId) -> bool {
+        self.effects.closures.get(&id).copied().unwrap_or(false)
+    }
 }
