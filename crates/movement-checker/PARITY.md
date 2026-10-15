@@ -3,17 +3,17 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **14 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 703 of 15246; 4 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 1041 of 11435.
-- Rust side: 6.7s; 0 records the Rust parser or catalog refused; 0 panics.
+- Diagnostics matched: 864 of 15246; 4 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 1061 of 11435.
+- Rust side: 7.0s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
 | checks under v5 | 2360 | 298 | 298 |
-| checks v1 | 1535 | 183 | 183 |
-| checks v2 | 1956 | 234 | 234 |
+| checks v1 | 1535 | 193 | 193 |
+| checks v2 | 1956 | 244 | 244 |
 | checks v3 | 2403 | 321 | 321 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 0 | 0 |
@@ -34,7 +34,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 25 | 0 | 314 | 0 | 314 | 0 | 0 |
 | records | 3 | 0 | 59 | 4 | 55 | 0 | 0 |
 | systems | 8 | 0 | 100 | 4 | 96 | 0 | 0 |
-| values | 22 | 5 | 1156 | 323 | 833 | 4 | 0 |
+| values | 22 | 5 | 1156 | 484 | 672 | 4 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
 | walks | 19 | 0 | 745 | 0 | 745 | 0 | 0 |
 | writes | 45 | 0 | 713 | 0 | 713 | 0 | 0 |
@@ -43,7 +43,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | code | family | TS | matched | missing in Rust | extra in Rust | message differs | parity |
 |---|---|---|---|---|---|---|---|
-| MOV_ABSENT_REQUIRED | values | 514 | 76 | 438 | 0 | 0 |  |
+| MOV_ABSENT_REQUIRED | values | 514 | 102 | 412 | 0 | 0 |  |
 | MOV_ADAPTER_NOT_CONSTRUCTED | systems | 28 | 0 | 28 | 0 | 0 |  |
 | MOV_AI_TIER_LEGACY | systems | 8 | 4 | 4 | 0 | 0 |  |
 | MOV_AMBIGUOUS_PROPERTY | walks | 4 | 0 | 4 | 0 | 0 |  |
@@ -84,7 +84,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_COMBINATOR_ARM_TAKES_NOTHING | closures | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_COMBINATOR_NEEDS_AWAIT | closures | 6 | 0 | 6 | 0 | 0 |  |
 | MOV_COMBINATOR_NO_AWAIT | closures | 28 | 0 | 28 | 0 | 0 |  |
-| MOV_COMPARE_TYPE_MISMATCH | values | 60 | 7 | 53 | 0 | 0 |  |
+| MOV_COMPARE_TYPE_MISMATCH | values | 60 | 43 | 17 | 0 | 0 |  |
 | MOV_CONSTRUCT_BAD_ARG | systems | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_CONSTRUCT_MISSING_CRED | systems | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_CONSTRUCT_NOT_ADAPTER | systems | 13 | 0 | 13 | 0 | 0 |  |
@@ -94,8 +94,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_DICT_KEY_NOT_TEXT | values | 12 | 6 | 6 | 0 | 0 |  |
 | MOV_DICT_UNKNOWN_KEY | values | 25 | 8 | 17 | 0 | 0 |  |
 | MOV_DUPLICATE_DECL | names | 16 | 16 | 0 | 0 | 0 | yes |
-| MOV_ENUM_EMPTY_DOMAIN | values | 12 | 0 | 12 | 0 | 0 |  |
-| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 15 | 103 | 0 | 0 |  |
+| MOV_ENUM_EMPTY_DOMAIN | values | 12 | 4 | 8 | 0 | 0 |  |
+| MOV_ENUM_UNKNOWN_VALUE | values | 118 | 35 | 83 | 0 | 0 |  |
 | MOV_EXPR_PARSE | calls | 141 | 0 | 141 | 0 | 0 |  |
 | MOV_EXTENDS_CYCLE | nodes | 9 | 0 | 9 | 0 | 0 |  |
 | MOV_EXTENDS_NOT_A_NODE | nodes | 3 | 0 | 3 | 0 | 0 |  |
@@ -110,7 +110,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_EXTRACT_SHAPE_NOT_DECLARED | extraction | 3 | 0 | 3 | 0 | 0 |  |
 | MOV_EXTRACT_TYPE_CONFLICT | extraction | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_EXTRACT_UNKNOWN_FIELD | extraction | 22 | 0 | 22 | 0 | 0 |  |
-| MOV_FOLD_NEEDS_ORDER | values | 109 | 29 | 80 | 4 | 0 |  |
+| MOV_FOLD_NEEDS_ORDER | values | 109 | 69 | 40 | 4 | 0 |  |
 | MOV_FUNCTION_NAME_COLLISION | names | 10 | 10 | 0 | 0 | 0 | yes |
 | MOV_FUNCTION_UNKNOWN | calls | 14 | 0 | 14 | 0 | 0 |  |
 | MOV_GRAPH_ENTRY_KIND | nodes | 8 | 0 | 8 | 0 | 0 |  |
@@ -138,7 +138,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_IMPORT_NOT_EXPORTED | imports | 20 | 0 | 20 | 0 | 0 |  |
 | MOV_IMPORT_UNKNOWN | names | 20 | 20 | 0 | 0 | 0 | yes |
 | MOV_INLINE_BLOCK_RETIRED | closures | 8 | 0 | 8 | 0 | 0 |  |
-| MOV_JSON_OPAQUE | values | 56 | 40 | 16 | 0 | 0 |  |
+| MOV_JSON_OPAQUE | values | 56 | 52 | 4 | 0 | 0 |  |
 | MOV_LANGUAGE_VERSION_UNSUPPORTED | versions | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_LIMIT_NEEDS_ORDER | walks | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_LINKED_HOP_RETIRED | writes | 8 | 0 | 8 | 0 | 0 |  |
@@ -188,7 +188,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_PLUGIN_OUTPUT_UNDECLARED | calls | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_PLUGIN_ROW_UNDECLARED | calls | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_PRESENCE_TEST_CONSTANT | values | 19 | 16 | 3 | 0 | 0 |  |
-| MOV_PRESENCE_TEST_ON_TEXT | values | 52 | 25 | 27 | 0 | 0 |  |
+| MOV_PRESENCE_TEST_ON_TEXT | values | 52 | 40 | 12 | 0 | 0 |  |
 | MOV_READ_NOT_FILE | extraction | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_REBOUND_NAME | names | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_RECORD_NOT_A_VALUE | records | 29 | 4 | 25 | 0 | 0 |  |
@@ -235,7 +235,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNTIL_CADENCE_TOO_SHORT | flow | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 4 | 0 | 4 | 0 | 0 |  |
 | MOV_USE_BEFORE_BIND | names | 19 | 15 | 4 | 0 | 0 |  |
-| MOV_VALUE_UNLISTED | values | 20 | 0 | 20 | 0 | 0 |  |
+| MOV_VALUE_UNLISTED | values | 20 | 8 | 12 | 0 | 0 |  |
 | MOV_WAIT_NOT_RESUMABLE | flow | 12 | 0 | 12 | 0 | 0 |  |
 | MOV_WRITE_APPEND_NOT_MULTI | writes | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_WRITE_BIND_NOT_RECORD | writes | 3 | 0 | 3 | 0 | 0 |  |

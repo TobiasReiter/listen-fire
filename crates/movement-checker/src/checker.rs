@@ -26,7 +26,7 @@ use movement_parser::lowering::condition::MovementCondition;
 use crate::slots::{collect_expression_names, condition_of_slot, expression_of_slot, expression_of_text, extract_hop_aliases, is_bare_ident, is_literal_word};
 
 /// `EXPRESSION_ROOT_PROBE`: what an expression root is spelled as in a probe.
-const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
+pub(crate) const EXPRESSION_ROOT_PROBE: &str = "__movement_expression_root__";
 
 /// The scalar names a value type may be written as (`<number>`).
 const SCALAR_TYPE_NAMES: &[&str] = &["text", "number", "boolean", "date", "datetime", "file", "json"];
@@ -785,7 +785,9 @@ impl<'c> Checker<'c> {
     /// aliases, and what it binds is remembered as escaped once it closes.
     fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) {
         let aliases = self.check_path_head(&block.head, scope);
+        let walk = self.type_head_walk(&block.head, scope);
         let body = self.open_landing(scope, &aliases, block.head.span);
+        self.type_head_aliases(body, &walk);
         self.check_statement_list(&block.body, body);
         let bound: Vec<String> = self
             .scopes

@@ -8,7 +8,8 @@
 
 use std::rc::Rc;
 
-use movement_parser::ast::{ClosureExpression, ConstructionCall, ExprSlot, ParamTypeRef, RValue, TypeRef, ValueType};
+use movement_parser::ast::{ClosureExpression, ConstructionCall, ExprSlot, ParamTypeRef, PathHead, PathRoot, RValue, TypeRef, ValueType};
+use movement_parser::lowering::expression::TraversalStep;
 use movement_parser::catalog::snapshot::Args;
 use movement_parser::lowering::expression::Expression;
 
@@ -131,11 +132,89 @@ impl Checker<'_> {
             }
             _ => return SymbolTypes::default(),
         };
-        let args: Args = construct.args.iter().map(|a| (a.name.clone(), a.value.raw.clone())).collect();
+        let credential = self.catalog.adapter(&adapter).and_then(movement_parser::catalog::helpers::credential_arg_of).map(|a| a.name.clone());
+        let args: Args = construct
+            .args
+            .iter()
+            .filter(|a| a.name != "dry_run")
+            .map(|a| {
+                let raw = a.value.raw.trim().to_string();
+                let value = if credential.as_deref() == Some(a.name.as_str()) { self.imported_credential_name(&raw, scope) } else { raw };
+                (a.name.clone(), value)
+            })
+            .collect();
         let Some(schema) = self.catalog.instantiate(&adapter, &args) else { return SymbolTypes::default() };
         let schema = self.schemas.entry(schema as *const _ as usize).or_insert_with(|| Rc::new(schema.clone())).clone();
         let instance = Rc::new(Instance { name: name.to_string(), schema });
         SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() }
+    }
+
+    /// `checkPathHead`, the typing half: where a head's walk starts (a record
+    /// the root names or holds) and the hops it takes. `None` when the hops do
+    /// not parse to a walk (a `_resources` head, a syntax error), which stays
+    /// untyped; a rootless head starts nowhere.
+    pub fn head_walk(&self, head: &PathHead, scope: ScopeId) -> Option<(Option<Position>, Vec<TraversalStep>)> {
+        let probe_root = match &head.root {
+            None => String::new(),
+            Some(PathRoot::Name { name }) => crate::families::names::spell_name(name),
+            Some(PathRoot::Expression { .. }) => crate::checker::EXPRESSION_ROOT_PROBE.to_string(),
+        };
+        let probe = format!("{probe_root}{}.`__movement_head_probe__`", head.hops_raw);
+        let Ok(Expression::Traverse { steps, .. }) = crate::slots::expression_of_text(&probe) else { return None };
+        let start = match &head.root {
+            None => None,
+            Some(PathRoot::Name { name }) => {
+                let env = self.typing_env(scope);
+                env.resolve_root(name).or_else(|| {
+                    let held = crate::types::field::widen_tuples(env.resolve_scalar(name), self.version);
+                    crate::types::field::record_head_position(held.as_ref())
+                })
+            }
+            Some(PathRoot::Expression { expr }) => {
+                let held = self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty);
+                crate::types::field::record_head_position(held.as_ref())
+            }
+        };
+        Some((start, steps))
+    }
+
+    /// A head's hop chain typed (check 4), what the typing says reported at
+    /// the head: each hop alias's landing, and the order the head yields its
+    /// records in (`lastOrdering`).
+    pub fn type_head_walk(&mut self, head: &PathHead, scope: ScopeId) -> HeadWalk {
+        let Some((Some(start), steps)) = self.head_walk(head, scope) else { return HeadWalk::default() };
+        let (walk, diagnostics) = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, head.span);
+            let landed = typing.walk_steps(Some(start), &steps, false);
+            let aliases = typing.locals.iter().map(|(name, pos)| (name.clone(), pos.clone())).collect();
+            (HeadWalk { landed, aliases, ordering: typing.last_ordering }, typing.diagnostics)
+        };
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
+        walk
+    }
+
+    /// Gives each hop alias declared in `scope` the landing the head's walk bound it to.
+    pub fn type_head_aliases(&mut self, scope: ScopeId, walk: &HeadWalk) {
+        for (alias, pos) in &walk.aliases {
+            if let Some(pos) = pos {
+                self.set_types(scope, alias, SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
+            }
+        }
+    }
+
+    /// `importedCredentialName`: a credential argument as the catalog keys it —
+    /// the name it was imported under, not a local alias for it.
+    fn imported_credential_name(&self, local: &str, scope: ScopeId) -> String {
+        let name = movement_parser::catalog::helpers::unwrap_credential_arg(local).unwrap_or_else(|| local.to_string());
+        match self.scopes.resolve(scope, &name) {
+            Resolution::Found(id) if self.scopes.symbol(id).kind == SymbolKind::Credential => {
+                self.scopes.symbol(id).imported_name.clone().unwrap_or(name)
+            }
+            _ => name,
+        }
     }
 
     /// A `type` declaration: the closed option set it names.
@@ -310,4 +389,18 @@ fn position_from_address(instance: &crate::types::InstanceRef, hops_raw: &str) -
         }
         other => other,
     })
+}
+
+/// What typing a head's walk found: where it landed, each hop alias's
+/// landing, and the order its records come in.
+pub struct HeadWalk {
+    pub landed: Option<Position>,
+    pub aliases: Vec<(String, Option<Position>)>,
+    pub ordering: crate::types::field::CollectionOrder,
+}
+
+impl Default for HeadWalk {
+    fn default() -> Self {
+        HeadWalk { landed: None, aliases: Vec::new(), ordering: crate::types::field::CollectionOrder::Unknown }
+    }
 }
