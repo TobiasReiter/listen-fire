@@ -877,8 +877,9 @@ impl<'c> Checker<'c> {
                 }
             }
             self.report_block_read_back(&names, scope, head.span);
-            self.check_head_expression(&probe, head.span, scope);
+            self.check_head_expression(&probe, head, scope);
         }
+        self.check_head_resources(head, &probe, root_name.as_deref(), scope);
         if let Some(name) = &root_name {
             self.check_path_root_constructed(name, root_symbol, &head.hops_raw, head.span);
         }

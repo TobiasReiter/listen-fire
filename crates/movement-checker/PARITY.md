@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **148 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14117 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 10351 of 11435.
-- Rust side: 2.4s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **152 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 14169 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 10392 of 11435.
+- Rust side: 3.0s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2008 | 2009 |
+| checks under v5 | 2360 | 2036 | 2037 |
 | checks v1 | 1535 | 1364 | 1365 |
 | checks v2 | 1956 | 1733 | 1734 |
-| checks v3 | 2403 | 2065 | 2066 |
+| checks v3 | 2403 | 2078 | 2079 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -26,7 +26,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 |---|---|---|---|---|---|---|---|
 | calls | 26 | 19 | 476 | 376 | 100 | 0 | 0 |
 | closures | 14 | 12 | 305 | 281 | 24 | 0 | 0 |
-| extraction | 20 | 16 | 207 | 159 | 48 | 0 | 0 |
+| extraction | 20 | 19 | 207 | 203 | 4 | 0 | 0 |
 | flow | 10 | 8 | 78 | 70 | 8 | 0 | 0 |
 | imports | 5 | 5 | 44 | 44 | 0 | 0 | 0 |
 | listens | 12 | 12 | 10671 | 10671 | 0 | 0 | 0 |
@@ -36,7 +36,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | systems | 8 | 7 | 100 | 89 | 11 | 0 | 0 |
 | values | 22 | 8 | 1156 | 896 | 260 | 0 | 0 |
 | versions | 2 | 1 | 7 | 5 | 2 | 0 | 0 |
-| walks | 19 | 11 | 745 | 542 | 203 | 0 | 0 |
+| walks | 19 | 12 | 745 | 550 | 195 | 0 | 0 |
 | writes | 45 | 41 | 713 | 605 | 108 | 0 | 0 |
 
 ## By code
@@ -181,7 +181,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_ORDER_KEY_MULTI | values | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_PARALLEL_RETIRED | closures | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_PARAM_NEEDS_TYPE | calls | 13 | 12 | 1 | 0 | 0 |  |
-| MOV_PARENT_READ_RETIRED | walks | 8 | 0 | 8 | 0 | 0 |  |
+| MOV_PARENT_READ_RETIRED | walks | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_ARGS_NAMED | calls | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_FED_BY_EXTRACTION | extraction | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_OUTPUT_CHANGED | versions | 2 | 0 | 2 | 0 | 0 |  |
@@ -195,9 +195,9 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_RECURSIVE_RETURN_TYPE | calls | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_REFRESH_UNSTABLE | writes | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_RESERVED_NAME | names | 4 | 4 | 0 | 0 | 0 | yes |
-| MOV_RESOURCES_NOT_EXTRACTED | extraction | 24 | 0 | 24 | 0 | 0 |  |
-| MOV_RESOURCE_READ_RETIRED | extraction | 14 | 0 | 14 | 0 | 0 |  |
-| MOV_RESOURCE_WALK_UNREAD | extraction | 6 | 0 | 6 | 0 | 0 |  |
+| MOV_RESOURCES_NOT_EXTRACTED | extraction | 24 | 24 | 0 | 0 | 0 | yes |
+| MOV_RESOURCE_READ_RETIRED | extraction | 14 | 14 | 0 | 0 | 0 | yes |
+| MOV_RESOURCE_WALK_UNREAD | extraction | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_RETURN_NOT_A_VALUE | calls | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_RETURN_OUTSIDE_BODY | calls | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_RETURN_PLANE_MISMATCH | calls | 4 | 0 | 4 | 0 | 0 |  |

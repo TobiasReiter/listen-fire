@@ -413,6 +413,24 @@ fn member_read_calls(tree: &MExpr, into: &mut Vec<At>) {
     }
 }
 
+/// `headHopsExtent`: an extent of a head's probe, placed in the file when it
+/// lies within the hops, which the probe carries verbatim and which end where
+/// the head does. A chain over several lines has no exact place.
+fn head_hops_extent(head: &movement_parser::ast::PathHead, probe_len: usize, at: At) -> Option<Span> {
+    if head.hops_raw.contains('\n') {
+        return None;
+    }
+    let hops_len = head.hops_raw.encode_utf16().count();
+    // The probe is the root, the hops, then the probe's own field read.
+    let offset = probe_len - ".`__movement_head_probe__`".len() - hops_len;
+    if at.start < offset || at.end > offset + hops_len {
+        return None;
+    }
+    let end = head.span.end;
+    let hops = ExprSlot::plain(head.hops_raw.clone(), Span { start: Loc { line: end.line, col: end.col.saturating_sub(hops_len) }, end });
+    Some(span_of_extent(&hops, At { start: at.start - offset, end: at.end - offset }))
+}
+
 /// `spanOfExtent`.
 pub fn span_of_extent(slot: &ExprSlot, at: At) -> Span {
     Span { start: span_within(slot, Some(at.start)).start, end: span_within(slot, Some(at.end)).start }
@@ -776,14 +794,24 @@ impl Checker<'_> {
 #[derive(Clone, Copy)]
 pub enum TreeAt<'s> {
     Slot(&'s ExprSlot),
-    Head(Span),
+    /// A block head, read through its probe (`probe_len` UTF-16 units).
+    Head { head: &'s movement_parser::ast::PathHead, probe_len: usize },
 }
 
 impl TreeAt<'_> {
     fn span_of(&self, at: At) -> Span {
         match self {
             TreeAt::Slot(slot) => span_within(slot, Some(at.start)),
-            TreeAt::Head(span) => *span,
+            TreeAt::Head { head, .. } => head.span,
+        }
+    }
+
+    /// `extentOf`: where an extent of the tree is exactly, when it has one
+    /// place in the file — what an exact rewrite needs.
+    pub fn extent_of(&self, at: At) -> Option<Span> {
+        match self {
+            TreeAt::Slot(slot) => Some(span_of_extent(slot, at)),
+            TreeAt::Head { head, probe_len } => head_hops_extent(head, *probe_len, at),
         }
     }
 }
@@ -952,22 +980,33 @@ impl Checker<'_> {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
-        self.visit_expression_tree(&tree, false, TreeAt::Slot(slot), scope, write_field);
+        self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
 
     /// The calls in a block head's hops (version 3), read through the probe
     /// the head is parsed as; every place is the head's.
-    pub fn check_head_expression(&mut self, probe: &str, span: Span, scope: ScopeId) {
+    pub fn check_head_expression(&mut self, probe: &str, head: &movement_parser::ast::PathHead, scope: ScopeId) {
         if !since(self.version, 3) {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(probe) else { return };
-        self.visit_expression_tree(&tree, false, TreeAt::Head(span), scope, false);
+        // The probe reads a field off the head's walk; that walk is the head.
+        let walk = match &tree {
+            MExpr::Member { object, .. } => Some(object.as_ref() as *const MExpr),
+            _ => None,
+        };
+        let at_ = TreeAt::Head { head, probe_len: probe.encode_utf16().count() };
+        self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
     }
 
-    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, at_: TreeAt, scope: ScopeId, write_field: bool) {
-        if let MExpr::Path { hops, at, .. } = expr {
+    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, in_resource_where: bool, place: (TreeAt, Option<*const MExpr>), scope: ScopeId, write_field: bool) {
+        let (at_, head) = place;
+        if let MExpr::Path { root, hops, at } = expr {
             self.check_walk_keeps_what_is_written(hops, at_.span_of(*at));
+            self.check_resource_walk(root.as_deref(), hops, at_.span_of(*at), head == Some(expr as *const MExpr));
+        }
+        if let MExpr::Special { text, at } = expr {
+            self.check_special_record_read(text, at_.span_of(*at), at_.extent_of(*at), in_resource_where);
         }
         if let MExpr::If { else_: None, at, .. } = expr {
             self.report(
@@ -995,9 +1034,15 @@ impl Checker<'_> {
             }
         }
         let key = sort_key_of(expr);
+        // A resource hop's WHERE reads the resource's own fields by bare name.
+        let resource_wheres: Vec<&MExpr> = match expr {
+            MExpr::Path { hops, .. } => hops.iter().filter(|h| crate::families::extraction::is_resource_hop(h)).filter_map(|h| h.where_.as_ref()).collect(),
+            _ => Vec::new(),
+        };
         for child in expression_children(expr) {
             let keyed = key.is_some_and(|k| std::ptr::eq(k, child));
-            self.visit_expression_tree(child, per_member || keyed, at_, scope, write_field);
+            let in_where = in_resource_where || resource_wheres.iter().any(|w| std::ptr::eq(*w, child));
+            self.visit_expression_tree(child, per_member || keyed, in_where, place, scope, write_field);
         }
     }
 
@@ -1082,7 +1127,7 @@ impl Checker<'_> {
                 let MExpr::Call { callee, at, .. } = call else { return };
                 let slot = match at_ {
                     TreeAt::Slot(slot) => Some(slot),
-                    TreeAt::Head(_) => None,
+                    TreeAt::Head { .. } => None,
                 };
                 let fix = slot.and_then(|slot| self.closest_function_name(written, scope).map(|to| (slot, to))).map(|(slot, to)| {
                     let spelled = if to.chars().any(char::is_whitespace) { format!("`{to}`") } else { to };

@@ -46,6 +46,12 @@ use crate::types::Typing;
 use crate::types::field::{BaseKind, Ty, base_kind, describe_field_type, field_assignable, field_type_compatible, maybe_absent, strip_absent, unwrap_list};
 use crate::types::position::EXTRACT_ROOT_NAME;
 use movement_parser::ast::ExprSlot;
+use movement_parser::ast::{PathHead, PathRoot};
+use movement_parser::catalog::types::InstanceSchema;
+use movement_parser::tree::{Hop, MExpr};
+use crate::families::names::spell_name;
+use crate::types::field::{record_head_position, widen_tuples};
+use crate::types::position::describe_position;
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
 use crate::types::position::{ExtractField, ExtractNode as ExtractNodeType, LocalEdge, LocalNode, Position};
 
@@ -917,4 +923,247 @@ pub fn type_chunks_call(typing: &mut Typing, args: &[Option<Ty>]) -> Ty {
         );
     }
     Ty::list(Ty::Text)
+}
+
+// ── Resource walks: `-[:_resources]->` ──
+
+/// `endingHop(hop) === 'resources'`: a hop a walk can only end in, which
+/// lowers to a node of its own.
+pub fn is_resource_hop(hop: &Hop) -> bool {
+    let label = hop.label.text.as_str();
+    let base = label.split(|c: char| c == ':' || c.is_whitespace()).next().unwrap_or(label);
+    base == "_resources" || base == "#resources"
+}
+
+/// What `@resource.…` could read (`RESOURCE_FIELDS`).
+const RESOURCE_FIELDS: &[&str] = &["name", "url", "type", "document_url", "content", "contentType"];
+
+impl Checker<'_> {
+    /// `checkWalkKeepsWhatIsWritten`, the resource half: a walk ending in a
+    /// resource hop keeps neither the hops before it (a block head) nor its
+    /// root (a walk read as a value); a rootless one read the event's record.
+    pub fn check_resource_walk(&mut self, root: Option<&MExpr>, hops: &[Hop], span: Span, is_head: bool) {
+        if !hops.last().is_some_and(is_resource_hop) {
+            return;
+        }
+        if is_head && hops.len() > 1 {
+            self.report(
+                codes::RESOURCE_WALK_UNREAD,
+                "a block head that ends in -[:_resources]-> walks only the hops before it — the -[:_resources]-> hop is never read, so the body would run once per record those hops reach, not once per resource. Walk to the record in one block, then its resources as the one hop of a block inside: '…-[m:…]-> { m-[f:_resources]-> { … } }'",
+                span,
+            );
+            return;
+        }
+        if is_head {
+            return;
+        }
+        let Some(root) = root else {
+            if self.version >= 5 {
+                self.report(
+                    codes::RESOURCES_NOT_EXTRACTED,
+                    "'-[:_resources]->' with no root reads the event's record, and '-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }'). For the event's files, name the event as a parameter and walk the edge its system declares to them.",
+                    span,
+                );
+            }
+            return;
+        };
+        let root = match root {
+            MExpr::Name { name, .. } => name.text.as_str(),
+            _ => "the root",
+        };
+        self.report(
+            codes::RESOURCE_WALK_UNREAD,
+            format!("a walk that ends in -[:_resources]-> is read here from no record — '{root}' would be dropped, and the resources read would not be {root}'s. Walk {root}'s resources as a block: '{root}-[f:_resources]-> {{ … f.`url` … }}'"),
+            span,
+        );
+    }
+
+    /// `checkSpecialRecordRead`: `@parent.<field>` and `@resource.<field>`
+    /// read the translation graph, which a run does not have. Inside a
+    /// resource hop's WHERE, `@resource.<field>` is the bare field name, so
+    /// the rewrite is exact.
+    pub fn check_special_record_read(&mut self, text: &str, span: Span, extent: Option<Span>, in_resource_where: bool) {
+        let read = text.strip_prefix('@').unwrap_or(text);
+        if let Some(field) = read.strip_prefix("parent.") {
+            self.report(
+                codes::PARENT_READ_RETIRED,
+                format!("'@parent.{field}' is retired — it read the translation graph's parent result, which a movement run does not have. Keep the parent write's handle and write the child off it: 'co = write crm-[:Companies]-> {{ … }}', then 'write co-[:Team]-> {{ … }}'"),
+                span,
+            );
+            return;
+        }
+        let Some(field) = read.strip_prefix("resource.") else { return };
+        let known = RESOURCE_FIELDS.contains(&field);
+        if !in_resource_where || !known {
+            let message = if in_resource_where {
+                format!(
+                    "'@resource.{field}' is retired, and a resource has no field '{field}' — it has {}{}. Inside a -[:_resources WHERE …]-> filter, write the field's bare name",
+                    RESOURCE_FIELDS.join(", "),
+                    did_you_mean(field, RESOURCE_FIELDS)
+                )
+            } else {
+                format!(
+                    "'@resource.{field}' is retired — outside a -[:_resources WHERE …]-> filter it was always null. Walk the record's resources and read the field off the landing: 'r-[f:_resources]-> {{ … f.`{}` … }}'",
+                    if known { field } else { "url" }
+                )
+            };
+            self.report(codes::RESOURCE_READ_RETIRED, message, span);
+            return;
+        }
+        let mut diagnostic = Diagnostic::error(
+            codes::RESOURCE_READ_RETIRED,
+            format!("'@resource.{field}' is retired — inside a -[:_resources WHERE …]-> filter, write the field's bare name: '{field}'"),
+            span,
+        );
+        if let Some(extent) = extent {
+            diagnostic.fix = Some(serde_json::json!({ "edits": [{ "span": extent, "text": field }] }));
+        }
+        self.push(diagnostic);
+    }
+}
+
+impl Checker<'_> {
+    /// `checkPathHead`'s resource rule (version 5): a head of one
+    /// `-[:_resources]->` hop reads an extraction's source content, so its
+    /// root has to be an extraction's result.
+    pub fn check_head_resources(&mut self, head: &PathHead, probe: &str, root_name: Option<&str>, scope: ScopeId) {
+        if self.version < 5 {
+            return;
+        }
+        let Ok(tree) = movement_parser::expr::parse_expression(probe) else { return };
+        let MExpr::Member { object, .. } = &tree else { return };
+        let MExpr::Path { hops, .. } = object.as_ref() else { return };
+        // `#resources`, its old spelling, is a retired `#` hop of its own.
+        let [hop] = hops.as_slice() else { return };
+        if !is_resource_hop(hop) || hop.label.text.starts_with('#') {
+            return;
+        }
+        let (root_type, may_hold) = match &head.root {
+            None => (None, None),
+            Some(PathRoot::Name { name }) => {
+                use crate::types::TypeEnv as _;
+                let env = self.typing_env(scope);
+                let start = env.resolve_root(name).or_else(|| record_head_position(widen_tuples(env.resolve_scalar(name), self.version).as_ref()));
+                (start, env.resolve_may_hold(name))
+            }
+            Some(PathRoot::Expression { expr }) => {
+                let held = self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty);
+                (record_head_position(held.as_ref()), None)
+            }
+        };
+        self.check_resources_of_extraction(root_type.as_ref(), root_name, may_hold.as_ref(), head.span);
+    }
+
+    /// `checkResourcesOfExtraction`: the rule is structural — is the root an
+    /// extraction's result? — and only the "write this instead" reads the
+    /// schema. A record holding a file itself is pointed at its file field.
+    fn check_resources_of_extraction(&mut self, root_type: Option<&Position>, root_name: Option<&str>, may_hold: Option<&Ty>, span: Span) {
+        let shown = root_name.unwrap_or("the root");
+        let lead = "'-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }')";
+        let Some(root_type) = root_type else {
+            // A head with no root is the engine's to refuse, in every version.
+            let Some(_) = root_name else { return };
+            // A name bound to an `IF` or a `COALESCE`: an extraction's result
+            // when every arm provably is one.
+            if let Some(may_hold) = may_hold {
+                let arms = match may_hold {
+                    Ty::Union(members) => members.clone(),
+                    other => vec![other.clone()],
+                };
+                let extracted = arms.iter().all(|arm| match strip_absent(arm) {
+                    Ty::Record(Some(position)) => matches!(unwrap_maybe_empty(position), Position::Extract { .. }),
+                    _ => false,
+                });
+                if extracted {
+                    return;
+                }
+            }
+            self.report(
+                codes::RESOURCES_NOT_EXTRACTED,
+                format!("'{shown}' is not provably an extraction's result, and {lead}. A record reaches its files over an edge its system declares: walk that edge instead."),
+                span,
+            );
+            return;
+        };
+        let position = unwrap_maybe_empty(root_type);
+        if matches!(position, Position::Extract { .. }) {
+            return;
+        }
+        let system_positions = match position {
+            Position::Position(p) => Some((&p.instance, vec![p.position.clone()])),
+            Position::Handle(h) => Some((&h.instance, h.position.iter().cloned().collect())),
+            Position::Union(u) => Some((&u.instance, u.variants.clone())),
+            _ => None,
+        };
+        let instead = match system_positions {
+            None => String::new(),
+            Some((instance, positions)) => {
+                let schema = &instance.schema;
+                let system = format!("'{}'", instance.name);
+                let mut own_files: Vec<&str> = Vec::new();
+                for p in &positions {
+                    for (field, ty) in schema.positions.get(p).map(|s| s.properties.iter()).into_iter().flatten() {
+                        if holds_file(&Ty::from_schema(ty)) && !own_files.contains(&field.as_str()) {
+                            own_files.push(field);
+                        }
+                    }
+                }
+                let edges = file_edges_of(schema, &positions);
+                if let Some(first) = own_files.first() {
+                    let listed = own_files.iter().map(|f| format!("'{f}'")).collect::<Vec<_>>().join(" or ");
+                    format!(" {} holds its file itself, in {listed}: read '{shown}.{}'.", describe_position(position), spell_name(first))
+                } else if let Some(first) = edges.first() {
+                    let listed = edges.iter().map(|e| format!("'{e}'")).collect::<Vec<_>>().join(" or ");
+                    format!(" {system} reaches a record's files over {listed}: write '{shown}-[f:{}]-> {{ … }}'.", spell_name(first))
+                } else {
+                    format!(" {system} exposes no files on {} — it declares no edge to a record that holds one.", describe_position(position))
+                }
+            }
+        };
+        self.report(codes::RESOURCES_NOT_EXTRACTED, format!("'{shown}' is {}, and {lead}.{instead}", describe_position(position)), span);
+    }
+}
+
+fn unwrap_maybe_empty(position: &Position) -> &Position {
+    match position {
+        Position::MaybeEmpty(of) => unwrap_maybe_empty(of),
+        other => other,
+    }
+}
+
+/// `holdsFile`: a file, or a collection that holds one.
+fn holds_file(ty: &Ty) -> bool {
+    match ty {
+        Ty::File => true,
+        Ty::List { of, .. } | Ty::Dict { of, .. } => holds_file(of),
+        Ty::MaybeAbsent(of) => holds_file(of),
+        Ty::Tuple { of, .. } => of.iter().flatten().any(holds_file),
+        _ => false,
+    }
+}
+
+/// `fileEdgesOf`: the edges a record reaches files over — the one its system
+/// declared as its resources, else every readable edge to a record holding a file.
+fn file_edges_of(schema: &InstanceSchema, positions: &[String]) -> Vec<String> {
+    let mut declared: Vec<String> = Vec::new();
+    let mut filed: Vec<String> = Vec::new();
+    for position in positions {
+        for (name, edge) in schema.positions.get(position).map(|p| p.edges.iter()).into_iter().flatten() {
+            if edge.readable == Some(false) {
+                continue;
+            }
+            if edge.resources == Some(true) {
+                if !declared.contains(name) {
+                    declared.push(name.clone());
+                }
+                continue;
+            }
+            let landings = schema.unions.as_ref().and_then(|u| u.get(&edge.target)).cloned().unwrap_or_else(|| vec![edge.target.clone()]);
+            let holds = landings.iter().any(|l| schema.positions.get(l).is_some_and(|p| p.properties.values().any(|t| holds_file(&Ty::from_schema(t)))));
+            if holds && !filed.contains(name) {
+                filed.push(name.clone());
+            }
+        }
+    }
+    if declared.is_empty() { filed } else { declared }
 }
