@@ -6,6 +6,7 @@
 pub mod arg_fit;
 pub mod calls;
 pub mod closures;
+pub mod collection_config;
 pub mod extraction;
 pub mod flow;
 pub mod imports;

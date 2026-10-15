@@ -67,3 +67,19 @@ fn a_builtin_argument_of_the_wrong_kind_is_refused_from_version_3() {
     assert!(codes(source, 3).iter().any(|(c, m)| c == "MOV_BUILTIN_ARG_TYPE" && m == message));
     assert!(!has(&codes(source, 2), "MOV_BUILTIN_ARG_TYPE"));
 }
+
+#[test]
+fn a_collection_op_reads_its_settings_as_written() {
+    let source = "movement main(e: <number>) {\n  names = [\"a\", \"b\"]\n  x = MAP(names, { concurrency: 2, initialConcurrency: 4 }, (t) => { return t })\n}";
+    let found = codes(source, 3);
+    let message = "'MAP' runs its first batch 4 at a time and the rest 2 at a time — the first batch is the warm-up, so it is never the wider one. Lower initialConcurrency, or raise concurrency.";
+    assert!(found.iter().any(|(c, m)| c == "MOV_COLLECTION_OP_CONFIG" && m == message), "{found:?}");
+}
+
+#[test]
+fn a_collection_ops_function_takes_its_members_type() {
+    let source = "movement main(e: <number>) {\n  xs = [1, 2]\n  x = MAP(xs, (t) => { return UPPER(t) })\n  y = MAP(e, (t) => { return t })\n}";
+    let found = codes(source, 3);
+    assert!(found.iter().any(|(c, m)| c == "MOV_BUILTIN_ARG_TYPE" && m.starts_with("UPPER's 'text' takes text, and this is number")), "{found:?}");
+    assert!(found.iter().any(|(c, m)| c == "MOV_COLLECTION_OP_NOT_A_COLLECTION" && m.starts_with("'MAP' reads a collection, and this is number")), "{found:?}");
+}

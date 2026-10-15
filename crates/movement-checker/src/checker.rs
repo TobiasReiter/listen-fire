@@ -672,6 +672,21 @@ impl<'c> Checker<'c> {
     /// `checkClosure`, with whether calling the closure may wait: its body
     /// is its own function, so what it does is not the writer's.
     pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Vec<Span>, bool) {
+        self.check_closure_supplied(closure, scope, self_name, label, supplied, &[])
+    }
+
+    /// `checkClosure` with `suppliedParams`: the caller supplies the first
+    /// `supplied` parameters, and `types` says what it hands each, where the
+    /// closure leaves the type out (contextual typing).
+    pub fn check_closure_supplied(
+        &mut self,
+        closure: &ClosureExpression,
+        scope: ScopeId,
+        self_name: Option<&str>,
+        label: &str,
+        supplied: usize,
+        types: &[crate::types::position::PlaneType],
+    ) -> (Vec<Span>, bool) {
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
@@ -682,6 +697,9 @@ impl<'c> Checker<'c> {
             if let Some(type_) = &param.type_ {
                 self.report_param_position(type_, scope);
                 self.type_param(body, &param.name, type_, scope);
+            } else if let Some(given) = types.get(index) {
+                let types = crate::types::scope_env::SymbolTypes { pos: given.pos.as_deref().cloned(), field: given.field.clone(), ..Default::default() };
+                self.set_types(body, &param.name, types);
             }
         }
         let own = self_name.and_then(|name| self.declare_closure_self(name, closure, body));
