@@ -955,7 +955,7 @@ fn record_surface(position: &Position) -> Option<crate::types::declared::Surface
             Some(p) => crate::types::declared::schema_surface(&h.instance.schema, p),
             None => Some(crate::types::declared::Surface { properties: h.result_shape.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect(), edges: Vec::new() }),
         },
-        Position::Extract { .. } => None,
+        Position::Extract { node, .. } => crate::types::declared::extract_surface(node),
         Position::MaybeEmpty(of) => record_surface(of),
         other => supplied_surface(other),
     }

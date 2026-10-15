@@ -23,8 +23,13 @@ use movement_parser::catalog::types::TriggerConfigFormat;
 use movement_parser::lowering::expression::{Expression, ListElement, StaticValue};
 use serde_json::json;
 
+use indexmap::IndexMap;
+use movement_parser::catalog::types::EdgeSchema;
+
 use crate::checker::Checker;
 use crate::codes;
+use crate::types::Ty;
+use crate::types::position::{LocalEdge, LocalNode, Position};
 use crate::cron::cron_schedule_error;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::families::names::spell_name;
@@ -774,28 +779,33 @@ impl Checker<'_> {
     }
 
     /// `checkCallback`: `callback({ … })` or `callback(movement, args…)`.
-    pub fn check_callback(&mut self, callback: &CallbackExpression, scope: ScopeId) {
-        match &callback.subject {
+    /// Hands back the fire-time signature (`CallbackParams`).
+    pub fn check_callback(&mut self, callback: &CallbackExpression, scope: ScopeId) -> Vec<(String, Option<Ty>)> {
+        let params = match &callback.subject {
             CallbackSubject::Inline { closure, .. } => {
                 // TODO(type-core): the TypeScript checks each parameter's type as
                 // the closure declares it; here they are checked just before.
-                for param in &closure.params {
-                    self.check_callback_param_type(param.type_.as_ref(), &param.name, Some(scope), None);
-                }
+                let params = closure
+                    .params
+                    .iter()
+                    .map(|param| (param.name.clone(), self.check_callback_param_type(param.type_.as_ref(), &param.name, Some(scope), None)))
+                    .collect();
                 let (_, suspends) = self.check_closure_walked(closure, scope, None, "a callback body", 0);
                 if suspends {
                     self.refuse_unresumable_wait("a callback body", closure.span);
                 }
                 self.absorb_suspend(suspends);
+                params
             }
             CallbackSubject::Named { movement, args, name_span, span } => self.check_callback_named(movement, args, *name_span, *span, scope),
-        }
+        };
         self.check_callback_config(&callback.config, scope);
+        params
     }
 
     /// `checkCallbackNamed`: a movement deferred by name; the parameters its
     /// arguments leave out are the callback's fire-time signature.
-    fn check_callback_named(&mut self, movement: &str, args: &[CallArg], name_span: Span, span: Span, scope: ScopeId) {
+    fn check_callback_named(&mut self, movement: &str, args: &[CallArg], name_span: Span, span: Span, scope: ScopeId) -> Vec<(String, Option<Ty>)> {
         let callee = match self.scopes.resolve(scope, &self.callee_name(movement, scope)) {
             Resolution::Found(id) => Some(id),
             _ => None,
@@ -817,9 +827,9 @@ impl Checker<'_> {
         self.check_callback_suspends(movement, name_span, scope);
         self.check_callback_arguments(movement, args, span, scope);
         if kind != Some(SymbolKind::Movement) {
-            return;
+            return Vec::new();
         }
-        let Some(info) = callee.and_then(|id| self.listens.movements.get(&id)) else { return };
+        let Some(info) = callee.and_then(|id| self.listens.movements.get(&id)) else { return Vec::new() };
         let params = info.params.clone();
         let mut supplied = HashSet::new();
         for (index, arg) in args.iter().enumerate() {
@@ -834,27 +844,33 @@ impl Checker<'_> {
                 }
             }
         }
-        for param in params.iter().filter(|p| !supplied.contains(&p.name)) {
-            self.check_callback_param_type(param.type_.as_ref(), &param.name, None, Some(name_span));
-        }
+        params
+            .iter()
+            .filter(|p| !supplied.contains(&p.name))
+            .map(|param| (param.name.clone(), self.check_callback_param_type(param.type_.as_ref(), &param.name, None, Some(name_span))))
+            .collect()
     }
 
     /// `checkCallbackParamType`: a fire-time parameter is one scalar a
     /// platform sends. `scope` is set when the callback declares it itself.
-    fn check_callback_param_type(&mut self, type_: Option<&ParamTypeRef>, name: &str, scope: Option<ScopeId>, at: Option<Span>) {
-        let Some(type_) = type_ else { return };
+    /// The parameter's scalar type, when it has one.
+    fn check_callback_param_type(&mut self, type_: Option<&ParamTypeRef>, name: &str, scope: Option<ScopeId>, at: Option<Span>) -> Option<Ty> {
+        let type_ = type_?;
         let reference = match type_ {
             ParamTypeRef::Value(value) => {
                 let message = format!(
                     "a callback's parameter '{name}' is a value the platform sends when the callback fires, one per control, so it has to be a single scalar type (<text>, <number>, <boolean>, <date>, <datetime>, <json>, <file>) — '<{}>' is more than one. Supply it as a fixed argument instead.",
                     spell_value_type(value)
                 );
-                return self.report(codes::CALLBACK_PARAM_NOT_VALUE, message, at.unwrap_or(value_type_span(value)));
+                self.report(codes::CALLBACK_PARAM_NOT_VALUE, message, at.unwrap_or(value_type_span(value)));
+                return None;
             }
             ParamTypeRef::Name(reference) => reference,
         };
-        if reference.hops_raw.is_none() && parse_field_type_name(Some(&reference.graph)).is_some() {
-            return;
+        if reference.hops_raw.is_none()
+            && let Some(scalar) = parse_field_type_name(Some(&reference.graph))
+        {
+            return Some(Ty::from_schema(&scalar));
         }
         let span = at.unwrap_or(reference.span);
         if let Some(scope) = scope {
@@ -866,6 +882,7 @@ impl Checker<'_> {
             reference.hops_raw.as_deref().unwrap_or("")
         );
         self.report(codes::CALLBACK_PARAM_NOT_VALUE, message, span);
+        None
     }
 
     /// `checkCallbackConfig`: `{ once: <boolean>, ttl: <duration> }`, closed.
@@ -1102,4 +1119,30 @@ mod tests {
         assert_eq!(scalar_literal_kind("\"x\""), Some("text"));
         assert_eq!(scalar_literal_kind("yes"), None);
     }
+}
+
+/// `callbackType`: a callback is a local node with `.id` / `.url` reads and an
+/// awaitable `Called` edge, landing on the call — `At` plus one field per
+/// typed fire-time parameter.
+pub fn callback_type(params: Vec<(String, Option<Ty>)>) -> Position {
+    let mut fields = IndexMap::new();
+    fields.insert("At".to_string(), Some(Ty::Datetime));
+    for (name, ty) in params {
+        if let Some(ty) = ty {
+            fields.insert(name, Some(ty));
+        }
+    }
+    let call = Position::Local(LocalNode { label: "a callback's call".to_string(), reads: fields, edges: None, run_built: None, extracted: None });
+    let schema = EdgeSchema {
+        target: "Called".to_string(),
+        awaitable: Some(true),
+        watchable: Some(true),
+        resolves_empty: Some(true),
+        sequenced: Some(movement_parser::catalog::types::EdgeSequencing::Arrival),
+        ..crate::types::position::edge_schema_to("Called")
+    };
+    let mut edges = IndexMap::new();
+    edges.insert("Called".to_string(), LocalEdge { schema, target: Some(call), structural: false, deferred: false, references: false });
+    let reads = IndexMap::from([("id".to_string(), Some(Ty::Text)), ("url".to_string(), Some(Ty::Text))]);
+    Position::Local(LocalNode { label: "a callback".to_string(), reads, edges: Some(edges), run_built: None, extracted: None })
 }

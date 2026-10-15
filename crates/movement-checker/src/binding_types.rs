@@ -142,6 +142,8 @@ impl Checker<'_> {
         }
         if let Some(pos) = &bound.pos {
             types = Some(SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
+        } else if bound.record {
+            types = Some(SymbolTypes { is_record: true, ..SymbolTypes::default() });
         }
         if let Some((returned, ordering)) = &bound.collected {
             types = Some(collected_types(returned, *ordering));
