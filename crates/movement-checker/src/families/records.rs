@@ -113,11 +113,80 @@ pub fn check_stdlib_whole_value_arg(typing: &mut Typing, function: &Builtin, typ
                 function.name
             ),
         );
+        return;
     }
-    // TODO(nodes): the graph checks — a reference edge holding records read
-    // live from a system (STDLIB_ARG_NOT_RECORD), and a lazy edge
-    // (STDLIB_ARG_LAZY_EDGE) — need a node literal's edges to carry
-    // `references` and `deferred`, which the nodes family's literal typing sets.
+    let Some(position) = position else { return };
+    // A graph holding references holds the real records, so one read live
+    // from a system is refused through the graph as it is on its own.
+    if let Some(edge) = live_reference_within(typing, &position) {
+        typing.report(
+            codes::STDLIB_ARG_NOT_RECORD,
+            format!(
+                "`{}` writes out a record whose '{edge}' edge holds records read live from a system, one field at a time — copy the fields you want into the graph with a body ('{edge}: … -> {{ field: x.Field }}') and write out that",
+                function.name
+            ),
+        );
+        return;
+    }
+    if let Some(edge) = deferred_edge_within(&position) {
+        typing.report(
+            codes::STDLIB_ARG_LAZY_EDGE,
+            format!(
+                "`{}` writes out a record whose '{edge}' edge is a lazy walk that has not run yet — read it first (bind the walk, or await it) and write out what it gave back",
+                function.name
+            ),
+        );
+    }
+}
+
+/// `liveReferenceWithin`: the first reference edge, at any depth inside a
+/// run-local node, that holds records read live from a system.
+// The parameter field-needs note (`onParameter`) is not ported, as above.
+fn live_reference_within(typing: &Typing, position: &Position) -> Option<String> {
+    let Position::Local(local) = (match position {
+        Position::MaybeEmpty(of) => of.as_ref(),
+        other => other,
+    }) else {
+        return None;
+    };
+    for (name, edge) in local.edges.iter().flatten() {
+        let target = match &edge.target {
+            Some(Position::MaybeEmpty(of)) => Some(of.as_ref()),
+            other => other.as_ref(),
+        };
+        let live = match target {
+            Some(Position::Position(record)) => !typing.env.is_declared_graph(&record.instance),
+            Some(Position::Union(union)) => !typing.env.is_declared_graph(&union.instance),
+            Some(Position::Meta { instance }) => !typing.env.is_declared_graph(instance),
+            _ => false,
+        };
+        if edge.references && live {
+            return Some(name.clone());
+        }
+        if let Some(nested) = edge.target.as_ref().and_then(|t| live_reference_within(typing, t)) {
+            return Some(nested);
+        }
+    }
+    None
+}
+
+/// `deferredEdgeWithin`: a `lazy` edge anywhere inside a run-local node.
+fn deferred_edge_within(position: &Position) -> Option<String> {
+    let Position::Local(local) = (match position {
+        Position::MaybeEmpty(of) => of.as_ref(),
+        other => other,
+    }) else {
+        return None;
+    };
+    for (name, edge) in local.edges.iter().flatten() {
+        if edge.deferred {
+            return Some(name.clone());
+        }
+        if let Some(nested) = edge.target.as_ref().and_then(deferred_edge_within) {
+            return Some(nested);
+        }
+    }
+    None
 }
 
 /// `recordArg` of the standard-library function that has one.

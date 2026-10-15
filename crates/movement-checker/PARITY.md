@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **191 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 14826 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 11019 of 11435.
+- Codes at parity: **192 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 14836 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 11029 of 11435.
 - Rust side: 2.4s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2237 | 2241 |
+| checks under v5 | 2360 | 2242 | 2246 |
 | checks v1 | 1535 | 1457 | 1458 |
 | checks v2 | 1956 | 1864 | 1865 |
-| checks v3 | 2403 | 2280 | 2284 |
+| checks v3 | 2403 | 2285 | 2289 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -32,7 +32,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | listens | 12 | 12 | 10671 | 10671 | 0 | 0 | 0 |
 | names | 9 | 9 | 371 | 371 | 0 | 0 | 0 |
 | nodes | 25 | 23 | 314 | 304 | 10 | 0 | 0 |
-| records | 3 | 0 | 59 | 42 | 17 | 0 | 0 |
+| records | 3 | 1 | 59 | 52 | 7 | 0 | 0 |
 | systems | 8 | 8 | 100 | 100 | 0 | 0 | 0 |
 | values | 22 | 10 | 1156 | 967 | 189 | 0 | 0 |
 | versions | 2 | 2 | 7 | 7 | 0 | 0 | 0 |
@@ -209,9 +209,9 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_SORT_NEEDS_KEY | values | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_SORT_NOT_COLLECTION | values | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_STDLIB_ARG_INVALID | calls | 23 | 23 | 0 | 0 | 0 | yes |
-| MOV_STDLIB_ARG_LAZY_EDGE | records | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_STDLIB_ARG_LAZY_EDGE | records | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_STDLIB_ARG_NOT_LITERAL | calls | 17 | 17 | 0 | 0 | 0 | yes |
-| MOV_STDLIB_ARG_NOT_RECORD | records | 26 | 17 | 9 | 0 | 0 |  |
+| MOV_STDLIB_ARG_NOT_RECORD | records | 26 | 23 | 3 | 0 | 0 |  |
 | MOV_TARGET_WHERE_BIND | writes | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_TARGET_WHERE_LOCAL | writes | 3 | 3 | 0 | 0 | 0 | yes |
 | MOV_TARGET_WHERE_NOT_FINAL | writes | 3 | 3 | 0 | 0 | 0 | yes |
