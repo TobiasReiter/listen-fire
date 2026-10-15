@@ -353,6 +353,7 @@ impl<'c> Checker<'c> {
         }
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
+        self.report_slot_typing(&parsed, slot.span, scope);
     }
 
     /// The config slots `checkListen` reads as expressions: every key the

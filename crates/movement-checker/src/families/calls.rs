@@ -31,7 +31,7 @@
 
 use movement_parser::ast::{RValue, MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
-use movement_parser::lowering::expression::Expression;
+use movement_parser::lowering::expression::{Expression, StaticValue};
 use movement_parser::version::since;
 
 use movement_parser::tree::{At, MExpr, MapMember, StringPart};
@@ -150,7 +150,155 @@ use crate::types::position::Position;
 /// Called by the type core after the values family's `observe`, for every
 /// node: a built-in call's argument rules (`checkBuiltinArgs`,
 /// `checkStdlibLiteralArgs`) live here. `crate::types::stdlib` has the signatures.
-pub fn observe(_typing: &mut Typing, _expr: &Expression, _position: Option<&Position>, _operands: &[Option<Ty>], _ty: Option<&Ty>) {}
+pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Position>, _operands: &[Option<Ty>], _ty: Option<&Ty>) {
+    if let Expression::Function { fn_, args } = expr {
+        check_stdlib_literal_args(typing, fn_, args);
+    }
+}
+
+/// The codes this family reports from the typing walk (`Typing.diagnostics`).
+const TYPED_CODES: &[&str] = &[codes::STDLIB_ARG_NOT_LITERAL, codes::STDLIB_ARG_INVALID];
+
+impl Checker<'_> {
+    /// `checkExprSlot`'s typing walk: what it found, reported where the
+    /// slot is. Only this family's codes surface here — the other families'
+    /// typing codes are theirs to surface.
+    pub fn report_slot_typing(&mut self, parsed: &Expression, span: Span, scope: ScopeId) {
+        let env = self.typing_env(scope);
+        let mut typing = Typing::new(&env, self.version, span);
+        typing.infer(parsed);
+        let found: Vec<_> = typing.diagnostics.into_iter().filter(|d| TYPED_CODES.contains(&d.code.as_str())).collect();
+        for diagnostic in found {
+            self.push(diagnostic);
+        }
+    }
+}
+
+/// A literal argument a standard-library function parses: what it is, and
+/// what is wrong with a written one (`None` when nothing is, or when this
+/// checker cannot tell).
+struct LiteralArg {
+    index: usize,
+    what: &'static str,
+    check: fn(&str) -> Option<String>,
+}
+
+/// `literalArgs` of each standard-library function that has them, with its
+/// signature.
+fn literal_args_of(id: &str) -> Option<(&'static str, &'static [LiteralArg])> {
+    const FORMAT: &[LiteralArg] = &[LiteralArg { index: 1, what: "the format pattern", check: check_date_format_pattern }];
+    const TODAY: &[LiteralArg] = &[LiteralArg { index: 0, what: "the time zone", check: check_time_zone }];
+    const AT: &[LiteralArg] = &[
+        LiteralArg { index: 1, what: "the time of day", check: check_wall_clock_time },
+        LiteralArg { index: 2, what: "the time zone", check: check_time_zone },
+    ];
+    const SERIALISE: &[LiteralArg] = &[LiteralArg { index: 1, what: "the format", check: check_serialise_format }];
+    const NUMBER_FORMAT: &[LiteralArg] = &[LiteralArg { index: 1, what: "the format style", check: check_number_format_style }];
+    Some(match id.to_ascii_lowercase().as_str() {
+        "date.format" => ("DATE.FORMAT(value, pattern)", FORMAT),
+        "date.today" => ("DATE.TODAY(zone)", TODAY),
+        "datetime.at" => ("DATETIME.AT(date, time, zone)", AT),
+        "text.serialise" => ("TEXT.SERIALISE(value, format)", SERIALISE),
+        "number.format" => ("NUMBER.FORMAT(number, style)", NUMBER_FORMAT),
+        _ => return None,
+    })
+}
+
+/// `checkStdlibLiteralArgs`: a parsed argument is written down, and parses.
+fn check_stdlib_literal_args(typing: &mut Typing, id: &str, args: &[Expression]) {
+    let Some((signature, declared)) = literal_args_of(id) else { return };
+    for literal in declared {
+        let Some(arg) = args.get(literal.index) else { continue };
+        let Expression::Static { value: StaticValue::String(written) } = arg else {
+            typing.report(
+                codes::STDLIB_ARG_NOT_LITERAL,
+                format!("{signature} reads {}, so it has to be written down — a computed one can't be checked here, and a mistake in it would show up in the output instead. Write the text in place.", literal.what),
+            );
+            continue;
+        };
+        if let Some(problem) = (literal.check)(written) {
+            typing.report(codes::STDLIB_ARG_INVALID, problem);
+        }
+    }
+}
+
+const DATE_FORMAT_TOKENS: &[&str] = &["YYYY", "YY", "MMMM", "MMM", "MM", "M", "DD", "D", "dddd", "ddd", "HH", "H", "mm", "m", "ss", "s"];
+
+/// `checkDateFormatPattern`: every run of letters splits, where the letter
+/// changes, into tokens.
+fn check_date_format_pattern(pattern: &str) -> Option<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_alphabetic() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        let part: String = chars[start..i].iter().collect();
+        let mut runs = Vec::new();
+        let mut j = start;
+        while j < i {
+            let k = (j..i).find(|&k| chars[k] != chars[j]).unwrap_or(i);
+            runs.push(chars[j..k].iter().collect::<String>());
+            j = k;
+        }
+        if runs.iter().all(|run| DATE_FORMAT_TOKENS.contains(&run.as_str())) {
+            continue;
+        }
+        let closest = closest_date_format_token(&part).map(|t| format!(" Did you mean '{t}'?")).unwrap_or_default();
+        return Some(format!(
+            "'{part}' isn't a date format token.{closest} The tokens are {} (year, month, day, weekday, hour, minute, second); anything that is not a letter is printed as written.",
+            DATE_FORMAT_TOKENS.join(", ")
+        ));
+    }
+    None
+}
+
+/// `closestDateFormatToken`: same case first, then the same letter; the one
+/// closest in length, the earliest on a tie.
+fn closest_date_format_token(run: &str) -> Option<&'static str> {
+    let head = run.chars().next()?;
+    let same_case: Vec<&str> = DATE_FORMAT_TOKENS.iter().copied().filter(|t| t.starts_with(head)).collect();
+    let same_letter = if same_case.is_empty() {
+        DATE_FORMAT_TOKENS.iter().copied().filter(|t| t.chars().next().is_some_and(|c| c.eq_ignore_ascii_case(&head))).collect()
+    } else {
+        same_case
+    };
+    let length = run.chars().count();
+    same_letter.into_iter().reduce(|best, t| if t.len().abs_diff(length) < best.len().abs_diff(length) { t } else { best })
+}
+
+/// `checkTimeZone` needs the IANA zone database, which this crate does not
+/// carry: a written zone is taken as it stands.
+fn check_time_zone(_zone: &str) -> Option<String> {
+    None
+}
+
+/// `wallClockTimeError`: a 24-hour `HH:mm` reading.
+fn check_wall_clock_time(time: &str) -> Option<String> {
+    let b = time.trim().as_bytes();
+    let ok = b.len() == 5
+        && b[2] == b':'
+        && matches!((b[0], b[1]), (b'0' | b'1', b'0'..=b'9') | (b'2', b'0'..=b'3'))
+        && matches!((b[3], b[4]), (b'0'..=b'5', b'0'..=b'9'));
+    (!ok).then(|| format!("'{time}' is not a time of day — write it as 24-hour HH:mm (e.g. \"07:00\", \"18:30\")"))
+}
+
+fn check_serialise_format(format: &str) -> Option<String> {
+    if format == "JSON" {
+        return None;
+    }
+    let near = if format.eq_ignore_ascii_case("JSON") { "did you mean \"JSON\"? " } else { "" };
+    Some(format!("'{format}' isn't a format TEXT.SERIALISE writes — {near}the formats are \"JSON\"."))
+}
+
+fn check_number_format_style(style: &str) -> Option<String> {
+    (!matches!(style, "compact" | "grouped")).then(|| format!("'{style}' isn't a number format style — write \"compact\" or \"grouped\"."))
+}
 
 /// `spanWithin`: the place `pos` (a UTF-16 offset into the slot's text)
 /// stands in the file, through to the slot's end.

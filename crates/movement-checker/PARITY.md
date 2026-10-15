@@ -2,10 +2,10 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **40 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 1034 of 15246; 0 extra in Rust.
+- Codes at parity: **41 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 1070 of 15246; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 1135 of 11435.
-- Rust side: 4.6s; 0 records the Rust parser or catalog refused; 0 panics.
+- Rust side: 5.9s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -24,7 +24,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| calls | 26 | 12 | 476 | 323 | 152 | 0 | 1 |
+| calls | 26 | 13 | 476 | 359 | 116 | 0 | 1 |
 | closures | 14 | 12 | 305 | 281 | 24 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
 | flow | 10 | 7 | 78 | 58 | 20 | 0 | 0 |
@@ -208,9 +208,9 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_SORT_KEY_ON_WALK | values | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_SORT_NEEDS_KEY | values | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_SORT_NOT_COLLECTION | values | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_STDLIB_ARG_INVALID | calls | 23 | 0 | 23 | 0 | 0 |  |
+| MOV_STDLIB_ARG_INVALID | calls | 23 | 19 | 4 | 0 | 0 |  |
 | MOV_STDLIB_ARG_LAZY_EDGE | records | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_STDLIB_ARG_NOT_LITERAL | calls | 17 | 0 | 17 | 0 | 0 |  |
+| MOV_STDLIB_ARG_NOT_LITERAL | calls | 17 | 17 | 0 | 0 | 0 | yes |
 | MOV_STDLIB_ARG_NOT_RECORD | records | 26 | 0 | 26 | 0 | 0 |  |
 | MOV_TARGET_WHERE_BIND | writes | 2 | 0 | 2 | 0 | 0 |  |
 | MOV_TARGET_WHERE_LOCAL | writes | 3 | 0 | 3 | 0 | 0 |  |
