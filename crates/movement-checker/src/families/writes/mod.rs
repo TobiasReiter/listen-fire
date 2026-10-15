@@ -128,7 +128,7 @@ impl Checker<'_> {
         self.push(diagnostic);
     }
 
-    fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
+    pub(crate) fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
         let mut diagnostic = Diagnostic::error(code, message, span);
         diagnostic.severity = Some(Severity::Warning);
         diagnostic.upgrade = Some(true);

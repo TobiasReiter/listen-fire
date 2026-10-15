@@ -557,6 +557,79 @@
      }
     }
    }
+  },
+  "maybe": {
+   "contractVersion": 1,
+   "adapters": {
+    "attio": {
+     "canFire": true,
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "crm_cred": {
+       "positions": {
+        "company": {
+         "properties": {
+          "name": "text",
+          "size": "number"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "companies": {
+         "target": "company"
+        }
+       },
+       "writableRoots": {
+        "company": {
+         "fields": {
+          "name": "text",
+          "size": "number"
+         },
+         "resultShape": {
+          "externalId": "text",
+          "name": "text"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "crm_cred": {
+     "adapters": [
+      "attio"
+     ]
+    }
+   },
+   "plugins": {
+    "score": {
+     "args": [
+      "n"
+     ],
+     "priced": false,
+     "argTypes": {
+      "n": "number"
+     },
+     "requiredArgs": [
+      "n"
+     ],
+     "effects": {
+      "ai": true
+     },
+     "output": {
+      "kind": "value",
+      "type": "text"
+     }
+    }
+   }
   }
  },
  "cases": [
@@ -812,6 +885,94 @@
    "source": "import { slack } from adapters\nchat = slack()\nmovement scan(c: <chat-[:#channel]->>) {\n  sent = node { messages: <chat-[:Channels]->-[:#members]->> }\n  y = 1\n}\nlisten to chat fire scan\n",
    "expected": [
     "MOV_TRAVERSE_UNKNOWN_EDGE 4:27-4:61 chat.channel has no edge '#members' — it has: members"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 1,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_UNRESOLVED 21:23-21:29 Unknown name 'text' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 3,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "__proto__ is no name",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "expected": [
+    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
+    "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
+    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
+    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
+   ]
+  },
+  {
+   "name": "a value that may be a record, handed to a value parameter",
+   "snapshot": "maybe",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "expected": [
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value. Before \"Dancing Wren\" (5) the record is passed through as it is; from it, this is refused"
    ]
   }
  ]

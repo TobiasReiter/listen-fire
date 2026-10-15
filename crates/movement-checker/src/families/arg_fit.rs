@@ -18,7 +18,7 @@ use crate::scope::{Resolution, ScopeId, SymbolId};
 use crate::slots::is_bare_ident;
 use crate::types::scope_env::SymbolTypes;
 use crate::types::field::{
-    Ty, describe_field_type, field_assignable, holds_records, is_maybe_absent, mixes_record_with_value, strip_absent,
+    HeldWalk, Ty, describe_field_type, field_assignable, handle_within, holds_records, is_maybe_absent, mixes_record_with_value, spell_held_steps, strip_absent,
     values_beside_record,
 };
 use crate::types::position::{ClosureParam, Position, ReturnShape, describe_position, positions_match, system_difference};
@@ -31,6 +31,19 @@ pub struct ArgFit<'a> {
     pub positional: bool,
     /// A plugin's call: its arguments are held to what it declares.
     pub plugin: Option<&'a PluginArgTypes<'a>>,
+    /// Who makes the call and what it hands, where no author wrote a call:
+    /// a collection op hands each member to its function.
+    pub caller: Option<ArgCaller>,
+}
+
+pub struct ArgCaller {
+    pub callee: String,
+    pub argument: String,
+}
+
+/// `calleeWords`: the callee as a diagnostic names it.
+fn callee_words(fit: &ArgFit) -> String {
+    fit.caller.as_ref().map_or_else(|| format!("'{}'", fit.callee), |caller| caller.callee.clone())
 }
 
 impl ArgFit<'_> {
@@ -152,7 +165,7 @@ impl Checker<'_> {
                 let name = arg.name().or_else(|| params.get(index).map(|p| p.name.as_str()))?;
                 params.iter().find(|p| p.name == name)
             });
-            let fit = ArgFit { callee, param, index, positional: arg.name().is_none(), plugin };
+            let fit = ArgFit { callee, param, index, positional: arg.name().is_none(), plugin, caller: None };
             self.check_call_arg(&fit, arg, scope);
         }
     }
@@ -254,7 +267,9 @@ impl Checker<'_> {
             return;
         }
         if let Some(param) = fit.field_type() {
-            // TODO(records): `refuseMaybeRecordForValue` (MOV_CALL_ARG_MAYBE_RECORD for a value parameter).
+            if arg_type.is_none() {
+                self.refuse_maybe_record_for_value(fit, param, typed.ty.as_ref(), typed.may_hold.as_ref(), expr.span, expr.raw.trim());
+            }
             let value = arg_type.clone().map(record_of).or(typed.ty);
             let options = ValueArg { span: expr.span, literal: is_record_literal_slot(expr), parsed: typed.expr.as_ref(), slot: Some(expr) };
             self.check_value_arg_fit(fit, param, value.as_ref(), options);
@@ -322,6 +337,49 @@ impl Checker<'_> {
                 describe_arg_place(fit),
                 describe_field_type(mixed),
                 others.join(" or ")
+            ),
+            span,
+        );
+    }
+
+    /// `refuseMaybeRecordForValue`: a value that may be a record (or a file)
+    /// and may be something else, handed to a value parameter that takes
+    /// neither. Its type cannot say so (no union mixes a record with a value);
+    /// what it may hold does. Refused from version 5; from 3 the call ran with
+    /// the record passed through, so an older pin is warned.
+    pub(crate) fn refuse_maybe_record_for_value(&mut self, fit: &ArgFit, param: &Ty, value: Option<&Ty>, may_hold: Option<&Ty>, span: Span, written: &str) {
+        if !since(self.version, 3) || may_hold.is_none() {
+            return;
+        }
+        let walk = HeldWalk::taken_by(Some(param));
+        let Some(hidden) = handle_within(may_hold, &walk) else { return };
+        // The value's own type shows the record: the fit check says it.
+        if handle_within(value, &walk).is_some() {
+            return;
+        }
+        let steps = spell_held_steps(&hidden.steps);
+        let file = matches!(hidden.handle, Ty::File);
+        let held = describe_field_type(&hidden.handle);
+        let where_ = if steps.is_empty() { format!("may be {held}") } else { format!("may hold {held} at '{steps}'") };
+        let repair = if file { "Pass its text ('READ(f)')" } else { "Narrow it to the record with IS and pass a field off it ('r.`Name`')" };
+        let argument = fit.caller.as_ref().map_or_else(|| format!("'{written}'"), |caller| caller.argument.clone());
+        let param_words = describe_field_type(param);
+        let message = format!(
+            "{} expects {param_words}{}, but {argument} {where_} — {}, not a value, and such a union is no {param_words}, as in TypeScript. {repair}, or fill every arm with a value",
+            callee_words(fit),
+            describe_arg_place(fit),
+            if file { "a file" } else { "a record" }
+        );
+        if since(self.version, 5) {
+            self.report(codes::CALL_ARG_MAYBE_RECORD, message, span);
+            return;
+        }
+        self.report_upgrade_warning(
+            codes::CALL_ARG_MAYBE_RECORD,
+            format!(
+                "{message}. Before {} the {} is passed through as it is; from it, this is refused",
+                crate::version::describe(5),
+                if file { "file" } else { "record" }
             ),
             span,
         );
