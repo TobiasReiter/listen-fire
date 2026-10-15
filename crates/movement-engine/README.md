@@ -1397,12 +1397,14 @@ writes back the same way.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, localZone?,
-catalog, dryRun?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
+catalog, dryRun?, nativeCheck?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
 extractionFileChars?, maxCallDepth?, extractionTiers?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
-rehearsal (writes captured, `sleep` fast-forwarded); `resume` is `{state,
+rehearsal (writes captured, `sleep` fast-forwarded); `nativeCheck` makes the
+engine answer `check.program` with the Rust checker instead of asking the host
+(off by default; nothing sets it yet); `resume` is `{state,
 reenter?}`, a `ParkedScopeState` (on the eval wire) to resume rather than a
 run to start; `limitPaused` says the run's pause holds, and `suspendAt` lists
 the addresses to suspend at (both "Parks" above). `languageVersion` is the pin,
