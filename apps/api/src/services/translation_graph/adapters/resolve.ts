@@ -77,6 +77,14 @@ export async function resolveAdapter(input: {
       `Unknown adapter type: ${input.adapterType} (slug: ${slug}). Registered: ${listAdapterTypes().join(', ')} (and no remote_adapter install for this team).`,
     );
   }
+  // Stopgap until remote adapters get per-run credentials: an install serves
+  // only the credential it was installed with. A run naming any other would
+  // otherwise silently act on the install's account instead of the named one.
+  if (input.credentialsId !== undefined && input.credentialsId !== row.credentials_id) {
+    throw new Error(
+      `Remote adapter "${input.adapterType}" serves only its own installed credential; a run cannot name a different credential for it.`,
+    );
+  }
   if (!row.credentials_id) {
     throw new Error(
       `Remote adapter "${input.adapterType}" has no credential configured (credentials_id is null).`,
