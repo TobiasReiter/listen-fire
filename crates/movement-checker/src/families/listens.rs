@@ -106,6 +106,44 @@ fn suggested_listen_key(movement: &str) -> String {
     if slug.is_empty() { "intake".to_string() } else { slug }
 }
 
+/// A file's own listens, set aside while an imported library is checked.
+pub struct FileListens {
+    count: usize,
+    identities: HashSet<String>,
+    aliases: HashSet<String>,
+    dispatchables: Vec<Dispatchable>,
+}
+
+impl ListenState {
+    /// Starts a library's file: its listens are its own.
+    pub fn enter_file(&mut self) -> FileListens {
+        FileListens {
+            count: std::mem::take(&mut self.count),
+            identities: std::mem::take(&mut self.identities),
+            aliases: std::mem::take(&mut self.aliases),
+            dispatchables: std::mem::take(&mut self.dispatchables),
+        }
+    }
+
+    pub fn leave_file(&mut self, outer: FileListens) {
+        self.count = outer.count;
+        self.identities = outer.identities;
+        self.aliases = outer.aliases;
+        self.dispatchables = outer.dispatchables;
+    }
+
+    /// An imported symbol stands for the library's: its declaration too.
+    pub fn adopt(&mut self, local: SymbolId, library: SymbolId) {
+        if let Some(info) = self.movements.get(&library) {
+            let info = MovementInfo { params: info.params.clone(), decl_scope: info.decl_scope };
+            self.movements.insert(local, info);
+        }
+        if let Some(shape) = self.shapes.get(&library).cloned() {
+            self.shapes.insert(local, shape);
+        }
+    }
+}
+
 impl Checker<'_> {
     /// Remembers a movement's declaration on its symbol, once declared in `scope`.
     pub fn note_movement(&mut self, scope: ScopeId, movement: &MovementDeclaration) {

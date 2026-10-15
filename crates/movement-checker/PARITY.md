@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **24 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 11131 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 7700 of 11435.
-- Rust side: 8.1s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **30 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 11183 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 7740 of 11435.
+- Rust side: 5.3s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 1220 | 1220 |
-| checks v1 | 1535 | 878 | 878 |
-| checks v2 | 1956 | 1091 | 1091 |
-| checks v3 | 2403 | 1330 | 1330 |
+| checks under v5 | 2360 | 1227 | 1227 |
+| checks v1 | 1535 | 889 | 889 |
+| checks v2 | 1956 | 1102 | 1102 |
+| checks v3 | 2403 | 1341 | 1341 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -28,9 +28,9 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | closures | 14 | 0 | 305 | 0 | 305 | 0 | 0 |
 | extraction | 20 | 0 | 207 | 0 | 207 | 0 | 0 |
 | flow | 10 | 0 | 78 | 0 | 78 | 0 | 0 |
-| imports | 5 | 1 | 44 | 12 | 32 | 0 | 0 |
-| listens | 12 | 10 | 10671 | 10659 | 12 | 0 | 0 |
-| names | 9 | 7 | 371 | 355 | 16 | 0 | 0 |
+| imports | 5 | 5 | 44 | 44 | 0 | 0 | 0 |
+| listens | 12 | 11 | 10671 | 10667 | 4 | 0 | 0 |
+| names | 9 | 8 | 371 | 367 | 4 | 0 | 0 |
 | nodes | 25 | 0 | 314 | 0 | 314 | 0 | 0 |
 | records | 3 | 0 | 59 | 0 | 59 | 0 | 0 |
 | systems | 8 | 5 | 100 | 84 | 16 | 0 | 0 |
@@ -130,12 +130,12 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_HOP_ORDER_ENGINE | walks | 38 | 0 | 38 | 0 | 0 |  |
 | MOV_HOP_ORDER_UNSUPPORTED | walks | 16 | 0 | 16 | 0 | 0 |  |
 | MOV_IF_WITHOUT_ELSE | flow | 6 | 0 | 6 | 0 | 0 |  |
-| MOV_IMPORT_CYCLE | imports | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_IMPORT_CYCLE | imports | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_IMPORT_DUPLICATE | names | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_IMPORT_FILE_INVALID | imports | 4 | 0 | 4 | 0 | 0 |  |
-| MOV_IMPORT_FILE_UNRESOLVED | imports | 4 | 0 | 4 | 0 | 0 |  |
+| MOV_IMPORT_FILE_INVALID | imports | 4 | 4 | 0 | 0 | 0 | yes |
+| MOV_IMPORT_FILE_UNRESOLVED | imports | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_IMPORT_FILE_UNSUPPORTED | imports | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_IMPORT_NOT_EXPORTED | imports | 20 | 0 | 20 | 0 | 0 |  |
+| MOV_IMPORT_NOT_EXPORTED | imports | 20 | 20 | 0 | 0 | 0 | yes |
 | MOV_IMPORT_UNKNOWN | names | 20 | 20 | 0 | 0 | 0 | yes |
 | MOV_INLINE_BLOCK_RETIRED | closures | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_JSON_OPAQUE | values | 56 | 0 | 56 | 0 | 0 |  |
@@ -155,7 +155,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_LISTEN_MISSING | listens | 10299 | 10299 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_NOT_INSTANCE | listens | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_PARAM_MISMATCH | listens | 142 | 142 | 0 | 0 | 0 | yes |
-| MOV_LISTEN_SHAPE_MISMATCH | listens | 24 | 16 | 8 | 0 | 0 |  |
+| MOV_LISTEN_SHAPE_MISMATCH | listens | 24 | 24 | 0 | 0 | 0 | yes |
 | MOV_LIST_MIXED | values | 21 | 0 | 21 | 0 | 0 |  |
 | MOV_LIST_SPREAD_NOT_A_LIST | values | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_MAP_KEY_OVERWRITTEN | values | 13 | 0 | 13 | 0 | 0 |  |
@@ -164,7 +164,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_MATCH_UNNAMED | writes | 29 | 0 | 29 | 0 | 0 |  |
 | MOV_MEMBERS_NOT_CLOSED | nodes | 8 | 0 | 8 | 0 | 0 |  |
 | MOV_META_UNKNOWN_KEY | walks | 16 | 0 | 16 | 0 | 0 |  |
-| MOV_NAME_UNRESOLVED | names | 246 | 234 | 12 | 0 | 0 |  |
+| MOV_NAME_UNRESOLVED | names | 246 | 246 | 0 | 0 | 0 | yes |
 | MOV_NARROWING | walks | 84 | 0 | 84 | 0 | 0 |  |
 | MOV_NESTED_CALL_SUSPENDS | calls | 6 | 0 | 6 | 0 | 0 |  |
 | MOV_NODE_ARG_SHAPE | nodes | 77 | 0 | 77 | 0 | 0 |  |

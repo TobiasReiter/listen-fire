@@ -36,6 +36,8 @@ pub struct Checker<'c> {
     type_only: usize,
     /// What the listens family remembers across the file.
     pub listens: crate::families::listens::ListenState,
+    /// The resolved file imports, and each library once checked.
+    pub imports: crate::families::imports::ImportState,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -60,6 +62,7 @@ impl<'c> Checker<'c> {
             diagnostics: Vec::new(),
             type_only: 0,
             listens: Default::default(),
+            imports: Default::default(),
         }
     }
 
