@@ -180,6 +180,7 @@ impl<'c> Checker<'c> {
             Statement::Unlink(unlink) => {
                 self.resolve_name(&unlink.from, unlink.span, scope);
                 self.resolve_name(&unlink.to, unlink.span, scope);
+                self.report_absent_edge_end("unlink", &unlink.from, &unlink.edge, Some(&unlink.to), unlink.span, scope);
             }
             Statement::Delete(delete) => {
                 self.resolve_name(&delete.name, delete.span, scope);
@@ -673,6 +674,11 @@ impl<'c> Checker<'c> {
 
     fn check_link(&mut self, link: &movement_parser::ast::LinkExpression, scope: ScopeId) {
         self.resolve_name(&link.from, link.span, scope);
+        let to = match &link.to {
+            LinkTarget::Handle { name } => Some(name.as_str()),
+            LinkTarget::Match { .. } => None,
+        };
+        self.report_absent_edge_end("link", &link.from, &link.edge, to, link.span, scope);
         match &link.to {
             LinkTarget::Handle { name } => {
                 self.resolve_name(name, link.span, scope);

@@ -1241,3 +1241,30 @@ impl crate::checker::Checker<'_> {
         }
     }
 }
+
+impl crate::checker::Checker<'_> {
+    /// `reportAbsentEdgeEnd` (version 4): an end of a link or unlink that may
+    /// not be there; only the first such end is reported.
+    pub fn report_absent_edge_end(&mut self, verb: &str, from: &str, edge: &str, to: Option<&str>, span: movement_parser::ast::Span, scope: crate::scope::ScopeId) {
+        if self.version < 4 {
+            return;
+        }
+        for name in std::iter::once(from).chain(to) {
+            let pos = match self.scopes.resolve(scope, name) {
+                crate::scope::Resolution::Found(id) => self.scopes.symbol(id).types.pos.clone(),
+                _ => None,
+            };
+            let Some(Position::MaybeEmpty(of)) = pos else { continue };
+            self.report(
+                codes::ABSENT_REQUIRED,
+                format!(
+                    "'{name}' is {} that may not be there, so this {verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if {name} != null {{ {verb} {from} -[:{edge}]-> {} }}'.",
+                    crate::types::position::describe_position(&of),
+                    to.unwrap_or("…")
+                ),
+                span,
+            );
+            return;
+        }
+    }
+}
