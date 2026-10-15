@@ -12,6 +12,7 @@ use movement_parser::ast::{
 use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
+use crate::families::returns::Body;
 use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
 
@@ -50,7 +51,7 @@ pub struct Checker<'c> {
     pub zones: &'c dyn crate::host::ZoneLookup,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
     /// The bodies being walked, innermost last, each collecting its `return`s.
-    pub return_stack: Vec<crate::families::calls::ReturnCollector>,
+    pub return_stack: Vec<crate::families::returns::ReturnCollector>,
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
@@ -101,6 +102,8 @@ pub struct Bound {
     pub closure_suspends: bool,
     /// For a function's call: what it hands back.
     pub returned: Option<crate::types::position::ReturnShape>,
+    /// For a closure: what its body was found to hand back.
+    pub closure_returns: Option<crate::types::position::ReturnShape>,
 }
 
 impl<'c> Checker<'c> {
@@ -222,14 +225,10 @@ impl<'c> Checker<'c> {
                 {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
-                self.type_assigned(&assign.name, &assign.value, scope);
-                if let Some(returned) = &bound.returned {
-                    self.set_types(scope, &assign.name, crate::families::arg_fit::types_of_return(returned));
+                if let Some(types) = self.bound_types(Some(&assign.name), &assign.value, &bound, scope) {
+                    self.set_types(scope, &assign.name, types);
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
-                if let Some(pos) = bound.pos {
-                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
-                }
                 self.note_closure_returns(&assign.name, &assign.value, scope);
             }
             Statement::Type(_) => {}
@@ -277,15 +276,14 @@ impl<'c> Checker<'c> {
             }
             Statement::If(statement) => self.check_if(statement, scope),
             Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
-            Statement::Return(statement) => {
-                self.check_rvalue(&statement.value, scope, None, statement.span);
-                self.collect_return(statement.span);
-            }
+            Statement::Return(statement) => self.check_return(statement, scope),
             Statement::Combinator(statement) => {
                 self.report_combinator_form(&statement.combinator, None);
                 self.check_combinator(&statement.combinator, scope);
             }
-            Statement::Collection(statement) => self.check_collection_op(&statement.collection, scope),
+            Statement::Collection(statement) => {
+                self.check_collection_op(&statement.collection, scope);
+            }
             Statement::Error(statement) => self.check_expr_slot(&statement.message, scope),
         }
     }
@@ -337,7 +335,10 @@ impl<'c> Checker<'c> {
                 self.report_combinator_form(combinator, None);
                 self.check_combinator(combinator, scope);
             }
-            RValue::Collection { collection } => self.check_collection_op(collection, scope),
+            RValue::Collection { collection } => {
+                let returned = self.check_collection_op(collection, scope);
+                return Bound { returned: Some(returned), ..Bound::default() };
+            }
             RValue::Members { members } => {
                 self.check_members(members, scope);
             }
@@ -349,8 +350,9 @@ impl<'c> Checker<'c> {
             RValue::Callback { callback } => self.check_callback(callback, scope),
             RValue::Closure { closure } => {
                 let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
-                let (_, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
-                return Bound { is_closure: true, closure_suspends: suspends, ..Bound::default() };
+                let (body, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
+                let returns = self.closure_returns(closure, body.value, scope);
+                return Bound { is_closure: true, closure_suspends: suspends, closure_returns: Some(returns), ..Bound::default() };
             }
             RValue::Node { node } => {
                 let pos = self.check_node_literal(node, scope);
@@ -623,16 +625,18 @@ impl<'c> Checker<'c> {
             self.type_param(body, &param.name, type_, scope);
         }
         self.open_effect_frame();
-        let returns = self.check_body(&movement.body, body, format!("'{}'", movement.name));
+        let what = format!("'{}'", movement.name);
+        let returns = self.check_body(&movement.body, body, what.clone());
         let row = self.close_effect_frame();
-        if let Some(returns) = &movement.return_type {
-            self.check_param_type(returns, scope);
+        if let Some(written) = &movement.return_type {
+            self.check_param_type(written, scope);
+            self.check_declared_return(written, &what, &returns.returns, scope, movement.span);
         }
         if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied()
             && self.scopes.symbol(id).kind == SymbolKind::Movement
         {
             self.record_movement_row(id, row);
-            self.report_movement_cycle(id, movement, !returns.is_empty());
+            self.report_movement_cycle(id, movement, !returns.returns.is_empty());
         }
     }
 
@@ -655,20 +659,20 @@ impl<'c> Checker<'c> {
 
     /// A closure whose caller supplies its parameters' types (a call's
     /// argument): none of them needs one written.
-    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) -> Vec<Span> {
+    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) -> Body {
         self.check_closure_as(closure, scope, self_name, "", usize::MAX)
     }
 
     /// `checkClosure`: `label` says what the closure is, and the caller
     /// supplies the types of its first `supplied` parameters. What its
     /// body returns, where.
-    pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Vec<Span> {
+    pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Body {
         self.check_closure_walked(closure, scope, self_name, label, supplied).0
     }
 
     /// `checkClosure`, with whether calling the closure may wait: its body
     /// is its own function, so what it does is not the writer's.
-    pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Vec<Span>, bool) {
+    pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Body, bool) {
         self.check_closure_supplied(closure, scope, self_name, label, supplied, &[])
     }
 
@@ -683,7 +687,7 @@ impl<'c> Checker<'c> {
         label: &str,
         supplied: usize,
         types: &[crate::types::position::PlaneType],
-    ) -> (Vec<Span>, bool) {
+    ) -> (Body, bool) {
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
@@ -703,8 +707,12 @@ impl<'c> Checker<'c> {
         self.open_effect_frame();
         let returns = self.check_body(&closure.body, body, label.to_string());
         let suspends = self.close_effect_frame();
+        // Reported once, where it is written: a type-only walk sees the same body.
+        if let Some(written) = &closure.return_type {
+            self.check_declared_return(written, label, &returns.returns, scope, closure.span);
+        }
         if let Some(own) = own {
-            self.close_closure_self(own, returns.is_empty());
+            self.close_closure_self(own, returns.returns.is_empty());
         }
         (returns, suspends)
     }
@@ -843,7 +851,7 @@ impl<'c> Checker<'c> {
         let body = self.open_landing(scope, &aliases, block.head.span);
         self.type_hop_aliases(body, &aliases, walk.as_ref());
         let what = assigned.map_or_else(|| "this block".to_string(), |name| format!("the block bound to '{name}'"));
-        let returns = self.check_body(&block.body, body, what);
+        let returns = self.check_body(&block.body, body, what).returns;
         let bound: Vec<String> = self
             .scopes
             .scope(body)

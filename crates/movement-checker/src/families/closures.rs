@@ -29,6 +29,8 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
+use crate::types::field::{Ty, collection_order_of, list_of};
+use crate::types::position::{PlaneType, ReturnShape};
 
 /// Whether a body hands a value back: a `return` at its own level or in an
 /// `if` arm (a block, a closure or a movement inside it returns for itself).
@@ -298,7 +300,7 @@ impl Checker<'_> {
                     self.report_arm_arity(kind, expected, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
                 self.absorb_suspend(suspends);
-                Some(!returns.is_empty() || closure.return_type.is_some())
+                Some(!returns.returns.is_empty() || closure.return_type.is_some())
             }
             ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, kind, scope, expected),
         }
@@ -361,9 +363,10 @@ impl Checker<'_> {
         self.report(codes::COLLECTION_OP_ARITY, message, span);
     }
 
-    /// `checkCollectionOp`, the parts that need no types: the slots, and the
-    /// function the op is given.
-    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
+    /// `checkCollectionOp`: the slots, the function the op is given, and
+    /// the op's value — what the function hands back, collected as the op
+    /// collects it.
+    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) -> ReturnShape {
         let spelling = op_spelling(op.op);
         let source = self.check_expr_slot_with(&op.source, scope, crate::checker::SlotOptions::default());
         let init = op.init.as_ref().map(|init| self.check_expr_slot_with(init, scope, crate::checker::SlotOptions::default()));
@@ -371,16 +374,17 @@ impl Checker<'_> {
             self.check_collection_config(config, spelling, None);
         }
         let element = self.collection_element(&op.source, source.expr.as_ref(), source.ty.as_ref(), spelling, scope);
+        let carried = init.and_then(|i| i.ty);
         let arity = if op.op == CollectionOp::Reduce { 2 } else { 1 };
         // The function is called once per member, so a parameter it leaves
         // untyped takes the member's type (REDUCE's first, the carried value's).
-        let as_value = |ty: Option<crate::types::Ty>| crate::types::position::PlaneType { field: ty, pos: None };
+        let as_value = |ty: Option<Ty>| PlaneType { field: ty, pos: None };
         let supplied = if op.op == CollectionOp::Reduce {
-            vec![as_value(init.and_then(|i| i.ty)), as_value(element)]
+            vec![as_value(carried.clone()), as_value(element.clone())]
         } else {
-            vec![as_value(element)]
+            vec![as_value(element.clone())]
         };
-        let returns = match &op.r#fn {
+        let (returns, shape) = match &op.r#fn {
             ArmExpression::Closure { closure, span } => {
                 if closure.params.len() != arity {
                     self.report_arm_arity(spelling, arity, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
@@ -394,9 +398,13 @@ impl Checker<'_> {
                     );
                 }
                 self.absorb_suspend(suspends);
-                Some(!returned.is_empty() || closure.return_type.is_some())
+                let returns = Some(!returned.returns.is_empty() || closure.return_type.is_some());
+                (returns, self.closure_returns(closure, returned.value, scope))
             }
-            ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, spelling, scope, arity),
+            ArmExpression::Ref { name, span } => {
+                let returns = self.check_named_arm(name, *span, spelling, scope, arity);
+                (returns, self.named_function_return(name, scope))
+            }
         };
         if op.op != CollectionOp::Map && returns == Some(false) {
             self.report(
@@ -405,5 +413,45 @@ impl Checker<'_> {
                 arm_span(&op.r#fn),
             );
         }
+        // A MAP function with no `return` leaves each slot absent.
+        let shape = if op.op == CollectionOp::Map && !shape.returns { ReturnShape { returns: true, plane: as_value(Some(Ty::Absent)), may_hold: None } } else { shape };
+        let returned = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
+        let ordering = collection_order_of(source.ty.as_ref());
+        if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
+            let diagnostics = {
+                let env = self.typing_env(scope);
+                let mut typing = crate::types::Typing::new(&env, self.version, arm_span(&op.r#fn));
+                crate::families::values::require_dict_key(&mut typing, returned.as_ref(), &format!("filed under by '{spelling}'"));
+                typing.diagnostics
+            };
+            for diagnostic in diagnostics {
+                self.push(diagnostic);
+            }
+        }
+        let value = match op.op {
+            CollectionOp::Map => returned.map(|r| list_of(r, ordering)),
+            CollectionOp::Filter => element.map(|e| list_of(e, ordering)),
+            CollectionOp::Reduce => returned.or(carried),
+            CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Box::new(list_of(e, ordering)), shape: None }),
+            CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Box::new(e), shape: None }),
+        };
+        // What the function's returns may hold beyond that type travels with
+        // the op's value, as a call's does: MAP's as members, REDUCE's as itself.
+        let may_hold = match op.op {
+            CollectionOp::Map => shape.may_hold.map(|held| list_of(held, ordering)),
+            CollectionOp::Reduce => shape.may_hold,
+            _ => None,
+        };
+        ReturnShape { returns: true, plane: as_value(value), may_hold }
+    }
+
+    /// What a function named as an op's function hands back.
+    fn named_function_return(&mut self, written: &str, scope: ScopeId) -> ReturnShape {
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return crate::families::returns::unknown_return() };
+        if self.scopes.symbol(id).kind == SymbolKind::Movement {
+            return self.movement_return(id);
+        }
+        self.called_closure(id).map_or_else(crate::families::returns::unknown_return, |closure| closure.returns)
     }
 }

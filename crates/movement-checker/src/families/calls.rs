@@ -24,8 +24,6 @@
 //! - MOV_RECURSIVE_RETURN_TYPE
 //! - MOV_RETURN_NOT_A_VALUE
 //! - MOV_RETURN_OUTSIDE_BODY
-//! - MOV_RETURN_PLANE_MISMATCH
-//! - MOV_RETURN_TYPE
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
 
@@ -531,14 +529,10 @@ impl Checker<'_> {
             self.scopes.declare(scope, symbol);
             // The name holds what the call hands back, as a binding of it
             // would (`boundCallShape`), typed in the order a binding is.
-            if let Ok(value) = &parsed {
-                self.type_assigned(&name, value, scope);
-            }
-            if let Some(returned) = &bound.returned {
-                self.set_types(scope, &name, crate::families::arg_fit::types_of_return(returned));
-            }
-            if let Some(pos) = bound.pos {
-                self.set_types(scope, &name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
+            if let Ok(value) = &parsed
+                && let Some(types) = self.bound_types(Some(&name), value, &bound, scope)
+            {
+                self.set_types(scope, &name, types);
             }
         }
         Some(rewritten)
@@ -790,7 +784,9 @@ impl Checker<'_> {
             CallReading::Function => {
                 self.check_call(call, scope);
             }
-            CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
+            CallReading::Collection(collection) => {
+                self.check_collection_op(&collection, scope);
+            }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Members(members) => {
@@ -814,7 +810,7 @@ impl Checker<'_> {
                 return Some(returned);
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
+            CallReading::Collection(collection) => return Some(self.check_collection_op(&collection, scope)),
             CallReading::Members(members) => {
                 self.check_members(&members, scope);
             }
@@ -1294,7 +1290,7 @@ impl Checker<'_> {
 
     /// A movement's declaration and the scope it is declared in.
     pub fn movement_declaration(&self, id: SymbolId) -> Option<(Rc<MovementDeclaration>, ScopeId)> {
-        self.inference.declarations.get(&id).map(|(m, scope)| (m.clone(), *scope))
+        self.inference.declarations.get(&self.declared_id(id)).map(|(m, scope)| (m.clone(), *scope))
     }
 
     /// The callee a call resolved to: the parameters its arguments bind, when
@@ -1373,38 +1369,7 @@ impl Checker<'_> {
     }
 }
 
-/// `ReturnCollector`: a body's `return`s, as they are met.
-pub struct ReturnCollector {
-    pub what: String,
-    pub returns: Vec<Span>,
-    /// Why a `return` here is refused, when the body hands nothing back.
-    pub refuses: Option<String>,
-}
-
 impl Checker<'_> {
-    /// `checkBody`: a body's statements, collecting its `return`s.
-    pub fn check_body(&mut self, statements: &[movement_parser::ast::Statement], scope: ScopeId, what: String) -> Vec<Span> {
-        self.return_stack.push(ReturnCollector { what, returns: Vec::new(), refuses: None });
-        self.check_statement_list(statements, scope);
-        self.return_stack.pop().map(|c| c.returns).unwrap_or_default()
-    }
-
-    /// `checkReturn`'s collecting half.
-    pub fn collect_return(&mut self, span: Span) {
-        match self.return_stack.last_mut() {
-            None => self.report(
-                codes::RETURN_OUTSIDE_BODY,
-                "'return' hands a value back from a body — there is none here. A movement, a traversal-headed block and a closure each return; file-level statements do not.",
-                span,
-            ),
-            Some(ReturnCollector { refuses: Some(why), .. }) => {
-                let why = why.clone();
-                self.report(codes::RETURN_OUTSIDE_BODY, why, span);
-            }
-            Some(collector) => collector.returns.push(span),
-        }
-    }
-
     /// A bound block whose body returns nothing.
     pub fn report_block_returns_nothing(&mut self, block: &movement_parser::ast::TraversalBlock, name: Option<&str>) {
         let root = match &block.head.root {
@@ -1521,6 +1486,11 @@ pub struct Inference {
     inferred: HashMap<SymbolId, bool>,
     /// Whether each movement's body may wait, once known.
     suspends: HashMap<SymbolId, bool>,
+    /// What each movement's body hands back, once walked.
+    returned: HashMap<SymbolId, ReturnShape>,
+    /// An imported movement stands for the library's declaration: its
+    /// body is walked once, and every call shares what was learned.
+    adopted: HashMap<SymbolId, SymbolId>,
     walking: HashMap<SymbolId, usize>,
     cycle_of: HashMap<SymbolId, usize>,
     cycles: Vec<CallCycle>,
@@ -1533,10 +1503,28 @@ impl Checker<'_> {
         self.inference.declarations.entry(id).or_insert_with(|| (Rc::new(movement.clone()), scope));
     }
 
+    /// An imported movement's symbol is the library's for inference.
+    pub fn adopt_movement(&mut self, local: SymbolId, library: SymbolId) {
+        if self.inference.declarations.contains_key(&library) {
+            self.inference.adopted.insert(local, library);
+        }
+    }
+
+    /// The symbol a movement's declaration is filed under.
+    fn declared_id(&self, id: SymbolId) -> SymbolId {
+        self.inference.adopted.get(&id).copied().unwrap_or(id)
+    }
+
+    /// What the movement's body was found to hand back, once walked.
+    pub fn movement_inferred_return(&self, id: SymbolId) -> Option<ReturnShape> {
+        self.inference.returned.get(&self.declared_id(id)).cloned()
+    }
+
     /// A call reaches movement `id`: what it returns is inferred from its
     /// body unless declared (from version 5 the declaration is the answer),
     /// and what it does is the caller's.
     pub fn call_movement(&mut self, id: SymbolId) {
+        let id = self.declared_id(id);
         let declared = self.inference.declarations.get(&id).is_some_and(|(m, _)| m.return_type.is_some()) && since(self.version, 3);
         if !(declared && since(self.version, 5)) {
             self.infer_movement(id);
@@ -1547,6 +1535,7 @@ impl Checker<'_> {
 
     /// `movementEffects`, the suspend flag of it.
     pub fn movement_suspends(&mut self, id: SymbolId) -> bool {
+        let id = self.declared_id(id);
         if !self.inference.declarations.contains_key(&id) {
             return false;
         }
@@ -1566,7 +1555,8 @@ impl Checker<'_> {
     }
 
     /// `inferMovement`: walks the body type-only, reporting nothing.
-    fn infer_movement(&mut self, id: SymbolId) {
+    pub fn infer_movement(&mut self, id: SymbolId) {
+        let id = self.declared_id(id);
         match self.inference.inferred.get(&id) {
             Some(true) => return,
             Some(false) => {
@@ -1589,19 +1579,28 @@ impl Checker<'_> {
             }
         }
         let what = format!("'{}'", movement.name);
-        if since(self.version, 3) {
+        let walked = if since(self.version, 3) {
             self.enter_inference(id);
             self.open_effect_frame();
-            self.check_body(&movement.body, body, what);
+            let walked = self.check_body(&movement.body, body, what);
             let row = self.close_effect_frame();
             self.leave_inference(id, row);
+            walked
         } else {
             self.open_effect_frame();
-            self.check_body(&movement.body, body, what);
+            let walked = self.check_body(&movement.body, body, what);
             let row = self.close_effect_frame();
             self.record_movement_row(id, row);
-        }
+            walked
+        };
         self.type_only -= 1;
+        // A node the body builds is labelled by whose value it is, which is
+        // the useful text at a call site; nothing else about its type changes.
+        let mut returned = walked.value;
+        if let Some(Position::Local(local)) = returned.plane.pos.as_deref_mut() {
+            local.label = format!("the value of '{}'", movement.name);
+        }
+        self.inference.returned.insert(id, returned);
         self.inference.inferred.insert(id, true);
     }
 

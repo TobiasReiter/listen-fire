@@ -622,6 +622,13 @@ fn kinds_held_by(ty: &Ty) -> (bool, bool) {
     }
 }
 
+/// `showsMoreHandles`: does `wider` hold a kind of engine object `ty` does not show?
+pub fn shows_more_handles(wider: &Ty, ty: Option<&Ty>) -> bool {
+    let (record, file) = kinds_held_by(wider);
+    let (shown_record, shown_file) = ty.map(kinds_held_by).unwrap_or((false, false));
+    (record && !shown_record) || (file && !shown_file)
+}
+
 /// `handleWithin`: the first record or file inside `ty` the walk does not accept.
 pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
     match strip_absent(ty?) {
