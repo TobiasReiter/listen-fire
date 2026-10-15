@@ -2,19 +2,19 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **205 of 220** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 15040 of 15246; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 11227 of 11435.
-- Rust side: 9.4s; 0 records the Rust parser or catalog refused; 0 panics.
+- Codes at parity: **206 of 220** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 15044 of 15246; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 11231 of 11435.
+- Rust side: 7.7s; 0 records the Rust parser or catalog refused; 0 panics.
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 2360 | 2303 | 2307 |
-| checks v1 | 1535 | 1491 | 1492 |
-| checks v2 | 1956 | 1906 | 1907 |
-| checks v3 | 2403 | 2346 | 2350 |
+| checks under v5 | 2360 | 2304 | 2308 |
+| checks v1 | 1535 | 1492 | 1493 |
+| checks v2 | 1956 | 1907 | 1908 |
+| checks v3 | 2403 | 2347 | 2351 |
 | checks v99 | 5 | 5 | 5 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -34,7 +34,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 25 | 24 | 314 | 312 | 2 | 0 | 0 |
 | records | 3 | 3 | 59 | 59 | 0 | 0 | 0 |
 | systems | 8 | 8 | 100 | 100 | 0 | 0 | 0 |
-| values | 22 | 15 | 1156 | 1046 | 110 | 0 | 0 |
+| values | 22 | 16 | 1156 | 1050 | 106 | 0 | 0 |
 | versions | 2 | 2 | 7 | 7 | 0 | 0 | 0 |
 | walks | 19 | 16 | 745 | 702 | 43 | 0 | 0 |
 | writes | 45 | 43 | 713 | 669 | 44 | 0 | 0 |
@@ -110,7 +110,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_EXTRACT_SHAPE_NOT_DECLARED | extraction | 3 | 3 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_TYPE_CONFLICT | extraction | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_UNKNOWN_FIELD | extraction | 22 | 22 | 0 | 0 | 0 | yes |
-| MOV_FOLD_NEEDS_ORDER | values | 109 | 105 | 4 | 0 | 0 |  |
+| MOV_FOLD_NEEDS_ORDER | values | 109 | 109 | 0 | 0 | 0 | yes |
 | MOV_FUNCTION_NAME_COLLISION | names | 10 | 10 | 0 | 0 | 0 | yes |
 | MOV_FUNCTION_UNKNOWN | calls | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_ENTRY_KIND | nodes | 8 | 8 | 0 | 0 | 0 | yes |

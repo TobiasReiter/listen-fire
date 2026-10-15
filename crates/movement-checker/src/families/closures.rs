@@ -29,7 +29,7 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
-use crate::types::field::{Ty, collection_order_of, list_of};
+use crate::types::field::{CollectionOrder, Ty, collection_order_of, list_of};
 use crate::types::position::{PlaneType, ReturnShape};
 
 /// Whether a body hands a value back: a `return` at its own level or in an
@@ -374,6 +374,15 @@ impl Checker<'_> {
             self.check_collection_config(config, spelling, None);
         }
         let element = self.collection_element(&op.source, source.expr.as_ref(), source.ty.as_ref(), spelling, scope);
+        let ordering = collection_order_of(source.ty.as_ref());
+        // The order-sensitive one, held to the rule every order-sensitive fold is.
+        if op.op == CollectionOp::Reduce && ordering == CollectionOrder::Unordered {
+            self.report(
+                codes::FOLD_NEEDS_ORDER,
+                "'REDUCE' reads the members one after another, so the answer depends on the order they are in — and nothing has given this collection one. Order the traversal it came from ('ORDER BY'), or fold it with something that answers the same over any order ('COUNT', 'SUM', 'MIN', 'MAX', 'ONLY').",
+                op.source.span,
+            );
+        }
         let carried = init.and_then(|i| i.ty);
         let arity = if op.op == CollectionOp::Reduce { 2 } else { 1 };
         // The function is called once per member, so a parameter it leaves
@@ -416,7 +425,6 @@ impl Checker<'_> {
         // A MAP function with no `return` leaves each slot absent.
         let shape = if op.op == CollectionOp::Map && !shape.returns { ReturnShape { returns: true, plane: as_value(Some(Ty::Absent)), may_hold: None } } else { shape };
         let returned = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
-        let ordering = collection_order_of(source.ty.as_ref());
         if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
             let diagnostics = {
                 let env = self.typing_env(scope);
