@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { parse } from 'tldts';
 
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from '../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { safeToUrl } from '../../lib/utils/url';
 import { AffinityAPIClient } from './apiClient';
 import { logger } from 'movement-engine/services/logger';

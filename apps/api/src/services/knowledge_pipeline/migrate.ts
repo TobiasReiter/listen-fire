@@ -12,7 +12,7 @@ import { getKnowledgeQb } from '../../lib/kysely';
 import { execute } from '../../lib/prompts/execute';
 import { promptDef } from '../../lib/prompts/definition';
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from '../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { searchFacts } from './facts';
 import { logger } from 'movement-engine/services/logger';
 import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity';

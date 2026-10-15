@@ -13,8 +13,11 @@
   "type": "commonjs",
   "dependencies": {
     "#shared": "workspace:@listen-fire/shared@*",
+    "@anthropic-ai/sdk": "^0.126.0",
     "engine-contracts": "workspace:*",
+    "exponential-backoff": "3.1.1",
     "google-auth-library": "10.3.0",
+    "jsonrepair": "3.8.0",
     "movement-lang": "workspace:*",
     "safe-stable-stringify": "2.5.0",
     "winston": "3.14.2",

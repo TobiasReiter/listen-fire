@@ -1,49 +1,11 @@
 import { z } from 'zod';
 
-import { parseJson } from '../utils/parse_json';
+import { parseJson, parseJsonReply } from 'movement-engine/lib/utils/parse_json';
 import { anthropicChat, anthropicChatStructured } from '../anthropic';
 import { logger } from 'movement-engine/services/logger';
 import { DefinitionArgs, PromptDefinition } from './definition';
 
 type DefaultToString<T> = unknown extends T ? string : T;
-
-/**
- * `parseJson` for LLM replies — degrades instead of throwing, because a
- * model reply is never trustworthy enough to crash on:
- * - an empty reply (a completion with no text blocks) → `null`;
- * - a reply no repair pass can parse → the raw text, verbatim.
- *
- * Consumers already handle both shapes: AI()'s envelope projection
- * treats null as "no value" and a bare string as the answer itself;
- * extraction's zod validation rejects either and retries with the
- * validation issues. Crashing here turned an empty reply into
- * `jsonrepair`'s "Unexpected end of json string at position 0" — a
- * run-killing error with no hint of its cause.
- */
-function parseJsonReply(
-  text: string,
-  options?: { label?: string; prompt?: string },
-): unknown {
-  const promptSnippet = options?.prompt?.slice(0, 300);
-  if (text.trim() === '') {
-    logger.warn('[llm] empty reply — resolving to null', {
-      label: options?.label,
-      prompt: promptSnippet,
-    });
-    return null;
-  }
-  try {
-    return parseJson(text);
-  } catch {
-    logger.warn('[llm] unparsable reply — passing raw text through', {
-      label: options?.label,
-      prompt: promptSnippet,
-      length: text.length,
-      snippet: text.slice(0, 200),
-    });
-    return text;
-  }
-}
 
 /**
  * Flatten a promptDef's `messages` into the (system, userMessage) shape the

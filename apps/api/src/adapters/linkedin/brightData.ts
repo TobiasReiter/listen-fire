@@ -11,7 +11,7 @@ import { safeToUrl } from '../../lib/utils/url';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { notNull, notUndefined } from '../../lib/utils/nullability';
 import { sendSlackNotification } from '../../lib/slack';
-import { Queue } from '../../lib/utils/queue';
+import { Queue } from 'movement-engine/lib/utils/queue';
 
 // BrightData long-polls (up to 5min per request) — limit concurrent requests
 const brightDataQueue = new Queue<unknown>({ concurrency: 4 });

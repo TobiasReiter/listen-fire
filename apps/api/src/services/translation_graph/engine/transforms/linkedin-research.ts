@@ -34,7 +34,7 @@ import { MINUTE, SECOND } from '../../../../constants';
 import { anthropicChat, anthropicChatStructured } from '../../../../lib/anthropic';
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
-import { parseJson } from '../../../../lib/utils/parse_json';
+import { parseJson } from 'movement-engine/lib/utils/parse_json';
 import { looksLikeNonHtmlAddress } from '../../../../lib/utils/url';
 import { logger } from 'movement-engine/services/logger';
 import { resolvePersonContext } from './extracted_fields';

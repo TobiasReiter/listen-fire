@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
-import { buildStructuredTool, extractStructuredResult, StructuredOutputError } from '../structured';
+import { buildStructuredTool, extractStructuredResult, StructuredOutputError } from 'movement-engine/lib/anthropic/structured';
 
 function messageWith(
   content: Anthropic.Message['content'],
