@@ -136,7 +136,7 @@ describe('worked examples (zero diagnostics)', () => {
         '    domains: [msg-[:sender]->.`domain`]',
         '  }',
         '',
-        '  MAP([',
+        '  all(',
         '    () => {',
         '      write team-[:message]-> {',
         '        channel: "#dealflow"',
@@ -150,7 +150,7 @@ describe('worked examples (zero diagnostics)', () => {
         '        attio_url: company.`url`',
         '      }',
         '    },',
-        '  ], { concurrency: 2 }, (f) => f())',
+        '  )',
         '}',
       ].join('\n'),
     );
@@ -310,14 +310,14 @@ describe('worked examples (zero diagnostics)', () => {
     );
   });
 
-  it("a MAP's closures bind inside themselves — what comes out is the answer", () => {
+  it("all's closures bind inside themselves — what comes out is the answer", () => {
     expectClean(
       inMovement(
         [
-          '  r = MAP([',
+          '  r = all(',
           '    () => { return write crm-[:company]-> { name: msg.`subject` } },',
           '    () => { return write crm-[:note]-> { text: msg.`text` } },',
-          '  ], { concurrency: 2 }, (f) => f())',
+          '  )',
         ].join('\n'),
       ),
     );
@@ -711,10 +711,10 @@ describe('binding order', () => {
       codes(
         inMovement(
           [
-            '  MAP([',
+            '  all(',
             '    () => { co = write crm-[:company]-> { name: msg.`subject` } },',
             '    () => { write team-[:message]-> { text: co.`url` } },',
-            '  ], { concurrency: 2 }, (f) => f())',
+            '  )',
           ].join('\n'),
         ),
       ),

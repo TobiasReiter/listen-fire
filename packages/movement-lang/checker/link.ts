@@ -36,6 +36,7 @@ import {
   Span,
   Statement,
 } from '../parser/ast';
+import { writtenArms } from '../parser/ast';
 import { MovementParseError, parseProgram } from '../parser/parse';
 import type { LanguageVersion } from '../language_version';
 
@@ -165,8 +166,8 @@ function combinatorOf(expr: AwaitExpression): CombinatorExpression | undefined {
 /** The statements inside a combinator's literal closure arms — an arm is an
  *  ordinary body, so an import inside one is an import the file makes. */
 function armBodies(expr: CombinatorExpression | undefined): Statement[] {
-  if (expr === undefined || expr.arms.kind !== 'literal') return [];
-  return expr.arms.arms.flatMap(arm => (arm.kind === 'closure' ? arm.closure.body : []));
+  if (expr === undefined) return [];
+  return writtenArms(expr.arms).flatMap(arm => (arm.kind === 'closure' ? arm.closure.body : []));
 }
 
 /**

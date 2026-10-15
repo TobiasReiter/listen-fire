@@ -81,7 +81,7 @@ export function slotOfTree(slot: ExprSlot, tree: MExpr): ExprSlot {
     : slot.raw.slice(0, tree.at.start).replace(/[^\n]/g, ' ')
       + slot.raw.slice(tree.at.start, tree.at.end)
       + slot.raw.slice(tree.at.end).replace(/[^\n]/g, ' ');
-  const derived: ExprSlot = { raw, span: slot.span, ...(slot.closures !== undefined ? { closures: slot.closures } : {}) };
+  const derived: ExprSlot = { raw, span: slot.span };
   slotTrees.set(derived, tree);
   slotOrigins.set(derived, originalSlot(slot));
   return derived;
@@ -98,17 +98,12 @@ export function originalSlot(slot: ExprSlot): ExprSlot {
 
 /** The slot as a value expression. */
 export function expressionOfSlot(slot: ExprSlot): Expression {
-  return lowerExpression(treeOf(slot), slot.raw, closureOffsets(slot));
-}
-
-/** The offsets of the slot's list element closures (`ExprSlot.closures`). */
-function closureOffsets(slot: ExprSlot): ReadonlySet<number> | undefined {
-  return slot.closures !== undefined ? new Set(slot.closures.map(c => c.at)) : undefined;
+  return lowerExpression(treeOf(slot), slot.raw);
 }
 
 /** The slot as an `if` condition. */
 export function conditionOfSlot(slot: ExprSlot): MovementCondition {
-  return lowerCondition(treeOf(slot), slot.raw, closureOffsets(slot));
+  return lowerCondition(treeOf(slot), slot.raw);
 }
 
 /**

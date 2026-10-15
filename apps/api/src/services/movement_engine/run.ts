@@ -71,12 +71,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BridgeError,
-  slotClosureName,
   DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
+  ALL_SETTING_KEYS,
   SEQUENTIAL_COLLECTION_SETTINGS,
+  writtenArms,
   type CollectionRunSettings,
+  type CombinatorKind,
   checkProgramWithLink,
   before,
   CURRENT_LANGUAGE_VERSION,
@@ -1564,7 +1566,7 @@ function fanOutBlockOf(container: Statement): TraversalBlock | undefined {
  *  branch-navigation currency. Arms built at run time have no static list, so
  *  nothing can be navigated into and this is empty. */
 function literalArmsOf(expr: CombinatorExpression | undefined): ArmExpression[] {
-  return expr !== undefined && expr.arms.kind === 'literal' ? expr.arms.arms : [];
+  return expr !== undefined ? writtenArms(expr.arms) : [];
 }
 
 /** The edge name of an awaited traversal's single hop — `-[:Response]->` and
@@ -1801,6 +1803,16 @@ function memberLeftOut(
     kind: 'warning',
     code: COLLECTION_MEMBER_FAILED,
     message: `'${spelling}' left out the member at index ${index}${of}, because its function failed: ${getErrorMessage(error)}`,
+  };
+}
+
+/** What the trace says of an `all` arm whose failure `onError: "warn"`
+ *  forgave: its slot is null. */
+function armLeftEmpty(kind: CombinatorKind, index: number, count: number, error: unknown): MovementTraceEntry {
+  return {
+    kind: 'warning',
+    code: COLLECTION_MEMBER_FAILED,
+    message: `'${kind}' left the slot of arm ${index} of ${count} null, because the arm failed: ${getErrorMessage(error)}`,
   };
 }
 
@@ -3267,9 +3279,17 @@ class Interpreter {
       case 'container': {
         const armBoundary = frame.armBoundary;
         const arm = (): Promise<SpineCompletion> => this.withinCalledName(frame.armName, inner);
-        const completed = armBoundary !== undefined
-          ? await this.withinBoundary(armBoundary, arm)
-          : await arm();
+        let completed: SpineCompletion;
+        try {
+          completed = armBoundary !== undefined
+            ? await this.withinBoundary(armBoundary, arm)
+            : await arm();
+        } catch (error) {
+          // An `all` arm that fails after it resumed is forgiven as it would
+          // have been before it parked: its slot stays null.
+          if (!this.forgivesArmFailure(frame, error)) throw error;
+          completed = { done: true, outcome: FELL_THROUGH };
+        }
         if (!completed.done) return completed;
         return this.finishContainer(frame, completed.outcome, leafAddress);
       }
@@ -3310,11 +3330,12 @@ class Interpreter {
     });
 
     // A combinator ARM is a `branch k` frame. `race` settles on the first
-    // completer (pending 1); `parallel` is an ordinary join (pending N).
+    // completer (pending 1); `all` (`parallel` before language version 5) is
+    // an ordinary join (pending N).
     const combinator =
       frame.descentKind === 'branch' ? combinatorOf(frame.container) : undefined;
     const isRace = combinator?.kind === 'race';
-    const isJoin = frame.descentKind === 'iter' || combinator?.kind === 'parallel';
+    const isJoin = frame.descentKind === 'iter' || combinator?.kind === 'parallel' || combinator?.kind === 'all';
 
     if (isRace) {
       // A race ARM completed. Persist its export, then claim the race frame
@@ -5304,6 +5325,7 @@ class Interpreter {
       return;
     }
 
+    const settings = this.combinatorSettings(expr, arms.length);
     const forks = arms.map((arm, index) => ({
       arm,
       index,
@@ -5319,38 +5341,59 @@ class Interpreter {
     // its own call stack and its own trace, spliced in ARM order once every
     // arm has stopped — and its effects wait only for an effect contending
     // for the same key (`effect_locks.ts`).
+    //
+    // `all(…, { concurrency: n })` runs at most n arms at once. An arm that
+    // parks is waiting, not running, so it frees its place for the next: every
+    // arm reaches its own park in this pass, and the join resumes them as it
+    // always has. An arm whose failure `onError` forgives leaves its slot null.
     const into = this.trace;
-    const outcomes = await Promise.allSettled(
-      forks.map((fork) =>
-        this.flowFrames.run(fork.frame, async () => {
-          try {
-            const runtime = fork.arm.runtime;
-            const outcome = runtime === undefined
-              ? await this.runArm(fork.arm, fork.env, body, fork.address)
-              : await this.withinBoundary({ kind: 'arm', arm: fork.index, body: runtime }, () =>
-                  this.runArm(fork.arm, fork.env, body, fork.address),
-                );
-            settled.set(fork.index, outcome.returned ? outcome.value : NULL_SLOT);
-          } catch (e) {
-            if (e instanceof RunParked) {
-              parked.push(fork);
-              return;
-            }
-            // A quiet scope end (find-on-missing) still COMPLETED — it ran to its
-            // end, it just bound less on the way.
-            if (!(e instanceof ScopeEndedQuietly)) throw e;
-            settled.set(fork.index, NULL_SLOT);
+    const failures = new Map<number, unknown>();
+    const runFork = (fork: (typeof forks)[number]): Promise<void> =>
+      this.flowFrames.run(fork.frame, async () => {
+        try {
+          const runtime = fork.arm.runtime;
+          const outcome = runtime === undefined
+            ? await this.runArm(fork.arm, fork.env, body, fork.address)
+            : await this.withinBoundary({ kind: 'arm', arm: fork.index, body: runtime }, () =>
+                this.runArm(fork.arm, fork.env, body, fork.address),
+              );
+          settled.set(fork.index, outcome.returned ? outcome.value : NULL_SLOT);
+        } catch (e) {
+          if (e instanceof RunParked) {
+            parked.push(fork);
+            return;
           }
-        }),
-      ),
-    );
+          // A quiet scope end (find-on-missing) still COMPLETED — it ran to its
+          // end, it just bound less on the way.
+          if (e instanceof ScopeEndedQuietly) {
+            settled.set(fork.index, NULL_SLOT);
+            return;
+          }
+          if (settings.onError === 'error' || !isMemberFailure(e)) throw e;
+          settled.set(fork.index, NULL_SLOT);
+          if (settings.onError === 'warn') fork.frame.trace.push(armLeftEmpty(expr.kind, fork.index, forks.length, e));
+        }
+      });
+    let next = 0;
+    const lane = async (): Promise<void> => {
+      // No arm starts once one has failed the combinator; those running finish.
+      while (next < forks.length && failures.size === 0) {
+        const fork = forks[next]!;
+        next += 1;
+        try {
+          await runFork(fork);
+        } catch (e) {
+          failures.set(fork.index, e);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(settings.concurrency, forks.length) }, lane));
     for (const fork of forks) into.push(...fork.frame.trace);
-    // An arm that failed fails the combinator — once every other arm has
-    // stopped too, so what they did is on the trace and the run's ledger. The
-    // failure re-thrown is the earliest ARM's.
-    for (const outcome of outcomes) {
-      if (outcome.status === 'rejected') throw outcome.reason;
-    }
+    // An arm that failed fails the combinator — once every other arm running
+    // has stopped too, so what they did is on the trace and the run's ledger.
+    // The failure re-thrown is the earliest ARM's.
+    const failed = [...failures.keys()].sort((a, b) => a - b)[0];
+    if (failed !== undefined) throw failures.get(failed);
 
     const bindReceipt = (): void => {
       if (bindingName === undefined) return;
@@ -5402,6 +5445,43 @@ class Interpreter {
     bindReceipt();
   }
 
+  /**
+   * How a combinator runs its arms: every arm at once, and the first failure
+   * fails it — unless `all(…, { … })` says otherwise (language version 5),
+   * read the way the checker read it.
+   */
+  private combinatorSettings(expr: CombinatorExpression, armCount: number): CollectionRunSettings {
+    const allAtOnce: CollectionRunSettings = { onError: 'error', concurrency: Math.max(1, armCount), initialConcurrency: Math.max(1, armCount) };
+    if (expr.kind !== 'all' || expr.settings === undefined) return allAtOnce;
+    let reading: ReturnType<typeof readCollectionConfig>;
+    try {
+      reading = readCollectionConfig(expressionOfSlot(expr.settings), expr.kind, { keys: ALL_SETTING_KEYS, concurrency: allAtOnce.concurrency });
+    } catch (e) {
+      if (!(e instanceof BridgeError)) throw e;
+      reading = { ok: false, problems: [e.message] };
+    }
+    if (!reading.ok) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `'${expr.kind}' was given settings it cannot run with — the checker should have caught this: ${reading.problems.join('; ')}`,
+      );
+    }
+    return reading.settings;
+  }
+
+  /** Is `error` an `all` arm's own failure that its `onError` forgives? The
+   *  resumed arm's frame is where the never-parked path forgives it. */
+  private forgivesArmFailure(frame: ResumeContainerFrame, error: unknown): boolean {
+    if (frame.descentKind !== 'branch' || !isMemberFailure(error)) return false;
+    const combinator = combinatorOf(frame.container);
+    if (combinator?.kind !== 'all') return false;
+    const arms = literalArmsOf(combinator).length;
+    const { onError } = this.combinatorSettings(combinator, arms);
+    if (onError === 'error') return false;
+    if (onError === 'warn') this.trace.push(armLeftEmpty(combinator.kind, frame.branchIndex, arms, error));
+    return true;
+  }
+
   /** A parked combinator whose arms were built at run time keeps how many
    *  there were — the source cannot say, and the receipt has a slot each. */
   private async keepArmCount(expr: CombinatorExpression, frameAddress: string, arms: number): Promise<void> {
@@ -5449,7 +5529,7 @@ class Interpreter {
   /** One literal arm as a body plus the bindings it brings with it. */
   private armInvocation(
     arm: ArmExpression,
-    kind: 'race' | 'parallel',
+    kind: CombinatorKind,
     env: Environment,
   ): ArmInvocation {
     if (arm.kind === 'closure') {
@@ -12179,9 +12259,6 @@ class Interpreter {
     return park;
   }
 
-  /** Scopes `evaluateSlot` bound a slot's list element closures in. */
-  private readonly closureEnvs = new WeakSet<Environment>();
-
   private async evaluateSlot(
     slot: ExprSlot,
     options: {
@@ -12191,18 +12268,6 @@ class Interpreter {
       fieldFunctions?: MovementExprContext['fieldFunctions'];
     },
   ): Promise<MovementEvalResult> {
-    // A closure written as a list element (language version 5) is a value:
-    // (AST, scope), holding the scope it is written in by REFERENCE, as a
-    // closure bound to a name does. It is bound around the slot under the
-    // name the lowering reads it by.
-    if (slot.closures !== undefined && !this.closureEnvs.has(options.env)) {
-      const around = options.env.child();
-      for (const { at, closure } of slot.closures) {
-        around.declare(slotClosureName(at), binding({ kind: 'closure', closure, captured: new Map(), env: options.env }));
-      }
-      this.closureEnvs.add(around);
-      return this.evaluateSlot(slot, { ...options, env: around });
-    }
     const staged = await this.stageNestedCalls(slot, options.env);
     if (staged !== undefined) return this.evaluateSlot(staged.slot, { ...options, env: staged.env });
     let expr: Expression;

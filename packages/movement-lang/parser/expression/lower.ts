@@ -30,14 +30,22 @@ import { describeStdlibFamily, listStdlibNamespaces, stdlibFamily } from '../../
 import { neverAsAny } from '../../never';
 import { isMapSpread, type BinaryOp, type CallArg, type Hop, type MapEntry, type MExpr, type Name, type TypeExpr } from './tree';
 import { parseExpression } from './parse_expression';
-import { slotClosureName } from '../ast';
 
 export class LoweringError extends BridgeError {
-  constructor(message: string, code?: string) {
+  constructor(
+    message: string,
+    code?: string,
+    /** A closure written where it would be kept as data — a list's element
+     *  or a map's value. From language version 5 a closure is a value, and
+     *  the checker refuses it there because a closure is not data. */
+    readonly heldAsData?: 'list' | 'map',
+  ) {
     super(message, undefined, code);
     this.name = 'LoweringError';
   }
 }
+
+const CLOSURE_POSITION_MESSAGE = 'a closure cannot be written here — bind it to a name first and pass the name';
 
 /** Terminal property id meaning "the landings themselves": a bare walk
  *  (`orgs-[:co]->`) lowers to a traverse ending in a read of this property.
@@ -68,14 +76,14 @@ interface Ctx {
 const TOP: Ctx = { edgeProps: false };
 
 /** Lower one expression; `source` is the text `tree` was parsed from. */
-export function lowerExpression(tree: MExpr, source: string, closures?: ReadonlySet<number>): Expression {
-  return new Lowering(source, closures).lower(tree, TOP);
+export function lowerExpression(tree: MExpr, source: string): Expression {
+  return new Lowering(source).lower(tree, TOP);
 }
 
 /** Lower one `if` condition into its top-level
  *  `AND` conjuncts, each an `IS` type guard or an expression. */
-export function lowerCondition(tree: MExpr, source: string, closures?: ReadonlySet<number>): MovementCondition {
-  return new Lowering(source, closures).condition(tree);
+export function lowerCondition(tree: MExpr, source: string): MovementCondition {
+  return new Lowering(source).condition(tree);
 }
 
 /** Parse and lower one expression text. */
@@ -146,12 +154,7 @@ type Segment =
   | { kind: 'hops'; hops: Hop[] };
 
 class Lowering {
-  constructor(
-    private readonly source: string,
-    /** The offsets of the list element closures the slot's statement parse
-     *  collected (`ExprSlot.closures`, language version 5). */
-    private readonly closures?: ReadonlySet<number>,
-  ) {}
+  constructor(private readonly source: string) {}
 
   // ── Conditions ──
 
@@ -238,14 +241,11 @@ class Lowering {
       case 'list':
         return {
           type: 'list',
-          elements: expr.elements.map((e): ListElement =>
-            e.kind === 'spread'
-              ? { type: 'spread', expression: this.lower(e.expr, ctx) }
-              : e.kind === 'closure' && this.closures?.has(e.at.start) === true
-              // The closure itself is the value, bound around the slot.
-              ? { type: 'alias_ref', name: slotClosureName(e.at.start) }
-              : this.lower(e, ctx),
-          ),
+          elements: expr.elements.map((e): ListElement => {
+            if (e.kind === 'spread') return { type: 'spread', expression: this.lower(e.expr, ctx) };
+            if (e.kind === 'closure') throw new LoweringError(CLOSURE_POSITION_MESSAGE, 'MOV_EXPR_CLOSURE_POSITION', 'list');
+            return this.lower(e, ctx);
+          }),
         };
       case 'map':
         return {
@@ -253,7 +253,9 @@ class Lowering {
           entries: expr.entries.map((e): ObjectMember =>
             isMapSpread(e)
               ? { type: 'spread', expression: this.lower(e.expr, ctx) }
-              : { key: e.key.text, value: this.lower(e.value, ctx) },
+              : e.value.kind === 'closure'
+                ? (() => { throw new LoweringError(CLOSURE_POSITION_MESSAGE, 'MOV_EXPR_CLOSURE_POSITION', 'map'); })()
+                : { key: e.key.text, value: this.lower(e.value, ctx) },
           ),
         };
       case 'member':
@@ -287,10 +289,7 @@ class Lowering {
           else: expr.else ? this.lower(expr.else, ctx) : { type: 'static', value: '' },
         };
       case 'closure':
-        throw new LoweringError(
-          'a closure cannot be written here — bind it to a name first and pass the name',
-          'MOV_EXPR_CLOSURE_POSITION',
-        );
+        throw new LoweringError(CLOSURE_POSITION_MESSAGE, 'MOV_EXPR_CLOSURE_POSITION');
       case 'type':
       case 'node':
       case 'graph':

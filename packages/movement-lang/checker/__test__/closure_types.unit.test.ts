@@ -1,7 +1,7 @@
 // A closure's type is written down (language version 5), as TypeScript's
 // function type is: `<(params) => <return>>` — `handler: <(c: <Company>) =>
-// <text>>`, `arms: <() => <text>>[]`, a declared return — never a record
-// type's key, as a closure is never held under a key. A parameter
+// <text>>`, a declared return — never a record type's key or a list's element,
+// as a closure is not data. A parameter
 // of closure type may be called; a closure value fits a closure type when it
 // takes what the type supplies (contravariant parameters) and returns what it
 // returns (covariant returns). Before 5 the syntax is refused.
@@ -57,12 +57,10 @@ const RUN_NUMBER = ['function run(h: <(n: <number>) => <text>>) {', '  return h(
 const TAKE_COMPANY = ['function take(h: <(c: <crm-[:company]->>) => <text>>) {', '  o = write crm-[:companies]-> { name: "x" }', '  return h(o)', '}'];
 
 describe('the closure type <(params) => <return>> (Dancing Wren, 5)', () => {
-  it('a list of closures is passed to a parameter typed <() => <text>>[], and its members are called', () => {
-    expect(errorsUnder(5, RUN_LIST, ['  v = go([label, () => "x"])', '  if v != null {', '  ' + WRITE, '  }'])).toEqual([]);
-  });
-
-  it('a closure in the list that returns a record does not fit <() => <text>>[]', () => {
-    expect(codes(RUN_LIST, ['  v = go([made, label])'])).toEqual(['MOV_CALL_ARG_TYPE']);
+  it('a list of closures is no type: a closure is not data', () => {
+    const errors = errorsUnder(5, RUN_LIST, ['  v = 1']);
+    expect(errors.map(d => d.code)).toContain('MOV_CLOSURE_NOT_DATA');
+    expect(errors.find(d => d.code === 'MOV_CLOSURE_NOT_DATA')!.message).toContain("a list's element is typed as a closure");
   });
 
   it('a parameter of closure type is called, typed by its return', () => {
@@ -96,20 +94,16 @@ describe('the closure type <(params) => <return>> (Dancing Wren, 5)', () => {
     expect(codes(RUN_ONE, ['  v = run((n: <number>) => "x")'])).toEqual(['MOV_CALL_ARG_TYPE']);
   });
 
-  it('a record key is never of closure type: a closure is never held under a key', () => {
+  it('a record key is never of closure type: a closure is not data', () => {
     const takesBox = ['function run(b: <{ go: <() => <text>> }>) {', '  return 1', '}'];
     const errors = errorsUnder(5, takesBox, ['  v = 1']);
-    expect(errors.map(d => d.code)).toEqual(['MOV_CLOSURE_UNDER_KEY']);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CLOSURE_NOT_DATA']);
     expect(errors[0]!.message).toContain("the key 'go' is typed as a closure");
-    expect(codes(['function run(h: <(b: <{ go: <() => <text>> }>) => <text>>) {', '  return 1', '}'], ['  v = 1'])).toEqual(['MOV_CLOSURE_UNDER_KEY']);
+    expect(codes(['function run(h: <(b: <{ go: <() => <text>> }>) => <text>>) {', '  return 1', '}'], ['  v = 1'])).toEqual(['MOV_CLOSURE_NOT_DATA']);
   });
 
-  it('a record key may be a list of closures', () => {
-    expect(errorsUnder(5, ['function run(b: <{ go: <() => <text>>[] }>) {', '  return 1', '}'], ['  v = 1'])).toEqual([]);
-  });
-
-  it('a bound closure\'s parameter may be a list of closures', () => {
-    expect(errorsUnder(5, [], ['  go2 = (fs: <() => <text>>[]) => MAP(fs, (f) => f())', '  r = go2([label, label])', '  v = FIRST(r)', '  if v != null {', '  ' + WRITE, '  }'])).toEqual([]);
+  it('nor a list of closures under a key', () => {
+    expect(codes(['function run(b: <{ go: <() => <text>>[] }>) {', '  return 1', '}'], ['  v = 1'])).toEqual(['MOV_CLOSURE_NOT_DATA']);
   });
 
   it('a function may declare it returns a closure', () => {
@@ -122,7 +116,7 @@ describe('the closure type <(params) => <return>> (Dancing Wren, 5)', () => {
 
   it.each<[string, string, RegExp]>([
     ['an untyped parameter', 'function run(h: <(n) => <text>>) {\n  return 1\n}', /parameter 'n' needs a type/],
-    ['a list after the return, which is ambiguous', 'function run(h: <() => <text>[]>) {\n  return 1\n}', /'<\(\) => <text\[\]>>'.*'<\(\) => <text>>\[\]'/],
+    ['a list after the return, which is ambiguous', 'function run(h: <() => <text>[]>) {\n  return 1\n}', /a closure that returns a list is '<\(\) => <text\[\]>>'/],
   ])('%s is refused where it is written', (_label, fn, message) => {
     expect(() => parseProgram(`${PRELUDE}\n${fn}`, { languageVersion: 5 })).toThrow(message);
   });

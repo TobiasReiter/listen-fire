@@ -20,7 +20,6 @@ import {
   DurationLiteral,
   ErrorStatement,
   ExprSlot,
-  SlotClosure,
   ExtractCallExpression,
   ExtractCallFinds,
   ExtractCallShape,
@@ -64,6 +63,7 @@ import {
   AwaitExpression,
   AwaitStatement,
   CombinatorExpression,
+  CombinatorKind,
   CombinatorArms,
   CollectionOp,
   CollectionOpExpression,
@@ -88,8 +88,6 @@ import {
 } from './ast';
 import { memberPathBindingName, spellName, spellPathRoot } from './ast';
 import { originalSlot } from '../expression/bridge';
-import { ExpressionSyntaxError, parseExpression } from './expression/parse_expression';
-import { closuresInLists, type MExpr } from './expression/tree';
 import type { EdgeSequencing } from '@listen-fire/shared/expression/types';
 import {
   callStyleIfMessage,
@@ -252,9 +250,13 @@ const RACE_BRANCHES_RETIRED =
   'a race takes FUNCTIONS, not brace branches: `r = await race([q, () => { await sleep(4h) }])`. The value is one slot per arm, in the order written — the winner\'s slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.';
 
 /** Under language version 5 `parallel` is retired too, so the rewrite these
- *  refusals offer is the MAP that replaced it. */
-const PARALLEL_AS_MAP =
-  'the parallel join is a MAP over its functions, calling each (language version 5): `r = MAP([() => { … }, () => { … }], { concurrency: 2 }, (f) => f())` — no `await`; one slot per function, in order. One that only acts needs no binding: `MAP([…], { concurrency: 2 }, (f) => f())`.';
+ *  refusals offer is the `all` that replaced it. */
+const PARALLEL_AS_ALL =
+  'the join is `all`, which takes its functions as arguments (language version 5): `r = all(() => { … }, () => { … })` — no `await`; one slot per function, in order. One that only acts needs no binding: `all(f, g)`.';
+
+/** Language version 5's race: the arms are arguments, and no `await`. */
+const RACE_BRANCHES_RETIRED_V5 =
+  'a race takes FUNCTIONS as its arguments, not brace branches: `r = race(q, () => { await sleep(4h) })`. The value is one slot per arm, in the order written — the winner\'s slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.';
 
 // `all` is gone as a name: parallel implies all, all does not imply parallel.
 const ALL_RETIRED =
@@ -856,39 +858,7 @@ class Parser {
     const { stop, contentEnd } = this.scanBalanced(options);
     const raw = this.src.slice(start, contentEnd);
     if (raw.length === 0) this.error(`Expected an expression ${options.context}`, start);
-    const closures = this.listElementClosures(raw, start);
-    return {
-      slot: { raw, span: this.spanFrom(start, contentEnd), ...(closures.length > 0 ? { closures } : {}) },
-      stop,
-    };
-  }
-
-  /**
-   * A closure written as an element of a list literal (`[() => { … }, (x) =>
-   * x + 1]`, language version 5 — TypeScript's array of functions), parsed
-   * here by the statement grammar so its block body is statements. Before
-   * version 5, and wherever the expression grammar cannot read the slot, none
-   * is collected: the lowering then refuses the closure by name
-   * (MOV_EXPR_CLOSURE_POSITION) or reports the syntax error, as it always has.
-   */
-  private listElementClosures(raw: string, start: number): SlotClosure[] {
-    if (!since(this.languageVersion, 5) || !raw.includes('=>')) return [];
-    let tree: MExpr;
-    try {
-      tree = parseExpression(raw);
-    } catch (e) {
-      if (e instanceof ExpressionSyntaxError) return [];
-      throw e;
-    }
-    const resume = this.pos;
-    try {
-      return closuresInLists(tree).map(element => {
-        this.pos = start + element.at.start;
-        return { at: element.at.start, closure: this.parseClosure(this.pos, ',]') };
-      });
-    } finally {
-      this.pos = resume;
-    }
+    return { slot: { raw, span: this.spanFrom(start, contentEnd) }, stop };
   }
 
   // ── Statements ──
@@ -1004,9 +974,17 @@ class Parser {
         if (combinator) return combinator;
         break;
       }
-      case 'all':
-        this.refuseRetiredAll(start);
+      case 'all': {
+        // From language version 5 `all(f, g)` is the join; before it, the
+        // name was retired in favour of `parallel`.
+        if (before(this.languageVersion, 5)) {
+          this.refuseRetiredAll(start);
+          break;
+        }
+        const combinator = this.tryParseCombinatorStatement('all', start);
+        if (combinator) return combinator;
         break;
+      }
       case 'if':
         return this.parseIf();
       case 'ERROR':
@@ -1271,8 +1249,8 @@ class Parser {
       this.pos += word.length;
       return { kind: 'await', await: this.parseAwait(start) };
     }
-    if (word === 'all') this.refuseRetiredAll(start);
-    if (word === 'race' || word === 'parallel') {
+    if (word === 'all' && before(this.languageVersion, 5)) this.refuseRetiredAll(start);
+    if (word === 'race' || word === 'parallel' || (word === 'all' && since(this.languageVersion, 5))) {
       const save = this.pos;
       this.pos += word.length;
       this.skipInlineWs();
@@ -2969,8 +2947,8 @@ class Parser {
     // `await race([…])` / `await parallel([…])` — the combinator wake sources
     // (core calculus v2 R5). The IDENTIFIER followed by `(` claims the form,
     // like sleep/until.
-    if (this.peekIdent() === 'all') this.refuseRetiredAll(sourceStart);
-    for (const kind of ['race', 'parallel'] as const) {
+    if (this.peekIdent() === 'all' && before(this.languageVersion, 5)) this.refuseRetiredAll(sourceStart);
+    for (const kind of ['race', 'parallel', 'all'] as const) {
       if (this.peekIdent() === kind) {
         const save = this.pos;
         this.pos += kind.length;
@@ -3044,7 +3022,7 @@ class Parser {
    * caller falls through to the identifier-led grammar.
    */
   private tryParseCombinatorStatement(
-    kind: 'race' | 'parallel',
+    kind: CombinatorKind,
     start: number,
   ): CombinatorStatement | undefined {
     const save = this.pos;
@@ -3068,11 +3046,11 @@ class Parser {
     this.skipInlineWs();
     const isCall = this.peekCh() === '(';
     this.pos = save;
-    if (isCall) this.error(since(this.languageVersion, 5) ? `\`all\` was retired: ${PARALLEL_AS_MAP}` : ALL_RETIRED, start);
+    if (isCall) this.error(ALL_RETIRED, start);
   }
 
   private parallelBlockRetired(): string {
-    return since(this.languageVersion, 5) ? `the \`parallel { … }\` block was retired: ${PARALLEL_AS_MAP}` : PARALLEL_BLOCK_RETIRED;
+    return since(this.languageVersion, 5) ? `the \`parallel { … }\` block was retired: ${PARALLEL_AS_ALL}` : PARALLEL_BLOCK_RETIRED;
   }
 
   /**
@@ -3080,13 +3058,21 @@ class Parser {
    * `pos` is just past it. The argument is ordinary: a LITERAL bracket of arms,
    * or any expression yielding a collection of them. There is no evaluation
    * zone here — an arm is a function value, and the combinator is what calls it.
+   *
+   * From language version 5 the arms are the call's ARGUMENTS — `race(q, () =>
+   * { … })`, `all(f, g, { concurrency: 2 })` — as TypeScript's `Promise.all`
+   * takes its promises: a closure is not data, so there is no list of them to
+   * pass. A bracket is still read, so the checker can refuse it with the
+   * rewrite.
    */
-  private parseCombinator(start: number, kind: 'race' | 'parallel'): CombinatorExpression {
+  private parseCombinator(start: number, kind: CombinatorKind): CombinatorExpression {
     this.skipInlineWs();
-    this.expect('(', `to open '${kind}([…])'`);
+    this.expect('(', `to open '${kind}(…)'`);
     this.skipAllWs();
+    const v5 = since(this.languageVersion, 5);
     // The retired brace form: `race({ … }, { … })`.
-    if (this.peekCh() === '{') this.error(RACE_BRANCHES_RETIRED, start);
+    if (this.peekCh() === '{') this.error(v5 ? RACE_BRANCHES_RETIRED_V5 : RACE_BRANCHES_RETIRED, start);
+    if (v5 && this.peekCh() !== '[') return this.parseArgumentArms(start, kind);
     const arms = this.peekCh() === '['
       ? this.parseLiteralArms(kind)
       : this.parseDynamicArms(kind);
@@ -3095,8 +3081,61 @@ class Parser {
     return { kind, arms, span: this.spanFrom(start) };
   }
 
+  /**
+   * `race(q, () => { … })` / `all(f, g, { concurrency: 2 })` (language version
+   * 5): each argument an arm — a closure written in place, or a function's
+   * name — and, last, the settings record `all` may be given. `pos` is just
+   * past the `(`.
+   */
+  private parseArgumentArms(start: number, kind: CombinatorKind): CombinatorExpression {
+    const armsStart = this.pos;
+    const arms: ArmExpression[] = [];
+    let settings: ExprSlot | undefined;
+    for (;;) {
+      this.skipAllWs();
+      if (this.eof()) this.error(`Expected an arm or ')' to close '${kind}(…)'`, start);
+      if (this.peekCh() === ')') break;
+      if (this.peekCh() === '{') {
+        // The settings record — the last argument, as `MAP`'s is the
+        // one before its function.
+        settings = this.readExprSlot({ stops: ',)', context: `for the settings '${kind}' runs with` }).slot;
+        this.skipAllWs();
+        if (this.peekCh() === ',') this.pos++;
+        this.skipAllWs();
+        if (this.peekCh() !== ')') {
+          this.error(`'${kind}' takes its settings last — \`${kind}(f, g, { concurrency: 2 })\``, this.pos);
+        }
+        break;
+      }
+      arms.push(this.parseArm(kind, 'An argument of'));
+      this.skipAllWs();
+      if (this.peekCh() === ',') {
+        this.pos++;
+        continue;
+      }
+      if (this.peekCh() === ')') break;
+      this.error(`Expected ',' between arms or ')' to close '${kind}(…)', found ${this.describeHere()}`);
+    }
+    const armsSpan = this.spanFrom(armsStart);
+    this.expect(')', `to close '${kind}(…)'`);
+    if (arms.length === 0) {
+      this.error(
+        kind === 'race'
+          ? 'A race over no arms can never settle — give it at least one function to run: `race(q, () => { await sleep(4h) })`'
+          : `'${kind}' over no functions runs nothing — give it at least one: \`${kind}(f, g)\``,
+        start,
+      );
+    }
+    return {
+      kind,
+      arms: { kind: 'arguments', arms, span: armsSpan },
+      ...(settings !== undefined ? { settings } : {}),
+      span: this.spanFrom(start),
+    };
+  }
+
   /** `[f, () => { … }]` — the arms written down, so each slot is its own. */
-  private parseLiteralArms(kind: 'race' | 'parallel'): CombinatorArms {
+  private parseLiteralArms(kind: CombinatorKind): CombinatorArms {
     const start = this.pos;
     this.pos++; // '['
     const arms: ArmExpression[] = [];
@@ -3274,7 +3313,7 @@ class Parser {
 
   /** Arms built at run time — an ordinary expression yielding a collection of
    *  functions. Same-typed by construction, so the receipt is a list. */
-  private parseDynamicArms(kind: 'race' | 'parallel'): CombinatorArms {
+  private parseDynamicArms(kind: CombinatorKind): CombinatorArms {
     const start = this.pos;
     const { slot } = this.readExprSlot({
       stops: ')',
@@ -3518,9 +3557,9 @@ class Parser {
       // `(f) => f()` is `(f) => { return f() }` (language version 5): a body
       // that is one call returns the call, so a callee that waits parks the
       // run as a returned call does — inside an expression it could not.
-      // `() => await race([…])` is `() => { return await race([…]) }`
-      // (language version 5), as TypeScript's `async () => await x` is — so a
-      // retired `parallel` there is the form its rewrite reaches.
+      // `() => await sleep(1h)` is `() => { return await sleep(1h) }`
+      // (language version 5), as TypeScript's `async () => await x` is — and
+      // a retired `await race(…)` there is refused with its rewrite.
       if (since(this.languageVersion, 5) && this.peekIdent() === 'await') {
         const awaitStart = this.pos;
         this.pos += 'await'.length;
@@ -3531,6 +3570,24 @@ class Parser {
           body: [{ kind: 'return', value: { kind: 'await', await: awaited }, span: this.spanFrom(awaitStart) }],
           span: this.spanFrom(start),
         };
+      }
+      // `() => all(f, g)` / `() => race(f, g)` (language version 5) returns
+      // the combinator's answer, as a returned call does.
+      const word = since(this.languageVersion, 5) ? this.peekIdent() : undefined;
+      if (word === 'race' || word === 'all' || word === 'parallel') {
+        const wordStart = this.pos;
+        this.pos += word.length;
+        this.skipInlineWs();
+        if (this.peekCh() === '(') {
+          const combinator = this.parseCombinator(wordStart, word);
+          return {
+            params,
+            ...returns,
+            body: [{ kind: 'return', value: { kind: 'combinator', combinator }, span: this.spanFrom(wordStart) }],
+            span: this.spanFrom(start),
+          };
+        }
+        this.pos = wordStart;
       }
       const call = since(this.languageVersion, 5) ? this.conciseBodyCall(stops) : undefined;
       if (call !== undefined) {
@@ -4093,9 +4150,10 @@ class Parser {
    * `<(c: <Company>) => <text>>` — a closure type (language version 5),
    * TypeScript's `(c: Company) => string`. The parameters are a function's own
    * parameter list, every one typed; the return is written as a function's
-   * return annotation is. A list of closures is `<() => <text>>[]` (the
-   * caller reads the `[]`); a closure that returns a list is
-   * `<() => <text[]>>`.
+   * return annotation is. A closure that returns a list is
+   * `<() => <text[]>>`; `<() => <text>>[]` reads (the caller reads the
+   * `[]`), and the checker refuses it — a closure is not data, so there is no
+   * list of them.
    */
   private readClosureType(paramName: string): ValueTypeRef {
     const start = this.pos;
@@ -4127,7 +4185,7 @@ class Parser {
     this.skipInlineWs();
     if (this.peekCh() === '[') {
       this.error(
-        `A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>', and a list of closures is '<() => <text>>[]'`,
+        `A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>'`,
       );
     }
     this.expect('>', `to close the closure type of '${paramName}'`);
@@ -4145,7 +4203,7 @@ class Parser {
         return member;
       }
       this.skipInlineWs();
-      this.expect(']', `to close '[]' — a list of closures is written '<() => <text>>[]'`);
+      this.expect(']', `to close '[]' — a list type is written '<text>[]'`);
       member = { kind: 'list', of: member, span: this.spanFrom(start) };
     }
   }

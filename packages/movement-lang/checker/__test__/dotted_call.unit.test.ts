@@ -5,7 +5,7 @@
 // their behaviour. A built-in in a record's scope (`o.UPPER(name)`) is what it
 // always was.
 //
-// Under 5 there are no methods either: a closure is never held under a key,
+// Under 5 there are no methods either: a closure is not data, never under a key,
 // so `box.g()` on a value is refused the same way, never a call of a member.
 
 import { parseProgram } from '../../parser/parse';
@@ -66,7 +66,7 @@ describe('a dotted call on a value (Dancing Wren, 5): there are no methods', () 
   });
 
   it('a value that would have held a closure is refused where the closure is put under the key', () => {
-    expect(codes(5, ['  box = { g: label }', '  v = box.g()'])).toEqual(['MOV_CLOSURE_UNDER_KEY', 'MOV_FUNCTION_UNKNOWN']);
+    expect(codes(5, ['  box = { g: label }', '  v = box.g()'])).toEqual(['MOV_CLOSURE_NOT_DATA', 'MOV_FUNCTION_UNKNOWN']);
   });
 });
 

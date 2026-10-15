@@ -139,11 +139,10 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
     expect(fieldTypeOf(body, 'u')).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
   });
 
-  it('from 5 a MAP over a tuple of closures is a tuple, slot by slot — the join parallel was', () => {
-    const body = '  u = MAP([() => { return e.`Subject` }, () => { return e.`Size` }], (f) => f())';
+  it('from 5 all over closures is a tuple, slot by slot — the join parallel was', () => {
+    const body = '  u = all(() => { return e.`Subject` }, () => { return e.`Size` })';
     expect(codes(body)).toEqual([]);
     expect(fieldTypeOf(body, 'u')).toEqual({ kind: 'tuple', of: ['text', 'number'] });
-    expect(fieldTypeOf(body, 'u', 4)).toBeUndefined();
   });
 
   it('a non-literal index reads any member — the union, possibly absent', () => {
@@ -189,6 +188,9 @@ describe('under version 3, a tuple read as a list is a list of its union', () =>
     ].join('\n');
     expect(codes(body, 4)).toEqual([]);
     expect(fieldTypeOf(body, 'u', 4)).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
+    const joined = body.replace('r = await parallel([', 'r = all(').replace('  ])', '  )');
+    expect(codes(joined)).toEqual([]);
+    expect(fieldTypeOf(joined, 'u')).toEqual({ kind: 'list', of: TEXT_OR_NUMBER });
   });
 
   it('a race receipt is the same union, each member possibly absent', () => {

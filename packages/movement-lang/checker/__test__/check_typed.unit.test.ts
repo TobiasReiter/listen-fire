@@ -1188,7 +1188,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         '    domains: [msg-[:sender]->.`domain`]',
         '  }',
         '',
-        '  MAP([',
+        '  all(',
         '    () => {',
         '      write team-[:messages]-> {',
         '        channel: "#dealflow"',
@@ -1201,7 +1201,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         '        attio_url: company.`url`',
         '      }',
         '    },',
-        '  ], { concurrency: 2 }, (f) => f())',
+        '  )',
         '}',
       ].join('\n'),
     );
@@ -1448,17 +1448,17 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
     ).toEqual([C.EXTRACT_UNKNOWN_FIELD]);
   });
 
-  it('handle types survive being written and read inside one closure a MAP calls', () => {
+  it('handle types survive being written and read inside one closure all calls', () => {
     expectClean(
       inMovement(
         [
-          '  MAP([',
+          '  all(',
           '    () => {',
           '      co = write crm-[:companies]-> { name: msg.`subject` }',
           '      write team-[:messages]-> { channel: "#d", text: "${co.`url`}" }',
           '    },',
           '    () => { write crm-[:note]-> { text: msg.`text` } },',
-          '  ], { concurrency: 2 }, (f) => f())',
+          '  )',
         ].join('\n'),
       ),
     );

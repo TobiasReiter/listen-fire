@@ -111,7 +111,7 @@ describe('an inner scope may not reuse an enclosing name', () => {
         inMovement(
           [
             '  one = c.`Name`',
-            '  r = MAP([() => { return c.`Name` }, () => { return c.`Name` }], { concurrency: 2 }, (f) => f())',
+            '  r = all(() => { return c.`Name` }, () => { return c.`Name` })',
           ].join('\n'),
         ),
       ),

@@ -131,7 +131,7 @@ movement intake(m: <inbox-[:message]->>) {
   a = write questions-[:Check]-> { prompt: "approve this deal?" }
   answer = await FIRST(a-[:Response]->)
   amount = COALESCE(facts.amount, 0)
-  timing = await race([() => { await sleep(2d) }, () => { return TRUE }])
+  timing = race(() => { await sleep(2d) }, () => { return TRUE })
   if amount > 1000 {
     write d { Stage: "big" }
   } else {
@@ -798,7 +798,7 @@ movement flows(m: <inbox-[:message]->>) {
     seen_reply = reply.answer
   }
 
-  outcome = await race([() => { return await FIRST(a-[:Response]->) }, () => { await sleep(1d) }])
+  outcome = race(() => { return await FIRST(a-[:Response]->) }, () => { await sleep(1d) })
 }
 
 listen to inbox { key: "flows" } fire flows
@@ -975,11 +975,11 @@ movement approve() {
   yes = callback({ write book-[:Companies]-> { Name: "approved" } })
   no = callback({ write book-[:Companies]-> { Name: "declined" } })
   write book-[:Companies]-> { Name: "asked \${yes.id} \${no.id}" }
-  r = await race([
+  r = race(
     () => { await FIRST(yes-[:Called]->) },
     () => { await FIRST(no-[:Called]->) },
     () => { await sleep(1d) },
-  ])
+  )
   if AT(r, 2) == null {
     write book-[:Companies]-> { Name: "nobody answered" }
   }
