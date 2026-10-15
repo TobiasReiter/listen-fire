@@ -6,15 +6,15 @@
 // behaviour is pinned here, and version 5 is refused at check.
 
 import type { InstanceSchema } from 'movement-lang';
-import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
-import { runMovement } from '../run';
-import { makeTestHost } from '../test_host';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000098');
 const KG = 'kg';
