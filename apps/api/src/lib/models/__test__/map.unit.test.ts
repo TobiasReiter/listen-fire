@@ -1,4 +1,4 @@
-import type { DefaultModelUse } from '../map';
+import type { DefaultModelUse } from 'movement-engine/lib/models/map';
 
 import {
   assertCallable,
@@ -10,7 +10,7 @@ import {
   providerCredentialsPresent,
   providerServes,
   resolveModel,
-} from '../map';
+} from 'movement-engine/lib/models/map';
 
 const GOOGLE = {
   GOOGLE_PRIVATE_KEY: 'pk',

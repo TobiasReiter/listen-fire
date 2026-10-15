@@ -15,8 +15,8 @@ import type {
   WebSearchResult,
   WebToolEvent,
 } from './web_tools';
-import type { Provider } from '../models/map';
-import type { ChatModelName } from '../models/registry';
+import type { Provider } from 'movement-engine/lib/models/map';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { buildStructuredTool, extractStructuredResult } from './structured';
 import {
@@ -36,8 +36,8 @@ import {
 } from './web_tools';
 import { chatCallFor } from '../models/chat';
 import { Queue } from '../utils/queue';
-import { neverAsAny } from '../utils/types';
-import { logger } from '../../services/logger';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
 import { SECOND } from '../../constants';
 import { recordLlmUsage, runFields } from '../llm_usage';
 import { assertRunBudget } from '../run_spend';

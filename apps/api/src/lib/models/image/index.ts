@@ -1,11 +1,11 @@
 // Image generation behind the model map: the caller names a registry model and
 // gpt-image-1's knobs, and the map decides which vendor draws it.
 
-import type { ImageModelName } from '../registry';
+import type { ImageModelName } from 'movement-engine/lib/models/registry';
 
 import { assertRunBudget } from '../../run_spend';
-import { neverAsAny } from '../../utils/types';
-import { assertCallable, resolveModel } from '../map';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
 import { geminiGenerateImage } from './gemini';
 import { openAiGenerateImage } from './openai';
 

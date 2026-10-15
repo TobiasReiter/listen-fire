@@ -13,7 +13,7 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TriggerRunTriggerType } from './trigger_run';
 
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
-import { triggerEventSchema, type TriggerEvent } from '../triggers/types';
+import { triggerEventSchema, type TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { dispatchTriggerByIdEvent } from '../triggers/router';
 
 

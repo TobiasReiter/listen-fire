@@ -37,7 +37,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 
 import { getAutomationsQb } from '../../../../lib/kysely';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../../../lib/slack';
 import { notUndefined } from '../../../../lib/utils/nullability';
 import { findTriggerByInboundKey } from '../../storage/tg_table';

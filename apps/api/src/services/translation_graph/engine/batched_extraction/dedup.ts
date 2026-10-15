@@ -23,16 +23,16 @@
 //   - LLM-clustering arm for constraint-less types is intentionally
 //     skipped (per the 2026-05-22 design ruling).
 
-import type { EphemeralNode } from '../../types';
+import type { EphemeralNode } from 'movement-engine/services/translation_graph/types';
 import type {
   Adapter,
   DedupRules,
   ExternalRecordRef,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type { Bundle } from './bundle';
 import type { SyntheticSchema } from './schema_synthesis';
 
-import { positionData } from '../../types';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 
 // ── Public types ──────────────────────────────────────────────────────────
 

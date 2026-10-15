@@ -2,7 +2,7 @@
 // Two decisions, both read from the environment, both of which change what a
 // user is shown and what the mailbox may afterwards do.
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 import {
   GMAIL_CONNECT_METHODS,
   gmailConnectMethod,

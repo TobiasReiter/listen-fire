@@ -9,7 +9,7 @@
 // must still read directly.
 
 // logger → services/context → casl crashes at module load; stub it.
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -19,7 +19,7 @@ import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   createNativeValuationsAdapter,
 } from '../native_valuations';
-import { makeStablePosition } from '../../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 const adapter = () =>
   createNativeValuationsAdapter({ teamId: 'team-1' as TeamId, credentialsId: 'cred-1' });

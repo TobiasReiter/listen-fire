@@ -6,10 +6,10 @@
 // answered a bound name as present without reading it — no longer answers for a
 // credential.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { runMovement } from '../run';
-import { MovementEngineError } from '../errors';
-import { makeTestHost } from '../test_host';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { tenantIdOf } from 'engine-contracts';
 import { mockCatalogSnapshot, parseMovementExpression, type LanguageVersion } from 'movement-lang';
 

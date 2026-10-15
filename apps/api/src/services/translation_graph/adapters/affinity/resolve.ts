@@ -18,11 +18,11 @@ import type {
   ResolveEntityResult,
   ExternalRecordRef,
   LinkedObjectCandidate,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 import { AFFINITY_ADAPTER_TYPE, listEntityKind, type DecodedTypeId } from './types';
 import { AFFINITY_LIST_ENTRIES_EDGE, AFFINITY_LIST_NAME_FIELD } from './schema_catalog';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { isAdapterCallCeilingExceeded } from '../../segment_scope';
 import { readOrgBuiltins, readPersonBuiltins } from './shared';
 

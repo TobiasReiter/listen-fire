@@ -19,7 +19,7 @@ import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import { registerLocalMutationSubscriber } from '../../knowledge/mutation_outbox/worker';
 import { recordMutationEventSchema, type RecordMutationEvent } from './record_mutation_event';
 import { dispatchMutationEvent } from './mutation_dispatch';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 export function subscribeEngineToKnowledgeOutbox(): void {
   registerLocalMutationSubscriber(async ({ teamId, envelope }) => {

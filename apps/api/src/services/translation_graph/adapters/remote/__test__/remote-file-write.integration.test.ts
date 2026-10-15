@@ -13,14 +13,14 @@ import http from 'node:http';
 
 import type { Readable } from 'node:stream';
 import type { AddressInfo } from 'node:net';
-import type { Adapter } from '../../../adapter';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { RemoteAdapterConfig } from '../index';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { createAdapterProtocolHandler } from '../../../protocol/server';
 import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from '../index';
-import { fileValue } from '../../../adapter';
+import { fileValue } from 'movement-engine/services/translation_graph/adapter';
 
 const EXPOSED_URL = 'https://example.test/api/files/blob/xyz';
 

@@ -28,8 +28,8 @@ import type { ExternalServiceCredentialsId } from '../../generated/kysely/automa
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
 import { AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
-import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
-import { makeStablePosition } from '../../services/translation_graph/types';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 

@@ -18,13 +18,13 @@
 //   (Test run rewired off the TG engine onto a movement dry-run)
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CapturedWrite } from '../engine/dry_run_adapter';
-import type { TriggerEvent } from '../triggers/types';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { anthropicChat } from '../../../lib/anthropic';
 import { runCostCapFromEnv } from '../../../lib/run_spend';
-import { logger } from '../../logger';
-import { runMovement } from '../../movement_engine/run';
+import { logger } from 'movement-engine/services/logger';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import { loadTriggerById } from '../storage/tg_table';
@@ -32,7 +32,7 @@ import { runCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
 import { tenantOfTeam } from './tenant';
 import { inMemoryRawTextStore } from './raw_text_store';
-import { InMemoryWriteLocks } from '../../write_locks/write_locks';
+import { InMemoryWriteLocks } from 'movement-engine/services/write_locks/write_locks';
 import { getMovementRow } from './store';
 
 /** A source field the synthetic payload should be keyed by — pulled from the

@@ -24,8 +24,8 @@ import type { TriggerRunId } from '../../../generated/kysely/automations/Trigger
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { ParkedScopeState } from '../serialize';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 const fireCallbackFiringMock = jest.fn();
 

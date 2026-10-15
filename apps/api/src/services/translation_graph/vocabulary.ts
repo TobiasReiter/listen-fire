@@ -4,7 +4,7 @@
 // `{slot}` templates; callers (the automation describer, and eventually the
 // movement renderer) never branch on an adapter slug themselves.
 
-import type { AdapterEventPhraseVocabulary, EventPhraseTemplate } from './adapter';
+import type { AdapterEventPhraseVocabulary, EventPhraseTemplate } from 'movement-engine/services/translation_graph/adapter';
 
 /**
  * Render an adapter's declared event phrasing against its trigger/listen

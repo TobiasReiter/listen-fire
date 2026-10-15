@@ -8,7 +8,7 @@
 // must not spend four more attempts on the very error that exists to stop
 // spending.
 
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

@@ -14,8 +14,8 @@
 import { z } from 'zod';
 import { WireManifestProtocolVersion } from 'engine-contracts';
 
-import type { AdapterManifest } from '../../adapter';
-import type { TriggerType } from '../../triggers/types';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 
 export const RemoteAdapterManifestFile = z.object({
   /** The adapter protocol version the server speaks. Required: a manifest

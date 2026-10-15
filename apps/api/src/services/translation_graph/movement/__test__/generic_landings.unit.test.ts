@@ -23,10 +23,10 @@ import {
 } from 'movement-lang';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { SchemaTypeDescriptor } from '../../types';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 import { AskAdapter } from '../../adapters/ask';
-import { instanceSchemaFromDescriptors } from '../schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { graftGenericLandings } from '../generic_landings';
 
 const PRELUDE = `import { questions } from adapters\nqa = questions()\n`;

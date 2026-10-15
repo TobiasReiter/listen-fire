@@ -10,7 +10,7 @@ import type { Request, Response } from 'express';
 
 import { verifySlackSignature } from '../../services/webhook_sync/providers/slack';
 import { handleSlackEventsInbound } from '../../services/webhook_sync/slack_events';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 
 const slackEventsRouter: ReturnType<typeof Router> = Router();

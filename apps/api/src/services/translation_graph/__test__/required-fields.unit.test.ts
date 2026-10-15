@@ -1,10 +1,10 @@
-import type { SchemaFieldDescriptor, TGFieldMapping } from '../types';
+import type { SchemaFieldDescriptor, TGFieldMapping } from 'movement-engine/services/translation_graph/types';
 
 import {
   requiredFieldStatuses,
   unsatisfiedRequiredFields,
   seedRequiredFieldMappings,
-} from '../required_fields';
+} from 'movement-engine/services/translation_graph/required_fields';
 
 function field(over: Partial<SchemaFieldDescriptor> & { fieldId: string }): SchemaFieldDescriptor {
   return {

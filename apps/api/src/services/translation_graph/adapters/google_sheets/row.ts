@@ -19,11 +19,11 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
-import { logger } from '../../../logger';
-import { containerAssociation } from '../../adapter';
-import { makeStablePosition } from '../../types';
+import { logger } from 'movement-engine/services/logger';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   type SheetsTableId,

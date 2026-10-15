@@ -69,7 +69,7 @@ import {
   pickerSpecForActionKind,
   type PickerSpec,
 } from '../../services/credentials/picker_spec';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { slackAppDisplayName } from '../../lib/brand';
 
 const connectRouter: ReturnType<typeof Router> = Router();

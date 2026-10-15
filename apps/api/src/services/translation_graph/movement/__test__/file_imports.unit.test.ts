@@ -20,7 +20,7 @@
 // ── Jest module workarounds (mirrors movement_engine/__test__/calls) ────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -47,7 +47,7 @@ jest.mock('../../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../context', () => ({
@@ -96,11 +96,11 @@ jest.mock('../../adapters/resolve', () => ({
 import { fromCatalogSnapshot } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { TriggerEvent } from '../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { runMovement } from '../../../movement_engine/run';
-import { MovementEngineError } from '../../../movement_engine/expression';
-import { listUnsupportedConstructs } from '../../../movement_engine/interpretable';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { staticCatalogSnapshot } from '../catalog';
 import { diagnoseMovementSource } from '../authoring';
 import { assembleMovementFileSources, resolverOverSources } from '../files';
@@ -109,10 +109,10 @@ import {
   type Adapter,
   type RuntimeCapabilities,
   type Resource,
-} from '../../adapter';
-import { containerAssociation } from '../../adapter';
-import { makeUnstablePosition, positionData } from '../../types';
-import { makeTestHost } from '../../../movement_engine/test_host';
+} from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
 

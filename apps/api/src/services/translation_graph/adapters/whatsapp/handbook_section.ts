@@ -10,7 +10,7 @@
 // WhatsApp cannot edit a sent message and has no toast — is taught plainly:
 // the ack a tap gets IS a reply, never a silent edit.
 
-import type { HandbookSection } from '../../../../lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/lib/handbook_section';
 
 export const WHATSAPP_HANDBOOK_SECTION: HandbookSection = {
   title: 'WhatsApp — the shared number, and a tap that acts',

@@ -20,7 +20,7 @@ const baseInput = {
 
 function mockTail(storeResult: unknown) {
   jest.doMock('../router', () => ({ dispatchTriggerByIdEvent: jest.fn() }));
-  jest.doMock('../../../logger', () => ({
+  jest.doMock('movement-engine/services/logger', () => ({
     logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   }));
   jest.doMock('../event_store', () => ({
@@ -79,7 +79,7 @@ describe('captureDiscriminableEvent — the pre-ack half', () => {
 
   it('a store failure yields no receipt id but still a dispatchable capture', async () => {
     jest.doMock('../router', () => ({ dispatchTriggerByIdEvent: jest.fn() }));
-    jest.doMock('../../../logger', () => ({
+    jest.doMock('movement-engine/services/logger', () => ({
       logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     }));
     jest.doMock('../event_store', () => ({

@@ -22,7 +22,7 @@ import type { SearchHit } from '../search_hygiene';
 
 import { services } from '../../../../../adapters/registry';
 import { SECOND } from '../../../../../constants';
-import { logger } from '../../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { describeError } from '../fetch_resource';
 import { canonicalProfileUrl, isThin, matchesSlug, readTitle } from '../linkedin_identity';
 

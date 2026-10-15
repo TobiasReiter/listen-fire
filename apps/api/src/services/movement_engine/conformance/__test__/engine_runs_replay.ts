@@ -17,8 +17,8 @@ import { canonicalJson, hostRecordingSchema, type HostRecording, type ReplayTarg
 import { httpTarget, rustTarget, typescriptTarget } from '../replay';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from 'movement-lang';
 
-import { parsePinned } from '../../program_check';
-import { rustRunStats } from '../../rust_stats';
+import { parsePinned } from 'movement-engine/services/movement_engine/program_check';
+import { rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
 

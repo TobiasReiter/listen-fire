@@ -58,9 +58,9 @@ import { resolveAdapter } from '../../translation_graph/adapters/resolve';
 import { resumeMovementFiring } from '../../translation_graph/movement/execute';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
 import { mintMovementVersionIfChanged } from '../../translation_graph/movement/version_store';
-import { positionData } from '../../translation_graph/types';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 
-import type { Adapter, DiscriminableEvent, RuntimeCapabilities } from '../../translation_graph/adapter';
+import type { Adapter, DiscriminableEvent, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 
 import { loadCorrelatedParks, registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 import { dispatchEventHandler, registerDispatchWork } from '../../translation_graph/triggers/dispatch_event';
@@ -70,7 +70,7 @@ import { handleInboundWebhook } from '../handler';
 import { SlackAdapter } from '../../translation_graph/adapters/slack';
 import { refreshLinkedObjects } from '../linked_object_cache';
 import { linkedObjectRefreshHandler, registerLinkedObjectWork } from '../linked_object_refresh';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { runHarnessDelivery } from '../../work/harness';
 import { claimDueWork, completeWork } from '../../work/store';
 

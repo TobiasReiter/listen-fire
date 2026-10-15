@@ -8,7 +8,7 @@ jest.mock('../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -20,9 +20,9 @@ jest.mock('../../../../lib/recording', () => ({
 import { Readable } from 'node:stream';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { FileRef } from '../../adapter';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
-import { isStablePosition, makeMetaPosition } from '../../types';
+import { isStablePosition, makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 import * as grantedItems from '../../../credentials/granted_items';
 import { GoogleDriveAdapter } from '../google_drive';
 import { DropboxAdapter } from '../dropbox';

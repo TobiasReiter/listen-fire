@@ -10,7 +10,7 @@
 
 import { z } from 'zod';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 export const DEALROOM_DEFAULT_BASE_URL = 'https://api.dealroom.co/api/v1';
 

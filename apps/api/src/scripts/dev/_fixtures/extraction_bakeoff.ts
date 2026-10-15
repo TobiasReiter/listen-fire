@@ -20,7 +20,7 @@ import type {
   Span,
 } from 'movement-lang';
 import type { FieldType } from 'movement-lang';
-import type { TransformInvocationResult } from '../../../services/movement_engine/extraction';
+import type { TransformInvocationResult } from 'movement-engine/services/movement_engine/extraction';
 
 // ── AST builders ───────────────────────────────────────────────────────────
 //

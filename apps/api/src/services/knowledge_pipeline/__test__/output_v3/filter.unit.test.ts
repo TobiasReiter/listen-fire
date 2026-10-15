@@ -11,12 +11,12 @@ jest.mock('../../output_v3/resolve', () => ({
   selectResourceField: jest.fn(),
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 import type { NodeData } from '../../output_v3/filter';
-import type { FieldRef } from '../../output_v3/schemas';
+import type { FieldRef } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 
 import { resolveFieldRef } from '../../output_v3/filter';
 

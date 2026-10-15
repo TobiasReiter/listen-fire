@@ -61,7 +61,7 @@ jest.mock('../run_failure', () => ({
 
 import { abortRun, resumeRun } from '../operator';
 import { RunBusy } from '../../movement_engine/run_lease';
-import { MovementEngineError } from '../../movement_engine/errors';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 
 beforeEach(() => {
   failRunAndCancelRequests.mockReset().mockResolvedValue(undefined);

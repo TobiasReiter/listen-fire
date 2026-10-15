@@ -66,15 +66,15 @@
 // adapter-attio.unit.test.ts), but it doesn't stub schemas — we want
 // the real round-trip behaviour.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
-import type { TranslationGraphRowBody } from '../types';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
+import type { TranslationGraphRowBody } from 'movement-engine/services/translation_graph/types';
 import type { z as _z } from 'zod';
 
-const schemasModule = require('../../knowledge_pipeline/output_v3/schemas');
+const schemasModule = require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const expressionModule = require('../../knowledge_pipeline/output_v3/expression');
+const expressionModule = require('movement-engine/services/knowledge_pipeline/output_v3/expression');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const typesModule = require('../types');
+const typesModule = require('movement-engine/services/translation_graph/types');
 
 
 // Surface the loaded module values to the test bodies with proper types.

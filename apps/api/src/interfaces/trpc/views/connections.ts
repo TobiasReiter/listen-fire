@@ -36,7 +36,7 @@ import {
   listAdapterManifests,
   resolveAdapterSlug,
 } from '../../../services/translation_graph/adapters/registry';
-import { credentialImportNames } from '../../../services/translation_graph/movement/schema_projection';
+import { credentialImportNames } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { inboundRoutingAddress } from '../../../services/translation_graph/adapters/email/address';
 import { WHATSAPP_MOVEMENTS_NUMBER } from '../../../services/translation_graph/adapters/whatsapp';
 import {

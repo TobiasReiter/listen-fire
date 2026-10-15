@@ -3,8 +3,8 @@
 // blocks a save (`listUnsupportedConstructs`) — the three surfaces that must
 // all agree a construct is live before an author can use it.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { listUnsupportedConstructs } from '../interpretable';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {

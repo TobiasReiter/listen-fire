@@ -23,7 +23,7 @@ import {
   type AdmissionReport,
   type ReasonDemand,
 } from '../services/movement_engine/admission_rollup';
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 const RETAINED_DAYS = 14;
 

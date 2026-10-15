@@ -20,8 +20,8 @@
 
 import { Readable } from 'node:stream';
 
-import type { RenderFile } from '../../movement_engine/host';
-import type { FileRef } from '../adapter';
+import type { RenderFile } from 'movement-engine/services/movement_engine/host';
+import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 

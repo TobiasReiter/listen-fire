@@ -38,7 +38,7 @@ import {
   formatEntityContext,
 } from '../../lib/knowledge/relationship_context';
 import { resolveDisplayNames } from '../../lib/knowledge/resolve_display_name';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { promptDef } from '../../lib/prompts/definition';
 import { execute } from '../../lib/prompts/execute';
 import { getKnowledgeQb } from '../../lib/kysely';

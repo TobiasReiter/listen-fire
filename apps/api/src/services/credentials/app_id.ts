@@ -5,7 +5,7 @@
 // the credential.
 
 import { gmailConnectMethod } from '../../adapters/gmail/connect_method';
-import { neverAsAny } from '../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 /** The Slack apps we distinguish. */
 export const SLACK_APP_ID = {

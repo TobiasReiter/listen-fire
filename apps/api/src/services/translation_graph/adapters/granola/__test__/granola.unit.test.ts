@@ -7,20 +7,20 @@ jest.mock('../../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
   encryptToken: async () => '',
 }));
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { TriggerEvent } from '../../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { RESOURCES_REFERENCE_FIELD_ID } from '../../../adapter';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
   makeStablePosition,
   positionData,
-} from '../../../types';
+} from 'movement-engine/services/translation_graph/types';
 import {
   createGranolaAdapter,
   GranolaAdapter,

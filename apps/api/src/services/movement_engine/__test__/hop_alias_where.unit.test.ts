@@ -8,20 +8,20 @@
 // WHERE: a block head, an expression hop, and an EXISTS hop.
 
 import type { InstanceSchema } from 'movement-lang';
-import { runMovement } from '../run';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { Adapter, GetRelatedInput, RelatedResult } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { Adapter, GetRelatedInput, RelatedResult } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import {
   META_RECORD_TYPE,
   makeStablePosition,
   positionRecordId,
-} from '../../translation_graph/types';
+} from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../test_host';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000031');

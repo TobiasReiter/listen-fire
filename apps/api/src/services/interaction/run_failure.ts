@@ -17,7 +17,7 @@ import { dropAwaitCorrelationsForRun } from '../translation_graph/adapters/await
 import { awaitKeepers } from '../translation_graph/adapters/packages';
 import { revokeRunCallbacks } from '../movement_engine/callback_store';
 import { withRunLease } from '../movement_engine/run_lease';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 
 /**
  * Settle a run that has been stamped `cancel_requested_at` (operator abort, or

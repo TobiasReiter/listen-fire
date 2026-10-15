@@ -1,6 +1,6 @@
 import { getQb } from '../kysely';
 import { retentionCutoff } from './types';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 export async function sweepOpsEvents(now = new Date()): Promise<number> {
   const res = await getQb(['ops_event'])

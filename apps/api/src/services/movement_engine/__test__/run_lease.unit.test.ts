@@ -23,7 +23,7 @@ function fakeQb(): unknown {
 jest.mock('../../../lib/kysely', () => ({
   getAutomationsQb: () => fakeQb(),
 }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 

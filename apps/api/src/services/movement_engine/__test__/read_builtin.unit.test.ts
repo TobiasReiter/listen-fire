@@ -7,7 +7,7 @@
 // which is what these tests pin — that, and the `file` provenance origin, which
 // is what keeps whole-document provenance when the text is then extracted from.
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -19,9 +19,9 @@ import {
   evalMovementExpr,
   type FileTextResolution,
   type MovementTraceEntry,
-} from '../expression';
-import { buildExtractSpec, materializeExtract, type ExtractRuntime } from '../extraction';
-import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
+} from 'movement-engine/services/movement_engine/expression';
+import { buildExtractSpec, materializeExtract, type ExtractRuntime } from 'movement-engine/services/movement_engine/extraction';
+import { fileValue, type FileRef, type FileValue } from 'movement-engine/services/translation_graph/adapter';
 import type { LlmCallInput, LlmCallResult } from '../../translation_graph/engine/batched_extraction';
 import type { ExtractExpression, ExtractStage } from 'movement-lang';
 

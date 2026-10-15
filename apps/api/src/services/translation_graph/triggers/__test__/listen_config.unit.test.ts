@@ -5,7 +5,7 @@
 // `events` used to fall through to "match/register everything", so a listen
 // scoped to `create` also fired on `update`/`delete`.
 
-import { channelScopeMatches, eventConfigList } from '../listen_config';
+import { channelScopeMatches, eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
 
 describe('eventConfigList', () => {
   it('wraps a bare-string events value in a single-element array', () => {

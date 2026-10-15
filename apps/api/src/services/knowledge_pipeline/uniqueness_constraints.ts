@@ -10,9 +10,9 @@ import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExtractedSubgraph, ExtractedNode, ExtractedProperty, ExtractedEdge } from './types';
 
-import { isBlankIdentityValue } from '../translation_graph/uniqueness';
-import { expressionSchema } from './output_v3/expression';
-import { logger } from '../logger';
+import { isBlankIdentityValue } from 'movement-engine/services/translation_graph/uniqueness';
+import { expressionSchema } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
+import { logger } from 'movement-engine/services/logger';
 import { getKnowledgeQb } from '../../lib/kysely';
 
 // ── Types ──

@@ -2,7 +2,7 @@ import { DocumentService } from '../../../services/document';
 import { RawTextService } from '../../../services/raw_text';
 import { DocumentSourceService } from '../../document_sources';
 import { pipeThroughTmpFile } from '../../utils/tmp';
-import { neverAsAny } from '../../utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { DocumentOutput, EmptyOutput, TextOutput, Tool } from './types';
 
 type PitchDeckParams = {

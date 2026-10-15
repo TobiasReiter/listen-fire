@@ -6,7 +6,7 @@
 
 // logger → services/context → casl crashes at module load; stub it (mirrors the
 // sibling read test).
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // Credentials load hits the DB + decrypt; stub the two seams so requireCreds
@@ -36,7 +36,7 @@ import {
   parseValuationCriteria,
   aggregateComputeValuation,
 } from '../native_valuations';
-import { makeStablePosition } from '../../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 const adapter = () =>
   createNativeValuationsAdapter({ teamId: 'team-1' as TeamId, credentialsId: 'cred-1' });

@@ -5,8 +5,8 @@ jest.mock('../../../lib/anthropic', () => ({
   anthropicChat: jest.fn(async () => 'an aggregated answer'),
 }));
 
-import type { Adapter, RuntimeCapabilities, Resource } from '../adapter';
-import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
+import type { Adapter, RuntimeCapabilities, Resource } from 'movement-engine/services/translation_graph/adapter';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
 
 import {
   evaluateExpression,
@@ -14,14 +14,14 @@ import {
   ResourceSink,
   type ExpressionEvalContext,
 } from '../engine/expression';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 import {
   type SourcePosition,
   makeStablePosition,
   makeUnstablePosition,
   isStablePosition,
   positionRecordId,
-} from '../types';
+} from 'movement-engine/services/translation_graph/types';
 import { KG_ADAPTER_TYPE } from '../adapters/knowledge_graph';
 
 /** Permissive caps: all expression kinds + traversal directions allowed. */

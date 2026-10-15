@@ -27,7 +27,7 @@ import type { ResolvedField } from './extracted_fields';
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
 import type { Anchors, SearchHit } from './search_hygiene';
 import type { ProfileIdentity } from './linkedin_identity';
-import type { TransformSignature } from '../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { services } from '../../../../adapters/registry';
 import { MINUTE, SECOND } from '../../../../constants';
@@ -36,7 +36,7 @@ import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
 import { parseJson } from '../../../../lib/utils/parse_json';
 import { looksLikeNonHtmlAddress } from '../../../../lib/utils/url';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { resolvePersonContext } from './extracted_fields';
 import { describeError, fetchWithTimeout } from './fetch_resource';
 import {
@@ -55,7 +55,7 @@ import {
   readTitle,
 } from './linkedin_identity';
 import { LINKEDIN_RESEARCH_HANDBOOK_SECTION } from './linkedin_research_handbook_section';
-import { importIdentifier } from '../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

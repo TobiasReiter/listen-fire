@@ -12,13 +12,13 @@
 // plain scrape are the same work once something has chosen a URL.
 
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
-import type { TransformSignature } from '../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { runFields } from '../../../../lib/llm_usage';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { emissionOf, fetchWithTimeout, normaliseUrl } from './fetch_resource';
 import { FETCH_URL_HANDBOOK_SECTION } from './fetch_url_handbook_section';
-import { importIdentifier } from '../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

@@ -23,7 +23,7 @@ import './_profile_loader';
 // Composition root — registers the services the fetch path reaches.
 import '../../services';
 import '../../services/translation_graph/engine/transforms/register-bundled';
-import { parseChatModelName } from '../../lib/models/registry';
+import { parseChatModelName } from 'movement-engine/lib/models/registry';
 import { runInContext } from '../../services/context/utils';
 import { research } from '../../services/translation_graph/engine/transforms/research';
 import { ensureDevLoopTeam } from './_lib';

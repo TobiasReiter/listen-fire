@@ -5,8 +5,8 @@
 // rule. The resolver is called WITHOUT trigger context — creator
 // override / fallbackToCreatorIfActorUnregistered must not pass the gate.
 
-import type { Adapter, ActingUser, ActorCandidate } from '../../adapter';
-import type { TriggerEvent } from '../types';
+import type { Adapter, ActingUser, ActorCandidate } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import { consultActorGate, inboundActorGateEnabled } from '../actor_gate';

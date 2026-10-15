@@ -26,7 +26,7 @@
 // resolve, and the reconciler refuses to mint a half-scoped channel
 // (listen_subscriptions.ts), so that state is unrepresentable.
 
-import type { ListenConfigKey } from '../adapter';
+import type { ListenConfigKey } from 'movement-engine/services/translation_graph/adapter';
 import type { CachedAdapterInstance } from './instance_cache';
 
 import { hopStep, type AddressStep } from './listen_narrowing';

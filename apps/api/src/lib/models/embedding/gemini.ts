@@ -1,13 +1,13 @@
 // Embeddings on Gemini, through `@google/genai`. For `gemini-embedding-001` on
 // Vertex the SDK speaks the model's `:predict` method, one text per instance.
 
-import type { Resolved } from '../map';
+import type { Resolved } from 'movement-engine/lib/models/map';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
 import { countTokens } from '../../chunking';
 import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
-import { GEMINI_EMBEDDING_MODELS } from './range';
+import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/lib/models/embedding/range';
 
 /**
  * `gemini-embedding-001` truncates a vector to `outputDimensionality` WITHOUT

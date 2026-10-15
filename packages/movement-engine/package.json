@@ -1,0 +1,27 @@
+{
+  "name": "movement-engine",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Its tests still live in apps/api",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "code:type-check": "tsc --pretty --noEmit"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "#shared": "workspace:@listen-fire/shared@*",
+    "engine-contracts": "workspace:*",
+    "google-auth-library": "10.3.0",
+    "movement-lang": "workspace:*",
+    "safe-stable-stringify": "2.5.0",
+    "winston": "3.14.2",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.5",
+    "typescript": "5.5.4"
+  }
+}

@@ -7,16 +7,16 @@
 // with MAP's `concurrency` and `onError`.
 
 import type { InstanceSchema } from 'movement-lang';
-import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
-import type { ParkedScopeState } from '../serialize';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
-import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from '../run';
-import { makeTestHost } from '../test_host';
+import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from 'movement-engine/services/movement_engine/run';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000097');

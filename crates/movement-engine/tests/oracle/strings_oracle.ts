@@ -24,9 +24,9 @@
 // Cases are `{fn, args, outcome}` in the eval wire format (./wire.ts), as
 // stdlib.json's are.
 
-import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
-import { boundFileText, maxFileChars } from '../../../../apps/api/src/services/movement_engine/extraction';
-import type { FileRef } from '../../../../apps/api/src/services/translation_graph/adapter';
+import { applyMovementFunction } from '../../../../packages/movement-engine/services/movement_engine/builtins';
+import { boundFileText, maxFileChars } from '../../../../packages/movement-engine/services/movement_engine/extraction';
+import type { FileRef } from '../../../../packages/movement-engine/services/translation_graph/adapter';
 import { applyStdlib, coerceToDatetime, stdlibFunctionById } from '../../../../packages/movement-lang/expression/stdlib';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { outcome, wire } from './wire';

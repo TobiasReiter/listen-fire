@@ -39,10 +39,10 @@ import type {
   ExtractValueInvocation,
   ExtractValueResult,
 } from '../evaluator/batcher';
-import type { EphemeralNode } from '../../types';
-import type { Adapter, Fact, Resource } from '../../adapter';
+import type { EphemeralNode } from 'movement-engine/services/translation_graph/types';
+import type { Adapter, Fact, Resource } from 'movement-engine/services/translation_graph/adapter';
 import type { StoredUniquenessConstraints } from '../../../knowledge_pipeline/uniqueness_constraints';
-import type { LlmClient } from './llm_call';
+import type { LlmClient } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
 
 import { assembleBundle, type Bundle } from './bundle';
 import { buildSyntheticSchema, type SyntheticSchema } from './schema_synthesis';
@@ -69,7 +69,7 @@ import { runInBatchDedup, type DedupJudge } from './dedup';
 
 // The model call the batcher is handed is its own module (`./llm_call`), so
 // the movement engine can name it without the batcher's storage types.
-export type { LlmCallInput, LlmCallResult, LlmClient } from './llm_call';
+export type { LlmCallInput, LlmCallResult, LlmClient } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
 
 /**
  * One transform's contribution back to the bundle. The dispatcher

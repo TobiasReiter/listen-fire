@@ -11,12 +11,12 @@ import type {
   UpdateInput,
   UpdateResult,
   UpdateWriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 import { attachPersonToOrganisation } from '../../../../adapters/affinity/employer_association';
 import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
-import { writeParentLinks } from '../../adapter';
-import { logger } from '../../../logger';
+import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
+import { logger } from 'movement-engine/services/logger';
 import {
   applyCustomReferenceParentLinks,
   buildOrgData,

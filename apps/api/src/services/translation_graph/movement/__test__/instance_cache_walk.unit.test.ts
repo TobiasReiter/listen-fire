@@ -19,7 +19,7 @@
 //   - an adapter with no `edgesFrom` is untouched.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { SourcePosition } from '../../types';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 const describeCalls: string[] = [];
 const edgesFromCalls: { recordType: string | null; recordId?: string; cursor?: unknown }[] = [];

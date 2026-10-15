@@ -12,14 +12,14 @@ import {
   type InstanceSchema,
 } from 'movement-lang';
 
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 import {
   closeDemandOverChains,
   closeDemandOverWriteVariants,
   demandSeed,
 } from '../demand';
-import { instanceSchemaFromDescriptors } from '../schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 const entries: SchemaEntryPoint[] = [
   { typeId: 'obj-companies', displayName: 'Companies', writable: true, readable: true },

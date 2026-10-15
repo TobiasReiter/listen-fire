@@ -43,8 +43,8 @@ import type {
   TGFieldMapping,
   TranslationGraphNode,
   TranslationGraphRowBody,
-} from '../../../services/translation_graph/types';
-import type { Expression } from '../../../services/knowledge_pipeline/output_v3/expression';
+} from 'movement-engine/services/translation_graph/types';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
 
 export type OntologyMaps = {
   /** Template node-type key (e.g. `opportunity`) → DB UUID. */

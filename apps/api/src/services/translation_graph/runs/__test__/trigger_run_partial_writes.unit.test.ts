@@ -5,7 +5,7 @@
 // run stay `failed`: honest accounting, not partial success.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MovementRunResult } from '../../../movement_engine/run';
+import type { MovementRunResult } from 'movement-engine/services/movement_engine/run';
 
 // `sql` is used here only to wrap a JSON payload for a JSONB column
 // (sql`${json}::jsonb`). Returning the interpolated value itself lets the test

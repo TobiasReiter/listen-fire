@@ -24,7 +24,7 @@ jest.mock('../../../../services/raw_text', () => ({
   },
 }));
 
-jest.mock('../../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

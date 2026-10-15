@@ -10,7 +10,7 @@
 // `within` marks a sub-step of an enclosing step, and sub-steps are reported
 // without being counted a second time.
 
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 export interface StepTimer {
   /** Time a top-level step. Its duration counts toward the total's breakdown. */

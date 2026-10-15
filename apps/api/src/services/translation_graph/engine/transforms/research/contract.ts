@@ -9,9 +9,9 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from '../../../../../lib/models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
-import { neverAsAny } from '../../../../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { describeError } from '../fetch_resource';
 
 /** One entry to research: whatever it carries, plus what the caller wants to

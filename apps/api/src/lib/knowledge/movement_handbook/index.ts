@@ -16,10 +16,10 @@ import type {
   PluginChapterId,
   SystemChapterId,
 } from './types';
-import type { AdapterManifest } from '../../../services/translation_graph/adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 import type { PluginManifest } from '../../../services/translation_graph/engine/transforms/registry';
 
-import { chapterRoute, sliceChapterSection } from '../../handbook_section';
+import { chapterRoute, sliceChapterSection } from 'movement-engine/lib/handbook_section';
 import { listAdapterManifests } from '../../../services/translation_graph/adapters/registry';
 import { foundations } from './chapters/foundations';
 import { anatomy } from './chapters/anatomy';

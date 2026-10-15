@@ -13,18 +13,18 @@
 import { sql } from 'kysely';
 import type { CoreParkReason } from 'engine-contracts';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
-import type { ParkSink, RunLimitPause } from './run';
+import type { ParkSink, RunLimitPause } from 'movement-engine/services/movement_engine/run';
 import { markRunLimitPaused } from './limit_pause';
 import {
   collectBranchExports,
   decrementJoinClose,
   persistBranchExport,
 } from './join_pending';
-import { isAncestorOrSelf, parseAddress } from './address';
+import { isAncestorOrSelf, parseAddress } from 'movement-engine/services/movement_engine/address';
 import {
   dropAwaitCorrelation,
   registerAwaitCorrelation,

@@ -12,7 +12,7 @@
 
 // Order-sensitive cycle guard (mirrors run_now.unit.test.ts).
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 const recordStep = jest.fn();
 const recordMovementStep = jest.fn();
@@ -77,7 +77,7 @@ jest.mock('../../../../lib/llm_usage', () => ({
 // contract — a transparent carrier for the partial write ledger — so the
 // firing's unwrapping is exercised for real. The class itself is covered in
 // movement_engine/__test__/run.unit.test.ts.
-jest.mock('../../../movement_engine/run', () => {
+jest.mock('movement-engine/services/movement_engine/run', () => {
   class MovementRunFailed extends Error {
     constructor(
       cause: unknown,
@@ -109,7 +109,7 @@ jest.mock('../firing_context', () => ({
   withFiringContext: <T>(_firing: unknown, fn: () => Promise<T>) => fn(),
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -125,14 +125,14 @@ jest.mock('../issues', () => ({
   resolveMovementIssues: jest.fn(async () => undefined),
 }));
 
-import type { TriggerEvent } from '../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import { RunLeaseLost } from '../../../movement_engine/run_lease';
 import { movementForTrigger, resumeMovementFiring, runMovementFiring } from '../execute';
 
 const { runMovement, resumeMovement, MovementRunFailed } = jest.requireMock(
-  '../../../movement_engine/run',
+  'movement-engine/services/movement_engine/run',
 ) as {
   runMovement: jest.Mock;
   resumeMovement: jest.Mock;

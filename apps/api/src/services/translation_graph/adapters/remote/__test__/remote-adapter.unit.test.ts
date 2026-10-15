@@ -4,19 +4,19 @@
 // re-wrapping of paged streams + manifest-gated optional methods. Names on the
 // wire are the caller's natural names, forwarded untranslated.
 
-import type { FileRef, RuntimeCapabilities } from '../../../adapter';
+import type { FileRef, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 import type { RemoteAdapterConfig, RemoteManifest } from '../index';
 
 import { streamFileRef } from '../../../engine/files/retrieve';
 
 // Mock the transport. Every forwarder funnels through `postRpc`; we control its
 // return value per-method and inspect the calls.
-jest.mock('../../../protocol/client', () => {
-  const actual = jest.requireActual('../../../protocol/client');
+jest.mock('movement-engine/services/translation_graph/protocol/client', () => {
+  const actual = jest.requireActual('movement-engine/services/translation_graph/protocol/client');
   return { ...actual, postRpc: jest.fn() };
 });
 
-import { postRpc } from '../../../protocol/client';
+import { postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from '../index';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';

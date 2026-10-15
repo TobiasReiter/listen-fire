@@ -30,8 +30,8 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { formatUsd, RUN_COST_CAP_ENV_VAR } from '../../lib/run_cost';
-import { logger } from '../logger';
+import { formatUsd, RUN_COST_CAP_ENV_VAR } from 'movement-engine/lib/run_cost';
+import { logger } from 'movement-engine/services/logger';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../generated/kysely/automations/Movement';
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -40,13 +40,13 @@ import { RUN_PAUSED } from '../translation_graph/adapters/system/types';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
 import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
-import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
+import { triggerEventSchema, type TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { runSpentMicrodollars, type TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 import { runHasPendingJoins } from './join_pending';
 import { dropRunLeaves } from './lease_fence';
-import type { RunLimitPause } from './run';
-import type { ParkedScopeState } from './serialize';
-import { MovementEngineError } from './errors';
+import type { RunLimitPause } from 'movement-engine/services/movement_engine/run';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import { claimParkedLeaf, finishResumedLeaf, type HeldRunLease } from './run_lease';
 
 /** What `trigger_run.limit_pause` holds while the run is paused. */

@@ -22,7 +22,7 @@ import {
   installContextIdentity,
 } from '../../../services/principal';
 import { recordUserMilestone } from '../../journey';
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 /** Everything a request needs to act as this principal. */
 function installIdentity(req: Request, res: Response, outcome: CoreAuthOutcome & { ok: true }) {

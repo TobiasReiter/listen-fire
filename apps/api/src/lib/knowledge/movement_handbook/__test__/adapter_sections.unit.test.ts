@@ -11,7 +11,7 @@
 // and a sloppy one is caught — because a rule that never fails is a rule
 // nobody can trust to be running.
 
-import type { AdapterManifest } from '../../../../services/translation_graph/adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 import * as registry from '../../../../services/translation_graph/adapters/registry';
 import { readBook } from '../../library';

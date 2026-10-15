@@ -27,7 +27,7 @@ import type { TeamId } from '../generated/kysely/core/Team';
 import type { MovementId } from '../generated/kysely/automations/Movement';
 
 import { getAutomationsQb, getCoreQb } from '../lib/kysely';
-import { logger } from '../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 type PausedListener = {
   triggerId: string;

@@ -6,9 +6,9 @@
 // refusal of `x-[f:_resources]->` off a record can name it. Nothing resolves
 // `_resources` to it.
 
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../types';
-import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 
 const entries: SchemaEntryPoint[] = [{ typeId: 'g:company', displayName: 'Company', writable: true, readable: true }];
 

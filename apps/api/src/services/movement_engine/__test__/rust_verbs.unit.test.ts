@@ -10,14 +10,14 @@ import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from '
 
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from '../../translation_graph/types';
-import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import { credentialIdsFor, makeTestHost, recordingWriteLocks, type TestHostOverrides } from '../test_host';
+import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
+import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { credentialIdsFor, makeTestHost, recordingWriteLocks, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c5');
 

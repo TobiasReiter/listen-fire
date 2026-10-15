@@ -32,16 +32,16 @@ import { randomUUID } from 'node:crypto';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { WebhookSubscriptionId } from '../../../generated/kysely/automations/WebhookSubscription';
-import type { Adapter, AdapterManifest, EventSubscriptionRegistration } from '../adapter';
+import type { Adapter, AdapterManifest, EventSubscriptionRegistration } from 'movement-engine/services/translation_graph/adapter';
 
 import { getQb, getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { buildWebhookTargetUrl, webhookProviderKey } from '../../webhook_sync/urls';
-import { UNREGISTERED_SECRET } from '../../webhook_sync/remote_inbound';
+import { UNREGISTERED_SECRET } from 'movement-engine/services/webhook_sync/remote_inbound';
 import { hasAdapter, resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import { teamAdapterManifestSet } from '../adapters/team_manifests';
-import { eventConfigList } from '../triggers/listen_config';
+import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
 import { canonicalAddress, resolvedAddressOfJson } from './listen_address';
 
 export const MOVEMENT_LISTEN_PROVISIONER = 'movement-listen';

@@ -8,8 +8,8 @@
 // gates away one it should have sent. This pins the agreement over the null case
 // — and, for contrast, over the non-null one.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import type { ExtractEmission } from '../extraction';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import type { ExtractEmission } from 'movement-engine/services/movement_engine/extraction';
 import { CURRENT_LANGUAGE_VERSION, parseMovementCondition, parseMovementExpression } from 'movement-lang';
 
 function emission(fields: Record<string, unknown>): ExtractEmission {

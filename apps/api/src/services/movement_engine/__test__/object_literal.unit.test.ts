@@ -6,8 +6,8 @@
 // This is the currency an adapter write receives, so nothing along the way
 // may stringify or comma-join it.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { listUnsupportedConstructs } from '../interpretable';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {

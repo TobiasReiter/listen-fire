@@ -17,7 +17,7 @@
 // schemas.ts so `expressionSchema` resolves before any ES import pulls it
 // transitively through ../../types.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 // `authoring.ts` exposes the team wrapper too, which imports ../catalog
 // (adapter registry + DB). This suite drives the pure core only.

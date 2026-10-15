@@ -18,8 +18,8 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { AttioRecord } from '../../../adapters/attio/apiClient';
 import type { AttioAttribute } from '../../../adapters/attio/interface';
-import type { TriggerEvent } from '../triggers/types';
-import type { SnapshotInput } from '../adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { SnapshotInput } from 'movement-engine/services/translation_graph/adapter';
 import type {
   ActorCandidate,
   ActorIdentity,
@@ -50,13 +50,13 @@ import type {
   WriteInput,
   WriteResult,
   LinkedObjectCandidate,
-} from '../adapter';
-import type { UniquenessConstraints } from '../uniqueness';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 
 import type { Expression } from '#shared/expression/types';
 import { decryptToken } from '../../../lib/credentials';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
 import { streamFileRef } from '../engine/files/retrieve';
 
@@ -69,9 +69,9 @@ import {
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 
 
-import { fileHandle, isFileValue, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from '../adapter';
+import { fileHandle, isFileValue, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { BaseAdapter } from './base';
-import { stubTargetOf, type EdgesFromResult } from '../adapter';
+import { stubTargetOf, type EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
 import { uniformWalk } from './hop';
 import { UPDATE_NOT_FOUND, isHttp404 } from './not_found';
 import { naturalName } from './name_resolution';
@@ -91,7 +91,7 @@ import {
   type SchemaReferenceDescriptor,
   type SchemaTypeDescriptor,
   type SourcePosition,
-} from '../types';
+} from 'movement-engine/services/translation_graph/types';
 
 import type { EdgeCapability, FieldCapability } from '#shared/expression/types';
 

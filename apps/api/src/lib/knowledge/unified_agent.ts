@@ -26,7 +26,7 @@
 import { z } from 'zod';
 
 import type { Kysely } from 'kysely';
-import type { ChatModelName } from '../models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 import type { ResourceChangeEvent } from '../message_queue/queues/resourceChanges';
 import type { AgentUpdate } from '../openai/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -41,7 +41,7 @@ import {
 } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { mq } from '../message_queue';
 import { getAutomationsQb, getKnowledgeQb, getQb } from '../kysely';
 import {

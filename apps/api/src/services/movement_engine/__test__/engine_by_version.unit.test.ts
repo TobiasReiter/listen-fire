@@ -8,16 +8,16 @@
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { positionData } from '../../translation_graph/types';
-import { MovementEngineError } from '../errors';
-import { resumeMovement, runMovement, type ParkSink, type RunMovementInput } from '../run';
-import { assertEngineChoiceConfigured, engineRoute, v5OnTypeScript } from '../rust_engine';
-import { resetRustRunStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from '../rust_stats';
-import type { ParkedScopeState } from '../serialize';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
+import { resumeMovement, runMovement, type ParkSink, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { assertEngineChoiceConfigured, engineRoute, v5OnTypeScript } from 'movement-engine/services/movement_engine/rust_engine';
+import { resetRustRunStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from 'movement-engine/services/movement_engine/rust_stats';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000e5');
 

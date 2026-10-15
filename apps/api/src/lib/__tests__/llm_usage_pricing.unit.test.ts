@@ -7,7 +7,7 @@ import type { RecordUsageOptions } from '../llm_usage';
 // being told, which is what the warning is for.
 
 const warn = jest.fn();
-jest.mock('../../services/logger', () => ({ logger: { info: jest.fn(), warn, error: jest.fn() } }));
+jest.mock('movement-engine/services/logger', () => ({ logger: { info: jest.fn(), warn, error: jest.fn() } }));
 
 const insertInto = jest.fn();
 jest.mock('../kysely', () => ({ getQb: () => ({ insertInto }) }));

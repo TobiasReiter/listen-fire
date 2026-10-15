@@ -1,6 +1,6 @@
 import http from 'node:http';
 
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { HttpTickNotifier, NoopNotifier } from '../drain';
 
 jest.mock('../store', () => ({
@@ -11,7 +11,7 @@ jest.mock('../store', () => ({
   releaseWork: jest.fn(),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() },
 }));
 

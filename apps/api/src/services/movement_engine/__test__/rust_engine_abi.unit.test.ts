@@ -10,9 +10,9 @@ import { EMPTY_CATALOG_SNAPSHOT, openEngineSegment } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 
-import { openRunContext } from '../run_context';
-import { driveEngine, openWasmEngine, RustShimError } from '../rust_engine';
-import { makeTestHost } from '../test_host';
+import { openRunContext } from 'movement-engine/services/movement_engine/run_context';
+import { driveEngine, openWasmEngine, RustShimError } from 'movement-engine/services/movement_engine/rust_engine';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 /** A program that parses and declares nothing. */
 const SOURCE = 'import { manual } from adapters';

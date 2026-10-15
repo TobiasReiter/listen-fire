@@ -21,7 +21,7 @@
 // so an override-on dispatch never pays the Slack/Attio actor-email API
 // round-trip.
 
-import type { ActingUser, ActorCandidate } from '../../adapter';
+import type { ActingUser, ActorCandidate } from 'movement-engine/services/translation_graph/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import {

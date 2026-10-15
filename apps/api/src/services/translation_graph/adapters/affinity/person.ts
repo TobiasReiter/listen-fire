@@ -10,11 +10,11 @@ import type {
   UpdateInput,
   UpdateResult,
   UpdateWriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
-import { writeParentLinks } from '../../adapter';
-import { logger } from '../../../logger';
+import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
+import { logger } from 'movement-engine/services/logger';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';
 import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
 import {

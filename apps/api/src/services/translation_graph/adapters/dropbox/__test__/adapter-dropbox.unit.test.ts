@@ -21,7 +21,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -48,7 +48,7 @@ jest.mock('../../../../../adapters/registry', () => ({
 
 // types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
 // the leaf — the adapter consumes it only at type level.
-jest.mock('../../../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -88,7 +88,7 @@ import type {
   WriteInput,
   UpdateInput,
   DeleteInput,
-} from '../../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 import { DropboxAdapter } from '../index';
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';

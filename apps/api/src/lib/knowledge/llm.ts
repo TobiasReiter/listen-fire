@@ -16,16 +16,16 @@ import { z } from 'zod';
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ChatProvider } from '../models/chat';
-import type { Provider, Resolved } from '../models/map';
-import type { ChatModelName } from '../models/registry';
+import type { Provider, Resolved } from 'movement-engine/lib/models/map';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
-import { missingGoogleServiceAccountVars } from '../google_cloud';
+import { missingGoogleServiceAccountVars } from 'movement-engine/lib/google_cloud';
 import { chatCallFor } from '../models/chat';
-import { providerCredentialsPresent, resolveModel } from '../models/map';
+import { providerCredentialsPresent, resolveModel } from 'movement-engine/lib/models/map';
 import { anthropicKeyedChatProvider } from '../models/providers/anthropic';
-import { parseChatModelName } from '../models/registry';
-import { neverAsAny } from '../utils/types';
-import { logger } from '../../services/logger';
+import { parseChatModelName } from 'movement-engine/lib/models/registry';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
 
 /**
  * Knowledge's key, falling back to the composed deployment's. A self-hoster

@@ -18,7 +18,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -45,7 +45,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -89,25 +89,25 @@ jest.mock('../../translation_graph/adapters/acting_user/resolve', () => ({
   resolveActingUser: jest.fn(async () => null),
 }));
 import type { InstanceSchema } from 'movement-lang';
-import { runMovement } from '../run';
-import { MovementEngineError } from '../expression';
-import { surfaceReadAdapter } from '../kg';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
+import { surfaceReadAdapter } from 'movement-engine/services/movement_engine/kg';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import type {
   Adapter,
   RuntimeCapabilities,
-} from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { RecordMutationEvent } from '../../translation_graph/triggers/record_mutation_event';
 import {
   makeStablePosition,
   positionData,
   positionRecordId,
-} from '../../translation_graph/types';
+} from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');
 const COMPANY_NODE_ID = '00000000-0000-0000-0000-00000000c001' as NodeId;

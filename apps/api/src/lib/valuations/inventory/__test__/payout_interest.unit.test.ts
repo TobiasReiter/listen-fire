@@ -10,7 +10,7 @@ import {
   recursiveGetTransactionsForAssets,
 } from '../data';
 import { AssetId, AssetTransfer, getInvesteeEntityKey, getInvestingEntityKey } from '../types';
-import { logger } from '../../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 jest.mock('../data', () => ({
   getAssetHolderIdsForInvestments: jest.fn(),

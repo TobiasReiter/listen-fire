@@ -42,25 +42,25 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
-import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData } from '../../types';
+import { fileHandle, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
+import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { uniformWalk } from '../hop';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import { decryptToken } from '../../../../lib/credentials';
 import { getQb, getAutomationsQb } from '../../../../lib/kysely';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   TelegramClient,
   sendUnifiedTelegramMessage,

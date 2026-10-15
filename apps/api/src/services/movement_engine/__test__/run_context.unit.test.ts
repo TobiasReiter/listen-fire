@@ -6,17 +6,17 @@
 import type { InstanceSchema } from 'movement-lang';
 
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
-import type { Adapter, WriteInput } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
+import type { Adapter, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 
-import { isRunCostCapExceeded, RunCostCapExceeded, type Budget } from '../../../lib/run_cost';
-import { InMemoryWriteLocks, type WriteLockHolder, type WriteLocks } from '../../write_locks/write_locks';
-import { makeFakeParkSink, makeTestHost } from '../test_host';
-import { NEVER_CANCELLED } from '../host_kit';
-import { runMovement } from '../run';
-import { RunCancelledSignal } from '../errors';
+import { isRunCostCapExceeded, RunCostCapExceeded, type Budget } from 'movement-engine/lib/run_cost';
+import { InMemoryWriteLocks, type WriteLockHolder, type WriteLocks } from 'movement-engine/services/write_locks/write_locks';
+import { makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { NEVER_CANCELLED } from 'movement-engine/services/movement_engine/host_kit';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { RunCancelledSignal } from 'movement-engine/services/movement_engine/errors';
 import {
   closeRunContext,
   openRunContext,
@@ -24,7 +24,7 @@ import {
   RunLedger,
   runLogFields,
   throwIfCancelled,
-} from '../run_context';
+} from 'movement-engine/services/movement_engine/run_context';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const DOLLAR = 1_000_000;

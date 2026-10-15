@@ -19,7 +19,7 @@
 // guard must NEVER block legitimate work (P4).
 
 import { redisConfigured } from '../../redisPool';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import type { BucketBackend } from './counters/backend';
 import { createMemoryBucketBackend } from './counters/memory';
 import { redisBucketBackend } from './counters/redis';

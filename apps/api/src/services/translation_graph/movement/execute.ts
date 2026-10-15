@@ -16,14 +16,14 @@
 
 import type { LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementTraceEntry } from '../../movement_engine/expression';
-import type { ParkedScopeState } from '../../movement_engine/serialize';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import type { TriggerEvent } from '../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { describeError } from '../../../lib/utils/error';
-import { logger } from '../../logger';
+import { describeError } from 'movement-engine/lib/utils/error';
+import { logger } from 'movement-engine/services/logger';
 import {
   runMovement,
   resumeMovement,
@@ -33,7 +33,7 @@ import {
   runFailureCause,
   type CancelGate,
   type MovementRunResult,
-} from '../../movement_engine/run';
+} from 'movement-engine/services/movement_engine/run';
 import { makeDbCancelGate } from '../../movement_engine/cancel_gate';
 import { failRunAndCancelRequests } from '../../interaction/run_failure';
 import { LlmUsageContext } from '../../../lib/llm_usage';

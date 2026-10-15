@@ -7,8 +7,8 @@
 // the context it was given.
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-jest.mock('../services/movement_engine/expression', () => {
-  const actual = jest.requireActual('../services/movement_engine/expression');
+jest.mock('movement-engine/services/movement_engine/expression', () => {
+  const actual = jest.requireActual('movement-engine/services/movement_engine/expression');
   const pinned = (ctx: { languageVersion?: unknown }) =>
     ctx.languageVersion === undefined ? { ...ctx, languageVersion: CURRENT_LANGUAGE_VERSION } : ctx;
   return {

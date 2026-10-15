@@ -23,19 +23,19 @@ import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movem
 
 import { tenantIdOf } from 'engine-contracts';
 import { RecordedConversation, verdictOf, type HostRecording } from 'engine-contracts/conformance';
-import type { Adapter } from '../../translation_graph/adapter';
-import type { LlmCallResult } from '../../translation_graph/engine/batched_extraction/llm_call';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TransformInvocationResult } from '../extraction';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { LlmCallResult } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TransformInvocationResult } from 'movement-engine/services/movement_engine/extraction';
 
-import { containerAssociation } from '../../translation_graph/adapter';
-import { positionData } from '../../translation_graph/types';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { positionData } from 'movement-engine/services/translation_graph/types';
 import { startHostDouble, httpHost } from '../conformance/http_host_double';
 import { recordEntry, recordedError } from '../conformance/recorder';
-import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import type { ParkedScopeState } from '../serialize';
-import { credentialIdsFor, endedInRust, makeFakeParkSink, makeTestHost } from '../test_host';
-import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { credentialIdsFor, endedInRust, makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b9');
 

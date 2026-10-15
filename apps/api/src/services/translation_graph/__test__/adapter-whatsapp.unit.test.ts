@@ -55,7 +55,7 @@ jest.mock('mime', () => ({
 import { parseProgram, checkProgram, mockCatalog, type Catalog } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SchemaTypeDescriptor, SourcePosition } from '../types';
+import type { SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import {
   WhatsappAdapter,
@@ -67,14 +67,14 @@ import {
   WHATSAPP_TYPING_TYPE,
   type WhatsappPayload,
 } from '../adapters/whatsapp';
-import { fileValue, RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { fileValue, RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
 import { normalizeWhatsappPhone } from '../adapters/acting_user/phone';
-import { discriminateEvent } from '../engine/inbound/discriminate';
+import { discriminateEvent } from 'movement-engine/services/translation_graph/engine/inbound/discriminate';
 import { parseWhatsappEvents } from '../../webhook_sync/providers/whatsapp';
 import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
-import { makeStablePosition, makeUnstablePosition } from '../types';
-import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
+import { makeStablePosition, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 const TEAM_ID = 'team-1' as TeamId;
 

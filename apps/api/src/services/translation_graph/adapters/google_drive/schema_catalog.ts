@@ -31,9 +31,9 @@ import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaTypeDescriptor,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 
-import { META_RECORD_TYPE } from '../../types';
+import { META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
 import { DISPLAY_NAME_BY_KIND, structuredIdFor } from './types';
 
 export const DRIVE_FOLDER_TYPE = DISPLAY_NAME_BY_KIND.folder;

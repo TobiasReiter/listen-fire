@@ -29,7 +29,7 @@ import { formatPropertyType } from '../format';
 //
 // The web app cannot import from apps/api directly. The schema
 // re-declared here is the drift-detector: keeping it in lockstep
-// with `apps/api/src/services/translation_graph/types.ts` is the
+// with `packages/movement-engine/services/translation_graph/types.ts` is the
 // whole point. If F2 adds a new `ExpressionType` arm, this schema
 // stops parsing the primitive's output and the test fails.
 

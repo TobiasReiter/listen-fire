@@ -3,7 +3,7 @@ import { backOff } from 'exponential-backoff';
 
 import { parseJsonResponse } from '../../lib/utils/fetch';
 import { SECOND } from '../../constants';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { Queue } from '../../lib/utils/queue';
 import {
   AttioAttribute,

@@ -33,7 +33,7 @@
 // `expressionSchema` resolves before orchestration/types pulls it
 // transitively.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 jest.mock('../../../../lib/kysely', () => {
   type Row = Record<string, unknown>;

@@ -1,7 +1,7 @@
 // The production model clients (`llm_clients.ts`): the output ceiling, the
 // truncation rule, and what a reply hands back.
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../../lib/anthropic', () => ({
@@ -10,7 +10,7 @@ jest.mock('../../../../lib/anthropic', () => ({
 }));
 
 import { anthropicChatDetailed } from '../../../../lib/anthropic';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { makeAnthropicLlmClient } from '../llm_clients';
 
 // ── Truncated LLM output must fail the call, not salvage into null fields ────

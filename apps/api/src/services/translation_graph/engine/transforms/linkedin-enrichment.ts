@@ -22,16 +22,16 @@
 import type { PersonContext, ResolvedField } from './extracted_fields';
 import type { TransformImpl, TransformOutput } from './registry';
 import type { PluginManifest } from './registry';
-import type { TransformSignature } from '../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { services } from '../../../../adapters/registry';
 import { anthropicChat } from '../../../../lib/anthropic';
 import { parseJson } from '../../../../lib/utils/parse_json';
 import { runFields } from '../../../../lib/llm_usage';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { WebSearchService, resolveWebSearchProvider } from '../../../web_search';
 import { resolvePersonContext } from './extracted_fields';
-import { importIdentifier } from '../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 
 // ── Signature ─────────────────────────────────────────────────────────────

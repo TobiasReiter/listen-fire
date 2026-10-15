@@ -1,5 +1,5 @@
 //! The built-in functions (packages/movement-lang/expression/stdlib.ts and
-//! the flat set in apps/api/src/services/movement_engine/expression.ts's
+//! the flat set in packages/movement-engine/services/movement_engine/expression.ts's
 //! `applyMovementFunction`), argument for argument and quirk for quirk.
 //!
 //! What JavaScript's runtime knows — the zone database, WHATWG URLs,

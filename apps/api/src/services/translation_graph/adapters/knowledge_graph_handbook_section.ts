@@ -17,7 +17,7 @@
 // makes; the handbook's checker fixture carries the same shape so the probes
 // below check against it.
 
-import type { HandbookSection } from '../../../lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/lib/handbook_section';
 
 export const KNOWLEDGE_GRAPH_HANDBOOK_SECTION: HandbookSection = {
   title: 'Knowledge graph — the workspace\'s own store',

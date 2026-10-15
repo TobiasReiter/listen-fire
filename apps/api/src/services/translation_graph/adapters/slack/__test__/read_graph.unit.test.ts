@@ -9,7 +9,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -28,9 +28,9 @@ import {
 import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { isStablePosition, makeMetaPosition, makeStablePosition, positionData } from '../../../types';
+import { isStablePosition, makeMetaPosition, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { SlackAdapter, SLACK_MANIFEST } from '../index';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 const TEAM = 'team-1' as TeamId;
 

@@ -25,11 +25,11 @@ class FakeClient extends EventEmitter {
 }
 
 jest.mock('pg', () => ({ Client: FakeClient, DatabaseError: class DatabaseError extends Error {} }));
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { PostgresWriteLocks } from '../postgres';
 
 /** What pg does with `query_timeout` when no reply ever comes. */

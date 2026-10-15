@@ -50,29 +50,29 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { EventType } from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { EventType } from 'movement-engine/services/translation_graph/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
-import type { TriggerEvent } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import type {
   AwaitableCapability,
   AwaitPoint,
   AwaitResolution,
-} from '../../awaitable';
+} from 'movement-engine/services/translation_graph/awaitable';
 
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
+import { fileHandle, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import {
   META_RECORD_TYPE,
   makeStablePosition,
   makeUnstablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { naturalName } from '../name_resolution';
 import { SLACK_HANDBOOK_SECTION } from './handbook_section';
@@ -84,7 +84,7 @@ import {
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   addReaction,
   createUnifiedMessage,
@@ -407,7 +407,7 @@ export const SLACK_MANIFEST: AdapterManifest = {
  */
 export function slackEventToDiscriminable(
   e: import('../../../webhook_sync/providers/interface').WebhookEvent,
-): import('../../adapter').DiscriminableEvent {
+): import('movement-engine/services/translation_graph/adapter').DiscriminableEvent {
   const base = webhookEventToDiscriminable(e);
   return (SLACK_MESSAGE_EVENT_TYPES as readonly string[]).includes(e.eventType)
     ? { ...base, changeType: 'create' }
@@ -435,7 +435,7 @@ export class SlackAdapter extends BaseAdapter {
   async preprocessInbound(input: {
     raw: unknown;
     checkpoint?: unknown;
-  }): Promise<{ events: import('../../adapter').DiscriminableEvent[] }> {
+  }): Promise<{ events: import('movement-engine/services/translation_graph/adapter').DiscriminableEvent[] }> {
     return { events: parseSlackEvents(input.raw).map(slackEventToDiscriminable) };
   }
 

@@ -17,7 +17,7 @@ import {
   isStrictAncestor,
   parentAddress,
   parseAddress,
-} from '../address';
+} from 'movement-engine/services/movement_engine/address';
 
 // stmt1 · iter j · stmt0 · branch k · stmt0  (the fan-out body's parallel's ask)
 const leaf = (iter: number, branch: number): Address =>

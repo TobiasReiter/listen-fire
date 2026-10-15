@@ -9,7 +9,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 
 import { getEnvVar } from '../../lib/utils/environment';
 import { isClientAbort } from '../../lib/middleware/context';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { describeRoutes, validateCallApiBody } from './registry';
 
 const PORT = process.env.PORT ?? 3000;

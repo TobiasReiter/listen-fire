@@ -17,7 +17,7 @@
 
 import { Client, DatabaseError } from 'pg';
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   DEFAULT_WRITE_LOCK_TIMEOUT_MS,
   type LockSession,
@@ -26,7 +26,7 @@ import {
   writeLockHolderClosed,
   writeLockSessionLost,
   writeLockTimeout,
-} from './write_locks';
+} from 'movement-engine/services/write_locks/write_locks';
 
 const FIRST_RETRY_MS = 25;
 const MAX_RETRY_MS = 250;

@@ -5,7 +5,7 @@ import { anthropicChat } from '../../lib/anthropic';
 import { parseJson } from '../../lib/utils/parse_json';
 import { safeToUrl } from '../../lib/utils/url';
 import { AffinityAPIClient } from './apiClient';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 /** Email addresses are compared case-insensitively across every Affinity write
  *  path. Affinity enforces one person per address and adjudicates it with a

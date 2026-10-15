@@ -5,7 +5,7 @@ import { runWithPrincipal } from 'principal';
 
 import { userPrincipal } from '../principal';
 import { accessFor } from '../principal/core_teams';
-import { AtLeastOne } from '../../lib/utils/object';
+import { AtLeastOne } from 'movement-engine/lib/utils/object';
 import {
   unauthorisedGetUserById,
   unauthorisedGetUserByEmail,

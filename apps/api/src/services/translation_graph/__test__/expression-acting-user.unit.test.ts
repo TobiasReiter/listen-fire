@@ -17,12 +17,12 @@ import type {
   ActorIdentity,
   Adapter,
   RuntimeCapabilities,
-} from '../adapter';
-import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
-import type { TriggerEvent } from '../triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { type SourcePosition, makeUnstablePosition } from '../types';
+import { type SourcePosition, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 
 const dbQueue: Array<unknown> = [];
 function setDbRow(row: unknown) {

@@ -44,7 +44,7 @@ import PropertyIdentity from '../../generated/kysely/knowledge/PropertyIdentity'
 import { createEntity, updateEntity } from '../../lib/knowledge/query_agent_crud';
 import { createKgRecord, updateKgRecord, linkKgRecords } from '../../services/translation_graph/adapters/knowledge_graph_writes';
 
-import type { MutationContext } from '../../services/translation_graph/mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { loadKgCredentials, kgFetch, type WireOntology } from '../../services/translation_graph/adapters/kg_client';

@@ -1,7 +1,7 @@
 import { ChatCompletionMessageParam } from 'openai/resources';
 import { z } from 'zod';
 
-import type { ChatModelName } from '../models/registry';
+import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 type PromptDefinition<T extends readonly string[], V extends z.ZodType> = {
   description: string;

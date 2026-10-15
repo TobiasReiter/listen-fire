@@ -23,10 +23,10 @@ import {
   type ReplayVerdict,
 } from 'engine-contracts/conformance';
 
-import { neverAsAny } from '../../../lib/utils/types';
-import type { EngineHost } from '../host';
-import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult } from '../run';
-import { rustRunStats } from '../rust_stats';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import type { EngineHost } from 'movement-engine/services/movement_engine/host';
+import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { startHostDouble, httpHost } from './http_host_double';
 import { recordedError } from './recorder';
 import { hostServing, settle } from './replay_host';

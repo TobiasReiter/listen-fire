@@ -54,7 +54,7 @@ jest.mock('../../../../../adapters/registry', () => ({
   },
 }));
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { Adapter, FileRef } from '../../../adapter';
+import type { Adapter, FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { FileOutsideTeamError, streamFileRef, withFileOwners, type ResolveFileOwner } from '../retrieve';
 

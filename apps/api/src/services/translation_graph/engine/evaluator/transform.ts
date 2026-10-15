@@ -11,9 +11,9 @@
 //   ("Transforms add ephemeral nodes to the source graph")
 
 import type { Expression, MetaEdgeStep } from '#shared/expression/types';
-import type { EphemeralNode, SourcePosition } from '../../types';
+import type { EphemeralNode, SourcePosition } from 'movement-engine/services/translation_graph/types';
 
-import { makeEphemeralPosition } from '../../types';
+import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput, type EphemeralEmission } from '../transforms';
 
 /**

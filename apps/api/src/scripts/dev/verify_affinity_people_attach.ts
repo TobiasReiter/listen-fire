@@ -41,17 +41,17 @@
  */
 import { checkProgram, fromCatalogSnapshot, parseProgram, type CatalogSnapshot } from 'movement-lang';
 
-import type { WriteRecord } from '../../services/movement_engine/expression';
+import type { WriteRecord } from 'movement-engine/services/movement_engine/expression';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { runMovement } from '../../services/movement_engine/run';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
 import {
   AffinityAdapter,
   AFFINITY_MANIFEST,
 } from '../../services/translation_graph/adapters/affinity';
-import { instanceSchemaFromDescriptors } from '../../services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 

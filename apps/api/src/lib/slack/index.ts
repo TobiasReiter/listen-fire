@@ -7,11 +7,11 @@ import {
 } from '@slack/web-api';
 import { IncomingWebhook, IncomingWebhookSendArguments } from '@slack/webhook';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { MINUTE } from '../../constants';
 import { getAutomationsQb } from '../kysely';
 import { decryptToken } from '../credentials';
-import { getErrorMessage } from '../utils/error';
+import { getErrorMessage } from 'movement-engine/lib/utils/error';
 import { notNull } from '../utils/nullability';
 import { services } from '../../adapters/registry';
 import { unsafeCurrentContext } from '../../services/context';

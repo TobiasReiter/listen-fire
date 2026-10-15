@@ -1,4 +1,4 @@
-import { aiExpressionSettings, extractionSettings } from '../ai_tiers';
+import { aiExpressionSettings, extractionSettings } from 'movement-engine/services/movement_engine/ai_tiers';
 
 /**
  * What a tier BUYS. The numbers here are the platform's side of the line, so a

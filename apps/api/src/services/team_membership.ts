@@ -24,7 +24,7 @@ import type { UserId } from '../generated/kysely/core/User';
 import type CoreSchema from '../generated/kysely/core/CoreSchema';
 
 import { getCoreQb } from '../lib/kysely';
-import { logger } from './logger';
+import { logger } from 'movement-engine/services/logger';
 import { ProvisioningService } from './provisioning';
 
 type Access = 'read' | 'write';

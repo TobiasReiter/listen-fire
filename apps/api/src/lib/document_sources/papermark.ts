@@ -1,7 +1,7 @@
 import { ExternalUrl, PdfStream } from '.';
 
 import { Crawler, FetchedDocument, Screenshot } from '../../services/crawler';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { PlaywrightService } from '../../services/playwright';
 
 class PapermarkCrawler extends Crawler {

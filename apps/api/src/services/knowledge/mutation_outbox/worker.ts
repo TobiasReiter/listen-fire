@@ -22,8 +22,8 @@ import { SECOND } from '../../../constants';
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { worker } from '../../../lib/worker';
 import { handleError } from '../../../lib/errors';
-import { logger } from '../../logger';
-import { neverAsAny } from '../../../lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { mutationDelivery } from './delivery_mode';
 
 const DRAIN_INTERVAL = 2 * SECOND;

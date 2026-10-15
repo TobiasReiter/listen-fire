@@ -2,10 +2,10 @@
 
 import { z } from 'zod';
 
-import type { Resolved } from '../map';
+import type { Resolved } from 'movement-engine/lib/models/map';
 import type { GeneratedImage, ImageRequest } from './index';
 
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { recordLlmUsage } from '../../llm_usage';
 import { openAiClient } from '../providers/openai';
 

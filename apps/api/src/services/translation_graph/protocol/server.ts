@@ -36,7 +36,7 @@ import { fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcR
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
-import type { Adapter } from '../adapter';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { MethodName, RpcResponseShape } from 'engine-contracts';
 
 /**

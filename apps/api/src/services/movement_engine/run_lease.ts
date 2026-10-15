@@ -24,7 +24,7 @@ import type { ParkReason } from 'engine-contracts';
 import { SECOND } from '../../constants';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { runLeasedTo } from './lease_fence';
 import { settleRunEngineRecord } from './run_engine_record';
 
@@ -110,7 +110,7 @@ export interface HeldRunLease {
 
 // The signal a segment that lost its lease stops with is the engine's own
 // control flow (errors.ts); re-exported for the host side.
-export { RunLeaseLost } from './errors';
+export { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
 
 /**
  * Take the run's lease for this process, or null while it is held elsewhere.

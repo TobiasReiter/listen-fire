@@ -26,7 +26,7 @@ import {
 
 import type { Chapter, EngineClaim } from './types';
 
-import { listChapterSections, sliceChapterSection } from '../../handbook_section';
+import { listChapterSections, sliceChapterSection } from 'movement-engine/lib/handbook_section';
 import { exampleProgram, exampleText, frontEntries, type FrontExample } from './front_page';
 
 export const LANGUAGE_SEARCH_KINDS = ['function', 'concept', 'recipe'] as const;

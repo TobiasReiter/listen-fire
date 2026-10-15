@@ -18,12 +18,12 @@ import { z } from 'zod';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { Trigger, TriggerId } from '../../generated/kysely/automations/Trigger';
-import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
+import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 import type { WorkHandler } from '../work/kinds';
 
 import { SECOND } from '../../constants';
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   getAdapter,
   getPollSource,

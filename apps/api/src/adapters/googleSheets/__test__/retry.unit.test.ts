@@ -4,7 +4,7 @@
 // errors retry with jitter; 4xx and success return immediately.
 
 jest.mock('../../registry', () => ({ services: {} }));
-jest.mock('../../../services/logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

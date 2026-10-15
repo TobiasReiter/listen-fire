@@ -31,18 +31,18 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { TriggerType } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   AirtableAPIClient,
   getAirtableClient,
@@ -52,10 +52,10 @@ import {
   META_RECORD_TYPE,
   makeStablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { hydrateTargets, targetStubs } from '../hop';
-import { stubTargetOf } from '../../adapter';
+import { stubTargetOf } from 'movement-engine/services/translation_graph/adapter';
 import { memoizedResolver, naturalName, type ScopedResolver } from '../name_resolution';
 import {
   AIRTABLE_ADAPTER_TYPE,

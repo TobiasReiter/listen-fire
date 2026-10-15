@@ -4,7 +4,7 @@ import z from 'zod';
 
 import { googleCredsParser } from '../google/authClient';
 import { services } from '../registry';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { sheetCellValue } from './cells';
 import {
   columnLetter,

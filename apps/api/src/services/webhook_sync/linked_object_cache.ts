@@ -8,7 +8,7 @@ import type { ExternalServiceCredentialsId } from '../../generated/kysely/automa
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { decryptToken } from '../../lib/credentials';
 import { AttioAPIClient, attioCredsParser } from '../../adapters/attio/apiClient';
 import { buildRecordData } from '../knowledge_pipeline/output_v3/adapters/attio';

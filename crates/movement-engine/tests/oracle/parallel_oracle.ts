@@ -28,16 +28,16 @@
 // taken in order, the writes in the order the run hands them back (the
 // write ledger's order) with their ids, and how the run ended.
 
-import { checkAnswer, checkPinned } from '../../../../apps/api/src/services/movement_engine/program_check';
+import { checkAnswer, checkPinned } from '../../../../packages/movement-engine/services/movement_engine/program_check';
 import { mockCatalogSnapshot, type InstanceSchema } from '../../../../packages/movement-lang';
 import { tenantIdOf } from '../../../../packages/engine-contracts';
-import { MovementEngineError } from '../../../../apps/api/src/services/movement_engine/errors';
-import { runFailureCause, runMovement } from '../../../../apps/api/src/services/movement_engine/run';
-import { credentialIdsFor, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
-import { InMemoryWriteLocks, type WriteLocks } from '../../../../apps/api/src/services/write_locks/write_locks';
-import type { Adapter } from '../../../../apps/api/src/services/translation_graph/adapter';
-import { containerAssociation } from '../../../../apps/api/src/services/translation_graph/adapter';
-import { positionData } from '../../../../apps/api/src/services/translation_graph/types';
+import { MovementEngineError } from '../../../../packages/movement-engine/services/movement_engine/errors';
+import { runFailureCause, runMovement } from '../../../../packages/movement-engine/services/movement_engine/run';
+import { credentialIdsFor, makeTestHost } from '../../../../packages/movement-engine/services/movement_engine/test_host';
+import { InMemoryWriteLocks, type WriteLocks } from '../../../../packages/movement-engine/services/write_locks/write_locks';
+import type { Adapter } from '../../../../packages/movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from '../../../../packages/movement-engine/services/translation_graph/adapter';
+import { positionData } from '../../../../packages/movement-engine/services/translation_graph/types';
 
 type Rand = () => number;
 

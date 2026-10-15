@@ -11,7 +11,7 @@
 
 import { openEngineSegment, type LanguageVersion } from 'movement-lang';
 
-import { WireOut } from '../rust_wire';
+import { WireOut } from 'movement-engine/services/movement_engine/rust_wire';
 import { cellId, cells, type Cell } from './binding_consumer_matrix.cells';
 import { catalog, programFor } from './binding_consumer_matrix.program';
 

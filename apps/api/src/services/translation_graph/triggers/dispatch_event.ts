@@ -14,18 +14,18 @@ import { z } from 'zod';
 import type { WorkContext, WorkHandler } from '../../work/kinds';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
-import type { DiscriminableEvent, EventType } from '../adapter';
-import type { TriggerType } from '../mutation_context';
+import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerType } from 'movement-engine/services/translation_graph/mutation_context';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { SettleReport } from '../../work/harness';
 
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { registerWorkHandler } from '../../work/drain';
 import { enqueueWork } from '../../work/store';
-import { triggerEventSchema, type TriggerEvent } from './types';
-import { discriminateEvent } from '../engine/inbound/discriminate';
+import { triggerEventSchema, type TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { triggerEventOf } from 'movement-engine/services/translation_graph/triggers/trigger_event';
 import { dispatchTriggerByIdEvent } from './router';
 import {
   storeTriggerEvent,
@@ -35,7 +35,7 @@ import {
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import { runningSegment } from '../runs/trigger_run';
 import { ORPHAN_AFTER } from '../../movement_engine/run_lease';
-import { neverAsAny } from '../../../lib/utils/types';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 
 
@@ -124,47 +124,20 @@ export async function captureDiscriminableEvent(
 
   if (movementId === null) return null;
 
-  // Discriminate into a concrete root type (honours a pre-set `tag`) so the
-  // engine seeds a typed record position rather than the raw payload.
-  let rootRecordType: string | undefined;
-  if (eventTypes.length > 0) {
-    const discriminated = discriminateEvent({ adapterType, event, eventTypes });
-    if (discriminated) {
-      rootRecordType = discriminated.eventType.positionType;
-    } else {
-      logger.info('[InboundDispatch] event matched no declared event type', {
-        triggerId,
-        adapterType,
-      });
-    }
-  }
-
-  // The external-side record type: the source's own type id when the adapter
-  // names it directly (Attio's object id), else the discriminated position
-  // type (the poll path's behaviour).
-  const externalRecordRefType = event.recordType ?? rootRecordType;
-
-  const triggerEvent: TriggerEvent = {
+  const { triggerEvent, discriminated } = triggerEventOf({
     pipelineInputId: `trigger:${triggerId}`,
     adapterType,
     triggerType,
-    payload: event.payload,
-    ...(event.changeType ? { changeType: event.changeType } : {}),
-    ...(rootRecordType ? { rootRecordType } : {}),
-    ...(event.externalId !== undefined
-      ? {
-          externalRecordRef: {
-            adapterType,
-            externalId: event.externalId,
-            ...(externalRecordRefType ? { recordType: externalRecordRefType } : {}),
-          },
-        }
-      : {}),
-    ...(event.actor ? { actor: event.actor } : {}),
-    ...(event.changedFields ? { changedFields: event.changedFields } : {}),
-    ...(event.idempotencyKey ? { idempotencyKey: event.idempotencyKey } : {}),
-    occurredAt: event.occurredAt ?? now.toISOString(),
-  };
+    event,
+    eventTypes,
+    now,
+  });
+  if (!discriminated && eventTypes.length > 0) {
+    logger.info('[InboundDispatch] event matched no declared event type', {
+      triggerId,
+      adapterType,
+    });
+  }
 
   // Durable receipt before dispatch — a crash mid-run loses nothing and any
   // event can be played back. Idempotent on the source's delivery id: a

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { parseJson } from '../utils/parse_json';
 import { anthropicChat, anthropicChatStructured } from '../anthropic';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { DefinitionArgs, PromptDefinition } from './definition';
 
 type DefaultToString<T> = unknown extends T ? string : T;

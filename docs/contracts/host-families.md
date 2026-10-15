@@ -2,7 +2,7 @@
 
 Version: 1
 
-The movement engine runs a program. Everything outside the program goes through one interface the caller hands it, `EngineHost` (`apps/api/src/services/movement_engine/host.ts`): adapters, model calls, parking, cancellation, files, the acting principal, write locks, the trace, the clock and fresh ids. The engine imports none of these itself. This document is that interface and the four entry points into the engine. How this repository's two hosts serve it, and the engine's own notes, are in [`docs/engine-host.md`](../engine-host.md). The data shapes are in the `engine-contracts` package (`packages/engine-contracts/`).
+The movement engine runs a program. Everything outside the program goes through one interface the caller hands it, `EngineHost` (`packages/movement-engine/services/movement_engine/host.ts`): adapters, model calls, parking, cancellation, files, the acting principal, write locks, the trace, the clock and fresh ids. The engine imports none of these itself. This document is that interface and the four entry points into the engine. How this repository's two hosts serve it, and the engine's own notes, are in [`docs/engine-host.md`](../engine-host.md). The data shapes are in the `engine-contracts` package (`packages/engine-contracts/`).
 
 This document is the host contract, frozen as JSON. Every host call is one request and one awaited answer, each plain JSON: no callback, live object, `Date`, stream or shared array crosses, and instants are ISO 8601 strings. An embedder in another language or process serves exactly these shapes.
 

@@ -1,5 +1,5 @@
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
-import type { FilterExpression, FilterCondition, FieldRef, Selection } from './schemas';
+import type { FilterExpression, FilterCondition, FieldRef, Selection } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import type { AdapterResult } from './adapters/types';
 import type { OutputExecutionContext } from './resolve';
 

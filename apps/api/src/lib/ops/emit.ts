@@ -1,5 +1,5 @@
 import { getQb } from '../kysely';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { unsafeCurrentContext } from '../../services/context';
 import { TeamId } from '../../generated/kysely/core/Team';
 import OpsSeverity from '../../generated/kysely/public/OpsSeverity';

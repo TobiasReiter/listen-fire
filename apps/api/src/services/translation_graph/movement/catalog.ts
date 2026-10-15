@@ -59,10 +59,10 @@ import {
 
 import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AdapterManifest, ConfigBlock } from '../adapter';
+import type { AdapterManifest, ConfigBlock } from 'movement-engine/services/translation_graph/adapter';
 
-import { neverAsAny } from '../../../lib/utils/types';
-import { availableChatModels } from '../../../lib/models/map';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { availableChatModels } from 'movement-engine/lib/models/map';
 import { getAutomationsQb } from '../../../lib/kysely';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import {
@@ -71,7 +71,7 @@ import {
   type ExpressionType,
   type Position,
   type TransformOutputKind,
-} from '../types';
+} from 'movement-engine/services/translation_graph/types';
 import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
 import { isCredentialType } from '../adapters/credential_type';
@@ -100,7 +100,7 @@ import {
   instanceSchemaFromDescriptors,
   type AdapterSchemaProjection,
   type CredentialRow,
-} from './schema_projection';
+} from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { closeDemandOverChains, closeDemandOverWriteVariants, demandSeed } from './demand';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
@@ -589,8 +589,8 @@ export {
   fieldTypeFromDescriptor,
   instanceSchemaFromDescriptors,
   credentialImportNames,
-} from './schema_projection';
-export type { AdapterSchemaProjection } from './schema_projection';
+} from 'movement-engine/services/translation_graph/movement/schema_projection';
+export type { AdapterSchemaProjection } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 // ── Team catalog assembly (I/O) ─────────────────────────────────────────────
 

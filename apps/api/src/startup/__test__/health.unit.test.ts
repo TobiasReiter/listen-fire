@@ -3,7 +3,7 @@
 // The registries are stubbed — what is under test is the composition rule and
 // the row shape, not any product's queries.
 
-jest.mock('../../services/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() } }));
+jest.mock('movement-engine/services/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() } }));
 
 const mockRegistry = (unit: string, ids: string[]) => ({
   unit,

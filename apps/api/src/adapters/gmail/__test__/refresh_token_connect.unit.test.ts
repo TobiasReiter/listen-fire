@@ -34,7 +34,7 @@ jest.mock('googleapis', () => ({
   google: { gmail: () => ({ users: { getProfile: profileMock } }) },
 }));
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 import { connectGmailByRefreshToken } from '../apiClient';
 
 const PASTED = 'the-pasted-refresh-token';

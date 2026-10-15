@@ -22,7 +22,7 @@
 import { parseProgram, checkProgram, mockCatalog, type Catalog } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SchemaTypeDescriptor, SourcePosition } from '../types';
+import type { SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import {
   SlackAdapter,
@@ -33,12 +33,12 @@ import {
   SLACK_MESSAGE_TYPE_ID,
   slackEventToDiscriminable,
 } from '../adapters/slack';
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
-import { makeStablePosition, makeUnstablePosition } from '../types';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 import { parseSlackEvents } from '../../webhook_sync/providers/slack';
 import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
-import { discriminateEvent } from '../engine/inbound/discriminate';
-import { instanceSchemaFromDescriptors } from '../movement/schema_projection';
+import { discriminateEvent } from 'movement-engine/services/translation_graph/engine/inbound/discriminate';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 const TEAM_ID = 'team-1' as TeamId;
 

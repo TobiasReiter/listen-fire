@@ -6,7 +6,7 @@
 import type { Expression } from '#shared/expression/types';
 
 import { anthropicToolLoop } from '../../../lib/anthropic';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 
 import {
   serialize,

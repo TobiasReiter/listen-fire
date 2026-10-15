@@ -71,7 +71,7 @@ import {
   coerceToNumber,
   stdlibFunctionById,
 } from '../../../../packages/movement-lang/expression/stdlib';
-import { applyMovementFunction } from '../../../../apps/api/src/services/movement_engine/builtins';
+import { applyMovementFunction } from '../../../../packages/movement-engine/services/movement_engine/builtins';
 import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writeExtractionOracle } from './extraction_oracle';

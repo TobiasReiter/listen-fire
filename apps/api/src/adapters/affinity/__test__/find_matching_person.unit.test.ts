@@ -22,7 +22,7 @@ import type { AffinityAPIClient } from '../apiClient';
 import { AffinityOperations } from '../operations';
 import { normalizeEmail, ownsEmail } from '../common';
 import { anthropicChat } from '../../../lib/anthropic';
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 const STORED = 'b.smith@acme.example';
 

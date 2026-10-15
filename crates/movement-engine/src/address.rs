@@ -1,4 +1,4 @@
-//! Lexical addresses (apps/api/src/services/movement_engine/address.ts): the
+//! Lexical addresses (packages/movement-engine/services/movement_engine/address.ts): the
 //! path of steps from the movement body's root to a statement, encoded as
 //! the text a park keys on (`s1.i0.s0.b0.s0`).
 //!

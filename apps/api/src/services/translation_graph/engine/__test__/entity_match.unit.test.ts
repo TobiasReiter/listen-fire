@@ -9,8 +9,8 @@
 
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import type { ExternalRecordRef } from '../../adapter';
-import type { UniquenessConstraints } from '../../uniqueness';
+import type { ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 
 import { execute } from '../../../../lib/prompts/execute';
 import { askJev } from '../../../../lib/jev/client';

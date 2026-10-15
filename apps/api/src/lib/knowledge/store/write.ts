@@ -44,7 +44,7 @@ import {
   recordChanges,
   type RecordChangeParams,
 } from '../changes';
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import {
   assertWritable,
   clearedColumns,

@@ -90,7 +90,7 @@ import { runWithPrincipal, type Principal } from 'principal';
 
 import type { RequestHandler } from 'express';
 
-import { MovementEngineError } from '../../../../services/movement_engine/errors';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import {
   readBookHandler,
   describeInstanceHandler,

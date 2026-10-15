@@ -26,7 +26,7 @@ import { z } from 'zod';
 import type { WebhookEvent, WebhookProvider, WebhookRegistration } from './interface';
 
 import { MUTATION_EVENT_TYPES } from '../../../lib/knowledge/store/events';
-import { actorSchema } from '../../translation_graph/mutation_context';
+import { actorSchema } from 'movement-engine/services/translation_graph/mutation_context';
 import {
   deregisterKnowledgeWebhook,
   registerKnowledgeWebhook,

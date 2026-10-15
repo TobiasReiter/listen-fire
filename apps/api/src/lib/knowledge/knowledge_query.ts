@@ -4,7 +4,7 @@ import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
 import type { SourceRef } from './agent_types';
 
 import { getQb, getKnowledgeQb } from '../kysely';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { anthropicChat } from '../anthropic';
 import { TeamId } from '../../generated/kysely/core/Team';
 import { NodeId } from '../../generated/kysely/knowledge/Node';

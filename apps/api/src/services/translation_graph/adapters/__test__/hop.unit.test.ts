@@ -7,7 +7,7 @@
 // when the lookahead is scaled back to a stub.
 
 import { uniformWalk, hydrateTargets } from '../hop';
-import { stubTargetOf, type DescribedTargetNode, type EdgeTargetNode } from '../../adapter';
+import { stubTargetOf, type DescribedTargetNode, type EdgeTargetNode } from 'movement-engine/services/translation_graph/adapter';
 
 /** Narrow to a described target, failing loudly if it turned out to be a stub.
  *  The union forces this at every call site, which is the point: a consumer
@@ -16,9 +16,9 @@ const described = (target: EdgeTargetNode | undefined): DescribedTargetNode => {
   if (!target || target.stub === true) throw new Error('expected a described target, got a stub');
   return target;
 };
-import { META_RECORD_TYPE, makeUnstablePosition } from '../../types';
+import { META_RECORD_TYPE, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 
-import type { SchemaTypeDescriptor } from '../../types';
+import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
 const ROOT: SchemaTypeDescriptor = {
   typeId: META_RECORD_TYPE,

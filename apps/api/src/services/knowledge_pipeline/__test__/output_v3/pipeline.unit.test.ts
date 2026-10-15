@@ -6,7 +6,7 @@
  * rather than call arguments.
  */
 
-import type { OutputV3Config, ActionNode, BranchNode } from '../../output_v3/schemas';
+import type { OutputV3Config, ActionNode, BranchNode } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import type { OutputExecutionContext } from '../../output_v3/resolve';
 import type { Changeset, ApplyResult } from '../../types';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
@@ -53,7 +53,7 @@ jest.mock('../../../../lib/kysely', () => ({
   }),
 }));
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     info: jest.fn(),
     warn: jest.fn(),
@@ -66,7 +66,7 @@ jest.mock('../../../../lib/prompts/execute', () => ({
   parseJson: jest.fn((text: string) => JSON.parse(text)),
 }));
 
-jest.mock('../../../../lib/utils/types', () => ({
+jest.mock('movement-engine/lib/utils/types', () => ({
   neverAsAny: (v: never) => v,
 }));
 

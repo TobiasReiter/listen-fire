@@ -18,7 +18,7 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -43,7 +43,7 @@ jest.mock('../../../../../adapters/airtable/apiClient', () => ({
 
 // types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
 // the leaf — the adapter consumes it only at type level.
-jest.mock('../../../../knowledge_pipeline/output_v3/schemas', () => {
+jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
   const stub: Record<string, unknown> = {};
   const ret = () => stub;
   Object.assign(stub, {
@@ -93,14 +93,14 @@ jest.mock('../../../engine/files/expose', () => ({
 import { scanInstanceChains } from 'movement-lang';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { ResolveEntityInput } from '../../../adapter';
+import type { ResolveEntityInput } from 'movement-engine/services/translation_graph/adapter';
 
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AirtableAdapter } from '../index';
 import { coerceAirtableValue } from '../record';
-import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from '../../../types';
+import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { eventsFromPayload } from '../webhook';
-import { instanceSchemaFromDescriptors } from '../../../movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { refineInstanceSchema } from '../../../movement/refinements';
 
 

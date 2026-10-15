@@ -16,7 +16,7 @@
 
 // logger → services/context → casl crashes at module load; stub it (mirrors
 // the sibling tests).
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../../../lib/kysely', () => {
@@ -36,7 +36,7 @@ jest.mock('../../../../lib/credentials', () => ({
 }));
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MutationContext } from '../../mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 import { createNativeValuationsAdapter } from '../native_valuations';
 

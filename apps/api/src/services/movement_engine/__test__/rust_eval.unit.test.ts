@@ -5,11 +5,11 @@
 
 import { parseMovementExpression } from 'movement-lang';
 
-import { MovementEngineError } from '../errors';
-import { binding, Environment, evalMovementExpr, type Binding, type MovementExprContext } from '../expression';
-import type { Provenance } from '../provenance';
-import { evalInRust, LOCAL_ZONE_UNVERIFIED, processLocalZone, rustCanEval } from '../rust_engine';
-import { resetRustEvalStats, rustEvalStats } from '../rust_stats';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
+import { binding, Environment, evalMovementExpr, type Binding, type MovementExprContext } from 'movement-engine/services/movement_engine/expression';
+import type { Provenance } from 'movement-engine/services/movement_engine/provenance';
+import { evalInRust, LOCAL_ZONE_UNVERIFIED, processLocalZone, rustCanEval } from 'movement-engine/services/movement_engine/rust_engine';
+import { resetRustEvalStats, rustEvalStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 /** Every evaluation in a run carries the run's pin: version 3, which no
  *  expression here reads differently from version 4 (Luminous Owl changed

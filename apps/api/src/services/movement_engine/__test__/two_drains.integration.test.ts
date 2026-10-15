@@ -29,7 +29,7 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { TriggerRunRecorder } from '../../translation_graph/runs/trigger_run';
 import { registerAwaitCorrelation } from '../../translation_graph/adapters/await_correlation';
 import { enqueueAwaitWake } from '../await_wake';

@@ -6,11 +6,11 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import type { SystemContext } from '../extract';
 
-import { outputV3ConfigSchema } from './schemas';
+import { outputV3ConfigSchema } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import { initializeV3Adapter } from './adapters';
 import { evaluateFilter } from './filter';
 import { executeOutputs } from './execute';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { getQb } from '../../../lib/kysely';
 
 // -- Extraction trigger --

@@ -6,14 +6,14 @@
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { EngineHost } from '../host';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { EngineHost } from 'movement-engine/services/movement_engine/host';
 
-import { containerAssociation } from '../../translation_graph/adapter';
-import { positionData } from '../../translation_graph/types';
-import { runMovement, type RunMovementInput } from '../run';
-import { openRunContext } from '../run_context';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { positionData } from 'movement-engine/services/translation_graph/types';
+import { runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { openRunContext } from 'movement-engine/services/movement_engine/run_context';
 import {
   admissionDryRunEvery,
   assertEngineChoiceConfigured,
@@ -23,9 +23,9 @@ import {
   dryAdmitSettle,
   type EngineProtocol,
   type EngineStep,
-} from '../rust_engine';
-import { admissionVerdicts, dryRunDurationSummary, resetRustRunStats, rustRunStats, setDryRunClock } from '../rust_stats';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+} from 'movement-engine/services/movement_engine/rust_engine';
+import { admissionVerdicts, dryRunDurationSummary, resetRustRunStats, rustRunStats, setDryRunClock } from 'movement-engine/services/movement_engine/rust_stats';
+import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000d1');
 

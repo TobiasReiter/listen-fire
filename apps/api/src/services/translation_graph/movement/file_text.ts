@@ -36,9 +36,9 @@
 
 import { Readable } from 'node:stream';
 
-import type { FileUnreadable } from '../../movement_engine/extraction';
-import type { FileTextResolution } from '../../movement_engine/expression';
-import type { FileRef, ResolveFileRefResult } from '../adapter';
+import type { FileUnreadable } from 'movement-engine/services/movement_engine/extraction';
+import type { FileTextResolution } from 'movement-engine/services/movement_engine/expression';
+import type { FileRef, ResolveFileRefResult } from 'movement-engine/services/translation_graph/adapter';
 import type { RawTextStore } from './raw_text_store';
 
 import { services } from '../../../adapters/registry';
@@ -46,7 +46,7 @@ import { MB } from '../../../constants';
 import { transcribe } from '../../../lib/models/transcription';
 import { getXlsxContent } from '../../../lib/utils/excel';
 import { getPptxText } from '../../../lib/utils/powerpoint';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { FileOutsideTeamError } from '../engine/files/file_outside_team';
 import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 

@@ -5,8 +5,8 @@
 
 import type { RecordedError, ServedAnswer } from 'engine-contracts/conformance';
 
-import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from '../errors';
-import { missingHostMethods, type EngineHost } from '../host';
+import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from 'movement-engine/services/movement_engine/errors';
+import { missingHostMethods, type EngineHost } from 'movement-engine/services/movement_engine/host';
 
 /** The error a recorded thrown error was. The engine branches on three
  *  classes a host may throw (a cancel, a lost lease, its own error by code);

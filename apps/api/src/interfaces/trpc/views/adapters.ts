@@ -23,8 +23,8 @@ import { currentContext } from '../../../services/context';
 import { trpc } from '../trpc';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { listAdapterManifests } from '../../../services/translation_graph/adapters/registry';
-import { WRITE_METHODS } from '../../../services/translation_graph/adapter';
-import { importIdentifier } from '../../../services/translation_graph/movement/schema_projection';
+import { WRITE_METHODS } from 'movement-engine/services/translation_graph/adapter';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { userProcedure as sharedUserProcedure } from '../procedures';
 
 

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 
 import { getDatabaseUrl } from '../../../prisma';
-import { logger } from '../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { PostgresWriteLocks, type PostgresWriteLockHolder } from '../postgres';
 
 const connectionString = requireUrl(getDatabaseUrl(false).url);

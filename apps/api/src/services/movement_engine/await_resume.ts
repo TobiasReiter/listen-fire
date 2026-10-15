@@ -20,13 +20,13 @@
 
 import { getQb, getAutomationsQb } from '../../lib/kysely';
 import { loadPinnedVersion } from '../translation_graph/movement/version_store';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import type { WorkHandler } from '../work/kinds';
 import { registerWorkHandler, WorkDeferred } from '../work/drain';
 import { wakeAwaitPayloadSchema } from './await_wake';
 import { settleCancelledRun } from '../interaction/run_failure';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
-import type { ParkedScopeState } from './serialize';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { runHasPendingJoins } from './join_pending';
 import { dropRunLeaves } from './lease_fence';
 import { awaitKeepers } from '../translation_graph/adapters/packages';
@@ -42,7 +42,7 @@ import { createSingleFlight } from './single_flight';
 import { claimParkedLeaf, finishResumedLeaf, withRunLease, type HeldRunLease } from './run_lease';
 import { resumeMovementFiring } from '../translation_graph/movement/execute';
 import { loadTriggerById } from '../translation_graph/storage/tg_table';
-import { triggerEventSchema, type TriggerEvent } from '../translation_graph/triggers/types';
+import { triggerEventSchema, type TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TriggerRunTriggerType } from '../translation_graph/runs/trigger_run';
 
 // Single-flight per run (F18/F21): concurrent wakes for the SAME run

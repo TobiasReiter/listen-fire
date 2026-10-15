@@ -8,10 +8,10 @@ import { Readable } from 'node:stream';
 import { PROTOCOL_VERSION } from 'engine-contracts';
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Adapter, GetRelatedInput, RelatedPage, RelatedResult } from '../../adapter';
+import type { Adapter, GetRelatedInput, RelatedPage, RelatedResult } from 'movement-engine/services/translation_graph/adapter';
 
-import { BASE_RUNTIME_CAPABILITIES, isFileValue } from '../../adapter';
-import { makeMetaPosition, makeStablePosition } from '../../types';
+import { BASE_RUNTIME_CAPABILITIES, isFileValue } from 'movement-engine/services/translation_graph/adapter';
+import { makeMetaPosition, makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import { AdapterBadRequestError, createAdapterProtocolHandler, DRAINED_PAGE_LIMIT } from '../server';
 
 function baseAdapter(overrides: Partial<Adapter> = {}): Adapter {

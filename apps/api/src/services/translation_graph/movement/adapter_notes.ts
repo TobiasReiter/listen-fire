@@ -1,4 +1,4 @@
-import type { AdapterManifest } from '../adapter';
+import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 
 // Plain-language notes derived from a manifest, attached to a described
 // connection so an authoring agent learns a system's idiosyncrasies from the

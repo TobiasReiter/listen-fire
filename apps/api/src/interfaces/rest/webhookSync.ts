@@ -4,10 +4,10 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 
 import { handleInboundWebhook } from '../../services/webhook_sync/handler';
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { notifyWork } from '../../services/work/drain';
 import { runHarnessDelivery } from '../../services/work/harness';
-import { REMOTE_SIGNATURE_HEADER } from '../../services/webhook_sync/remote_inbound';
+import { REMOTE_SIGNATURE_HEADER } from 'movement-engine/services/webhook_sync/remote_inbound';
 
 const webhookSyncRouter: ReturnType<typeof Router> = Router();
 

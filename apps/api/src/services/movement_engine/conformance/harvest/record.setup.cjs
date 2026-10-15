@@ -50,7 +50,7 @@ if (process.env.UPDATE_ENGINE_RUNS === '1' && DIR !== undefined && !UNRECORDED.i
     });
   }
 
-  const RUN = path.resolve(__dirname, '../../run.ts');
+  const RUN = path.resolve(__dirname, 'movement-engine/services/movement_engine/run');
   const RECORDER = path.resolve(__dirname, '../recorder.ts');
   const file = testFile;
   const lines = [];

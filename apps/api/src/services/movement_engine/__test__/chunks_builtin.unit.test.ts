@@ -9,7 +9,7 @@
 // one, and that the run's trace says how the text came out, which is the only
 // place a reader can find out.
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -20,8 +20,8 @@ import {
   evalMovementExpr,
   type FileTextResolution,
   type MovementTraceEntry,
-} from '../expression';
-import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
+} from 'movement-engine/services/movement_engine/expression';
+import { fileValue, type FileRef, type FileValue } from 'movement-engine/services/translation_graph/adapter';
 
 /** 36 characters with no break of any kind in them, so every cut falls at the
  *  ceiling — the arithmetic is readable straight off the string. */

@@ -23,7 +23,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { listUnsupportedConstructs } from '../interpretable';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 
 type Cover =
   | { by: 'checker'; codes: string[] }
@@ -249,7 +249,17 @@ const SITES: Site[] = [
     cover: { by: 'unreachable', why: "the trigger type comes from dispatch, not the program; nothing in apps/api emits the two unhandled types" } },
 ];
 
-const ENGINE_DIR = path.resolve(__dirname, '..');
+/** The engine lives in its package; this app keeps the host side. Both are scanned. */
+const ENGINE_DIRS = [
+  path.resolve(__dirname, '../../../../../../packages/movement-engine/services/movement_engine'),
+  path.resolve(__dirname, '..'),
+];
+
+function engineFile(file: string): string {
+  const dir = ENGINE_DIRS.find((d) => fs.existsSync(path.join(d, file)));
+  if (dir === undefined) throw new Error(`no movement_engine file ${file}`);
+  return path.join(dir, file);
+}
 const CHECKER_DIR = path.resolve(__dirname, '../../../../../../packages/movement-lang/checker');
 
 const PRELUDE = `
@@ -263,7 +273,7 @@ graph = kg()
 
 /** Every `unsupported(` call in a file, keyed by its first argument's text. */
 function callSites(file: string): string[] {
-  const source = fs.readFileSync(path.join(ENGINE_DIR, file), 'utf8');
+  const source = fs.readFileSync(engineFile(file), 'utf8');
   const found: string[] = [];
   const call = /\bunsupported\(/g;
   for (let match = call.exec(source); match !== null; match = call.exec(source)) {
@@ -299,8 +309,7 @@ function checkerSources(): string {
 
 describe('every MOVENG_UNSUPPORTED site names what stops a saved movement reaching it', () => {
   it('only the registered files throw it', () => {
-    const callers = fs
-      .readdirSync(ENGINE_DIR)
+    const callers = ENGINE_DIRS.flatMap((dir) => fs.readdirSync(dir))
       .filter((f) => f.endsWith('.ts') && callSites(f).length > 0)
       .sort();
     expect(callers).toEqual(['expression.ts', 'run.ts']);

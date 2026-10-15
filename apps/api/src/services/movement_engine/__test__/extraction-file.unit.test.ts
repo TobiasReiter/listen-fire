@@ -8,7 +8,7 @@
 // hand-built extract + an injected `resolveFileText` seam, so the
 // adapter/OCR boundary is mocked deterministically.
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -23,11 +23,11 @@ import {
   materializeExtract,
   type ExtractRuntime,
   type FileTextResolution,
-} from '../extraction';
-import { fileValue, type FileRef, type FileValue } from '../../translation_graph/adapter';
-import { NO_PROVENANCE } from '../provenance';
+} from 'movement-engine/services/movement_engine/extraction';
+import { fileValue, type FileRef, type FileValue } from 'movement-engine/services/translation_graph/adapter';
+import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
 import type { LlmCallInput, LlmCallResult } from '../../translation_graph/engine/batched_extraction';
-import type { MovementTraceEntry } from '../expression';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 
 // ── Builders ────────────────────────────────────────────────────────────────
 

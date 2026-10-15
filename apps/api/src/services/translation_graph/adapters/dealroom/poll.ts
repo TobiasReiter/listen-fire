@@ -7,7 +7,7 @@
 // fires on NEW rounds only — a round whose amount is corrected afterwards does
 // not fire again.
 
-import type { DiscriminableEvent } from '../../adapter';
+import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
@@ -19,7 +19,7 @@ import {
   type DealroomFundingRound,
   type DealroomMustFilters,
 } from '../../../../adapters/dealroom/apiClient';
-import { eventConfigList } from '../../triggers/listen_config';
+import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
 import { resolveDealroomClient, type DealroomApiClient } from './client';
 import { DEALROOM_SEARCH_FIELDS } from './schema';
 import {

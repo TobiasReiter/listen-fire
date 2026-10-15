@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { Kysely } from 'kysely';
 
-import { slugify } from '../utils/string';
+import { slugify } from 'movement-engine/lib/utils/string';
 
 /**
  * A slug for `name` that is actually free, or undefined when `name` slugifies

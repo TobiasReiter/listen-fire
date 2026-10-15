@@ -4,7 +4,7 @@
 // fixed: a template is present text, and an absent part contributes "". This
 // pins the runtime half of that promise, so the two cannot drift apart.
 
-import { binding, Environment, evalMovementExpr } from '../expression';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function render(raw: string, bindings: Record<string, unknown>): Promise<unknown> {

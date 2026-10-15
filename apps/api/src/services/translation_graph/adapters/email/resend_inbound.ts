@@ -17,7 +17,7 @@ import { parseEmailAddress } from './index';
 import type { Request } from 'express';
 import type { EmailAttachment, EmailPayload } from './index';
 
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { routeInboundEmail, type InboundEmailDecision } from './inbound_door';
 import {
   fetchReceivedEmail,

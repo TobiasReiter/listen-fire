@@ -12,21 +12,21 @@
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
-import type { Adapter } from '../../translation_graph/adapter';
-import type { LlmCallResult } from '../../translation_graph/engine/batched_extraction/llm_call';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { FileTextResolution, TransformInvocationResult } from '../extraction';
+import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { LlmCallResult } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { FileTextResolution, TransformInvocationResult } from 'movement-engine/services/movement_engine/extraction';
 
-import { availableChatModels } from '../../../lib/models/map';
-import { RunCostCapExceeded } from '../../../lib/run_cost';
-import { containerAssociation } from '../../translation_graph/adapter';
+import { availableChatModels } from 'movement-engine/lib/models/map';
+import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
-import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
-import { MovementEngineError, isCheckFailure } from '../errors';
-import type { ParkedScopeState } from '../serialize';
-import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from 'movement-engine/services/movement_engine/test_host';
+import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError, isCheckFailure } from 'movement-engine/services/movement_engine/errors';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b3');
 

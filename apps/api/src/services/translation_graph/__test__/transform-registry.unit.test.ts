@@ -4,7 +4,7 @@
 //
 // Brief: plans/2026-05-19-tg-extraction-parity/_execution/wave-0/F4-transform-registry.md
 
-import type { SourcePosition, TransformSignature } from '../types';
+import type { SourcePosition, TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import {
   _resetTransformRegistry,
@@ -17,7 +17,7 @@ import {
   type TransformInput,
   type TransformOutput,
 } from '../engine/transforms';
-import { makeStablePosition } from '../types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 
 const sourceNode: SourcePosition = makeStablePosition({
   adapterType: 'fixture',

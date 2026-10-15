@@ -29,17 +29,17 @@ import type {
   ResolveFileRefResult,
   WriteInput,
   WriteResult,
-} from '../../adapter';
-import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from '../../types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { fileHandle, ownedFileSource, singleParentLink } from '../../adapter';
+import { fileHandle, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
   makeStablePosition,
   positionData,
-} from '../../types';
+} from 'movement-engine/services/translation_graph/types';
 import { BaseAdapter } from '../base';
 import { uniformWalk } from '../hop';
 import { naturalName } from '../name_resolution';

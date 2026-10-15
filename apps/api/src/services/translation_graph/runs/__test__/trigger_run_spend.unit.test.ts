@@ -5,7 +5,7 @@
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
-import type { MovementRunResult } from '../../../movement_engine/run';
+import type { MovementRunResult } from 'movement-engine/services/movement_engine/run';
 
 // `sql` only wraps JSON for a JSONB column; hand the JSON text straight back so
 // the test can read the persisted diagnostics out of the captured upsert.

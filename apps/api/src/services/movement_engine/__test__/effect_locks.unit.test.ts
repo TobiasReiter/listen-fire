@@ -11,7 +11,7 @@
 // how many lookups, creates and updates were in flight at once.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -38,7 +38,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -78,9 +78,9 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { runMovement } from '../run';
-import type { MovementTransformInvoker } from '../extraction';
-import type { MovementTraceEntry } from '../expression';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import type { MovementTransformInvoker } from 'movement-engine/services/movement_engine/extraction';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import {
   EffectLocks,
   bindLock,
@@ -90,8 +90,8 @@ import {
   identityLocks,
   recordLock,
   type CrossRunLocks,
-} from '../effect_locks';
-import { InMemoryWriteLocks, type WriteLockHolder } from '../../write_locks/write_locks';
+} from 'movement-engine/services/movement_engine/effect_locks';
+import { InMemoryWriteLocks, type WriteLockHolder } from 'movement-engine/services/write_locks/write_locks';
 
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
@@ -99,13 +99,13 @@ import {
   type Adapter,
   type ExternalRecordRef,
   type RuntimeCapabilities,
-} from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { positionData, type SchemaTypeDescriptor } from '../../translation_graph/types';
-import type { UniquenessConstraints } from '../../translation_graph/uniqueness';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { positionData, type SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
 import { tenantIdOf } from 'engine-contracts';
 import { CURRENT_LANGUAGE_VERSION, type InstanceSchema } from 'movement-lang';
-import { credentialIdsFor, makeTestHost } from '../test_host';
+import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000052');
 

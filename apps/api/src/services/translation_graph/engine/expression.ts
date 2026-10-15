@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { Expression } from '../../knowledge_pipeline/output_v3/expression';
+import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
 import type { AggregationFunction, TraversalStep } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type {
@@ -21,16 +21,16 @@ import type {
   Adapter,
   FieldEvidence,
   Resource,
-} from '../adapter';
-import type { ResourceFilter } from '../../knowledge_pipeline/output_v3/schemas';
-import type { TriggerEvent } from '../triggers/types';
-import type { EphemeralNode, ExpressionType, SourcePosition } from '../types';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { ResourceFilter } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { EphemeralNode, ExpressionType, SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { runKgQuery as RunKgQueryFn } from '../../knowledge_pipeline/output_v3/kg_query_runner';
 import type { ActionResultRecord } from './action_plan';
 
-import { RESOURCES_REFERENCE_FIELD_ID } from '../adapter';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
 import { resourcePositionsFromExtractNode } from './resources';
-import { isEphemeralPosition, positionData } from '../types';
+import { isEphemeralPosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { getAutomationsQb } from '../../../lib/kysely';
 import {
   evaluateExtractStep,
@@ -41,7 +41,7 @@ import {
   type TransformAugmentation,
 } from './evaluator';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
-import { resolvePositionResources } from './files/resources';
+import { resolvePositionResources } from 'movement-engine/services/translation_graph/engine/files/resources';
 
 
 import { isObjectSpread, objectMemberExpression } from '#shared/expression/types';

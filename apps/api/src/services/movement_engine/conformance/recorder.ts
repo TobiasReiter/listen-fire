@@ -23,8 +23,8 @@ import {
 } from 'engine-contracts/conformance';
 
 import { NotJson, notJsonAt } from './not_json';
-import { VOID_HOST_METHODS, hostMethodPaths, servedHostMethods, type EngineHost } from '../host';
-import { MovementRunFailed } from '../errors';
+import { VOID_HOST_METHODS, hostMethodPaths, servedHostMethods, type EngineHost } from 'movement-engine/services/movement_engine/host';
+import { MovementRunFailed } from 'movement-engine/services/movement_engine/errors';
 
 const MANIFEST: ReadonlySet<string> = new Set(hostMethodPaths());
 const VOID_METHODS: ReadonlySet<string> = new Set(VOID_HOST_METHODS);

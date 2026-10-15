@@ -23,7 +23,7 @@ jest.mock('../inbound_door', () => ({
   routeInboundEmail: (...args: unknown[]) => routeInboundEmail(...args),
 }));
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { warn: () => undefined, error: () => undefined, info: () => undefined },
 }));
 

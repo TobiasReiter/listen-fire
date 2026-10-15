@@ -29,7 +29,7 @@ import type { MessageThoughts } from '../lib/knowledge/agent_types';
 
 import { anthropicChat } from '../lib/anthropic';
 import { currentContext } from './context';
-import { logger } from './logger';
+import { logger } from 'movement-engine/services/logger';
 
 // ---------------------------------------------------------------------------
 // Types

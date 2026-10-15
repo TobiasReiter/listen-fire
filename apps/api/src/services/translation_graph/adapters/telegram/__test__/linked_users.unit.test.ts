@@ -2,7 +2,7 @@
 // cannot enumerate chats; the handshake's identity table can, and each row's
 // user id IS the private chat id a send targets.
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -52,7 +52,7 @@ jest.mock('../../../../../lib/kysely', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { isStablePosition, makeMetaPosition, makeStablePosition } from '../../../types';
+import { isStablePosition, makeMetaPosition, makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import { TelegramAdapter } from '../index';
 
 describe('Telegram Linked Users collection', () => {

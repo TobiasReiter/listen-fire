@@ -7,7 +7,7 @@
 // run shows its entries, and the settle neither loses nor duplicates them.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { MovementRunResult } from '../../../movement_engine/run';
+import type { MovementRunResult } from 'movement-engine/services/movement_engine/run';
 
 jest.mock('kysely', () => ({
   sql: (_strings: TemplateStringsArray, ...values: unknown[]) => values[0],
@@ -89,7 +89,7 @@ jest.mock('../../../context', () => ({
   currentContext: jest.fn().mockReturnValue(null),
 }));
 
-import type { MovementTraceEntry } from '../../../movement_engine/expression';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 
 import { TriggerRunRecorder } from '../trigger_run';
 

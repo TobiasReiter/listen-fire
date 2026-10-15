@@ -1,0 +1,31 @@
+{
+  "name": "lf-cli",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "`lf`: run movements locally from a project folder. A shell over the same language, checker, engine and run host the hosted product uses; it must never import apps/api",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "bin": {
+    "lf": "bin/lf.cjs"
+  },
+  "scripts": {
+    "lf": "node bin/lf.cjs",
+    "code:type-check": "tsc --pretty --noEmit",
+    "test": "node --test --require tsx/cjs src/__test__/*.test.ts"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "engine-contracts": "workspace:*",
+    "movement-engine": "workspace:*",
+    "movement-lang": "workspace:*",
+    "tsx": "4.21.0",
+    "yaml": "2.5.0",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "typescript": "5.5.4"
+  }
+}

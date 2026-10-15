@@ -5,7 +5,7 @@ import { toFile } from 'openai';
 
 import type { TranscriptionRequest, TranscriptionResult } from './index';
 
-import { logger } from '../../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { openAiClient } from '../providers/openai';
 import { sniffContainer } from './audio_format';
 

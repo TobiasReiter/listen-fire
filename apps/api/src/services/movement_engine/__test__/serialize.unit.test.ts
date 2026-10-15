@@ -6,11 +6,11 @@
 // descriptor: data, so it parks and comes back as it stands. The rehydration
 // context is mocked.
 
-import type { FileRef, Resource } from '../../translation_graph/adapter';
-import type { SourcePosition } from '../../translation_graph/types';
-import type { Binding, DeferredWalk, SourceRead, WriteRecord } from '../expression';
-import { binding, bindingOf, Environment, isDictValue } from '../expression';
-import type { ExtractEmission } from '../extraction';
+import type { FileRef, Resource } from 'movement-engine/services/translation_graph/adapter';
+import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
+import type { Binding, DeferredWalk, SourceRead, WriteRecord } from 'movement-engine/services/movement_engine/expression';
+import { binding, bindingOf, Environment, isDictValue } from 'movement-engine/services/movement_engine/expression';
+import type { ExtractEmission } from 'movement-engine/services/movement_engine/extraction';
 import {
   assertJsonSerializable,
   assertParkRead,
@@ -21,8 +21,8 @@ import {
   serializeScopeChain,
   type BindingDescriptor,
   type RehydrationContext,
-} from '../serialize';
-import { MovementEngineError } from '../errors';
+} from 'movement-engine/services/movement_engine/serialize';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 
 // ── A fake adapter / source-read the registry "re-resolves" to ──
 const fakeAdapter = { adapterType: 'attio' } as unknown as SourceRead['adapter'];

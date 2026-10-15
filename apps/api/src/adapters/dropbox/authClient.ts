@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';
 import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';

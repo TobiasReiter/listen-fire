@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { EvaluationResult } from '../../engine/types';
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
-import type { TriggerEvent } from '../../triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';

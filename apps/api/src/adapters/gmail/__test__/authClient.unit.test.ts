@@ -5,7 +5,7 @@
 // refresh token at all. Both are read off the URL rather than through a real
 // exchange — a test that signed in would be testing Google.
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 import { GmailAuthClient, parseGrantedScopes } from '../authClient';
 
 function client(env: NodeJS.ProcessEnv): GmailAuthClient {

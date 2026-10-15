@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 
-import type { TriggerEvent } from '../../../../services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type OpsDetailLevel from '../../../../generated/kysely/automations/OpsDetailLevel';
 import type { UserEmailId } from '../../../../generated/kysely/core/UserEmail';

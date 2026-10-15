@@ -43,7 +43,7 @@
 // ── Jest module workarounds (mirrors local_record_update.unit.test.ts) ──────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -70,7 +70,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -114,17 +114,17 @@ import { writeFileSync } from 'node:fs';
 
 import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
 
-import type { ExtractCallLlmInput, ExtractCallLlmResult } from '../extraction_call';
-import type { MovementTransformInvoker } from '../extraction';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
+import type { MovementTransformInvoker } from 'movement-engine/services/movement_engine/extraction';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
-import { makeTestHost } from '../test_host';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
-import { runMovement, runFailureCause, type MovementRunResult } from '../run';
-import { MovementEngineError } from '../errors';
-import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
-import { makeStablePosition, positionData, positionRecordId, META_RECORD_TYPE } from '../../translation_graph/types';
+import { runMovement, runFailureCause, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
+import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, positionData, positionRecordId, META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
 import { ACME, BETA, GAMMA, cellId, cells, expectationAt, row, type Cell, type Rec } from './binding_consumer_matrix.cells';
 import { RELAY, SUMMARISE, catalog, programFor } from './binding_consumer_matrix.program';
 

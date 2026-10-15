@@ -15,18 +15,18 @@
 import http from 'node:http';
 
 import type { AddressInfo } from 'node:net';
-import type { MutationContext } from '../../../services/translation_graph/mutation_context';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 import type { RemoteAdapterConfig } from '../../../services/translation_graph/adapters/remote';
 import type { FakeCrmServer } from '../fake_crm_adapter';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { BASE_RUNTIME_CAPABILITIES } from '../../../services/translation_graph/adapter';
+import { BASE_RUNTIME_CAPABILITIES } from 'movement-engine/services/translation_graph/adapter';
 import {
   createRemoteAdapter,
   fetchRemoteManifest,
   RemoteAdapter,
 } from '../../../services/translation_graph/adapters/remote';
-import { makeMetaPosition, positionData } from '../../../services/translation_graph/types';
+import { makeMetaPosition, positionData } from 'movement-engine/services/translation_graph/types';
 import {
   FAKE_CRM_ADAPTER_TYPE,
   FAKE_CRM_COMMENTS_EDGE,

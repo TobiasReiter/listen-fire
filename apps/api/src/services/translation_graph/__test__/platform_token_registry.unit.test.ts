@@ -1,5 +1,5 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Actor } from '../mutation_context';
+import type { Actor } from 'movement-engine/services/translation_graph/mutation_context';
 
 import {
   InMemoryPlatformTokenRegistry,

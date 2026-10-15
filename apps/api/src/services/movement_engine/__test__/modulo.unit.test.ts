@@ -4,8 +4,8 @@
 // all agree a construct is live before an author can use it. Same shape as
 // negate.unit.test.ts (unary minus, 2026-09-28).
 
-import { binding, Environment, evalMovementExpr } from '../expression';
-import { listUnsupportedConstructs } from '../interpretable';
+import { binding, Environment, evalMovementExpr } from 'movement-engine/services/movement_engine/expression';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { CURRENT_LANGUAGE_VERSION, parseMovementExpression } from 'movement-lang';
 
 async function evaluate(text: string, bindings: Record<string, unknown> = {}): Promise<unknown> {

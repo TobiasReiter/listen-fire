@@ -32,12 +32,12 @@ import { z } from 'zod';
 
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
 import type { SearchHit } from './search_hygiene';
-import type { TransformSignature } from '../../types';
+import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { anthropicChatStructured } from '../../../../lib/anthropic';
 import { runFields } from '../../../../lib/llm_usage';
 import { looksLikeNonHtmlAddress } from '../../../../lib/utils/url';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { describeError, emissionOf, fetchWithTimeout } from './fetch_resource';
 import {
   asExactPhrase,
@@ -50,7 +50,7 @@ import {
   runSearch,
 } from './search_hygiene';
 import { WEB_RESEARCH_HANDBOOK_SECTION } from './web_research_handbook_section';
-import { importIdentifier } from '../../movement/schema_projection';
+import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
 
 // ── Signature ─────────────────────────────────────────────────────────────
 

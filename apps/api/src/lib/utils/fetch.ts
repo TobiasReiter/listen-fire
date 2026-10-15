@@ -1,4 +1,4 @@
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 
 async function parseJsonResponse(response: Response, serviceName: string): Promise<unknown> {
   const text = await response.text();

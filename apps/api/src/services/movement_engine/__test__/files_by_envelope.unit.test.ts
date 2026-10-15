@@ -14,20 +14,20 @@
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
-import type { Adapter, FileRef } from '../../translation_graph/adapter';
-import type { LlmCallResult } from '../../translation_graph/engine/batched_extraction/llm_call';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { ParkedScopeState } from '../serialize';
-import type { FileTextResolution } from '../expression';
+import type { Adapter, FileRef } from 'movement-engine/services/translation_graph/adapter';
+import type { LlmCallResult } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import type { FileTextResolution } from 'movement-engine/services/movement_engine/expression';
 
-import { containerAssociation } from '../../translation_graph/adapter';
-import { makeUnstablePosition, positionData } from '../../translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from '../test_host';
-import { isCheckFailure } from '../errors';
-import { runFailureCause, resumeMovement, runMovement, type RunMovementInput } from '../run';
-import { filesInBranchExports, filesInParkState } from '../rust_wire';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, endedInRust } from 'movement-engine/services/movement_engine/test_host';
+import { isCheckFailure } from 'movement-engine/services/movement_engine/errors';
+import { runFailureCause, resumeMovement, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import { filesInBranchExports, filesInParkState } from 'movement-engine/services/movement_engine/rust_wire';
 import { isFileValue } from 'engine-contracts';
-import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { installMemoryDocumentStore } from '../../translation_graph/engine/files/__test__/memory_document_store';
 import { FileOutsideTeamError } from '../../translation_graph/engine/files/retrieve';
 import { makeFileTextResolver } from '../../translation_graph/movement/file_text';

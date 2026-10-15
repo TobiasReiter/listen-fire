@@ -10,7 +10,7 @@ import type {
   FieldMapping,
   TraversalStep,
   FilterExpression,
-} from '../schemas';
+} from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
 import type { OntologySummary } from './types';
 
 type NodeRelationship = ActionNode['children'][number]['relationship'];

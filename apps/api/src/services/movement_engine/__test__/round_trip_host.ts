@@ -8,7 +8,7 @@
 // object itself, so a method added to any family is wrapped without anyone
 // listing it.
 
-import { VOID_HOST_METHODS, type EngineHost } from '../host';
+import { VOID_HOST_METHODS, type EngineHost } from 'movement-engine/services/movement_engine/host';
 import { NotJson, notJsonAt } from '../conformance/not_json';
 
 export { NotJson, notJsonAt };

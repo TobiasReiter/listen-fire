@@ -24,7 +24,7 @@
 // ── Jest module workarounds (mirrors run.unit.test.ts) ──────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 process.env.ENCRYPTION_MASTER_KEY ??= Buffer.alloc(32, 1).toString('base64');
 process.env.ENCRYPTION_SALT_BASE64 ??= Buffer.alloc(16, 2).toString('base64');
@@ -51,7 +51,7 @@ jest.mock('../../../lib/kysely', () => ({
   getCoreQb: jest.fn(() => mockChainable()),
 }));
 
-jest.mock('../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../context', () => ({
@@ -91,12 +91,12 @@ jest.mock('../../../lib/anthropic', () => ({
 }));
 
 import type { Catalog, InstanceSchema } from 'movement-lang';
-import { runMovement } from '../run';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import {
   snapshotOverManifests,
   staticCatalogFromManifests,
 } from '../../translation_graph/movement/catalog';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -104,18 +104,18 @@ import type {
   RelatedResult,
   UpdateInput,
   WriteInput,
-} from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { MutationContext } from '../../translation_graph/mutation_context';
+} from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 import {
   META_RECORD_TYPE,
   makeStablePosition,
   positionData,
-} from '../../translation_graph/types';
+} from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { containerAssociation } from '../../translation_graph/adapter';
-import { makeTestHost } from '../test_host';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000010');

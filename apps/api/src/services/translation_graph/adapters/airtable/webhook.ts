@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-import type { DiscriminableEvent, EventType } from '../../adapter';
+import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 import type { AirtableWebhookPayload } from '../../../../adapters/airtable/apiClient';
 
 /** The Airtable ping POSTed to the callback URL. It carries only ids — the

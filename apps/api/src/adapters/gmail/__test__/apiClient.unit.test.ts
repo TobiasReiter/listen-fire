@@ -4,8 +4,8 @@
 // by which scope set it was requesting.
 
 const delegatedAuthCalls: { subject: string; scopes: readonly string[] }[] = [];
-jest.mock('../../../lib/google_cloud', () => {
-  const actual = jest.requireActual('../../../lib/google_cloud');
+jest.mock('movement-engine/lib/google_cloud', () => {
+  const actual = jest.requireActual('movement-engine/lib/google_cloud');
   return {
     ...actual,
     delegatedGoogleAuth: jest.fn((input: { subject: string; scopes: readonly string[] }) => {
@@ -42,7 +42,7 @@ jest.mock('googleapis', () => ({
   google: { gmail: (opts: { auth: unknown }) => gmailFactory(opts) },
 }));
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '../../../lib/google_cloud';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
 import {
   GMAIL_DELEGATION_MESSAGE,
   GmailApiClient,

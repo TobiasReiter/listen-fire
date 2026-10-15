@@ -10,7 +10,7 @@
 // fake recording subscription calls).
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-require('../../../knowledge_pipeline/output_v3/schemas');
+require('movement-engine/services/knowledge_pipeline/output_v3/schemas');
 
 jest.mock('../../../../lib/kysely', () => {
   type Row = Record<string, unknown>;
@@ -107,7 +107,7 @@ jest.mock('../../../../lib/kysely', () => {
   };
 });
 
-jest.mock('../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

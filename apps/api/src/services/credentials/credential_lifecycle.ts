@@ -32,7 +32,7 @@ import {
 import { platformTokenRegistry } from '../translation_graph/engine/platform_token_registry_db';
 import { ApiKeyService } from '../api_key';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../lib/recording';
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 
 interface LifecycleContext {
   /** The decrypted credentials envelope this hook operates on. */

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 
-import { logger } from '../../services/logger';
+import { logger } from 'movement-engine/services/logger';
 import { storePendingCredentials } from '../../lib/pendingCredentials';
 import { getFlowUserId } from '../../lib/oauthFlows';
 import { resolveOAuthCallbackRedirect } from '../../lib/oauthCallbackRedirect';

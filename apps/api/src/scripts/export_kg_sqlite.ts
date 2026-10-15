@@ -36,8 +36,8 @@ import type { PropertyTypeId } from '../generated/kysely/knowledge/PropertyType'
 import type { Property } from '../generated/kysely/knowledge/Property';
 
 import { KG_ADAPTER_TYPE } from '../services/translation_graph/adapters/knowledge_graph';
-import { logger } from '../services/logger';
-import { neverAsAny } from '../lib/utils/types';
+import { logger } from 'movement-engine/services/logger';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { getAutomationsQb, getCoreQb, getKnowledgeQb } from '../lib/kysely';
 import PropertyValueType from '../generated/kysely/knowledge/PropertyValueType';
 import PropertyCardinality from '../generated/kysely/knowledge/PropertyCardinality';

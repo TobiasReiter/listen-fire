@@ -29,7 +29,7 @@
 
 import { z } from 'zod';
 
-import { logger } from '../logger';
+import { logger } from 'movement-engine/services/logger';
 import { getMetaWhatsappApi } from '../whatsapp/metaApi';
 import { isCallbackId } from '../movement_engine/callback_store';
 import {

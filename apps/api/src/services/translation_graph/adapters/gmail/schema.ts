@@ -11,9 +11,9 @@
 // and the walk hydrates every target rather than stubbing.
 
 import type { EdgeCapability } from '#shared/expression/types';
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from '../../types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 
-import { META_RECORD_TYPE } from '../../types';
+import { META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
 import {
   GMAIL_ATTACHMENT_DISPLAY_NAME,
   GMAIL_ATTACHMENT_TYPE_ID,

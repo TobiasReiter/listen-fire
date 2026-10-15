@@ -6,7 +6,7 @@
 // return for a bigger adapter.
 
 import { EmailAdapter, EMAIL_RECORD_TYPE_ID, EMAIL_ATTACHMENT_TYPE_ID, EMAIL_ATTACHMENTS_FIELD } from '../index';
-import { META_RECORD_TYPE, makeUnstablePosition } from '../../../types';
+import { META_RECORD_TYPE, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 
 const adapter = () => new EmailAdapter({ teamId: 'team-1' } as never);
 

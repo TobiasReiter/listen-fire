@@ -19,7 +19,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { ensureDevLoopTeam } from './_lib';
-import { userEditContext } from '../../services/translation_graph/mutation_context';
+import { userEditContext } from 'movement-engine/services/translation_graph/mutation_context';
 
 function countUpstreamCalls() {
   const calls: string[] = [];

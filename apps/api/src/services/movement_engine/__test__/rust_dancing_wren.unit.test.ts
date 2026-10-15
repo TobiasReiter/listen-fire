@@ -15,14 +15,14 @@
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
 
-import { containerAssociation, type Adapter } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
+import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { makeStablePosition, makeUnstablePosition, positionData } from '../../translation_graph/types';
-import { makeTestHost, endedInRust } from '../test_host';
-import { runFailureCause, runMovement } from '../run';
-import { MovementEngineError, isCheckFailure } from '../errors';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from '../rust_stats';
+import { makeStablePosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { makeTestHost, endedInRust } from 'movement-engine/services/movement_engine/test_host';
+import { runFailureCause, runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementEngineError, isCheckFailure } from 'movement-engine/services/movement_engine/errors';
+import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 /** Diagnostic codes the checker is made to miss, so a run reaches the
  *  engine's own guard as a program the checker let by would. */

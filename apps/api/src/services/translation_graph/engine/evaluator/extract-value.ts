@@ -8,7 +8,7 @@
 // validation still surfaces a clear error rather than calling the
 // batcher with an undefined parent.
 
-import type { ExpressionType } from '../../types';
+import type { ExpressionType } from 'movement-engine/services/translation_graph/types';
 import type { Batcher, ExtractValueResult } from './batcher';
 
 import { allocateSiteId, type ExtractState } from './extract';

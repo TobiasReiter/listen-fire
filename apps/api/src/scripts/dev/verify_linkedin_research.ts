@@ -27,7 +27,7 @@ import '../../services/translation_graph/engine/transforms/register-bundled';
 import { services } from '../../adapters/registry';
 import { runInContext } from '../../services/context/utils';
 import { getTransform } from '../../services/translation_graph/engine/transforms';
-import { makeStablePosition } from '../../services/translation_graph/types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import { ensureDevLoopTeam } from './_lib';
 
 import type { ContextDependentInput } from '../../services/translation_graph/engine/transforms';

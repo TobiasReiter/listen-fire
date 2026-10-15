@@ -3,7 +3,7 @@
 // Run Failed emission from a failed run, and the rule that keeps a failure
 // handler from reporting itself. No database: the failed-run reader is faked.
 
-jest.mock('../../../../logger', () => ({
+jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // The DB reader is replaced in every test; stub the accessor so the module
@@ -13,7 +13,7 @@ jest.mock('../../../../../lib/kysely', () => ({ getAutomationsQb: jest.fn() }));
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { StoredSystemEvent, StoredSystemEventReader } from '../events';
 
-import { makeMetaPosition, makeUnstablePosition } from '../../../types';
+import { makeMetaPosition, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
 import { SYSTEM_ADAPTER_TYPE, SYSTEM_MANIFEST, SystemAdapter } from '../index';
 import {
   SystemPollSource,

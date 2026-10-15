@@ -12,16 +12,16 @@ import { tenantIdOf } from 'engine-contracts';
 
 import { evaluatePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
-import type { Adapter, GetRelatedInput, RelatedResult } from '../../translation_graph/adapter';
-import { containerAssociation } from '../../translation_graph/adapter';
-import type { CapturedWrite } from '../../translation_graph/engine/dry_run_adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from '../../translation_graph/types';
-import { MovementEngineError } from '../errors';
-import type { MovementTraceEntry } from '../expression';
-import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from '../run';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from '../rust_stats';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from '../test_host';
+import type { Adapter, GetRelatedInput, RelatedResult } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
+import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import { MovementRunFailed, runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c4');
 

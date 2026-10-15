@@ -19,7 +19,7 @@
  *      transcript: the entry with an address is fetched, the bare one is
  *      researched, and the resolved address has to land on it.
  */
-import { BARE_HOST } from '../../services/movement_engine/host_kit';
+import { BARE_HOST } from 'movement-engine/services/movement_engine/host_kit';
 import './_profile_loader';
 
 // Composition root — registers the services the fetch path reaches.
@@ -29,16 +29,16 @@ import '../../services/translation_graph/engine/transforms/register-bundled';
 import { parseProgram } from 'movement-lang';
 
 import { runInContext } from '../../services/context/utils';
-import { buildExtractSpec, materializeExtract } from '../../services/movement_engine/extraction';
+import { buildExtractSpec, materializeExtract } from 'movement-engine/services/movement_engine/extraction';
 import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
 import { registryTransformInvoker } from '../../services/translation_graph/movement/transform_invoker';
 import { getTransform } from '../../services/translation_graph/engine/transforms';
-import { makeStablePosition } from '../../services/translation_graph/types';
+import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
 import { WebSearchService } from '../../services/web_search';
 import { ensureDevLoopTeam } from './_lib';
 
 import type { ExtractExpression, ExprSlot } from 'movement-lang';
-import type { MovementTraceEntry } from '../../services/movement_engine/expression';
+import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import type { ContextDependentInput } from '../../services/translation_graph/engine/transforms';
 
 // ── The test set ──────────────────────────────────────────────────────────

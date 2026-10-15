@@ -17,8 +17,8 @@
 // event is visible and replayable.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { ActingUser, ActorCandidate, Adapter } from '../adapter';
-import type { TriggerEvent } from './types';
+import type { ActingUser, ActorCandidate, Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { getAdapterManifest } from '../adapters/registry';

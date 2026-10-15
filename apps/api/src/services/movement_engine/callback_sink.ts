@@ -18,7 +18,7 @@ import {
   mintCallback,
   readCallbackCalls,
 } from './callback_store';
-import type { CallbackSink } from './host';
+import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
 
 import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 

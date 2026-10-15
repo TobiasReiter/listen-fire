@@ -1,4 +1,4 @@
-import { describeError, getErrorMessage } from '../error';
+import { describeError, getErrorMessage } from 'movement-engine/lib/utils/error';
 
 describe('describeError', () => {
   it('returns a plain error message unchanged', () => {

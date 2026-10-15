@@ -9,7 +9,7 @@
 // `?answer=` idiom it replaces is no longer taught (the doors still recognise
 // it while live automations are re-authored).
 
-import type { HandbookSection } from '../../../../lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/lib/handbook_section';
 
 export const SLACK_HANDBOOK_SECTION: HandbookSection = {
   title: 'Slack — posts, Block Kit, and acting in the channel',

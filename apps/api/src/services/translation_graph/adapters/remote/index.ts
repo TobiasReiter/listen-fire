@@ -72,24 +72,24 @@ import type {
   EnsureEventSubscriptionInput,
   EventSubscriptionRegistration,
   RemoveEventSubscriptionInput,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 import type {
   AwaitableCapability,
   AwaitPoint,
   AwaitResolution,
-} from '../../awaitable';
+} from 'movement-engine/services/translation_graph/awaitable';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from '../../types';
-import type { TriggerEvent, TriggerType } from '../../triggers/types';
+} from 'movement-engine/services/translation_graph/types';
+import type { TriggerEvent, TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
 import type { Expression } from '#shared/expression/types';
-import type { AuthStrategy } from '../../protocol/client';
+import type { AuthStrategy } from 'movement-engine/services/translation_graph/protocol/client';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { MethodName } from 'engine-contracts';
 
-import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
+import { authHeader, postRpc, parseWireResult } from 'movement-engine/services/translation_graph/protocol/client';
 import { DOCUMENT_STORE_OWNER } from '../../engine/files/document_store';
 import { fileOwner, hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import { exposeFile } from '../../engine/files/expose';
@@ -103,7 +103,7 @@ import {
   writeParentLinks,
   type EarlierFileSource,
   type FileSource,
-} from '../../adapter';
+} from 'movement-engine/services/translation_graph/adapter';
 
 /**
  * A remote's catalog could not be read for the field a read answered, so

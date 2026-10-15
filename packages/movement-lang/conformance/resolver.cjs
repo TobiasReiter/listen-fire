@@ -24,5 +24,15 @@ module.exports = (request, options) => {
   } catch {
     // Not a corpus file — resolve against the original position below.
   }
-  return defaultResolver(request, { ...options, basedir: basedir.replace(CORPUS_SEGMENT, '') });
+  const live = basedir.replace(CORPUS_SEGMENT, '');
+  try {
+    return defaultResolver(request, { ...options, basedir: live });
+  } catch (error) {
+    // The engine moved out of apps/api into packages/movement-engine with its
+    // paths kept (apps/api/src/X -> packages/movement-engine/X), so a corpus
+    // test's relative import of an engine module resolves there.
+    const moved = live.replace(/([\\/])apps[\\/]api[\\/]src(?=[\\/]|$)/, '$1packages$1movement-engine');
+    if (moved === live) throw error;
+    return defaultResolver(request, { ...options, basedir: moved });
+  }
 };

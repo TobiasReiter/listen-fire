@@ -29,14 +29,14 @@
 // answers, on the eval wire, by edge.
 
 import { languageVersionDiagnostic, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from '../../../../packages/movement-lang';
-import { WireOut } from '../../../../apps/api/src/services/movement_engine/rust_wire';
+import { WireOut } from '../../../../packages/movement-engine/services/movement_engine/rust_wire';
 import { tenantIdOf } from '../../../../packages/engine-contracts';
-import { MovementEngineError } from '../../../../apps/api/src/services/movement_engine/errors';
-import { checkAnswer, checkPinned } from '../../../../apps/api/src/services/movement_engine/program_check';
-import { runFailureCause, runMovement } from '../../../../apps/api/src/services/movement_engine/run';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../apps/api/src/services/movement_engine/test_host';
-import type { Adapter, GetRelatedInput, RelatedResult } from '../../../../apps/api/src/services/translation_graph/adapter';
-import { makeStablePosition, positionData } from '../../../../apps/api/src/services/translation_graph/types';
+import { MovementEngineError } from '../../../../packages/movement-engine/services/movement_engine/errors';
+import { checkAnswer, checkPinned } from '../../../../packages/movement-engine/services/movement_engine/program_check';
+import { runFailureCause, runMovement } from '../../../../packages/movement-engine/services/movement_engine/run';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../packages/movement-engine/services/movement_engine/test_host';
+import type { Adapter, GetRelatedInput, RelatedResult } from '../../../../packages/movement-engine/services/translation_graph/adapter';
+import { makeStablePosition, positionData } from '../../../../packages/movement-engine/services/translation_graph/types';
 
 type Rand = () => number;
 

@@ -4,7 +4,7 @@ import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, ResourceContext } from './types';
 
 import { services } from '../../../../adapters/registry';
-import { logger } from '../../../logger';
+import { logger } from 'movement-engine/services/logger';
 import { composeTextFromPrompt, resolvePreserveTags, loadResources } from '../resolve';
 import { resolveConfigField } from './types';
 

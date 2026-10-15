@@ -23,7 +23,7 @@ import { CURRENT_LANGUAGE_VERSION, parseProgram } from 'movement-lang';
 
 import type { EngineClaim } from '../types';
 
-import { listUnsupportedConstructs } from '../../../../services/movement_engine/interpretable';
+import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
 import { getMovementHandbook } from '../index';
 import { frontPageClaims } from '../front_page';
 import { controlFormClaims } from '../language_search';
