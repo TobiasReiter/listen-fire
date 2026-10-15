@@ -100,6 +100,24 @@ const CASES: Record<string, string> = {
   x = MAP([COALESCE(co, 1)], (n: <number>) => n + 1)
   write graph-[:note]-> { payload: { x: x } }
 }`,
+  recordMemberToText: `movement recap(go: <runs-[:Invocation]->>) {
+  co = write graph-[:companies]-> { name: "a" }
+  up = (t: <text>) => UPPER(t)
+  x = MAP([co], up)
+  write graph-[:note]-> { payload: { x: x } }
+}`,
+  recordStart: `movement recap(go: <runs-[:Invocation]->>) {
+  co = write graph-[:companies]-> { name: "a" }
+  add = (acc: <text>, n: <text>) => CONCAT(acc, n)
+  x = REDUCE(["a"], co, add)
+  write graph-[:note]-> { payload: { x: x } }
+}`,
+  filterRecordsAsText: `movement recap(go: <runs-[:Invocation]->>) {
+  co = write graph-[:companies]-> { name: "a" }
+  long = (t: <text>) => LENGTH(t) > 3
+  x = FILTER([co], long)
+  write graph-[:note]-> { payload: { n: COUNT(x) } }
+}`,
 };
 
 async function runUnder(source: string, languageVersion: 3 | 4 | 5) {
@@ -131,6 +149,12 @@ describe('a collection op\'s typed function, handed members of another type', ()
 
   it.each([3, 4] as const)('ran under %i: REDUCE\'s text starting value reached a number accumulator', async version => {
     expect(payloads((await runUnder(CASES.textStart!, version)).kg)).toEqual([{ x: Number.NaN }]);
+  });
+
+  it.each([3, 4] as const)('ran under %i: a record reached a text parameter, and was read as "[object Object]"', async version => {
+    expect(payloads((await runUnder(CASES.recordMemberToText!, version)).kg)).toEqual([{ x: ['[OBJECT OBJECT]'] }]);
+    expect(payloads((await runUnder(CASES.recordStart!, version)).kg)).toEqual([{ x: '[object Object]a' }]);
+    expect(payloads((await runUnder(CASES.filterRecordsAsText!, version)).kg)).toEqual([{ n: 1 }]);
   });
 
   it.each(Object.keys(CASES))('%s is refused at check under Dancing Wren (5)', async name => {

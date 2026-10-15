@@ -64,6 +64,10 @@ const MISFITS: Array<[string, string[], string]> = [
   ['REDUCE\'s members against the parameter after the accumulator', ['  x = REDUCE(["a"], 0, (acc: <number>, n: <number>) => acc + n)'], 'MOV_CALL_ARG_TYPE'],
   ['a record member, to a number', ['  x = MAP([co], (n: <number>) => n)'], 'MOV_CALL_ARG_TYPE'],
   ['a member that may be a record', ['  x = MAP([COALESCE(co, 1)], (n: <number>) => n)'], 'MOV_CALL_ARG_MAYBE_RECORD'],
+  ['MAP over a hop\'s records, a closure in a variable taking text', ['  up = (t: <text>) => UPPER(t)', '  x = MAP(crm-[:companies]->, up)'], 'MOV_CALL_ARG_TYPE'],
+  ['FILTER over a hop\'s records, a closure in a variable taking text', ['  long = (t: <text>) => LENGTH(t) > 3', '  x = FILTER(crm-[:companies]->, long)'], 'MOV_CALL_ARG_TYPE'],
+  ['REDUCE whose starting value is a record, against a typed accumulator', ['  add = (acc: <text>, n: <text>) => CONCAT(acc, n)', '  x = REDUCE(["a"], co, add)'], 'MOV_CALL_ARG_TYPE'],
+  ['MAP over text, a closure adding to a number', ['  x = MAP(["a"], (t: <number>) => t + 1)'], 'MOV_CALL_ARG_TYPE'],
 ];
 
 describe('a collection op\'s members against its function\'s parameters', () => {
