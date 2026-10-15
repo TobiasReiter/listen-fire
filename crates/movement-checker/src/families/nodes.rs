@@ -402,6 +402,38 @@ impl Checker<'_> {
         None
     }
 
+    /// `checkMembers`: `MEMBERS(<T>)` lists a closed set's values, in the
+    /// order declared.
+    pub fn check_members(&mut self, expr: &movement_parser::ast::MembersExpression, scope: ScopeId) -> Option<crate::types::Ty> {
+        let ty = self.resolve_named_type(&expr.type_, expr.type_span, scope)?;
+        let named = crate::types::Ty::from_schema(&ty);
+        let named = crate::types::field::strip_absent(&named).clone();
+        let crate::types::Ty::Enum { open, .. } = &named else {
+            self.report(
+                codes::MEMBERS_NOT_CLOSED,
+                format!(
+                    "'MEMBERS' lists the values of a closed set, and '{t}' is {} — there is nothing to list. Declare the set ('type {t} = <\"A\" | \"B\">'), or name a field whose options the system holds.",
+                    crate::types::field::describe_field_type(&named),
+                    t = expr.type_
+                ),
+                expr.type_span,
+            );
+            return None;
+        };
+        if open.is_some() {
+            self.report(
+                codes::MEMBERS_NOT_CLOSED,
+                format!(
+                    "'{}' is a known-values field: those options are the ones we could read, and other values are legal there too — so there is no complete list of them to walk. Declare the set you mean ('type Thesis = <\"A\" | \"B\">') and iterate that.",
+                    expr.type_
+                ),
+                expr.type_span,
+            );
+            return None;
+        }
+        Some(crate::types::Ty::list(named))
+    }
+
     /// `typeNamesInScope`: the primitives, then every `type` declared in scope.
     fn type_names_in_scope(&self, scope: ScopeId) -> Vec<String> {
         let mut names: Vec<String> = PRIMITIVE_TYPE_NAMES.iter().map(|s| s.to_string()).collect();
@@ -976,18 +1008,18 @@ impl Checker<'_> {
         if let Some(required) = required
             && !opaque_spread
         {
-            self.report_missing_graph_fields(required, &reads, &edges, literal.span);
+            self.report_missing_graph_fields(required, &reads, literal.span);
         }
         LocalNode { label: "a graph".to_string(), reads, edges: Some(edges), run_built: None, extracted: None }
     }
 
     /// `reportMissingGraphFields`.
-    fn report_missing_graph_fields(&mut self, required: &Required, reads: &IndexMap<String, Option<Ty>>, edges: &IndexMap<String, LocalEdge>, span: Span) {
+    fn report_missing_graph_fields(&mut self, required: &Required, reads: &IndexMap<String, Option<Ty>>, span: Span) {
         let Some(declared) = required.declared() else { return };
         let missing: Vec<(String, Ty)> = declared
             .properties
             .iter()
-            .filter(|(name, _)| !reads.contains_key(*name) && !edges.contains_key(*name))
+            .filter(|(name, _)| !reads.contains_key(*name))
             .map(|(name, want)| (name.clone(), Ty::from_schema(want)))
             .filter(|(_, want)| !is_maybe_absent(Some(want)))
             .collect();
@@ -1625,7 +1657,7 @@ impl Checker<'_> {
             };
             let (landing_reads, landing_edges) = self.check_spread_keys(&nested, child.as_ref(), spread, &[], &[]);
             if let Some(child) = &child {
-                self.report_missing_graph_fields(child, &landing_reads, &IndexMap::new(), spread.span);
+                self.report_missing_graph_fields(child, &landing_reads, spread.span);
             }
             let landing = LocalNode { label: format!("a '{key}' landing"), reads: landing_reads, edges: Some(landing_edges), run_built: None, extracted: None };
             edges.insert(key.clone(), local_edge(key, Some(Position::Local(landing))));

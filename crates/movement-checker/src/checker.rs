@@ -343,7 +343,9 @@ impl<'c> Checker<'c> {
                 self.check_combinator(combinator, scope);
             }
             RValue::Collection { collection } => self.check_collection_op(collection, scope),
-            RValue::Members { .. } => {}
+            RValue::Members { members } => {
+                self.check_members(members, scope);
+            }
             RValue::InlineBlock { inline_block } => {
                 let block_scope = self.scopes.open(Some(scope));
                 self.check_statement_list(&inline_block.body, block_scope);

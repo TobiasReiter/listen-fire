@@ -739,7 +739,9 @@ impl Checker<'_> {
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Members(_) => {}
+            CallReading::Members(members) => {
+                self.check_members(&members, scope);
+            }
         }
     }
 
@@ -756,7 +758,9 @@ impl Checker<'_> {
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
-            CallReading::Members(_) => {}
+            CallReading::Members(members) => {
+                self.check_members(&members, scope);
+            }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
         }
     }
