@@ -268,12 +268,12 @@ const SCENARIOS: Record<string, { body: string[]; payload: unknown }> = {
       '    await sleep(1h)',
       '    return k * 2',
       '  }',
-      '  r = await parallel([',
+      '  r = all(',
       '    () => {',
       '      y = f()',
       '      return y + 1',
       '    }',
-      '  ])',
+      '  )',
       '  write graph-[:note]-> { payload: { r: r } }',
     ],
     payload: { r: [15] },
@@ -346,7 +346,7 @@ describe('a body closure holds its scope by reference', () => {
     expect(payloadOf(kg.creates)).toEqual({ seen: 'two/two' });
   });
 
-  it('a closure made in a MAP member and returned is written with its scope, and runs as a parallel arm after a park', async () => {
+  it('a closure made in a MAP member and returned is written with its scope, and runs as a parallel arm after a park (version 4)', async () => {
     const parks = makeParkSink();
     const source = program([
       '  k = 3',
@@ -370,22 +370,66 @@ describe('a body closure holds its scope by reference', () => {
   });
 });
 
+describe('a closure a maker returns, run as an all arm after a park (version 5)', () => {
+  it('is written with its scope, and answers by slot', async () => {
+    const parks = makeParkSink();
+    const source = program([
+      '  k = 3',
+      '  mk = (n: <number>) => {',
+      '    m = n * k',
+      '    return () => {',
+      '      await sleep(1h)',
+      '      return m + 1',
+      '    }',
+      '  }',
+      '  f1 = mk(1)',
+      '  f2 = mk(2)',
+      '  r = all(f1, f2)',
+      '  write graph-[:note]-> { payload: { r: r } }',
+    ]);
+    const first = await start(source, parks);
+    expect(first.result.parked).toBe(true);
+    expect(parks.parks.size).toBe(2);
+    const { result, kg } = await resumeAll(source, parks);
+    expect(result.parked).toBeUndefined();
+    expect(payloadOf(kg.creates)).toEqual({ r: [4, 7] });
+  });
+});
+
 describe('a parked run sees what an unparked run sees', () => {
-  // A MAP member that parks returns closures that write the outer handle; run
-  // by `parallel`, they and the scope must hold ONE handle. Before, the park
-  // split it, and the scope's `a` read a stale record.
-  const body = (park: boolean, version: number): string[] => [
-    '  a = write graph-[:note]-> { body: "one" }',
-    '  fs = MAP([1, 2], (n) => {',
-    ...(park ? ['    await sleep(1h)'] : []),
-    '    return () => {',
-    '      write a { body: CONCAT("v", n) }',
-    '      return a.body',
-    '    }',
-    '  })',
-    `  r = ${joined(version, 'fs')}`,
-    '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
-  ];
+  // A function that parks returns closures that write the outer handle; run
+  // by the join, they and the scope must hold ONE handle. Before, the park
+  // split it, and the scope's `a` read a stale record. Before 5 the closures
+  // come out of a MAP member and `parallel` runs the list; from 5 a closure is
+  // not data, so a closure maker hands each back to a variable and `all` runs
+  // them.
+  const body = (park: boolean, version: number): string[] => version < 5
+    ? [
+        '  a = write graph-[:note]-> { body: "one" }',
+        '  fs = MAP([1, 2], (n) => {',
+        ...(park ? ['    await sleep(1h)'] : []),
+        '    return () => {',
+        '      write a { body: CONCAT("v", n) }',
+        '      return a.body',
+        '    }',
+        '  })',
+        '  r = await parallel(fs)',
+        '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
+      ]
+    : [
+        '  a = write graph-[:note]-> { body: "one" }',
+        '  mk = (n: <number>) => {',
+        ...(park ? ['    await sleep(1h)'] : []),
+        '    return () => {',
+        '      write a { body: CONCAT("v", n) }',
+        '      return a.body',
+        '    }',
+        '  }',
+        '  f1 = mk(1)',
+        '  f2 = mk(2)',
+        '  r = all(f1, f2)',
+        '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
+      ];
 
   for (const version of [4, 5]) {
     it(`v${version}: the closures write the outer handle, and the parked run ends as the unparked one`, async () => {
@@ -881,23 +925,21 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
 describe('a closure whose scope reaches back to itself resumes', () => {
   // The closure `g` returns is written in a scope whose parent holds `g`: the
   // scopes form a cycle, and building one must not await the other.
+  // Before 5 the closure comes out of a MAP member and `parallel` runs the
+  // list; from 5 a closure is not data, so a maker hands it to a variable and
+  // `all` runs it.
+  const made = (version: number, inner: string[]): string[] => version < 5
+    ? ['  k = 7', '  fs = MAP([1], (n) => {', ...inner, '  })', '  await sleep(1h)', '  r = await parallel(fs)', '  write graph-[:note]-> { payload: { r: r } }']
+    : ['  k = 7', '  outer = (n: <number>) => {', ...inner, '  }', '  f = outer(1)', '  await sleep(1h)', '  r = all(f)', '  write graph-[:note]-> { payload: { r: r } }'];
   const cycles = (version: number): Record<string, string[]> => ({
-    twoScopes: [
-      '  k = 7',
-      '  fs = MAP([1], (n) => {',
+    twoScopes: made(version, [
       '    mk = () => {',
       '      return () => n + k',
       '    }',
       '    g = mk()',
       '    return g',
-      '  })',
-      '  await sleep(1h)',
-      `  r = ${joined(version, 'fs')}`,
-      '  write graph-[:note]-> { payload: { r: r } }',
-    ],
-    threeScopes: [
-      '  k = 7',
-      '  fs = MAP([1], (n) => {',
+    ]),
+    threeScopes: made(version, [
       '    mk = () => {',
       '      mk2 = () => {',
       '        return () => n + k',
@@ -907,11 +949,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
       '    }',
       '    g = mk()',
       '    return g',
-      '  })',
-      '  await sleep(1h)',
-      `  r = ${joined(version, 'fs')}`,
-      '  write graph-[:note]-> { payload: { r: r } }',
-    ],
+    ]),
   });
   for (const version of [3, 4, 5]) {
     for (const [name, body] of Object.entries(cycles(version))) {

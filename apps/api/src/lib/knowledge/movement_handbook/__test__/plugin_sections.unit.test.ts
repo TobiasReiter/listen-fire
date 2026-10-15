@@ -119,7 +119,7 @@ describe('plugin-declared handbook sections', () => {
       'log_lead(msg)',
       'again = callback(`Chase`(company), { once: FALSE })',
       'await until(() => done, every: 1h)',
-      'r = await parallel([() => { return 1 }])',
+      'r = all(() => { return 1 })',
     ].join('\n');
     expect(proseViolations(sectionWith(`\`\`\`\n${modern}\n\`\`\``))).toEqual([]);
   });

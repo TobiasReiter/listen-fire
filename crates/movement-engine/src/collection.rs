@@ -309,6 +309,14 @@ pub(crate) fn width(n: f64) -> usize {
 /// names: what each says, or why it says nothing this engine runs.
 pub(crate) fn settings(config: Option<&ast::ExprSlot>) -> Result<(OnError, f64, f64), String> {
     let Some(config) = config else { return Ok((OnError::Error, 1.0, 1.0)) };
+    let (on_error, concurrency, initial) = written_settings(config)?;
+    let concurrency = concurrency.unwrap_or(1.0);
+    Ok((on_error, concurrency, initial.unwrap_or(concurrency)))
+}
+
+/// What a settings record written in place says: `onError`, and the
+/// `concurrency` and `initialConcurrency` it names, if it names them.
+fn written_settings(config: &ast::ExprSlot) -> Result<(OnError, Option<f64>, Option<f64>), String> {
     let lowered = movement_parser::expr::parse_expression(&config.raw)
         .ok()
         .and_then(|tree| movement_parser::lowering::lower_expression(&tree, &config.raw).ok())
@@ -331,8 +339,18 @@ pub(crate) fn settings(config: Option<&ast::ExprSlot>) -> Result<(OnError, f64, 
             (key, _) => return Err(format!("the setting '{key}'")),
         }
     }
-    let concurrency = concurrency.unwrap_or(1.0);
-    Ok((on_error, concurrency, initial.unwrap_or(concurrency)))
+    Ok((on_error, concurrency, initial))
+}
+
+/// `readCollectionConfig` for `all`'s settings record (`ALL_SETTING_KEYS`):
+/// `onError` and `concurrency` only, every arm at once (`arms`) unless it
+/// says otherwise.
+pub(crate) fn all_settings(config: &ast::ExprSlot, arms: usize) -> Result<(OnError, f64), String> {
+    let (on_error, concurrency, initial) = written_settings(config)?;
+    if initial.is_some() {
+        return Err("the setting 'initialConcurrency'".into());
+    }
+    Ok((on_error, concurrency.unwrap_or(arms as f64)))
 }
 
 impl Run<'_> {
@@ -839,7 +857,7 @@ pub(crate) fn is_member_failure(failure: &Failure) -> bool {
 }
 
 /// `getErrorMessage(error)`: a `MovementEngineError`'s message carries its code.
-fn error_message(failure: &Failure) -> String {
+pub(crate) fn error_message(failure: &Failure) -> String {
     match failure {
         Failure::Engine { class: crate::eval::ErrorClass::Engine(code), message } => format!("{code}: {message}"),
         Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => unreachable!("never forgiven"),

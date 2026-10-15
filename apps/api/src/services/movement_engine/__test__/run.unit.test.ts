@@ -2081,7 +2081,7 @@ describe('parallel — env fork + join', () => {
     ).toEqual(['co', 'note']);
   });
 
-  it('under 5, the MAP that replaces it runs its functions CONCURRENTLY too, and answers by slot', async () => {
+  it('under 5, all, which replaces it, runs its functions CONCURRENTLY too, and answers by slot', async () => {
     const barrier = makeBarrier(2);
     const attio = makeFakeAdapter('attio');
     const slack = makeFakeAdapter('slack');
@@ -2092,10 +2092,10 @@ describe('parallel — env fork + join', () => {
         return base(input);
       };
     }
-    const mapped = PARALLEL.replace('  r = await parallel([', '  r = MAP([').replace('  ])\n  write inbox', '  ], { concurrency: 2 }, (f) => f())\n  write inbox');
-    expect(mapped).not.toContain('parallel');
+    const joined = PARALLEL.replace('  r = await parallel([', '  r = all(').replace('  ])\n  write inbox', '  )\n  write inbox');
+    expect(joined).not.toContain('parallel');
     await runMovement({
-      source: mapped,
+      source: joined,
       event: webhookEvent('slack', { user: 'U123', text: 'hello' }),
       teamId: TEAM_ID,
       catalog,
@@ -4852,7 +4852,7 @@ describe('await race — park and resume', () => {
     PRELUDE,
     '',
     'movement intake(msg: <inbox-[:message]->>) {',
-    '  r = await race([',
+    '  r = race(',
     '    () => {',
     '      await sleep(30d)',
     '      made = write crm-[:companies]-> {',
@@ -4862,7 +4862,7 @@ describe('await race — park and resume', () => {
     '      return made.externalId',
     '    },',
     '    () => { await sleep(30d) },',
-    '  ])',
+    '  )',
     '  if AT(r, 0) != null {',
     '    write crm-[:companies]-> {',
     '      unique by (`name`)',
@@ -5001,7 +5001,7 @@ describe('race — synchronous completion builds a progressive receipt', () => {
     'team  = slack(credentials: acme_workspace)',
     '',
     'movement race_sync(msg: <inbox-[:message]->>) {',
-    '  r = await race([',
+    '  r = race(',
     '    () => {',
     '      made = write crm-[:companies]-> {',
     '        unique by (`domains`)',
@@ -5011,7 +5011,7 @@ describe('race — synchronous completion builds a progressive receipt', () => {
     '      return made.externalId',
     '    },',
     '    () => { return true },',
-    '  ])',
+    '  )',
     '  write team-[:messages]-> {',
     '    channel: "#c"',
     '    text:    "id=${AT(r, 0)}"',
@@ -5068,10 +5068,10 @@ describe('race — synchronous completion builds a progressive receipt', () => {
     'team  = slack(credentials: acme_workspace)',
     '',
     'movement race_tie(msg: <inbox-[:message]->>) {',
-    '  r = await race([',
+    '  r = race(',
     '    () => { one = write crm-[:companies]-> { name: "A" }; return one.externalId },',
     '    () => { two = write crm-[:companies]-> { name: "B" }; return two.externalId },',
-    '  ])',
+    '  )',
     '  write team-[:messages]-> {',
     '    channel: "#one"',
     '    text:    "one=${AT(r, 0)}"',

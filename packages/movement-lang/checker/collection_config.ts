@@ -56,14 +56,33 @@ const SETTINGS: ReadonlyArray<{ key: keyof CollectionRunSettings; summary: strin
 
 const SETTING_KEYS = SETTINGS.map((setting) => setting.key);
 
+/** `all(f, g, { … })`'s settings (language version 5): how many arms run at
+ *  once, and what an arm that fails does. There is no first batch — an arm
+ *  that parks is waiting, not running, so it holds no place. */
+export const ALL_SETTING_KEYS: ReadonlyArray<keyof CollectionRunSettings> = ['onError', 'concurrency'];
+
+export interface CollectionConfigOptions {
+  /** The settings this form takes; every op's by default. */
+  keys?: ReadonlyArray<keyof CollectionRunSettings>;
+  /** How many run at once when the record does not say — one, for an op. */
+  concurrency?: number;
+}
+
 export type CollectionConfigReading =
   | { ok: true; settings: CollectionRunSettings }
   | { ok: false; problems: string[] };
 
 /** `MAP`'s settings, read off the record as it was parsed. `spelling` is the op
  *  as written, so every sentence can be pasted back into the program. */
-export function readCollectionConfig(record: Expression, spelling: string): CollectionConfigReading {
-  const inventory = SETTINGS.map((setting) => `${setting.key} — ${setting.summary}`).join('; ');
+export function readCollectionConfig(
+  record: Expression,
+  spelling: string,
+  options: CollectionConfigOptions = {},
+): CollectionConfigReading {
+  const keys = options.keys ?? SETTING_KEYS;
+  const inventory = SETTINGS.filter((setting) => keys.includes(setting.key))
+    .map((setting) => `${setting.key} — ${setting.summary}`)
+    .join('; ');
   if (record.type !== 'object') {
     return {
       ok: false,
@@ -79,9 +98,9 @@ export function readCollectionConfig(record: Expression, spelling: string): Coll
       problems.push(`'${spelling}' takes its settings written out one by one — a spread ('...') is not accepted here. The settings are: ${inventory}`);
       continue;
     }
-    if (!isSettingKey(entry.key)) {
+    if (!isSettingKey(entry.key) || !keys.includes(entry.key)) {
       problems.push(
-        `'${spelling}' has no setting '${entry.key}'${didYouMean(entry.key, SETTING_KEYS)}. The settings are: ${inventory}`,
+        `'${spelling}' has no setting '${entry.key}'${didYouMean(entry.key, keys)}. The settings are: ${inventory}`,
       );
       continue;
     }
@@ -97,7 +116,7 @@ export function readCollectionConfig(record: Expression, spelling: string): Coll
   const concurrencyValue = written.get('concurrency');
   const concurrency = concurrencyValue !== undefined
     ? readWidth(concurrencyValue, 'concurrency', spelling, problems)
-    : SEQUENTIAL_COLLECTION_SETTINGS.concurrency;
+    : options.concurrency ?? SEQUENTIAL_COLLECTION_SETTINGS.concurrency;
   const initialValue = written.get('initialConcurrency');
   const initialConcurrency = initialValue !== undefined
     ? readWidth(initialValue, 'initialConcurrency', spelling, problems)

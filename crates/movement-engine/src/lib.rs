@@ -200,7 +200,7 @@ mod tests {
     /// does, as the JSON the engine is handed.
     fn lowered(text: &str) -> String {
         let tree = movement_parser::parse_expression(text, 0).unwrap();
-        let bytes = movement_parser::lowering::lower_json_bytes(&tree.to_string(), text, &[], movement_parser::lowering::Mode::Expression)
+        let bytes = movement_parser::lowering::lower_json_bytes(&tree.to_string(), text, movement_parser::lowering::Mode::Expression)
             .unwrap_or_else(|e| panic!("{}", String::from_utf8_lossy(&e)));
         String::from_utf8(bytes).unwrap()
     }

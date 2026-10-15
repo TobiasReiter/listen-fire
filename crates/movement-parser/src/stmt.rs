@@ -57,8 +57,11 @@ const PARALLEL_BLOCK_RETIRED: &str = "the `parallel { … }` block was replaced 
 const RACE_BRANCHES_RETIRED: &str = "a race takes FUNCTIONS, not brace branches: `r = await race([q, () => { await sleep(4h) }])`. The value is one slot per arm, in the order written — the winner's slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.";
 
 /// Under language version 5 `parallel` is retired too, so the rewrite these
-/// refusals offer is the MAP that replaced it.
-const PARALLEL_AS_MAP: &str = "the parallel join is a MAP over its functions, calling each (language version 5): `r = MAP([() => { … }, () => { … }], { concurrency: 2 }, (f) => f())` — no `await`; one slot per function, in order. One that only acts needs no binding: `MAP([…], { concurrency: 2 }, (f) => f())`.";
+/// refusals offer is the `all` that replaced it.
+const PARALLEL_AS_ALL: &str = "the join is `all`, which takes its functions as arguments (language version 5): `r = all(() => { … }, () => { … })` — no `await`; one slot per function, in order. One that only acts needs no binding: `all(f, g)`.";
+
+/// Language version 5's race: the arms are arguments, and no `await`.
+const RACE_BRANCHES_RETIRED_V5: &str = "a race takes FUNCTIONS as its arguments, not brace branches: `r = race(q, () => { await sleep(4h) })`. The value is one slot per arm, in the order written — the winner's slot holds what its function returned and every other slot is null, so a timeout is `AT(r, 1) != null`.";
 
 const ALL_RETIRED: &str =
     "`all` was replaced by `parallel` — parallel implies all, and all does not imply parallel: `r = await parallel([f, g])`.";
@@ -293,13 +296,7 @@ impl Parser {
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
         } else {
-            let mut callee = self.read_name("the name being called")?;
-            // `box.g()` (language version 5): the member a value holds under a
-            // key, called — the checker and the engine resolve the dotted callee.
-            if since(self.version, 5) && self.is('.') {
-                self.pos += 1;
-                callee = format!("{callee}.{}", self.read_name("the key being called")?);
-            }
+            let callee = self.read_name("the name being called")?;
             self.skip_inline_ws();
             self.expect("(", &format!("to open the call to '{callee}'"))?;
             let args = self.parse_call_args(&callee, start)?;
@@ -385,7 +382,7 @@ impl Parser {
     }
 
     fn slot(&self, raw: String, span: Span) -> ExprSlot {
-        ExprSlot { raw, span, eager: self.eager, closures: Vec::new() }
+        ExprSlot { raw, span, eager: self.eager }
     }
 
     fn fail<T>(&self, message: impl Into<String>) -> SResult<T> {
@@ -877,35 +874,7 @@ impl Parser {
         if content_end <= start {
             return self.fail_at(format!("Expected an expression {}", options.context), start);
         }
-        let mut slot = self.slot(self.text(start, content_end), self.span_between(start, content_end));
-        slot.closures = self.list_element_closures(&slot.raw, start)?;
-        Ok((slot, stop))
-    }
-
-    /// A closure written as an element of a list literal (`[() => { … }, (x) =>
-    /// x + 1]`, language version 5 — TypeScript's array of functions), parsed
-    /// here by the statement grammar so its block body is statements. Before
-    /// version 5, and wherever the expression grammar cannot read the slot,
-    /// none is collected: the lowering then refuses the closure by name
-    /// (MOV_EXPR_CLOSURE_POSITION) or reports the syntax error, as it always has.
-    fn list_element_closures(&mut self, raw: &str, start: usize) -> SResult<Vec<SlotClosure>> {
-        if !since(self.version, 5) || !raw.contains("=>") {
-            return Ok(Vec::new());
-        }
-        let Ok(tree) = crate::expr::parse_expression(raw) else {
-            return Ok(Vec::new());
-        };
-        let resume = self.pos;
-        let closures = crate::tree::closures_in_lists(&tree)
-            .into_iter()
-            .map(|at| {
-                self.pos = start + at;
-                let closure = self.parse_closure(self.pos, ",]")?;
-                Ok(SlotClosure { at, closure })
-            })
-            .collect::<SResult<Vec<_>>>();
-        self.pos = resume;
-        closures
+        Ok((self.slot(self.text(start, content_end), self.span_between(start, content_end)), stop))
     }
 
     // ── Statements ──
@@ -1000,7 +969,14 @@ impl Parser {
                     return Ok(Statement::Combinator(combinator));
                 }
             }
-            "all" => self.refuse_retired_all(start)?,
+            // From language version 5 `all(f, g)` is the join; before it, the
+            // name was retired in favour of `parallel`.
+            "all" if before(self.version, 5) => self.refuse_retired_all(start)?,
+            "all" => {
+                if let Some(combinator) = self.try_parse_combinator_statement(CombinatorKind::All, start)? {
+                    return Ok(Statement::Combinator(combinator));
+                }
+            }
             "if" => return Ok(Statement::If(self.parse_if()?)),
             "ERROR" => return Ok(Statement::Error(self.parse_error_statement()?)),
             "extract" => {
@@ -1255,11 +1231,10 @@ impl Parser {
             self.pos += "await".len();
             return Ok(RValue::Await { r#await: self.parse_await(start)? });
         }
-        if w == Some("all") {
+        if w == Some("all") && before(self.version, 5) {
             self.refuse_retired_all(start)?;
         }
-        if w == Some("race") || w == Some("parallel") {
-            let kind = if w == Some("race") { CombinatorKind::Race } else { CombinatorKind::Parallel };
+        if let Some(kind) = w.and_then(|w| self.combinator_named(w)) {
             let save = self.pos;
             self.pos += kind.word().len();
             self.skip_inline_ws();
@@ -2814,10 +2789,10 @@ impl Parser {
             }
             self.pos = save;
         }
-        if self.at_word("all") {
+        if self.at_word("all") && before(self.version, 5) {
             self.refuse_retired_all(source_start)?;
         }
-        for kind in [CombinatorKind::Race, CombinatorKind::Parallel] {
+        for kind in [CombinatorKind::Race, CombinatorKind::Parallel, CombinatorKind::All] {
             if self.at_word(kind.word()) {
                 let save = self.pos;
                 self.pos += kind.word().len();
@@ -2910,34 +2885,112 @@ impl Parser {
         let is_call = self.is('(');
         self.pos = save;
         if is_call {
-            if since(self.version, 5) {
-                return self.fail_at(format!("`all` was retired: {PARALLEL_AS_MAP}"), start);
-            }
             return self.fail_at(ALL_RETIRED, start);
         }
         Ok(())
     }
 
+    /// The combinator a word leading a value names: `race` and `parallel` on
+    /// every version, `all` from language version 5.
+    fn combinator_named(&self, word: &str) -> Option<CombinatorKind> {
+        match word {
+            "race" => Some(CombinatorKind::Race),
+            "parallel" => Some(CombinatorKind::Parallel),
+            "all" if since(self.version, 5) => Some(CombinatorKind::All),
+            _ => None,
+        }
+    }
+
     fn parallel_block_retired(&self) -> String {
         if since(self.version, 5) {
-            return format!("the `parallel {{ … }}` block was retired: {PARALLEL_AS_MAP}");
+            return format!("the `parallel {{ … }}` block was retired: {PARALLEL_AS_ALL}");
         }
         PARALLEL_BLOCK_RETIRED.to_string()
     }
 
-    /// `race(<arms>)` / `parallel(<arms>)`; `pos` is just past the keyword.
+    /// `race(<arms>)` / `parallel(<arms>)` / `all(<arms>)`; `pos` is just past
+    /// the keyword. From language version 5 the arms are the call's
+    /// ARGUMENTS — `race(q, () => { … })`, `all(f, g, { concurrency: 2 })` —
+    /// as TypeScript's `Promise.all` takes its promises: a closure is not
+    /// data, so there is no list of them to pass. A bracket is still read, so
+    /// the checker can refuse it with the rewrite.
     fn parse_combinator(&mut self, start: usize, kind: CombinatorKind) -> SResult<CombinatorExpression> {
         let k = kind.word();
         self.skip_inline_ws();
-        self.expect("(", &format!("to open '{k}([…])'"))?;
+        self.expect("(", &format!("to open '{k}(…)'"))?;
         self.skip_all_ws();
+        let v5 = since(self.version, 5);
         if self.is('{') {
-            return self.fail_at(RACE_BRANCHES_RETIRED, start);
+            return self.fail_at(if v5 { RACE_BRANCHES_RETIRED_V5 } else { RACE_BRANCHES_RETIRED }, start);
+        }
+        if v5 && !self.is('[') {
+            return self.parse_argument_arms(start, kind);
         }
         let arms = if self.is('[') { self.parse_literal_arms(kind)? } else { self.parse_dynamic_arms(kind)? };
         self.skip_all_ws();
         self.expect(")", &format!("to close '{k}([…])'"))?;
-        Ok(CombinatorExpression { kind, arms, span: self.span_from(start) })
+        Ok(CombinatorExpression { kind, arms, settings: None, span: self.span_from(start) })
+    }
+
+    /// `race(q, () => { … })` / `all(f, g, { concurrency: 2 })` (language
+    /// version 5): each argument an arm — a closure written in place, or a
+    /// function's name — and, last, the settings record `all` may be given.
+    /// `pos` is just past the `(`.
+    fn parse_argument_arms(&mut self, start: usize, kind: CombinatorKind) -> SResult<CombinatorExpression> {
+        let k = kind.word();
+        let arms_start = self.pos;
+        let mut arms = Vec::new();
+        let mut settings = None;
+        loop {
+            self.skip_all_ws();
+            if self.eof() {
+                return self.fail_at(format!("Expected an arm or ')' to close '{k}(…)'"), start);
+            }
+            if self.is(')') {
+                break;
+            }
+            if self.is('{') {
+                // The settings record — the last argument, as `MAP`'s is the
+                // one before its function.
+                settings = Some(self.read_expr_slot(Scan::new(",)", format!("for the settings '{k}' runs with")))?.0);
+                self.skip_all_ws();
+                if self.is(',') {
+                    self.pos += 1;
+                }
+                self.skip_all_ws();
+                if !self.is(')') {
+                    return self.fail(format!("'{k}' takes its settings last — `{k}(f, g, {{ concurrency: 2 }})`"));
+                }
+                break;
+            }
+            arms.push(self.parse_arm(k, "An argument of")?);
+            self.skip_all_ws();
+            if self.is(',') {
+                self.pos += 1;
+                continue;
+            }
+            if self.is(')') {
+                break;
+            }
+            return self.fail(format!("Expected ',' between arms or ')' to close '{k}(…)', found {}", self.describe_here()));
+        }
+        let arms_span = self.span_from(arms_start);
+        self.expect(")", &format!("to close '{k}(…)'"))?;
+        if arms.is_empty() {
+            return self.fail_at(
+                match kind {
+                    CombinatorKind::Race => {
+                        "A race over no arms can never settle — give it at least one function to run: `race(q, () => { await sleep(4h) })`"
+                            .to_string()
+                    }
+                    CombinatorKind::Parallel | CombinatorKind::All => {
+                        format!("'{k}' over no functions runs nothing — give it at least one: `{k}(f, g)`")
+                    }
+                },
+                start,
+            );
+        }
+        Ok(CombinatorExpression { kind, arms: CombinatorArms::Arguments { arms, span: arms_span }, settings, span: self.span_from(start) })
     }
 
     /// `[f, () => { … }]` — the arms written down.
@@ -2973,7 +3026,7 @@ impl Parser {
                     CombinatorKind::Race => {
                         "A race over no arms can never settle — give it at least one function to run: `await race([q, () => { await sleep(4h) }])`"
                     }
-                    CombinatorKind::Parallel => {
+                    CombinatorKind::Parallel | CombinatorKind::All => {
                         "A parallel over no arms runs nothing — give it at least one function: `await parallel([f, g])`"
                     }
                 },
@@ -3287,9 +3340,9 @@ impl Parser {
             // `(f) => f()` is `(f) => { return f() }` (language version 5): a body
             // that is one call returns the call, so a callee that waits parks the
             // run as a returned call does — inside an expression it could not.
-            // `() => await race([…])` is `() => { return await race([…]) }`
-            // (language version 5), as TypeScript's `async () => await x` is — so a
-            // retired `parallel` there is the form its rewrite reaches.
+            // `() => await sleep(1h)` is `() => { return await sleep(1h) }`
+            // (language version 5), as TypeScript's `async () => await x` is — and
+            // a retired `await race(…)` there is refused with its rewrite.
             if since(self.version, 5) && self.peek_ident().as_deref() == Some("await") {
                 let await_start = self.pos;
                 self.pos += "await".len();
@@ -3300,6 +3353,26 @@ impl Parser {
                     concise: false,
                 })];
                 return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
+            }
+            // `() => all(f, g)` / `() => race(f, g)` (language version 5) returns
+            // the combinator's answer, as a returned call does.
+            if since(self.version, 5)
+                && let Some(word) = self.peek_ident()
+                && let Some(kind) = self.combinator_named(&word)
+            {
+                let word_start = self.pos;
+                self.pos += kind.word().len();
+                self.skip_inline_ws();
+                if self.is('(') {
+                    let combinator = self.parse_combinator(word_start, kind)?;
+                    let body = vec![Statement::Return(ReturnStatement {
+                        value: RValue::Combinator { combinator },
+                        span: self.span_from(word_start),
+                        concise: false,
+                    })];
+                    return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
+                }
+                self.pos = word_start;
             }
             if since(self.version, 5) {
                 if let Some((value, span)) = self.concise_body_call(stops)? {
@@ -3777,9 +3850,10 @@ impl Parser {
     /// `<(c: <Company>) => <text>>` — a closure type (language version 5),
     /// TypeScript's `(c: Company) => string`. The parameters are a function's own
     /// parameter list, every one typed; the return is written as a function's
-    /// return annotation is. A list of closures is `<() => <text>>[]` (the
-    /// caller reads the `[]`); a closure that returns a list is
-    /// `<() => <text[]>>`.
+    /// return annotation is. A closure that returns a list is
+    /// `<() => <text[]>>`; `<() => <text>>[]` reads (the caller reads the
+    /// `[]`), and the checker refuses it — a closure is not data, so there is
+    /// no list of them.
     fn read_closure_type(&mut self, param_name: &str) -> SResult<ValueType> {
         let start = self.pos;
         if before(self.version, 5) {
@@ -3816,7 +3890,7 @@ impl Parser {
         self.skip_inline_ws();
         if self.is('[') {
             return self.fail(
-                "A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>', and a list of closures is '<() => <text>>[]'",
+                "A closure type's return is written in its own angle brackets, so '[]' here is ambiguous — a closure that returns a list is '<() => <text[]>>'",
             );
         }
         self.expect(">", &format!("to close the closure type of '{param_name}'"))?;
@@ -3834,7 +3908,7 @@ impl Parser {
                 return Ok(member);
             }
             self.skip_inline_ws();
-            self.expect("]", "to close '[]' — a list of closures is written '<() => <text>>[]'")?;
+            self.expect("]", "to close '[]' — a list type is written '<text>[]'")?;
             member = ValueType::List { of: Box::new(member), span: self.span_from(start) };
         }
     }

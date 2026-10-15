@@ -531,7 +531,7 @@ fn lowered_on(stack: usize, json: String) -> Result<(), Value> {
     std::thread::Builder::new()
         .stack_size(stack)
         .spawn(move || {
-            lower_json_bytes(&json, "a", &[], Mode::Expression)
+            lower_json_bytes(&json, "a", Mode::Expression)
                 .map(drop)
                 .map_err(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap()["error"].take())
         })

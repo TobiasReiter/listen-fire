@@ -66,16 +66,16 @@ movement main(e: <inbox-[:message]->>) {
     expect(codes(source)).toContain(C.COMPARE_TYPE_MISMATCH);
   });
 
-  it("a closure in a list returns like any other body", () => {
+  it("an all arm returns like any other body", () => {
     const source = inMovement(
-      '  r = MAP([() => { return e.`Subject` }, () => { await sleep(2d) }], { concurrency: 2 }, (f) => f())',
+      '  r = all(() => { return e.`Subject` }, () => { await sleep(2d) })',
     );
     expect(codes(source)).not.toContain(C.RETURN_OUTSIDE_BODY);
   });
 
   it('a race arm returns the same way, and its value lands in its own slot', () => {
     const source = inMovement(
-      '  r = await race([() => { return e.`Subject` }, () => { await sleep(2d) }])',
+      '  r = race(() => { return e.`Subject` }, () => { await sleep(2d) })',
     );
     expect(codes(source)).not.toContain(C.RETURN_OUTSIDE_BODY);
   });
@@ -203,7 +203,7 @@ describe('MOV_EXPR_CLOSURE_POSITION never fires at a legal closure position', ()
 
   it('a race arm is clean', () => {
     const source = inMovement(
-      '  r = await race([() => { return e.`Subject` }, () => { await sleep(2d) }])',
+      '  r = race(() => { return e.`Subject` }, () => { await sleep(2d) })',
     );
     expect(codes(source)).not.toContain(C.EXPR_CLOSURE_POSITION);
   });

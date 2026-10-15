@@ -26,7 +26,14 @@ import { parseExpression } from './parse_expression';
  *  (FILE's artifact type, an options map's keys) is refused as a plain
  *  `BridgeError` instead, as it always was. */
 export class LoweringError extends BridgeError {
-  constructor(message: string, code?: string) {
+  constructor(
+    message: string,
+    code?: string,
+    /** A closure written where it would be kept as data — a list's element
+     *  or a map's value. From language version 5 a closure is a value, and
+     *  the checker refuses it there because a closure is not data. */
+    readonly heldAsData?: 'list' | 'map',
+  ) {
     super(message, undefined, code);
     this.name = 'LoweringError';
   }
@@ -51,12 +58,9 @@ export type MovementCondition =
     }
   | { kind: 'expr'; expr: Expression };
 
-/** Lower one expression; `source` is the text `tree` was parsed from.
- *  `closures`: the offsets of the list element closures the slot's statement
- *  parse collected (`ExprSlot.closures`, language version 5), each read as the
- *  name `slotClosureName(at)`. */
-export function lowerExpression(tree: MExpr, source: string, closures?: ReadonlySet<number>): Expression {
-  const { ok, json } = callLowering('lower_expression', JSON.stringify(tree), source, [...(closures ?? [])]);
+/** Lower one expression; `source` is the text `tree` was parsed from. */
+export function lowerExpression(tree: MExpr, source: string): Expression {
+  const { ok, json } = callLowering('lower_expression', JSON.stringify(tree), source);
   if (!ok) throw loweringRefusal(json);
   if (!isLoweredExpression(json)) throw malformedLowering('expression', json);
   return json;
@@ -64,8 +68,8 @@ export function lowerExpression(tree: MExpr, source: string, closures?: Readonly
 
 /** Lower one `if` condition into its top-level
  *  `AND` conjuncts, each an `IS` type guard or an expression. */
-export function lowerCondition(tree: MExpr, source: string, closures?: ReadonlySet<number>): MovementCondition {
-  const { ok, json } = callLowering('lower_condition', JSON.stringify(tree), source, [...(closures ?? [])]);
+export function lowerCondition(tree: MExpr, source: string): MovementCondition {
+  const { ok, json } = callLowering('lower_condition', JSON.stringify(tree), source);
   if (!ok) throw loweringRefusal(json);
   if (!isLoweredCondition(json)) throw malformedLowering('condition', json);
   return json;
@@ -88,9 +92,10 @@ function loweringRefusal(json: unknown): Error {
   const error = isRecord(json) ? json.error : undefined;
   if (!isRecord(error) || typeof error.message !== 'string') throw malformedLowering('refusal', json);
   const code = typeof error.code === 'string' ? error.code : undefined;
+  const heldAsData = error.heldAsData === 'list' || error.heldAsData === 'map' ? error.heldAsData : undefined;
   switch (error.class) {
     case undefined:
-      return new LoweringError(error.message, code);
+      return new LoweringError(error.message, code, heldAsData);
     case 'BridgeError':
       return new BridgeError(error.message, undefined, code);
     case 'MalformedTree':

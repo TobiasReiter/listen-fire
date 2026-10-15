@@ -1,13 +1,15 @@
-// `parallel` is retired under language version 5 (Dancing Wren): a MAP over
-// the arms, calling each, is the same join. MOV_PARALLEL_RETIRED carries the
-// exact rewrite for a literal arm list —
+// `parallel` is retired under language version 5 (Dancing Wren): `all` is the
+// same join, its functions passed as arguments — a closure is not data, so
+// there is no list of them to pass — and written without `await`, which marks
+// only where the run itself parks. MOV_PARALLEL_RETIRED carries the exact
+// rewrite for arms written down —
 //
 //     r = await parallel([a, () => { … }])
-//     r = MAP([a, () => { … }], { concurrency: 2 }, (f) => f())
+//     r = all(a, () => { … })
 //
 // — and the rewritten program checks clean, its later `AT(r, i)` reads
-// included: a MAP over a list written down is a tuple, slot by slot, as the
-// receipt was. `race` is unchanged. Versions 1 to 4 keep `parallel`.
+// included: the receipt is a tuple, slot by slot. Versions 1 to 4 keep
+// `parallel`.
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
@@ -78,35 +80,35 @@ const PROGRAMS: Array<[string, string[], string[]]> = [
       '  write crm-[:notes]-> { title: AT(r, 0).name, count: AT(r, 1) }',
     ],
     [
-      '  r = MAP([',
+      '  r = all(',
       '    () => {',
       '      a = write crm-[:companies]-> { name: "Acme" }',
       '      return a',
       '    },',
       '    () => 2',
-      '  ], { concurrency: 2 }, (f) => f())',
+      '  )',
       '  write crm-[:notes]-> { title: AT(r, 0).name, count: AT(r, 1) }',
     ],
   ],
   [
     'named functions as arms',
     ['  r = await parallel([made, label])', '  write crm-[:notes]-> { title: AT(r, 1) }', '  g = graph { c: AT(r, 0) }'],
-    ['  r = MAP([made, label], { concurrency: 2 }, (f) => f())', '  write crm-[:notes]-> { title: AT(r, 1) }', '  g = graph { c: AT(r, 0) }'],
+    ['  r = all(made, label)', '  write crm-[:notes]-> { title: AT(r, 1) }', '  g = graph { c: AT(r, 0) }'],
   ],
   [
     'arms that wait',
     ['  r = await parallel([() => {', '    await sleep(1h)', '    return "a"', '  }, () => { return "b" }])', '  write crm-[:notes]-> { title: CONCAT(AT(r, 0), AT(r, 1)) }'],
-    ['  r = MAP([() => {', '    await sleep(1h)', '    return "a"', '  }, () => { return "b" }], { concurrency: 2 }, (f) => f())', '  write crm-[:notes]-> { title: CONCAT(AT(r, 0), AT(r, 1)) }'],
+    ['  r = all(() => {', '    await sleep(1h)', '    return "a"', '  }, () => { return "b" })', '  write crm-[:notes]-> { title: CONCAT(AT(r, 0), AT(r, 1)) }'],
   ],
   [
     'arms that hand nothing back',
     ['  await parallel([() => {', '    write crm-[:notes]-> { title: "a" }', '  }, () => {', '    write crm-[:notes]-> { title: "b" }', '  }])'],
-    ['  MAP([() => {', '    write crm-[:notes]-> { title: "a" }', '  }, () => {', '    write crm-[:notes]-> { title: "b" }', '  }], { concurrency: 2 }, (f) => f())'],
+    ['  all(() => {', '    write crm-[:notes]-> { title: "a" }', '  }, () => {', '    write crm-[:notes]-> { title: "b" }', '  })'],
   ],
   [
     'run for its effects, unbound',
     ['  await parallel([made, made])'],
-    ['  MAP([made, made], { concurrency: 2 }, (f) => f())'],
+    ['  all(made, made)'],
   ],
 ];
 
@@ -128,28 +130,20 @@ describe('parallel under Dancing Wren (5)', () => {
   it('a record slot the rewrite reads into a field is still refused, as the receipt\'s was', () => {
     const body = ['  r = await parallel([made, label])', '  write crm-[:notes]-> { title: AT(r, 0) }'];
     expect(check(4, sourceOf(body)).map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
-    expect(check(5, sourceOf(['  r = MAP([made, label], { concurrency: 2 }, (f) => f())', '  write crm-[:notes]-> { title: AT(r, 0) }'])).map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(check(5, sourceOf(['  r = all(made, label)', '  write crm-[:notes]-> { title: AT(r, 0) }'])).map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
   });
 
   it('written without await, the retirement is the one refusal, and the fix drops nothing', () => {
     const body = ['  r = parallel([label, label])', '  write crm-[:notes]-> { title: AT(r, 0) }'];
     expect(check(5, sourceOf(body)).map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    expect(fixed(sourceOf(body))).toBe(sourceOf(['  r = MAP([label, label], { concurrency: 2 }, (f) => f())', '  write crm-[:notes]-> { title: AT(r, 0) }']));
+    expect(fixed(sourceOf(body))).toBe(sourceOf(['  r = all(label, label)', '  write crm-[:notes]-> { title: AT(r, 0) }']));
     expect(check(5, fixed(sourceOf(body)))).toEqual([]);
   });
 
-  it('arms built at run time: refused with the form, and no fix (the concurrency is the author\'s)', () => {
-    const errors = check(5, sourceOf(['  fs = [label, label]', '  r = await parallel(fs)']));
-    expect(errors.map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    expect(errors[0]!.fix).toBeUndefined();
-    expect(errors[0]!.message).toContain("MAP(fs, { concurrency: <how many at once> }, (f) => f())");
-  });
-
-  it('the MAP\'s parameter shadows nothing: a name in scope is passed over', () => {
-    const body = ['  f = () => { return "a" }', '  r = await parallel([f, label])', '  write crm-[:notes]-> { title: AT(r, 0) }'];
-    const rewritten = fixed(sourceOf(body));
-    expect(rewritten).toBe(sourceOf(['  f = () => { return "a" }', '  r = MAP([f, label], { concurrency: 2 }, (fn) => fn())', '  write crm-[:notes]-> { title: AT(r, 0) }']));
-    expect(check(5, rewritten)).toEqual([]);
+  it('written with its arms as arguments, the fix renames it', () => {
+    const body = ['  r = parallel(label, made)'];
+    expect(check(5, sourceOf(body)).map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
+    expect(fixed(sourceOf(body))).toBe(sourceOf(['  r = all(label, made)']));
   });
 
   it('an arrow body that awaits it gets the fix too', () => {
@@ -158,17 +152,11 @@ describe('parallel under Dancing Wren (5)', () => {
     expect(errors.map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
     expect(errors[0]!.fix).toBeDefined();
     const rewritten = fixed(sourceOf(body));
-    expect(rewritten).toBe(sourceOf(['  g = () => MAP([label, made], { concurrency: 2 }, (f) => f())', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }']));
+    expect(rewritten).toBe(sourceOf(['  g = () => all(label, made)', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }']));
     expect(check(5, rewritten)).toEqual([]);
   });
 
-  it('an arrow body may await (from 5, as an async arrow does in TypeScript); before it, it does not parse', () => {
-    const body = ['  g = () => await race([label, () => "x"])', '  v = g()'];
-    expect(check(5, sourceOf(body))).toEqual([]);
-    expect(check(4, sourceOf(body)).map(d => d.code)).toEqual(['MOV_EXPR_PARSE']);
-  });
-
-  it('race is unchanged', () => {
-    expect(check(5, sourceOf(['  r = await race([label, () => { await sleep(1h) }])']))).toEqual([]);
+  it('`all` is a retired name before 5', () => {
+    expect(() => check(4, sourceOf(['  r = all(label, made)']))).toThrow('`all` was replaced by `parallel`');
   });
 });

@@ -64,7 +64,10 @@ const NOT_RECOMMENDED: Array<{ pattern: RegExp; label: string }> = [
     label: 'a `movement` declaration — declare with `function`',
   },
   { pattern: /\bONLY\(\s*extract\(/i, label: '`ONLY(extract(…))` — write `extractOne(…)`' },
-  { pattern: /\b(?:parallel|race)\s*\{/, label: 'a `parallel { … }` / `race { … }` block — write `await parallel([…])`' },
+  { pattern: /\b(?:parallel|race)\s*\{/, label: 'a `parallel { … }` / `race { … }` block — write `all(f, g)` / `race(f, g)`' },
+  { pattern: /\bparallel\s*\(/, label: '`parallel(…)` — write `all(f, g)`' },
+  { pattern: /\b(?:race|all)\s*\(\s*\[/, label: 'a combinator over a list — pass the arms as arguments: `race(f, g)`' },
+  { pattern: /\bawait\s+(?:race|all)\s*\(/, label: '`await` on a combinator — write `race(f, g)`; the wait is the `await` inside an arm' },
   { pattern: /\b(?:mailgun|resend)\(\)/, label: 'a mail carrier alias — construct `email()`' },
   {
     pattern: /\b(?:not recommended|supported,? but|older (?:form|spelling|literal|keyword|syntax)s?|still supported|legacy)\b/i,

@@ -36,34 +36,14 @@ pub struct ExprSlot {
     pub span: Span,
     #[serde(rename = "__slot", default, skip_serializing_if = "std::ops::Not::not")]
     pub eager: bool,
-    /// The closures written as elements of a list literal in the slot
-    /// (`fs = [() => { … }, (x) => x + 1]`, language version 5), each parsed
-    /// by the statement grammar, since a block body is statements. The
-    /// lowering reads each as the name `slot_closure_name(at)`, which the
-    /// engine binds to the closure in a scope around the slot.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub closures: Vec<SlotClosure>,
 }
 
 impl ExprSlot {
-    /// A slot holding no list element closure: a piece of another slot's
+    /// A slot that is not the statement parse's: a piece of another slot's
     /// text, or a slot built by the engine.
     pub fn plain(raw: String, span: Span) -> Self {
-        ExprSlot { raw, span, eager: false, closures: Vec::new() }
+        ExprSlot { raw, span, eager: false }
     }
-}
-
-/// One list element closure of a slot; `at` is its offset in `raw` (UTF-16).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SlotClosure {
-    pub at: usize,
-    pub closure: ClosureExpression,
-}
-
-/// The name a list element closure is read by inside its slot — an identity
-/// compared, never parsed. `#` keeps it out of every author's namespace.
-pub fn slot_closure_name(at: usize) -> String {
-    format!("#closure@{at}")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -602,6 +582,8 @@ pub struct AwaitStatement {
 pub enum CombinatorKind {
     Race,
     Parallel,
+    /// Language version 5's join, which replaced `parallel`.
+    All,
 }
 
 impl CombinatorKind {
@@ -609,6 +591,7 @@ impl CombinatorKind {
         match self {
             CombinatorKind::Race => "race",
             CombinatorKind::Parallel => "parallel",
+            CombinatorKind::All => "all",
         }
     }
 }
@@ -618,6 +601,10 @@ impl CombinatorKind {
 pub struct CombinatorExpression {
     pub kind: CombinatorKind,
     pub arms: CombinatorArms,
+    /// `all(f, g, { concurrency: 2 })` — the settings record, written last
+    /// (language version 5): MAP's `concurrency` and `onError`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<ExprSlot>,
     pub span: Span,
 }
 
@@ -625,7 +612,21 @@ pub struct CombinatorExpression {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CombinatorArms {
     Literal { arms: Vec<ArmExpression>, span: Span },
+    /// `race(q, () => { … })` — the arms are the call's arguments (language
+    /// version 5), as written down as a bracket's.
+    Arguments { arms: Vec<ArmExpression>, span: Span },
     Dynamic { expr: ExprSlot, span: Span },
+}
+
+impl CombinatorArms {
+    /// The arms written down — in a bracket, or as the call's arguments. A
+    /// collection built at run time has none to name.
+    pub fn written(&self) -> &[ArmExpression] {
+        match self {
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
+            CombinatorArms::Dynamic { .. } => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -524,29 +524,33 @@ describe('an engine suspension inside parallel / race arms', () => {
     expect(payloadOf(kg.creates)).toEqual({ r: [5, 10] });
   });
 
-  it('under 5, a closure built at run time and called by the MAP that replaced parallel carries its body in the park', async () => {
+  it('under 5, an all arm: the other arm completes, the answer holds both slots', async () => {
     const h: Harness = {
       source: program(
         '',
         [
-          '  arms = MAP([1, 2], (n) => {',
-          '    return () => {',
-          '      write graph-[:note]-> { body: "arm ${n}" }',
-          '      return n * 5',
+          '  r = all(',
+          '    () => {',
+          '      write graph-[:note]-> { body: "arm 0" }',
+          '      return 1',
+          '    },',
+          '    () => {',
+          '      write graph-[:note]-> { body: "arm 1" }',
+          '      return 2',
           '    }',
-          '  })',
-          '  r = MAP(arms, { concurrency: 2 }, (f) => f())',
+          '  )',
           '  write graph-[:note]-> { payload: { r: r } }',
         ].join('\n'),
       ),
       parks: makeParkSink(),
       languageVersion: 5,
     };
-    const first = await start(h, ['s1.c0.i1.s0.c0.s0']);
-    expect(bodies(first.kg.creates)).toEqual(['arm 1']);
-    const { kg } = await resumeAt(h, 's1.c0.i1.s0.c0.s0');
-    expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['arm 2']);
-    expect(payloadOf(kg.creates)).toEqual({ r: [5, 10] });
+    const first = await start(h, ['s0.b1.s0']);
+    expect(bodies(first.kg.creates)).toEqual(['arm 0']);
+    const { result, kg } = await resumeAt(h, 's0.b1.s0');
+    expect(result.parked).toBeUndefined();
+    expect(bodies(kg.creates).filter((b) => b !== undefined)).toEqual(['arm 1']);
+    expect(payloadOf(kg.creates)).toEqual({ r: [1, 2] });
   });
 
   it('a call inside a race arm: the arm resumes inside the callee and wins', async () => {
@@ -558,12 +562,12 @@ describe('an engine suspension inside parallel / race arms', () => {
 }
 `,
         [
-          '  r = await race([',
+          '  r = race(',
           '    () => {',
           '      v = slow(n: 3)',
           '      return v',
           '    }',
-          '  ])',
+          '  )',
           '  write graph-[:note]-> { payload: { r: r } }',
         ].join('\n'),
       ),
@@ -1028,15 +1032,15 @@ describe("a combinator receipt's record slot", () => {
     5: { at: 'arm 0', named: 'arm 0', missing: false, second: 2 },
   } as const;
 
-  // `parallel` is retired under 5: there the MAP that replaced it answers, and
-  // its slot reads the record as the receipt's did.
-  const mapped = source.replace('  r = await parallel([', '  r = MAP([').replace("    () => 2\n  ])", "    () => 2\n  ], { concurrency: 2 }, (f) => f())");
-  const sources = { 4: source, 5: mapped } as const;
+  // `parallel` is retired under 5: there `all`, which replaced it, answers,
+  // and its slot reads the record as the receipt's did.
+  const joined = source.replace('  r = await parallel([', '  r = all(').replace("    () => 2\n  ])", "    () => 2\n  )");
+  const sources = { 4: source, 5: joined } as const;
   /** Where the record arm parks before its return: the arm's statement 1. */
-  const beforeReturn = { 4: 's0.b0.s1', 5: 's0.c0.i0.s0.c0.s1' } as const;
+  const beforeReturn = { 4: 's0.b0.s1', 5: 's0.b0.s1' } as const;
 
-  it('under 5 the program is the MAP form', () => {
-    expect(mapped).not.toContain('parallel');
+  it('under 5 the program is the all form', () => {
+    expect(joined).not.toContain('parallel');
   });
 
   for (const languageVersion of [4, 5] as const) {
@@ -1147,13 +1151,14 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
     return [...h.parks.parks.keys()].sort();
   }
 
-  // `parallel` is retired under 5: there the join is the MAP that replaced
-  // it, whose members park one frame deeper (the MAP's own function calls the
-  // closure), and resume the same way.
-  const join = (version: LanguageVersion, arms: string): string =>
-    version >= 5 ? `MAP(${arms}, { concurrency: 2 }, (fn) => fn())` : `await parallel(${arms})`;
-  const at = (version: LanguageVersion, statement: number, arm: number): string =>
-    version >= 5 ? `s${statement}.c0.i${arm}.s0.c0.s0` : `s${statement}.b${arm}.s0`;
+  // `parallel` is retired under 5: there the join is `all`, which replaced it
+  // — the same arm frames, the arms passed as arguments — and `race` takes its
+  // arms as arguments too, without `await`.
+  const join = (version: LanguageVersion, arms: string[]): string =>
+    version >= 5 ? `all(${arms.join(', ')})` : `await parallel([${arms.join(', ')}])`;
+  const race = (version: LanguageVersion, arms: string[]): string =>
+    version >= 5 ? `race(${arms.join(', ')})` : `await race([${arms.join(', ')}])`;
+  const at = (_version: LanguageVersion, statement: number, arm: number): string => `s${statement}.b${arm}.s0`;
 
   for (const languageVersion of [4, 5] as LanguageVersion[]) {
     it(`version ${languageVersion}: one closure arm, beside a written-in-place one`, async () => {
@@ -1166,7 +1171,7 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    write graph-[:note]-> { body: "f woke" }',
             '    return 1',
             '  }',
-            `  r = ${join(languageVersion, '[f, () => { return 2 }]')}`,
+            `  r = ${join(languageVersion, ['f', '() => { return 2 }'])}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
@@ -1193,7 +1198,7 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    await sleep(2h)',
             '    return "g"',
             '  }',
-            `  r = ${join(languageVersion, '[f, g]')}`,
+            `  r = ${join(languageVersion, ['f', 'g'])}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
@@ -1218,7 +1223,7 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    await sleep(1h)',
             '    return a.body',
             '  }',
-            `  r = ${join(languageVersion, '[f]')}`,
+            `  r = ${join(languageVersion, ['f'])}`,
             '  write graph-[:note]-> { payload: { r: r } }',
           ].join('\n'),
         ),
@@ -1231,7 +1236,7 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
       expect(payloadOf(kg.creates)).toEqual({ r: ['one'] });
     });
 
-    it(`version ${languageVersion}: race([f, g]) — the closure arm that wakes first wins`, async () => {
+    it(`version ${languageVersion}: a race of f and g — the closure arm that wakes first wins`, async () => {
       const h: Harness = {
         source: program(
           '',
@@ -1244,7 +1249,7 @@ describe('a parallel / race arm that names a body closure parks and resumes (B18
             '    await sleep(2h)',
             '    return "g"',
             '  }',
-            '  r = await race([f, g])',
+            `  r = ${race(languageVersion, ['f', 'g'])}`,
             '  write graph-[:note]-> { payload: { won: r } }',
           ].join('\n'),
         ),

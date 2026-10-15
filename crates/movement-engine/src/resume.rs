@@ -333,7 +333,7 @@ impl Run<'_> {
             };
             let arm_name = match &combinator {
                 Some((expr, _)) if descent == 'b' => match &expr.arms {
-                    CombinatorArms::Literal { arms, .. } => match arms.get(descent_index) {
+                    CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => match arms.get(descent_index) {
                         Some(movement_parser::ast::ArmExpression::Ref { name, .. }) => Some(name.clone()),
                         _ => None,
                     },
@@ -420,7 +420,7 @@ impl Run<'_> {
             // `armBodyAt`: a closure written in place, or a name resolved in
             // the scope around the combinator — a movement, or a body closure.
             let body = match &combinator.arms {
-                CombinatorArms::Literal { arms, .. } => match arms.get(index) {
+                CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => match arms.get(index) {
                     Some(movement_parser::ast::ArmExpression::Closure { closure, .. }) => Some((closure.body.clone(), format!("{combinator_path}/arms/arms/{index}/closure/body"))),
                     Some(movement_parser::ast::ArmExpression::Ref { name, .. }) => match scope.resolve(name) {
                         Some(Binding::Movement(declared)) => self.declaration(&declared).ok().map(|(d, path)| (d.body, path)),
@@ -534,8 +534,14 @@ impl Run<'_> {
                 Spine::Container { arm_boundary, arm_name, .. } => {
                     let arm = self.within_called_name(arm_name.as_deref(), inner);
                     let completed = match arm_boundary {
-                        Some(boundary) => self.within_boundary(boundary.clone(), arm).await?,
-                        None => arm.await?,
+                        Some(boundary) => self.within_boundary(boundary.clone(), arm).await,
+                        None => arm.await,
+                    };
+                    // An `all` arm that fails after it resumed is forgiven as it
+                    // would have been before it parked: its slot stays null.
+                    let completed = match completed {
+                        Err(Stop::Thrown(failure)) if self.forgives_arm_failure(frame, &failure)? => Completion::Done(Flow::FellThrough),
+                        other => other?,
                     };
                     let Completion::Done(flow) = completed else { return Ok(Completion::Stopped) };
                     self.finish_container(frame, flow, leaf_address).await
@@ -544,6 +550,24 @@ impl Run<'_> {
                 Spine::Member { .. } => self.finish_resumed_member(frame, inner, leaf_address).await,
             }
         })
+    }
+
+    /// `forgivesArmFailure`: is `failure` an `all` arm's own failure that its
+    /// `onError` forgives? `warn` traces why.
+    fn forgives_arm_failure(&self, frame: &Spine, failure: &crate::run::Failure) -> Result<bool, Stop> {
+        let Spine::Container { container, container_path, descent: 'b', branch_index, .. } = frame else { return Ok(false) };
+        if !crate::collection::is_member_failure(failure) {
+            return Ok(false);
+        }
+        let Some((combinator, _)) = combinator_of(container, container_path).filter(|(c, _)| c.kind == CombinatorKind::All) else { return Ok(false) };
+        let arms = combinator.arms.written().len();
+        let (on_error, _) = self.combinator_settings(&combinator, arms)?;
+        match on_error {
+            crate::collection::OnError::Error => return Ok(false),
+            crate::collection::OnError::Warn => self.trace(crate::combinator::arm_left_empty(combinator.kind, *branch_index, arms, failure)),
+            crate::collection::OnError::Ignore => {}
+        }
+        Ok(true)
     }
 
     /// The leaf's own rule.
@@ -581,7 +605,7 @@ impl Run<'_> {
         }
         let combinator = if *descent == 'b' { combinator_of(container, container_path) } else { None };
         let is_race = combinator.as_ref().is_some_and(|(c, _)| c.kind == CombinatorKind::Race);
-        let is_join = *descent == 'i' || combinator.as_ref().is_some_and(|(c, _)| c.kind == CombinatorKind::Parallel);
+        let is_join = *descent == 'i' || combinator.as_ref().is_some_and(|(c, _)| matches!(c.kind, CombinatorKind::Parallel | CombinatorKind::All));
         let frame_address = container_address.encode();
         if is_race || is_join {
             // This branch's exports kept before the decrement, so by the time
@@ -1555,7 +1579,7 @@ fn bound_name_of(statement: &Statement) -> Option<String> {
 /// `armCountOf`: written in the source, or kept at the frame.
 fn arm_count_of(combinator: &CombinatorExpression, rows: &[(i64, Js)]) -> usize {
     match &combinator.arms {
-        CombinatorArms::Literal { arms, .. } => arms.len(),
+        CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms.len(),
         CombinatorArms::Dynamic { .. } => match rows.iter().find(|(index, _)| *index == -1).and_then(|(_, exports)| at(exports, "arms")) {
             Some(Js::Number(n)) => *n as usize,
             _ => 0,

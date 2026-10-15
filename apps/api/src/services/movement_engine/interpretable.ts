@@ -29,7 +29,6 @@ import {
   pathRootName,
   typeNameOf,
   CURRENT_LANGUAGE_VERSION,
-  since,
   programCallScope,
   readCall,
   resolveCallee,
@@ -690,12 +689,6 @@ class InterpretabilityScan {
           (callee) => resolveCallee(callee, this.callScope, this.languageVersion),
           // The file call scope binds only functions.
           () => true,
-          // `box.g()` (language version 5) calls the member a value holds; the
-          // checker refuses one on anything else, so it scans as the call it is.
-          (object, key) =>
-            since(this.languageVersion, 5)
-            && !isMovementBuiltinFunction(key.toLowerCase())
-            && resolveCallee(`${object}.${key}`, this.callScope, this.languageVersion).kind !== 'builtin',
         ),
       ),
     );

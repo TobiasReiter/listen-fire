@@ -494,15 +494,6 @@ impl MExpr {
     }
 }
 
-/// Where each closure written as an ELEMENT of a list literal starts
-/// (`[() => { … }, (x) => x + 1]`), outermost first — language version 5's
-/// one new closure position (`closuresInLists`, expression/tree.ts). A
-/// closure's own body is not looked into: a list inside it is that body's
-/// own slot's business.
-pub fn closures_in_lists(tree: &MExpr) -> Vec<usize> {
-    closure_extents_in_lists(tree).into_iter().map(|at| at.start).collect()
-}
-
 /// Every name `tree` reads as a value: a bare name anywhere but as the
 /// callee a call names (language version 5 reads a function's name as the
 /// function itself, `g = one`, `[twice, twice]`), a closure's concise body
@@ -520,88 +511,6 @@ pub fn names_read(tree: &MExpr) -> Vec<String> {
                 }
             }
             other => shared::expr(other, &mut |child| visit(child, found)),
-        }
-    }
-    let mut found = Vec::new();
-    visit(tree, &mut found);
-    found
-}
-
-/// `closures_in_lists`, each closure's whole extent: what an engine that
-/// stages a slot's text finds them again by.
-pub fn closure_extents_in_lists(tree: &MExpr) -> Vec<At> {
-    fn visit(expr: &MExpr, found: &mut Vec<At>) {
-        match expr {
-            MExpr::List { elements, .. } => {
-                for element in elements {
-                    match element {
-                        ListElement::Spread(spread) => visit(&spread.expr, found),
-                        ListElement::Expr(MExpr::Closure { at, .. }) => found.push(*at),
-                        ListElement::Expr(element) => visit(element, found),
-                    }
-                }
-            }
-            MExpr::String { parts, .. } => {
-                for part in parts {
-                    if let StringPart::Expr(part) = part {
-                        visit(part, found);
-                    }
-                }
-            }
-            MExpr::Paren { expr, .. } => visit(expr, found),
-            MExpr::Map { entries, .. } => {
-                for entry in entries {
-                    match entry {
-                        MapMember::Entry { value, .. } => visit(value, found),
-                        MapMember::Spread(spread) => visit(&spread.expr, found),
-                    }
-                }
-            }
-            MExpr::Member { object, .. } => visit(object, found),
-            MExpr::Index { object, index, .. } => {
-                visit(object, found);
-                visit(index, found);
-            }
-            MExpr::Call { callee, args, .. } => {
-                visit(callee, found);
-                for arg in args {
-                    visit(&arg.value, found);
-                }
-            }
-            MExpr::Path { root, .. } => {
-                if let Some(root) = root {
-                    visit(root, found);
-                }
-            }
-            MExpr::Unary { operand, .. } | MExpr::Exists { operand, .. } | MExpr::Within { operand, .. } => {
-                visit(operand, found)
-            }
-            MExpr::Binary { left, right, .. } => {
-                visit(left, found);
-                visit(right, found);
-            }
-            MExpr::Where { source, predicate, .. } => {
-                visit(source, found);
-                visit(predicate, found);
-            }
-            MExpr::Is { subject, .. } => visit(subject, found),
-            MExpr::If { condition, then, else_, .. } => {
-                visit(condition, found);
-                visit(then, found);
-                if let Some(else_) = else_ {
-                    visit(else_, found);
-                }
-            }
-            MExpr::Literal { .. }
-            | MExpr::Name { .. }
-            | MExpr::Special { .. }
-            | MExpr::Type { .. }
-            | MExpr::Closure { .. }
-            | MExpr::Node { .. }
-            | MExpr::Graph { .. }
-            | MExpr::Declaration { .. }
-            | MExpr::Mapped { .. }
-            | MExpr::Lazy { .. } => {}
         }
     }
     let mut found = Vec::new();

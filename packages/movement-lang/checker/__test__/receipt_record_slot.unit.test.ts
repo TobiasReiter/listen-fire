@@ -152,7 +152,7 @@ describe("a combinator receipt's record slot", () => {
   it('under 5 parallel itself is retired, and its rewrite reads the slot as the record, clean', () => {
     const errors = (body: string) => under(5, body).filter((d) => (d.severity ?? 'error') === 'error');
     expect(errors([RECEIPT, '  n = AT(r, 0).Name'].join('\n')).map((d) => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    const mapped = RECEIPT.replace('r = await parallel([', 'r = MAP([').replace('  ])', '  ], { concurrency: 2 }, (f) => f())');
-    expect(errors([mapped, '  n = AT(r, 0).Name'].join('\n'))).toEqual([]);
+    const joined = RECEIPT.replace('r = await parallel([', 'r = all(').replace('  ])', '  )');
+    expect(errors([joined, '  n = AT(r, 0).Name'].join('\n'))).toEqual([]);
   });
 });

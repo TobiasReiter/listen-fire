@@ -203,9 +203,6 @@ pub(crate) fn rewritten(units: &Utf16, at: At, mut replaced: Vec<(At, String)>) 
     out
 }
 
-/// The place of a list element closure a staged text no longer holds.
-const NOT_CARRIED: usize = usize::MAX;
-
 /// A piece of a slot's text, staged or cut: the text at `at` with each of
 /// `replaced` (inside it, a nested call or an operand settled) written as
 /// the name it was bound to.
@@ -226,43 +223,9 @@ impl Piece {
     }
 }
 
-/// `piece` of a part of `origin` starting `offset` units in (`units`, the
-/// part's), as a slot holding `origin`'s list element closures again at
-/// their places in the piece's text. Its closures keep `origin`'s order, so
-/// the k-th is the program's k-th; one the piece no longer holds (inside a
-/// part settled, or outside the piece) is `NOT_CARRIED`. Each is followed by
-/// its place, as the TypeScript keeps the original slot's offsets
-/// (`slotOfTree`): two closures written alike stay two.
-pub(crate) fn carried(origin: &ExprSlot, offset: usize, units: &Utf16, piece: &Piece, span: movement_parser::ast::Span) -> ExprSlot {
-    let text = rewritten(units, piece.at, piece.replaced.clone());
-    if origin.closures.is_empty() {
-        return ExprSlot::plain(text, span);
-    }
-    let width = |name: &str| name.encode_utf16().count();
-    let place = |at: usize| -> usize {
-        let Some(at) = at.checked_sub(offset).filter(|at| (piece.at.start..piece.at.end).contains(at)) else { return NOT_CARRIED };
-        let mut moved = at - piece.at.start;
-        for (part, name) in &piece.replaced {
-            if (part.start..part.end).contains(&at) {
-                return NOT_CARRIED;
-            }
-            if part.end <= at {
-                moved = moved + width(name) - (part.end - part.start);
-            }
-        }
-        moved
-    };
-    let closures = origin
-        .closures
-        .iter()
-        .map(|c| movement_parser::ast::SlotClosure { at: if c.at == NOT_CARRIED { NOT_CARRIED } else { place(c.at) }, closure: c.closure.clone() })
-        .collect();
-    ExprSlot { raw: text, span, eager: false, closures }
-}
-
-/// The offsets the lowering reads a slot's list element closures at.
-pub(crate) fn closure_offsets(slot: &ExprSlot) -> Vec<usize> {
-    slot.closures.iter().map(|c| c.at).filter(|at| *at != NOT_CARRIED).collect()
+/// `piece` as a slot of its own, spanning `span`.
+pub(crate) fn slot_of_piece(units: &Utf16, piece: &Piece, span: movement_parser::ast::Span) -> ExprSlot {
+    ExprSlot::plain(rewritten(units, piece.at, piece.replaced.clone()), span)
 }
 
 /// The backticked spelling of a name the staging binds.
@@ -295,11 +258,6 @@ fn register_slots(node: &serde_json::Value, path: &str, over: bool, into: &mut S
         let key = span_key(&slot.span);
         if over || !into.contains_key(&key) {
             into.insert(key, path.to_string());
-        }
-        // A list element closure's body (language version 5) holds slots
-        // of its own.
-        if let Some(closures) = node.get("closures") {
-            register_slots(closures, &format!("{path}/closures"), over, into);
         }
         return;
     }
@@ -344,10 +302,6 @@ impl Run<'_> {
     /// no value.
     pub(crate) fn runs_as_call(&self, call: &MExpr, scope: &Scope) -> bool {
         let MExpr::Call { callee, .. } = call else { return false };
-        // `box.g()` (language version 5): the member a value holds, called.
-        if let MExpr::Member { object, property, .. } = callee.as_ref() {
-            return matches!(object.as_ref(), MExpr::Name { name, .. } if self.member_callee_object(&format!("{}.{}", name.text, property.text), scope));
-        }
         let MExpr::Name { name, .. } = callee.as_ref() else { return false };
         let written = &name.text;
         if let Some(binding) = scope.resolve(written) {
@@ -356,20 +310,7 @@ impl Run<'_> {
         if self.version() < 3 {
             return false;
         }
-        scope.resolve_function(written).is_some() || (!written.contains('.') && is_call_form(written)) || self.member_callee_object(written, scope)
-    }
-
-    /// `box.g` (language version 5): a dotted callee whose object is a
-    /// value calls the member it holds under the key (run.ts
-    /// `memberCallee`, the checker's), run first as any call in an
-    /// expression is.
-    pub(crate) fn member_callee_object(&self, written: &str, scope: &Scope) -> bool {
-        let ident = |part: &str| {
-            let mut chars = part.chars();
-            chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        };
-        let Some((object, key)) = written.split_once('.') else { return false };
-        self.version() >= 5 && ident(object) && ident(key) && matches!(scope.resolve(object), Some(Binding::Value(_)))
+        scope.resolve_function(written).is_some() || (!written.contains('.') && is_call_form(written))
     }
 
     /// `stageNestedCalls`: the slot with its nested calls run, as the text
@@ -391,7 +332,7 @@ impl Run<'_> {
         }
         let staging = Staging { origin, offset, slot, units: Utf16::new(&slot.raw), scratch: scope.expression_child(), calls, scope, bound: Cell::new(0) };
         let piece = self.stage_tree(&tree, &staging).await?;
-        Ok(Some((carried(origin, offset, &staging.units, &piece, slot.span), staging.scratch)))
+        Ok(Some((slot_of_piece(&staging.units, &piece, slot.span), staging.scratch)))
     }
 
     /// `stageTree`: `tree` with its nested calls run, in order.
@@ -458,32 +399,6 @@ impl Run<'_> {
         })
     }
 
-    /// `evaluateSlot`'s first step (language version 5): a closure written
-    /// as a list element is a value, (AST, scope), holding the scope it is
-    /// written in by REFERENCE, as a closure bound to a name does — bound
-    /// in a scope around the slot under the name the lowering reads it by
-    /// (`slot_closure_name`). `None` where the slot holds none, or `scope`
-    /// is already that scope.
-    pub(crate) fn around_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Option<Rc<Scope>> {
-        let mut written = slot.closures.iter().enumerate().filter(|(_, c)| c.at != NOT_CARRIED).peekable();
-        let (_, first) = written.peek()?;
-        if scope.resolve_own(&movement_parser::ast::slot_closure_name(first.at)).is_some() {
-            return None;
-        }
-        let file = scope.written_in();
-        let slot_path = {
-            let mut by_file = self.slot_paths.borrow_mut();
-            self.slot_paths_of(&mut by_file, &file).get(&span_key(&slot.span)).cloned().unwrap_or_else(|| "#slot".to_string())
-        };
-        let around = scope.child();
-        for (index, written) in written {
-            let code = crate::flow::Code { ast: Rc::new(written.closure.clone()), path: format!("{slot_path}/closures/{index}/closure") };
-            let closure = crate::bindings::Closure { code, captured: scope.clone(), self_name: None, file_name: None, by_reference: true };
-            around.declare(movement_parser::ast::slot_closure_name(written.at), Binding::Closure(Rc::new(closure)));
-        }
-        Some(around)
-    }
-
     /// `settleShortCircuit`: `AND` / `OR` / `IF` / `COALESCE`, reaching only
     /// the operands it needs.
     async fn settle_short_circuit(&self, short: ShortCircuit<'_>, staging: &Staging<'_>) -> Result<Binding, Stop> {
@@ -524,7 +439,7 @@ impl Run<'_> {
     fn settled_binding<'s>(&'s self, expr: &'s MExpr, staging: &'s Staging<'s>) -> Settled<'s> {
         Box::pin(async move {
             let piece = self.stage_tree(expr, staging).await?;
-            let slot = carried(staging.origin, staging.offset, &staging.units, &piece, staging.slot.span);
+            let slot = slot_of_piece(&staging.units, &piece, staging.slot.span);
             self.bind_slot_binding(&slot, &staging.scratch).await
         })
     }
@@ -560,7 +475,7 @@ impl Run<'_> {
         }
         let units = Utf16::new(&slot.raw);
         for conjunct in conjuncts_of(&tree) {
-            let part = carried(slot, 0, &units, &Piece::whole(conjunct.at()), slot.span);
+            let part = slot_of_piece(&units, &Piece::whole(conjunct.at()), slot.span);
             let held = match self.staged_part(slot, &part, conjunct.at().start, scope).await? {
                 Some((staged, scratch)) => Box::pin(self.condition(&staged, &scratch)).await?,
                 None => Box::pin(self.condition(&part, scope)).await?,

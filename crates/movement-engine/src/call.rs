@@ -65,7 +65,6 @@ impl Run<'_> {
         match scope.resolve(&self.callee_name(written, scope)) {
             Some(Binding::Movement(_)) => true,
             Some(Binding::Closure(_)) => self.version() >= 3,
-            None => self.member_callee_object(written, scope),
             _ => false,
         }
     }
@@ -90,13 +89,7 @@ impl Run<'_> {
         Box::pin(async move {
             let name = self.callee_name(&call.callee, scope);
             let declared_file;
-            let callee = match scope.resolve(&name) {
-                None if self.member_callee_object(&call.callee, scope) => {
-                    let member = movement_parser::ast::ExprSlot::plain(call.callee.clone(), call.span);
-                    crate::record::binding_of(&self.evaluate_slot(&member, scope).await?.value)
-                }
-                resolved => resolved,
-            };
+            let callee = scope.resolve(&name);
             let declaration = match callee {
                 Some(Binding::Movement(declared)) => {
                     declared_file = declared.file.clone();
@@ -398,8 +391,8 @@ impl Run<'_> {
                 },
                 // A closure is a value (language version 5): written in
                 // place as an argument it is (AST, scope), holding the scope
-                // it is written in by reference, as a list element closure
-                // does.
+                // it is written in by reference, as a closure bound to a
+                // name does.
                 CallArg::Closure { closure, .. } if takes_value && self.version() >= 5 => Ok(Binding::Closure(Rc::new(crate::bindings::Closure {
                     code: crate::flow::Code { ast: Rc::new(closure.clone()), path: format!("{path}/closure") },
                     captured: scope.clone(),

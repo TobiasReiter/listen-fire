@@ -280,10 +280,10 @@ describe('a return woken after a park still returns', () => {
     const h = harness(
       [
         'movement intake(m: <inbox-[:message]->>) {',
-        '  return await race([() => {',
+        '  return race(() => {',
         '    await sleep(1h)',
         '    return "slept"',
-        '  }])',
+        '  })',
         '  write crm-[:companies]-> { name: "after the return" }',
         '}',
       ].join('\n'),

@@ -199,28 +199,6 @@ pub fn refusals(
     catalog: &Plugins<'_>,
     libraries: &Libraries,
 ) -> Admission {
-    // Language version 5: a list element closure is read by the name the
-    // lowering gives it, in admission's own copy of each file.
-    let named = slot_closures_named(program);
-    let (program, movements, entry) = match &named {
-        Some(copy) => {
-            let at = |m: &ast::MovementDeclaration| program.statements.iter().position(|s| matches!(s, Statement::Movement(d) if std::ptr::eq(d, m)));
-            let movement_at = |index: Option<usize>| match index.and_then(|i| copy.statements.get(i)) {
-                Some(Statement::Movement(m)) => Some(m),
-                _ => None,
-            };
-            (copy, movements.iter().filter_map(|m| movement_at(at(m))).collect::<Vec<_>>(), entry.and_then(|e| movement_at(at(e))))
-        }
-        None => (program, movements.to_vec(), entry),
-    };
-    let movements = movements.as_slice();
-    let named_libraries;
-    let libraries = if libraries.0.values().any(|l| holds_slot_closures(l)) {
-        named_libraries = Libraries(libraries.0.iter().map(|(path, l)| (path.clone(), slot_closures_named(l).unwrap_or_else(|| l.clone()))).collect());
-        &named_libraries
-    } else {
-        libraries
-    };
     let reasons = Reasons::default();
     let mut seeds: Vec<Seed> = Vec::new();
     let walking = Walking { language_version, catalog, libraries, reasons: &reasons };
@@ -265,56 +243,6 @@ pub fn refusals(
         admit_file(&walking, library, &reached, start, false, &mut seeds);
     }
     Admission { reasons: reasons.0.into_inner() }
-}
-
-/// `program` with every list element closure a slot holds (language
-/// version 5, `ExprSlot::closures`) read as the name the lowering reads it
-/// by, backtick-quoted, in the slot's text: what admission lowers is then
-/// the TypeScript's tree (`#closure@<at>`, a value free of records whose
-/// calls are value calls), and each closure's body stays on the slot, walked
-/// where the slot is. `None` where no slot holds one.
-fn slot_closures_named(program: &ast::Program) -> Option<ast::Program> {
-    if !holds_slot_closures(program) {
-        return None;
-    }
-    let mut json = serde_json::to_value(program).ok()?;
-    name_slot_closures(&mut json);
-    serde_json::from_value(json).ok()
-}
-
-fn holds_slot_closures(program: &ast::Program) -> bool {
-    fn holds(json: &serde_json::Value) -> bool {
-        match json {
-            serde_json::Value::Object(object) => object.get("closures").is_some_and(|c| c.as_array().is_some_and(|c| !c.is_empty())) || object.values().any(holds),
-            serde_json::Value::Array(items) => items.iter().any(holds),
-            _ => false,
-        }
-    }
-    serde_json::to_value(program).is_ok_and(|json| holds(&json))
-}
-
-fn name_slot_closures(json: &mut serde_json::Value) {
-    match json {
-        serde_json::Value::Object(object) => {
-            object.values_mut().for_each(name_slot_closures);
-            let offsets: Vec<usize> = match object.get("closures") {
-                Some(serde_json::Value::Array(closures)) => closures.iter().filter_map(|c| c.get("at")?.as_u64()).map(|at| at as usize).collect(),
-                _ => return,
-            };
-            let Some(serde_json::Value::String(raw)) = object.get("raw") else { return };
-            let Ok(tree) = movement_parser::expr::parse_expression(raw) else { return };
-            let units = movement_parser::util::utf16::Utf16::new(raw);
-            let named = movement_parser::tree::closure_extents_in_lists(&tree)
-                .into_iter()
-                .filter(|at| offsets.contains(&at.start))
-                .map(|at| (at, crate::nested::spelled(&ast::slot_closure_name(at.start))))
-                .collect();
-            let text = crate::nested::rewritten(&units, movement_parser::tree::At { start: 0, end: units.len() }, named);
-            object.insert("raw".into(), serde_json::Value::String(text));
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(name_slot_closures),
-        _ => {}
-    }
 }
 
 /// Every closure `program` writes, wherever it is written (bound, a list
@@ -545,7 +473,6 @@ fn admit_file<'p>(
                 call_holders: &[],
                 nested_holders: &[],
             };
-            names.slot_closures(value);
             reasons.noted(names.rvalue(value));
         }
         values.insert(name.to_string());
@@ -832,8 +759,8 @@ fn holds_lazy(movement: &ast::MovementDeclaration) -> bool {
 /// `until`'s condition.
 fn closure_bodies(statement: &Statement) -> Vec<&ast::ClosureExpression> {
     fn combinator<'a>(c: &'a ast::CombinatorExpression, bodies: &mut Vec<&'a ast::ClosureExpression>) {
-        if let CombinatorArms::Literal { arms, .. } = &c.arms {
-            for arm in arms {
+        {
+            for arm in c.arms.written() {
                 if let ArmExpression::Closure { closure, .. } = arm {
                     bodies.push(closure);
                 }
@@ -1079,7 +1006,7 @@ struct Callees<'p> {
     /// back, read in the library's own file (`closures_returned`).
     foreign_holders: RefCell<Vec<(*const ast::ClosureExpression, Holder)>>,
     /// Language version 5: the functions a value may hold, which a call
-    /// through a value runs (a parameter, a member, `box.g`): every closure
+    /// through a value runs (a parameter, a member): every closure
     /// the file writes, wherever it is written, and every function whose
     /// name the file reads as a value (`g = one`, `[twice]`).
     value_closures: Vec<ast::ClosureExpression>,
@@ -1815,14 +1742,9 @@ impl<'c> Bound<'c> {
         for closure in closure_bodies(statement) {
             self.closure_body(closure, scope);
         }
-        // A slot's list element closures, and a closure written in place
-        // as a function's argument (language version 5; a collection op's
-        // function is its member's, `collection`).
-        for slot in direct_slots(statement) {
-            for written in &slot.closures {
-                self.closure_body(&written.closure, scope);
-            }
-        }
+        // A closure written in place as a function's argument (language
+        // version 5; a collection op's function is its member's,
+        // `collection`).
         if let Some(call) = statement_call(statement)
             && self.callees.is_some_and(|c| c.language_version >= 5)
             && self.call_reading(call).is_none()
@@ -2281,16 +2203,15 @@ impl<'c> Bound<'c> {
 
     /// A call through a value (language version 5, run.ts's call of a name
     /// whose value is a closure): its callee a name the body or the file
-    /// binds — a parameter, a member, `g = one` — or a member of one
-    /// (`box.g`); not a function of the program's, a closure bound to the
-    /// name, or a plugin.
+    /// binds — a parameter, a member, `g = one`; not a function of the
+    /// program's, a closure bound to the name, or a plugin.
     fn value_callee(&self, written: &str) -> bool {
         let Some(callees) = self.callees else { return false };
         if callees.language_version < 5 || self.callee(written).is_some() || self.calls_closure(written) || self.plugin_kind(written).is_some() {
             return false;
         }
         let holds = |name: &str| self.binds_here(name) || callees.file_holders.contains_key(name);
-        holds(written.split_once('.').map_or(written, |(object, _)| object))
+        holds(written)
     }
 
     /// What a call through a value hands back (`Callees::value_call_holder`).
@@ -2560,7 +2481,7 @@ impl<'c> Bound<'c> {
     /// built them as (`built_arms`), where every binding of the name is one.
     fn receipt_holder(&self, combinator: &ast::CombinatorExpression) -> Holder {
         let arms = match &combinator.arms {
-            CombinatorArms::Literal { arms, .. } => arms,
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
             CombinatorArms::Dynamic { expr, .. } => {
                 let Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = lowered(&expr.raw) else { return Holder::Other };
                 return match self.built_arms.get(&name) {
@@ -2901,18 +2822,7 @@ impl Names<'_> {
         }
     }
 
-    /// A slot's list element closures (language version 5): each body
-    /// walked as a closure's, where the slot is.
-    fn slot_closures(&self, node: &impl serde::Serialize) {
-        for slot in direct_slots(node) {
-            for written in &slot.closures {
-                self.reasons.noted(self.closure(&written.closure.params, &written.closure.body));
-            }
-        }
-    }
-
     fn statement(&self, statement: &Statement, within: Within) -> Admitted {
-        self.slot_closures(statement);
         // A park inside a block's iteration or a collection op's member is
         // joined by its fan-out's frame; inside a callee, resumed through its
         // call frames.
@@ -3064,7 +2974,7 @@ impl Names<'_> {
     /// arms built at run time, the value that holds them.
     fn combinator(&self, combinator: &ast::CombinatorExpression, _within: Within) -> Admitted {
         match &combinator.arms {
-            CombinatorArms::Literal { arms, .. } => {
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => {
                 for arm in arms {
                     if let ArmExpression::Closure { closure, .. } = arm {
                         self.reasons.noted(self.closure(&closure.params, &closure.body));
@@ -4353,7 +4263,7 @@ impl Names<'_> {
         let mut value_holders = self.value_holders.clone();
         value_holders.extend(plan.names.iter().cloned());
         let inner = Names { values: &values, value_holders: &value_holders, instances: self.instances.clone(), ..*self };
-        let piece = |raw: &str| ExprSlot { raw: raw.to_string(), span: slot.span, eager: false, closures: Vec::new() };
+        let piece = |raw: &str| ExprSlot { raw: raw.to_string(), span: slot.span, eager: false };
         for bound in &plan.bound {
             inner.assigned(&piece(bound))?;
         }
@@ -4467,7 +4377,7 @@ impl Names<'_> {
             // its own, then read as a condition.
             let units = movement_parser::util::utf16::Utf16::new(&slot.raw);
             for conjunct in crate::nested::conjuncts_of(&tree) {
-                let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false, closures: Vec::new() };
+                let part = ExprSlot { raw: units.text(conjunct.at().start, conjunct.at().end), span: slot.span, eager: false };
                 match self.with_nested(&part, &|names, staged| names.plain_condition(staged)) {
                     Some(admitted) => admitted?,
                     None => self.plain_condition(&part)?,
@@ -5110,10 +5020,6 @@ fn callee_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
     use movement_parser::tree::MExpr;
     match callee {
         MExpr::Name { name, .. } => Some(name.text.clone()),
-        MExpr::Member { object, property, .. } => match object.as_ref() {
-            MExpr::Name { name, .. } => Some(format!("{}.{}", name.text, property.text)),
-            _ => None,
-        },
         _ => None,
     }
 }
@@ -5139,8 +5045,7 @@ pub(crate) fn direct_slots(statement: &impl serde::Serialize) -> Vec<ExprSlot> {
                 if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
                     && let (Some(start), Some(end)) = (span.get("start").and_then(loc), span.get("end").and_then(loc))
                 {
-                    let closures = object.get("closures").and_then(|c| serde_json::from_value(c.clone()).ok()).unwrap_or_default();
-                    into.push(ExprSlot { raw: raw.clone(), span: ast::Span { start, end }, eager: false, closures });
+                    into.push(ExprSlot::plain(raw.clone(), ast::Span { start, end }));
                     return;
                 }
                 for (key, value) in object {
@@ -6200,11 +6105,11 @@ mod tests {
             let source = format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
             reasons_of(&source, "m", 5)
         };
-        let returns_record = "  fs = [() => { return write crm-[:companies]-> { name: \"a\" } }]\n  g = AT(fs, 0)\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
+        let returns_record = "  mk = () => { return () => { return write crm-[:companies]-> { name: \"a\" } } }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
         assert!(!reasons(returns_record).is_empty(), "a record handed back through a value");
-        let free = "  fs = [() => { return \"a\" }]\n  g = AT(fs, 0)\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
+        let free = "  mk = () => { return () => { return \"a\" } }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { body: { k: x } }";
         assert_eq!(reasons(free), Vec::<String>::new());
-        let record_arg = "  fs = [(n: <number>) => n]\n  co = write crm-[:companies]-> { name: \"a\" }\n  g = AT(fs, 0)\n  x = g(COALESCE(co, 1))";
+        let record_arg = "  a = (n: <number>) => n\n  co = write crm-[:companies]-> { name: \"a\" }\n  g = COALESCE(a, a)\n  x = g(COALESCE(co, 1))";
         assert_eq!(reasons(record_arg), vec!["value_call_arg_record".to_string()]);
     }
 
@@ -6212,32 +6117,28 @@ mod tests {
     /// (apps/api) runs on both engines is admitted whole.
     #[test]
     fn admits_closures_as_values() {
-        let top = "function one() {\n  return \"one\"\n}\nfunction pickOne() {\n  return one\n}\nfunction twice(n: <number>) {\n  return n * 2\n}\nfunction callAll(fs: <() => <text>>[]) {\n  return MAP(fs, (f) => f())\n}\nfunction run(h: <(n: <number>) => <number>>) {\n  return h(20)\n}\n";
+        let top = "function one() {\n  return \"one\"\n}\nfunction pickOne() {\n  return one\n}\nfunction twice() {\n  return 2\n}\nfunction run(h: <(n: <number>) => <number>>) {\n  return h(20)\n}\n";
         let write = |fields: &str| format!("  write graph-[:note]-> {{ payload: {{ {fields} }} }}");
+        let lines = |text: &str| text.lines().map(String::from).collect::<Vec<_>>();
         let cases: Vec<(&str, Vec<String>)> = vec![
-            ("listElements", vec!["  k = 7".into(), "  fs = [() => { return k }, () => { return k * 2 }]".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
-            ("listElementParks", vec!["  k = 3".into(), "  fs = [() => {".into(), "    await sleep(1h)".into(), "    return k + 1".into(), "  }, () => { return 10 }]".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
-            ("namedList", vec!["  a = () => { return 1 }".into(), "  b = () => { return 2 }".into(), "  fs = [a, b]".into(), "  out = MAP(fs, (f) => f())".into(), write("out: out")]),
-            ("inlineListWithArgument", vec!["  k = 10".into(), "  out = MAP([(n: <number>) => n + k, (n: <number>) => { return n * k }], (f) => { return f(2) })".into(), write("out: out")]),
-            ("namedFunctionMember", vec!["  out = MAP([twice, twice], (f) => f(4))".into(), write("out: out")]),
-            ("memberReadWithAt", vec!["  fs = [() => { return \"first\" }, () => { return \"second\" }]".into(), "  g = AT(fs, 1)".into(), "  x = g()".into(), write("x: x")]),
-            ("memberParksByReference", vec!["  k = 5".into(), "  fs = [() => {".into(), "    await sleep(1h)".into(), "    return k + 1".into(), "  }, () => { return k }]".into(), "  out = MAP(fs, (f) => { return f() })".into(), write("out: out")]),
-            ("raceOverFilter", vec!["  all = [() => { return \"a\" }, () => {".into(), "    await sleep(1h)".into(), "    return \"b\"".into(), "  }]".into(), "  arms = FILTER(all, (f) => TRUE)".into(), "  r = await race(arms)".into(), write("r: r")]),
-            ("mapReplacesParallel", vec!["  r = MAP([() => { return 1 }, () => {".into(), "    await sleep(1h)".into(), "    return \"two\"".into(), "  }, () => 3], { concurrency: 3 }, (f) => f())".into(), write("r: r, second: AT(r, 1)")]),
-            ("everyArmWaiting", vec!["  k = 2".into(), "  r = MAP([() => {".into(), "    await sleep(1h)".into(), "    return k".into(), "  }, () => {".into(), "    await sleep(2h)".into(), "    return k * 10".into(), "  }], { concurrency: 2 }, (f) => f())".into(), write("r: r")]),
-            ("closureFromParkedMember", vec!["  a = 3".into(), "  fs = MAP([1, 2], (n) => {".into(), "    await sleep(1h)".into(), "    return () => { return a + n }".into(), "  })".into(), "  r = MAP(fs, (f) => f())".into(), write("r: r")]),
+            ("allJoin", [lines("  k = 7\n  r = all(() => { return k }, () => { return k * 2 }, () => 3)"), vec![write("r: r, second: AT(r, 1)")]].concat()),
+            ("allArmParks", [lines("  k = 3\n  r = all(() => {\n    await sleep(1h)\n    return k + 1\n  }, () => { return 10 })"), vec![write("r: r")]].concat()),
+            ("everyArmWaiting", [lines("  k = 2\n  r = all(() => {\n    await sleep(1h)\n    return k\n  }, () => {\n    await sleep(2h)\n    return k * 10\n  })"), vec![write("r: r")]].concat()),
+            ("namedArms", [lines("  a = () => { return \"a\" }\n  r = all(a, twice)"), vec![write("r: r")]].concat()),
+            ("concurrencyOneWithAParkedArm", [lines("  r = all(() => {\n    await sleep(1h)\n    return \"slept\"\n  }, () => {\n    write graph-[:note]-> { body: \"second ran\" }\n    return \"ran\"\n  }, { concurrency: 1 })"), vec![write("r: r")]].concat()),
+            ("onErrorWarn", vec!["  r = all(() => { ERROR(\"boom\") }, () => { return 2 }, { onError: \"warn\" })".into(), write("r: r")]),
+            ("onErrorIgnoreAfterResume", [lines("  r = all(() => {\n    await sleep(1h)\n    ERROR(\"late\")\n  }, () => { return 2 }, { onError: \"ignore\" })"), vec![write("r: r")]].concat()),
+            ("raceArguments", [lines("  a = () => { return \"a\" }\n  r = race(a, () => {\n    await sleep(1h)\n    return \"b\"\n  })"), vec![write("r: r")]].concat()),
+            ("closureFromParkedMaker", [lines("  a = 3\n  mk = (n: <number>) => {\n    await sleep(1h)\n    return () => { return a + n }\n  }\n  h = mk(1)\n  x = h()"), vec![write("x: x")]].concat()),
             ("namedFunctionBound", vec!["  g = one".into(), "  x = g()".into(), write("x: x")]),
             ("namedFunctionFromConcise", vec!["  mk = () => one".into(), "  h = mk()".into(), "  x = h()".into(), write("x: x")]),
             ("namedFunctionReturned", vec!["  h = pickOne()".into(), "  x = h()".into(), write("x: x")]),
             ("ifOverClosures", vec!["  a = () => \"a\"".into(), "  c = TRUE".into(), "  g = IF c THEN one ELSE a END".into(), "  x = g()".into(), write("x: x")]),
             ("coalesceOverClosures", vec!["  a = () => \"a\"".into(), "  g = COALESCE(one, a)".into(), "  x = g()".into(), write("x: x")]),
-            ("listOfClosuresPassed", vec!["  k = \"b\"".into(), "  x = callAll([() => \"a\", () => k])".into(), write("x: x")]),
             ("closureInPlaceArgument", vec!["  k = 2".into(), "  x = run((n) => n + k)".into(), write("x: x")]),
             ("extraArgumentDropped", vec!["  x = run(() => 5)".into(), write("x: x")]),
-            ("dottedCall", vec!["  k = \"!\"".into(), "  shout = (t: <text>) => \"${UPPER(t)}${k}\"".into(), "  box = { g: shout }".into(), "  a = box.g(\"hi\")".into(), "  b = LOWER(box.g(\"yo\"))".into(), write("a: a, b: b")]),
-            ("awaitingArrowBody", vec!["  g = () => await race([() => \"first\"])".into(), "  r = g()".into(), write("r: r")]),
-            ("raceSlotHoldingClosure", vec!["  r = await race([() => { return one }])".into(), "  g = COALESCE(AT(r, 0), one)".into(), "  x = g()".into(), write("x: x")]),
-            ("effectsOnly", vec!["  MAP([() => {".into(), "    write graph-[:note]-> { body: \"a\" }".into(), "  }, () => {".into(), "    write graph-[:note]-> { body: \"b\" }".into(), "  }], { concurrency: 2 }, (f) => f())".into(), write("done: 1")]),
+            ("combinatorArrowBody", vec!["  g = () => race(() => \"first\")".into(), "  r = g()".into(), write("r: r")]),
+            ("effectsOnly", [lines("  all(() => {\n    write graph-[:note]-> { body: \"a\" }\n  }, () => {\n    write graph-[:note]-> { body: \"b\" }\n  })"), vec![write("done: 1")]].concat()),
         ];
         let mut refused = Vec::new();
         for (name, body) in cases {

@@ -769,9 +769,19 @@ describe('§E ordering and parallel', () => {
     expect(() => parseProgram('r = await all([f, g])', { languageVersion: 4 })).toThrow(/`all` was replaced by `parallel`/);
   });
 
-  it('under 5, where parallel is retired too, both point at the MAP that replaced it', () => {
-    expect(() => parseProgram('parallel {\n  write team-[:message]-> { channel: "#d" }\n}')).toThrow(/MAP\(\[/);
-    expect(() => parseProgram('r = await all([f, g])')).toThrow(/`all` was retired: .*MAP\(\[/);
+  it('under 5, where parallel is retired too, the block points at the all that replaced it', () => {
+    expect(() => parseProgram('parallel {\n  write team-[:message]-> { channel: "#d" }\n}')).toThrow(/`r = all\(/);
+  });
+
+  it('under 5 all is the join, its arms the call\'s arguments', () => {
+    const program = parseProgram('movement m() {\n  r = all(f, () => { return 1 }, { concurrency: 2 })\n}');
+    const movement = program.statements[0];
+    if (movement?.kind !== 'movement') throw new Error('expected a movement');
+    const statement = movement.body[0];
+    if (statement?.kind !== 'assign' || statement.value.kind !== 'combinator') throw new Error('expected a bound combinator');
+    expect(statement.value.combinator.kind).toBe('all');
+    expect(statement.value.combinator.arms.kind).toBe('arguments');
+    expect(statement.value.combinator.settings?.raw).toBe('{ concurrency: 2 }');
   });
 });
 

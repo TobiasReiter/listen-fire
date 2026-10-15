@@ -1,5 +1,5 @@
-//! `parallel` and `race` (run.ts `interpretCombinator`), and the closures
-//! their arms are written as.
+//! `parallel`, `all` and `race` (run.ts `interpretCombinator`), and the
+//! closures their arms are written as.
 //!
 //! Each arm runs in a scope of its own, a child of the combinator's, at the
 //! address `… .b k`, as a flow of its own (crate::flow): its own call stack
@@ -11,17 +11,24 @@
 //! nothing. An arm that failed fails the combinator, once every other arm
 //! has stopped too; the failure is the earliest arm's.
 //!
+//! `all(…, { concurrency: n })` (language version 5's `parallel`) runs at
+//! most n arms at once: an arm that parks is waiting, not running, so it
+//! frees its place for the next. An arm whose failure `onError` forgives
+//! leaves its slot null (`warn` traces why).
+//!
 //! A `race` settles on the arms that finished: the ones still parked stop
 //! being listened on (`cancelSubtrees`). With none finished it parks as a
 //! join of one; a `parallel` with parked arms keeps what the finished ones
 //! returned at its frame (`persistBranchExport`) and parks as a join of
 //! as many as parked.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use movement_parser::ast::{ArmExpression, ClosureExpression, CombinatorArms, CombinatorExpression, CombinatorKind, Statement};
 
 use crate::bindings::{Binding, Closure, Scope};
+use crate::collection::{OnError, is_member_failure};
 use crate::env::{Trail, ValueBinding};
 use crate::executor::join_all;
 use crate::flow::{Boundary, Code};
@@ -51,6 +58,19 @@ enum Ended {
     Failed(Stop),
 }
 
+/// `armLeftEmpty`: the warning `onError: "warn"` leaves for an `all` arm
+/// whose slot it left null.
+pub(crate) fn arm_left_empty(kind: CombinatorKind, index: usize, count: usize, failure: &Failure) -> TraceEntry {
+    TraceEntry::Warning {
+        code: "MOVENG_COLLECTION_MEMBER_FAILED".into(),
+        message: format!(
+            "'{}' left the slot of arm {index} of {count} null, because the arm failed: {}",
+            kind.word(),
+            crate::collection::error_message(failure)
+        ),
+    }
+}
+
 /// `NULL_SLOT`: the slot of an arm that handed nothing back.
 pub(crate) fn null_slot() -> Binding {
     Binding::Value(ValueBinding { value: Js::Null, trail: Some(Trail::default()), many: false })
@@ -60,11 +80,7 @@ impl Run<'_> {
     /// `interpretCombinator`. `path` is the combinator's AST path.
     pub(crate) async fn combinator(&self, expr: &CombinatorExpression, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<(), Stop> {
         let arms = self.resolve_arms(expr, scope, path).await?;
-        let kind = match expr.kind {
-            CombinatorKind::Race => "race",
-            CombinatorKind::Parallel => "parallel",
-        };
-        self.trace(TraceEntry::Block { root: kind.into(), positions: arms.len() });
+        self.trace(TraceEntry::Block { root: expr.kind.word().into(), positions: arms.len() });
         if arms.is_empty() {
             if expr.kind == CombinatorKind::Race {
                 return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", "a race over no arms can never settle — nothing was given to it to run".into())));
@@ -75,45 +91,95 @@ impl Run<'_> {
             }
             return Ok(());
         }
+        let (on_error, concurrency) = self.combinator_settings(expr, arms.len())?;
         let fork = self.fork_writes();
         let envs: Vec<Rc<Scope>> = arms.iter().map(|_| scope.child()).collect();
         let addresses: Vec<Address> = (0..arms.len()).map(|index| at.branch(index)).collect();
-        let flows = arms.iter().enumerate().map(|(index, arm)| {
+        let count = arms.len();
+        let (arms, envs, addresses_of, fork) = (&arms, &envs, &addresses, &fork);
+        let run_fork = |index: usize| {
+            let (arm, env, address) = (&arms[index], &envs[index], &addresses_of[index]);
             let state = self.open_flow(fork.branch(index));
-            let (env, address) = (&envs[index], &addresses[index]);
-            self.in_flow(state, async move {
-                let ran = match &arm.runtime {
-                    None => self.run_arm(arm, env, address).await,
-                    Some(body) => self.within_boundary(Boundary::Arm { arm: index, body: body.clone() }, self.run_arm(arm, env, address)).await,
+            async move {
+                let (ended, mut state) = self
+                    .in_flow(state, async move {
+                        let ran = match &arm.runtime {
+                            None => self.run_arm(arm, env, address).await,
+                            Some(body) => self.within_boundary(Boundary::Arm { arm: index, body: body.clone() }, self.run_arm(arm, env, address)).await,
+                        };
+                        match ran {
+                            Ok(Flow::Returned) => Ended::Settled(env.resolve_own(RETURN_SLOT).unwrap_or_else(null_slot)),
+                            // A quiet scope end (find-on-missing) still completed: it ran
+                            // to its end, it just bound less on the way.
+                            Ok(Flow::FellThrough) | Err(Stop::EndedQuietly) => Ended::Settled(null_slot()),
+                            Err(Stop::Parked(_)) => Ended::Parked,
+                            Err(other) => Ended::Failed(other),
+                        }
+                    })
+                    .await;
+                let ended = match ended {
+                    Ended::Failed(Stop::Thrown(failure)) if on_error != OnError::Error && is_member_failure(&failure) => {
+                        if on_error == OnError::Warn {
+                            state.trace.push(arm_left_empty(expr.kind, index, count, &failure));
+                        }
+                        Ended::Settled(null_slot())
+                    }
+                    other => other,
                 };
-                match ran {
-                    Ok(Flow::Returned) => Ended::Settled(env.resolve_own(RETURN_SLOT).unwrap_or_else(null_slot)),
-                    // A quiet scope end (find-on-missing) still completed: it ran
-                    // to its end, it just bound less on the way.
-                    Ok(Flow::FellThrough) | Err(Stop::EndedQuietly) => Ended::Settled(null_slot()),
-                    Err(Stop::Parked(_)) => Ended::Parked,
-                    Err(other) => Ended::Failed(other),
+                (ended, state.trace)
+            }
+        };
+        // Each lane takes the next arm as the one it ran stops (parks
+        // included). Every lane starts its first arm, as the TypeScript's
+        // lanes all start before any arm can fail; after that, no arm starts
+        // once one has failed the combinator, and those running finish.
+        let ended: RefCell<Vec<Option<(Ended, Vec<TraceEntry>)>>> = RefCell::new((0..count).map(|_| None).collect());
+        let lanes = concurrency.min(count);
+        let next = Cell::new(lanes);
+        let failed = Cell::new(false);
+        let lane = |first: usize| {
+            let (ended, next, failed, run_fork) = (&ended, &next, &failed, &run_fork);
+            async move {
+                let mut index = first;
+                loop {
+                    let outcome = run_fork(index).await;
+                    if matches!(outcome.0, Ended::Failed(_)) {
+                        failed.set(true);
+                    }
+                    ended.borrow_mut()[index] = Some(outcome);
+                    if failed.get() || next.get() >= count {
+                        return;
+                    }
+                    index = next.get();
+                    next.set(index + 1);
                 }
-            })
-        });
-        let outcomes = join_all(flows.collect()).await;
-        let mut ended = Vec::with_capacity(outcomes.len());
-        for (outcome, state) in outcomes {
-            self.trace.extend(state.trace);
-            ended.push(outcome);
-        }
-        // The earliest arm's failure, once every arm has stopped.
-        let mut settled: Vec<Option<Binding>> = Vec::with_capacity(ended.len());
+            }
+        };
+        join_all((0..lanes).map(lane).collect()).await;
+        let mut settled: Vec<Option<Binding>> = Vec::with_capacity(count);
         let mut parked: Vec<usize> = Vec::new();
-        for (index, outcome) in ended.into_iter().enumerate() {
+        let mut failure = None;
+        for (index, outcome) in ended.into_inner().into_iter().enumerate() {
+            let Some((outcome, trace)) = outcome else {
+                settled.push(None);
+                continue;
+            };
+            self.trace.extend(trace);
             match outcome {
-                Ended::Failed(stop) => return Err(stop),
+                Ended::Failed(stop) => {
+                    failure.get_or_insert(stop);
+                    settled.push(None);
+                }
                 Ended::Settled(value) => settled.push(Some(value)),
                 Ended::Parked => {
                     settled.push(None);
                     parked.push(index);
                 }
             }
+        }
+        // The earliest arm's failure, once every arm running has stopped.
+        if let Some(stop) = failure {
+            return Err(stop);
         }
         let receipt = || Binding::Tuple(Rc::new(settled.iter().map(|slot| slot.clone().unwrap_or_else(null_slot)).collect()));
         let frame = at.encode();
@@ -155,6 +221,21 @@ impl Run<'_> {
 
     /// `keepArmCount`: a parked combinator whose arms were built at run time
     /// keeps how many there were at its frame (`FRAME_STATE_INDEX`).
+    /// `combinatorSettings`: how `all` runs its arms — every arm at once,
+    /// failing on an arm's failure, unless its settings record says otherwise.
+    /// `race` and `parallel` take no settings.
+    pub(crate) fn combinator_settings(&self, expr: &CombinatorExpression, arms: usize) -> Result<(OnError, usize), Stop> {
+        let all_at_once = arms.max(1);
+        let (Some(settings), CombinatorKind::All) = (&expr.settings, expr.kind) else { return Ok((OnError::Error, all_at_once)) };
+        let (on_error, concurrency) = crate::collection::all_settings(settings, all_at_once).map_err(|problem| {
+            Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("'{}' was given settings it cannot run with — the checker should have caught this: {problem}", expr.kind.word()),
+            ))
+        })?;
+        Ok((on_error, crate::collection::width(concurrency)))
+    }
+
     async fn keep_arm_count(&self, expr: &CombinatorExpression, frame: &str, arms: usize) -> Result<(), Stop> {
         if !matches!(expr.arms, CombinatorArms::Dynamic { .. }) {
             return Ok(());
@@ -185,12 +266,9 @@ impl Run<'_> {
     /// `resolveArms`: literal arms in place, or a collection of closures a
     /// value holds. `path` is the combinator's AST path.
     async fn resolve_arms(&self, expr: &CombinatorExpression, scope: &Rc<Scope>, path: &str) -> Result<Vec<Arm>, Stop> {
-        let kind = match expr.kind {
-            CombinatorKind::Race => "race",
-            CombinatorKind::Parallel => "parallel",
-        };
+        let kind = expr.kind.word();
         match &expr.arms {
-            CombinatorArms::Literal { arms, .. } => arms
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms
                 .iter()
                 .enumerate()
                 .map(|(index, arm)| self.arm_invocation(arm, kind, scope, &format!("{path}/arms/arms/{index}")))

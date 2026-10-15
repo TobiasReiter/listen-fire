@@ -1,7 +1,7 @@
 // A closure's type flows wherever its value goes (language version 5), as a
 // TypeScript function's does: a named function bound or handed back as a
-// value, a conditional or COALESCE over closures (their union), and a race
-// receipt's slot. A call through any of them is typed by what the closures it
+// value, a conditional or COALESCE over closures (their union), and a closure
+// an `all` arm captures. A call through any of them is typed by what the closures it
 // may be return — so a record one returns is refused in a text field, and text
 // is clean.
 
@@ -67,8 +67,8 @@ const POSITIONS: Array<[string, (rec: string, txt: string) => string[]]> = [
   ['IF … THEN … ELSE … END over bound closures', fn => ['  a = () => label()', `  b = () => ${fn}()`, '  c = TRUE', '  g = IF c THEN a ELSE b END', '  v = g()']],
   ['IF … THEN … ELSE … END over named functions', fn => ['  c = TRUE', `  g = IF c THEN label ELSE ${fn} END`, '  v = g()']],
   ['COALESCE over bound closures', fn => ['  a = () => label()', `  b = () => ${fn}()`, '  g = COALESCE(a, b)', '  v = g()']],
-  ['COALESCE of a maybe-absent pick and a named function', fn => ['  fs = [label, label]', `  g = COALESCE(FIRST(FILTER(fs, (f) => TRUE)), ${fn})`, '  v = g()']],
-  ['a race receipt slot holding a closure', fn => [`  r = await race([() => { return () => { return ${fn}() } }])`, '  g = AT(r, 0)', '  if g != null {', '    v = g()', '  ' + WRITE, '  }']],
+  ['COALESCE of a named function and a bound closure', fn => ['  a = () => label()', `  g = COALESCE(${fn}, a)`, '  v = g()']],
+  ['a closure an all arm captures and calls', fn => [`  g = ${fn}`, '  r = all(() => { return g() })', '  v = AT(r, 0)']],
 ];
 
 const program = (body: string[]): string[] => (body.includes('  ' + WRITE) ? body : [...body, WRITE]);
@@ -82,9 +82,8 @@ describe('a closure\'s type flows through every value position (Dancing Wren, 5)
     expect(errorsUnder(5, program(at('label', 'label')))).toEqual([]);
   });
 
-  it('a MAP whose members are named functions maps to closures, called with their type', () => {
-    expect(codes(5, ['  fs = MAP([1, 2], (n) => made)', '  r = MAP(fs, (f) => f())', '  v = FIRST(r)', '  if v != null {', '    ' + WRITE, '  }']))
-      .toEqual(['MOV_WRITE_FIELD_TYPE']);
+  it('a MAP whose members would be closures is refused: a closure is not data', () => {
+    expect(codes(5, ['  fs = MAP([1, 2], (n) => made)'])).toEqual(['MOV_CLOSURE_NOT_DATA']);
   });
 
   it('under Luminous Owl (4) a named function bound to a name is still no function to call', () => {

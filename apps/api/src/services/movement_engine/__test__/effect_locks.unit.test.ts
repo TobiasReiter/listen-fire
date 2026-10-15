@@ -424,7 +424,7 @@ describe('members writing different keys write at once; the same key, one at a t
 
 // `parallel` is retired under Dancing Wren (5); the MAP that replaced it runs
 // its functions at once, each isolated as a member is.
-describe('the functions a MAP runs at once, and race arms, are isolated as members are', () => {
+describe('the arms all runs at once, and race arms, are isolated as members are', () => {
   const FETCH_ONE = [
     'node Link {',
     '  url: <text>',
@@ -437,10 +437,10 @@ describe('the functions a MAP runs at once, and race arms, are isolated as membe
     '',
   ];
 
-  it('two functions calling the same movement at once are not a recursion; the trace reads in list order', async () => {
+  it('two arms calling the same movement at once are not a recursion; the trace reads in argument order', async () => {
     const { result } = await run(
       [
-        '  r = MAP([',
+        '  r = all(',
         '    () => {',
         '      got = fetch_one(l: node { url: "40" })',
         '      return got',
@@ -449,7 +449,7 @@ describe('the functions a MAP runs at once, and race arms, are isolated as membe
         '      got = fetch_one(l: node { url: "5" })',
         '      return got',
         '    },',
-        '  ], { concurrency: 2 }, (f) => f())',
+        '  )',
         '  write crm-[:companies]-> { name: "${AT(r, 0)}/${AT(r, 1)}" }',
       ],
       makeCrm(),
@@ -462,11 +462,11 @@ describe('the functions a MAP runs at once, and race arms, are isolated as membe
 
   it('functions writing one key at once make one record', async () => {
     const { crm } = await run([
-      '  MAP([',
+      '  all(',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "left" } },',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "right" } },',
       '    () => { write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: "third" } },',
-      '  ], { concurrency: 3 }, (f) => f())',
+      '  )',
     ]);
     expect(crm.creates).toHaveLength(1);
     expect(crm.updates).toHaveLength(2);
@@ -474,7 +474,7 @@ describe('the functions a MAP runs at once, and race arms, are isolated as membe
 
   it('a race arm that finishes in the same burst as the winner is not undone: its writes stay, and its slot is filled', async () => {
     const { crm, result } = await run([
-      '  r = await race([',
+      '  r = race(',
       '    () => {',
       '      co = write crm-[:companies]-> { unique by (`name`), name: "Fast" }',
       '      return "fast"',
@@ -484,7 +484,7 @@ describe('the functions a MAP runs at once, and race arms, are isolated as membe
       '      co = write crm-[:companies]-> { unique by (`name`), name: "Slow" }',
       '      return "slow"',
       '    },',
-      '  ])',
+      '  )',
       '  write crm-[:notes]-> { text: "${AT(r, 0)}/${AT(r, 1)}" }',
     ]);
     expect(crm.creates.map((c) => c.name ?? c.text)).toEqual(['Fast', 'Slow', 'fast/slow']);

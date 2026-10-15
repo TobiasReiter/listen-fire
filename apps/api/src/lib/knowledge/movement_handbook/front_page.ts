@@ -152,7 +152,7 @@ export const CONCEPTS: readonly FrontEntry[] = [
     title: 'Runs: effects, waiting, cost',
     text: 'A run parks at an `await` (an approval, `sleep`) and resumes when it settles; `race` and `MAP` combine waits. It pauses at its cost cap.',
     example: {
-      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = await race([\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n])\napproved = AT(r, 0) == TRUE',
+      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = AT(r, 0) == TRUE',
     },
   },
 ];

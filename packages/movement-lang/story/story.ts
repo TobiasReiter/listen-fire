@@ -33,6 +33,7 @@ import {
   type PathHead,
   type Program,
   type CombinatorExpression,
+  type CombinatorKind,
   type RValue,
   type ShapeNode,
   type Span,
@@ -45,6 +46,7 @@ import {
 import {
   constructionAsCall,
   isValueTypeRef,
+  writtenArms,
   pathRootName,
   spreadSourceText,
   spellPathHead,
@@ -566,8 +568,9 @@ export type Step =
   | {
       kind: 'race';
       /** Which combinator — one lane shape, two settling rules: `race` takes
-       *  the first arm to settle, `parallel` waits for all of them. */
-      combinator: 'race' | 'parallel';
+       *  the first arm to settle, `all` (`parallel` before language version
+       *  5) waits for all of them. */
+      combinator: CombinatorKind;
       /** One lane per ARM, in the order written — the same order the receipt's
        *  slots are in, which is what makes a lane readable against a slot.
        *  A lane written as a closure carries its steps; a lane that is only a
@@ -2090,7 +2093,7 @@ class Projection {
     const node = recorded?.kind === 'combinator' ? (recorded as RecordedCombinator) : undefined;
     // Arms built at run time have no lanes to draw — the picture says what it
     // knows (the combinator ran, and what it bound), not a lane count it made up.
-    const arms = expr.arms.kind === 'literal' ? expr.arms.arms : [];
+    const arms = writtenArms(expr.arms);
     return {
       kind: 'race',
       combinator: expr.kind,
@@ -2264,8 +2267,7 @@ function walkArmBodies(
   expr: CombinatorExpression,
   visit: (statement: Statement) => void,
 ): void {
-  if (expr.arms.kind !== 'literal') return;
-  for (const arm of expr.arms.arms) {
+  for (const arm of writtenArms(expr.arms)) {
     if (arm.kind === 'closure') walkStatements(arm.closure.body, visit);
   }
 }

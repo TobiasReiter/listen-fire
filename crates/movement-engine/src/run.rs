@@ -1548,15 +1548,11 @@ impl Run<'_> {
     /// record it picks (`selectedPositionBinding`); anything else, the value
     /// it evaluates to.
     pub(crate) async fn bind_slot_binding(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Binding, Stop> {
-        // Staged first, as `bindSlotValue` stages before `evaluateSlot`
-        // binds the list element closures: they hold the staging's scope.
+        // Staged first, as `bindSlotValue` stages before `evaluateSlot`.
         if let Some((staged, scratch)) = self.staged(slot, scope).await? {
             return Box::pin(self.bind_slot_binding(&staged, &scratch)).await;
         }
-        if let Some(around) = self.around_slot(slot, scope) {
-            return Box::pin(self.bind_slot_binding(slot, &around)).await;
-        }
-        let expr = lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression")
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
             && let Some(binding) = scope.resolve(name)
@@ -1596,9 +1592,6 @@ impl Run<'_> {
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
-        if let Some(around) = self.around_slot(slot, scope) {
-            return Box::pin(self.bind_slot(slot, &around)).await;
-        }
         // A file-level value holding a nested call: this engine binds the
         // file's values before anything else, and stages none there.
         if self.version() >= 3
@@ -1607,7 +1600,7 @@ impl Run<'_> {
         {
             return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
         }
-        let expr = lowered(slot, |tree| movement_parser::lowering::lower_slot_expression(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "expression")
+        let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         self.bind_evaluated(&expr, slot, scope).await
     }
@@ -1672,10 +1665,7 @@ impl Run<'_> {
         if let Some(held) = self.staged_condition(slot, scope).await? {
             return Ok(held);
         }
-        if let Some(around) = self.around_slot(slot, scope) {
-            return Box::pin(self.condition(slot, &around)).await;
-        }
-        let condition = lowered(slot, |tree| movement_parser::lowering::lower_slot_condition(tree, &slot.raw, &crate::nested::closure_offsets(slot)), "condition")
+        let condition = lowered(slot, |tree| movement_parser::lowering::lower_condition(tree, &slot.raw), "condition")
             .map_err(Stop::Thrown)?;
         self.parsed_condition(&condition, scope, slot).await
     }

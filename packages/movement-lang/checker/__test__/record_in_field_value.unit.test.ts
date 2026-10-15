@@ -12,7 +12,7 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
-import { applyFix } from '../fixes';
+import { combinatorsSpelledFor } from './combinator_spelling';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
 import { fieldAssignable, fieldTypeCompatible, handleWithin, spellHeldSteps } from '../typing';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
@@ -80,21 +80,11 @@ const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
     d => (d.severity ?? 'error') === 'error',
   );
 
-/** `parallel` is retired under 5 (MOV_PARALLEL_RETIRED): there each program is
- *  checked as the checker's fix rewrites it, the MAP over the arms (arms built
- *  at run time by hand, as they have no fix), which must answer the same. */
-const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
-  let source = program(body);
-  if (version >= 5) {
-    source = source.replace(/await parallel\((\w+)\)/g, 'MAP($1, { concurrency: 2 }, (f) => f())');
-    for (let guard = 0; guard < 5; guard++) {
-      const retired = checkUnder(version, source).find(d => d.code === 'MOV_PARALLEL_RETIRED');
-      if (retired?.fix === undefined) break;
-      source = applyFix(source, retired.fix);
-    }
-  }
-  return checkUnder(version, source);
-};
+/** Under 5 each program is checked as the checker's own fixes respell its
+ *  combinators (`all(…)` / `race(…)`, the arms as arguments, no `await`),
+ *  which must answer the same. */
+const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
+  checkUnder(version, combinatorsSpelledFor(version, program(body), source => checkUnder(version, source)));
 
 const note = (company: string): string[] => [`  write crm-[:notes]-> { title: "hello", company: ${company} }`];
 
@@ -205,8 +195,9 @@ describe('the type rule, as pure functions', () => {
 describe('a receipt nobody can type is not a record', () => {
   // Arms built at run time: nothing can see what they return, so the receipt
   // is untyped — a value, as the un-awaited combinator binds it, never "a
-  // record nobody can name", which the field rule above would refuse.
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, an awaited one writes under a key', version => {
+  // record nobody can name", which the field rule above would refuse. From 5
+  // there are no arms built at run time: a closure is not data.
+  it.each(VERSIONS.filter(v => v >= 3 && v < 5))('under language version %i, an awaited one writes under a key', version => {
     expect(
       errorsUnder(version, [
         '  arms = MAP([1, 2], (n) => { return () => { return n * 5 } })',
@@ -263,7 +254,8 @@ describe('KNOWN GAP: a combinator receipt over arms only known at run time is no
   // typed from their returns (receipt_record_in_field); a collection of
   // functions filtered or joined at run time has no function type to read its
   // returns through, so the receipt is untyped — accepted TODAY.
-  it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a MAP of closures is refused', version => {
+  // A collection of functions exists only before 5: from 5 a closure is not data.
+  it.each(VERSIONS.filter(v => v >= 3 && v < 5))('under language version %i, a MAP of closures is refused', version => {
     const errors = errorsUnder(version, [
       '  arms = MAP([1, 2], (n) => { return () => { return org } })',
       '  r = await parallel(arms)',
@@ -283,15 +275,13 @@ describe('KNOWN GAP: a combinator receipt over arms only known at run time is no
     ).toEqual([]);
   });
 
-  // From 5 a closure's type is a value's, so FILTER keeps it and the gap closes.
-  it.each(VERSIONS.filter(v => v >= 5))('under language version %i, filtered arms are refused', version => {
+  // From 5 there is no collection of functions to build: a closure is not data.
+  it.each(VERSIONS.filter(v => v >= 5))('under language version %i, the collection is refused where it is built', version => {
     const errors = errorsUnder(version, [
       '  c = () => { return org }',
       '  arms = FILTER([c], (a) => { return true })',
-      '  r = await parallel(arms)',
-      ...note('r'),
     ]);
-    expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
+    expect(errors.map(d => d.code)).toEqual(['MOV_CLOSURE_NOT_DATA']);
   });
 
   it.each(VERSIONS.filter(v => v >= 3))('under language version %i, a literal arm returning a record is refused', version => {

@@ -3,7 +3,7 @@
 //! comes back from its own syntax tree, never from here: crate::resume.)
 
 use movement_parser::ast::{
-    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorArms, CombinatorExpression, NodeEntry, NodeLiteral, Program,
+    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorExpression, NodeEntry, NodeLiteral, Program,
     RValue, Span, Statement, UntilCondition,
 };
 use serde_json::Value as Json;
@@ -136,8 +136,8 @@ fn arm<'p>(a: &'p ArmExpression, f: &mut dyn FnMut(Found<'p>)) {
 }
 
 fn combinator<'p>(c: &'p CombinatorExpression, f: &mut dyn FnMut(Found<'p>)) {
-    if let CombinatorArms::Literal { arms, .. } = &c.arms {
-        for a in arms {
+    {
+        for a in c.arms.written() {
             arm(a, f);
         }
     }

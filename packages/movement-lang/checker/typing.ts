@@ -239,6 +239,13 @@ export const TypedDiagnosticCodes = {
    *  "[object Object]". Its text is `READ(f)`. Versions 1 to 4 keep the old
    *  meaning; the error under 5 keeps such a program on its version. */
   FILE_IN_TEXT: 'MOV_FILE_IN_TEXT',
+  /** A closure kept as data (language version 5) — a list's element, a
+   *  record or map's value, a field written, a collection op's or a
+   *  combinator's answer, a type whose list or key is a closure. A closure
+   *  lives in a variable or a parameter, or is passed as an argument where it
+   *  is written; it is never stored. Before 5 a closure is not a value at
+   *  all. */
+  CLOSURE_NOT_DATA: 'MOV_CLOSURE_NOT_DATA',
   /** A write handle's FILE field the write did not send, used as a file —
    *  from language version 5. The system hands back its own description of the
    *  file, not bytes the run can pull; the file is on the record's edge, as a
@@ -3130,8 +3137,9 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
   const first = types[0];
   if (first === undefined || types.length === 0) return undefined;
   if (types.every(t => t !== undefined && fieldTypeEquals(t, first))) return first;
-  // Closures keep their types: TypeScript's `(() => A) | (() => B)`, so a
-  // member of a list of closures is called as any of them (`closureOfValue`).
+  // Closures keep their types: TypeScript's `(() => A) | (() => B)`, so an
+  // IF or COALESCE choosing between closures is called as any of them
+  // (`closureOfValue`).
   const closures = closureUnion(types);
   if (closures !== undefined) return closures;
   if (types.every(t => isRecordType(t))) return { kind: 'record' };
@@ -3367,6 +3375,21 @@ export function fieldAssignable(source: FieldType, target: FieldType): boolean {
 }
 
 type ClosurePosition = Extract<PositionTypeRef, { kind: 'closure' }>;
+
+/** Is this (or any arm of it) a closure? What holds one — a list, a map —
+ *  was refused where it was built, so only the value itself is asked. */
+export function mayBeClosure(type: FieldType | null | undefined): boolean {
+  if (type === undefined || type === null || typeof type === 'string') return false;
+  const variant = variantOf(stripAbsent(type));
+  if (variant.kind === 'union') return variant.of.some(mayBeClosure);
+  return variant.kind === 'record' && variant.position?.kind === 'closure';
+}
+
+/** Why a closure kept as data is refused (language version 5). `where`
+ *  names the place and ends where the sentence says what it holds. */
+export function closureNotDataMessage(where: string): string {
+  return `${where} a closure, and a closure is not data — keep it in a variable ('g = …', called as 'g()') or pass it as an argument ('all(f, g)', 'MAP(xs, (x) => …)')`;
+}
 
 function closureOfRecord(type: FieldType): ClosurePosition | undefined {
   if (typeof type === 'string') return undefined;
@@ -5339,8 +5362,18 @@ export class ExpressionTyping {
   private listLiteralType(elements: ListElement[], position: PositionTypeRef | undefined): FieldType {
     type Part = { slot: FieldType | null } | { run: FieldType | null };
     const parts: Part[] = elements.flatMap((element): Part[] => {
-      if (element.type !== 'spread') return [{ slot: this.inferExactAt(element, position) ?? null }];
-      return this.spreadParts(element.expression, position);
+      if (element.type !== 'spread') {
+        const slot = this.inferExactAt(element, position);
+        this.refuseClosureAsData(element, slot, 'a list\'s element is');
+        return [{ slot: slot ?? null }];
+      }
+      const spread = this.spreadParts(element.expression, position);
+      this.refuseClosureAsData(
+        element.expression,
+        valueUnion(spread.flatMap(part => { const t = 'slot' in part ? part.slot : part.run; return t !== null ? [t] : []; })),
+        'a spread into a list holds',
+      );
+      return spread;
     });
     const firstRun = parts.findIndex(part => 'run' in part);
     const slotsOf = (run: Part[]): Array<FieldType | null> =>
@@ -5359,6 +5392,18 @@ export class ExpressionTyping {
     // Two runs: nothing past the first one has a fixed place any more.
     const folded = tupleAsList({ kind: 'tuple', of: slotsOf(parts.slice(firstRun)) }, this.options.languageVersion);
     return { kind: 'tuple', of: prefix, rest: { at: prefix.length, of: folded?.of ?? null } };
+  }
+
+  /**
+   * A closure is not data (language version 5): a value whose type is — or
+   * may be, or holds — a closure is refused where it would be kept, whether
+   * its own type says so or what it may hold does (a function's answer).
+   */
+  private refuseClosureAsData(expr: Expression, type: FieldType | undefined, where: string): void {
+    if (before(this.options.languageVersion, 5)) return;
+    if (mayBeClosure(type) || mayBeClosure(this.mayHoldType(expr))) {
+      this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage(where));
+    }
   }
 
   /**
@@ -5390,12 +5435,18 @@ export class ExpressionTyping {
     for (const member of members) {
       if (!isObjectSpread(member)) {
         const exact = this.inferExactAt(member.value, position);
+        this.refuseClosureAsData(member.value, exact, `'${member.key}' holds`);
         shape[member.key] = exact ?? null;
         written.add(member.key);
         readTypes.push(widenTuples(exact, this.options.languageVersion));
         continue;
       }
       const spread = this.spreadKeys(member.expression, position);
+      this.refuseClosureAsData(
+        member.expression,
+        spread.keys !== undefined ? valueUnion(Object.values(spread.keys).filter((t): t is FieldType => t !== null)) : spread.of,
+        'a spread into a map holds',
+      );
       if (spread.keys === undefined) {
         keysNamed = false;
         readTypes.push(spread.of);
