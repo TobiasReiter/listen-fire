@@ -1,8 +1,10 @@
 // A closure is not data (language version 5). A closure lives in a variable
-// (`g = label`, a call that answers one, an IF or COALESCE choosing between
-// closures), in a parameter, or is passed as an argument where it is written
-// (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`) — never in a list, a record,
-// a map, a field, a collection op's answer or a combinator's receipt
+// (`g = label`, a call that answers one), in a parameter, or is passed as an
+// argument to a parameter that takes one (`MAP(xs, (x) => …)`, `race(a, b)`,
+// `all(a, b)`, a closure-typed parameter) — never in a list, a record, a map, a
+// field, a collection op's answer or a combinator's receipt, and never as an
+// operand of a value expression: an IF's arm, COALESCE's argument, a
+// comparison, interpolation, arithmetic, a condition, a built-in's argument
 // (`MOV_CLOSURE_NOT_DATA`). There are no methods, either: a dot on a record or
 // map always reads a field. Before 5 a closure is not a value at all, and
 // nothing changes.
@@ -61,6 +63,18 @@ describe('a closure is not data (Dancing Wren, 5)', () => {
     // A collection op's answer.
     ['a MAP whose function returns a closure', [], ['  d = MAP([1, 2], (x) => { return label })']],
     ['a MAP whose function returns a map holding one', [], ['  d = MAP([1, 2], (x) => { return { g: label } })']],
+    // An operand of a value expression.
+    ['IF … THEN … ELSE … END choosing between closures', [], ['  c = TRUE', '  h = () => "b"', '  g = IF c THEN label ELSE h END']],
+    ['IF … THEN … ELSE … END with one closure arm', [], ['  c = TRUE', '  g = IF c THEN label ELSE "x" END']],
+    ['COALESCE over closures', [], ['  h = () => "b"', '  g = COALESCE(label, h)']],
+    ['a comparison', [], ['  h = () => "b"', '  x = h == label']],
+    ['interpolation', [], ['  x = "v ${label}"']],
+    ['arithmetic', [], ['  h = () => 1', '  x = h + 1']],
+    ['a negation', [], ['  h = () => 1', '  x = -h']],
+    ['NOT', [], ['  x = NOT label']],
+    ['AND', [], ['  x = label AND TRUE']],
+    ['a built-in that takes no function', [], ['  x = UPPER(label)']],
+    ['a condition', [], ['  if label {', '    x = 1', '  }']],
     // A combinator's receipt.
     ['an all arm that returns a closure', [], ['  r = all(() => { return label })']],
     ['a race arm that returns a closure', [], ['  r = race(() => { return label })']],
@@ -95,7 +109,6 @@ describe('a closure is not data (Dancing Wren, 5)', () => {
 
   it.each<[string, string[], string[]]>([
     ['a variable', [], ['  g = label', '  x = g()']],
-    ['a conditional choosing between closures', [], ['  c = TRUE', '  h = () => "b"', '  g = IF c THEN label ELSE h END', '  k = COALESCE(g, h)', '  x = CONCAT(g(), k())']],
     ['a call that answers a closure', ['function mk() {', '  return label', '}'], ['  g = mk()', '  x = g()']],
     ['a closure-typed parameter, and its argument', ['function run(f: <() => <text>>) {', '  return f()', '}'], ['  x = run(label)', '  y = run(() => "b")']],
     ['a collection op\'s function', [], ['  d = MAP([1, 2], (x) => x + 1)']],

@@ -14909,6 +14909,10 @@ class Checker {
         // is left to its own truthiness, as before.
         const opaque = checkJsonOpaque(type, 'used as a condition');
         if (opaque !== null) this.report(opaque.code, opaque.message, slot.span);
+        // A closure is no decision either: it is not data (language version 5).
+        if (since(this.languageVersion, 5) && mayBeClosure(type)) {
+          this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage('a value used as a condition is'), slot.span);
+        }
         // Narrowing (layer 6): an `==` against a present value proves its
         // subject present inside the arm — the comparison joins `?:` fill and
         // traversal-as-gate as a guard form. Runs AFTER the walk above so the

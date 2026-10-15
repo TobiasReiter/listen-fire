@@ -1462,16 +1462,12 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  * answers, or what, so this manufactures neither a presence nor a kind
  * (unknown stays unknown, as in TS).
  */
-function coalesceType(args: Array<FieldType | undefined>, closuresAreValues = false): FieldType | undefined {
+function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
   if (args.some(type => type === undefined)) return undefined;
   const typed = args as FieldType[];
   const valued = typed.filter(type => type !== 'absent');
   // Every argument is the `null` literal — the value that is never there.
   if (valued.length === 0) return 'absent';
-  // Closures (language version 5) are TypeScript's `(() => A) ?? (() => B)`:
-  // the union of the closures, present when one argument always is.
-  const closures = closuresAreValues ? closureUnion(valued.map(stripAbsent)) : undefined;
-  if (closures !== undefined) return valued.some(type => !isMaybeAbsent(type)) ? closures : maybeAbsent(closures);
   const kinds = valued.map(stripAbsent);
   const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
@@ -3137,11 +3133,6 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
   const first = types[0];
   if (first === undefined || types.length === 0) return undefined;
   if (types.every(t => t !== undefined && fieldTypeEquals(t, first))) return first;
-  // Closures keep their types: TypeScript's `(() => A) | (() => B)`, so an
-  // IF or COALESCE choosing between closures is called as any of them
-  // (`closureOfValue`).
-  const closures = closureUnion(types);
-  if (closures !== undefined) return closures;
   if (types.every(t => isRecordType(t))) return { kind: 'record' };
   // Dicts that hold the same thing under different written keys are still a
   // dict of that thing — only the keys stop being knowable, so the shape goes
@@ -3152,26 +3143,6 @@ export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType 
     return head;
   }
   return undefined;
-}
-
-/** Closure values alone, as their union — undefined unless every member is
- *  a closure (or a union of them). */
-function closureUnion(types: Array<FieldType | undefined>): FieldType | undefined {
-  const members: FieldType[] = [];
-  let absent = false;
-  const add = (type: FieldType | undefined): boolean => {
-    if (type === undefined) return false;
-    if (isMaybeAbsent(type)) absent = true;
-    const present = stripAbsent(type);
-    const variant = variantOf(present);
-    if (variant.kind === 'union') return variant.of.every(add);
-    if (variant.kind !== 'record' || variant.position?.kind !== 'closure') return false;
-    if (!members.some(seen => variantOf(seen).kind === 'record' && (seen as { position?: unknown }).position === variant.position)) members.push(present);
-    return true;
-  };
-  if (!types.every(add) || members.length === 0) return undefined;
-  const union: FieldType = members.length === 1 ? members[0]! : { kind: 'union', of: members };
-  return absent ? maybeAbsent(union) : union;
 }
 
 /** A dict with its written keys forgotten — what it holds, looked up by data. */
@@ -4193,6 +4164,10 @@ export class ExpressionTyping {
    *  what `handleHeldBy` reads the parts of a written value by. */
   private readonly exactTypes = new WeakMap<Expression, FieldType | undefined>();
 
+  /** The expressions already refused for a closure operand, so what holds
+   *  them is not refused for it again. */
+  private readonly closureOperandRefused = new WeakSet<Expression>();
+
   /** The sub-expressions that were a bare NAME, by that name — so the walk for
    *  an engine object can ask what the name may hold beyond its type. */
   private readonly bareNames = new WeakMap<Expression, string>();
@@ -4994,8 +4969,10 @@ export class ExpressionTyping {
       case 'arithmetic': {
         const left = this.inferAt(expr.left, position);
         const right = this.inferAt(expr.right, position);
-        this.requireTransparent(left, 'used in arithmetic');
-        this.requireTransparent(right, 'used in arithmetic');
+        const leftOpaque = this.requireTransparent(left, 'used in arithmetic');
+        const rightOpaque = this.requireTransparent(right, 'used in arithmetic');
+        // A closure refused as an operand is said once (language version 5).
+        if ((leftOpaque && mayBeClosure(left)) || (rightOpaque && mayBeClosure(right))) return 'number';
         const nonNumeric = checkArithmeticOperands(expr, left, right);
         if (nonNumeric !== null) this.report(nonNumeric.code, nonNumeric.message);
         return 'number';
@@ -5003,18 +4980,22 @@ export class ExpressionTyping {
       case 'compare': {
         const leftType = this.inferAt(expr.left, position);
         const rightType = this.inferAt(expr.right, position);
+        if (this.refuseClosureOperands([[expr.left, leftType], [expr.right, rightType]], expr, 'compared')) return 'boolean';
         this.checkCompareOperands(expr.op, expr, leftType, rightType);
         return 'boolean';
       }
       case 'logical':
         this.inferLogical(expr, position);
+        this.refuseClosureOperands(expr.operands.map(o => [o, this.readTypes.get(o)] as const), expr, `joined by ${expr.op.toUpperCase()}`);
         return 'boolean';
-      case 'not':
-        this.inferAt(expr.expression, position);
+      case 'not': {
+        const operand = this.inferAt(expr.expression, position);
+        this.refuseClosureOperands([[expr.expression, operand]], expr, 'negated by NOT');
         return 'boolean';
+      }
       case 'negate': {
         const inner = this.inferAt(expr.expression, position);
-        this.requireTransparent(inner, 'negated');
+        if (this.requireTransparent(inner, 'negated') && mayBeClosure(inner)) return 'number';
         const nonNumeric = checkNegateOperand(inner);
         if (nonNumeric !== null) this.report(nonNumeric.code, nonNumeric.message);
         return 'number';
@@ -5026,13 +5007,15 @@ export class ExpressionTyping {
         const proofs = presenceProofs(expr.condition, o => this.inferAt(o, position));
         const thenType = this.withPresence(proofs, position, narrowed => this.inferAt(expr.then, narrowed));
         const elseType = this.inferAt(expr.else, position);
+        // A closure is not data (language version 5): IF chooses between
+        // values, and a closure is kept in a variable or passed as an
+        // argument, never chosen by a value expression.
+        if (this.refuseClosureOperands([[expr.then, thenType], [expr.else, elseType]], expr, 'chosen by IF … THEN … ELSE … END')) {
+          return undefined;
+        }
         if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
           return thenType;
         }
-        // Closures (language version 5) are TypeScript's `c ? a : b` over
-        // functions: the union of the two, so a call through it is typed by
-        // what either returns.
-        if (since(this.options.languageVersion, 5)) return closureUnion([thenType, elseType]);
         return undefined;
       }
       case 'at': {
@@ -5210,13 +5193,20 @@ export class ExpressionTyping {
             : lookupBuiltin(expr.fn);
         if (builtin !== undefined) {
           this.absorbBuiltinEffects(builtin);
+          if (this.refuseClosureOperands(
+            expr.args.flatMap((arg, i) => (builtinParamAt(builtin, i)?.type === 'function' ? [] : [[arg, args[i]] as const])),
+            expr,
+            `handed to ${builtin.name}`,
+          )) {
+            return undefined;
+          }
           this.checkBuiltinArgs(builtin, args);
         }
         if (expr.fn === FILE_FUNCTION_ID) return 'file';
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
-        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, since(this.options.languageVersion, 5));
+        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
         if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {
@@ -5400,10 +5390,30 @@ export class ExpressionTyping {
    * its own type says so or what it may hold does (a function's answer).
    */
   private refuseClosureAsData(expr: Expression, type: FieldType | undefined, where: string): void {
-    if (before(this.options.languageVersion, 5)) return;
+    if (before(this.options.languageVersion, 5) || this.closureOperandRefused.has(expr)) return;
     if (mayBeClosure(type) || mayBeClosure(this.mayHoldType(expr))) {
       this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage(where));
     }
+  }
+
+  /**
+   * A closure as an OPERAND of a value expression (language version 5) — an
+   * IF's arm, COALESCE's argument, a comparison's side, a built-in's argument
+   * that is not its function: refused once for the whole expression, which is
+   * remembered so a list or map holding it does not say so again. True when
+   * it fired.
+   */
+  private refuseClosureOperands(
+    operands: ReadonlyArray<readonly [Expression, FieldType | undefined]>,
+    whole: Expression,
+    operation: string,
+  ): boolean {
+    if (before(this.options.languageVersion, 5)) return false;
+    const closure = operands.some(([operand, type]) => mayBeClosure(type) || mayBeClosure(this.mayHoldType(operand)));
+    if (!closure) return false;
+    this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage(`a value ${operation} is`));
+    this.closureOperandRefused.add(whole);
+    return true;
   }
 
   /**
@@ -5681,6 +5691,12 @@ export class ExpressionTyping {
   }
 
   private requireTransparent(type: FieldType | undefined, operation: string): boolean {
+    // A closure is not data (language version 5) — said as that, not as the
+    // record a closure's type is built on.
+    if (since(this.options.languageVersion, 5) && mayBeClosure(type)) {
+      this.report(TypedDiagnosticCodes.CLOSURE_NOT_DATA, closureNotDataMessage(`a value ${operation} is`));
+      return true;
+    }
     const diagnostic = checkJsonOpaque(type, operation) ?? checkRecordAsValue(type, operation);
     if (diagnostic === null) return false;
     this.report(diagnostic.code, diagnostic.message);
