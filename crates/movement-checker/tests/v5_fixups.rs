@@ -169,3 +169,29 @@ fn a_negative_literal_index_reads_the_tuples_slot_as_at_did() {
     let first = errors(&program("0"), 5);
     assert!(first.iter().any(|e| e.starts_with("MOV_CALL_ARG_TYPE")), "{first:?}");
 }
+
+const REGISTRY: &str = r#"{"adapters":{"registry":{"canFire":true,"constructionArgs":[{"name":"credentials","kind":"credential","required":true}],"schemas":{"public_registry":{"positions":{"entity":{"properties":{"Name":"text","City":"text"},"edges":{}}},"collections":{"entities":{"target":"entity"}},"writableRoots":{"entity":{"fields":{"Name":"text","City":"text"},"resultShape":{"externalId":"text","Name":"text","City":"text"},"fuzzyResolution":["Name"]}}}}}},"credentials":{"public_registry":{"adapters":["registry"]}},"plugins":{}}"#;
+
+#[test]
+fn a_targets_bare_field_is_respelled_through_the_alias_at_its_own_place() {
+    let edits = |line: &str| -> Vec<(u64, u64, String)> {
+        let source = format!(
+            "import {{ registry }} from adapters\nimport {{ public_registry }} from credentials\nreg = registry(credentials: public_registry)\nmovement main() {{\n{line}\n}}"
+        );
+        let catalog = CatalogSnapshot::load(REGISTRY).unwrap();
+        let options = CheckOptions { language_version: 5, upgrading_from: Some(4), parse_version: None, zones: &movement_checker::host::native::NativeZones };
+        let found = check_source(&source, &catalog, options).unwrap();
+        let d = found.into_iter().find(|d| d.code == "MOV_V5_SPELLING" && d.message.contains("hop's alias")).expect("a walk field respelling");
+        d.fix.expect("a fix")["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["span"]["start"]["col"].as_u64().unwrap(), e["span"]["end"]["col"].as_u64().unwrap(), e["text"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let expected = |at: u64| vec![(at, at, "e".to_string()), (at + 16, at + 22, "e.`City`".to_string())];
+    // `  write reg-[` puts the colon at column 14; `  rows = reg-[` at 15.
+    assert_eq!(edits("  write reg-[:entities WHERE `City` == \"x\"]-> { unique by (FUZZY `Name`), Name: \"a\" }"), expected(14));
+    assert_eq!(edits("  m = match reg-[:entities WHERE `City` == \"x\"]-> { unique by (FUZZY `Name`), Name: \"a\" }"), expected(18));
+    assert_eq!(edits("  rows = reg-[:entities WHERE `City` == \"x\"]->"), expected(15));
+}

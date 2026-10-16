@@ -1822,8 +1822,13 @@ impl Parser {
                 }
             }
             let hops_raw = self.text(hops_start, self.pos);
+            // From 5 the walk ends at its last hop, as a block head's does:
+            // what follows (a written type, the space before the body) is not
+            // its, and a rewrite placed from the walk's end lands in it.
+            let hops_end = self.pos;
             let explicit_type = self.try_read_explicit_write_type()?;
-            let path = PathHead { root: Some(root), hops_raw, span: self.span_from(target_start) };
+            let path_end = if since(self.version, 5) { hops_end } else { self.pos };
+            let path = PathHead { root: Some(root), hops_raw, span: self.span_between(target_start, path_end) };
             return Ok(WriteTarget::Linked { path, explicit_type, span: self.span_from(target_start) });
         }
         // A bare name or member path updates the record it holds in place

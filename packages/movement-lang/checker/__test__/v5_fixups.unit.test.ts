@@ -198,3 +198,38 @@ describe("a negative literal index from 5 reads the tuple's slot, as AT(t, -1) d
     expect(errors(program('0'), 5).join('\n')).toMatch(/MOV_CALL_ARG_TYPE/);
   });
 });
+
+describe("a target's bare field is respelled through the hop's alias at its own place", () => {
+  const registry = mockCatalog({
+    adapters: {
+      registry: {
+        constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+        schema: {
+          positions: { entity: { properties: { Name: 'text', City: 'text' }, edges: {} } },
+          collections: { entities: { target: 'entity' } },
+          writableRoots: {
+            entity: { fields: { Name: 'text', City: 'text' }, resultShape: { externalId: 'text', Name: 'text', City: 'text' }, fuzzyResolution: ['Name'] },
+          },
+        },
+      },
+    },
+    credentials: { public_registry: { adapter: 'registry' } },
+  });
+  const edits = (line: string) => {
+    const source = `import { registry } from adapters\nimport { public_registry } from credentials\nreg = registry(credentials: public_registry)\nmovement main() {\n${line}\n}`;
+    const d = checkProgram(parseProgram(source, { languageVersion: 5 }), registry, { languageVersion: 5, upgradingFrom: 4 }).find(
+      (d) => d.code === 'MOV_V5_SPELLING' && d.message.includes("hop's alias"),
+    );
+    return d?.fix?.edits.map((e) => [e.span.start.col, e.span.end.col, e.text]);
+  };
+  const expected = (at: number) => [
+    [at, at, 'e'],
+    [at + 16, at + 22, 'e.`City`'],
+  ];
+
+  it('in a write or a match target as in a walk read (the colon at 14, 18 and 15)', () => {
+    expect(edits('  write reg-[:entities WHERE `City` == "x"]-> { unique by (FUZZY `Name`), Name: "a" }')).toEqual(expected(14));
+    expect(edits('  m = match reg-[:entities WHERE `City` == "x"]-> { unique by (FUZZY `Name`), Name: "a" }')).toEqual(expected(18));
+    expect(edits('  rows = reg-[:entities WHERE `City` == "x"]->')).toEqual(expected(15));
+  });
+});
