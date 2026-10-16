@@ -7,17 +7,19 @@
 // before. The frozen behaviour is pinned here.
 
 import type { InstanceSchema } from 'movement-lang';
-import type { Adapter, RuntimeCapabilities, WriteInput } from '../../translation_graph/adapter';
-import type { TriggerEvent } from '../../translation_graph/triggers/types';
-import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import { tenantIdOf } from 'engine-contracts';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
-import { staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
-import { runMovement } from '../run';
+import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
+import { teamOfTenant } from '../../translation_graph/movement/tenant';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
-const TEAM_ID = '00000000-0000-0000-0000-000000000097' as TeamId;
+const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000097');
 const KG = 'kg';
-const manualAdapter = createManualAdapter({ teamId: TEAM_ID });
+const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 function makeKgFake() {
   const creates: WriteInput[] = [];
@@ -66,7 +68,7 @@ const kgSchema: InstanceSchema = {
   },
   };
 
-const catalog = staticCatalogFromManifests({
+const catalog = staticCatalogSnapshot({
   credentials: { kg_cred: { adapters: ['kg'] } },
   instanceSchemas: { kg: kgSchema },
 });
@@ -103,11 +105,15 @@ async function runUnder(languageVersion: 4 | 5) {
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
-    resolveAdapter: ({ adapterType }: { adapterType: string }) => {
-      if (adapterType === 'manual') return manualAdapter;
-      if (adapterType === KG) return kg.adapter;
-      throw new Error(`test: no fake adapter for '${adapterType}'`);
-    },
+    host: makeTestHost({
+      adapters: {
+        resolve: ({ adapterType }: { adapterType: string }) => {
+          if (adapterType === 'manual') return manualAdapter;
+          if (adapterType === KG) return kg.adapter;
+          throw new Error(`test: no fake adapter for '${adapterType}'`);
+        },
+      },
+    }),
     dryRun: false,
     languageVersion,
   });
