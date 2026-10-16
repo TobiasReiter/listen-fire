@@ -202,18 +202,32 @@ afterEach(() => setRunEngineRecorder(undefined));
 
 let runs = 0;
 
-async function run(body: string[], config: Config, answers: Record<string, TransformInvocationResult>, replies: unknown[] = []): Promise<Recorded[]> {
+/** What a run is set up with beyond its body: the extraction's replies, and
+ *  the program's imports and catalog when they are not the plain ones. */
+interface RunSetup {
+  replies?: unknown[];
+  prelude?: string;
+  catalog?: typeof catalog;
+}
+
+async function run(
+  body: string[],
+  config: Config,
+  answers: Record<string, TransformInvocationResult>,
+  setup: RunSetup = {},
+): Promise<Recorded[]> {
+  const replies = setup.replies ?? [];
   const { adapter: email } = makeFakeAdapter('email');
   const { invoker, calls } = stubInvoker(answers);
   await under(config, () =>
     runMovement({
-      source: [PRELUDE, 'function intake(m: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+      source: [setup.prelude ?? PRELUDE, 'function intake(m: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
       languageVersion: 5,
       runId: `run-v5-plugin-${++runs}`,
       movementName: 'intake',
       event: { pipelineInputId: 'pi-v5-plugin-calls', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'https://acme.example' } },
       teamId: TEAM_ID,
-      catalog,
+      catalog: setup.catalog ?? catalog,
       credentialIds: {},
       host: makeTestHost({
         adapters: { resolve: () => email },
@@ -276,7 +290,72 @@ describe.each(ENGINES)('a plugin called by position on %s', (_name, config, engi
       ],
       config,
       { research: { data: { summary: 'Payments.' } } },
-      [{ 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] }],
+      { replies: [{ 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] }] },
+    );
+    expect(recorded.map((r) => r.engine)).toEqual([engine]);
+    expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
+  });
+});
+
+// A plugin package from language version 5 (design §2.10): a package import
+// binds each member as `web.fetchUrl`, and a member call is the plugin's own
+// call — invoked by its catalog key, with the named config.
+const WEB = new Set(['fetch_url', 'research']);
+const packaged: typeof catalog = {
+  ...catalog,
+  plugins: Object.fromEntries(
+    Object.entries(catalog.plugins).map(([key, spec]) => [key, WEB.has(key) ? { ...spec, package: '@lf/web' } : spec]),
+  ),
+};
+const PACKAGED = [
+  'import { `@lf/email` as email } from adapters',
+  'import { `@lf/web` as web } from plugins',
+  '',
+  'inbox = connect email',
+  '',
+].join('\n');
+
+describe.each(ENGINES)("a package's member called on %s", (_name, config, engine) => {
+  it('is its plugin, bound, bare, nested, as an argument and in a closure', async () => {
+    const calls = await run(
+      [
+        '  page = web.fetchUrl(m.`text`)',
+        '  web.fetchUrl(m.`subject`)',
+        '  n = coalesce(web.fetchUrl(m.`text`), "none")',
+        '  more = web.research(web.fetchUrl(m.`subject`), { context: m.`text` })',
+        '  g = (x: <text>) => {',
+        '    q = web.fetchUrl(x)',
+        '    return q',
+        '  }',
+        '  y = g("https://g.example")',
+      ],
+      config,
+      { fetch_url: { text: 'Acme' }, research: { data: { summary: 'Payments.' } } },
+      { prelude: PACKAGED, catalog: packaged },
+    );
+    expect(recorded.map((r) => r.engine)).toEqual([engine]);
+    expect(calls).toEqual([
+      { plugin: 'fetch_url', config: { url: 'https://acme.example' } },
+      { plugin: 'fetch_url', config: { url: 'Acme' } },
+      { plugin: 'fetch_url', config: { url: 'https://acme.example' } },
+      { plugin: 'fetch_url', config: { url: 'Acme' } },
+      { plugin: 'research', config: { name: 'Acme', context: 'https://acme.example' } },
+      { plugin: 'fetch_url', config: { url: 'https://g.example' } },
+    ]);
+  });
+
+  it('is a through stage', async () => {
+    const calls = await run(
+      [
+        '  found = extract from [m.`text`] {',
+        '    name: "the company"',
+        '  } through [web.research(m.`subject`, { questions: "what it does" })] {',
+        '    summary: "what it does"',
+        '  }',
+      ],
+      config,
+      { research: { data: { summary: 'Payments.' } } },
+      { replies: [{ 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] }], prelude: PACKAGED, catalog: packaged },
     );
     expect(recorded.map((r) => r.engine)).toEqual([engine]);
     expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
