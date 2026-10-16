@@ -540,7 +540,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const companies = { 'x:extract_result#1': [{ company: [{ name: wrap('Acme') }, { name: wrap('Globex') }] }] };
     const found = ['  found = extract from [msg.`text`] {', '    node company: "each company named" {', '      name: "the company\'s name"', '    }', '  }'];
 
-    it("fails a head's WHERE over a held extraction as the TypeScript does, before the body", async () => {
+    it("keeps the entities a head's WHERE over a held extraction holds for, on both engines", async () => {
       const source = [
         'function m(msg: <inbox-[:message]->>) {',
         ...found,
@@ -551,7 +551,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         '}',
       ].join('\n');
       const ts = await agree({ source, replies: [companies] }, { runsWhole: true });
-      expect('error' in ts && String(runFailureCause(ts.error))).toContain('WHERE filters on extract-result block heads is not supported');
+      expect('error' in ts && ts.error).toBeFalsy();
     });
 
     it("ends the event inside an input at the check (its deck is a file), and writes any other record there as its fields", async () => {

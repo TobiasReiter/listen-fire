@@ -3403,9 +3403,7 @@ impl Names<'_> {
         };
         let Some((TraversalStep::Edge(step), rest)) = steps.split_first() else { return refuse("block_head_step") };
         refuse_meta_edge(&step.edge_type_id)?;
-        if let Some(filter) = &step.expression_filter {
-            self.scoped(filter)?;
-        }
+        self.in_memory_hop(step)?;
         // Past the node's own edge the walk is the landing's: a node's edge
         // again, or a system's record walked on as a source head walks
         // (`walkNodePlane`), so a later hop is held to both.
@@ -3415,11 +3413,10 @@ impl Names<'_> {
         })
     }
 
-    /// A head over what an extraction yielded: one hop down one of its
-    /// edges, as the TypeScript walks it: a WHERE fails the run as its
-    /// `headIterationsFrom` fails it (crate::traverse `extract_paths`, the
-    /// same `unsupported`), and an ORDER BY, a LIMIT or a direction is not
-    /// read, by either engine.
+    /// A head over what an extraction yielded: hops down its edges, as the
+    /// TypeScript walks them (crate::traverse `extract_paths`): each hop's
+    /// WHERE, and from 5 its ORDER BY key, scoped at the entity it lands on;
+    /// a direction is not read, by either engine.
     fn extract_head(&self, root: &str, head: &PathHead) -> Admitted {
         let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
         let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
@@ -3431,10 +3428,23 @@ impl Names<'_> {
             Expression::ResourceTraverse { expression_filter, .. } => return self.resource_filter(expression_filter.as_deref()),
             _ => return refuse("block_head_does_not_lower"),
         };
-        match steps.iter().all(|step| matches!(step, TraversalStep::Edge(_))) {
-            true => Ok(()),
-            false => refuse("block_head_step"),
+        steps.iter().try_for_each(|step| match step {
+            TraversalStep::Edge(step) => self.in_memory_hop(step),
+            _ => refuse("block_head_step"),
+        })
+    }
+
+    /// One hop over records in hand (an extraction's entities, a node's
+    /// landings; crate::reading `keep_in_memory_hop`): its WHERE and ORDER
+    /// BY key scoped at the record it lands on.
+    fn in_memory_hop(&self, step: &movement_parser::lowering::expression::EdgeStep) -> Admitted {
+        if let Some(filter) = &step.expression_filter {
+            self.scoped(filter)?;
         }
+        if let Some(key) = step.cardinality.as_ref().and_then(|c| c.order_by.as_deref()) {
+            self.scoped(key)?;
+        }
+        Ok(())
     }
 
     /// `x = <expression>`: a bare name of a record is a second name for it
@@ -3508,12 +3518,15 @@ impl Names<'_> {
     /// the records it holds; off a kept walk, the walk runs on past its head
     /// (`resolveDeferred`), each hop held to what every kind reads.
     fn walk_hops(&self, root: &str, steps: &[TraversalStep]) -> Admitted {
-        // Down an extraction, plain hops (`walkExtractSteps`): a WHERE or a
-        // hop that is no edge fails the run as the TypeScript's fails it
-        // (crate::traverse `walk_extract`, the same `unsupported`, before the
-        // WHERE is read); an ORDER BY, a LIMIT or a direction is not read.
+        // Down an extraction (`walkExtractSteps`): a hop that is no edge fails
+        // the run as the TypeScript's fails it (crate::traverse
+        // `walk_extract`, the same `unsupported`); each edge's WHERE and
+        // ORDER BY key are read at the entity it lands on.
         if self.extracts.contains(root) {
-            return Ok(());
+            return steps.iter().try_for_each(|step| match step {
+                TraversalStep::Edge(step) => self.in_memory_hop(step),
+                _ => Ok(()),
+            });
         }
         steps.iter().try_for_each(|step| match step {
             TraversalStep::Edge(step) => self.hop(step),

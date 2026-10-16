@@ -1855,6 +1855,15 @@ export async function evalMovementExpr(
           ctx.scope.read,
         );
       }
+      // Only a walked hop's record carries inline edge properties. Over an
+      // in-memory edge (an extracted child, a node literal's landing) an alias
+      // read is that record's own field, and from 5 a bare name is the
+      // variable it names, as everywhere else.
+      if (ctx.scope) {
+        if (expr.fieldOnly === true) return readScopedProperty(expr.propertyTypeId, ctx.scope, ctx);
+        const variable = since(ctx.languageVersion, 5) ? scopedBinding(expr.propertyTypeId, ctx) : undefined;
+        if (variable) return variable;
+      }
       throw unsupported(
         'edge-property reads outside a traversal WHERE',
         'edge properties exist only on a walked hop',
@@ -2612,7 +2621,7 @@ async function traverseFrom(
 
     case 'extractRoot':
     case 'extractPosition': {
-      const emissions = walkExtractSteps(binding.emission, expr.steps, name);
+      const emissions = await walkExtractSteps(binding.emission, expr.steps, name, ctx);
       const existsTerminal = existsTerminalOf(expr, name, { allowSteps: true });
       if (existsTerminal) {
         return evaluateExists(existsTerminal, emissions.map(extractPositionOf), ctx);
@@ -3398,6 +3407,31 @@ export async function hopFilterKeeps(input: {
   return Boolean(await evalScopedFilter(filter, scopeOf(landed), { ...ctx, env }));
 }
 
+/**
+ * One hop over records already in hand (an extracted entity's children, a
+ * node literal's landings), from one origin: the ones its WHERE keeps, and
+ * from 5 in its ORDER BY and cut to its LIMIT, as a hop over a source record
+ * is. Versions 1–4 never read an in-memory hop's ORDER BY or LIMIT, so they
+ * still don't.
+ */
+export async function keepInMemoryHop<T extends Binding>(
+  landings: T[],
+  step: EdgeStep,
+  ctx: MovementExprContext,
+): Promise<T[]> {
+  const kept: T[] = [];
+  for (const landed of landings) {
+    if (
+      step.expressionFilter === undefined
+      || (await hopFilterKeeps({ step, filter: step.expressionFilter, landed, ctx }))
+    ) {
+      kept.push(landed);
+    }
+  }
+  if (!since(ctx.languageVersion, 5)) return kept;
+  return applyHopOrderLimit(kept, step.cardinality, { value: hopOrderKeyReader(step, ctx) });
+}
+
 const NEEDS_THE_CLOCK = Symbol('a WITHIN needs the clock');
 
 /**
@@ -3759,20 +3793,23 @@ export function nodeEdgeLandings(
 
 /** Walks plain edge hops over the extract result graph — each hop fans
  *  out to the child emissions, exactly like the language's blocks do. */
-function walkExtractSteps(
+async function walkExtractSteps(
   root: ExtractEmission,
   steps: Extract<Expression, { type: 'traverse' }>['steps'],
   name: string,
-): ExtractEmission[] {
+  ctx: MovementExprContext,
+): Promise<ExtractEmission[]> {
   let current: ExtractEmission[] = [root];
   for (const step of steps) {
     if (step.type !== 'edge') {
       throw unsupported(`'${step.type}' hops over the extract result ('${name}')`);
     }
-    if (step.expressionFilter) {
-      throw unsupported(`WHERE filters on extract-result hops ('${name}')`);
+    const next: ExtractEmission[] = [];
+    for (const emission of current) {
+      const children = (emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
+      next.push(...(await keepInMemoryHop(children, step, ctx)).map((child) => child.emission));
     }
-    current = current.flatMap((e) => e.children.get(step.edgeTypeId) ?? []);
+    current = next;
   }
   return current;
 }
@@ -3850,16 +3887,13 @@ async function walkMetaSteps(
       // A landed edge holds its landings in hand — a local graph's own — so a
       // hop WHERE keeps the ones it holds for, through the same keep decision
       // every other walker makes.
-      const kept: Binding[] = [];
-      for (const landed of edge?.landings ?? []) {
-        if (
-          step.expressionFilter === undefined
-          || (await hopFilterKeeps({ step, filter: step.expressionFilter, landed, ctx }))
-        ) {
-          kept.push(landed);
-        }
-      }
+      const kept = await keepInMemoryHop(edge?.landings ?? [], step, ctx);
       reached.push(...(await walkMetaSteps(kept, rest, name, ctx)));
+      continue;
+    }
+    if (binding.kind === 'extractPosition' || binding.kind === 'extractRoot') {
+      const children = (binding.emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
+      reached.push(...(await walkMetaSteps(await keepInMemoryHop(children, step, ctx), rest, name, ctx)));
       continue;
     }
     if (step.expressionFilter) {
@@ -3873,11 +3907,6 @@ async function walkMetaSteps(
     }
     if (binding.kind === 'positions') {
       reached.push(...(await walkMetaSteps(binding.landings, steps, name, ctx)));
-      continue;
-    }
-    if (binding.kind === 'extractPosition' || binding.kind === 'extractRoot') {
-      const children = (binding.emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
-      reached.push(...(await walkMetaSteps(children, rest, name, ctx)));
       continue;
     }
     throw unsupported(

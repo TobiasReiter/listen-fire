@@ -121,6 +121,11 @@ for byte; on text already in the version 5 spelling it changes nothing.
   and a program pinned there still does. A move up across 5 warns a count of a list that may hold an
   empty item (`MOV_COUNT_COUNTS_EMPTY`). The rewrites `LENGTH(xs)` → `count(xs)` and `EXISTS(xs)` →
   `count(xs) > 0` of a list keep the meaning, and are marked safe to apply automatically.
+- **A hop over records the run already holds keeps its ORDER BY and LIMIT**: an extraction's
+  entities (`deals-[c:company ORDER BY c.rank]->`), a `node { … }` or `graph { … }` literal's
+  entries and the records written onto a local node, in a block head, an expression and `exists`.
+  Under 1 to 4 those two were silently not read there (only `exists` read them). Why: a hop means
+  the same thing whatever it walks over.
 - **`found != null` on the records a block returned says whether it returned any**, as
   `EXISTS(found)` does. Why: from 5 `!= null` is how a program asks what `EXISTS` asked of a
   value. Under 4 and earlier those records always counted as present, so the test was always true,
@@ -740,6 +745,14 @@ for byte; on text already in the version 5 spelling it changes nothing.
 
 ### Fixed
 
+- A hop's alias read under 5 (`c.name` in `-[c:company WHERE c.name == "Acme"]->`) works over
+  records the run already holds: an extraction's entities, nested ones too, a `node { … }` or
+  `graph { … }` literal's entries and the records written onto a local node. Before, both engines
+  failed the run with "edge-property reads outside a traversal WHERE", so these programs had no
+  runnable version 5 spelling. A bare name there is the variable it names, as everywhere under 5.
+- A hop's WHERE over an extraction's entities runs in a block head and an expression
+  (`deals-[c:company WHERE …]-> { … }`, `Text.join(deals-[c:company WHERE …]->.name, ", ")`), on
+  every language version. Before, only `exists` ran it; the others failed the run.
 - `MOVEMENT_ENGINE=rust`: a file bound to a name such as `fields`, `body`, `head`, `position`, `op`,
   `mapping`, `closure`, `params`, `origin` or `handle` is a file again after a park and resume
   (before, it came back as a dict and `READ` of it failed). The host now finds a parked state's

@@ -1825,15 +1825,20 @@ impl Run<'_> {
             },
             Ask::ScopedField { field, edge, field_only } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
                 Scoped::Landed(landed) => self.scoped_field(landed, &field, crate::traverse::ScopedRead { edge, field_only }, scope).await.map(Ok),
-                Scoped::Emission(_) if edge => Ok(Err(EvalError::engine(
-                    "MOVENG_UNSUPPORTED",
-                    "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
-                ))),
+                // Only a walked hop's record carries inline edge properties.
+                // Over an in-memory edge (an extracted child, a node literal's
+                // landing) an alias read is that record's own field, and from 5
+                // a bare name is the variable it names, as everywhere else.
+                Scoped::Emission(_) | Scoped::Binding(_) if edge && !field_only => match scope.resolve(&field) {
+                    Some(Binding::Value(value)) if movement_parser::version::since(self.version(), 5) => {
+                        Ok(Ok(Evaluated { value: value.value, prov: Prov::Built(value.trail.unwrap_or_default()) }))
+                    }
+                    _ => Ok(Err(EvalError::engine(
+                        "MOVENG_UNSUPPORTED",
+                        "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
+                    ))),
+                },
                 Scoped::Emission(emission) => Ok(crate::write::emission_field(emission, &field)),
-                Scoped::Binding(_) if edge => Ok(Err(EvalError::engine(
-                    "MOVENG_UNSUPPORTED",
-                    "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
-                ))),
                 Scoped::Binding(binding) => self.read_binding_field(binding, &field, "the scoped position").map(Ok),
             },
             Ask::Traverse { expr } => {

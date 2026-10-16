@@ -261,7 +261,7 @@ impl Run<'_> {
                     self.binding_field(&Binding::Handle(handle), field).map_err(|e| Failure::of_eval(e, ""))
                 }
                 Binding::Extracted { emission, .. } => {
-                    let emissions = crate::traverse::walk_extract(&emission, steps, name)?;
+                    let emissions = self.walk_extract(&emission, steps, name, scope, span).await?;
                     let reached: Vec<Binding> =
                         emissions.iter().map(|e| Binding::Extracted { emission: e.clone(), root: false, id: Identity::new() }).collect();
                     if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
@@ -428,13 +428,18 @@ impl Run<'_> {
                             reached.extend(self.deferred_landings(&walk, rest).await?);
                             continue;
                         }
-                        let mut kept = Vec::new();
                         let landings = node.borrow().landings(&step.edge_type_id);
-                        for landed in landings {
-                            if self.hop_keeps_binding(step, &landed, scope, span).await? {
-                                kept.push(landed);
-                            }
-                        }
+                        let kept = self.keep_in_memory_hop(landings, step, scope, span).await?;
+                        reached.extend(self.walk_meta(kept, rest, name, scope, span).await?);
+                        continue;
+                    }
+                    Binding::Extracted { emission, .. } => {
+                        let children: Vec<Binding> = emission
+                            .children_of(&step.edge_type_id)
+                            .iter()
+                            .map(|child| Binding::Extracted { emission: child.clone(), root: false, id: Identity::new() })
+                            .collect();
+                        let kept = self.keep_in_memory_hop(children, step, scope, span).await?;
                         reached.extend(self.walk_meta(kept, rest, name, scope, span).await?);
                         continue;
                     }
@@ -445,14 +450,6 @@ impl Run<'_> {
                 }
                 match binding {
                     Binding::Positions(landings) => reached.extend(self.walk_meta(landings, steps, name, scope, span).await?),
-                    Binding::Extracted { emission, .. } => {
-                        let children: Vec<Binding> = emission
-                            .children_of(&step.edge_type_id)
-                            .iter()
-                            .map(|child| Binding::Extracted { emission: child.clone(), root: false, id: Identity::new() })
-                            .collect();
-                        reached.extend(self.walk_meta(children, rest, name, scope, span).await?);
-                    }
                     other => {
                         return Err(unsupported(&format!(
                             "traversing '{}' from {} inside a meta-node read",
@@ -485,6 +482,24 @@ impl Run<'_> {
             None => scope.clone(),
         };
         self.decides(filter, &at, crate::traverse::scoped_at(landed), span).await
+    }
+
+    /// `keepInMemoryHop`: one hop over records in hand (an extracted
+    /// entity's children, a node literal's landings) from one origin — the
+    /// ones its WHERE keeps, and from 5 in its ORDER BY and cut to its LIMIT,
+    /// as a hop over a source record is. Versions 1–4 never read an in-memory
+    /// hop's ORDER BY or LIMIT, so they still don't.
+    pub(crate) async fn keep_in_memory_hop(&self, landings: Vec<Binding>, step: &EdgeStep, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Binding>, Failure> {
+        let mut kept = Vec::new();
+        for landed in landings {
+            if self.hop_keeps_binding(step, &landed, scope, span).await? {
+                kept.push(landed);
+            }
+        }
+        if !movement_parser::version::since(self.version(), 5) {
+            return Ok(kept);
+        }
+        self.ordered_bindings(kept, step, scope, span).await
     }
 
     /// `readLandings`: the records themselves (a value landing as its
