@@ -268,3 +268,15 @@ fn bang_binds_as_typescript_s_unary_operator() {
     // `NOT` keeps its reach (it is refused as a spelling, its fix `!(…)`).
     assert_eq!(upgraded("NOT a == b"), "!(a == b)");
 }
+
+#[test]
+fn fail_is_the_error_statement() {
+    let new = program("function f() {\n  fail(\"no\")\n}\n", 5);
+    assert!(new.spelling.is_empty(), "{:?}", new.spelling);
+    let (n, o) = (serde_json::to_value(&new.statements).unwrap(), statements("movement f() {\n  ERROR(\"no\")\n}\n", 4));
+    assert!(n.pointer("/0/body/0").is_some(), "{n}");
+    assert_eq!(n.pointer("/0/body/0").map(|s| s.as_object().unwrap().keys().cloned().collect::<Vec<_>>()), o.pointer("/0/body/0").map(|s| s.as_object().unwrap().keys().cloned().collect::<Vec<_>>()));
+    assert_eq!(spelling("function f() {\n  ERROR(\"no\")\n}\n"), vec![("`ERROR` is written `fail` from language version 5".to_string(), "fail".to_string())]);
+    // Under 4 `fail` is no statement word.
+    assert!(crate::stmt::parse_program("movement f() {\n  ERROR(\"no\")\n}\n", 4, false).unwrap().spelling.is_empty());
+}

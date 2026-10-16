@@ -116,8 +116,13 @@ impl<'s> Canon<'s> {
         self.src.text(at.start, at.end)
     }
 
+    /// `at` is the whole text, or the whole of a parenthesised one (an `if`
+    /// condition from version 5): a rewrite there needs no parentheses.
     fn whole(&self, at: At) -> bool {
-        self.text(At { start: 0, end: at.start }).trim().is_empty() && self.text(At { start: at.end, end: self.src.len() }).trim().is_empty()
+        let before = self.text(At { start: 0, end: at.start });
+        let after = self.text(At { start: at.end, end: self.src.len() });
+        let (before, after) = (before.trim(), after.trim());
+        (before.is_empty() && after.is_empty()) || (before == "(" && after == ")")
     }
 
     /// `text`, parenthesised unless it is the whole expression.

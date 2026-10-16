@@ -638,6 +638,22 @@ impl<'a> Evaluator<'a> {
         if let Some(name) = name
             && self.env.binds_non_value(name)
         {
+            // From version 5 `x != null` is how a program writes what
+            // `EXISTS(x)` asked: a name bound to records that may be none (a
+            // block's returned records, a kept walk) is present only when it
+            // holds one, exactly as EXISTS answers.
+            if movement_parser::version::since(self.language_version, 5)
+                && matches!(self.env.binding(name), Some(Binding::Positions(_) | Binding::LazyWalk(_)))
+            {
+                let exists = Expression::Traverse {
+                    alias_root: Some(name.clone()),
+                    steps: Vec::new(),
+                    expression: Box::new(Expression::Exists { steps: Vec::new(), where_: None }),
+                };
+                let present = self.eval(&exists).await?;
+                let value = if present.value.truthy() { Js::Bool(true) } else { Js::Null };
+                return Ok(Evaluated { value: Js::Bool(compare_to_null(op, &value)), prov: present.prov });
+            }
             return Ok(Evaluated { value: Js::Bool(compare_to_null(op, &Js::Bool(true))), prov: Prov::Built(Trail::default()) });
         }
         let subject = self.eval(subject).await?;

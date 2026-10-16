@@ -1015,6 +1015,8 @@ impl Parser {
             }
             "if" => return Ok(Statement::If(self.parse_if()?)),
             "ERROR" => return Ok(Statement::Error(self.parse_error_statement()?)),
+            // From version 5 the statement is `fail("…")` (design §2.11).
+            "fail" if since(self.version, 5) => return Ok(Statement::Error(self.parse_error_statement()?)),
             "extract" => {
                 return self.fail_at("An 'extract' must be bound to a name — write `name = extract from […] { … }`", start);
             }
@@ -3583,9 +3585,14 @@ impl Parser {
     }
 
     fn parse_error_call(&mut self) -> SResult<ExprSlot> {
-        self.expect_word("ERROR", "an 'ERROR(…)' call")?;
+        let start = self.pos;
+        let word = if since(self.version, 5) && self.at_word("fail") { "fail" } else { "ERROR" };
+        self.expect_word(word, "an 'ERROR(…)' call")?;
+        if word == "ERROR" && since(self.version, 5) {
+            self.spelling("`ERROR` is written `fail` from language version 5", start, self.pos, vec![(start, self.pos, "fail".into())]);
+        }
         self.skip_inline_ws();
-        self.expect("(", "after 'ERROR'")?;
+        self.expect("(", if word == "fail" { "after 'fail'" } else { "after 'ERROR'" })?;
         let (slot, _) = self.read_expr_slot(Scan::new(")", "for the ERROR message"))?;
         self.expect(")", "to close the 'ERROR(…)' message")?;
         Ok(slot)
