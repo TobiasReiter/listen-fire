@@ -1,10 +1,9 @@
-// Traversal blocks in the Rust engine (chunk 5B task 4), held to the
-// TypeScript engine: each program runs under MOVEMENT_ENGINE=ts and =rust
-// against fresh fakes, and the two must agree on everything a caller can see
-// — the result or the error, the trace and its hand-overs, the resolver's
-// requests, and every call each adapter received, in order and key for key
-// (compared as JSON text, so the order of an argument object's keys is held
-// too: a hop's `getRelated` is the very request the TypeScript makes).
+// Traversal blocks in the Rust engine (the version-5 reference): each program
+// runs against fresh fakes, and everything a caller can see — the result or
+// the error, the trace and its hand-overs, the resolver's requests, and every
+// call each adapter received, in order and key for key — is held to a
+// snapshot read for correctness when it was recorded (compared as JSON text,
+// so the order of an argument object's keys is held too).
 
 import {
   fromCatalogSnapshot,
@@ -383,9 +382,6 @@ interface Case {
   suspendAt?: readonly string[];
   /** A fresh hold for each run (see `holdingRead`). */
   hold?: () => HeldRead;
-  /** The pin the run is under. Unpinned, a case compares under version 3
-   *  and under the current version (`agree`). */
-  languageVersion?: LanguageVersion;
   /** Text the upgrade tool cannot respell, written for version 5 instead:
    *  each pair replaces the first occurrence in the body before a version-5 run. */
   v5Edits?: ReadonlyArray<readonly [string, string]>;
@@ -464,8 +460,7 @@ async function runOn(c: Case): Promise<Outcome> {
   });
   try {
     const run = runMovement({
-      source: programFor(c.languageVersion ?? 5, c.body, c.v5Edits),
-      ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
+      source: programFor(5, c.body, c.v5Edits),
       event: c.event ?? webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,
       catalog,
@@ -514,14 +509,6 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
-/** The case on the Rust engine, the version-5 reference. A case pinned below
- *  5 runs on the TypeScript engine and is not this suite's. */
-async function agree(c: Case) {
-  if (c.languageVersion !== undefined && c.languageVersion < 5)
-    throw new Error(`test: a case pinned to ${c.languageVersion} runs on the TypeScript engine`);
-  return onRust(c);
-}
-
 /** One run on the Rust engine: run whole, and what
  *  the hosts saw and what the run handed back (or how it failed) held to the
  *  recorded snapshot, read for correctness when it was recorded. */
@@ -555,7 +542,7 @@ const NOTE_PER_COMPANY = (bracket: string) =>
 
 describe('traversal blocks in the Rust engine', () => {
   it('pushes the WHERE, ORDER BY and LIMIT and filters, sorts and slices what comes back, as the TypeScript engine does', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY(BRACKET) });
+    const { rust } = await onRust({ body: NOTE_PER_COMPANY(BRACKET) });
     expect(written(rust)).toEqual(['Globex', 'Umbrella']);
     const [method, fetch] = calls(rust).find(([m]) => m === 'getRelated')!;
     expect(method).toBe('getRelated');
@@ -581,8 +568,8 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('answers the same records in the same order whether the adapter honours the pushdown or filters nothing', async () => {
-    const local = await agree({ body: NOTE_PER_COMPANY(BRACKET) });
-    const pushed = await agree({ body: NOTE_PER_COMPANY(BRACKET), graph: { honours: true } });
+    const local = await onRust({ body: NOTE_PER_COMPANY(BRACKET) });
+    const pushed = await onRust({ body: NOTE_PER_COMPANY(BRACKET), graph: { honours: true } });
     expect(written(pushed.rust)).toEqual(written(local.rust));
     const fetch = (o: Outcome) => calls(o).find(([m]) => m === 'getRelated')?.[1];
     expect(fetch(pushed.rust)).toEqual(fetch(local.rust));
@@ -593,7 +580,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('orders by a key that is not a bare field locally, asking the adapter for neither the sort nor the limit', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: NOTE_PER_COMPANY('company ORDER BY LOWER(c.`name`) DESC LIMIT 3'),
     });
     expect(written(rust)).toEqual(['Umbrella', 'Initech', 'Hooli']);
@@ -603,7 +590,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('closes the pushed WHERE over the values the scope holds, an event field read before the fetch', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body:
         '  wanted = msg.`subject`\n' +
         NOTE_PER_COMPANY(
@@ -621,20 +608,20 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('decides a pure WHERE a conjunct at a time, and evaluates any other whole', async () => {
-    await agree({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Late" AND `revenue` > 1') });
-    await agree({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Late" OR `revenue` > 25') });
-    const impure = await agree({ body: NOTE_PER_COMPANY('company WHERE UPPER(`name`) == "ACME"') });
+    await onRust({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Late" AND `revenue` > 1') });
+    await onRust({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Late" OR `revenue` > 25') });
+    const impure = await onRust({ body: NOTE_PER_COMPANY('company WHERE UPPER(`name`) == "ACME"') });
     expect(written(impure.rust)).toEqual(['Acme']);
     expect(calls(impure.rust).find(([m]) => m === 'getRelated')?.[1]).not.toHaveProperty('where');
   });
 
   it('runs no body for an empty traversal', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Nowhere"') });
+    const { rust } = await onRust({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Nowhere"') });
     expect(written(rust)).toEqual([]);
     expect(rust.trace).toEqual([
       { kind: 'block', root: 'kg-[c:company WHERE c.`stage` == "Nowhere"]->', positions: 0 },
     ]);
-    const none = await agree({
+    const none = await onRust({
       body: NOTE_PER_COMPANY('lead'),
       graph: { collections: { company: COMPANIES } },
     });
@@ -643,7 +630,7 @@ describe('traversal blocks in the Rust engine', () => {
 
   it('traces the field a raw-payload landing does not carry, once, as the TypeScript engine does', async () => {
     // `note` is the schema's, and no record's payload carries it.
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: NOTE_PER_COMPANY('company WHERE `note` == null'),
       graph: { unstable: true },
     });
@@ -654,7 +641,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('walks a streamed traversal a page at a time, filtering each page before it asks for the next', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY(BRACKET), graph: { pageSize: 2 } });
+    const { rust } = await onRust({ body: NOTE_PER_COMPANY(BRACKET), graph: { pageSize: 2 } });
     expect(written(rust)).toEqual(['Globex', 'Umbrella']);
     const pages = calls(rust).filter(([m]) => m === 'iterateRelatedPage');
     expect(pages.map(([, p]) => p.cursor ?? null)).toEqual([null, 2, 4]);
@@ -667,7 +654,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('fails a paged traversal whose server hands its cursor back, with the TypeScript engine’s error', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: NOTE_PER_COMPANY('company'),
       graph: { pageSize: 2, stuckCursor: true },
     });
@@ -677,11 +664,11 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('walks off the event and off a write handle, each from its own position', async () => {
-    const offEvent = await agree({
+    const offEvent = await onRust({
       body: '  msg-[a:attachments]-> {\n    write kg-[:note]-> { text: a.`name` }\n  }',
     });
     expect(offEvent.rust.captured).toHaveLength(2);
-    const offHandle = await agree({
+    const offHandle = await onRust({
       body: '  co = write kg-[:company]-> { name: "Acme" }\n  co-[d:deals]-> {\n    write kg-[:note]-> { text: d.`title` }\n  }',
       graph: {
         collections: { company: COMPANIES, deal: [{ id: 'd-1', fields: { title: 'Seed round' } }] },
@@ -699,7 +686,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('runs each body at its own address with its own scope, in order', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  label = "co"',
         '  kg-[c:company WHERE `revenue` > 15 ORDER BY `name`]-> {',
@@ -722,12 +709,12 @@ describe('traversal blocks in the Rust engine', () => {
       { body: NOTE_PER_COMPANY('company'), costCapMicrodollars: 1_000 },
       { body: NOTE_PER_COMPANY('company'), suspendAt: ['s0.i1.s0'] },
     ]) {
-      await agree(c);
+      await onRust(c);
     }
   });
 
   it('drops the records of the members a narrowed hop is not about, before reading their fields', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  co = write kg-[:company]-> { name: "Acme" }',
         `  co-[le:list_entries WHERE ${NARROWED}]-> {`,
@@ -755,7 +742,7 @@ describe('traversal blocks in the Rust engine', () => {
   it('runs two blocks that reuse a hop alias and a body name, each in its own scope', async () => {
     const block = (where: string) =>
       `  kg-[c:company WHERE ${where}]-> {\n    n = c.\`name\`\n    write kg-[:note]-> { text: n }\n  }`;
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: `${block('`stage` == "Late"')}\n${block('`revenue` == 10')}`,
     });
     expect(written(rust)).toEqual(['Initech', 'Acme']);
@@ -789,7 +776,7 @@ describe('traversal blocks in the Rust engine', () => {
     ].join('\n');
 
     it('walks a hop off each landing, its body writing at both levels, in order', async () => {
-      const { rust } = await agree({ body: NESTED, graph: graph() });
+      const { rust } = await onRust({ body: NESTED, graph: graph() });
       expect(written(rust)).toEqual([
         'co Acme',
         'Acme: Series A!',
@@ -817,7 +804,7 @@ describe('traversal blocks in the Rust engine', () => {
     });
 
     it('fails mid-fan-out where the TypeScript engine does, keeping the writes before it', async () => {
-      const { rust } = await agree({ body: NESTED, graph: graph({ failOn: 'd-3' }) });
+      const { rust } = await onRust({ body: NESTED, graph: graph({ failOn: 'd-3' }) });
       expect(rust.failed).toBe(true);
       expect(String(runFailureCause(rust.error))).toContain('graph: d-3 is unreadable');
       expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.length : -1).toBe(
@@ -832,7 +819,7 @@ describe('traversal blocks in the Rust engine', () => {
         '      t = d.`title`',
         '      t = d.`title`\n      s = d.`stage`',
       );
-      const { rust } = await agree({ body, graph: graph({ failOn: 'd-1/stage' }) });
+      const { rust } = await onRust({ body, graph: graph({ failOn: 'd-1/stage' }) });
       expect(String(runFailureCause(rust.error))).toContain('graph: d-1 is unreadable');
       expect(
         rust.error instanceof MovementRunFailed
@@ -844,7 +831,7 @@ describe('traversal blocks in the Rust engine', () => {
 
   describe('bound blocks', () => {
     it('binds what the iterations return as one list, its trail the union of theirs', async () => {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: [
           '  names = kg-[c:company WHERE `revenue` >= 20 ORDER BY `name`]-> {',
           '    if c.`stage` == "Late" {',
@@ -859,7 +846,7 @@ describe('traversal blocks in the Rust engine', () => {
     });
 
     it('binds no returned records when nothing returns, read as an empty list and a null field', async () => {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: [
           '  none = kg-[c:company WHERE `stage` == "Nowhere"]-> {',
           '    return c.`name`',
@@ -885,9 +872,9 @@ describe('traversal blocks in the Rust engine', () => {
       fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` },
     }));
     const graph = { collections: { company: rows } };
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY `revenue`'), graph });
+    const { rust } = await onRust({ body: NOTE_PER_COMPANY('company ORDER BY `revenue`'), graph });
     expect(written(rust)).toHaveLength(65);
-    await agree({
+    await onRust({
       body: `  write kg-[:note]-> { text: "first" }\n${NOTE_PER_COMPANY('company ORDER BY `revenue`')}`,
       graph,
     });
@@ -916,19 +903,19 @@ describe('traversal blocks in the Rust engine', () => {
 
     it('reads a bare name off the walked edge first, then a binding of that name, then the record', async () => {
       // `d-3` carries no edge properties: the binding `role` answers for it.
-      const { rust } = await agree({ body: body('`role` == "lead"'), graph: graph(true) });
+      const { rust } = await onRust({ body: body('`role` == "lead"'), graph: graph(true) });
       expect(written(rust)).toEqual([undefined, 'Seed round', 'Bridge']);
     });
 
     it('leaves a bare name alone in the pushed WHERE when the edge can carry it, and closes over the binding when it cannot', async () => {
       const where = (o: Outcome) =>
         JSON.stringify(calls(o).find(([m]) => m === 'getRelated')?.[1].where);
-      const carried = await agree({ body: body('`role` == "lead"'), graph: graph(true) });
+      const carried = await onRust({ body: body('`role` == "lead"'), graph: graph(true) });
       expect(where(carried.rust)).not.toContain(
         '{"type":"static","value":"lead"},{"type":"static"',
       );
       expect(where(carried.rust)).toContain('role');
-      const closed = await agree({ body: body('`role` == "lead"'), graph: graph(false) });
+      const closed = await onRust({ body: body('`role` == "lead"'), graph: graph(false) });
       expect(where(closed.rust)).not.toContain('role');
       // Closed over for the fetch; per landing, the edge's own property
       // still answers first.
@@ -969,8 +956,8 @@ describe('the expression tail, on both engines', () => {
       ].join('\n');
 
     it('answers the same whether the adapter honours the pushed WHERE or not, asking it the same', async () => {
-      const local = await agree({ body: body(PUSHED) });
-      const pushed = await agree({ body: body(PUSHED), graph: { honours: true } });
+      const local = await onRust({ body: body(PUSHED) });
+      const pushed = await onRust({ body: body(PUSHED), graph: { honours: true } });
       expect(written(local.rust)).toEqual(['2 Globex Globex, Umbrella']);
       expect(written(pushed.rust)).toEqual(written(local.rust));
       expect(fetches(pushed.rust)).toEqual(fetches(local.rust));
@@ -983,7 +970,7 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('filters, orders and bounds locally a WHERE no adapter can be handed, with the same answer', async () => {
-      const local = await agree({ body: body(LOCAL) });
+      const local = await onRust({ body: body(LOCAL) });
       expect(written(local.rust)).toEqual(['2 Globex Globex, Umbrella']);
       for (const fetch of fetches(local.rust)) {
         expect(fetch).not.toHaveProperty('where');
@@ -992,7 +979,7 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('walks a streaming instance with one getRelated per hop, as an expression does', async () => {
-      const { rust } = await agree({ body: body(PUSHED), graph: { pageSize: 2 } });
+      const { rust } = await onRust({ body: body(PUSHED), graph: { pageSize: 2 } });
       // The pick walks as a block head does, a page at a time; the count and
       // the projection, as an expression does, in one getRelated each.
       expect(calls(rust).filter(([m]) => m === 'iterateRelatedPage')).toHaveLength(3);
@@ -1000,21 +987,21 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('picks the last and the only record, binds null when there is none, and fails ONLY over two', async () => {
-      const last = await agree({
+      const last = await onRust({
         body: '  top = LAST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)\n  write kg-[:note]-> { text: COALESCE(top.`name`, "none") }',
       });
       expect(written(last.rust)).toEqual(['Umbrella']);
-      const none = await agree({
+      const none = await onRust({
         body: '  top = FIRST(kg-[c:company WHERE `stage` == "Gone" ORDER BY `name`]->)\n  if top == null { ERROR("no company matched") }',
       });
       expect(String(runFailureCause(none.rust.error))).toContain('no company matched');
-      const two = await agree({
+      const two = await onRust({
         body: '  co = ONLY(kg-[c:company WHERE `stage` == "Late" OR `revenue` == 30]->)',
       });
       expect(String(runFailureCause(two.rust.error))).toContain(
         'says there is exactly one, and there are 2',
       );
-      const one = await agree({
+      const one = await onRust({
         body: '  co = ONLY(kg-[c:company WHERE `name` == "Initech"]->)\n  if EXISTS(co) {\n    write kg-[:note]-> { text: COALESCE(co.`name`, "?") }\n  }',
         graph: withDeals(),
       });
@@ -1022,11 +1009,11 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('counts from a landed record, a hop alias read in the WHERE and the ORDER BY key a walk of its own', async () => {
-      await agree({
+      await onRust({
         body: '  kg-[c:company]-> {\n    write kg-[:note]-> { text: "${COUNT(c-[d:deals WHERE d.`stage` != "lost"]->)}" }\n  }',
         graph: withDeals(),
       });
-      await agree({
+      await onRust({
         body: '  write kg-[:note]-> { text: JOIN(kg-[c:company ORDER BY c-[:deals]->.`title` DESC LIMIT 2]->.`name`, ",") }',
         graph: withDeals(),
       });
@@ -1035,7 +1022,7 @@ describe('the expression tail, on both engines', () => {
 
   describe('EXISTS', () => {
     it('asks one getRelated per subject and hop, and reads the WHERE until a record holds it', async () => {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: [
           '  co = write kg-[:company]-> { name: "Newco" }',
           '  if EXISTS(co-[:deals]->) { write kg-[:note]-> { text: "any" } }',
@@ -1059,7 +1046,7 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('asks whether a value holds one, and tests a candidate of a target WHERE', async () => {
-      await agree({
+      await onRust({
         body: [
           '  v = msg.`subject`',
           '  blank = null',
@@ -1075,7 +1062,7 @@ describe('the expression tail, on both engines', () => {
   });
 
   it('folds values as the TypeScript engine does', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  xs = [3, null, "4", 1]',
         '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]',
@@ -1095,7 +1082,7 @@ describe('the expression tail, on both engines', () => {
     });
     // `count` counts the empty item too under 5 (the one in `xs`); COUNT skipped it before.
     expect(written(rust)).toEqual(['4 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
-    const only = await agree({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
+    const only = await onRust({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
     expect(String(runFailureCause(only.rust.error))).toContain(
       'ONLY(xs) says there is exactly one, and there are 2.',
     );
@@ -1115,7 +1102,7 @@ describe('the expression tail, on both engines', () => {
       '    write kg-[:note]-> { text: c.`name` }',
       '  }',
     ].join('\n');
-    const { rust } = await agree({ body });
+    const { rust } = await onRust({ body });
     expect(written(rust)).toEqual(['recent', 'false', 'Acme', 'Globex', 'Initech', 'Umbrella']);
     // The hop's WHERE is pure, so it is handed to the adapter as the
     // TypeScript hands it; the engine decides it itself all the same.
@@ -1125,7 +1112,7 @@ describe('the expression tail, on both engines', () => {
   });
 
   it("ranks by a SORT key of any form, read in each member's scope, records and maps alike", async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  cs = kg-[c:company]->',
         '  byName = SORT(cs, LOWER(`name`), DESC)',
@@ -1154,7 +1141,7 @@ describe('the expression tail, on both engines', () => {
   });
 
   it('reads a second name for the event, a landing and a handle as the record it names', async () => {
-    await agree({
+    await onRust({
       body: [
         '  m2 = msg',
         '  m3 = m2',
@@ -1220,7 +1207,7 @@ describe('the expression tail, on both engines', () => {
       '    write kg-[:note]-> { text: f.`text` }',
       '  }',
     ];
-    const whole = await agree({ body: [...before, ...after].join('\n'), languageVersion: 5 });
+    const whole = await onRust({ body: [...before, ...after].join('\n') });
     expect(written(whole.rust)).toEqual(['t Seed', 'Late']);
 
     const body = [...before, '  await sleep(1h)', ...after].join('\n');
@@ -1258,7 +1245,7 @@ describe('the expression tail, on both engines', () => {
   });
 
   it('tests a record IS of a kind, from the run alone', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       event: { ...webhook({ subject: 'Seed', text: 'Late' }), rootRecordType: 'message' },
       body: [
         '  if msg IS <inbox-[:message]->> { write kg-[:note]-> { text: "message" } }',
@@ -1281,7 +1268,7 @@ describe('the expression tail, on both engines', () => {
 // settle before failing; resolutions memoised), on a program both engines run.
 describe("5A's engine fixes, on both engines", () => {
   it('writes the ledger in program order, iteration by iteration, each record citing its place there', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  kg-[c:company]-> {',
         '    co = write kg-[:company]-> { name: "copy of ${c.`name`}" }',
@@ -1302,7 +1289,7 @@ describe("5A's engine fixes, on both engines", () => {
   });
 
   it('resolves the instance every iteration writes once for the segment', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company') });
+    const { rust } = await onRust({ body: NOTE_PER_COMPANY('company') });
     expect(written(rust)).toHaveLength(COMPANIES.length);
     const targets = rust.resolved.filter(
       (r) => typeof r === 'object' && r !== null && Reflect.get(r, 'role') === 'target',
@@ -1322,36 +1309,32 @@ describe("5A's engine fixes, on both engines", () => {
       calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
 
     it('issues every key read when one fails, and fails with the TypeScript engine’s error', async () => {
-      const { rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' } });
+      const { rust } = await onRust({ body: ORDERED, graph: { failOn: 'n-2/name' } });
       expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
-      expect(keyReads(rust)).toHaveLength(COMPANIES.length);
       expect(keyReads(rust)).toHaveLength(COMPANIES.length);
     });
 
     it('does not fail while a sibling of the failed read is still held at the host', async () => {
       const held = holdingRead('n-5/name');
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: ORDERED,
         graph: { failOn: 'n-2/name' },
         hold: held.hold,
       });
-      // A run each: both engines, under versions 3 and 4.
-      expect(held.settledWhileHeld).toEqual([false, false, false, false]);
+      expect(held.settledWhileHeld).toEqual([false]);
       expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
     });
 
     it('fails with the lower index’s error when two reads fail, the higher first', async () => {
       // n-2's read is held and fails on release; n-4's fails at once.
       const held = holdingRead('n-2/name');
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: ORDERED,
         graph: { failOn: ['n-2/name', 'n-4/name'] },
         hold: held.hold,
       });
-      // A run each: both engines, under versions 3 and 4.
-      expect(held.settledWhileHeld).toEqual([false, false, false, false]);
-      for (const o of [rust, rust])
-        expect(String(runFailureCause(o.error))).toContain('graph: n-2 is unreadable');
+      expect(held.settledWhileHeld).toEqual([false]);
+      expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
     });
   });
 });
