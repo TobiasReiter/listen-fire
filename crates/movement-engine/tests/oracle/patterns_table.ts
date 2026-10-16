@@ -120,6 +120,31 @@ const COMPANY_DECL = [
   '}',
 ].join('\n');
 
+/** The one record an `extractOne` of the message hands back: the companies
+ *  it names, each with its rounds, to walk hops down. */
+const FOUND_DECL = [
+  'node Found: "the companies this message names" {',
+  '  node co: "each company" {',
+  '    name: <text> "its name"',
+  '    node round: "each round it raised" {',
+  '      stage: <text> "the stage"',
+  '    }',
+  '  }',
+  '}',
+].join('\n');
+
+/** The model's answer for `Found`: one company per name, no rounds. */
+const found = (...names: Array<[string, string]>) => ({ record: { co: names.map(([value, quote]) => ({ name: said(value, quote), round: [] })) } });
+const ACME_BETA = found(['Acme', 'Acme Corp'], ['Beta', 'Beta Ltd']);
+
+/** `body` over `found = extractOne([msg.text], Found)` (at `settings`),
+ *  inside the guard a record that may be absent needs before a walk. */
+const overFound = (body: string, settings?: string) =>
+  `${FOUND_DECL}\n${m(`  found = extractOne([msg.\`text\`], Found${settings !== undefined ? `, ${settings}` : ''})\n  if found != null {\n${body
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n')}\n  }`)}`;
+
 /** `state` with one more binding in its innermost scope. */
 function withBinding(state: Record<string, unknown>, name: string, binding: unknown): unknown {
   const chain = Array.isArray(state.scopeChain) ? [...(state.scopeChain as unknown[])] : [];
@@ -163,12 +188,12 @@ export const PATTERNS: Pattern[] = [
     note: 'closed in chunk 7A Task 6: the deployment tier table is a run input (extractionTiers)',
     programs: [
       (pick) => ({
-        body: `  d = extract "${pick(['quick', 'careful', 'thorough'])}" from [msg.\`text\`] {\n    name: "the company's name"\n  }\n  write crm-[:notes]-> { body: COALESCE(d.\`name\`, "none") }`,
-        replies: [{ 'x:extract_result#1': [{ name: said(pick(NAMES), 'Acme Corp') }] }],
+        body: `  d = extractOne([msg.\`text\`], node D: "the company" { name: <text> "the company's name" }, { tier: '${pick(['quick', 'careful'])}' })\n  write crm-[:notes]-> { body: COALESCE(d.name, "none") }`,
+        replies: [{ record: { name: said(pick(NAMES), 'Acme Corp') } }],
       }),
       (pick) => ({
-        body: `  d = extract "${pick(['careful', 'smart'])}" from [msg.\`text\`] {\n    node co: "each company" {\n      name: "its name"\n    }\n  }\n  d-[c:co]-> {\n    write crm-[:notes]-> { body: c.\`name\` }\n  }`,
-        replies: [{ 'x:extract_result#1': [{ co: [{ name: said(pick(NAMES), 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }],
+        file: overFound('found-[c:co]-> {\n  write crm-[:notes]-> { body: c.name }\n}', `{ tier: '${pick(['careful', 'quick'])}' }`),
+        replies: [found([pick(NAMES), 'Acme Corp'], ['Beta', 'Beta Ltd'])],
       }),
     ],
   },
@@ -265,12 +290,12 @@ export const PATTERNS: Pattern[] = [
     note: "closed in PLAN-08A group F: a library's movements run as callees in the library's own scope, its shapes' words, types and bases read in the file that wrote them; a file the snapshot does not carry the link refuses at the check",
     programs: [
       () => ({
-        file: `import { Deal } from "lib/deals"\n${m('  d = extract from [msg.`text`] {\n    node deal: <Deal>\n  }\n  d-[x:deal]-> {\n    write crm-[:notes]-> { body: x.`name` }\n  }')}`,
+        file: `import { Deal } from "lib/deals"\n${m('  d = extract([msg.`text`], Deal)\n  MAP(d, (x) => {\n    write crm-[:notes]-> { body: x.name }\n  })')}`,
         files: { 'lib/deals': { source: LIBRARY } },
-        replies: [{ 'x:extract_result#1': [{ deal: [{ name: said('Acme'), stage: said('Seed') }] }] }],
+        replies: [{ records: [{ name: said('Acme'), stage: said('Seed') }] }],
       }),
       (pick) => ({
-        file: `import { Deal } from "lib/deals"\n${m(`  d = extract from [msg.\`subject\`] {\n    node deal: <Deal> "the deal ${pick(WORDS)}"\n  }`)}`,
+        file: `import { Deal } from "lib/deals"\n${m(`  d = extractOne([msg.\`subject\`, "${pick(WORDS)}"], Deal)`)}`,
         files: { 'lib/deals': { source: LIBRARY } },
       }),
       (pick) => ({
@@ -289,7 +314,7 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: 'closed in chunk 7A Task 6: a file-level extraction, block, write, match or link fails the run as interpretFileStatement fails it; any other right-hand side binds nothing, and a read of it fails naming it, on either engine',
     programs: [
-      () => ({ file: `r = extract from ["a fixed document"] {\n  name: "a name"\n}\n${m('  write crm-[:notes]-> { body: msg.`subject` }')}` }),
+      () => ({ file: `r = extractOne(["a fixed document"], node R: "the document" { name: <text> "a name" })\n${m('  write crm-[:notes]-> { body: msg.`subject` }')}` }),
       (pick) => ({ file: `n = node { title: "${pick(NAMES)}" }\n${m('  write crm-[:notes]-> { body: n.`title` }')}` }),
     ],
   },
@@ -350,13 +375,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'name_not_value',
     routes: 'whole',
-    note: "closed by the v5 probe (2026-10-15): a through stage's plugin argument naming bare a record (a handle, an extraction's record, a node) is handed the record's fields, as a plain call's argument is. The event, whose `deck` is a file, ends at the check (MOV_CALL_ARG_TYPE at 'q.deck', the first program)",
+    note: "closed by the v5 probe (2026-10-15): a plugin argument naming bare a record (a handle, an extraction's record, a node) is handed the record's fields, as a plain call's argument is. The through stage that first met it is the extraction keyword's (legacy_extraction); a plain call's event and handle are name_not_value@plugin's",
     programs: [
-      () => ({ file: `import { echo } from plugins\n${m('  d = extract from [msg.`text`] through [echo(q: msg)] {\n    name: "a name"\n  }')}`, checks: false, routes: 'unreached' }),
-      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
-      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
-      () => ({ file: `import { echo } from plugins\n${m('  e = extract from [msg.`text`] {\n    name: "a name"\n  }\n  d = extract from [msg.`text`] through [echo(q: e)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }, { 'x:extract_result#1': [{ name: said('Acme') }] }] }),
-      () => ({ file: `import { echo } from plugins\n${m('  n = node { title: "t" }\n  d = extract from [msg.`text`] through [echo(q: n)] {\n    name: "a name"\n  }')}`, version: 5, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  e = extractOne([msg.`text`], node E: "the company" { name: <text> "a name" })\n  said = echo(q: e)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, replies: [{ record: { name: said('Acme') } }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  e = extractOne([msg.`text`], node E: "the company" { name: <text> "a name" })\n  said = echo(q: e)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, version: 5, replies: [{ record: { name: said('Acme') } }] }),
+      () => ({ file: `import { echo } from plugins\n${m('  n = node { title: "t" }\n  said = echo(q: n)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, version: 5 }),
     ],
   },
   {
@@ -429,23 +452,22 @@ export const PATTERNS: Pattern[] = [
   },
   {
     reason: 'extract_from_record',
-    routes: 'whole',
-    note: "closed in fix round 1 of the group G merge (2026-10-12): a record in an extraction's from datum is written into the prompt as its fields at any depth (fieldsValueOf, extract/prompt.rs), as main's TypeScript writes it; each program's prompt is compared byte for byte (`exact`). The checker refuses a system's record there, whose fields are read one at a time, and a file inside an input (MOV_EXTRACT_CONTENT): those programs end at the check on both engines",
+    routes: 'unreached',
+    note: "closed in fix round 1 of the group G merge (2026-10-12) for the extraction keyword's from datum, whose record was written into the prompt as its fields (its programs are now legacy_extraction's: the keyword is refused whole since 2026-10-16). The extraction call holds its content to text and files: a record, a map or list holding one, or a file inside an input ends at the check on both engines (MOV_EXTRACT_CONTENT), so no checked program reaches the engine with one",
     programs: [
-      () => ({ body: '  rows = crm-[c:companies]->\n  d = extract from [rows] {\n    name: "a name"\n  }', checks: false, routes: 'unreached' }),
-      // A record the run wrote: its written fields, then what the system handed back.
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', version: 2, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  d = extractOne([rows], node D: "the company" { name: <text> "a name" })', checks: false }),
+      // A record the run wrote.
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extractOne([co], node D: "the company" { name: <text> "a name" })', checks: false }),
       // A node the run built, one declared field left absent (it reads null).
-      () => ({ file: `node Co {\n  name: <text>\n  stage: <text | null>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  d = extract from [x] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text | null>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  d = extractOne([x], node D: "the company" { name: <text> "a name" })')}`, checks: false }),
       // An earlier extraction's result.
-      () => ({ body: '  e = extract from [msg.`text`] {\n    name: "a name"\n    stage: "a stage"\n  }\n  d = extract from [e] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme'), stage: said('Seed') }] }, { 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ body: '  e = extractOne([msg.`text`], node E: "the company" {\n    name: <text> "a name"\n    stage: <text> "a stage"\n  })\n  d = extractOne([e], node D: "the company" { name: <text> "a name" })', checks: false }),
       // A record under a key, beside a value.
-      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [{ lead: co, note: "met at the fair" }] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extractOne([{ lead: co, note: "met at the fair" }], node D: "the company" { name: <text> "a name" })', checks: false }),
       // Records nested in maps and lists, a written one and a built one.
-      () => ({ file: `node Co {\n  name: <text>\n  stage: <text>\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: "Beta", stage: "Seed" }\n  d = extract from [{ a: { both: [co, x] } }, [x]] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }], exact: true }),
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text>\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: "Beta", stage: "Seed" }\n  d = extractOne([{ a: { both: [co, x] } }, [x]], node D: "the company" { name: <text> "a name" })')}`, checks: false }),
       // A file inside an input: refused at the check on both engines.
-      () => ({ body: '  f = FIRST(msg-[:files]->)\n  d = extract from [{ doc: f }] {\n    name: "a name"\n  }', checks: false, routes: 'unreached' }),
+      () => ({ body: '  f = FIRST(msg-[:files]->)\n  d = extractOne([{ doc: f }], node D: "the company" { name: <text> "a name" })', checks: false }),
     ],
   },
   {
@@ -621,8 +643,8 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  node Lead {\n    who: <text>\n  }\n  write crm-[:notes]-> { body: "lead" }' }),
       (pick) => ({ body: `  t = graph<Tag> { label: "${pick(WORDS)}" }\n  node Tag {\n    label: <text>\n  }\n  write crm-[:notes]-> { body: t.label }` }),
       (pick) => ({
-        body: `  word = "${pick(WORDS)}"\n  node Tag: "a tag, \${word}" {\n    label: <text> "its label"\n  }\n  d = extract from [msg.\`subject\`] {\n    node tag: <Tag>\n  }\n  d-[x:tag]-> {\n    write crm-[:notes]-> { body: x.label }\n  }`,
-        replies: [{ 'x:extract_result#1': [{ tag: [{ label: said('Infra') }] }] }],
+        body: `  word = "${pick(WORDS)}"\n  node Tag: "a tag, \${word}" {\n    label: <text> "its label"\n  }\n  d = extract([msg.\`subject\`], Tag)\n  MAP(d, (x) => {\n    write crm-[:notes]-> { body: x.label }\n  })`,
+        replies: [{ records: [{ label: said('Infra') }] }],
       }),
     ],
   },
@@ -852,10 +874,11 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'write_spread_path',
     routes: 'whole',
-    note: '`...m.k` in a write: a member the checker lets through (an extraction’s record) runs whole on Rust; one it does not spell out the checker refuses (MOV_WRITE_SPREAD_SOURCE); the reason stays in admission for a form no checked program here reaches',
+    note: '`...m.k` in a write: a member the checker lets through (a node the program spells out, held under a key) runs whole on Rust; one it does not spell out the checker refuses (MOV_WRITE_SPREAD_SOURCE), an extraction call’s record held under a key among them (the keyword’s record, which it let through, is legacy_extraction’s now); the reason stays in admission for a form no checked program here reaches',
     programs: [
-      () => ({ body: '  d = extract from [msg.`text`] {\n    body: "a body"\n  }\n  held = { k: d }\n  write crm-[:notes]-> { ...held.k }', replies: [{ 'x:extract_result#1': [{ body: { evidence: 'Acme', value: 'Acme' } }] }] }),
-      () => ({ body: '  d = extract from [msg.`text`] {\n    body: "a body"\n  }\n  held = { k: d }\n  write crm-[:notes]-> { ...held.k, title: "t" }' }),
+      () => ({ body: '  n = node { body: msg.`subject` }\n  held = { k: n }\n  write crm-[:notes]-> { ...held.k }' }),
+      () => ({ body: '  n = node { body: "a body" }\n  held = { k: n }\n  write crm-[:notes]-> { ...held.k, title: "t" }' }),
+      () => ({ body: '  d = extractOne([msg.`text`], node N: "the note" { body: <text> "a body" })\n  held = { k: d }\n  write crm-[:notes]-> { ...held.k }', checks: false, routes: 'unreached' }),
     ],
   },
   {
@@ -1002,19 +1025,18 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'block_head_extract_hop',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a head over an extraction's records with a WHERE fails the run as the TypeScript's headIterationsFrom fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result block heads'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
+    note: "closed in PLAN-08A Task 2: a head over an extraction's records with a WHERE fails the run as the TypeScript's headIterationsFrom fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result block heads'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine; since the keyword is refused whole (legacy_extraction, 2026-10-16) the programs walk the one record an extractOne hands back, inside the guard a record that may be absent needs",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  found-[c:co WHERE `name` == "Acme"]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  found-[c:co ORDER BY `name` DESC LIMIT 1]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ file: overFound('write crm-[:notes]-> { body: "first" }\nfound-[c:co WHERE `name` == "Acme"]-> {\n  write crm-[:notes]-> { body: c.`name` }\n}'), replies: [ACME_BETA] }),
+      () => ({ file: overFound('found-[c:co ORDER BY `name` DESC LIMIT 1]-> {\n  write crm-[:notes]-> { body: c.`name` }\n}'), replies: [ACME_BETA] }),
     ],
   },
   {
     reason: 'block_head_resources',
     routes: 'whole',
-    note: "closed in PLAN-08A group D: a `_resources` head walks the record's bundle (resolvePositionResources, the host making each resource's fileRef a file) or the content an extraction read, its WHERE over each resource with it current",
+    note: "closed in PLAN-08A group D: a `_resources` head walks the record's bundle (resolvePositionResources, the host making each resource's fileRef a file) or the content an extraction read, its WHERE over each resource with it current; off an extraction keyword's content it is legacy_extraction's now",
     programs: [
       () => ({ body: '  msg-[f:_resources WHERE type == "FILE"]-> {\n    write crm-[:notes]-> { body: f.`name` }\n  }' }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  found-[f:_resources]-> {\n    write crm-[:notes]-> { body: "a file" }\n  }' }),
       () => ({ body: '  msg-[f:_resources]-> {\n    write crm-[:notes]-> { body: "a file" }\n  }' }),
     ],
   },
@@ -1057,20 +1079,20 @@ export const PATTERNS: Pattern[] = [
   {
     reason: 'walk_extract_hop',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: a hop down an extraction with a WHERE fails the run as the TypeScript's walkExtractSteps fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result hops'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine",
+    note: "closed in PLAN-08A Task 2: a hop down an extraction with a WHERE fails the run as the TypeScript's walkExtractSteps fails it (MOVENG_UNSUPPORTED 'WHERE filters on extract-result hops'); an ORDER BY, a LIMIT or an incoming direction is not read, on either engine; since the keyword is refused whole (legacy_extraction, 2026-10-16) the programs walk the one record an extractOne hands back, inside the guard a record that may be absent needs",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  write crm-[:notes]-> { body: "first" }\n  x = COUNT(found-[c:co WHERE c.`name` != ""]->)', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COUNT(found-[c:co ORDER BY `name` LIMIT 1]->)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  x = COLLECT(found<-[:co]-.`name`)\n  write crm-[:notes]-> { body: "${x}" }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ file: overFound('write crm-[:notes]-> { body: "first" }\nx = COUNT(found-[c:co WHERE c.`name` != ""]->)'), replies: [ACME_BETA] }),
+      () => ({ file: overFound('x = COUNT(found-[c:co ORDER BY `name` LIMIT 1]->)\nwrite crm-[:notes]-> { body: "${x}" }'), replies: [ACME_BETA] }),
+      () => ({ file: overFound('x = COLLECT(found<-[:co]-.`name`)\nwrite crm-[:notes]-> { body: "${x}" }'), replies: [ACME_BETA] }),
     ],
   },
   {
     reason: 'exists_extract_hop',
     routes: 'whole',
-    note: "closed in PLAN-08A Task 2: EXISTS down an extraction reads each hop's WHERE, ORDER BY and LIMIT as the TypeScript's evaluateExists reads them (per origin, over the entities' children)",
+    note: "closed in PLAN-08A Task 2: EXISTS down an extraction reads each hop's WHERE, ORDER BY and LIMIT as the TypeScript's evaluateExists reads them (per origin, over the entities' children); since the keyword is refused whole (legacy_extraction, 2026-10-16) the programs walk the one record an extractOne hands back, inside the guard a record that may be absent needs",
     programs: [
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co ORDER BY `name` DESC LIMIT 1]-> WHERE `name` == "Beta") {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n    }\n  }\n  if EXISTS(found-[c:co WHERE `name` == "Beta"]->) {\n    write crm-[:notes]-> { body: "yes" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }, { name: said('Beta', 'Beta Ltd') }] }] }] }),
+      () => ({ file: overFound('if EXISTS(found-[c:co ORDER BY `name` DESC LIMIT 1]-> WHERE `name` == "Beta") {\n  write crm-[:notes]-> { body: "yes" }\n}'), replies: [ACME_BETA] }),
+      () => ({ file: overFound('if EXISTS(found-[c:co WHERE `name` == "Beta"]->) {\n  write crm-[:notes]-> { body: "yes" }\n}'), replies: [ACME_BETA] }),
     ],
   },
 
@@ -1110,8 +1132,8 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  x = SORT(["b", "a"], UPPER("a"))', checks: false, routes: 'unreached' }),
       () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LOWER(`name`))\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }' }),
       () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, LENGTH(`stage`))\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }' }),
-      () => ({ body: '  rows = crm-[c:companies]->\n  x = SORT(rows, `employees` * -1, DESC)\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }', version: 5 }),
-      () => ({ body: '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]\n  x = SORT(rows, COALESCE(`s`, 0) * -1)\n  write crm-[:notes]-> { body: JOIN(MAP(x, (r) => r.n), ",") }', version: 5 }),
+      () => ({ body: '  rows = crm-[c:companies]->\n  x = sort(rows, (c) => c.employees * -1, { order: "desc" })\n  write crm-[:notes]-> { body: JOIN(MAP(x, (c) => c.`name`), ",") }', version: 5 }),
+      () => ({ body: '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]\n  x = sort(rows, (r) => COALESCE(r.s, 0) * -1)\n  write crm-[:notes]-> { body: JOIN(MAP(x, (r) => r.n), ",") }', version: 5 }),
     ],
   },
   {
@@ -1147,7 +1169,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  if EXISTS(-[:deals]->) {\n    x = 1\n  }' }),
       (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  y = EXISTS(-[:notes]-> WHERE \`body\` == "x")` }),
       () => ({ body: '  crm-[c:companies WHERE EXISTS(-[:deals]->)]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }' }),
-      () => ({ body: '  found = extract from [msg.`text`] {\n    node co: "c" {\n      name: "a"\n      node round: "r" {\n        stage: "s"\n      }\n    }\n  }\n  if EXISTS(found-[c:co]-> WHERE EXISTS(-[:round]->)) {\n    write crm-[:notes]-> { body: "rounds" }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp'), round: [{ stage: said('Seed', 'seed') }] }, { name: said('Beta', 'Beta Ltd'), round: [] }] }] }] }),
+      () => ({ file: overFound('if EXISTS(found-[c:co]-> WHERE EXISTS(-[:round]->)) {\n  write crm-[:notes]-> { body: "rounds" }\n}'), replies: [{ record: { co: [{ name: said('Acme', 'Acme Corp'), round: [{ stage: said('Seed', 'seed') }] }, { name: said('Beta', 'Beta Ltd'), round: [] }] } }] }),
     ],
   },
   {
@@ -1190,7 +1212,7 @@ export const PATTERNS: Pattern[] = [
       () => ({ body: '  loud = (t: <text>) => UPPER(t)\n  write crm-[:notes]-> { body: loud(msg.`subject`) }' }),
       () => ({ file: `import { echo } from plugins\n${m('  write crm-[:notes]-> { body: COALESCE(echo(q: READ(msg.`deck`)), "none") }')}` }),
       () => ({ file: `import { echo } from plugins\n${m('  loud = (t: <text>) => UPPER(t)\n  said = echo(q: COALESCE(loud(msg.`subject`), "n"))\n  write crm-[:notes]-> { body: said }')}` }),
-      () => ({ file: m('  loud = (t: <text>) => UPPER(t)\n  d = extract from [loud(msg.`text`)] {\n    name: "the company\'s name"\n  }\n  write crm-[:notes]-> { body: COALESCE(d.`name`, "none") }'), replies: [{ name: { value: 'Acme', evidence: { item: '0', quote: 'ACME' } } }] }),
+      () => ({ file: m('  loud = (t: <text>) => UPPER(t)\n  d = extractOne([loud(msg.`text`)], node D: "the company" { name: <text> "the company\'s name" })\n  write crm-[:notes]-> { body: COALESCE(d.name, "none") }'), replies: [{ record: { name: { value: 'Acme', evidence: { item: '0', quote: 'ACME' } } } }] }),
       () => ({ body: '  later = (t: <text>) => {\n    await sleep(1h)\n    return UPPER(t)\n  }\n  write crm-[:notes]-> { body: CONCAT(later(msg.`subject`), "!") }', checks: false, routes: 'unreached' }),
     ],
   },
@@ -1360,6 +1382,19 @@ export const PATTERNS: Pattern[] = [
         replies: [{ 'x:extract_result#1': [{ deal: [{ name: said('Acme') }] }] }],
       }),
       () => ({ body: '  d = extract from [msg.`text`] {\n    name: "a name"\n  }', version: 5, checks: false, routes: 'unreached' }),
+      // Its through stage, a plugin handed a record bare (name_not_value's first form).
+      () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [msg.`text`] through [echo(q: co)] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      // A record in its from datum, written into the prompt as its fields (extract_from_record's forms).
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [co] {\n    name: "a name"\n  }', version: 2, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text | null>\n}\n${m('  x = graph<Co> { name: "Acme" }\n  d = extract from [x] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ body: '  e = extract from [msg.`text`] {\n    name: "a name"\n    stage: "a stage"\n  }\n  d = extract from [e] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme'), stage: said('Seed') }] }, { 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ body: '  co = write crm-[:companies]-> { name: "Acme" }\n  d = extract from [{ lead: co, note: "met at the fair" }] {\n    name: "a name"\n  }', replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      () => ({ file: `node Co {\n  name: <text>\n  stage: <text>\n}\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  x = graph<Co> { name: "Beta", stage: "Seed" }\n  d = extract from [{ a: { both: [co, x] } }, [x]] {\n    name: "a name"\n  }')}`, replies: [{ 'x:extract_result#1': [{ name: said('Acme') }] }] }),
+      // Its record spread from under a key (write_spread_path's first form).
+      () => ({ body: '  d = extract from [msg.`text`] {\n    body: "a body"\n  }\n  held = { k: d }\n  write crm-[:notes]-> { ...held.k }', replies: [{ 'x:extract_result#1': [{ body: { evidence: 'Acme', value: 'Acme' } }] }] }),
+      // Its content, walked as a `_resources` head (block_head_resources' first form).
+      () => ({ body: '  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  found-[f:_resources]-> {\n    write crm-[:notes]-> { body: "a file" }\n  }' }),
     ],
   },
   {
@@ -1376,7 +1411,7 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: 'closed in PLAN-08A group F: a shape declared in a body, held across a park, is rebuilt from its declaration where the program writes it',
     programs: [
-      () => ({ body: '  node Note {\n    title: <text>\n  }\n  await sleep(1h)\n  d = extract from [msg.`text`] {\n    node note: <Note>\n  }' }),
+      () => ({ body: '  node Note {\n    title: <text>\n  }\n  await sleep(1h)\n  d = extractOne([msg.`text`], Note)' }),
       () => ({ body: '  node Tag {\n    label: <text>\n  }\n  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }' }),
     ].map((make) => (pick: Pick) => ({ ...make(), resume: (state: Record<string, unknown>) => state })),
   },
@@ -1580,8 +1615,8 @@ export const PATTERNS: Pattern[] = [
     routes: 'whole',
     note: 'closed in chunk 7A Task 3: an extraction’s values held across a park, and resumed',
     programs: [
-      () => ({ body: '  d = extract from [msg.`text`] {\n    name: "a name"\n  }\n  n = d.`name`\n  await sleep(1h)\n  write crm-[:notes]-> { body: COALESCE(n, "none") }', replies: [{ 'x:extract_result#1': [{ name: said('Acme', 'Acme Corp') }] }], resume: (state) => state }),
-      () => ({ body: '  d = extract from [msg.`text`] {\n    node co: "each company" {\n      name: "its name"\n    }\n  }\n  await sleep(1h)\n  d-[c:co]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme', 'Acme Corp') }] }] }], resume: (state) => state }),
+      () => ({ body: '  d = extractOne([msg.`text`], node D: "the company" { name: <text> "a name" })\n  n = d.name\n  await sleep(1h)\n  write crm-[:notes]-> { body: COALESCE(n, "none") }', replies: [{ record: { name: said('Acme', 'Acme Corp') } }], resume: (state) => state }),
+      () => ({ file: `${FOUND_DECL}\n${m('  found = extractOne([msg.`text`], Found)\n  await sleep(1h)\n  if found != null {\n    found-[c:co]-> {\n      write crm-[:notes]-> { body: c.name }\n    }\n  }')}`, replies: [found(['Acme', 'Acme Corp'])], resume: (state) => state }),
     ],
   },
   {
