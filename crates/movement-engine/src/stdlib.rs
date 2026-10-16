@@ -101,7 +101,9 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
         "tostring" => if a.is_nullish() { Js::Null } else { Js::str(a.to_js_string()) },
         "tonumber" => {
             let n = a.to_number();
-            if n.is_nan() { Js::Null } else { Js::Number(n) }
+            // An empty text is no number (JavaScript's `Number("")` is 0).
+            let empty = matches!(&a, Js::String(text) if js::trim(text.as_form()).is_empty());
+            if n.is_nan() || empty { Js::Null } else { Js::Number(n) }
         }
         "date" => coerce_to_date(&a).map_or(Js::Null, Js::str),
         "datetime" => coerce_to_datetime(&a).map_or(Js::Null, |(iso, _)| Js::str(iso)),
@@ -1096,7 +1098,8 @@ mod tests {
         // Half away from zero (JavaScript went half toward +∞: -2).
         assert!(matches!(call("round", vec![s("-2.5")]), Js::Number(n) if n == -3.0));
         assert!(matches!(call("tonumber", vec![s("abc")]), Js::Null));
-        assert!(matches!(call("tonumber", vec![s("")]), Js::Number(n) if n == 0.0));
+        assert!(matches!(call("tonumber", vec![s("")]), Js::Null));
+        assert!(matches!(call("number", vec![s("  ")]), Js::Null));
         assert!(matches!(call("number", vec![s("")]), Js::Null));
         assert!(matches!(call("number", vec![s("0x10")]), Js::Null));
         assert_eq!(text(call("tostring", vec![Js::Number(1e21)])), "1e+21");

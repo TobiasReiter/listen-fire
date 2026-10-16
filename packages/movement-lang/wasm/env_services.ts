@@ -39,14 +39,7 @@ export interface ZonedFields {
 export type EnvRequest =
   | { op: 'tz_convert'; instantIso: string; zone: string }
   | { op: 'url_parse'; text: string }
-  | { op: 'number_format'; value: number; locale: string; options: NumberOptions }
   | { op: 'normalize'; text: string; form: NormalForm };
-
-export interface NumberOptions {
-  minimumFractionDigits?: number;
-  maximumFractionDigits?: number;
-  useGrouping?: boolean;
-}
 
 export type NormalForm = 'NFC' | 'NFD' | 'NFKC' | 'NFKD';
 
@@ -117,15 +110,6 @@ export function urlParse(text: string): Record<string, string> | null {
   return { href, protocol, username, password, host, hostname, port, pathname, search, hash };
 }
 
-export function numberFormat(value: number, locale: string, options: NumberOptions): string | null {
-  if (!Number.isFinite(value)) return null;
-  try {
-    return new Intl.NumberFormat(locale, { ...options }).format(value);
-  } catch {
-    return null;
-  }
-}
-
 /** One request's answer, `{value}`. Throws for a request it cannot read. */
 export function answerEnvRequest(request: unknown): { value: unknown } {
   const r = readRequest(request);
@@ -134,8 +118,6 @@ export function answerEnvRequest(request: unknown): { value: unknown } {
       return { value: tzConvert(r.instantIso, r.zone) };
     case 'url_parse':
       return { value: urlParse(r.text) };
-    case 'number_format':
-      return { value: numberFormat(r.value, r.locale, r.options) };
     case 'normalize':
       return { value: r.text.normalize(r.form) };
     default: {
@@ -159,12 +141,6 @@ function readRequest(request: unknown): EnvRequest {
       return { op, instantIso: text('instantIso'), zone: text('zone') };
     case 'url_parse':
       return { op, text: text('text') };
-    case 'number_format': {
-      const value = field('value');
-      const options = field('options');
-      if (typeof value !== 'number') throw new Error('a number_format value is a number');
-      return { op, value, locale: text('locale'), options: readNumberOptions(options) };
-    }
     case 'normalize': {
       const form = text('form');
       if (form !== 'NFC' && form !== 'NFD' && form !== 'NFKC' && form !== 'NFKD') {
@@ -175,24 +151,4 @@ function readRequest(request: unknown): EnvRequest {
     default:
       throw new Error(`no environment service ${op}`);
   }
-}
-
-function readNumberOptions(options: unknown): NumberOptions {
-  if (options === undefined) return {};
-  if (typeof options !== 'object' || options === null) throw new Error('number_format options are an object');
-  const read: NumberOptions = {};
-  const digits = (name: 'minimumFractionDigits' | 'maximumFractionDigits') => {
-    const value: unknown = Reflect.get(options, name);
-    if (value === undefined) return;
-    if (typeof value !== 'number') throw new Error(`number_format ${name} is a number`);
-    read[name] = value;
-  };
-  digits('minimumFractionDigits');
-  digits('maximumFractionDigits');
-  const grouping: unknown = Reflect.get(options, 'useGrouping');
-  if (grouping !== undefined) {
-    if (typeof grouping !== 'boolean') throw new Error('number_format useGrouping is a boolean');
-    read.useGrouping = grouping;
-  }
-  return read;
 }
