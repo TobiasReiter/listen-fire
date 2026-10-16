@@ -728,8 +728,8 @@ describe('the file scope, as interpretFileStatement reads it', () => {
     // a segment opens, on either engine (`check`: the snapshot describes no
     // `fetch_url`).
     for (const [source, ends] of [
-      [`r = extract from ["a"] {\n  node n: "n" { a: "a" }\n}\n${movement('  x = 1')}`, 'segment'],
-      [`import { fetch_url } from plugins\npage = fetch_url(url: "x")\n${movement('  x = 1')}`, 'check'],
+      [`node N: "n" {\n  a: <text> "a"\n}\nr = extract(["a"], N)\n${movement('  x = 1')}`, 'segment'],
+      [`import { fetchUrl } from plugins\npage = fetchUrl("x")\n${movement('  x = 1')}`, 'check'],
       [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'segment'],
       [`write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`, 'segment'],
       [`n = node { title: "t" }\n${movement('  x = n.\`title\`')}`, 'segment'],

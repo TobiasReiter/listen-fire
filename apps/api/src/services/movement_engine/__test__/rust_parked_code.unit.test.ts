@@ -140,6 +140,12 @@ async function runOn(engine: Engine, c: Case) {
             return { parsedJson: replies.shift() ?? {} };
           },
         },
+        extractCall: {
+          call: async (request) => {
+            asked.push({ label: request.label, blocks: request.blocks, system: request.system });
+            return { parsedJson: replies.shift() ?? {}, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+          },
+        },
       },
       park: { sink: park.sink },
     }),
@@ -270,12 +276,10 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '    label: <text> "its label"',
       '  }',
       '  await sleep(1h)',
-      '  found = extract from [n] {',
-      '    node tag: <Tag>',
-      '  }',
-      '  found-[g:tag]-> {',
+      '  found = extract([n], Tag)',
+      '  map(found, (g) => {',
       '    write crm-[:notes]-> { body: g.label }',
-      '  }',
+      '  })',
       '}',
     ]);
     const source = [
@@ -290,7 +294,7 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '  keep(msg.subject)',
       '}',
     ].join('\n');
-    const replies = [{ 'x:extract_result#1': [{ tag: [{ label: { evidence: 'q', value: 'Infra' } }] }] }];
+    const replies = [{ records: [{ label: { value: 'Infra', evidence: { item: 0, quote: 'q' } } }] }];
     const resumed = await parkAndResume({ source, files, replies });
     expect(resumed).toContain('a tag by LIB');
     expect(resumed).not.toContain('a tag by ROO');

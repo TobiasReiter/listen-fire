@@ -67,7 +67,7 @@ const catalog = mockCatalogSnapshot({
   plugins: { fetch_url: fetchUrl, find_files: findFiles, echo },
 });
 
-const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'inbox = connect email using dealflow_inbox', ''].join(
+const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'inbox = email(credentials: dealflow_inbox)', ''].join(
   '\n',
 );
 
@@ -232,14 +232,14 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   it('refuses an ALIASED priced plugin once the run has spent its cap, without asking the host', async () => {
     const spent = { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 };
     const through = [
-      'import { fetchUrl as fetch } from plugins',
-      'function m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] through [fetch(msg.`text`)] {',
+      'import { fetch_url as fetch } from plugins',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  found = extract from [msg.`text`] through [fetch(url: msg.`text`)] {',
       '    name: "the company"',
       '  }',
       '}',
     ].join('\n');
-    const plain = ['import { fetchUrl as fetch } from plugins', 'function m(msg: <inbox-[:message]->>) {', '  page = fetch(msg.`text`)', '}'].join('\n');
+    const plain = ['import { fetch_url as fetch } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch(url: msg.`text`)', '}'].join('\n');
     for (const source of [through, plain]) {
       const ts = await agree({ source, spend: spent }, { runsWhole: true });
       // The registered name is what is priced: the cap stops it before the
@@ -257,7 +257,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
   it('reads a model number past the double range as JSON.parse left it: refused, and asked again', async () => {
     const source = [
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    amount: <number> "the amount raised"',
       '  }',
@@ -282,7 +282,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     );
     const source = [
       'import { Deal } from "lib/deals"',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    node deal: <Deal>',
       '  }',
@@ -313,11 +313,11 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     '    overall: <Verdict> "the batch"',
     '    node entry: <Local>',
     '  }',
-    '  copy = first(map([n], (v) => {',
+    '  copy = FIRST(MAP([n], (v) => {',
     '    g = graph { ...v }',
     '    return g',
     '  }))',
-    '  return Text.concat(copy.body, "/", coalesce(found.overall, "none"))',
+    '  return CONCAT(copy.body, "/", COALESCE(found.overall, "none"))',
     '}',
   ].join('\n');
 
@@ -326,8 +326,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       'import { triage as route } from "lib/triage"',
       'lens = "the importer\'s lens"',
       'type Verdict = <"Yes" | "No">',
-      'function m(msg: <inbox-[:message]->>) {',
-      '  r = route(node { body: msg.`text` })',
+      'movement m(msg: <inbox-[:message]->>) {',
+      '  r = route(n: node { body: msg.`text` })',
       '  return r',
       '}',
     ].join('\n');
@@ -343,7 +343,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const library = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
-      'crm = connect attio using acme_main',
+      'crm = attio(credentials: acme_main)',
       'export node Note {',
       '  body: <text>',
       '}',
@@ -362,7 +362,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '  }',
       '}',
     ].join('\n');
-    const source = ['import { keep } from "lib/keep"', 'function m(msg: <inbox-[:message]->>) {', '  keep(node { body: msg.`text` })', '}'].join('\n');
+    const source = ['import { keep } from "lib/keep"', 'movement m(msg: <inbox-[:message]->>) {', '  keep(n: node { body: msg.`text` })', '}'].join('\n');
     const files = { 'lib/keep': { source: library } };
     const reply = { 'x:extract_result#1': [{ tag: [{ label: wrap('Infra') }] }] };
     function hostWith(park: ReturnType<typeof makeFakeParkSink>, creates: unknown[]) {
@@ -433,7 +433,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         if (tiers === undefined) delete process.env.EXTRACTION_TIERS;
         else process.env.EXTRACTION_TIERS = tiers;
         for (const tier of ['"quick" ', '"careful" ', '"thorough" ', '"smart" ', '']) {
-          const source = `function m(msg: <inbox-[:message]->>) {\n  d = extract ${tier}from [msg.\`text\`] {\n    name: "a"\n  }\n  return ai("why ${tier.length}", { tier: ${tier === '' ? '"careful"' : tier.trim()} })\n}`;
+          const source = `movement m(msg: <inbox-[:message]->>) {\n  d = extract ${tier}from [msg.\`text\`] {\n    name: "a"\n  }\n  return AI("why ${tier.length}", ${tier === '' ? '"careful"' : tier.trim()})\n}`;
           const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }, { value: 'because', has_value: true }] }, { runsWhole: true });
           expect(ts.asked).toHaveLength(2);
           if (tiers !== undefined && tier === '"careful" ') {
@@ -457,7 +457,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   describe("an extraction call's written model, held to the run's one list", () => {
     const company = 'node Company {\n  name: <text>\n}\n';
     const calling = (model: string) =>
-      `${company}function m(msg: <inbox-[:message]->>) {\n  found = extract([msg.\`text\`], Company, { model: '${model}' })\n  return count(found)\n}`;
+      `${company}movement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.\`text\`], Company, { model: '${model}' })\n  return COUNT(found)\n}`;
 
     it('runs a listed model whole, the model asked the one written, on both engines', async () => {
       for (const models of [undefined, ['claude-opus-5', 'claude-sonnet-5']]) {
@@ -488,13 +488,13 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
   it('declines, before any effect, a file-level value holding a nested call (it stages nested calls in a body only)', async () => {
     resetRustRunStats();
-    await runOn('rust', { source: `import { echo } from plugins\nsaid = { page: echo({ q: "x" }) }\nfunction m(msg: <inbox-[:message]->>) {\n  x = 1\n}` });
+    await runOn('rust', { source: `import { echo } from plugins\nsaid = { page: echo(q: "x") }\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}` });
     expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, notAdmitted: {}, declined: { unreproduced: 1 } });
     expect(Object.keys(rustRunStats.hostCalls).filter((call) => call !== 'check.program')).toEqual([]);
   });
 
   it('runs a plugin argument that calls a closure whole, its value what the closure returns (PLAN-08A Task 2)', async () => {
-    const source = `import { fetchUrl as fetch_url, findFiles as find_files } from plugins\nfunction m(msg: <inbox-[:message]->>) {\n  loud = (t: <text>) => Text.upper(t)\n  page = fetch_url(loud(msg.\`text\`))\n}`;
+    const source = `import { fetch_url, find_files } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  loud = (t: <text>) => UPPER(t)\n  page = fetch_url(url: loud(msg.\`text\`))\n}`;
     resetRustRunStats();
     await runOn('rust', { source });
     expect(rustRunStats).toMatchObject({ ranWhole: 1, notAdmitted: {}, declined: {} });
@@ -506,9 +506,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const extract = (indent: string) =>
       [`${indent}d = extract from [msg.\`text\`] {`, `${indent}  __proto__: "p"`, `${indent}  name: "n"`, `${indent}}`].join('\n');
     const fan = ['  ys = MAP([1, 2], { onError: "ignore" }, (x) => {', extract('    '), '    return d', '  })', '  return ys'].join('\n');
-    const declared = 'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nfunction m(msg: <inbox-[:message]->>) {\n  d = extract from [msg.`text`] {\n    node entry: <Entry>\n  }\n}';
+    const declared = 'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  d = extract from [msg.`text`] {\n    node entry: <Entry>\n  }\n}';
     const reply = { 'x:extract_result#1': [{ __proto__: wrap(3), name: wrap('Acme') }] };
-    const sources = [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`].map((body) => `function m(msg: <inbox-[:message]->>) {\n${body}\n}`);
+    const sources = [`${extract('  ')}\n  return d`, fan, `  if 1 == 1 {\n    g = 1\n  }\n${fan}`].map((body) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
     for (const source of [...sources, declared]) {
       const ts = await agree({ source, replies: [reply, reply, reply] }, { endsAtCheck: true });
       expect('error' in ts && runFailureCause(ts.error)).toMatchObject({ code: 'MOVENG_CHECK', message: expect.stringContaining('MOV_SHAPE_FIELD_PROTO') });
@@ -517,7 +517,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   });
 
   it('suspends before a plugin call a suspendAt names, as the TypeScript engine does: it never invokes the plugin', async () => {
-    const source = 'import { fetchUrl as fetch_url } from plugins\nfunction m(msg: <inbox-[:message]->>) {\n  page = fetch_url(msg.`text`)\n}';
+    const source = 'import { fetch_url } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  page = fetch_url(url: msg.`text`)\n}';
     // With a sink that can suspend: the run parks before the call.
     const parked = await agree({ source, spend: { suspendAt: ['s0.c0'] }, parks: true }, { runsWhole: true });
     expect(parked.invoked).toEqual([]);
@@ -530,13 +530,13 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
   it('suspends inside a block where the cap is met at an extraction’s priced stage, as the TypeScript engine does', async () => {
     const source = [
-      'import { fetchUrl as fetch_url } from plugins',
+      'import { fetch_url } from plugins',
       'import { attio } from adapters',
       'import { acme_main } from credentials',
-      'crm = connect attio using acme_main',
-      'function m(msg: <inbox-[:message]->>) {',
+      'crm = attio(credentials: acme_main)',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  crm-[e:companies]-> {',
-      '    d = extract from [e.`name`] through [fetch_url(e.`name`)] {',
+      '    d = extract from [e.`name`] through [fetch_url(url: e.`name`)] {',
       '      name: "a"',
       '    }',
       '  }',
@@ -559,7 +559,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
     it("keeps the entities a head's WHERE over a held extraction holds for, on both engines", async () => {
       const source = [
-        'function m(msg: <inbox-[:message]->>) {',
+        'movement m(msg: <inbox-[:message]->>) {',
         ...found,
         '  held = [found]',
         '  held-[c:company WHERE c.`name` == "Acme"]-> {',
@@ -576,11 +576,11 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       // checked at any depth, and one whose fields include a file is refused
       // (MOV_EXTRACT_CONTENT) — the event's `deck` is one — on both engines,
       // before either is asked.
-      const source = ['function m(msg: <inbox-[:message]->>) {', '  held = [msg]', '  found = extract from [held, msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
+      const source = ['movement m(msg: <inbox-[:message]->>) {', '  held = [msg]', '  found = extract from [held, msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
       const ts = await agree({ source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] }, { endsAtCheck: true });
       expect('error' in ts && String(ts.error)).toContain('MOV_EXTRACT_CONTENT');
       expect(ts.asked).toEqual([]);
-      const again = ['function m(msg: <inbox-[:message]->>) {', ...found, '  more = extract from [found] {', '    name: "the company"', '  }', '}'].join('\n');
+      const again = ['movement m(msg: <inbox-[:message]->>) {', ...found, '  more = extract from [found] {', '    name: "the company"', '  }', '}'].join('\n');
       // An earlier extraction's result runs on Rust too, written into the
       // prompt as its fields, byte for byte as the TypeScript's: the root's
       // own fields are none (its companies are an edge, not a field).
@@ -592,9 +592,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     });
 
     it("ends the event, and any other record, inside a plugin's argument at the check, a through stage's included", async () => {
-      const program = (body: string) => ['import { echo } from plugins', 'function m(msg: <inbox-[:message]->>) {', body, '}'].join('\n');
+      const program = (body: string) => ['import { echo } from plugins', 'movement m(msg: <inbox-[:message]->>) {', body, '}'].join('\n');
       const through = (arg: string, before: readonly string[] = []) =>
-        program([...before, `  d = extract from [msg.\`text\`] through [echo({ q: ${arg} })] {`, '    name: "the company"', '  }'].join('\n'));
+        program([...before, `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`, '    name: "the company"', '  }'].join('\n'));
       const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
       // A through stage's argument is held to what the plugin takes, as a
       // plain call's is (main's record walk, group G): the event inside a
@@ -608,7 +608,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       // (the event's included, MOV_CALL_ARG_TYPE) on both engines, before
       // either engine is asked.
       for (const arg of ['[msg]', '{ k: msg }']) {
-        const ts = await agree({ source: program(`  x = echo({ q: ${arg} })`) }, { endsAtCheck: true });
+        const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { endsAtCheck: true });
         expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
         expect(ts.invoked).toEqual([]);
       }
@@ -620,7 +620,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       // As a call's argument it ends at the check: a record handed whole to
       // structured data carries its fields, and the event's `deck` is a file
       // (main's file rule, MOV_CALL_ARG_TYPE at 'q.deck').
-      const whole = await agree({ source: program('  x = echo({ q: msg })') }, { endsAtCheck: true });
+      const whole = await agree({ source: program('  x = echo(q: msg)') }, { endsAtCheck: true });
       expect('error' in whole && String(whole.error)).toContain("'q.deck' is file");
       expect(whole.invoked).toEqual([]);
       // Any other record inside a through stage's argument ends at the check
@@ -639,10 +639,10 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         'import { echo } from plugins',
         'import { attio } from adapters',
         'import { acme_main } from credentials',
-        'crm = connect attio using acme_main',
-        'function m(msg: <inbox-[:message]->>) {',
+        'crm = attio(credentials: acme_main)',
+        'movement m(msg: <inbox-[:message]->>) {',
         ...before,
-        `  d = extract from [msg.\`text\`] through [echo({ q: ${arg} })] {`,
+        `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`,
         '    name: "the company"',
         '  }',
         '}',
@@ -659,7 +659,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   });
 
   describe('a model reply holding a lone surrogate (transition artefacts row 9: read on, on both engines)', () => {
-    const source = ['function m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
+    const source = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`text`] {', '    name: "the company"', '  }', '}'].join('\n');
     // `JSON.parse`, so the surrogate is the reply's own. (A reply's own
     // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"\\ud800"}}]}');
@@ -676,8 +676,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"text":"\\ud800"}');
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
-    const plugin = ['import { fetchUrl as fetch_url } from plugins', 'function m(msg: <inbox-[:message]->>) {', '  page = fetch_url(msg.`text`)', '  fail("${Json.stringify(page)}")', '}'].join('\n');
-    const file = ['function m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
+    const plugin = ['import { fetch_url } from plugins', 'movement m(msg: <inbox-[:message]->>) {', '  page = fetch_url(url: msg.`text`)', '  ERROR("${TEXT.SERIALISE(page, "JSON")}")', '}'].join('\n');
+    const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
     const withDeck: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck } };
     const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
@@ -696,8 +696,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
     const withDeck: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck } };
     const fileText = { text: 'The deck says GPT 5.6 Luna powers the product.' };
-    const read = ['function m(msg: <inbox-[:message]->>) {', '  t = File.read(msg.`deck`)', '  fail("${t}")', '}'].join('\n');
-    const file = ['function m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
+    const read = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '  ERROR("${t}")', '}'].join('\n');
+    const file = ['movement m(msg: <inbox-[:message]->>) {', '  found = extract from [msg.`deck`] {', '    name: "the company"', '  }', '}'].join('\n');
     const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
     it.each([
@@ -710,7 +710,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
   it("fails the run by name, never as the shim's fault, when the file reader calls a file unreadable for a reason outside the four", async () => {
     const deck = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', size: 12, source: { ownerAdapterType: 'email', handle: 'a-1' } };
-    const source = ['function m(msg: <inbox-[:message]->>) {', '  t = File.read(msg.`deck`)', '}'].join('\n');
+    const source = ['movement m(msg: <inbox-[:message]->>) {', '  t = READ(msg.`deck`)', '}'].join('\n');
     resetRustRunStats();
     const rust = await runOn('rust', { source, event: { ...EVENT, payload: { subject: 'Acme', deck } }, fileText: { unreadable: 'garbled' } as never });
     // A host-contract fault (the host broke its typed contract), which this
@@ -727,8 +727,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const source = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
-      'crm = connect attio using acme_main',
-      'function m(msg: <inbox-[:message]->>) {',
+      'crm = attio(credentials: acme_main)',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    name: "the company"',
       '    node founder: "each founder" {',
@@ -741,7 +741,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '  }',
       '  await sleep(1h)',
       '  write crm-[:companies]-> { name: found.name }',
-      '  held = count(kept)',
+      '  held = COUNT(kept)',
       '  write crm-[:companies]-> { name: "${held} kept" }',
       '  found-[f:founder]-> {',
       '    write crm-[:companies]-> { name: f.first }',

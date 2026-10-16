@@ -59,6 +59,9 @@ const catalog = mockCatalogSnapshot({
 
 const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'import { probe, finds } from plugins', 'inbox = connect email using dealflow_inbox', ''].join('\n');
 
+/** One company extracted from the subject (`extractOne`, its shape written in place). */
+const ONE_COMPANY = ['  found = extractOne([msg.`subject`], node Company: "" {', '    name: <text> "the company"', '  })'];
+
 const program = (...lines: string[]) => [PRELUDE + 'function m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
 
 /** What a host's JSON text makes: every `__proto__` key an own key. */
@@ -113,6 +116,12 @@ function inputOf(c: Case, park: ReturnType<typeof makeFakeParkSink>, seen: { inv
           call: async (request): Promise<LlmCallResult> => {
             seen.asked.push(request.label);
             return { parsedJson: replies.shift() ?? {} };
+          },
+        },
+        extractCall: {
+          call: async (request) => {
+            seen.asked.push(request.label);
+            return { parsedJson: replies.shift() ?? {}, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
           },
         },
         transforms: {
@@ -216,10 +225,10 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     });
     expect(ai.asked).toHaveLength(1);
     const extraction = await agree({
-      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  fail("${found.name}")'),
-      replies: [JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"Acme"},"__proto__":{"x":1}}]}')],
+      source: program(...ONE_COMPANY, '  fail("${found.name}")'),
+      replies: [JSON.parse('{"record":{"name":{"value":"Acme","evidence":{"item":0,"quote":"q"}},"__proto__":{"x":1}}}')],
     });
-    expect(extraction.asked).toEqual(['movement_extraction']);
+    expect(extraction.asked).toHaveLength(1);
   });
 
   it('spreads a `__proto__: null` in as no prototype at all: still a dict, read and spread again', async () => {
@@ -355,11 +364,11 @@ describe('lone surrogates on the wire, on both engines', () => {
       expect([engine, JSON.stringify(traced)]).toEqual([engine, expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`)]);
     }
     const extraction = await agree({
-      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  fail("${found.name} ${Text.length(found.name)}")'),
-      replies: [JSON.parse(`{"x:extract_result#1":[{"name":{"evidence":"q","value":"${'n'.repeat(199)}😀\\udc00"}}]}`)],
+      source: program(...ONE_COMPANY, '  fail("${found.name} ${Text.length(found.name)}")'),
+      replies: [JSON.parse(`{"record":{"name":{"value":"${'n'.repeat(199)}😀\\udc00","evidence":{"item":0,"quote":"q"}}}}`)],
     });
     // Read in one call (before: the Rust engine retried).
-    expect(extraction.asked).toEqual(['movement_extraction']);
+    expect(extraction.asked).toHaveLength(1);
     expect(extraction.ended).toContain(' 202');
   });
 
