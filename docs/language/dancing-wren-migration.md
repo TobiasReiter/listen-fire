@@ -39,8 +39,9 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 
 ### Upgrading
 
-- `lf upgrade <file>` (the CLI) and the API's upgrade (`upgradeAutomation`) apply every fix, check again, and repeat until no fix is left. An outer rewrite is written from the original text, so a fix inside it comes round on the next pass.
+- An upgrade runs only when someone asks for it: `lf upgrade <file>` (the CLI), the API's upgrade (`upgradeAutomation`), or the agent tool. It applies the fixes marked safe (they provably keep the meaning), checks again, and repeats until no fix is left. Every other fix is listed with its rewrite; `lf upgrade --all` (the API's `applyAllFixes`) applies those too. An outer rewrite is written from the original text, so a fix inside it comes round on the next pass.
 - The result is checked under 5. The pin moves only when it checks clean; otherwise the automation stays on its version, runs as before, and lists what is left.
+- A release's deploy check never rewrites an automation. It moves a pin only when the automation's text, as written, is already clean under 5; an automation in an older spelling stays on its version, and the team is told that an upgrade can rewrite it.
 - Check a few rewrites by hand, because the right one depends on what the value is:
   - `LENGTH(x)` is rewritten to `Text.length(x)`. On a list, write `count(x)`.
   - `x CONTAINS v` outside brackets is rewritten to `Text.includes(x, v)` when `v` is a text literal, else to `List.includes(x, v)`. Check that it matches what `x` is.
@@ -81,7 +82,7 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 | `SUM AVG MIN MAX LAST COLLECT MULTI GROUPBY KEYBY` | `List.sum List.avg List.min List.max List.last List.from List.compact List.groupBy List.keyBy` |
 | `x IN [..]`, `xs CONTAINS v` | `List.includes(xs, v)` |
 | `FILE(content, "pdf")`, `READ(f)` | `File.from(content, "pdf")`, `File.read(f)` |
-| `AT(xs, 0)`, `AT(d, "k")`, `AT(d, key)` | `xs[0]`, `d.k`, `d[key]` |
+| `AT(xs, 0)`, `AT(d, "k")`, `AT(d, key)` | `xs[0]`, `d["k"]`, `d[key]` (the upgrade writes `d["k"]`: on a record, `d.k` would read the field where `AT` refused; on a dict, `d.k` reads the same key) |
 
 - A built-in run in a record's scope (`o.UPPER(n)`) is gone: a dot reads a field, or a namespace's function.
 - Letter case is exact outside brackets. A name in the wrong case is refused with a did-you-mean: `Upper(x)`, `Text.Upper(x)` and `Text.uper(x)` each name `Text.upper`.

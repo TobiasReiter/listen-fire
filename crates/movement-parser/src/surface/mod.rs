@@ -101,10 +101,10 @@ pub struct NamedArg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fix {
     pub edits: Vec<SourceEdit>,
-    /// Safe to apply automatically: the rewrite provably keeps the program's
-    /// meaning (its text reads into the tree the old text did). Only such
-    /// fixes move a pin on their own (the deploy check's advance); the others
-    /// are applied by a person's upgrade, or listed.
+    /// Safe to apply without a person reading it: the rewrite provably keeps
+    /// the program's meaning (its text reads into the tree the old text did).
+    /// An explicit upgrade applies these, and lists the others unless asked
+    /// to apply every fix.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub safe: bool,
 }

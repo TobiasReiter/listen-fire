@@ -20,17 +20,26 @@ or `upgradeAutomation` through the API). Versions 1 to 4 keep their behaviour (p
 4 conformance corpus). Every rule, with rewrites, is in the [Dancing Wren migration
 guide](docs/language/dancing-wren-migration.md).
 
-**The old spellings rewrite themselves.** `upgradeAutomation` and the deploy check first rewrite an
-automation by the fixes the checker offers under 5 (every old spelling, and any other repair it is
-certain of); only the rewritten text is judged, and when it is clean the text and the pin move in
-one save. An automation left with errors keeps its text and its pin, and what is left is listed
-against the rewritten text. For a local project, `lf upgrade` rewrites the movement files in place
+**An upgrade rewrites the old spellings, when asked.** `upgradeAutomation` (and the agent tool)
+first rewrites an automation by the fixes the checker offers under 5 that are marked safe (they
+provably keep the meaning), and lists the others with their rewrite (`applyAllFixes` applies them
+too); only the rewritten text is judged, and when it is clean the text and the pin move in one
+save. An automation left with errors keeps its text and its pin, and what is left is listed
+against the rewritten text. The deploy check never rewrites an automation's text: it moves a pin
+only when the text as written is already clean under the newer version, and otherwise tells the
+team an upgrade can rewrite it. For a local project, `lf upgrade` rewrites the movement files in place
 (`lf upgrade --check` prints the diff); `pnpm --filter movement-lang language:upgrade` does the same
-for any file or a program on stdin. Comments and layout outside the rewritten spans are kept byte
+for any file or a program on stdin. `AT(x, "k")` is rewritten to `x["k"]`, which keeps a record's
+refusal (`x.k` would read the field). A narrowing a host registers matches a hop's WHERE however
+the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
 ### Language version 5, Dancing Wren: what breaks
 
+- **A field read off text is refused** (`MOV_TEXT_HAS_NO_FIELDS`, from version 5). `t.Name` where
+  `t` holds text reads nothing: both engines answer null. Why: a text has no fields, and a read
+  that always answers null is a mistake the checker said nothing about. Under 3 and 4 it is a
+  warning, and the program runs as before.
 - **The everyday spelling outside walk brackets** (`MOV_V5_SPELLING`, with the exact rewrite as
   the diagnostic's fix). Why: code that runs step by step reads like TypeScript, so a model or a
   person writes it right first time, and a walk's brackets read like a query because the source

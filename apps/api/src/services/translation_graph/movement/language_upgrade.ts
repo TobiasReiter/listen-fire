@@ -14,13 +14,20 @@
 //      validation under the current version, shown to the caller first; the pin
 //      moves only when the caller acknowledges a clean result.
 //
-// Both first REWRITE the text by the fixes the checker offers under the current
-// version (movement-lang checker/upgrade.ts — the loop `lf upgrade` runs too):
-// every old spelling, and any other repair the checker is certain of. What
-// is judged is the rewritten text, and when the pin moves, the rewritten text
-// is saved with it, in one save under the new pin. A movement that is not clean
-// after the rewrite keeps its text and its pin; what is left is reported
-// against the rewritten text (`upgradedSource`), each with its source line.
+// The deploy check NEVER rewrites a movement's text (Henry, 2026-10-16): it
+// judges the text as written, and advances only a pin whose text is already
+// clean under the current version. A movement in an older spelling stays on
+// its pin, with what stands in the way stored and the team told, until
+// someone upgrades it.
+//
+// Only the explicit upgrade REWRITES the text, by the fixes the checker offers
+// under the current version (movement-lang checker/upgrade.ts — the loop
+// `lf upgrade` runs too): the fixes marked safe (they provably keep the
+// meaning), and every fix when asked. What is judged is the rewritten text,
+// and when the pin moves, the rewritten text is saved with it, in one save
+// under the new pin. A movement that is not clean after the rewrite keeps its
+// text and its pin; what is left is reported against the rewritten text
+// (`upgradedSource`), each with its source line.
 //
 // An edit or re-save never moves the pin (store.ts).
 //
@@ -120,7 +127,8 @@ export type ValidateUnder = (input: {
  *  can still land short of shipping. */
 export type AdvanceOutcome = { ok: true } | { ok: false; detail: string };
 
-/** Move `movement`'s pin to `to` — with `source`, saving that text with it. */
+/** Move `movement`'s pin to `to` — with `source`, saving that text with it
+ *  (only an explicit upgrade passes one). */
 export type Advance = (input: { movement: MovementRow; to: LanguageVersion; source?: string }) => Promise<AdvanceOutcome>;
 
 // ── The rewrite ─────────────────────────────────────────────────────────────
@@ -162,9 +170,8 @@ function checkerDiagnostic(d: AuthoringDiagnostic): Diagnostic {
  * the one validation it always needed.
  *
  * Only fixes marked safe (they provably keep the meaning) are applied unless
- * `all` is set — which only a person's explicit upgrade may ask; the deploy
- * check's advance never does. An unapplied fix stays on its diagnostic, so
- * the caller lists it.
+ * `all` is set. An unapplied fix stays on its diagnostic, so the caller lists
+ * it. Only an explicit upgrade rewrites; the deploy check never calls this.
  */
 export async function rewriteForUpgrade(input: {
   movement: MovementRow;
@@ -426,9 +433,10 @@ async function checkOne(input: {
     return entryFor(movement, 'current', pin, releaseLanguage, '');
   }
 
-  // (b) Under the current version, after the rewrite — whether the pin may move.
-  const rewrite = await rewriteForUpgrade({ movement, to: current, validate: deps.validate });
-  const underCurrent = rewrite.validation;
+  // (b) Under the current version, as written — whether the pin may move. The
+  // check never rewrites the text: an old spelling blocks like any error, and
+  // the explicit upgrade is what rewrites it.
+  const underCurrent = await deps.validate(validationUnder(movement, current));
   const blocking = blockingDiagnostics(underCurrent.diagnostics);
   await deps.recordUpgradeCheck({ movement, diagnostics: blocking, checkedAgainst: current });
   const notes = noteDiagnostics(underCurrent.diagnostics);
@@ -437,13 +445,16 @@ async function checkOne(input: {
 
   if (blocking.length > 0) {
     const detail = diagnosticsText(blocking);
+    // Some of it has a rewrite the checker offers: an explicit upgrade applies it.
+    const upgradable = blocking.some((d) => d.fix !== undefined);
     await emitSafely(deps, () => ({
       teamId: movement.teamId,
       kind: VALIDATION_ISSUE,
       payload: payloadFor(movement, pin, at, {
         reason:
           `Stays on ${describeLanguageVersion(pin)}: under ${describeLanguageVersion(current)} ` +
-          `it reports ${detail}`,
+          `it reports ${detail}` +
+          (upgradable ? '. Upgrading the automation rewrites what the checker can fix, for you to review' : ''),
       }),
     }));
     await emitDeprecation(deps, movement, pin, at);
@@ -454,16 +465,13 @@ async function checkOne(input: {
     return withNotes(entryFor(movement, 'unverified', pin, releaseLanguage, gapsText(underCurrent.gaps)));
   }
 
-  const advanced = await deps.advance({ movement, to: current, ...(rewrite.changed ? { source: rewrite.source } : {}) });
+  // Clean as written: only the pin moves (the text is untouched).
+  const advanced = await deps.advance({ movement, to: current });
   if (!advanced.ok) {
     await emitDeprecation(deps, movement, pin, at);
     return withNotes(entryFor(movement, 'unverified', pin, releaseLanguage, advanced.detail));
   }
-  await deps.recordValidity({
-    movement: { ...movement, source: rewrite.source },
-    validation: underCurrent,
-    checkedAgainst: current,
-  });
+  await deps.recordValidity({ movement, validation: underCurrent, checkedAgainst: current });
   await emitDeprecation(deps, movement, current, at);
   return withNotes(entryFor(movement, 'advanced', current, releaseLanguage, ''));
 }
@@ -625,8 +633,9 @@ export function liveDeployCheckDeps(release: DeployCheckRelease): DeployCheckDep
 }
 
 /**
- * Move a pin for real. Without a rewrite, the pin moves on its own (and the
- * current snapshot is re-minted under it). With one, the rewritten text is
+ * Move a pin for real. Without a rewrite (the deploy check's advance), the pin
+ * moves on its own (and the current snapshot is re-minted under it). With one
+ * (an explicit upgrade's), the rewritten text is
  * saved under the new pin in one save — the text and the pin it is written in
  * move together, its listeners are reconciled and its snapshot minted — so no
  * run ever sees the new spelling under the old pin or the old under the new.
