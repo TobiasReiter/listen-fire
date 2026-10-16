@@ -1340,6 +1340,13 @@ impl Checker<'_> {
             }
         }
         let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
+        if since(self.version, 5)
+            && let (Some(names), Some(first)) = (&names, call.args.first())
+            && first.name().is_some()
+        {
+            let at = call_arg_span(first).start;
+            self.named_orders.insert((at.line, at.col), names.clone());
+        }
         self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
         // A plugin's argument values are held to what it declares it takes.
         let plugin = match self.scopes.resolve(scope, &callee) {

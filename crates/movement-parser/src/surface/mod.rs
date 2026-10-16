@@ -56,6 +56,25 @@ pub struct SpellingFinding {
     pub span: Span,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fix: Option<Fix>,
+    /// A call with named arguments (from version 5 they are positional): its
+    /// arguments as written, for the checker to order by the callee's
+    /// parameters. The finding stands only where the checker can.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub named: Option<NamedCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NamedCall {
+    pub callee: String,
+    pub args: Vec<NamedArg>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NamedArg {
+    pub name: String,
+    pub text: String,
+    /// Where the argument's value starts.
+    pub at: Loc,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,6 +158,7 @@ pub fn place(f: &Finding, src: &Utf16, start: Loc) -> SpellingFinding {
         message: f.message.clone(),
         span: span(f.at),
         fix: f.edits.as_ref().map(|edits| Fix { edits: edits.iter().map(|e| SourceEdit { span: span(e.at), text: e.text.clone() }).collect() }),
+        named: None,
     }
 }
 

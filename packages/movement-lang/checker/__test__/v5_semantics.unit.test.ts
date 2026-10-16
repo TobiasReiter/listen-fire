@@ -235,3 +235,29 @@ describe('a walk\'s fields are read through the hop\'s alias from version 5', ()
     expect(fixed).toContain('c-[m:Messages WHERE m.Text == cutoff]-> {');
   });
 });
+
+describe('named arguments become positional, in the callee\'s order, from version 5', () => {
+  const lib4 = 'movement label(name: <text>, tags: <text[]>) {\n  return name\n}\n\n';
+  const lib5 = 'function label(name: <text>, tags: <text[]>) {\n  return name\n}\n\n';
+
+  it('under 4 a named call reads as before', () => {
+    expect(codes(`${HEAD4}${lib4}movement go(n: <text>, ts: <text[]>) {\n  x = label(tags: ts, name: n)\n}`, 4)).toEqual([]);
+  });
+
+  it('under 5 the fix orders the arguments by the declared parameters', () => {
+    const v5 = `${HEAD5}${lib5}function go(n: <text>, ts: <text[]>) {\n  x = label(tags: ts, name: n)\n}`;
+    const found = check(v5, 5).filter((d) => d.code === 'MOV_V5_SPELLING');
+    expect(found).toHaveLength(1);
+    expect(found[0].fix?.edits[0].text).toBe('n, ts');
+    const fixed = upgraded(v5);
+    expect(fixed).toContain('x = label(n, ts)');
+    expect(codes(fixed, 5)).toEqual([]);
+  });
+
+  it('a name that is no parameter keeps the finding without a fix', () => {
+    const wrong = `${HEAD5}${lib5}function go(n: <text>, ts: <text[]>) {\n  x = label(nope: ts, name: n)\n}`;
+    const spelled = check(wrong, 5).filter((d) => d.code === 'MOV_V5_SPELLING');
+    expect(spelled).toHaveLength(1);
+    expect(spelled[0].fix).toBeUndefined();
+  });
+});

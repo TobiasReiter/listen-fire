@@ -320,3 +320,24 @@ impl Checker<'_> {
         }
     }
 }
+
+// ── Arguments by position (design §2.7) ──
+
+/// The parser's finding for a call with named arguments, its fix the
+/// arguments in the order of the callee's parameters: kept only for a callee
+/// whose parameters the check saw (a function, not a plugin), and without a
+/// fix where the names do not match the parameters one for one (the call's
+/// own diagnostics say why).
+pub fn positional(
+    finding: &movement_parser::surface::SpellingFinding,
+    named: &movement_parser::surface::NamedCall,
+    orders: &std::collections::HashMap<(usize, usize), Vec<String>>,
+) -> Option<Diagnostic> {
+    let first = named.args.first()?;
+    let params = orders.get(&(first.at.line, first.at.col))?;
+    let ordered: Option<Vec<&str>> = params.iter().map(|p| named.args.iter().find(|a| &a.name == p).map(|a| a.text.as_str())).collect();
+    let fix = ordered
+        .filter(|o| o.len() == named.args.len())
+        .map(|o| serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }] }));
+    Some(Diagnostic { fix, ..Diagnostic::error(&finding.code, finding.message.clone(), finding.span) })
+}

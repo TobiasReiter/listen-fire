@@ -400,7 +400,7 @@ impl Parser {
         let fix = (!edits.is_empty()).then(|| Fix {
             edits: edits.into_iter().map(|(s, e, text)| SourceEdit { span: self.span_between(s, e), text }).collect(),
         });
-        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix });
+        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None });
     }
 
     /// From version 5 an `if` condition is parenthesised, as TypeScript's.
@@ -2454,17 +2454,21 @@ impl Parser {
 
     fn parse_call_args_here(&mut self, callee: &str, start: usize) -> SResult<Vec<CallArg>> {
         let mut args: Vec<CallArg> = Vec::new();
+        // Each argument's start, its name and where its value starts.
+        let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
         loop {
             self.skip_all_ws();
             if self.eof() {
                 return self.fail_at(format!("Expected ')' to close the call to '{callee}'"), start);
             }
             if self.is(')') {
+                self.named_arguments(callee, &marks, self.pos);
                 self.pos += 1;
                 break;
             }
             let arg_start = self.pos;
             let name = self.read_call_arg_name();
+            marks.push((arg_start, name.clone(), self.pos));
             // Positional arguments arrived with language version 3.
             if name.is_none() && !since(self.version, 3) {
                 return self.fail_at(
@@ -2551,6 +2555,36 @@ impl Parser {
             }
         }
         Ok(args)
+    }
+
+    /// From version 5 a call passes its arguments by position (design §2.7).
+    /// The order is the callee's, which only the checker knows, so a call
+    /// with named arguments is a finding without a fix that carries each
+    /// argument's text; the checker writes the fix when the callee is a
+    /// function it can see, and drops the finding otherwise.
+    fn named_arguments(&self, callee: &str, marks: &[(usize, Option<String>, usize)], close: usize) {
+        // An adapter's construction has its own rewrite (`connect`).
+        if !since(self.version, 5) || !marks.first().is_some_and(|m| m.1.is_some()) || self.adapters.iter().any(|a| a == callee) {
+            return;
+        }
+        let args = marks
+            .iter()
+            .enumerate()
+            .map(|(i, (_, name, value))| {
+                let end = marks.get(i + 1).map_or(close, |next| next.0);
+                let text = self.text(*value, end);
+                let text = text.trim_end().strip_suffix(',').unwrap_or(text.trim_end()).trim().to_string();
+                crate::surface::NamedArg { name: name.clone().unwrap_or_default(), text, at: self.loc_at(*value) }
+            })
+            .collect();
+        let end = (marks[0].0 + 1..=close).rev().find(|&i| !crate::util::utf16::is_js_space(self.src.units()[i - 1])).unwrap_or(close);
+        crate::surface::report(crate::surface::SpellingFinding {
+            code: crate::surface::SPELLING_CODE.into(),
+            message: format!("from language version 5 arguments are passed by position: `{callee}(a, b)`, in the order its parameters are declared"),
+            span: self.span_between(marks[0].0, end),
+            fix: None,
+            named: Some(crate::surface::NamedCall { callee: callee.to_string(), args }),
+        });
     }
 
     /// A named argument's `<parameter>:` prefix, consumed — or `None`,

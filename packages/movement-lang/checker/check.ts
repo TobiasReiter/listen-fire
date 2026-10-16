@@ -181,7 +181,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
-import { spellMessage } from '../parser/surface';
+import { spellMessage, type NamedCall, type SpellingFinding } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -1380,10 +1380,11 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => {
+  const spelling: Diagnostic[] = (program.spelling ?? []).flatMap((f): Diagnostic[] => {
+    if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
     const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
-    if (typed !== undefined) return { code: f.code, message: typed.message, span: f.span, fix: typed.fix };
-    return { code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) };
+    if (typed !== undefined) return [{ code: f.code, message: typed.message, span: f.span, fix: typed.fix }];
+    return [{ code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) }];
   });
   const found = checker.diagnostics
     .map(withHandbookPointer)
@@ -2100,6 +2101,24 @@ function repairAt(at: string | HeldHandle, repair: string): string {
 /** A path head as the author wrote it — diagnostics currency. */
 function rawPath(path: PathHead): string {
   return spellPathHead(path);
+}
+
+/** The parser's finding for a call with named arguments (version 5), its
+ *  fix the arguments in the order of the callee's parameters: kept only for
+ *  a callee whose parameters the check saw (a function, not a plugin), and
+ *  without a fix where the names do not match the parameters one for one
+ *  (the call's own diagnostics say why). */
+function positional(f: SpellingFinding, named: NamedCall, orders: ReadonlyMap<string, string[]>): Diagnostic[] {
+  const first = named.args[0];
+  if (first === undefined) return [];
+  const params = orders.get(`${first.at.line}:${first.at.col}`);
+  if (params === undefined) return [];
+  const ordered = params.map(p => named.args.find(a => a.name === p)?.text);
+  const texts = ordered.flatMap(t => (t === undefined ? [] : [t]));
+  const fix = texts.length === params.length && texts.length === named.args.length
+    ? { edits: [{ span: f.span, text: texts.join(', ') }] }
+    : undefined;
+  return [{ code: f.code, message: f.message, span: f.span, ...(fix ? { fix } : {}) }];
 }
 
 function spanKey(span: Span): string {
@@ -3889,6 +3908,10 @@ class Checker {
    *  span: the message and fix the checker, which knows the type, gives them
    *  instead (`typed_spelling`). */
   readonly respelled = new Map<string, { message: string; fix: DiagnosticFix }>();
+  /** A call with named arguments to a function whose parameters are known
+   *  (version 5): its parameters in order, by where its first argument's
+   *  value starts — what the parser's finding for it needs for its fix. */
+  readonly namedOrders = new Map<string, string[]>();
 
   /** Node declarations made in the files being checked, by the symbol that
    *  declares them — how `extends` reaches a base declared in the same file,
@@ -11289,6 +11312,11 @@ class Checker {
           );
         }
       }
+    }
+    const first = statement.args[0];
+    if (since(this.languageVersion, 5) && params !== undefined && first !== undefined && first.name !== undefined) {
+      const at = callArgSpan(first).start;
+      this.namedOrders.set(`${at.line}:${at.col}`, params.map(p => p.name));
     }
     const bound = this.checkArgumentBindings({
       callee: statement.callee,

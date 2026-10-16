@@ -174,3 +174,23 @@ fn a_walk_s_fields_are_read_through_the_hop_s_alias() {
     let fixed = upgraded(&v5("  c-[m:Messages WHERE Text == cutoff]-> {\n    x = 1\n  }"));
     assert!(fixed.contains("c-[m:Messages WHERE m.Text == cutoff]-> {"), "{fixed}");
 }
+
+#[test]
+fn named_arguments_become_positional_in_the_callee_s_order() {
+    let lib4 = "movement label(name: <text>, tags: <text[]>) {\n  return name\n}\n\n";
+    let lib5 = "function label(name: <text>, tags: <text[]>) {\n  return name\n}\n\n";
+    let v4 = format!("{HEAD4}{lib4}movement go(n: <text>, ts: <text[]>) {{\n  x = label(tags: ts, name: n)\n}}");
+    assert_eq!(codes(&v4, 4), Vec::<String>::new());
+    let v5 = format!("{HEAD5}{lib5}function go(n: <text>, ts: <text[]>) {{\n  x = label(tags: ts, name: n)\n}}");
+    let found: Vec<_> = check(&v5, 5).into_iter().filter(|d| d.code == "MOV_V5_SPELLING").collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].fix.as_ref().unwrap()["edits"][0]["text"], "n, ts");
+    let fixed = upgraded(&v5);
+    assert!(fixed.contains("x = label(n, ts)"), "{fixed}");
+    assert_eq!(codes(&fixed, 5), Vec::<String>::new());
+    // A name that is no parameter: refused as before, the spelling without a fix.
+    let wrong = format!("{HEAD5}{lib5}function go(n: <text>, ts: <text[]>) {{\n  x = label(nope: ts, name: n)\n}}");
+    let spelled: Vec<_> = check(&wrong, 5).into_iter().filter(|d| d.code == "MOV_V5_SPELLING").collect();
+    assert_eq!(spelled.len(), 1);
+    assert!(spelled[0].fix.is_none());
+}
