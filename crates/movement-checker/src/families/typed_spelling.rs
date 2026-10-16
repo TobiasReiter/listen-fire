@@ -164,7 +164,7 @@ impl Checker<'_> {
                     _ => None,
                 }
             };
-            typed_spellings(tree, &slot.raw, &mut kind_of)
+            typed_spellings(tree, self.written_text(slot), &mut kind_of)
         };
         for f in found {
             let span = span_of_extent(slot, f.at);

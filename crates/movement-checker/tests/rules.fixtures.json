@@ -3159,6 +3159,20 @@
     "MOV_NAME_UNRESOLVED 2:3-2:19 Unknown name 'UPPER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
     "MOV_NAME_UNRESOLVED 3:3-3:19 Unknown name 'LOWER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope"
    ]
+  },
+  {
+   "name": "a message or a fix quotes an expression's nested calls as written, and every place after one is where it is written",
+   "snapshot": "none",
+   "version": 5,
+   "source": "function m(t: <text>) {\n  inc = (v: <number>) => v + 1\n  c = INC(inc(1)) * 10\n  d = LEN([inc(1), 2])\n  e = AT([inc(1), 2], 0)\n  f = UPPER(t) + \"${inc(2)}\"\n  g = CONTAINS([inc(1)], 2)\n  return [c, d, e, f, g]\n}\n",
+   "expected": [
+    "MOV_V5_SPELLING 5:7-5:25 `AT(x, i)` is written `x[i]` from language version 5",
+    "MOV_V5_SPELLING 6:7-6:15 `UPPER` is written `Text.upper` from language version 5",
+    "MOV_FUNCTION_UNKNOWN 3:7-3:23 Unknown function 'INC' — did you mean 'inc'? Write 'inc(inc(1))' — a call names a function declared or imported here, or a built-in (see handbook: front#functions-not-methods)",
+    "MOV_FUNCTION_UNKNOWN 4:7-4:23 Unknown function 'LEN' — did you mean 'List.min'? — a call names a function declared or imported here, or a built-in (see handbook: front#functions-not-methods)",
+    "MOV_ARITH_NON_NUMERIC 6:7-6:29 An arithmetic operation requires numeric operands — both sides of '+' are text. Build the string with \"${…}\" interpolation instead.",
+    "MOV_EXPR_PARSE 7:7-7:28 CONTAINS is written between its operands — 'a CONTAINS b', not 'CONTAINS(a, b)'"
+   ]
   }
  ]
 }

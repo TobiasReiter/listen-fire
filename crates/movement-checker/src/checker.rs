@@ -90,6 +90,14 @@ pub struct Checker<'c> {
     /// argument's value starts — what the parser's finding for it needs for
     /// its fix.
     pub named_orders: std::collections::HashMap<(usize, usize), crate::families::typed_spelling::ArgOrder>,
+    /// A slot with its nested calls hoisted (`hoist_nested_calls`), by its
+    /// span and rewritten text: the text as written, which a message or a fix
+    /// quotes (the TypeScript's rewritten slot keeps its text; only its tree
+    /// reads the hoisted names). Offsets agree, the rewrite being padded.
+    pub hoisted_texts: std::collections::HashMap<((usize, usize, usize, usize), String), String>,
+    /// The name each call hoisted out of an expression is bound to, by where
+    /// the call starts in the file (`nested_call_name`).
+    pub nested_call_names: std::cell::RefCell<std::collections::HashMap<(usize, usize), String>>,
     /// The file's statements' spans, and every name it declares or binds at
     /// its top (with the shapes the extraction keyword's rewrites generate):
     /// where a rewrite hoists a declaration, and the names it may not take.
@@ -184,7 +192,23 @@ impl Bound {
     }
 }
 
+fn hoisted_key(slot: &ExprSlot) -> ((usize, usize, usize, usize), String) {
+    let Span { start, end } = slot.span;
+    ((start.line, start.col, end.line, end.col), slot.raw.clone())
+}
+
 impl<'c> Checker<'c> {
+    /// A slot's text as the author wrote it, through any hoisting of its
+    /// nested calls — what a message or a fix quotes of it.
+    pub fn written_text<'s>(&'s self, slot: &'s ExprSlot) -> &'s str {
+        self.hoisted_texts.get(&hoisted_key(slot)).map_or(slot.raw.as_str(), String::as_str)
+    }
+
+    /// Remembers that `rewritten` is `written` with its nested calls hoisted.
+    pub fn note_hoisted(&mut self, rewritten: &ExprSlot, written: String) {
+        self.hoisted_texts.insert(hoisted_key(rewritten), written);
+    }
+
     /// Program text a message suggests, in this program's spelling.
     pub fn code(&self, text: &str) -> String {
         movement_parser::surface::phrase::spell_code(text, self.version)
@@ -217,6 +241,8 @@ impl<'c> Checker<'c> {
             stamps: Default::default(),
             respelled: Default::default(),
             named_orders: Default::default(),
+            hoisted_texts: Default::default(),
+            nested_call_names: Default::default(),
             file_statement_spans: Vec::new(),
             file_names: Default::default(),
             packages: Default::default(),
