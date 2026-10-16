@@ -134,6 +134,9 @@ import {
   treeOfSlot,
   valueChildren,
   withValueChildren,
+  bindPluginArgs,
+  pluginArgMisfitMessage,
+  pluginPositionalParams,
 } from 'movement-lang';
 import type {
   CallNode,
@@ -151,6 +154,7 @@ import type {
   MembersExpression,
   ArmExpression,
   CallArg,
+  PluginSpec,
   CallPosition,
   CallReading,
   CallScope,
@@ -6183,7 +6187,8 @@ class Interpreter {
         `'${statement.callee}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this`,
       );
     }
-    if (isPositionalCall(statement.args)) {
+    const args = this.boundPluginArgs(statement, spec);
+    if (isPositionalCall(args)) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
         `'${statement.callee}' is a plugin, and a plugin's arguments are named — the checker should have caught this`,
@@ -6191,7 +6196,7 @@ class Interpreter {
     }
     const config: Record<string, unknown> = {};
     const trails: Provenance[] = [];
-    for (const arg of statement.args) {
+    for (const arg of args) {
       if (arg.name === undefined) continue; // refused above: never positional
       if (arg.kind === 'write' || arg.kind === 'closure' || arg.kind === 'type') {
         // A plugin's parameters are values: a write is an effect, and a
@@ -6231,6 +6236,25 @@ class Interpreter {
       returned: handedBack ? 'value' : 'absent',
     });
     return binding;
+  }
+
+  /** From version 5 a plugin's arguments are by position, bound to its
+   *  parameters as the checker bound them; one that does not fit is a
+   *  checker miss. */
+  private boundPluginArgs(statement: Extract<Statement, { kind: 'call' }>, spec: PluginSpec | undefined): CallArg[] {
+    if (spec === undefined || before(this.languageVersion, 5) || statement.args.every((arg) => arg.name !== undefined)) {
+      return statement.args;
+    }
+    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const [misfit] = bound.misfits;
+    if (misfit !== undefined) {
+      const positional = pluginPositionalParams(spec, 'plain');
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `${pluginArgMisfitMessage(misfit, statement.callee, positional)} — the checker should have caught this`,
+      );
+    }
+    return bound.args;
   }
 
   /** A plugin argument's value: what `v = <argument>` would bind, read back
