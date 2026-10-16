@@ -15,7 +15,7 @@ import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 import type { Adapter, FileRef } from 'movement-engine/services/translation_graph/adapter';
-import type { LlmCallResult } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
+import type { ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import type { FileTextResolution } from 'movement-engine/services/movement_engine/expression';
@@ -172,10 +172,13 @@ function hostFor(
       resolve: (r) => (r.adapterType === 'attio' ? crm : sourceAdapter(r.adapterType, records)),
     },
     llm: {
-      client: {
-        call: async (request): Promise<LlmCallResult> => {
-          prompts.push(request.userMessage);
-          return { parsedJson: { 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] } };
+      extractCall: {
+        call: async (request): Promise<ExtractCallLlmResult> => {
+          prompts.push(request.blocks.map((block) => block.text).join('\n'));
+          return {
+            parsedJson: { record: { name: { evidence: 'q', value: 'Acme' } } },
+            usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+          };
         },
       },
     },
@@ -240,12 +243,23 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
     expect(ran.read).toEqual([]);
   });
 
-  it('there, `extract from [it]` reads it as its JSON text, and reads no file', async () => {
-    const ran = await both(program(source, ['found = extract from [r.`meta`] {', '  name: "the company"', '}']));
+  // From 5 an extraction reads text and files only, so a dict is refused as
+  // content before a run; rendered as text first, it is read as its JSON.
+  it('there, `extractOne([it], …)` is refused as json content (by the checker), and nothing is read', async () => {
+    const ran = await both(program(source, ['found = extractOne([r.`meta`], node Found: "the company" { name: <text> "its name" })']), { endsAtCheck: true });
+    expect(ran.read).toEqual([]);
+    expect(ran.prompts).toEqual([]);
+    expect(String(ran.error)).toContain('MOV_EXTRACT_CONTENT');
+  });
+
+  it('there, `extractOne([Json.stringify(it)], …)` reads its JSON text, and reads no file', async () => {
+    const ran = await both(
+      program(source, ['found = extractOne([Json.stringify(r.`meta`)], node Found: "the company" { name: <text> "its name" })']),
+    );
     expect(ran.error).toBeUndefined();
     expect(ran.read).toEqual([]);
     expect(ran.prompts).toHaveLength(1);
-    expect(ran.prompts[0]).toContain('"__brand":"FileRef"');
+    expect(ran.prompts[0]).toContain('"__brand": "FileRef"');
     expect(ran.prompts[0]).toContain('s3://bucket/another-team/secrets.pdf');
   });
 
