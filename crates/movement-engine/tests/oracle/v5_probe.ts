@@ -71,6 +71,10 @@ const EXTRA = [
   b('x_multi', '  up = (t: <number>) => t + 1\n  r = MAP(["a"], up)\n  write crm-[:notes]-> { body: "${r}" }'),
   b('x_multi', '  nm = (c) => c.`name`\n  r = MAP(crm-[:companies]->, nm)\n  write crm-[:notes]-> { body: "${r}" }'),
   b('x_multi', '  r = MAP(crm-[:companies]->, (c) => c.`name`)\n  write crm-[:notes]-> { body: "${r}" }'),
+  // A function's call that hands back a node, written positionally from version 5.
+  f('movement_call', 'node Note {\n  title: <text>\n}\nmovement make(t: <text>) {\n  return node { title: t }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  l = msg.`subject`\n  n = make(t: l)\n  write crm-[:notes]-> { body: n.`title` }\n}'),
+  f('movement_call', 'movement pick(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return co\n}\nmovement say(n: <text>) {\n  write crm-[:notes]-> { body: n }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  co = pick(n: "Acme")\n  say(n: co.`name`)\n}'),
+  { reason: 'v5:movement_call', program: { file: 'import { keep } from "lib/keep"\nmovement m(msg: <inbox-[:message]->>) {\n  k = keep(e: msg)\n  write crm-[:notes]-> { body: "${COUNT(k-[:files]->)}" }\n}', files: { 'lib/keep': { source: 'import { email } from adapters\nimport { inbox_cred } from credentials\ninbox = email(credentials: inbox_cred)\nexport function keep(e: <inbox-[:message]->>) {\n  n = node { files: lazy e-[a:files]-> }\n  await sleep(1h)\n  return n\n}' } }, movementName: 'm' } },
   b('x_multi', '  up = (t: <text>) => UPPER(t)\n  r = up(ONLY(crm-[:companies]->))\n  write crm-[:notes]-> { body: "${r}" }'),
 ];
 
