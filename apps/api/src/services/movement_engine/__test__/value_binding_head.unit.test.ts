@@ -338,10 +338,12 @@ describe('a block head rooted at a value holding extraction roots', () => {
       PER_PIECE_EXTRACT +
         [
           '  one = found[1]',
-          '  one-[c:company]-> {',
-          '    write crm-[:companies]-> {',
-          '      unique by (`name`)',
-          '      name: c.name',
+          '  if (one != null) {',
+          '    one-[c:company]-> {',
+          '      write crm-[:companies]-> {',
+          '        unique by (`name`)',
+          '        name: c.name',
+          '      }',
           '    }',
           '  }',
           '}',

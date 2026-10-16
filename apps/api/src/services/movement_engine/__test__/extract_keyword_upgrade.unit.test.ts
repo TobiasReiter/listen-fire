@@ -153,10 +153,14 @@ describe("the extraction keyword's upgrade to extractOne over a declared shape",
     const errors = checkProgram(parseProgram(upgraded, { languageVersion: 5 }), fromCatalogSnapshot(catalog), { languageVersion: 5 }).filter(
       (d) => (d.severity ?? 'error') === 'error',
     );
-    expect(errors).toEqual([]);
+    // The call's record may be absent, which the keyword's result never was:
+    // the walk off it asks for its guard, which a person writes.
+    expect(errors.map((d) => d.code)).toEqual(['MOV_ABSENT_REQUIRED']);
+    const guarded = upgraded.replace(/\n  found-\[c:company\]-> \{\n([\s\S]*?)\n  \}\n\}/, (_, body: string) => `\n  if (found != null) {\n  found-[c:company]-> {\n${body}\n  }\n  }\n}`);
+    expect(guarded).not.toEqual(upgraded);
 
     const before = await writesOf(V4, 4);
     expect(before).toEqual([{ name: 'Acme' }, { name: 'Acme: Ada' }, { name: 'Acme: Grace' }, { name: 'Initech' }]);
-    expect(await writesOf(upgraded, 5)).toEqual(before);
+    expect(await writesOf(guarded, 5)).toEqual(before);
   });
 });

@@ -332,7 +332,8 @@ describe('a block head rooted at an expression', () => {
   it('a singleton fold over a list of records walks the one it picked', async () => {
     const attio = makeFakeAdapter('attio');
 
-    await run(TWO_NODES + ['  ONLY([two])-[t:tag]-> {', WRITE_TAG].join('\n'), {
+    // It may be absent (none to pick), so the walk off it is guarded (from 5).
+    await run(TWO_NODES + ['  picked = ONLY([two])', '  if (picked != null) {', '  picked-[t:tag]-> {', WRITE_TAG.replace(/\n}$/, '\n  }\n}')].join('\n'), {
       attio: attio.adapter,
     });
 
@@ -346,8 +347,11 @@ describe('a block head rooted at an expression', () => {
       TWO_NODES +
         [
           '  held = KEYBY(both, (n) => { return n.label })',
-          '  AT(held, "B")-[t:tag]-> {',
-          WRITE_TAG,
+          // A key may hold nothing, so the walk off it is guarded (from 5).
+          '  picked = AT(held, "B")',
+          '  if (picked != null) {',
+          '  picked-[t:tag]-> {',
+          WRITE_TAG.replace(/\n}$/, '\n  }\n}'),
         ].join('\n'),
       { attio: attio.adapter },
     );

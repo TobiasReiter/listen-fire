@@ -164,8 +164,10 @@ describe("an extracted node's children: a hop's alias read is the child's field"
     expect(
       await notesOnBoth(
         ...EXTRACT,
-        '  deals-[c:company WHERE c.name != "Initech" ORDER BY c.rank]-> {',
-        '    write inbox-[:note]-> { body: c.name }',
+        '  if (deals != null) {',
+        '    deals-[c:company WHERE c.name != "Initech" ORDER BY c.rank]-> {',
+        '      write inbox-[:note]-> { body: c.name }',
+        '    }',
         '  }',
       ),
     ).toEqual(['Acme', 'Globex']);
@@ -185,9 +187,11 @@ describe("an extracted node's children: a hop's alias read is the child's field"
     expect(
       await notesOnBoth(
         ...EXTRACT,
-        '  deals-[c:company ORDER BY c.rank]-> {',
-        '    c-[r:round WHERE r.stage != "seed" ORDER BY r.stage]-> {',
-        '      write inbox-[:note]-> { body: "${c.name}:${r.stage}" }',
+        '  if (deals != null) {',
+        '    deals-[c:company ORDER BY c.rank]-> {',
+        '      c-[r:round WHERE r.stage != "seed" ORDER BY r.stage]-> {',
+        '        write inbox-[:note]-> { body: "${c.name}:${r.stage}" }',
+        '      }',
         '    }',
         '  }',
       ),
