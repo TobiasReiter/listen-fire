@@ -1319,8 +1319,10 @@ impl Checker<'_> {
         let mut value = crate::types::position::ReturnShape::default();
         let callee = self.callee_name(&call.callee, scope);
         let resolution = self.scopes.resolve(scope, &callee);
-        // Before version 3 a built-in is not a callee (no standard library).
-        if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
+        // From version 3 a built-in's call is read as one (`readOneCall`);
+        // before it a built-in is not a callee (no standard library), so its
+        // name is as unresolved as any other.
+        if matches!(resolution, Resolution::Found(_)) || !since(self.version, 3) || !crate::families::names::is_builtin_name(&call.callee) {
             match resolution {
                 Resolution::Found(id) => (params, value) = self.check_callee(call, id, scope),
                 Resolution::Unknown

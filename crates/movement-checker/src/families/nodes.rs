@@ -59,6 +59,13 @@ impl NodeState {
         self.declared.get(&symbol)
     }
 
+    /// Where a walk rooted at a node declaration starts, as at an instance
+    /// (`positionTypeOf` of a graph symbol): its own meta position, whose one
+    /// collection is the declaration itself.
+    pub fn walk_root(&self, symbol: SymbolId) -> Option<crate::types::Position> {
+        self.declared(symbol).map(|d| crate::types::Position::Meta { instance: d.instance.clone() })
+    }
+
     /// `declaredShapeTokens`: a declaration this file wrote (not an imported one).
     pub fn is_local(&self, symbol: SymbolId) -> bool {
         self.local.contains_key(&symbol)

@@ -807,7 +807,10 @@ impl crate::checker::Checker<'_> {
     /// `rootType`: where a head's walk starts.
     fn head_root_type(&self, head: &PathHead, scope: ScopeId) -> Option<Position> {
         let symbol_pos = match &head.root {
-            Some(PathRoot::Name { name }) => self.symbol_types(name, scope).and_then(|t| t.pos.clone()),
+            Some(PathRoot::Name { name }) => match self.scopes.resolve(scope, name) {
+                Resolution::Found(id) => self.scopes.symbol(id).types.pos.clone().or_else(|| self.nodes.walk_root(id)),
+                _ => None,
+            },
             _ => None,
         };
         symbol_pos.or_else(|| record_head_position(self.head_root_value_type(head, scope).as_ref()))

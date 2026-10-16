@@ -77,7 +77,13 @@ impl TypeEnv for ScopeEnv<'_> {
 
     fn resolve_root(&self, name: &str) -> Option<Position> {
         let Resolution::Found(id) = self.scopes.resolve(self.scope, name) else { return None };
-        self.scopes.symbol(id).types.pos.clone().or_else(|| self.function_values.get(&id).cloned().map(Position::Closure))
+        self.scopes
+            .symbol(id)
+            .types
+            .pos
+            .clone()
+            .or_else(|| self.function_values.get(&id).cloned().map(Position::Closure))
+            .or_else(|| self.nodes.walk_root(id))
     }
 
     fn resolve_scalar(&self, name: &str) -> Option<Ty> {
