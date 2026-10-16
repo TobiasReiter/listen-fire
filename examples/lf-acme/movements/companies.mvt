@@ -1,10 +1,10 @@
 import { acme_crm } from adapters
 import { acme } from credentials
 
-crm = acme_crm(credentials: acme)
+crm = connect acme_crm using acme
 
 # A company created in the CRM is welcomed at once, then followed up an hour later.
-movement welcome(company: <crm-[:Company]->>) {
+function welcome(company: <crm-[:Company]->>) {
   write crm-[:Company]-> { Name: "Welcome ${company.Name}" }
   await sleep(1h)
   write crm-[:Company]-> { Name: "Follow up ${company.Name}" }

@@ -7,16 +7,16 @@ Listen-Fire runs small programs over the systems a team already uses. A program 
 An automation **listens** to something in one of your systems and **fires** a named automation in response. That is the whole shape of a program, and it is where the name comes from.
 
 ```
-import { email, attio } from adapters
+import { `@lf/email` as email, `@lf/attio` as attio } from adapters
 import { acme_main } from credentials
 
-inbox = email()
-crm   = attio(credentials: acme_main)
+inbox = connect email
+crm   = connect attio using acme_main
 
 function `Inbound Intake`(msg: <inbox-[:Email]->>) {
   write crm-[:Companies]-> {
-    unique by (`Name`)
-    Name: msg.`Subject`
+    unique by (Name)
+    Name: msg.Subject
   }
 }
 
