@@ -211,6 +211,33 @@ fn operators_and_conditionals() {
     same("a ? b ? 1 : 2 : 3", "IF a THEN IF b THEN 1 ELSE 2 END ELSE 3 END");
 }
 
+/// The first hop WHERE in a lowered walk.
+fn hop_filter(lowered: &Value) -> Option<Value> {
+    match lowered {
+        Value::Object(o) => o.get("expressionFilter").cloned().or_else(|| o.values().find_map(hop_filter)),
+        Value::Array(items) => items.iter().find_map(hop_filter),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_narrowing_key_does_not_depend_on_how_the_field_read_is_spelled() {
+    use crate::catalog::helpers::refinement_key;
+    let key = |text: &str, version: u32| refinement_key("Record Change", &hop_filter(&lowered(text, version)).expect("a hop WHERE"));
+    let alias = key("at-[e:`Record Change` WHERE e.action == \"record.created\" AND e.`table` == \"tblDeals\"]->", 5);
+    let bare = key("at-[:`Record Change` WHERE action == \"record.created\" AND `table` == \"tblDeals\"]->", 4);
+    assert!(lowered("at-[e:`Record Change` WHERE e.action == \"x\"]->", 5).to_string().contains("fieldOnly"));
+    assert_eq!(alias, bare);
+    // What a host registers: its own filter, no spelling marks.
+    let host = serde_json::json!({ "type": "logical", "op": "and", "operands": [
+        { "type": "compare", "op": "eq", "left": { "type": "edge_property", "propertyTypeId": "action" }, "right": { "type": "static", "value": "record.created" } },
+        { "type": "compare", "op": "eq", "left": { "type": "edge_property", "propertyTypeId": "table" }, "right": { "type": "static", "value": "tblDeals" } },
+    ] });
+    let bare_filter = hop_filter(&lowered("at-[:`Record Change` WHERE action == \"record.created\" AND `table` == \"tblDeals\"]->", 4)).unwrap();
+    assert_eq!(bare_filter, host);
+    assert_eq!(alias, refinement_key("Record Change", &host));
+}
+
 #[test]
 fn presence_and_walks() {
     same("exists(msg-[:Attachments]->)", "EXISTS(msg-[:Attachments]->)");
