@@ -110,15 +110,21 @@ jest.mock('../../document', () => ({
 
 import {
   CURRENT_LANGUAGE_VERSION,
-  fromCatalogSnapshot,
   mockCatalogSnapshot,
   type CatalogSnapshot,
   type ExtractExpression,
   type InstanceSchema,
   type Span,
 } from 'movement-lang';
-import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
-import { MovementRunFailed, runFailureCause, runMovement } from 'movement-engine/services/movement_engine/run';
+import { MovementRunFailed, runFailureCause, runMovement as runMovementUnder } from 'movement-engine/services/movement_engine/run';
+
+// The extraction keyword's engine suite. The keyword (`extract from […] { … }`,
+// its inline shapes and `through […]` stages) is versions 1–4 only — from 5 it
+// is MOV_EXTRACT_KEYWORD_RETIRED, and an extraction is `extract(content,
+// Shape)` (extract_call's suites) — so every run here is pinned to version 4
+// in the spelling 4 reads, unless a test names its own version.
+const runMovement = (input: Parameters<typeof runMovementUnder>[0]): ReturnType<typeof runMovementUnder> =>
+  runMovementUnder({ languageVersion: 4, ...input });
 import { MovementEngineError, type MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import { logger } from 'movement-engine/services/logger';
 import {
@@ -457,9 +463,9 @@ const MOVEMENT_PRELUDE = [
   'import { email, attio, slack } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace } from credentials',
   '',
-  'inbox = connect email using dealflow_inbox',
-  'crm   = connect attio using acme_main',
-  'team  = connect slack using acme_workspace',
+  'inbox = email(credentials: dealflow_inbox)',
+  'crm   = attio(credentials: acme_main)',
+  'team  = slack(credentials: acme_workspace)',
 ].join('\n');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -474,15 +480,15 @@ const PARITY_PRELUDE = [
   'import { email, attio, slack } from adapters',
   'import { acme_main, acme_workspace } from credentials',
   '',
-  'inbox = connect email',
-  'crm   = connect attio using acme_main',
-  'team  = connect slack using acme_workspace',
+  'inbox = email()',
+  'crm   = attio(credentials: acme_main)',
+  'team  = slack(credentials: acme_workspace)',
 ].join('\n');
 
 const PARITY_MOVEMENT = [
   PARITY_PRELUDE,
   '',
-  'function log_dealflow(msg: <inbox-[:message]->>) {',
+  'movement log_dealflow(msg: <inbox-[:message]->>) {',
   '',
   '  deals = extract from [msg.`text`] {',
   '    digest: "a one-line summary of the dealflow message"',
@@ -674,19 +680,19 @@ describe('stage-0 extraction through runMovement', () => {
 const STAGED_MOVEMENT = [
   'import { email, attio, slack } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace } from credentials',
-  'import { vcFetch as vc_fetch } from plugins',
+  'import { vc_fetch } from plugins',
   '',
-  'inbox = connect email using dealflow_inbox',
-  'crm   = connect attio using acme_main',
-  'team  = connect slack using acme_workspace',
+  'inbox = email(credentials: dealflow_inbox)',
+  'crm   = attio(credentials: acme_main)',
+  'team  = slack(credentials: acme_workspace)',
   '',
-  'function log_dealflow(msg: <inbox-[:message]->>) {',
+  'movement log_dealflow(msg: <inbox-[:message]->>) {',
   '',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company seeking investment in this message" {',
   '      name: "the company\'s name"',
   '      urls: "URLs in the message associated with this company"',
-  '    } through [vc_fetch({ urls: urls })] {',
+  '    } through [vc_fetch(urls: urls)] {',
   '      name:    "the company\'s name"',
   '      website: "the company\'s official website"',
   '',
@@ -965,9 +971,9 @@ describe('through-staged extraction', () => {
 
 const AUTO_CONTENT_MOVEMENT = [
   MOVEMENT_PRELUDE,
-  'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
+  'import { vc_url_retrieval } from plugins',
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] through [vc_url_retrieval] {',
   '    node company: "each company mentioned" {',
   '      name: "the company\'s name"',
@@ -1024,14 +1030,14 @@ describe('through auto-content (vc_url_retrieval)', () => {
 
 const PER_ENTITY_FETCH_MOVEMENT = [
   MOVEMENT_PRELUDE,
-  'import { fetchUrl as fetch_url } from plugins',
+  'import { fetch_url } from plugins',
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company mentioned" {',
   '      name:    "the company\'s name"',
   '      website: "the company\'s web address"',
-  '    } through [fetch_url(website)] {',
+  '    } through [fetch_url(url: website)] {',
   '      summary: "what the company does"',
   '    }',
   '  }',
@@ -1245,9 +1251,9 @@ describe('a per-entity retrieval stage', () => {
     const pipeline = Array.from({ length: STAGE_FAN_OUT + 2 }, () => 'vc_url_retrieval');
     const source = [
       MOVEMENT_PRELUDE,
-      'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
+      'import { vc_url_retrieval } from plugins',
       '',
-      'function intake(msg: <inbox-[:message]->>) {',
+      'movement intake(msg: <inbox-[:message]->>) {',
       `  deals = extract from [msg.\`text\`] through [${pipeline.join(', ')}] {`,
       '    node company: "each company mentioned" {',
       '      name: "the company\'s name"',
@@ -1302,9 +1308,9 @@ describe('a per-entity retrieval stage', () => {
     const pipeline = Array.from({ length: STAGE_FAN_OUT + 2 }, () => 'vc_url_retrieval');
     const source = [
       MOVEMENT_PRELUDE,
-      'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
+      'import { vc_url_retrieval } from plugins',
       '',
-      'function intake(msg: <inbox-[:message]->>) {',
+      'movement intake(msg: <inbox-[:message]->>) {',
       `  deals = extract from [msg.\`text\`] through [${pipeline.join(', ')}] {`,
       '    node company: "each company mentioned" {',
       '      name: "the company\'s name"',
@@ -1448,14 +1454,14 @@ describe('a per-entity retrieval stage', () => {
  *  every entity whatever the entity's own fields say. */
 const TWO_PLUGIN_STAGE_MOVEMENT = [
   MOVEMENT_PRELUDE,
-  'import { fetchUrl as fetch_url, vcUrlRetrieval as vc_url_retrieval } from plugins',
+  'import { fetch_url, vc_url_retrieval } from plugins',
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company mentioned" {',
   '      name:    "the company\'s name"',
   '      website: "the company\'s web address"',
-  '    } through [vc_url_retrieval, fetch_url(website)] {',
+  '    } through [vc_url_retrieval, fetch_url(url: website)] {',
   '      summary: "what the company does"',
   '    }',
   '  }',
@@ -1664,7 +1670,7 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
   const ENUM_MOVEMENT = [
     MOVEMENT_PRELUDE,
     '',
-    'function m(msg: <inbox-[:message]->>) {',
+    'movement m(msg: <inbox-[:message]->>) {',
     '  deals = extract from [msg.`text`] {',
     '    node company: "each company seeking investment in this message" {',
     '      name:  "the company\'s name"',
@@ -1764,7 +1770,7 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
       '',
       'type Stage = <"Pre-seed" | "Bridge">',
       '',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  deals = extract from [msg.`text`] {',
       '    node company: "each company seeking investment in this message" {',
       '      name:  "the company\'s name"',
@@ -1849,7 +1855,7 @@ describe('enum borrowing — `stage: crm.company.stage "…"` constrains the ext
     const MULTISELECT_MOVEMENT = [
       MOVEMENT_PRELUDE,
       '',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  deals = extract from [msg.`text`] {',
       '    node company: "each company seeking investment in this message" {',
       '      name:       "the company\'s name"',
@@ -1922,7 +1928,7 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
   const OPEN_SINGLE_MOVEMENT = [
     MOVEMENT_PRELUDE,
     '',
-    'function m(msg: <inbox-[:message]->>) {',
+    'movement m(msg: <inbox-[:message]->>) {',
     '  deals = extract from [msg.`text`] {',
     '    node company: "each company seeking investment in this message" {',
     '      name:   "the company\'s name"',
@@ -2025,7 +2031,7 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
     const CLOSED_SINGLE_MOVEMENT = [
       MOVEMENT_PRELUDE,
       '',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  deals = extract from [msg.`text`] {',
       '    node company: "each company seeking investment in this message" {',
       '      name:  "the company\'s name"',
@@ -2073,7 +2079,7 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
   const OPEN_MULTISELECT_MOVEMENT = [
     MOVEMENT_PRELUDE,
     '',
-    'function m(msg: <inbox-[:message]->>) {',
+    'movement m(msg: <inbox-[:message]->>) {',
     '  deals = extract from [msg.`text`] {',
     '    node company: "each company seeking investment in this message" {',
     '      name: "the company\'s name"',
@@ -2132,7 +2138,7 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
     const CLOSED_MULTISELECT_MOVEMENT = [
       MOVEMENT_PRELUDE,
       '',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  deals = extract from [msg.`text`] {',
       '    node company: "each company seeking investment in this message" {',
       '      name:       "the company\'s name"',
@@ -2192,7 +2198,7 @@ describe('open enums (`enum.open`) — known-values fields accept novel values',
 const META_NODE_MOVEMENT = [
   MOVEMENT_PRELUDE,
   '',
-  'function m(msg: <inbox-[:message]->>) {',
+  'movement m(msg: <inbox-[:message]->>) {',
   '  mentioned = extract from [msg.`text`] {',
   '    node company: "each company mentioned" {',
   '      name: "the company\'s name"',
@@ -2208,7 +2214,7 @@ const META_NODE_MOVEMENT = [
   '',
   '  write team-[:messages]-> {',
   '    channel: "#deals"',
-  '    text: "Logged ${count(orgs)} companies. Urls: ${orgs.`url`}"',
+  '    text: "Logged ${COUNT(orgs)} companies. Urls: ${orgs.`url`}"',
   '  }',
   '}',
 ].join('\n');
@@ -2264,7 +2270,7 @@ describe('per-position isolation — each iteration binds its own handles', () =
   const ISOLATED_MOVEMENT = [
     MOVEMENT_PRELUDE,
     '',
-    'function m(msg: <inbox-[:message]->>) {',
+    'movement m(msg: <inbox-[:message]->>) {',
     '  mentioned = extract from [msg.`text`] {',
     '    node company: "each company mentioned" {',
     '      name: "the company\'s name"',
@@ -2333,7 +2339,7 @@ describe('linked writes inside blocks — per-iteration parent links', () => {
     const source = [
       MOVEMENT_PRELUDE,
       '',
-      'function m(msg: <inbox-[:message]->>) {',
+      'movement m(msg: <inbox-[:message]->>) {',
       '  mentioned = extract from [msg.`text`] {',
       '    node company: "each company mentioned" {',
       '      name: "the company\'s name"',
@@ -2408,13 +2414,13 @@ describe('linked writes inside blocks — per-iteration parent links', () => {
 const EXTRACT_EXISTS_MOVEMENT = [
   MOVEMENT_PRELUDE,
   '',
-  'function m(msg: <inbox-[:message]->>) {',
+  'movement m(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] {',
   "    node company: \"each company mentioned\" {",
   "      name: \"the company's name\"",
   '    }',
   '  }',
-  '  if (exists(deals-[c:company WHERE c.`name` == "Acme"]->)) {',
+  '  if EXISTS(deals-[:company]-> WHERE `name` = "Acme") {',
   '    write team-[:messages]-> { channel: "#alerts", text: "Acme spotted" }',
   '  } else {',
   '    write team-[:messages]-> { channel: "#quiet", text: "no acme" }',
@@ -2533,10 +2539,10 @@ const CARRY_MOVEMENT = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = connect email using dealflow_inbox',
-  'crm   = connect attio using acme_main',
+  'inbox = email(credentials: dealflow_inbox)',
+  'crm   = attio(credentials: acme_main)',
   '',
-  'function carry(msg: <inbox-[:message]->>) {',
+  'movement carry(msg: <inbox-[:message]->>) {',
   '',
   '  deal = extract from [msg.`deck`] {',
   '    name: "the company name in the deck"',
@@ -2565,10 +2571,10 @@ const CARRY_EMPTY_MOVEMENT = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = connect email using dealflow_inbox',
-  'crm   = connect attio using acme_main',
+  'inbox = email(credentials: dealflow_inbox)',
+  'crm   = attio(credentials: acme_main)',
   '',
-  'function carry(msg: <inbox-[:message]->>) {',
+  'movement carry(msg: <inbox-[:message]->>) {',
   '',
   '  deal = extract from [msg.`deck`, msg.`text`] {',
   '    name: "the company name"',
@@ -2579,7 +2585,7 @@ const CARRY_EMPTY_MOVEMENT = [
   '    name: deal.`name`',
   '  }',
   '',
-  '  deal-[file:_resources WHERE file.type = "FILE"]-> {',
+  '  deal-[file:_resources WHERE type = "FILE"]-> {',
   '    write crm-[:companies]-> {',
   '      unique by (`name`)',
   '      name: deal.`name`',
@@ -2715,10 +2721,10 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     // drop the filter (which iterated the TEXT resource into the file write
     // and broke the WhatsApp-voice-note → Attio carry in prod, 2026-07-07).
     const doubleEqualsMovement = CARRY_EMPTY_MOVEMENT.replace(
-      '_resources WHERE file.type = "FILE"',
-      '_resources WHERE file.type == "FILE"',
+      '_resources WHERE type = "FILE"',
+      '_resources WHERE type == "FILE"',
     );
-    expect(doubleEqualsMovement).toContain('file.type == "FILE"');
+    expect(doubleEqualsMovement).toContain('type == "FILE"');
 
     const deckRef = {
       __brand: 'FileRef' as const,
@@ -2764,10 +2770,10 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
     // key=value pairs parsed; now the hop's WHERE rides the same parser as
     // every other bracket filter (contentType read, AND composition, ==).
     const composed = CARRY_EMPTY_MOVEMENT.replace(
-      '_resources WHERE file.type = "FILE"',
-      '_resources WHERE file.contentType == "audio/ogg" && file.type == "FILE"',
+      '_resources WHERE type = "FILE"',
+      '_resources WHERE contentType == "audio/ogg" AND type == "FILE"',
     );
-    expect(composed).toContain('file.contentType == "audio/ogg"');
+    expect(composed).toContain('contentType == "audio/ogg"');
 
     const deckRef = {
       __brand: 'FileRef' as const,
@@ -2810,7 +2816,6 @@ describe('Layer 5 — extracted-node `_resources` carries the source file forwar
 // message lands on the extracted record's `_resources` exactly as an attached
 // deck does, so the same carry block attaches it.
 describe('Layer 5 — files a `through` plugin fetched join `_resources`', () => {
-  // Written once, in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
   const FETCHED_MOVEMENT = [
     'import { email, attio } from adapters',
     'import { dealflow_inbox, acme_main } from credentials',
@@ -2858,13 +2863,12 @@ describe('Layer 5 — files a `through` plugin fetched join `_resources`', () =>
     run.mockResolvedValue({ edges: { vcUrl: emissions.map((data) => ({ data })) } });
     const email = makeFakeAdapter('email');
     const attio = makeCapturingAttio();
-    const catalog = carryFileSchema().catalog;
     const llm = queuedMovementLlm([{ 'x:extract_result#1': [{ name: wrap('Acme') }] }]);
     await runMovement({
-      source: spelledFor(languageVersion ?? 5, FETCHED_MOVEMENT, fromCatalogSnapshot(catalog)),
+      source: FETCHED_MOVEMENT,
       event: webhookEvent('email', { subject: 'Deck', text: 'deck: https://docsend.example/acme' }),
       teamId: TEAM_ID,
-      catalog,
+      catalog: carryFileSchema().catalog,
       host: makeTestHost({
         adapters: { resolve: makeResolver({ email: email.adapter, attio: attio.adapter }) },
         llm: { client: llm.client, transforms: registryTransformInvoker },
@@ -2935,9 +2939,9 @@ describe('Layer 5 — files a `through` plugin fetched join `_resources`', () =>
 // linkedin can search by person + company rather than a bare first name.
 const NESTED_ANCESTOR_MOVEMENT = [
   MOVEMENT_PRELUDE,
-  'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
+  'import { vc_url_retrieval } from plugins',
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  found = extract from [msg.`text`] {',
   '    node company: "the company" {',
   '      name: "the company\'s name"',
@@ -3250,7 +3254,7 @@ describe('independent extraction work runs at once', () => {
 const PRESENCE_MOVEMENT = [
   MOVEMENT_PRELUDE,
   '',
-  'function m(msg: <inbox-[:message]->>) {',
+  'movement m(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company mentioned" {',
   '      name:  "the company\'s name"',
@@ -3260,12 +3264,12 @@ const PRESENCE_MOVEMENT = [
   '    }',
   '  }',
   '  deals-[c:company]-> {',
-  '    if (c.`stage` == "") {',
+  '    if c.`stage` == "" {',
   '      write team-[:messages]-> { channel: "#missing", text: "[${c.`note`}]" }',
   '    } else {',
   '      write team-[:messages]-> { channel: "#found", text: c.`stage` }',
   '    }',
-  '    if (c.`size` == null) {',
+  '    if ISNULL(c.`size`) {',
   '      write team-[:messages]-> { channel: "#no-size", text: c.`name` }',
   '    }',
   '  }',
@@ -3376,7 +3380,7 @@ describe('an unproduced text field is the empty string; a typed one is absent', 
 const ONE_STAGE_FETCH_MOVEMENT = [
   MOVEMENT_PRELUDE,
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company mentioned" {',
   '      name:    "the company\'s name"',
@@ -4093,7 +4097,7 @@ describe('an extraction call describes itself on the run', () => {
 const WRAPPED_LIST_MOVEMENT = [
   MOVEMENT_PRELUDE,
   '',
-  'function watch(msg: <inbox-[:message]->>) {',
+  'movement watch(msg: <inbox-[:message]->>) {',
   '  found = extract from [msg.`text`] {',
   '    node entry: "each LinkedIn or company line in the message" {',
   '      name:        "the name on the line"',
@@ -4233,7 +4237,7 @@ describe('a node list answered inside an evidence envelope is unwrapped, not dis
     const gauge = [
       MOVEMENT_PRELUDE,
       '',
-      'function gauge(msg: <inbox-[:message]->>) {',
+      'movement gauge(msg: <inbox-[:message]->>) {',
       '  readings = extract from [msg.`text`] {',
       '    node reading: "each reading in the message" {',
       '      value:    "the number read"',
@@ -4901,15 +4905,15 @@ describe('a per-entity refinement that is never answered keeps the entity, not t
 
 const INTERPOLATED_DESCRIPTION_MOVEMENT = [
   MOVEMENT_PRELUDE,
-  'import { fetchUrl as fetch_url } from plugins',
+  'import { fetch_url } from plugins',
   '',
-  'function intake(msg: <inbox-[:message]->>) {',
+  'movement intake(msg: <inbox-[:message]->>) {',
   '  `Themes` = "AI Agents, Future of Work, Vertical SaaS"',
   '  deals = extract from [msg.`text`] {',
   '    node company: "each company working on ${`Themes`}" {',
   '      name:    "the company\'s name"',
   '      website: "the company\'s web address"',
-  '    } through [fetch_url(website)] {',
+  '    } through [fetch_url(url: website)] {',
   '      deep_dive: "the theme(s), VERBATIM from the list. ${`Themes`}"',
   '    }',
   '  }',
