@@ -7226,7 +7226,7 @@ class Checker {
     if (closure.params.length > 0) {
       this.report(
         DiagnosticCodes.AWAIT_IMPURE_CONDITION,
-        `an 'until' condition is called by the clock, so nothing can supply '${closure.params[0].name}' — write it with no parameters: 'until(() => { … }, every: …)'`,
+        `an 'until' condition is called by the clock, so nothing can supply '${closure.params[0].name}' — write it with no parameters: 'until(() => { … }, ${since(this.languageVersion, 5) ? '{ every: … }' : 'every: …'})'`,
         closure.params[0].span,
       );
     }
