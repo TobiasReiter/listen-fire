@@ -16,12 +16,8 @@
 // fails the run, or, where the route falls back, runs on the TypeScript
 // engine. Each decision is logged once per run (`noteEngine`) and counted
 // (`rustRunStats`).
-//
-// Below a whole program, one expression can already run in Rust: `evalInRust`
-// is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
-// an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, languageVersionDiagnostic, openEngineSegment, since, type LanguageVersion } from 'movement-lang';
+import { languageVersionDiagnostic, openEngineSegment, since, type LanguageVersion } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -1048,70 +1044,6 @@ function readRequest(value: unknown, call: string): HostRequest {
 
 // ── The evaluator ─────────────────────────────────────────────────────────────
 
-/** The flat built-ins and namespaced members the Rust evaluator runs
- *  (crates/movement-engine/src/stdlib.rs): every one. Zones, URLs and
- *  normalisation it asks of this runtime through the artifact's
- *  environment import (movement-lang's wasm/env_services.ts). */
-const RUST_FUNCTIONS: ReadonlySet<string> = new Set([
-  'isnull', 'coalesce', 'trim', 'lower', 'upper', 'length', 'abs', 'round', 'floor', 'ceil', 'tostring', 'tonumber',
-  'multi', 'split', 'date', 'datetime', 'number',
-  'currency.get_number_from_figure', 'currency.get_code_from_figure', 'currency.format_figure',
-  'date.parse', 'date.add_days', 'date.format', 'date.format_iso', 'date.today', 'datetime.at',
-  'text.regex_extract', 'text.slug', 'text.pairs', 'text.serialise', 'url.host', 'number.format',
-]);
-
-/**
- * Whether the Rust evaluator runs `expr`: every node a kind it evaluates (no
- * host reads, no model, no traversal), every function one of its built-ins,
- * and every literal one the lowering carries as itself (a lone surrogate
- * crosses JSON as its escape, which the engine reads).
- */
-export function rustCanEval(expr: Expression): boolean {
-  const child = rustCanEval;
-  switch (expr.type) {
-    case 'static':
-      return typeof expr.value !== 'number' || (Number.isFinite(expr.value) && !Object.is(expr.value, -0));
-    case 'alias_ref':
-    case 'property':
-      return true;
-    case 'at':
-      return child(expr.expression) && child(expr.index);
-    case 'list':
-      return expr.elements.every((element) => child(listElementExpression(element)));
-    case 'object':
-      return expr.entries.every(
-        (member) =>
-          (isObjectSpread(member) || member.key !== '__proto__')
-          && child(objectMemberExpression(member)),
-      );
-    case 'concat':
-      return expr.parts.every((e) => child(e));
-    case 'conditional':
-      return child(expr.condition) && child(expr.then) && child(expr.else);
-    case 'compare':
-      return expr.op !== 'within' && child(expr.left) && child(expr.right);
-    case 'logical':
-      return expr.operands.every((e) => child(e));
-    case 'not':
-    case 'negate':
-      return child(expr.expression);
-    case 'arithmetic':
-      return child(expr.left) && child(expr.right);
-    case 'function':
-      return RUST_FUNCTIONS.has(expr.fn) && expr.args.every((e) => child(e));
-    default:
-      return false;
-  }
-}
-
-/** Whether a record (`bindingOf`) is anywhere inside `value`. */
-function holdsBinding(value: unknown, seen = new Set<object>()): boolean {
-  if (typeof value !== 'object' || value === null || seen.has(value)) return false;
-  if (bindingOf(value) !== undefined) return true;
-  seen.add(value);
-  return Object.values(value).some((member) => holdsBinding(member, seen));
-}
-
 /**
  * The zone this process's `Date` reads a date-time text with no offset in
  * (`new Date("2026-03-12T09:30")`, `Date.parse("March 12, 2026")`), as an
@@ -1173,139 +1105,6 @@ function wallInZone(at: Date, zone: string): string {
 /** `at` on the wall clock this process's `Date` reads. */
 function wallOfDate(at: Date): string {
   return [at.getFullYear(), at.getMonth() + 1, at.getDate(), at.getHours(), at.getMinutes(), at.getSeconds()].join(' ');
-}
-
-/**
- * `expr` evaluated by the Rust engine, or undefined where the TypeScript
- * evaluator must answer: not admitted, a name that is not a value binding, a
- * value that cannot cross as itself, or a reading Rust does not reproduce
- * (its `fallback`). Errors are thrown as the TypeScript evaluator throws them.
- */
-export function evalInRust(expr: Expression, ctx: MovementExprContext): MovementEvalResult | undefined {
-  const notAdmitted = (): undefined => {
-    rustEvalStats.notAdmitted += 1;
-    return undefined;
-  };
-  if (!rustCanEval(expr)) return notAdmitted();
-  const wire = new WireOut();
-  const bindings: Record<string, unknown> = {};
-  const read = new Map<string, Extract<Binding, { kind: 'value' }>>();
-  for (const name of namesRead(expr)) {
-    const binding = ctx.env.resolve(name);
-    if (binding?.kind !== 'value') return notAdmitted();
-    // The one place the TypeScript engine's own values cross: a record a
-    // value holds stays with the evaluator that made it.
-    if (holdsBinding(binding.value)) return notAdmitted();
-    const value = wire.value(binding.value);
-    if (value === REFUSED) return notAdmitted();
-    read.set(name, binding);
-    bindings[name] = {
-      value,
-      ...(binding.provenance !== undefined ? { provenance: wire.trail(binding.provenance) } : {}),
-      ...(binding.many === true ? { many: true } : {}),
-    };
-  }
-  rustEvalStats.admitted += 1;
-  const localZone = processLocalZone();
-  if (localZone === undefined) {
-    rustEvalStats.fallback[LOCAL_ZONE_UNVERIFIED] = (rustEvalStats.fallback[LOCAL_ZONE_UNVERIFIED] ?? 0) + 1;
-    return undefined;
-  }
-  const envelope = {
-    bindings,
-    origins: wire.origins.length,
-    languageVersion: ctx.languageVersion,
-    // The run's pinned instant, which DATE.TODAY reads.
-    now: pinnedNow(ctx).toISOString(),
-    // The zone a date-time text with no offset is read in.
-    localZone,
-  };
-  const reply = callEvalExpression(JSON.stringify(expr), JSON.stringify(envelope));
-  const answer = record(reply.json, 'the Rust evaluator reply');
-  if (!reply.ok) {
-    throw new RustShimError(`the Rust evaluator refused its input: ${String(record(answer.error, 'its error').message)}`);
-  }
-  if ('fallback' in answer) {
-    const reason = String(answer.fallback);
-    rustEvalStats.fallback[reason] = (rustEvalStats.fallback[reason] ?? 0) + 1;
-    return undefined;
-  }
-  rustEvalStats.answered += 1;
-  if ('error' in answer) throw thrownBy(record(answer.error, 'the Rust evaluator error'));
-  const literal = new Map<number, ProvenanceOrigin>();
-  const origin = (id: unknown): ProvenanceOrigin => {
-    if (typeof id !== 'number') throw new RustShimError(`an origin id is a number, not ${String(id)}`);
-    const own = wire.origins[id];
-    if (own !== undefined) return own;
-    // A literal the evaluation read: one fresh origin per literal, shared
-    // between `origins` and `direct` as `fromOrigin` shares it.
-    let minted = literal.get(id);
-    if (minted === undefined) {
-      minted = { kind: 'literal', ...(ctx.literalSpan !== undefined ? { span: ctx.literalSpan } : {}) };
-      literal.set(id, minted);
-    }
-    return minted;
-  };
-  const trail = record(answer.provenance, 'the Rust evaluator provenance');
-  let provenance: Provenance;
-  if (typeof trail.binding === 'string') {
-    provenance = read.get(trail.binding)?.provenance ?? NO_PROVENANCE;
-  } else {
-    if (!Array.isArray(trail.origins)) throw new RustShimError('the Rust evaluator provenance has no origins');
-    provenance = {
-      origins: trail.origins.map(origin),
-      ...(trail.direct !== undefined ? { direct: origin(trail.direct) } : {}),
-    };
-  }
-  return { value: wire.read(answer.value), provenance };
-}
-
-/** The names `expr` reads: its `alias_ref`s and rootless `property` reads. */
-function namesRead(expr: Expression, into: Set<string> = new Set()): Set<string> {
-  switch (expr.type) {
-    case 'alias_ref':
-      into.add(expr.name);
-      break;
-    case 'property':
-      into.add(expr.propertyTypeId);
-      break;
-    case 'at':
-      namesRead(expr.expression, into);
-      namesRead(expr.index, into);
-      break;
-    case 'list':
-      for (const element of expr.elements) namesRead(listElementExpression(element), into);
-      break;
-    case 'object':
-      for (const member of expr.entries) namesRead(objectMemberExpression(member), into);
-      break;
-    case 'concat':
-      for (const part of expr.parts) namesRead(part, into);
-      break;
-    case 'conditional':
-      namesRead(expr.condition, into);
-      namesRead(expr.then, into);
-      namesRead(expr.else, into);
-      break;
-    case 'compare':
-    case 'arithmetic':
-      namesRead(expr.left, into);
-      namesRead(expr.right, into);
-      break;
-    case 'logical':
-      for (const operand of expr.operands) namesRead(operand, into);
-      break;
-    case 'not':
-    case 'negate':
-      namesRead(expr.expression, into);
-      break;
-    case 'function':
-      for (const a of expr.args) namesRead(a, into);
-      break;
-    default:
-      break;
-  }
-  return into;
 }
 
 /** The error the TypeScript engine would have thrown. */

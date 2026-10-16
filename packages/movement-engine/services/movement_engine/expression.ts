@@ -161,7 +161,6 @@ import {
 } from './provenance';
 import { MovementEngineError, type MovementEngineErrorCode } from './errors';
 import { applyMovementFunction } from './builtins';
-import { engineChoice, evalInRust } from './rust_engine';
 import { neverAsAny } from '../../lib/utils/types';
 import type { LocalLandingShape, WriteRecord as RecordedWrite } from 'engine-contracts';
 
@@ -1416,10 +1415,6 @@ export async function evalMovementExpr(
   expr: Expression,
   ctx: MovementExprContext,
 ): Promise<MovementEvalResult> {
-  // The Rust engine's evaluator, for what it runs (rust_engine.ts says what);
-  // everything else, and anything it hands back, is evaluated below.
-  const inRust = engineChoice() === 'rust' ? evalInRust(expr, ctx) : undefined;
-  if (inRust !== undefined) return inRust;
   switch (expr.type) {
     case 'static':
       // The literal's value is the program text itself — the trail

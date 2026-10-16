@@ -9,8 +9,8 @@
 //  - movement_parser.wasm (crates/movement-parser alone): the parser, the
 //    lowering and the catalog. A browser loads it with `await initParser(url)`
 //    (browsers refuse large synchronous compiles on the main thread), and so
-//    never downloads the engine; `eval_expression` and the engine segments
-//    are then absent, and refused by name.
+//    never downloads the engine; the engine segments are then absent, and
+//    refused by name.
 //
 // One compiled module serves two kinds of instance: the parser's, long-lived
 // and replaced only after a trap, and one per engine segment
@@ -67,7 +67,6 @@ type WasmFunction = ParserFunction | LoweringFunction | CatalogFunction;
 interface ParserExports extends BufferExports {
   call(fn: WasmFunction, args: number[]): number;
   /** Absent from a module built without the engine (the loader test's). */
-  evalExpression: ((...args: number[]) => number) | undefined;
   /** The Rust checker's export: absent from a module built without the
    *  engine (the browser's parser artifact). */
   checkProgram: ((...args: number[]) => number) | undefined;
@@ -176,30 +175,6 @@ export function callLowering(fn: LoweringFunction, treeJson: string, source: str
  */
 export function callCatalog(snapshotJson: string, queryJson: string): { ok: boolean; json: unknown } {
   return call('catalog_query', [snapshotJson, queryJson], []);
-}
-
-/**
- * One expression evaluated by the Rust engine against value bindings
- * (crates/movement-engine/src/abi.rs `eval_expression`), on the parser's
- * instance: the lowered expression's JSON and the bindings envelope's, and
- * the reply — `{value, provenance}`, `{error}` or `{fallback}` — or a
- * misuse as `{ok: false, json: {error: {message}}}`.
- *
- * @internal Used by the engine's evaluator switch (apps/api's rust_engine.ts).
- */
-export function callEvalExpression(exprJson: string, envelopeJson: string): { ok: boolean; json: unknown } {
-  const exports = currentExports();
-  const evalExpression = exports.evalExpression;
-  if (evalExpression === undefined) throw new Error('this movement artifact has no eval_expression()');
-  let reply: { status: number; text: string };
-  try {
-    reply = exchange(exports, [exprJson, envelopeJson], (pairs, slots) => evalExpression(...pairs, slots, slots + 4));
-  } catch (trap) {
-    if (!(trap instanceof WasmTrap)) throw trap;
-    if (loaded) loaded.exports = undefined;
-    throw new Error(`movement engine crashed in eval_expression: ${trap.detail}`, { cause: trap.trapped });
-  }
-  return statusReply(reply, 'movement engine returned unknown status %s from eval_expression');
 }
 
 /**
@@ -470,13 +445,11 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     lower_condition: exported('lower_condition'),
     catalog_query: exported('catalog_query'),
   };
-  const evalExpression = typeof raw.eval_expression === 'function' ? exported('eval_expression') : undefined;
   const checkProgram = typeof raw.check_program === 'function' ? exported('check_program') : undefined;
   return {
     memory,
     ...buffers,
     call: (fn, args) => number(parsers[fn](...args), fn),
-    evalExpression: evalExpression && ((...args) => number(evalExpression(...args), 'eval_expression')),
     checkProgram: checkProgram && ((...args) => number(checkProgram(...args), 'check_program')),
   };
 }

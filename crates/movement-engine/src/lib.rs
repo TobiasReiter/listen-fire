@@ -4,12 +4,11 @@
 //! and the host answers each by id. `abi` carries that conversation across
 //! the boundary.
 //!
-//! Two things run here: the pure evaluator (`eval`, with `stdlib` and
-//! `filter`), which the TypeScript evaluator calls synchronously through
-//! `abi::eval_expression` for an expression over value bindings; and a whole
-//! run, the `segment` entry (`run`), for the programs `admit` admits
-//! (packages/movement-engine/services/movement_engine/rust_engine.ts drives it). JavaScript's value
-//! semantics are `js`'s, and values cross on `env`'s wire.
+//! A whole run is the `segment` entry (`run`), which
+//! packages/movement-engine/services/movement_engine/rust_engine.ts drives;
+//! its expressions are the evaluator's (`eval`, with `stdlib` and `filter`).
+//! JavaScript's value semantics are `js`'s, and values cross on `env`'s
+//! wire.
 
 // A list's cells are a `RefCell`; a borrow held across an await would let a
 // concurrent member's push panic.
@@ -61,11 +60,9 @@ pub mod unique;
 pub mod verbs;
 pub mod write;
 
-use movement_parser::lowering::expression::Expression;
-
-use eval::{ErrorClass, EvalError, Evaluator, Prov};
-
-use serde_json::{Value as Json, json};
+use serde_json::Value as Json;
+#[cfg(test)]
+use serde_json::json;
 
 use executor::{Answer, HostError, ProtocolError, Segment};
 #[cfg(test)]
@@ -155,47 +152,51 @@ fn answer_envelope(answer: &Answer) -> Json {
     }
 }
 
-/// `eval_expression`'s reply, or a message for input it cannot read.
-pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
-    let expr: Expression = js_string::from_json_text(expr).map_err(|e| format!("the expression does not read: {e}"))?;
-    let envelope = env::read_envelope(bindings)?;
-    // A zone the environment does not know would read every date text as
-    // UTC: the TypeScript evaluator answers instead.
-    if let Some(zone) = &envelope.local_zone
-        && !crate::js_date::LocalZone::is_known(zone, env_services::current())
-    {
-        return Ok(json!({ "fallback": "local_zone_does_not_read" }));
-    }
-    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now, local_zone: envelope.local_zone.as_deref() };
-    let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
-    Ok(match evaluator.eval_pure(&expr) {
-        Ok(result) => json!({
-            "value": env::encode(&result.value),
-            "provenance": match result.prov {
-                Prov::Binding(name) => json!({ "binding": name }),
-                Prov::Built(trail) => match trail.direct {
-                    Some(direct) => json!({ "origins": trail.origins, "direct": direct }),
-                    None => json!({ "origins": trail.origins }),
-                },
-            },
-        }),
-        Err(EvalError::Thrown { class, message }) => json!({ "error": match class {
-            ErrorClass::Engine(code) => json!({ "class": "MovementEngineError", "code": code, "message": message }),
-            ErrorClass::Error => json!({ "class": "Error", "message": message }),
-            ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
-            ErrorClass::TypeError => json!({ "class": "TypeError", "message": message }),
-            ErrorClass::Unreproduced => json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": message }),
-        } }),
-        Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
-        Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use movement_parser::lowering::expression::Expression;
     use serde_json::{Value as Json, json};
 
-    use super::evaluate;
+    use crate::eval::{ErrorClass, EvalError, Evaluator, Prov};
+    use crate::{env, env_services, js_string, stdlib};
+
+    /// One expression evaluated against value bindings (`env::read_envelope`),
+    /// for the evaluator's unit tests: `{value, provenance}`, `{error: {class,
+    /// code?, message}}` or `{fallback: reason}`.
+    fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
+        let expr: Expression = js_string::from_json_text(expr).map_err(|e| format!("the expression does not read: {e}"))?;
+        let envelope = env::read_envelope(bindings)?;
+        // A zone the environment does not know would read every date text as
+        // UTC: the TypeScript evaluator answers instead.
+        if let Some(zone) = &envelope.local_zone
+            && !crate::js_date::LocalZone::is_known(zone, env_services::current())
+        {
+            return Ok(json!({ "fallback": "local_zone_does_not_read" }));
+        }
+        let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now, local_zone: envelope.local_zone.as_deref() };
+        let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
+        Ok(match evaluator.eval_pure(&expr) {
+            Ok(result) => json!({
+                "value": env::encode(&result.value),
+                "provenance": match result.prov {
+                    Prov::Binding(name) => json!({ "binding": name }),
+                    Prov::Built(trail) => match trail.direct {
+                        Some(direct) => json!({ "origins": trail.origins, "direct": direct }),
+                        None => json!({ "origins": trail.origins }),
+                    },
+                },
+            }),
+            Err(EvalError::Thrown { class, message }) => json!({ "error": match class {
+                ErrorClass::Engine(code) => json!({ "class": "MovementEngineError", "code": code, "message": message }),
+                ErrorClass::Error => json!({ "class": "Error", "message": message }),
+                ErrorClass::RangeError => json!({ "class": "RangeError", "message": message }),
+                ErrorClass::TypeError => json!({ "class": "TypeError", "message": message }),
+                ErrorClass::Unreproduced => json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": message }),
+            } }),
+            Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
+            Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
+        })
+    }
 
     /// `text` parsed and lowered as the TypeScript's `parseMovementExpression`
     /// does, as the JSON the engine is handed.

@@ -1,10 +1,10 @@
-// The tests that read dates in "this process's zone" (rust_eval, rust_run),
+// The tests that read dates in "this process's zone" (rust_run),
 // run once per zone: jest hands every suite a copy of the environment, so a
 // test assigning `TZ` moves no clock, and a process's zone is fixed when it
 // starts. Each zone is a jest of its own, `TZ` set: the IANA zones the shim
 // hands the Rust engine (both engines then read a date text alike), and the
-// `TZ` values whose zone `Intl` cannot name as `Date` reads it (the run and
-// the expression are left to TypeScript by name, never diverge).
+// `TZ` values whose zone `Intl` cannot name as `Date` reads it (the run is
+// refused by name, never diverges).
 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -24,17 +24,17 @@ const ZONES: Array<[string, 'named' | 'unverified']> = [
 ];
 
 describe("the date tests, in each process's zone", () => {
-  // Nested runs: each is a jest of the two suites, a few seconds apiece.
+  // Nested runs: each is a jest of the suite, a few seconds apiece.
   jest.setTimeout(600_000);
 
   it.each(ZONES)('TZ=%j: %s', (zone, expected) => {
     const run = spawnSync(
       process.execPath,
-      [JEST, '--config', 'src/test/jest-unit.config.ts', '--runInBand', '--testPathPattern', 'rust_(eval|run)\\.unit', '-t', "in this process's zone"],
+      [JEST, '--config', 'src/test/jest-unit.config.ts', '--runInBand', '--testPathPattern', 'rust_run\\.unit', '-t', "in this process's zone"],
       { cwd: API, env: { ...process.env, TZ: zone, EXPECT_LOCAL_ZONE: expected }, encoding: 'utf8' },
     );
     const summary = /Tests: +(?:(\d+) failed, )?.*?(\d+) passed/.exec(run.stderr);
     expect([zone, run.status, summary?.[1] ?? '0']).toEqual([zone, 0, '0']);
-    expect(Number(summary?.[2])).toBeGreaterThanOrEqual(5);
+    expect(Number(summary?.[2])).toBeGreaterThanOrEqual(3);
   });
 });

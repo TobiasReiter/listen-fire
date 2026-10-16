@@ -5,7 +5,6 @@ export * from './parser/parse';
 export {
   MovementParserNotReady,
   assertParserReady,
-  callEvalExpression,
   initEngine,
   initParser,
   isParserReady,

@@ -112,7 +112,6 @@ describe('the parser loader', () => {
       await loader.initParser(committedArtifact('movement_parser.wasm'));
       expect(loader.callJson('parse_program', '', [3])).toEqual({ statements: [] });
       expect(loader.callLowering('lower_expression', JSON.stringify(loader.callJson('parse_expression', 'a', [3])), 'a').ok).toBe(true);
-      expect(() => loader.callEvalExpression('{}', '{}')).toThrow('this movement artifact has no eval_expression()');
       expect(() => loader.openEngineSegment()).toThrow();
     });
 

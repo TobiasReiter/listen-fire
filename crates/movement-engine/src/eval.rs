@@ -16,6 +16,7 @@
 //! evaluated once however many reads it makes, in the TypeScript's order.
 //! With no run nothing is awaited, and `eval_pure` runs the walk on the spot.
 
+#[cfg(test)]
 use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
@@ -27,7 +28,9 @@ use movement_parser::lowering::expression::{
 
 use crate::bindings::Binding;
 use crate::env::{Env, Trail, ValueBinding};
-use crate::executor::{HostError, ready};
+use crate::executor::HostError;
+#[cfg(test)]
+use crate::executor::ready;
 use crate::filter::{arithmetic, at_index, compare_to_null, compare_values, is_null_literal};
 use crate::js::{Js, JsObject};
 use crate::stdlib::{self, Surroundings};
@@ -258,8 +261,9 @@ pub struct Evaluator<'a> {
 }
 
 enum Mode<'a> {
-    /// `eval_expression`: nothing to ask, and literal ids counted up from
-    /// the first the caller left free.
+    /// The unit tests' evaluation with no run: nothing to ask, and literal
+    /// ids counted up from the first the caller left free.
+    #[cfg(test)]
     Pure { next_literal: Cell<u32> },
     /// Inside a run: what the evaluation cannot answer itself it asks, and
     /// its literals are origins in the run's table.
@@ -271,6 +275,7 @@ type Eval = Result<Evaluated, EvalError>;
 impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
+    #[cfg(test)]
     pub fn new(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, first_literal: u32) -> Self {
         Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
     }
@@ -289,6 +294,7 @@ impl<'a> Evaluator<'a> {
     fn reader(&self) -> Option<&'a dyn Reader> {
         match self.mode {
             Mode::Run(reader) => Some(reader),
+            #[cfg(test)]
             Mode::Pure { .. } => None,
         }
     }
@@ -304,6 +310,7 @@ impl<'a> Evaluator<'a> {
     fn literal(&self) -> u32 {
         match &self.mode {
             Mode::Run(reader) => reader.literal(),
+            #[cfg(test)]
             Mode::Pure { next_literal } => {
                 let id = next_literal.get();
                 next_literal.set(id + 1);
@@ -313,6 +320,7 @@ impl<'a> Evaluator<'a> {
     }
 
     /// An evaluation with no run, which asks nothing and so never waits.
+    #[cfg(test)]
     pub fn eval_pure(&self, expr: &Expression) -> Eval {
         debug_assert!(self.reader().is_none(), "an evaluation in a run is awaited");
         ready(self.eval(expr))

@@ -75,7 +75,9 @@ impl Env {
     }
 }
 
-/// What `eval_expression` reads beside the expression.
+/// What the evaluator's unit tests (crate::evaluate) read beside the
+/// expression.
+#[cfg(test)]
 pub struct Envelope {
     pub env: Env,
     /// How many origin ids the caller assigned.
@@ -92,6 +94,7 @@ pub struct Envelope {
     pub local_zone: Option<String>,
 }
 
+#[cfg(test)]
 pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     let json: Json = crate::js_string::from_json_text(text).map_err(|e| format!("the bindings are not JSON: {e}"))?;
     let mut decoder = Decoder::default();
@@ -123,6 +126,7 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     Ok(Envelope { env, origins, language_version, now, local_zone })
 }
 
+#[cfg(test)]
 fn read_trail(json: &Json) -> Result<Trail, String> {
     let id = |v: &Json| v.as_u64().map(|n| n as u32).ok_or_else(|| format!("an origin id is a number, not {v}"));
     let origins = json.get("origins").and_then(Json::as_array).ok_or("a trail has `origins`")?;
