@@ -346,27 +346,45 @@ impl Checker<'_> {
 
 // ── Arguments by position (design §2.7) ──
 
+/// A callee's parameters as a call passes them from version 5: in order,
+/// then (a plugin's) the names its settings record takes.
+#[derive(Debug, Clone)]
+pub struct ArgOrder {
+    pub positional: Vec<String>,
+    /// `None` for a function: every parameter is positional.
+    pub settings: Option<Vec<String>>,
+}
+
 /// The parser's finding for a call with named arguments, its fix the
-/// arguments in the order of the callee's parameters: kept only for a callee
-/// whose parameters the check saw (a function, not a plugin), and without a
-/// fix where the names do not match the parameters one for one (the call's
+/// arguments in the order of the callee's parameters, a plugin's settings in
+/// a trailing record: kept only for a callee whose parameters the check saw,
+/// and without a fix where the names do not match the parameters (the call's
 /// own diagnostics say why).
 pub fn positional(
     finding: &movement_parser::surface::SpellingFinding,
     named: &movement_parser::surface::NamedCall,
-    orders: &std::collections::HashMap<(usize, usize), Vec<String>>,
+    orders: &std::collections::HashMap<(usize, usize), ArgOrder>,
 ) -> Option<Diagnostic> {
     let first = named.args.first()?;
-    let params = orders.get(&(first.at.line, first.at.col))?;
-    let ordered: Option<Vec<&str>> = params.iter().map(|p| named.args.iter().find(|a| &a.name == p).map(|a| a.text.as_str())).collect();
-    // Safe when the arguments keep the order they were written in: moved,
-    // they would be evaluated in another order.
-    let kept = |o: &Vec<&str>| o.iter().zip(&named.args).all(|(t, a)| *t == a.text);
-    let fix = ordered.filter(|o| o.len() == named.args.len()).map(|o| {
-        if kept(&o) {
-            serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }], "safe": true })
+    let order = orders.get(&(first.at.line, first.at.col))?;
+    let ordered: Option<Vec<&movement_parser::surface::NamedArg>> = order.positional.iter().map(|p| named.args.iter().find(|a| &a.name == p)).collect();
+    let settings: Vec<&movement_parser::surface::NamedArg> = named.args.iter().filter(|a| !order.positional.contains(&a.name)).collect();
+    let settles = match &order.settings {
+        None => settings.is_empty(),
+        Some(names) => settings.iter().all(|a| names.contains(&a.name)),
+    };
+    let fix = ordered.filter(|o| settles && o.len() + settings.len() == named.args.len()).map(|ordered| {
+        let mut texts: Vec<String> = ordered.iter().map(|a| a.text.clone()).collect();
+        if !settings.is_empty() {
+            texts.push(format!("{{ {} }}", settings.iter().map(|a| format!("{}: {}", a.name, a.text)).collect::<Vec<_>>().join(", ")));
+        }
+        // Safe when the arguments keep the order they were written in: moved,
+        // they would be evaluated in another order.
+        let kept = ordered.iter().chain(&settings).zip(&named.args).all(|(a, b)| std::ptr::eq(*a, b));
+        if kept {
+            serde_json::json!({ "edits": [{ "span": finding.span, "text": texts.join(", ") }], "safe": true })
         } else {
-            serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }] })
+            serde_json::json!({ "edits": [{ "span": finding.span, "text": texts.join(", ") }] })
         }
     });
     Some(Diagnostic { fix, ..Diagnostic::error(&finding.code, finding.message.clone(), finding.span) })

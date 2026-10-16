@@ -1338,6 +1338,8 @@ impl Checker<'_> {
     /// `checkCall`: a function's call — its callee, its arity, and its
     /// arguments against the parameters they bind.
     pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) -> crate::types::position::ReturnShape {
+        let bound = self.bind_plugin_call(call, scope);
+        let call = bound.as_ref().unwrap_or(call);
         let mut params = None;
         let mut value = crate::types::position::ReturnShape::default();
         let callee = self.callee_name(&call.callee, scope);
@@ -1361,7 +1363,7 @@ impl Checker<'_> {
             && first.name().is_some()
         {
             let at = call_arg_span(first).start;
-            self.named_orders.insert((at.line, at.col), names.clone());
+            self.named_orders.insert((at.line, at.col), crate::families::typed_spelling::ArgOrder { positional: names.clone(), settings: None });
         }
         self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
         // A plugin's argument values are held to what it declares it takes.

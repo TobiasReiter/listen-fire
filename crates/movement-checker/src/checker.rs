@@ -81,10 +81,11 @@ pub struct Checker<'c> {
     /// span: the message and fix the checker, which knows the type, gives
     /// them instead (families::typed_spelling).
     pub respelled: std::collections::HashMap<(usize, usize, usize, usize), (String, serde_json::Value)>,
-    /// A call with named arguments to a function whose parameters are known
-    /// (version 5): its parameters in order, by where its first argument's
-    /// value starts — what the parser's finding for it needs for its fix.
-    pub named_orders: std::collections::HashMap<(usize, usize), Vec<String>>,
+    /// A call with named arguments to a function or a plugin whose parameters
+    /// are known (version 5): its parameters in order, by where its first
+    /// argument's value starts — what the parser's finding for it needs for
+    /// its fix.
+    pub named_orders: std::collections::HashMap<(usize, usize), crate::families::typed_spelling::ArgOrder>,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
