@@ -247,7 +247,7 @@ test('READ of a FILE() artifact reads the stored text through resolveFileText', 
   const movements = join(dir, 'movements/companies.mvt');
   writeFileSync(
     movements,
-    readFileSync(movements, 'utf8').replace('Name: "Welcome ${company.Name}"', 'Name: COALESCE(READ(FILE("hello ${company.Name}", "text")), "unreadable")'),
+    readFileSync(movements, 'utf8').replace('Name: "Welcome ${company.Name}"', 'Name: coalesce(File.read(File.from("hello ${company.Name}", "text")), "unreadable")'),
   );
   const run = await lf(dir, ['run', '--event', EVENT]);
   assert.equal(run.code, 0, run.out);

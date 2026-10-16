@@ -1,13 +1,13 @@
 import { acme_crm } from adapters
 import { acme } from credentials
 
-crm = acme_crm(credentials: acme)
+crm = connect acme_crm using acme
 
 # A company created in the CRM opens a discussion record, waits for its first
 # comment, and records the answer.
-movement discuss(company: <crm-[:Company]->>) {
+function discuss(company: <crm-[:Company]->>) {
   thread = write crm-[:Company]-> { Name: "Discuss ${company.Name}" }
-  c = await FIRST(thread-[:Comments]->)
+  c = await first(thread-[:Comments]->)
   write crm-[:Company]-> { Name: "Answered ${c.Text}" }
 }
 

@@ -15,7 +15,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { InstanceSchema } from 'movement-lang';
+import { fromCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
@@ -27,6 +27,7 @@ import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog'
 import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from 'movement-engine/services/movement_engine/run';
 import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
+import { spelledFor as spelledForSurface } from '../../../../../../packages/movement-lang/checker/__test__/surface_spelling';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000079');
 const KG = 'kg';
@@ -171,9 +172,14 @@ function makeParkSink() {
 
 type Sink = ReturnType<typeof makeParkSink>;
 
-function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>) {
+/** The programs below are written once, in the spelling versions 1–4 read;
+ *  a version 5 run reads them as the upgrade tool respells them. */
+function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>, pinned?: number) {
+  // `parallel` is retired under 5: a program that joins with it runs under 4,
+  // where it still does (the version loops below pass their own).
+  const version = pinned ?? (source.includes('await parallel') ? 4 : 5);
   return {
-    source,
+    source: spelledForSurface(version as never, source, fromCatalogSnapshot(catalog)),
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
@@ -189,9 +195,7 @@ function runInput(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>
       park: { sink: parks.sink },
     }),
     dryRun: false,
-    // `parallel` is retired under 5: a program that joins with it runs under 4,
-    // where it still does (the version loops below pass their own).
-    ...(source.includes('await parallel') ? { languageVersion: 4 as const } : {}),
+    ...(version !== 5 ? { languageVersion: version as never } : {}),
   };
 }
 
@@ -437,7 +441,7 @@ describe('a parked run sees what an unparked run sees', () => {
     it(`v${version}: the closures write the outer handle, and the parked run ends as the unparked one`, async () => {
       const run = (source: string, parks: Sink) => {
         const kg = makeKgFake();
-        return runMovement({ ...runInput(source, parks, kg), languageVersion: version as never }).then(() => kg);
+        return runMovement(runInput(source, parks, kg, version)).then(() => kg);
       };
       const unparkedKg = await run(program(body(false, version)), makeParkSink());
       const unparked = payloadOf(unparkedKg.creates);
@@ -454,8 +458,7 @@ describe('a parked run sees what an unparked run sees', () => {
         parks.parks.delete(address);
         const kg = makeKgFake();
         const result = await resumeMovement({
-          ...runInput(source, parks, kg),
-          languageVersion: version as never,
+          ...runInput(source, parks, kg, version),
           state: park.state,
           reenter: park.kind !== 'timer',
         });
@@ -527,10 +530,15 @@ interface Pinned {
 }
 
 function inputOn(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>, pin: Pinned) {
+  const files =
+    pin.files === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(pin.files).map(([name, file]) => [name, { source: spelledForSurface((pin.version ?? 5) as never, file.source, fromCatalogSnapshot(catalog)) }]),
+        );
   return {
-    ...runInput(source, parks, kg),
-    ...(pin.version !== undefined ? { languageVersion: pin.version as never } : {}),
-    ...(pin.files !== undefined ? { catalog: { ...catalog, files: pin.files } } : {}),
+    ...runInput(source, parks, kg, pin.version),
+    ...(files !== undefined ? { catalog: { ...catalog, files } } : {}),
   };
 }
 
@@ -972,7 +980,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
         const parks = makeParkSink();
         const source = program(body);
         const kg0 = makeKgFake();
-        await runMovement({ ...runInput(source, parks, kg0), languageVersion: version as never });
+        await runMovement(runInput(source, parks, kg0, version));
         expect(parks.parks.size).toBeGreaterThan(0);
         let last: Awaited<ReturnType<typeof resumeAt>> | undefined;
         for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
@@ -981,8 +989,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
           parks.parks.delete(address);
           const kg = makeKgFake();
           const result = await resumeMovement({
-            ...runInput(source, parks, kg),
-            languageVersion: version as never,
+            ...runInput(source, parks, kg, version),
             state: park.state,
             reenter: park.kind !== 'timer',
           });
@@ -1058,7 +1065,7 @@ describe('both engines: a closure bound from a call, then called by name (admit.
   });
   const shapes: Record<
     string,
-    { source: (park: boolean) => string; payload: unknown; body?: string; parks?: boolean; files?: (park: boolean) => Record<string, { source: string }> }
+    { source: (park: boolean, version: number) => string; payload: unknown; body?: string; parks?: boolean; files?: (park: boolean) => Record<string, { source: string }> }
   > = {
     fromClosure: {
       source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = mk(2)', '  r = h(1)', write('r: r')]),
@@ -1088,7 +1095,8 @@ describe('both engines: a closure bound from a call, then called by name (admit.
       payload: { r: 3 },
     },
     calleeInAnotherCase: {
-      source: (park) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', '  h = MK(2)', '  r = h(1)', write('r: r')]),
+      // Function names are case-sensitive from 5, so only before it can the callee be written in another case.
+      source: (park, version) => program(['  mk = (a: <number>) => {', ...inner(park), '  }', `  h = ${version < 5 ? 'MK' : 'mk'}(2)`, '  r = h(1)', write('r: r')]),
       payload: { r: 3 },
     },
     intoTextField: {
@@ -1174,7 +1182,7 @@ describe('both engines: a closure bound from a call, then called by name (admit.
         const wrote: Record<string, WriteInput[]> = {};
         for (const engine of ENGINES) {
           const kg = makeKgFake();
-          const result = await onEngine(engine, () => runMovement(inputOn(shape.source(false), makeParkSink(), kg, { version, files: shape.files?.(false) })));
+          const result = await onEngine(engine, () => runMovement(inputOn(shape.source(false, version), makeParkSink(), kg, { version, files: shape.files?.(false) })));
           expect({ engine, parked: result.parked, error: (result as { error?: unknown }).error }).toEqual({ engine, parked: undefined, error: undefined });
           wrote[engine] = kg.creates;
         }
@@ -1184,7 +1192,7 @@ describe('both engines: a closure bound from a call, then called by name (admit.
       }, 30_000);
       if (shape.parks === false) continue;
       it(`v${version} ${name}, parked inside the returned closure's call: the same bytes and answer every way round`, async () => {
-        const end = await acrossEngines(shape.source(true), { version, files: shape.files?.(true) });
+        const end = await acrossEngines(shape.source(true, version), { version, files: shape.files?.(true) });
         expect(end.payload).toEqual(shape.payload);
       }, 60_000);
     }

@@ -21,10 +21,10 @@ function reportProject(): string {
     `import { acme_crm } from adapters
 import { acme } from credentials
 
-crm = acme_crm(credentials: acme)
+crm = connect acme_crm using acme
 
-movement report(company: <crm-[:Company]->>) {
-  write crm-[:Company]-> { Name: "Report ${'$'}{company.Name}", Report: FILE("Hello ${'$'}{company.Name}", "text") }
+function report(company: <crm-[:Company]->>) {
+  write crm-[:Company]-> { Name: "Report ${'$'}{company.Name}", Report: File.from("Hello ${'$'}{company.Name}", "text") }
 }
 
 listen to crm { events: ["company.created"] } fire report
