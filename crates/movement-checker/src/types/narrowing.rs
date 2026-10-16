@@ -29,7 +29,7 @@ impl PresenceProof {
 
 /// `isPositionTerminal`.
 pub fn is_position_terminal(expr: &Expression) -> bool {
-    matches!(expr, Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL)
+    matches!(expr, Expression::Property { property_type_id, .. } if property_type_id == POSITION_SENTINEL)
 }
 
 /// `isWalkProjection`: a walk that reads a field off where it lands.
@@ -37,7 +37,7 @@ pub fn is_walk_projection(expr: &Expression) -> bool {
     let Expression::Traverse { steps, expression, .. } = expr else { return false };
     !steps.is_empty()
         && match &**expression {
-            Expression::Property { property_type_id } => property_type_id != POSITION_SENTINEL,
+            Expression::Property { property_type_id, .. } => property_type_id != POSITION_SENTINEL,
             Expression::EdgeProperty { .. } => true,
             _ => false,
         }
@@ -54,7 +54,7 @@ pub fn direct_field_read(expr: &Expression) -> Option<(String, String)> {
         return None;
     }
     match &**expression {
-        Expression::Property { property_type_id } => Some((root.clone(), property_type_id.clone())),
+        Expression::Property { property_type_id, .. } => Some((root.clone(), property_type_id.clone())),
         _ => None,
     }
 }
@@ -62,7 +62,7 @@ pub fn direct_field_read(expr: &Expression) -> Option<(String, String)> {
 /// `bareName`.
 pub fn bare_name(expr: &Expression) -> Option<&str> {
     match expr {
-        Expression::Property { property_type_id } => Some(property_type_id),
+        Expression::Property { property_type_id, .. } => Some(property_type_id),
         Expression::AliasRef { name } => Some(name),
         _ => None,
     }
@@ -74,7 +74,7 @@ fn where_field_read(expr: &Expression) -> Option<(String, String)> {
         return None;
     }
     match &**expression {
-        Expression::EdgeProperty { property_type_id } => Some((root.clone(), property_type_id.clone())),
+        Expression::EdgeProperty { property_type_id, .. } => Some((root.clone(), property_type_id.clone())),
         _ => None,
     }
 }
@@ -84,7 +84,7 @@ fn presence_subject(expr: &Expression) -> Option<PresenceProof> {
         return Some(PresenceProof::Field { root, property });
     }
     let name = match expr {
-        Expression::EdgeProperty { property_type_id } => Some(property_type_id.as_str()),
+        Expression::EdgeProperty { property_type_id, .. } => Some(property_type_id.as_str()),
         other => bare_name(other),
     };
     name.map(|root| PresenceProof::Binding { root: root.to_string() })

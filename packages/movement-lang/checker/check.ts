@@ -1829,7 +1829,8 @@ function collectNames(expr: Expression, out: CollectedNames, position: NamePosit
       expr.params.forEach(p => collectNames(p, out, position));
       return;
     case 'property':
-      if (position === 'value') out.refs.push(expr.propertyTypeId);
+      // A hop's alias read is a field, never a name to resolve.
+      if (position === 'value' && expr.fieldOnly !== true) out.refs.push(expr.propertyTypeId);
       return;
     case 'edge_property':
     case 'static':
@@ -6506,10 +6507,6 @@ class Checker {
         const span = place.extentOf(e.at);
         return span !== undefined ? [{ span, text: e.text }] : [];
       });
-      if (found.shadowed === true) {
-        this.report(DiagnosticCodes.SHADOWED_NAME, found.message, place.spanOf(found.at));
-        continue;
-      }
       const fix = placed.length > 0 && placed.length === found.edits.length ? { edits: placed, ...(found.safe === true ? { safe: true as const } : {}) } : undefined;
       this.reportWithFix({ code: 'MOV_V5_SPELLING', message: found.message, span: place.spanOf(found.at), ...(fix ? { fix } : {}) });
     }

@@ -99,21 +99,17 @@ function whole(raw: string, at: At): boolean {
 // From version 5 a hop's WHERE and ORDER BY read its record's fields through
 // the hop's alias (`c.Name`); a bare name there is a variable from outside the
 // walk, as it is everywhere else. The parser reads `c.Name` into the bare
-// field the canonical tree has always held (keeping the alias read's extent),
-// so a name the source writes bare that the scope does not bind is the old
-// spelling of a field: refused, its fix the alias read, with an alias added
-// to a hop that has none. A postfix `walk WHERE p` moves into the last hop.
+// field the canonical tree has always held, marked as only ever the field
+// (the name's `field`), so a name the source writes bare that the scope does
+// not bind is the old spelling of a field: refused, its fix the alias read,
+// with an alias added to a hop that has none. A postfix `walk WHERE p` moves
+// into the last hop.
 
 export interface WalkField {
   at: At;
   message: string;
   /** Offsets into the text the tree was read from. */
   edits: Array<{ at: At; text: string }>;
-  /** A field read through the alias whose name the scope also binds: the
-   *  canonical tree reads both as the one bare name, which the engine takes
-   *  as the variable (MOV_SHADOWED_NAME, refused until the tree tells them
-   *  apart). */
-  shadowed?: true;
   /** The fix keeps the meaning: an alias read for a name the scope does not
    *  bind is the field the bare name read. Moving a postfix WHERE into the
    *  hop is not proved to. */
@@ -125,11 +121,8 @@ export interface WalkField {
 export function walkFields(tree: MExpr, raw: string, binds: (name: string) => boolean): WalkField[] {
   const out: WalkField[] = [];
   const text = (at: At): string => raw.slice(at.start, at.end);
-  const isField = (name: Name, aliases: readonly string[]): boolean => {
-    const written = text(name.at);
-    const bare = written === name.text || written === `\`${name.text}\``;
-    return bare && !aliases.includes(name.text) && name.text.toLowerCase() !== 'edge' && !binds(name.text);
-  };
+  const isField = (name: Name, aliases: readonly string[]): boolean =>
+    !aliases.includes(name.text) && name.text.toLowerCase() !== 'edge' && !binds(name.text);
   const aliasOf = (hop: Hop, taken: readonly string[]): { alias: string; insert?: { at: At; text: string } } => {
     if (hop.alias !== undefined) return { alias: hop.alias.text };
     const letter = [...hop.label.text].find((c) => /[A-Za-z]/.test(c));
@@ -152,17 +145,6 @@ export function walkFields(tree: MExpr, raw: string, binds: (name: string) => bo
         const names: Name[] = [];
         if (hop.where !== undefined) bareNames(hop.where, names);
         if (hop.orderBy !== undefined) bareNames(hop.orderBy.key, names);
-        for (const n of names) {
-          const written = text(n.at);
-          if (written !== n.text && written !== `\`${n.text}\`` && binds(n.text)) {
-            out.push({
-              at: n.at,
-              message: `\`${written}\` reads the field '${n.text}', but a variable named '${n.text}' is in scope, and inside a hop's brackets the run cannot yet tell the two apart: it would read the variable. Rename the variable`,
-              edits: [],
-              shadowed: true,
-            });
-          }
-        }
         const fields = names.filter((n) => isField(n, here));
         const first = fields[0];
         if (first === undefined) continue;
@@ -209,10 +191,12 @@ export function walkFields(tree: MExpr, raw: string, binds: (name: string) => bo
   return out;
 }
 
-/** The names `e` reads bare, outside any walk nested in it (whose hops are
- *  read on their own) and never a call's callee. */
+/** The names `e` reads bare (not through the hop's alias), outside any walk
+ *  nested in it (whose hops are read on their own) and never a call's callee. */
 function bareNames(e: MExpr, out: Name[]): void {
-  if (e.kind === 'name') out.push(e.name);
+  if (e.kind === 'name') {
+    if (e.field !== true) out.push(e.name);
+  }
   else if (e.kind === 'path' || e.kind === 'where') return;
   else if (e.kind === 'call') for (const a of e.args) bareNames(a.value, out);
   else for (const c of children(e)) bareNames(c, out);

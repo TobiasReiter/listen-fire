@@ -581,7 +581,7 @@ impl<'a> Typing<'a> {
     fn read_dict_member(&mut self, held: &Ty, member: &Expression, within: bool) -> Option<Option<Ty>> {
         let Ty::Dict { of, shape } = strip_absent(held) else { return None };
         let (key, member_steps, member_expression) = match member {
-            Expression::Property { property_type_id } => (property_type_id.clone(), None, None),
+            Expression::Property { property_type_id, .. } => (property_type_id.clone(), None, None),
             Expression::Traverse { alias_root: Some(root), steps, expression } => (root.clone(), Some(steps.as_slice()), Some(&**expression)),
             _ => return None,
         };
@@ -648,7 +648,7 @@ impl<'a> Typing<'a> {
                 },
                 Vec::new(),
             ),
-            Expression::Property { property_type_id } => match position {
+            Expression::Property { property_type_id, .. } => match position {
                 None => {
                     self.bare_names.insert(key(expr), property_type_id.clone());
                     (self.read_bare_name(property_type_id), Vec::new())
@@ -674,7 +674,7 @@ impl<'a> Typing<'a> {
                 if !steps.is_empty() && is_position_terminal(expression) {
                     return (Some(list_of(Ty::record(destination), self.last_ordering)), Vec::new());
                 }
-                if let (Some(root), true, Expression::Property { property_type_id }) = (alias_root, steps.is_empty(), &**expression) {
+                if let (Some(root), true, Expression::Property { property_type_id, .. }) = (alias_root, steps.is_empty(), &**expression) {
                     crate::families::records::report_handle_read_found(self, root, destination.as_ref(), property_type_id);
                 }
                 (self.infer_at(expression, destination.as_ref()), Vec::new())
@@ -782,15 +782,17 @@ impl<'a> Typing<'a> {
                 crate::families::walks::observe_meta(self, meta);
                 (movement_meta_key_type(meta), Vec::new())
             }
-            Expression::EdgeProperty { property_type_id } => {
+            Expression::EdgeProperty { property_type_id, field_only } => {
                 // Binding first, field second: the engine's order (typing.ts).
-                if let Some(bound) = self.scalar_type(property_type_id) {
+                // A hop's alias read is only ever the field.
+                if !field_only && let Some(bound) = self.scalar_type(property_type_id) {
                     return (Some(bound), Vec::new());
                 }
                 if let Some(declared) = lookup_property_type(position, property_type_id) {
                     return (Some(declared), Vec::new());
                 }
-                if self.env.name_in_scope(property_type_id) || instance_of_ref(position).is_some_and(|i| i.schema.edges_carry_properties == Some(true)) {
+                let a_variable = !field_only && self.env.name_in_scope(property_type_id);
+                if a_variable || instance_of_ref(position).is_some_and(|i| i.schema.edges_carry_properties == Some(true)) {
                     return (None, Vec::new());
                 }
                 (self.read_property(position, property_type_id), Vec::new())

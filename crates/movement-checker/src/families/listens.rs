@@ -1052,7 +1052,7 @@ fn bare_name_values(slot: &ExprSlot) -> Option<Vec<String>> {
     elements
         .iter()
         .map(|element| match element {
-            ListElement::Expression(Expression::Property { property_type_id }) => Some(property_type_id.clone()),
+            ListElement::Expression(Expression::Property { property_type_id, .. }) => Some(property_type_id.clone()),
             _ => None,
         })
         .collect()

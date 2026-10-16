@@ -1,7 +1,8 @@
 //! The v5 surface integration's own rules, through the Rust checker: letter
 //! case counts in a call's name from 5; a WHERE's bare name is typed as the
 //! engine reads it (a value binding before a field) on every version; an
-//! alias read the scope also binds is refused under 5; and which fixes are
+//! alias read is the field under 5 even where the scope binds its name; and
+//! which fixes are
 //! marked safe to apply automatically. The TypeScript twin is
 //! packages/movement-lang/checker/__test__/v5_integration.unit.test.ts.
 
@@ -45,11 +46,16 @@ fn a_where_name_that_is_a_variable_and_a_field_is_typed_as_the_variable_the_engi
 }
 
 #[test]
-fn an_alias_read_whose_name_the_scope_binds_is_refused_under_5() {
-    let shadowed = format!("{HEAD5}function go(c: <chat-[:channel]->>, Body: <text>) {{\n  ms = c-[m:Messages WHERE m.Body == Body]->\n}}\n");
-    assert_eq!(errors(&shadowed, 5), vec!["MOV_SHADOWED_NAME".to_string()]);
-    let renamed = format!("{HEAD5}function go(c: <chat-[:channel]->>, wanted: <text>) {{\n  ms = c-[m:Messages WHERE m.Body == wanted]->\n}}\n");
-    assert_eq!(errors(&renamed, 5), Vec::<String>::new());
+fn an_alias_read_is_the_field_even_where_the_scope_binds_its_name_under_5() {
+    // `m.Body == Body`: the field against the variable, both text.
+    let same = format!("{HEAD5}function go(c: <chat-[:channel]->>, Body: <text>) {{\n  ms = c-[m:Messages WHERE m.Body == Body]->\n}}\n");
+    assert_eq!(errors(&same, 5), Vec::<String>::new(), "{:?}", check(&same, 5));
+    // `m.Score` is the number field, not the text variable `Score`.
+    let field = format!("{HEAD5}function go(c: <chat-[:channel]->>, Score: <text>) {{\n  ms = c-[m:Messages WHERE m.Score == \"high\"]->\n}}\n");
+    assert!(errors(&field, 5).contains(&"MOV_COMPARE_TYPE_MISMATCH".to_string()), "{:?}", check(&field, 5));
+    // The same through ORDER BY.
+    let ordered = format!("{HEAD5}function go(c: <chat-[:channel]->>, Score: <text>) {{\n  ms = c-[m:Messages WHERE m.Body == Score ORDER BY m.Score DESC LIMIT 2]->\n}}\n");
+    assert_eq!(errors(&ordered, 5), Vec::<String>::new(), "{:?}", check(&ordered, 5));
 }
 
 #[test]

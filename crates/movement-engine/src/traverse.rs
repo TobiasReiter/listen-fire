@@ -1162,8 +1162,10 @@ impl Run<'_> {
         for leaf in crate::filter::pure_leaf_reads(where_).expect("a pushed WHERE is pure") {
             let value = match leaf {
                 Expression::Meta { .. } => None,
-                Expression::EdgeProperty { property_type_id } => if read.edge_properties { None } else { bound(property_type_id) },
-                Expression::Property { property_type_id } => bound(property_type_id),
+                // A hop's alias read is the field the source tests.
+                Expression::Property { field_only: true, .. } | Expression::EdgeProperty { field_only: true, .. } => None,
+                Expression::EdgeProperty { property_type_id, .. } => if read.edge_properties { None } else { bound(property_type_id) },
+                Expression::Property { property_type_id, .. } => bound(property_type_id),
                 Expression::AliasRef { name } => bound(name),
                 Expression::Traverse { alias_root, .. } => match alias_root {
                     Some(root) if step.alias.as_deref() != Some(root.as_str()) => {
@@ -1199,23 +1201,31 @@ impl Run<'_> {
         if crate::filter::pure_leaf_reads(filter).is_none() {
             return Ok(self.evaluate_scoped(filter, at, Some(span.clone()), Some(subject)).await.map_err(stopped)?.value.truthy());
         }
+        // A hop's alias read (`m.email`) is kept apart from a bare name of the
+        // same text, which may be a variable (`m.email == email`).
         let mut reads: HashMap<String, Js> = HashMap::new();
+        let mut fields: HashMap<String, Js> = HashMap::new();
         let mut last = Js::Bool(true);
         for conjunct in crate::unique::and_conjuncts(filter) {
             for leaf in crate::filter::pure_leaf_reads(conjunct).expect("a conjunct of a pure predicate is pure") {
-                let key = crate::filter::leaf_read_key(leaf);
-                if !reads.contains_key(&key) {
-                    let value = self.evaluate_scoped(leaf, at, Some(span.clone()), Some(subject.clone())).await.map_err(stopped)?.value;
-                    reads.insert(key, value);
+                let field_only = matches!(leaf, Expression::Property { field_only: true, .. } | Expression::EdgeProperty { field_only: true, .. });
+                let into = if field_only { &mut fields } else { &mut reads };
+                if let std::collections::hash_map::Entry::Vacant(read) = into.entry(crate::filter::leaf_read_key(leaf)) {
+                    read.insert(self.evaluate_scoped(leaf, at, Some(span.clone()), Some(subject.clone())).await.map_err(stopped)?.value);
                 }
             }
             let read = |name: &str| reads.get(name).cloned().unwrap_or(Js::Undefined);
+            let read_field = |name: &str| fields.get(name).cloned().unwrap_or(Js::Undefined);
             // The host's clock is asked once per conjunct that reaches a
             // `WITHIN` (expression.ts `decideWithClock`), not per `WITHIN`.
             let now: RefCell<Option<f64>> = RefCell::new(None);
             let now = &now;
             let ask = |_: FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> { Box::pin(async move { self.within(l, r, now).await }) };
-            last = crate::filter::evaluate_predicate_with(conjunct, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone() })
+            last = crate::filter::evaluate_predicate_with(
+                conjunct,
+                &read,
+                crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone(), read_field: Some(&read_field) },
+            )
                 .await
                 .map_err(|e| Failure::of_eval(e, "the Rust engine does not reproduce it"))?;
             if !last.truthy() {
@@ -1340,14 +1350,17 @@ impl Run<'_> {
     /// A name a position-scoped evaluation reads off its landed record
     /// (`case 'edge_property'` / `readScopedProperty`): for an edge
     /// property, the walked edge's inline property first, then a value
-    /// binding of that name; then the record's field.
-    pub(crate) async fn scoped_field(&self, landed: &Landed, field: &str, edge: bool, scope: &Scope) -> Result<Evaluated, Failure> {
-        if edge {
+    /// binding of that name; then the record's field. A hop's alias read
+    /// (`field_only`) skips the binding.
+    pub(crate) async fn scoped_field(&self, landed: &Landed, field: &str, read: ScopedRead, scope: &Scope) -> Result<Evaluated, Failure> {
+        if read.edge {
             let inline = landed.edge_properties.as_ref().map_or(Js::Undefined, |p| get(p, field));
             if !matches!(inline, Js::Undefined) {
                 return Ok(Evaluated { value: inline, prov: Prov::Built(Trail::default()) });
             }
-            if let Some(Binding::Value(value)) = scope.resolve(field) {
+            if !read.field_only
+                && let Some(Binding::Value(value)) = scope.resolve(field)
+            {
                 return Ok(Evaluated { value: value.value, prov: Prov::Built(value.trail.unwrap_or_default()) });
             }
         }
@@ -1577,4 +1590,13 @@ mod tests {
             assert_eq!(resources_alias(hops).as_deref(), alias, "{hops}");
         }
     }
+}
+
+/// How `scoped_field` reads a name: as the bracket grammar's edge property
+/// (the walked edge's inline property first), and whether it is a hop's
+/// alias read, which no value binding answers.
+#[derive(Clone, Copy)]
+pub(crate) struct ScopedRead {
+    pub edge: bool,
+    pub field_only: bool,
 }

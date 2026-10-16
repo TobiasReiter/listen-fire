@@ -1031,7 +1031,7 @@ impl Run<'_> {
         let ask = |_: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
             Box::pin(async move { self.within(l, r, now).await })
         };
-        match crate::filter::evaluate_predicate_with(predicate, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone() }).await {
+        match crate::filter::evaluate_predicate_with(predicate, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone(), read_field: None }).await {
             Ok(value) => Ok(value.truthy()),
             Err(error) => Err(thrown(Failure::of_eval(error, "the Rust engine does not reproduce it"))),
         }

@@ -29,8 +29,8 @@ import { slotTrees } from './slot_trees';
 export { BridgeError } from './error';
 export { POSITION_SENTINEL, type MovementCondition } from '../parser/expression/lower';
 
-export function parseMovementExpression(raw: string): Expression {
-  return lowerMovementExpression(raw);
+export function parseMovementExpression(raw: string, languageVersion?: number): Expression {
+  return lowerMovementExpression(raw, languageVersion);
 }
 
 export function parseMovementCondition(raw: string): MovementCondition {

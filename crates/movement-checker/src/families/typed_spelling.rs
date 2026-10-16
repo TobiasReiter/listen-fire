@@ -181,10 +181,11 @@ impl Checker<'_> {
 // From version 5 a hop's WHERE and ORDER BY read its record's fields through
 // the hop's alias (`c.Name`); a bare name there is a variable from outside the
 // walk, as it is everywhere else. The parser reads `c.Name` into the bare
-// field the canonical tree has always held (keeping the alias read's extent),
-// so a name the source writes bare that the scope does not bind is the old
-// spelling of a field: refused, its fix the alias read, with an alias added
-// to a hop that has none. A postfix `walk WHERE p` moves into the last hop.
+// field the canonical tree has always held, marked as only ever the field
+// (`MExpr::Name::field`), so a name the source writes bare that the scope
+// does not bind is the old spelling of a field: refused, its fix the alias
+// read, with an alias added to a hop that has none. A postfix `walk WHERE p`
+// moves into the last hop.
 
 /// A walk-field finding: where, the message, and the fix's edits (offsets
 /// into the slot's text).
@@ -192,11 +193,6 @@ pub struct WalkField {
     pub at: At,
     pub message: String,
     pub edits: Vec<(At, String)>,
-    /// A field read through the alias whose name the scope also binds: the
-    /// canonical tree reads both as the one bare name, which the engine takes
-    /// as the variable (MOV_SHADOWED_NAME, refused until the tree tells them
-    /// apart).
-    pub shadowed: bool,
     /// The fix keeps the meaning: an alias read for a name the scope does not
     /// bind is the field the bare name read. Moving a postfix WHERE into the
     /// hop is not proved to.
@@ -224,17 +220,7 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
             if let Some(order) = &hop.order_by {
                 bare_names(&order.key, &mut names);
             }
-            for n in &names {
-                let written = src.text(n.at.start, n.at.end);
-                if written != n.text && written != format!("`{}`", n.text) && binds(&n.text) {
-                    let message = format!(
-                        "`{written}` reads the field '{}', but a variable named '{}' is in scope, and inside a hop's brackets the run cannot yet tell the two apart: it would read the variable. Rename the variable",
-                        n.text, n.text
-                    );
-                    out.push(WalkField { at: n.at, message, edits: Vec::new(), shadowed: true, safe: false });
-                }
-            }
-            let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, src, binds)).collect();
+            let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, binds)).collect();
             let Some(first) = fields.first() else { continue };
             let (alias, insert) = alias_of(hop, &here, src, binds);
             let mut edits: Vec<(At, String)> = insert.into_iter().collect();
@@ -243,7 +229,7 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
             let message = format!(
                 "from language version 5 a walk's field is read through the hop's alias: `{alias}.{written}` (a bare name inside the brackets is a variable from outside the walk)"
             );
-            out.push(WalkField { at: first.at, message, edits, shadowed: false, safe: true });
+            out.push(WalkField { at: first.at, message, edits, safe: true });
         }
     }
     if let MExpr::Where { source, predicate, at } = e
@@ -252,7 +238,7 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
     {
         let mut names = Vec::new();
         bare_names(predicate, &mut names);
-        let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, src, binds)).collect();
+        let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, binds)).collect();
         let simple = last.where_.is_none() && last.order_by.is_none() && last.limit.is_none() && last.config.is_none();
         let message = "from language version 5 a walk's filter is written inside its last hop, its fields through the hop's alias: `-[a:Edge WHERE a.Field …]->`".to_string();
         let edits = if simple {
@@ -280,17 +266,18 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
         } else {
             Vec::new()
         };
-        out.push(WalkField { at: *at, message, edits, shadowed: false, safe: false });
+        out.push(WalkField { at: *at, message, edits, safe: false });
     }
     for child in expression_children(e) {
         walk_visit(child, &here, src, binds, out);
     }
 }
 
-/// The names `e` reads bare, outside any walk nested in it (whose hops are
-/// read on their own) and never a call's callee.
+/// The names `e` reads bare (not through the hop's alias), outside any walk
+/// nested in it (whose hops are read on their own) and never a call's callee.
 fn bare_names<'e>(e: &'e MExpr, out: &mut Vec<&'e movement_parser::tree::Name>) {
     match e {
+        MExpr::Name { field: true, .. } => {}
         MExpr::Name { name, .. } => out.push(name),
         MExpr::Path { .. } | MExpr::Where { .. } => {}
         MExpr::Call { args, .. } => args.iter().for_each(|a| bare_names(&a.value, out)),
@@ -298,12 +285,9 @@ fn bare_names<'e>(e: &'e MExpr, out: &mut Vec<&'e movement_parser::tree::Name>) 
     }
 }
 
-/// A name written bare (its extent is its own text, not an alias read the
-/// parser folded) that is no alias, no `edge` and no variable in scope.
-fn is_field(name: &movement_parser::tree::Name, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -> bool) -> bool {
-    let written = src.text(name.at.start, name.at.end);
-    let bare = written == name.text || written == format!("`{}`", name.text);
-    bare && !aliases.contains(&name.text) && !name.text.eq_ignore_ascii_case("edge") && !binds(&name.text)
+/// A name written bare that is no alias, no `edge` and no variable in scope.
+fn is_field(name: &movement_parser::tree::Name, aliases: &[String], binds: &dyn Fn(&str) -> bool) -> bool {
+    !aliases.contains(&name.text) && !name.text.eq_ignore_ascii_case("edge") && !binds(&name.text)
 }
 
 /// The hop's alias, and the edit that adds it when it has none: its label's
@@ -332,10 +316,6 @@ impl Checker<'_> {
         };
         for f in found {
             let span = place.span_of(f.at);
-            if f.shadowed {
-                self.push(Diagnostic::error(codes::SHADOWED_NAME, f.message, span));
-                continue;
-            }
             let edits: Option<Vec<serde_json::Value>> =
                 f.edits.iter().map(|(at, text)| place.extent_of(*at).map(|span| serde_json::json!({ "span": span, "text": text }))).collect();
             let fix = edits.filter(|e| !e.is_empty()).map(|edits| if f.safe { serde_json::json!({ "edits": edits, "safe": true }) } else { serde_json::json!({ "edits": edits }) });

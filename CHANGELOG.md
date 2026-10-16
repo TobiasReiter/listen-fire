@@ -44,7 +44,8 @@ for byte; on text already in the version 5 spelling it changes nothing.
   adapter is set up with `crm = connect attio using acme { dryRun: true }` and imported by its
   package tag (`` import { `@lf/attio` as attio } from adapters ``). Inside walk brackets the
   words stay CAPS (`WHERE … AND … CONTAINS`), and a field is read through the hop's alias
-  (`-[c:Companies WHERE c.Name == n]->`). Messages name built-ins in the program's own version's
+  (`-[c:Companies WHERE c.Name == n]->`); a bare name there is only ever a variable, so
+  `c.Name == Name` compares the field with a variable of the same name. Messages name built-ins in the program's own version's
   spelling. Upgrade with `lf upgrade` or the API's upgrade, which apply every fix, check the
   result under 5, and move the pin only when it is clean. The handbook, the examples and the
   [migration guide](docs/language/dancing-wren-migration.md#2-the-everyday-spelling) show only

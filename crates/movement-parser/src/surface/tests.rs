@@ -17,6 +17,22 @@ fn lowered(text: &str, version: u32) -> Value {
     })
 }
 
+/// `lowered` as versions 1–4 read it: an alias read's `fieldOnly` mark gone.
+fn without_field_only(mut value: Value) -> Value {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                object.remove("fieldOnly");
+                object.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    strip(&mut value);
+    value
+}
+
 fn findings(text: &str) -> Vec<super::Finding> {
     with_version(5, || {
         let mut tree = crate::expr::parse_expression_raw(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
@@ -170,13 +186,18 @@ fn presence_and_walks() {
     let walk = "crm-[c:Companies WHERE c.Categories == \"Customer\" AND LOWER(c.Name) CONTAINS \"x\" ORDER BY c.`Created At` DESC LIMIT 10]->";
     assert!(findings(walk).is_empty(), "{:?}", findings(walk));
     // A field read through the hop's alias is the bare field versions 1–4
-    // wrote (the gates and the pushdown see the field they always saw).
+    // wrote (the gates and the pushdown see the field they always saw),
+    // marked as only ever the field: never a variable of the same name.
     let bare = "crm-[c:Companies WHERE Categories == \"Customer\" AND LOWER(Name) CONTAINS \"x\" ORDER BY `Created At` DESC LIMIT 10]->";
-    assert_eq!(lowered(walk, 5), lowered(bare, 4));
+    let read = lowered(walk, 5);
+    assert_eq!(read.to_string().matches(r#""fieldOnly":true"#).count(), 3, "{read}");
+    assert_eq!(without_field_only(read), lowered(bare, 4));
     // Another hop's alias, and a walk nested in the WHERE, keep their reads.
     let nested = "crm-[c:Companies]->-[t:Team WHERE c.Name == t.Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
     let nested_bare = "crm-[c:Companies]->-[t:Team WHERE c.Name == Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
-    assert_eq!(lowered(nested, 5), lowered(nested_bare, 4));
+    let read = lowered(nested, 5);
+    assert_eq!(read.to_string().matches(r#""fieldOnly":true"#).count(), 1, "{read}");
+    assert_eq!(without_field_only(read), lowered(nested_bare, 4));
     assert!(findings("ch-[m:Messages WHERE lower(m.Text) CONTAINS \"urgent\"]->").is_empty());
     let everyday = findings("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->");
     assert_eq!(everyday.len(), 1);

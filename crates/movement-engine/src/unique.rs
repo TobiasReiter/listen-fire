@@ -171,13 +171,13 @@ pub enum Key<'e> {
 
 pub fn identity_key(conjunct: &Expression) -> Option<Key<'_>> {
     match conjunct {
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => {
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => {
             Some(Key::Bare(property_type_id.clone()))
         }
         Expression::AliasRef { name } => Some(Key::Bare(name.clone())),
         Expression::Compare { op, left, right } if *op == movement_parser::lowering::expression::FilterOperator::Eq => {
             match left.as_ref() {
-                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => {
+                Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => {
                     Some(Key::Compared { name: property_type_id.clone(), with: right })
                 }
                 _ => None,

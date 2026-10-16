@@ -350,6 +350,13 @@ pub enum MExpr {
     Name {
         name: Name,
         at: At,
+        /// From language version 5, a hop's alias read (`m.email` inside the
+        /// hop's WHERE or ORDER BY): always the field of the record the hop
+        /// lands on, never a variable. A name written bare is only ever a
+        /// variable, so `m.email == email` compares the field with the
+        /// variable rather than the variable with itself.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        field: bool,
     },
     Special {
         text: String,
@@ -775,7 +782,7 @@ mod tests {
 
     #[test]
     fn a_map_entry_has_no_kind_and_a_spread_has_one() {
-        let name = MExpr::Name { name: Name { text: "a".into(), quoted: false, at: AT }, at: AT };
+        let name = MExpr::Name { name: Name { text: "a".into(), quoted: false, at: AT }, at: AT, field: false };
         let map = MExpr::Map {
             entries: vec![
                 MapMember::Entry {
