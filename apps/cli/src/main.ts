@@ -2,6 +2,7 @@
 //
 //   lf init [dir]
 //   lf check
+//   lf upgrade [--check]
 //   lf run --event <file.json> [--dry-run]
 //   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]…
 //   lf resume [<run-id>]
@@ -14,14 +15,16 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import { initProject, loadProject } from './project';
-import { EventFile, fireEvent, openSession, receiveWebhook, resumeAll, resumeRun, type RunOutcome } from './runs';
+import { EventFile, fireEvent, openSession, receiveWebhook, resumeAll, resumeRun, type RunOutcome, type Session } from './runs';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
+import { upgradeProject } from './upgrade';
 
-const USAGE = `usage: lf <init|check|run|resume|serve|runs> [options]
+const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs> [options]
   lf init [dir]
   lf check
+  lf upgrade [--check]   rewrite the movement files into the current language version (--check: print the diff, write nothing)
   lf run --event <file.json> [--dry-run]
   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
   lf resume [<run-id>]
@@ -37,6 +40,7 @@ async function main(argv: string[]): Promise<number> {
       dir: { type: 'string', default: process.cwd() },
       ephemeral: { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      check: { type: 'boolean', default: false },
       event: { type: 'string' },
       webhook: { type: 'string' },
       body: { type: 'string' },
@@ -59,26 +63,29 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'check': {
-      const project = loadProject(values.dir);
-      let session;
-      try {
-        session = await openSession(project, { ephemeral: true, start: true });
-      } catch (error) {
-        if (!(error instanceof MissingCredentialsError)) throw error;
-        for (const m of error.missing) process.stdout.write(`${m.file}:${m.line}:${m.column} error MISSING_CREDENTIAL ${m.message}\n`);
-        process.stdout.write(`${error.missing.length} error(s)\n`);
-        return 1;
-      }
+      const session = await checkingSession(values.dir);
+      if (session === undefined) return 1;
       try {
         let errors = 0;
         for (const file of session.files) {
-          for (const d of checkFile({ file, catalog: session.catalog, languageVersion: project.languageVersion })) {
+          for (const d of checkFile({ file, catalog: session.catalog, languageVersion: session.project.languageVersion })) {
             if (d.severity === 'error') errors++;
             process.stdout.write(`${file.path}:${d.line}:${d.column} ${d.severity} ${d.code} ${d.message}\n`);
           }
         }
         process.stdout.write(`${session.files.length} file(s), ${errors} error(s)\n`);
         return errors > 0 ? 1 : 0;
+      } finally {
+        session.close();
+      }
+    }
+    case 'upgrade': {
+      const session = await checkingSession(values.dir);
+      if (session === undefined) return 1;
+      try {
+        const report = upgradeProject(session, { checkOnly: values.check });
+        for (const line of report.lines) process.stdout.write(`${line}\n`);
+        return report.left > 0 || (values.check && report.changed > 0) ? 1 : 0;
       } finally {
         session.close();
       }
@@ -153,6 +160,21 @@ async function main(argv: string[]): Promise<number> {
     default:
       process.stderr.write(`unknown command "${command}"\n${USAGE}\n`);
       return 2;
+  }
+}
+
+/** A session to check the project's files against (the externals started,
+ *  for their schemas), or undefined when a credential the files name is
+ *  missing — printed as the check's errors. */
+async function checkingSession(dir: string): Promise<Session | undefined> {
+  const project = loadProject(dir);
+  try {
+    return await openSession(project, { ephemeral: true, start: true });
+  } catch (error) {
+    if (!(error instanceof MissingCredentialsError)) throw error;
+    for (const m of error.missing) process.stdout.write(`${m.file}:${m.line}:${m.column} error MISSING_CREDENTIAL ${m.message}\n`);
+    process.stdout.write(`${error.missing.length} error(s)\n`);
+    return undefined;
   }
 }
 
