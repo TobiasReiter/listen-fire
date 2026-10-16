@@ -434,8 +434,8 @@ movement engine runs in the CLI process against the shared DB + fakes, like
 synthesizes the exact `tick` TriggerEvent the wall-clock scheduler builds
 (`movement_scheduler/worker.ts`), and calls `dispatchTriggerByIdEvent` —
 bypassing the schedule + first-sight-skip so you don't wait for 9am Monday.
-Author a listener first (`timer = cron(); listen to timer { schedule: "…" }
-fire <movement>`).
+Author a listener first (`timer = connect cron`, then `listen to timer { schedule: "…" }
+fire <function>`).
 
 **Granola** under the hood: Granola is a **polled source**, not a webhook — there
 is NO inbound HTTP route. So this inject mirrors `cron`/`kg-mutation` (in-process
@@ -467,7 +467,7 @@ existing node of that type (or `--node-id`), builds a `RecordMutationEvent`, and
 calls `dispatchMutationEvent` — the same entry the post-commit emitter feeds. Use
 this to exercise a `listen to kg { type: <…> }` movement; `dev:link` does a raw
 insert that bypasses the mutation emitter and will NOT fire a kg listener. The
-listener movement's param is kg-seeded: `movement m(rec: <kg-[:Deal]->>) { … }` +
+listener movement's param is kg-seeded: `function m(rec: <kg-[:Deal]->>) { … }` +
 `listen to kg { type: <Deal> } fire m`.
 
 **Valuations webhook** — NOT currently driveable. `dev:valuations setup`
@@ -522,10 +522,13 @@ the dev-loop team:
 The movement's shape is the point, and it has **no `base:`**:
 
 ```
-at = airtable(credentials: `Dev Loop Airtable`)
-movement airtable_intake(e: <at-[:`Record Change`
-      WHERE `action` == "record.created" AND `base` == "appDevLoop" AND `table` == "tblDeals"]->>) {
-  e-[r:Record]-> { … r.`Name` … }
+import { `@lf/airtable` as airtable } from adapters
+import { `Dev Loop Airtable` as devLoop } from credentials
+
+at = connect airtable using devLoop
+function airtable_intake(e: <at-[c:`Record Change`
+      WHERE c.action == "record.created" AND c.base == "appDevLoop" AND c.table == "tblDeals"]->>) {
+  e-[r:Record]-> { … r.Name … }
 }
 listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created"] } fire airtable_intake
 ```
@@ -866,8 +869,8 @@ pnpm dev:inject whatsapp --from 15551234567 --media --text "Deck attached"
 pnpm dev:inspect slack            # → "WhatsApp from 15551234567: Deck attached"
 
 # 3b. Write-backs: a movement can reply (threaded) and react off the event —
-#     write m-[:Replies]->   { To: m.`From`, Body: "…" }
-#     write m-[:Reactions]-> { To: m.`From`, Emoji: "👍" }
+#     write m-[:Replies]->   { To: m.From, Body: "…" }
+#     write m-[:Reactions]-> { To: m.From, Emoji: "👍" }
 #     Sends land in the fake Meta send endpoint
 #     (POST /whatsapp/graph/:pnid/messages) and show in the same outbox:
 pnpm dev:inspect whatsapp         # → outbox entries with reaction / context (threading)
