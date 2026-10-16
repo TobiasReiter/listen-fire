@@ -78,7 +78,7 @@ desk = connect desk_sys using desk_creds
 books = connect ledger_sys using ledger_creds
 
 function intake(n: <desk-[:note]->>) {
-  facts = extract from [n.\`text\`] {
+  facts = extractOne([n.\`text\`], node Facts: "what the note says" {
     who: <text> "who filed it"
     node vendor: "the supplier it mentions" {
       title: <text> "the supplier's name"
@@ -86,7 +86,7 @@ function intake(n: <desk-[:note]->>) {
         email: <text> "their email address"
       }
     }
-  }
+  })
   org = write books-[:Orgs]-> { unique by (\`Title\`) Title: n.\`text\` }
   entry = write org-[:Entries]-> { Amount: 12 }
   books-[shop:Orgs WHERE shop.\`Title\` == "acme"]-> {
