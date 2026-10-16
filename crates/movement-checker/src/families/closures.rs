@@ -601,7 +601,7 @@ impl Checker<'_> {
             }
         }
         if op.op == CollectionOp::Sort {
-            self.check_sort_key(returned.as_ref(), arm_span(&op.r#fn));
+            self.check_sort_by(op, source.expr.as_ref(), element.as_ref(), returned.as_ref());
         }
         if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
             let diagnostics = {
@@ -639,9 +639,30 @@ impl Checker<'_> {
 
     /// The parameters of a function named as an op's function, with the
     /// types they are written with.
-    /// `checkSortKey`: what `sort`'s function answers for each member is
-    /// what the members are ranked by, so it is one value with an order.
-    fn check_sort_key(&mut self, key: Option<&Ty>, span: Span) {
+    /// `checkSortBy`: `sort` by a function key is refused where `SORT(xs,
+    /// key)` was, the key being the function: a walk written inside the
+    /// call, or a key read off members that are plain values. Past those,
+    /// what the function answers for each member is what the members are
+    /// ranked by, so it is one value with an order.
+    fn check_sort_by(&mut self, op: &CollectionOpExpression, walk: Option<&movement_parser::lowering::expression::Expression>, element: Option<&Ty>, key: Option<&Ty>) {
+        use crate::families::values::{is_bare_walk, is_plain_value};
+        let span = arm_span(&op.r#fn);
+        if walk.is_some_and(is_bare_walk) {
+            self.report(
+                codes::SORT_KEY_ON_WALK,
+                "sort reads a key off each record, and a walk written inside the call hands its records over without the graph they came from. Bind the walk first — `entries = … { return … }` — then sort the name.",
+                op.source.span,
+            );
+            return;
+        }
+        if element.is_some_and(is_plain_value) && key_reads_off_member(&op.r#fn) {
+            self.report(
+                codes::SORT_KEY_ON_SCALAR,
+                "sort reads this key off each member, and these members are plain values — there is nothing to read it from. Order them by themselves: `sort(…)` or `sort(…, { order: \"desc\" })`.",
+                span,
+            );
+            return;
+        }
         let Some(key) = key else { return };
         if crate::families::values::is_keyed_value(key) {
             let what = if crate::types::field::records_alone(Some(key)).is_some() { "a record" } else { "a value with named parts" };
@@ -782,4 +803,29 @@ impl Checker<'_> {
         }
         self.called_closure(id).map_or_else(crate::families::returns::unknown_return, |closure| closure.returns)
     }
+}
+
+/// `keyReadsOffMember`: whether a sort's function reads a part off the member
+/// it is handed in what it returns (`(r) => r.Name`, what `SORT(xs, Name)`
+/// reads as from 5).
+fn key_reads_off_member(arm: &ArmExpression) -> bool {
+    use movement_parser::tree::MExpr;
+    let ArmExpression::Closure { closure, .. } = arm else { return false };
+    let Some(param) = closure.params.first().map(|p| p.name.as_str()) else { return false };
+    fn reads(e: &MExpr, param: &str) -> bool {
+        matches!(e, MExpr::Member { object, .. } if matches!(object.as_ref(), MExpr::Name { name, .. } if name.text == param))
+            || crate::families::calls::expression_children(e).into_iter().any(|c| reads(c, param))
+    }
+    closure.body.iter().any(|statement| match statement {
+        Statement::Return(ret) => {
+            // A concise body that is one call is held as the call, read whole.
+            let returned = match &ret.value {
+                RValue::Expr { expr } => Some(expr),
+                RValue::Call { call } => call.expression.as_ref(),
+                _ => None,
+            };
+            returned.is_some_and(|slot| movement_parser::expr::parse_expression(&slot.raw).is_ok_and(|tree| reads(&tree, param)))
+        }
+        _ => false,
+    })
 }

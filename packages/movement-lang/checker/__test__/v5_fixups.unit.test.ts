@@ -233,3 +233,41 @@ describe("a target's bare field is respelled through the hop's alias at its own 
     expect(edits('  rows = reg-[:entities WHERE `City` == "x"]->')).toEqual(expected(15));
   });
 });
+
+describe("sort by a function key is refused where SORT(xs, key) was", () => {
+  const chat = mockCatalog({
+    adapters: {
+      slack: {
+        constructionArgs: [],
+        schema: {
+          positions: {
+            channel: { properties: { Name: 'text' }, edges: { Members: { target: 'person', readable: true } } },
+            person: { properties: { Name: 'text' }, edges: {} },
+          },
+          collections: { Channels: { target: 'channel' } },
+          writableRoots: {},
+        },
+      },
+    },
+  });
+  const codes = (body: string): string[] =>
+    checkProgram(
+      parseProgram(`import { \`@lf/slack\` as slack } from adapters\nchat = connect slack\n\nfunction m(c: <chat-[:channel]->>) {\n${body}\n  return t\n}`, { languageVersion: 5 }),
+      chat,
+      { languageVersion: 5 },
+    )
+      .filter((d) => (d.severity ?? 'error') === 'error')
+      .map((d) => d.code);
+  const names = '  names = c-[p:Members]-> { return p.Name }\n';
+
+  it('a key read off plain values, as SORT(names, Name) was; a key of the member itself stands', () => {
+    expect(codes(`${names}  t = sort(names, (r) => r.Name)`)).toEqual(['MOV_SORT_KEY_ON_SCALAR']);
+    expect(codes(`${names}  t = sort(names, (r) => Text.lower(r.Name))`)).toEqual(['MOV_SORT_KEY_ON_SCALAR']);
+    expect(codes(`${names}  t = sort(names, (r) => Text.lower(r))`)).toEqual([]);
+  });
+
+  it('a walk written inside the call, as SORT(c-[p:Members]->, Name) was; a bound one stands', () => {
+    expect(codes('  t = count(sort(c-[p:Members]->, (r) => r.Name))')).toEqual(['MOV_SORT_KEY_ON_WALK']);
+    expect(codes('  people = c-[p:Members]-> { return p }\n  t = count(sort(people, (r) => r.Name))')).toEqual([]);
+  });
+});

@@ -342,6 +342,8 @@ import {
   valuesBesideRecord,
   recordsAlone,
   isKeyedValue,
+  isBareWalk,
+  isPlainValue,
   sameStartingPoint,
   positionSchemaOfRef,
   recordHeadPosition,
@@ -2188,6 +2190,28 @@ function spanOfExtent(slot: ExprSlot, at: At): Span {
  * own length before that. A chain over several lines, or an extent outside
  * the hops (the probe's stand-in root), has no exact place.
  */
+/** Whether a sort's function reads a part off the member it is handed in
+ *  what it returns (`(r) => r.Name`, what `SORT(xs, Name)` reads as from 5). */
+function keyReadsOffMember(fn: ArmExpression): boolean {
+  if (fn.kind !== 'closure') return false;
+  const param = fn.closure.params[0]?.name;
+  if (param === undefined) return false;
+  const reads = (e: MExpr): boolean =>
+    (e.kind === 'member' && e.object.kind === 'name' && e.object.name.text === param) || expressionChildren(e).some(reads);
+  return fn.closure.body.some((statement) => {
+    if (statement.kind !== 'return') return false;
+    // A concise body that is one call is held as the call, read whole.
+    const returned = statement.value.kind === 'expr' ? statement.value.expr : statement.value.kind === 'call' ? statement.value.call.expression : undefined;
+    if (returned === undefined) return false;
+    try {
+      return reads(parseExpression(returned.raw));
+    } catch (e) {
+      if (e instanceof ExpressionSyntaxError) return false;
+      throw e;
+    }
+  });
+}
+
 function headHopsExtent(head: PathHead, at: At): Span | undefined {
   if (head.hopsRaw.includes('\n')) return undefined;
   const offset = probePathHead(head).length - head.hopsRaw.length;
@@ -7951,7 +7975,7 @@ class Checker {
     if (shape.mayHold !== undefined && (expr.op === 'map' || expr.op === 'reduce')) {
       this.collectionMayHold.set(expr, expr.op === 'map' ? listOf(shape.mayHold, ordering) : shape.mayHold);
     }
-    if (expr.op === 'sort') this.checkSortKey(returned, expr.fn.span);
+    if (expr.op === 'sort') this.checkSortBy(expr, { walk: source.parsed, element, key: returned });
 
     switch (expr.op) {
       case 'map':
@@ -7979,9 +8003,33 @@ class Checker {
     }
   }
 
-  /** What `sort`'s function answers for each member is what the members are
-   *  ranked by, so it is one value with an order. */
-  private checkSortKey(key: FieldType | undefined, span: Span): void {
+  /** `sort` by a function key is refused where `SORT(xs, key)` was, the key
+   *  being the function: a walk written inside the call, or a key read off
+   *  members that are plain values. Past those, what the function answers
+   *  for each member is what the members are ranked by, so it is one value
+   *  with an order. */
+  private checkSortBy(
+    expr: CollectionOpExpression,
+    members: { walk: Expression | undefined; element: FieldType | undefined; key: FieldType | undefined },
+  ): void {
+    const span = expr.fn.span;
+    if (members.walk !== undefined && isBareWalk(members.walk)) {
+      this.report(
+        TypedDiagnosticCodes.SORT_KEY_ON_WALK,
+        'sort reads a key off each record, and a walk written inside the call hands its records over without the graph they came from. Bind the walk first — `entries = … { return … }` — then sort the name.',
+        expr.source.span,
+      );
+      return;
+    }
+    if (members.element !== undefined && isPlainValue(members.element) && keyReadsOffMember(expr.fn)) {
+      this.report(
+        TypedDiagnosticCodes.SORT_KEY_ON_SCALAR,
+        'sort reads this key off each member, and these members are plain values — there is nothing to read it from. Order them by themselves: `sort(…)` or `sort(…, { order: "desc" })`.',
+        span,
+      );
+      return;
+    }
+    const key = members.key;
     if (key === undefined) return;
     if (isKeyedValue(key)) {
       const what = recordsAlone(key) !== undefined ? 'a record' : 'a value with named parts';

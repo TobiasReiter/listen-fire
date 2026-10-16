@@ -1814,7 +1814,7 @@ export type CollectionOrder = 'ordered' | 'unordered' | 'unknown';
 
 /** A walk written as a VALUE and read for its landings (`l-[e:Entries]->`) —
  *  the shape whose records arrive without the graph behind them. */
-function isBareWalk(expr: Expression): boolean {
+export function isBareWalk(expr: Expression): boolean {
   return (
     expr.type === 'traverse'
     && expr.steps.length > 0
@@ -1909,7 +1909,7 @@ export function isKeyedValue(type: FieldType): boolean {
 
 /** A PLAIN value — text, a number, a date: something with no fields to key on
  *  and a natural order of its own. `json` and `file` are neither. */
-function isPlainValue(type: FieldType): boolean {
+export function isPlainValue(type: FieldType): boolean {
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     case 'text':

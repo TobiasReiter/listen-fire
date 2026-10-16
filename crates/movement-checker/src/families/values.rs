@@ -1076,7 +1076,7 @@ fn sort_element_position(typing: &Typing, argument: &Expression, position: Optio
 }
 
 /// `isBareWalk`: a walk read for its landings.
-fn is_bare_walk(expr: &Expression) -> bool {
+pub fn is_bare_walk(expr: &Expression) -> bool {
     matches!(expr, Expression::Traverse { steps, expression, .. }
         if !steps.is_empty() && matches!(&**expression, Expression::Property { property_type_id, .. } if property_type_id == POSITION_SENTINEL))
 }
@@ -1091,7 +1091,7 @@ pub fn is_keyed_value(ty: &Ty) -> bool {
 }
 
 /// `isPlainValue`: no fields to key on, an order of its own.
-fn is_plain_value(ty: &Ty) -> bool {
+pub fn is_plain_value(ty: &Ty) -> bool {
     match strip_absent(ty) {
         Ty::Text | Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::Enum { .. } => true,
         Ty::Union(members) => members.iter().all(is_plain_value),

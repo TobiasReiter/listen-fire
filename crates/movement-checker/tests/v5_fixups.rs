@@ -195,3 +195,24 @@ fn a_targets_bare_field_is_respelled_through_the_alias_at_its_own_place() {
     assert_eq!(edits("  m = match reg-[:entities WHERE `City` == \"x\"]-> { unique by (FUZZY `Name`), Name: \"a\" }"), expected(18));
     assert_eq!(edits("  rows = reg-[:entities WHERE `City` == \"x\"]->"), expected(15));
 }
+
+const MEMBERS: &str = r#"{"adapters":{"slack":{"constructionArgs":[],"schemas":{"":{"positions":{
+  "channel":{"properties":{"Name":"text"},"edges":{"Members":{"target":"person","readable":true}}},
+  "person":{"properties":{"Name":"text"},"edges":{}}},
+  "collections":{"Channels":{"target":"channel"}},"writableRoots":{}}}}},"credentials":{},"plugins":{}}"#;
+
+#[test]
+fn sort_by_a_function_key_is_refused_where_sort_with_a_key_was() {
+    let codes = |body: &str| -> Vec<String> {
+        let source = format!("import {{ `@lf/slack` as slack }} from adapters\nchat = connect slack\n\nfunction m(c: <chat-[:channel]->>) {{\n{body}\n  return t\n}}");
+        let catalog = CatalogSnapshot::load(MEMBERS).unwrap();
+        let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+        check_source(&source, &catalog, options).unwrap().into_iter().filter(|d| d.is_error()).map(|d| d.code).collect()
+    };
+    let names = "  names = c-[p:Members]-> { return p.Name }\n";
+    assert_eq!(codes(&format!("{names}  t = sort(names, (r) => r.Name)")), ["MOV_SORT_KEY_ON_SCALAR"]);
+    assert_eq!(codes(&format!("{names}  t = sort(names, (r) => Text.lower(r.Name))")), ["MOV_SORT_KEY_ON_SCALAR"]);
+    assert_eq!(codes(&format!("{names}  t = sort(names, (r) => Text.lower(r))")), Vec::<String>::new());
+    assert_eq!(codes("  t = count(sort(c-[p:Members]->, (r) => r.Name))"), ["MOV_SORT_KEY_ON_WALK"]);
+    assert_eq!(codes("  people = c-[p:Members]-> { return p }\n  t = count(sort(people, (r) => r.Name))"), Vec::<String>::new());
+}
