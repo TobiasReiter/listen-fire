@@ -718,30 +718,34 @@ describe('AI(): runMovement through the LlmClient seam', () => {
 
   it('the run trace explains a no-writes firing: field miss, empty extraction, null AI, closed gate', async () => {
     // The production shape that motivated the trace: a schema field the
-    // event payload doesn't carry → extraction over nothing → AI with no
+    // event payload doesn't carry → extraction over nothing (no record) → AI with no
     // useful context returns null → the gate closes → zero writes, and
     // the run record says exactly why.
     const SRC = [
       'import { email, attio } from adapters',
       'import { acme_main } from credentials',
       '',
-      'inbox = email()',
-      'crm   = attio(credentials: acme_main)',
+      'inbox = connect email',
+      'crm   = connect attio using acme_main',
       '',
-      'movement probe(msg: <inbox-[:message]->>) {',
-      '  mentions = extract from [msg.text] {',
-      '    node company: "each company mentioned" {',
-      '      name: "the company name"',
+      'node Mentions: "the companies mentioned" {',
+      '  node company: "each company mentioned" {',
+      '    name: <text> "the company name"',
+      '  }',
+      '}',
+      '',
+      'function probe(msg: <inbox-[:message]->>) {',
+      '  mentions = extractOne([msg.text], Mentions)',
+      '  suggested = ai("a next step, if any")',
+      '  if (mentions != null) {',
+      '    mentions-[c:company]-> {',
+      '      write crm-[:companies]-> {',
+      '        unique by (`name`)',
+      '        name: c.name',
+      '      }',
       '    }',
       '  }',
-      '  suggested = AI("a next step, if any")',
-      '  mentions-[c:company]-> {',
-      '    write crm-[:companies]-> {',
-      '      unique by (`name`)',
-      '      name: c.name',
-      '    }',
-      '  }',
-      '  if EXISTS(suggested) {',
+      '  if (suggested != null) {',
       '    write crm-[:companies]-> {',
       '      unique by (`name`)',
       '      name: suggested',
@@ -779,13 +783,15 @@ describe('AI(): runMovement through the LlmClient seam', () => {
       },
       {
         kind: 'extraction',
-        node: 'extract result',
+        form: 'call',
+        node: 'Mentions',
         inputChars: 0,
         skipped: 'empty_source',
-        emissions: { 'extract result': 0 },
+        emissions: { Mentions: 0 },
       },
       { kind: 'ai', prompt: 'a next step, if any', hasValue: false },
-      { kind: 'block', root: 'mentions-[c:company]->', positions: 0 },
+      // Nothing extracted, so the walk's guard closes, then the AI's.
+      { kind: 'gate', outcome: false },
       { kind: 'gate', outcome: false },
     ]);
   });
@@ -818,6 +824,9 @@ describe('value bindings — field reads', () => {
     const attio = makeFakeAdapter('attio');
     await runMovement({
       source: SRC,
+      // The catalog types `subject` text, and from 5 a text has no fields
+      // (MOV_TEXT_HAS_NO_FIELDS), so the read is pinned to 4.
+      languageVersion: 4,
       // The event field holds an object — the binding's value.
       event: webhookEvent('email', {
         subject: { label: 'Follow up with ACME' },
@@ -2221,11 +2230,12 @@ describe('unsupported constructs raise MOVENG_UNSUPPORTED naming the construct',
       [
         PRELUDE,
         '',
-        'r = extract from ["a fixed document"] {',
+        'node Rounds: "the funding rounds in this document" {',
         '  node round: "funding round mentioned in this document" {',
-        '    name: "funding round name"',
+        '    name: <text> "funding round name"',
         '  }',
         '}',
+        'r = extractOne(["a fixed document"], Rounds)',
         '',
         'movement m(msg: <inbox-[:message]->>) {',
         '  write crm-[:companies]-> {',
