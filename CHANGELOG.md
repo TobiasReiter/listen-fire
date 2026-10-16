@@ -230,6 +230,10 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - **Numbers print with Rust's shortest digits.** On a 17-digit tie the last digit can differ:
   `TEXT(16086.196899414062)` is `"16086.196899414063"` (JavaScript printed `…062`); both read
   back as the same number. The layout is unchanged (`1e+21`, `1.5e-7`, `0.000001`).
+- **Letters and numbers are Rust's.** A FUZZY match's words split on what `char::is_alphanumeric`
+  refuses, so a combining vowel sign no longer breaks a word (`हिंदी` is one word; it was `ह` and
+  `द`). The CHUNKS entities estimate reads capitals with `char::is_uppercase`.
+- **A regex group name is ASCII** (`$`, `_`, letters, digits): `(?<𝒜>.)` is a malformed pattern.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new
