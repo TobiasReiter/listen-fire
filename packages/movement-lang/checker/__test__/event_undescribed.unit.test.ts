@@ -5,7 +5,8 @@
 // time — an undescribed position accepting any field.
 //
 // From version 5 a read or a write off it is refused (MOV_EVENT_UNDESCRIBED);
-// before, it stays unsaid. The Rust checker's twin is crates/movement-checker/tests/
+// in 3 and 4, whose programs checked clean and ran, it is a warning; before 3
+// it stays unsaid. The Rust checker's twin is crates/movement-checker/tests/
 // event_undescribed.rs, on the same catalog.
 
 import { parseProgram } from '../../parser/parse';
@@ -64,7 +65,14 @@ describe('MOV_EVENT_UNDESCRIBED', () => {
     );
   });
 
-  it.each([1, 2, 3, 4])('says nothing under version %i, as before', version => {
+  it.each([3, 4])('warns under version %i, where such a program checked clean and ran', version => {
+    expect(check(BEFORE_5, version).map(d => [d.code, d.severity])).toEqual([
+      ['MOV_EVENT_UNDESCRIBED', 'warning'],
+      ['MOV_EVENT_UNDESCRIBED', 'warning'],
+    ]);
+  });
+
+  it.each([1, 2])('says nothing under version %i, as before', version => {
     expect(check(BEFORE_5, version)).toEqual([]);
   });
 

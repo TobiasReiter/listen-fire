@@ -208,7 +208,8 @@ export const TypedDiagnosticCodes = {
   /** A read or a write off a movement's EVENT parameter whose event the
    *  catalog has no description for (`UndescribedEvent`): the instance's
    *  system answered nothing, so the fields can't be checked and the read is
-   *  null at run time. An error from version 5; unsaid before. */
+   *  null at run time. An error from version 5; a warning in 3 and 4, where
+   *  such programs checked clean and ran; unsaid before 3. */
   EVENT_UNDESCRIBED: 'MOV_EVENT_UNDESCRIBED',
   /** A property read names a WRITE-ONLY field — declared on the type's write
    *  shape only (`readable: false`): a value a write SETS (WhatsApp Message's
@@ -4707,10 +4708,12 @@ export interface UndescribedEvent {
 
 /**
  * MOV_EVENT_UNDESCRIBED's severity under `languageVersion`: refused from
- * version 5; `undefined` — unsaid, as it always was — before.
+ * version 5; a warning in 3 and 4, whose programs checked clean and ran (the
+ * read was null); `undefined` — unsaid, as it always was — before 3.
  */
 export function undescribedEventSeverity(languageVersion: LanguageVersion): 'error' | 'warning' | undefined {
   if (since(languageVersion, 5)) return 'error';
+  if (since(languageVersion, 3)) return 'warning';
   return undefined;
 }
 
