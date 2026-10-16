@@ -968,8 +968,11 @@ impl<'a> Typing<'a> {
         if untyped_spread {
             return None;
         }
-        let first = read_types.first().cloned().flatten();
-        let agree = first.as_ref().is_some_and(|f| read_types.iter().all(|t| t.as_ref().is_some_and(|t| field_type_equals(t, f))));
+        // Compared in place, not cloned: a type is the same as itself whatever
+        // kind it is (`sameStartingPoint`'s identity), as a write's handle is.
+        let first = read_types.first().and_then(Option::as_ref);
+        let agree = first.is_some_and(|f| read_types.iter().all(|t| t.as_ref().is_some_and(|t| field_type_equals(t, f))));
+        let first = first.cloned();
         let of = match (&first, agree) {
             (Some(first), true) => {
                 if read_types.iter().any(|t| is_maybe_absent(t.as_ref())) {

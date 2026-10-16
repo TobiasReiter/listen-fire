@@ -610,11 +610,31 @@ impl HeldHandle {
 }
 
 /// `HeldWalk`: the handle kinds a destination takes (those are not reported).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HeldWalk {
     pub steps: Vec<HeldStep>,
     pub accepts_record: bool,
     pub accepts_file: bool,
+    /// `HeldWalk.inspect`: for a target that takes an object only on terms
+    /// (an extraction prompt renders a record as its fields, which must be in
+    /// hand) — asked of EVERY accepted object the walk meets, at any depth
+    /// and in any arm, instead of passing over it. What it answers is what
+    /// the walk found.
+    pub inspect: Option<InspectHeld>,
+}
+
+/// What `HeldWalk::inspect` asks of an accepted object.
+pub type InspectHeld = std::rc::Rc<dyn Fn(HeldHandle) -> Option<HeldHandle>>;
+
+impl std::fmt::Debug for HeldWalk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeldWalk")
+            .field("steps", &self.steps)
+            .field("accepts_record", &self.accepts_record)
+            .field("accepts_file", &self.accepts_file)
+            .field("inspect", &self.inspect.is_some())
+            .finish()
+    }
 }
 
 /// `HandleKind`s a target takes (`ReadonlySet<HandleKind>`).
@@ -633,7 +653,7 @@ impl HandleKinds {
 
     /// `heldWalk(kinds)`.
     pub fn walk(self) -> HeldWalk {
-        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file }
+        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file, inspect: None }
     }
 }
 
@@ -652,7 +672,12 @@ impl HeldWalk {
     /// `heldWalk(handleKindsTaken(target))`: the kinds `target` holds.
     pub fn taken_by(target: Option<&Ty>) -> HeldWalk {
         let (record, file) = target.map(kinds_held_by).unwrap_or((false, false));
-        HeldWalk { steps: Vec::new(), accepts_record: record, accepts_file: file }
+        HeldWalk { steps: Vec::new(), accepts_record: record, accepts_file: file, inspect: None }
+    }
+
+    /// An accepted object, handed to the walk's inspection if it has one (`acceptedHandle`).
+    fn accepted(&self, handle: Ty) -> Option<HeldHandle> {
+        self.inspect.as_ref().and_then(|inspect| inspect(HeldHandle { steps: self.steps.clone(), handle, may: false }))
     }
 }
 
@@ -679,10 +704,10 @@ pub fn shows_more_handles(wider: &Ty, ty: Option<&Ty>) -> bool {
 /// `handleWithin`: the first record or file inside `ty` the walk does not accept.
 pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
     match strip_absent(ty?) {
-        Ty::Record(position) => {
-            (!walk.accepts_record).then(|| HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false })
-        }
-        Ty::File => (!walk.accepts_file).then(|| HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
+        Ty::Record(position) if walk.accepts_record => walk.accepted(Ty::Record(position.clone())),
+        Ty::Record(position) => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false }),
+        Ty::File if walk.accepts_file => walk.accepted(Ty::File),
+        Ty::File => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
         list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk),
         Ty::Dict { of, shape } => {
             for (key, value) in shape.iter().flat_map(|s| s.iter()) {

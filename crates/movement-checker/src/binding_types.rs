@@ -108,7 +108,9 @@ impl Checker<'_> {
         }
         let ty = if holds_value { typing.infer_exact(&expr) } else { typing.infer(&expr) };
         let may_hold = typing.may_hold_type(&expr);
-        let may_hold = if ty.is_none() { may_hold } else { None };
+        // The arms a value was built of travel with it where its type no
+        // longer shows an engine object they hold.
+        let may_hold = may_hold.filter(|held| crate::types::field::shows_more_handles(held, ty.as_ref()));
         let many_valued = crate::types::narrowing::is_walk_projection(&expr)
             || crate::types::narrowing::bare_name(&expr).is_some_and(|n| env.is_many_valued_name(n));
         Some(SymbolTypes { field: ty, may_hold, many_valued, ..SymbolTypes::default() })

@@ -689,6 +689,11 @@ impl Checker<'_> {
         if self.scopes.symbol(id).kind == SymbolKind::Movement {
             return self.movement_return(id);
         }
+        // A closure arm hands back what it returns on every version, called
+        // or not (`checkArm`).
+        if let Some(crate::types::position::Position::Closure(closure)) = &self.scopes.symbol(id).types.pos {
+            return closure.returns.clone();
+        }
         self.called_closure(id).map_or_else(crate::families::returns::unknown_return, |closure| closure.returns)
     }
 }

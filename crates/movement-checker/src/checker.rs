@@ -13,7 +13,7 @@ use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
 use crate::families::returns::Body;
-use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
+use crate::types::field::{HeldHandle, Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
 
 use crate::types::narrowing::{negative_presence_proofs, presence_proofs};
@@ -85,6 +85,23 @@ pub struct SlotOptions<'f> {
     /// (`heldTakes`): the first one held inside the value that the walk does
     /// not accept is found (`SlotTyped::held`). `None`: nobody asks.
     pub held_takes: Option<crate::types::field::HandleKinds>,
+    /// Asked of every object of a kind `held_takes` names, wherever the walk
+    /// meets it, with the type of the whole value (`inspectHeld`).
+    pub inspect_held: Option<&'f SlotInspect>,
+}
+
+/// `SlotOptions::inspect_held`: an accepted object and the whole value's type.
+pub type SlotInspect = std::rc::Rc<dyn Fn(HeldHandle, Option<&Ty>) -> Option<HeldHandle>>;
+
+/// `slotHeldWalk`: the walk a slot's options ask for, its inspection told the
+/// whole value's type.
+fn slot_held_walk(takes: Option<crate::types::field::HandleKinds>, inspect: Option<&SlotInspect>, shape: Option<&Ty>) -> Option<crate::types::field::HeldWalk> {
+    let mut walk = takes?.walk();
+    if let Some(inspect) = inspect {
+        let (inspect, shape) = (std::rc::Rc::clone(inspect), shape.cloned());
+        walk.inspect = Some(std::rc::Rc::new(move |held| inspect(held, shape.as_ref())));
+    }
+    Some(walk)
 }
 
 /// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
@@ -461,8 +478,7 @@ impl<'c> Checker<'c> {
     /// its nested calls hoisted out, is parsed, every name it reads resolves,
     /// and it is typed, what the typing reports surfacing here.
     pub fn check_expr_slot_with(&mut self, slot: &ExprSlot, scope: ScopeId, options: SlotOptions) -> SlotTyped {
-        let SlotOptions { holds_value, write_field, fields, held_takes } = options;
-        let held_takes = held_takes.map(crate::types::field::HandleKinds::walk);
+        let SlotOptions { holds_value, write_field, fields, held_takes, inspect_held } = options;
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if is_literal_word(trimmed) {
@@ -478,10 +494,11 @@ impl<'c> Checker<'c> {
             let may_hold = self.typing_env(scope).resolve_may_hold(trimmed);
             // A name on the record plane with no value type (an instance) is
             // still the engine object it names.
-            let held = held_takes.as_ref().and_then(|walk| {
+            let held = held_takes.and_then(|_| {
                 let named = if bound.is_none() { self.bare_slot_position_type(slot, scope).map(|p| Ty::record(Some(p))) } else { None };
                 let may_hold = may_hold.clone().or(named);
-                crate::types::field::handle_within(bound.as_ref(), walk).or_else(|| crate::types::field::handle_within(may_hold.as_ref(), walk))
+                let walk = slot_held_walk(held_takes, inspect_held, bound.as_ref().or(may_hold.as_ref()))?;
+                crate::types::field::handle_within(bound.as_ref(), &walk).or_else(|| crate::types::field::handle_within(may_hold.as_ref(), &walk))
             });
             let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
             return SlotTyped { expr: None, ty, may_hold, held };
@@ -510,7 +527,8 @@ impl<'c> Checker<'c> {
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            let held = held_takes.as_ref().and_then(|walk| typing.handle_held_by(&parsed, walk).or_else(|| crate::types::field::handle_within(ty.as_ref(), walk)));
+            let held = slot_held_walk(held_takes, inspect_held, ty.as_ref().or(may_hold.as_ref()))
+                .and_then(|walk| typing.handle_held_by(&parsed, &walk).or_else(|| crate::types::field::handle_within(ty.as_ref(), &walk)));
             (ty, may_hold, held, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
         };
         self.effects.note_watchable_reads(&watchable);
@@ -851,7 +869,7 @@ impl<'c> Checker<'c> {
     fn check_extract(&mut self, extract: &ExtractExpression, scope: ScopeId) {
         self.check_ai_tier(extract.tier.as_deref(), extract.span);
         for input in &extract.from {
-            self.check_expr_slot(input, scope);
+            self.check_extract_input(input, scope);
         }
         self.check_extract_stages(&extract.stages, scope, &Default::default(), None);
         self.resolve_extract_annotations(&extract.stages, scope);

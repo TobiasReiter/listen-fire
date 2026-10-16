@@ -272,31 +272,16 @@ impl Checker<'_> {
         self.report(codes::CALL_ARG_TYPE, handle_in_typed_plugin_arg_message(callee, name, &declared_ty, &misplaced), span);
     }
 
-    /// `recordAsFieldsProblem`: a record handed over as its fields — a file
-    /// among them, or a record whose fields its system reads one at a time
-    /// (the problem); `None` where the program holds them in hand.
+    /// `recordAsFieldsProblem`, with this file's declarations as the ones
+    /// whose fields are in hand.
     fn record_as_fields_problem(&self, held: HeldHandle, purpose: &str) -> Option<HeldHandle> {
-        let Ty::Record(Some(position)) = strip_absent(&held.handle) else { return None };
-        let walk = crate::types::field::HeldWalk { steps: held.steps.clone(), accepts_record: true, accepts_file: false };
-        if let Some(file_field) = crate::types::field::handle_spread_of(Some(&held.handle), &walk) {
-            return Some(HeldHandle { may: file_field.may || held.may, ..file_field });
-        }
-        if self.holds_fields_in_hand(position) {
-            crate::types::position::note_fields_needed(Some(position), || purpose.to_string());
-            return None;
-        }
-        Some(held)
+        record_as_fields_problem(held, purpose, &|symbol| self.nodes.is_local(symbol))
     }
 
     /// `holdsFieldsInHand` with the declared shapes' graphs told apart from a
     /// system's: a declared node's fields are the program's own.
     pub fn holds_fields_in_hand(&self, position: &Position) -> bool {
-        match position {
-            Position::Position(p) => p.instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol)),
-            Position::Union(u) => u.instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol)),
-            Position::MaybeEmpty(of) => self.holds_fields_in_hand(of),
-            _ => crate::types::infer::holds_fields_in_hand(position),
-        }
+        holds_fields_in_hand_given(position, &|symbol| self.nodes.is_local(symbol))
     }
 
     /// `refusePluginRecordInPlace`: a write, or a node literal where a plain
@@ -429,4 +414,32 @@ fn file_below_whole(ty: Option<&Ty>) -> Option<HeldHandle> {
 /// Structured data, or no declared type: the plugin takes a record's fields.
 fn is_structured_or_open(declared: Option<&SchemaFieldType>) -> bool {
     declared.is_none_or(is_json)
+}
+
+/// `recordAsFieldsProblem`: a record handed over as its fields — a file
+/// among them, or a record whose fields its system reads one at a time
+/// (the problem); `None` where the program holds them in hand. `is_local`
+/// tells a declaration this file wrote.
+pub fn record_as_fields_problem(held: HeldHandle, purpose: &str, is_local: &dyn Fn(crate::scope::SymbolId) -> bool) -> Option<HeldHandle> {
+    let Ty::Record(Some(position)) = strip_absent(&held.handle) else { return None };
+    let walk = crate::types::field::HeldWalk { steps: held.steps.clone(), accepts_record: true, accepts_file: false, inspect: None };
+    if let Some(file_field) = crate::types::field::handle_spread_of(Some(&held.handle), &walk) {
+        return Some(HeldHandle { may: file_field.may || held.may, ..file_field });
+    }
+    if holds_fields_in_hand_given(position, is_local) {
+        crate::types::position::note_fields_needed(Some(position), || purpose.to_string());
+        return None;
+    }
+    Some(held)
+}
+
+/// `holdsFieldsInHand`, a declared node's fields the program's own where
+/// `is_local` says this file wrote it.
+fn holds_fields_in_hand_given(position: &Position, is_local: &dyn Fn(crate::scope::SymbolId) -> bool) -> bool {
+    match position {
+        Position::Position(p) => p.instance.declared.is_some_and(is_local),
+        Position::Union(u) => u.instance.declared.is_some_and(is_local),
+        Position::MaybeEmpty(of) => holds_fields_in_hand_given(of, is_local),
+        _ => crate::types::infer::holds_fields_in_hand(position),
+    }
 }
