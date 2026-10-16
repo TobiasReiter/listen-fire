@@ -51,3 +51,52 @@ Oracles re-baselined, not retired:
 - `cargo clippy` on the engine and checker is clean.
 - The movement-engine TS package type-checks.
 - Not run: the full `pnpm -r code:type-check`, the TS suites against a rebuilt wasm, and any end-to-end run.
+
+## Continuation (2026-10-17): items 10, 11, key order, small items
+
+Sizes are movement.wasm gzipped (`gzip -9`), built with the build script's flags. Start: 1,491,970.
+
+| change | commit | gz after | saved |
+|---|---|---|---|
+| small: `NUMBER("")` is absent (controller ruling); the TS loader's dead `number_format` op removed | 45a08588 | (in the next row) | |
+| 10 eval wire → plain JSON (`["l", items]`, `["o", entries]`; undefined/NaN/±Infinity/−0 → null; lone surrogate → U+FFFD; no ids, no `i`/`r`, no held-object table, no `f`/`p`/`s16`/`u`/`n` tags) | 46c0b63b | 1,488,797 | 3,173 |
+| 11 a map is a map (no prototype emulation; `__proto__` an ordinary key; checkers refuse it before version 5 only, both checkers) + wire fix-up: a member holding undefined is left out (as `JSON.stringify` does) | 4fd6a76e | 1,482,995 | 5,802 |
+| key order → insertion order (engine) | f526e109 | 1,482,451 | 544 |
+
+Session total 9,519 saved; overall 1,527,863 → 1,482,451 (45,412 saved; 90,413 under the failure line).
+
+Accepted differences, each a named test:
+- stdlib oracle: `empty_text_is_no_number`, `number_like_key_serialised`.
+- records oracle: `names_a_prototype_member` (540 of 4,407 cases: a program or payload naming an `Object.prototype` member).
+- The oracles keep their recorded form; `tests/oracle_wire/mod.rs` reads it (the engine no longer does).
+- Checker fixtures: the version 5 `__proto__` case re-baselined (rules.fixtures.json), plus a TS checker test.
+
+Decision to flag: the brief said undefined → null. Inside a map I leave the member OUT instead. Sending `evidence: null` changed adapter calls (`bridgeToExternal: null` where TypeScript sent no key). In a list and at top level, undefined is null.
+
+Not done:
+- **UTF-16 strings → Rust `String` with U+FFFD.** The wire already turns lone surrogates into U+FFFD at the boundary. The engine still holds the in-band escape form (js_string.rs), and the JSON text passes and UTF-16 counting are still there. The handbook defines LENGTH and CHUNKS size as "characters", so code points are allowed.
+- **Parser key order.** The parser's `object_key_order` (catalog maps, lowering `extra`) still lists array-index keys first. The parser serves every version, so this needs a version decision.
+- **TS suites against the rebuilt wasm** (apps/api `services/movement_engine/__test__/(rust_|seam_guard|files_by_envelope)`): 23 of 340 tests fail, in 14 suites. Categories:
+  - (a) Both-engine comparisons that assert TypeScript parity for `__proto__` keys, lone surrogates and identity: rust_wire_round_trip, rust_values_cross, rust_language_changes, rust_write, rust_run, rust_concurrency. These are retired once Rust runs only version 5 (shrink-routes).
+  - (b) Eval ABI and admission suites: rust_eval, rust_engine_abi, rust_admission_matrix, rust_dry_run. shrink-routes deletes these.
+  - (c) Test literals still in the old wire form (`['l', 0, …]`, `["o",2,…]`): rust_engine, seam_guard, files_by_envelope. These need a mechanical fix-up.
+  - No baseline was taken before this work, so it is not known how many of these failed already.
+- **Dead machinery left behind:** `holds_itself`/`acyclic`. Nothing can build a cycle any more, now that GROUPBY no longer pushes onto a list held by a prototype.
+
+Shared files touched (tell the integrator):
+- park.rs: the `Js::Function` refusal in `json_serializable` was removed, `assign` became `set`, and one test assertion changed.
+- resume.rs: `assign` became `set`.
+- lib.rs: eval tests were updated to the plain wire.
+- admit.rs: untouched.
+- packages/movement-engine rust_wire.ts and rust_engine.ts: the `whole` option was dropped.
+- docs/contracts/host-families.md: the eval-wire bullet.
+- The checkers: names.rs and nodes.rs; check.ts and its unit test.
+
+Verification:
+- `cargo test` passes on the engine and the checker.
+- `cargo clippy --all-targets` is clean on the engine and the checker.
+- The movement-lang wasm tests pass (11 of 11).
+- The TS checker tests pass.
+- The apps/api engine set: see above.
+- The movement-engine and movement-lang packages type-check clean.
+- `pnpm -r code:type-check` stopped at apps/admin. All 19 errors there are an ungenerated Prisma client in this worktree (`$Enums` and model types); none is in code this work changed. apps/api was not type-checked.
