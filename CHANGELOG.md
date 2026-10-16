@@ -312,6 +312,9 @@ for byte; on text already in the version 5 spelling it changes nothing.
 
 ### Changed
 
+- The API's WebAssembly artifact (`movement.wasm`) is 1,527,856 bytes gzipped with version 5's
+  surface and its refusals, under CI's failure line of 1,572,864 bytes (1.5 MiB) by 44,008 bytes.
+  The browser's parser artifact (`movement_parser.wasm`) is 361,029 bytes gzipped.
 - **A program that runs on the Rust engine is checked by the Rust checker.** Every run on the Rust
   engine (an automation pinned to version 5 or later, any run under `MOVEMENT_ENGINE=rust`, every
   `lf` run, and their resumes) is checked inside the engine, with no `check.program` request to the
