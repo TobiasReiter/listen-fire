@@ -90,10 +90,7 @@ jest.mock('../../../lib/anthropic', () => ({
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import type {
-  LlmCallInput,
-  LlmCallResult,
-} from '../../translation_graph/engine/batched_extraction';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 import type {
   Adapter,
   RuntimeCapabilities,
@@ -183,27 +180,22 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
 
 const wrap = (value: unknown) => ({ evidence: 'q', value });
 
-/** Answers under whatever key the call asked for, from the names the caller
- *  reads off the piece the call is about — a per-piece extraction mints its own
- *  call site, so the queue position says nothing useful. */
-function perPieceLlm(names: (userMessage: string) => string[]): {
-  calls: LlmCallInput[];
-  client: { call(input: LlmCallInput): Promise<LlmCallResult> };
+/** Answers each extraction call with the companies the caller reads off the
+ *  content the call was handed — a per-piece extraction is its own call, so
+ *  the queue position says nothing useful. */
+function perPieceLlm(names: (content: string) => string[]): {
+  calls: ExtractCallLlmInput[];
+  client: { call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> };
 } {
-  const calls: LlmCallInput[] = [];
+  const calls: ExtractCallLlmInput[] = [];
   return {
     calls,
     client: {
-      async call(input: LlmCallInput): Promise<LlmCallResult> {
+      async call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> {
         calls.push(input);
-        const key = /one key — `([^`]+)`/.exec(input.system)?.[1];
-        if (!key) throw new Error(`test: no answer key in the system prompt:\n${input.system}`);
         return {
-          parsedJson: {
-            [key]: [
-              { company: names(input.userMessage).map((name) => ({ name: wrap(name) })) },
-            ],
-          },
+          parsedJson: { record: { company: names(JSON.stringify(input.blocks)).map((name) => ({ name: wrap(name) })) } },
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
         };
       },
     },
@@ -261,7 +253,7 @@ function run(
   source: string,
   opts: {
     text?: string;
-    llm?: { call(input: LlmCallInput): Promise<LlmCallResult> };
+    llm?: { call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> };
     attio: Adapter;
   },
 ): Promise<Awaited<ReturnType<typeof runMovement>>> {
@@ -278,22 +270,31 @@ function run(
           attio: opts.attio,
         }),
       },
-      llm: { ...(opts.llm ? { client: opts.llm } : {}) },
+      llm: { ...(opts.llm ? { extractCall: opts.llm } : {}) },
     }),
   });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 
+/** The shape every extraction here extracts. */
+const COMPANIES = [
+  'node Companies: "the companies named" {',
+  '  node company: "each company named" {',
+  '    name: <text> "the company\'s name"',
+  '  }',
+  '}',
+  '',
+].join('\n');
+
 const PER_PIECE_EXTRACT = [
+  COMPANIES,
   'function intake(msg: <inbox-[:message]->>) {',
   '  pieces = Text.chunks(msg.`text`, { size: 20 })',
   '  found = map(pieces, (p) => {',
-  '    return extract from [p] {',
-  '      node company: "each company named" {',
-  '        name: "the company\'s name"',
-  '      }',
-  '    }',
+  '    r = extractOne([p], Companies)',
+  '    if (r == null) { fail("nothing extracted") }',
+  '    return r',
   '  })',
   '',
 ].join('\n');
@@ -471,17 +472,11 @@ describe('a list literal of extraction roots', () => {
 
     await run(
       [
+        COMPANIES,
         'function intake(msg: <inbox-[:message]->>) {',
-        '  chosen = extract from [msg.`text`] {',
-        '    node company: "each company named" {',
-        '      name: "the company\'s name"',
-        '    }',
-        '  }',
-        '  second = extract from ["Globex raised an A."] {',
-        '    node company: "each company named" {',
-        '      name: "the company\'s name"',
-        '    }',
-        '  }',
+        '  chosen = extractOne([msg.`text`], Companies)',
+        '  second = extractOne(["Globex raised an A."], Companies)',
+        '  if (chosen == null || second == null) { fail("nothing extracted") }',
         '  both = [chosen, second]',
         '  both-[c:company]-> {',
         '    write crm-[:companies]-> {',
