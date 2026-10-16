@@ -40,15 +40,6 @@ pub enum OnError {
     Ignore,
 }
 
-/// A collection op as a member frame keeps it: the op, and the object the
-/// TypeScript's park writes for it (`SerializedFrame.op`, its AST as the
-/// TypeScript holds it).
-#[derive(Debug)]
-pub(crate) struct OpCode {
-    pub op: CollectionOpExpression,
-    pub json: Js,
-}
-
 /// The function an op runs over its members.
 pub(crate) struct Function {
     params: Vec<MovementParam>,
@@ -181,7 +172,7 @@ impl OpOrigin {
 /// its answer need, whether it started in this segment or is being finished
 /// on resume.
 pub(crate) struct CollectionRun {
-    pub op: Rc<OpCode>,
+    pub op: Rc<CollectionOpExpression>,
     pub on_error: OnError,
     pub function: Function,
     /// The op's own address, its statement's `call k`: members are `iter i`
@@ -431,7 +422,7 @@ impl Run<'_> {
         })?;
         let function = self.collection_function(&expr.r#fn, spelling, scope, &origin.fn_path(expr))?;
         let run = CollectionRun {
-            op: Rc::new(OpCode { op: expr.clone(), json: self.op_json(expr, origin).map_err(Stop::Thrown)? }),
+            op: Rc::new(expr.clone()),
             on_error,
             function,
             address: self.call_address(event, at),
@@ -464,7 +455,7 @@ impl Run<'_> {
     /// entries); any other failure stops further members starting, and once
     /// those running have finished the earliest member's is the op's.
     pub(crate) async fn run_members(&self, run: &CollectionRun, indices: &[usize], answers: Vec<Option<Option<Js>>>) -> Result<Binding, Stop> {
-        let spelling = spelling(run.op.op.op);
+        let spelling = spelling(run.op.op);
         let fork = self.fork_writes();
         let answers = RefCell::new(answers);
         let parked: RefCell<Vec<usize>> = RefCell::default();
@@ -561,7 +552,7 @@ impl Run<'_> {
             return Err(self.park_collection_op(run, &answers, parked.len()).await);
         }
         let flat: Vec<Option<Js>> = answers.into_iter().map(Option::flatten).collect();
-        self.collection_answer(&run.op.op, spelling, &run.members, &flat, &run.init, run.source_trail.clone())
+        self.collection_answer(&run.op, spelling, &run.members, &flat, &run.init, run.source_trail.clone())
     }
 
     /// One member: its function's body in a scope of its own off what the
@@ -570,7 +561,7 @@ impl Run<'_> {
     /// and, for a function named, as a call by that name.
     async fn member(&self, run: &CollectionRun, index: usize, answers: &[Option<Option<Js>>]) -> Result<Js, Stop> {
         let member = run.members[index].clone();
-        let values = match run.op.op.op {
+        let values = match run.op.op {
             CollectionOp::Reduce => {
                 let before: Vec<Option<Js>> = answers[..index].iter().map(|a| a.clone().flatten()).collect();
                 vec![carried(&before, &run.init), member]
@@ -593,7 +584,7 @@ impl Run<'_> {
         let body = async {
             let named = run.function.named.as_deref();
             let flow = self.within_named_call(named, self.body(&run.function.body, &at, &address, &run.function.path, 0)).await?;
-            self.member_answer(run.op.op.op, spelling(run.op.op.op), flow, &at)
+            self.member_answer(run.op.op, spelling(run.op.op), flow, &at)
         };
         match &run.site {
             Some(site) => {
@@ -640,54 +631,6 @@ impl Run<'_> {
         match kept.await {
             Ok(()) => Stop::Parked(frame),
             Err(stop) => stop,
-        }
-    }
-
-    /// The op as a member frame keeps it (`SerializedFrame.op`): written as
-    /// an op, the program's node; read from a call (version 3), the object
-    /// `readCall` builds of the call's own pieces.
-    fn op_json(&self, expr: &CollectionOpExpression, origin: &OpOrigin) -> Result<Js, Failure> {
-        match origin {
-            OpOrigin::Written(path) => self.program_code(path),
-            OpOrigin::Call { call, path } => {
-                let value_at = |index: usize| -> Result<Js, Failure> {
-                    match &call.args[index] {
-                        CallArg::Call { .. } => self.program_code(&format!("{path}/args/{index}/call/expression")),
-                        _ => self.program_code(&format!("{path}/args/{index}/expr")),
-                    }
-                };
-                let op = match expr.op {
-                    CollectionOp::Map => "map",
-                    CollectionOp::Filter => "filter",
-                    CollectionOp::Reduce => "reduce",
-                    CollectionOp::Groupby => "groupby",
-                    CollectionOp::Keyby => "keyby",
-                    CollectionOp::Sort => "sort",
-                };
-                let mut members = vec![("op", Js::str(op)), ("source", value_at(0)?)];
-                if expr.init.is_some() {
-                    members.push(("init", value_at(1)?));
-                }
-                if expr.config.is_some() {
-                    members.push(("config", value_at(1)?));
-                }
-                let last = call.args.len() - 1;
-                let function = match &expr.r#fn {
-                    ArmExpression::Closure { .. } => crate::env::object_of(vec![
-                        ("kind", Js::str("closure")),
-                        ("closure", self.program_code(&format!("{path}/args/{last}/closure"))?),
-                        ("span", self.program_code(&format!("{path}/args/{last}/span"))?),
-                    ]),
-                    ArmExpression::Ref { name, .. } => crate::env::object_of(vec![
-                        ("kind", Js::str("ref")),
-                        ("name", Js::str(name.clone())),
-                        ("span", self.program_code(&format!("{path}/args/{last}/expr/span"))?),
-                    ]),
-                };
-                members.push(("fn", function));
-                members.push(("span", self.program_code(&format!("{path}/span"))?));
-                Ok(crate::env::object_of(members))
-            }
         }
     }
 

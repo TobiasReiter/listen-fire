@@ -27,6 +27,7 @@ pub enum Family {
     ParkSink,
     Park,
     ParkCallbacks,
+    ParkSources,
     ControlCancel,
     Locks,
     Trace,
@@ -50,6 +51,7 @@ const FAMILIES: &[Family] = &[
     Family::ParkSink,
     Family::Park,
     Family::ParkCallbacks,
+    Family::ParkSources,
     Family::ControlCancel,
     Family::Locks,
     Family::Trace,
@@ -75,6 +77,7 @@ impl Family {
             Family::ParkSink => "park.sink",
             Family::Park => "park",
             Family::ParkCallbacks => "park.callbacks",
+            Family::ParkSources => "park.sources",
             Family::ControlCancel => "control.cancel",
             Family::Locks => "locks",
             Family::Trace => "trace",
@@ -110,6 +113,7 @@ impl Request {
         match self.family {
             Family::Check | Family::Builtins | Family::Clock | Family::ControlCancel | Family::Lookup => true,
             Family::ParkCallbacks => self.method == "calls",
+            Family::ParkSources => self.method == "load",
             Family::ParkSink => self.method == "collectBranchExports",
             Family::Adapters if self.method == "resolve" => true,
             Family::Adapters => matches!(
@@ -472,6 +476,18 @@ pub mod park {
             args["expiresAt"] = json!(at);
         }
         Request { family: Family::ParkCallbacks, method: "mint".into(), args: in_segment(segment, args) }
+    }
+
+    /// A library's text kept once, by its content (`park.sources`): a
+    /// park names it by the hash this answers (`{hash}`) where it would
+    /// carry the text.
+    pub fn save_source(segment: &str, source: &str) -> Request {
+        Request { family: Family::ParkSources, method: "save".into(), args: in_segment(segment, json!({ "source": source })) }
+    }
+
+    /// The text a park named by its hash, answered `{source}`.
+    pub fn load_source(segment: &str, hash: &str) -> Request {
+        Request { family: Family::ParkSources, method: "load".into(), args: in_segment(segment, json!({ "hash": hash })) }
     }
 
     /// A callback's call ledger, answered on the eval wire.

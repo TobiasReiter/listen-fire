@@ -91,7 +91,7 @@ impl Run<'_> {
             Some(every) => crate::park::duration_ms(&every.raw).ok_or_else(|| invalid_duration(&every.raw))?,
             None => UNTIL_EVERY_MS,
         };
-        let state = crate::park::park_state(self, &address, None, Leaf::Until, scope).map_err(Stop::Thrown)?;
+        let state = crate::park::park_state(self, &address, None, Leaf::Until, scope).await.map_err(Stop::Thrown)?;
         let now = self.clock_now().await.map_err(Stop::Thrown)?;
         let wake_at = crate::js_date::to_iso_string(now + every_ms);
         let request = host::park::commit_timer_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, &wake_at);
@@ -195,7 +195,7 @@ impl Run<'_> {
             )));
         }
         let key = env::json_of_js(&id);
-        let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).map_err(Stop::Thrown)?;
+        let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).await.map_err(Stop::Thrown)?;
         let request = host::park::commit_await_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, CALLBACK_AWAIT_TYPE, &key);
         self.ask(request).await.map_err(Stop::Thrown)?;
         let again = self.first_matching_call(&id, filter, scope).await.map(|call| call.is_some());
@@ -335,7 +335,7 @@ impl Run<'_> {
                 if !self.serves("park.sink.commitAwaitPark") {
                     return Err(Stop::Thrown(Failure::unsupported("await (a durable park)", "this run has no park sink — an await needs the durable trigger-run substrate")));
                 }
-                let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).map_err(Stop::Thrown)?;
+                let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).await.map_err(Stop::Thrown)?;
                 let parked_type = raw.adapter_type.clone();
                 let request = host::park::commit_await_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, &parked_type, &key);
                 self.ask(request).await.map_err(Stop::Thrown)?;
@@ -412,7 +412,7 @@ impl Run<'_> {
         let address = at.encode();
         let params = self.callback_params(&callback.subject, scope)?;
         let (single_use, expires_at) = self.callback_config(callback, scope).await?;
-        let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).map_err(Stop::Thrown)?;
+        let state = crate::park::park_state(self, &address, None, Leaf::Plain, scope).await.map_err(Stop::Thrown)?;
         let params_js = Js::array(params.iter().map(|(name, type_)| env::object_of(vec![("name", Js::str(name.clone())), ("type", Js::str(type_.clone()))])).collect());
         let request = host::park::mint_callback(self.segment(), &address, env::json_of_js(&params_js), self.encode(&state).map_err(Stop::Thrown)?, single_use, expires_at.as_deref());
         let minted = self.ask(request).await.map_err(Stop::Thrown)?.unwrap_or(Json::Null);

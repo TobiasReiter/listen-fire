@@ -1,6 +1,11 @@
-//! A flow parked and resumed: serialize.ts's `ParkedScopeState` (version 1),
-//! written and read exactly as the TypeScript engine writes and reads it, so
-//! a run parked by either engine resumes on either.
+//! A flow parked and resumed: the `ParkedScopeState` of
+//! docs/contracts/park-state.md, version 2. Every piece of run state is
+//! written as the TypeScript engine's version 1 writes it; CODE is not: a
+//! closure, a kept walk, a body-local node declaration and a run-time arm
+//! are named by their place in the pinned program (crate::code), and the
+//! text of every library the run linked rides beside them (`libraries`), so
+//! a resume reads the code the run parked with whatever the team has saved
+//! since.
 //!
 //! - **Park** (any await: `sleep`, `until`, a callback's landing, a
 //!   combinator; and a suspension): one state for the whole run, written in
@@ -22,15 +27,13 @@
 //!   the TypeScript does.
 //! - **Resume** is `resume.rs` (`resumeAlongAddress`).
 //!
-//! `resume_refusal` refuses only a state that does not read, another
-//! version, a malformed `suspended`, and the two binding kinds this engine
-//! does not rebuild (`blockMeta`, `localShape`), before the run asks its
-//! host for anything; the shim then resumes it on the TypeScript engine.
+//! `resume_refusal` refuses a state that does not read, another version, a
+//! malformed `suspended`, and the binding kind no run makes (`blockMeta`),
+//! before the run asks its host for anything.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use movement_parser::ast;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
@@ -43,6 +46,11 @@ use crate::trace::TraceEntry;
 use crate::js::{Js, JsObject};
 use crate::flow::{Boundary, CallRecord};
 use crate::run::{Address, Failure, Run, Stop};
+
+/// The park state contract's version this engine writes and reads
+/// (docs/contracts/park-state.md): version 2 names code by its place in the
+/// pinned program.
+pub(crate) const PARK_STATE_VERSION: f64 = 2.0;
 
 /// What a resumed segment is handed (`ResumeMovementInput`'s state and mode).
 #[derive(Debug, Clone, Deserialize)]
@@ -81,8 +89,9 @@ pub(crate) enum Leaf<'a> {
 /// body boundaries the flow is inside (`frames`), when it is inside any. One
 /// park's node table runs through the whole state, in the order it is
 /// written.
-pub(crate) fn park_state(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: Leaf<'_>, scope: &Rc<Scope>) -> Result<Js, Failure> {
-    one_park(|park| park_state_in(run, address, binding_name, &leaf, scope, park))
+pub(crate) async fn park_state(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: Leaf<'_>, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    let state = one_park(|park| park_state_in(run, address, binding_name, &leaf, scope, park))?;
+    run.store_library_sources(state).await
 }
 
 fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf: &Leaf<'_>, scope: &Rc<Scope>, park: &mut ParkWriter) -> Result<Js, Failure> {
@@ -95,7 +104,7 @@ fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf:
             Boundary::Arm { .. } => {}
         }
     }
-    let mut state = vec![("version", Js::Number(1.0)), ("address", Js::str(address)), ("bindingName", binding_name.map_or(Js::Null, Js::str))];
+    let mut state = vec![("version", Js::Number(PARK_STATE_VERSION)), ("address", Js::str(address)), ("bindingName", binding_name.map_or(Js::Null, Js::str))];
     match *leaf {
         Leaf::Timer { presence: true } => state.push(("presenceBind", Js::Bool(true))),
         Leaf::Timer { presence: false } | Leaf::Plain => {}
@@ -110,21 +119,26 @@ fn park_state_in(run: &Run<'_>, address: &str, binding_name: Option<&str>, leaf:
         let frames = boundaries.iter().map(|boundary| serialize_boundary(run, boundary, park)).collect::<Result<Vec<_>, _>>()?;
         state.push(("frames", Js::array(frames)));
     }
+    let libraries = run.library_sources();
+    if !libraries.is_empty() {
+        let libraries = libraries.into_iter().map(|(path, source)| object_of(vec![("path", Js::str(path)), ("source", Js::str(source))])).collect();
+        state.push(("libraries", Js::array(libraries)));
+    }
     Ok(object_of(state))
 }
 
 /// `{version: 1, address, bindingName, presenceBind?, scopeChain}`: a
 /// `sleep`'s park.
-pub(crate) fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Result<Js, Failure> {
-    park_state(run, address, presence, Leaf::Timer { presence: presence.is_some() }, scope)
+pub(crate) async fn parked_state(run: &Run<'_>, address: &str, presence: Option<&str>, scope: &Rc<Scope>) -> Result<Js, Failure> {
+    park_state(run, address, presence, Leaf::Timer { presence: presence.is_some() }, scope).await
 }
 
 /// `{version: 1, address, bindingName: null, suspended: true, journal,
 /// scopeChain}`, as `suspendFlow` writes it: the journal every call the
 /// statement has handed back, those a re-run had still to replay among them.
-pub(crate) fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Result<Js, Failure> {
+pub(crate) async fn suspended_state(run: &Run<'_>, address: &str, scope: &Rc<Scope>) -> Result<Js, Failure> {
     let journal = run.call_sites.borrow().last().map(|site| site.calls.borrow().journal()).unwrap_or_default();
-    park_state(run, address, None, Leaf::Suspended(&journal), scope)
+    park_state(run, address, None, Leaf::Suspended(&journal), scope).await
 }
 
 /// The scopes root first, as one park writes them.
@@ -169,12 +183,14 @@ fn serialize_boundary(run: &Run<'_>, boundary: &Boundary, park: &mut ParkWriter)
                 ("index", Js::Number(*index as f64)),
                 ("next", Js::Number(*next as f64)),
                 ("member", Js::Number(*member as f64)),
-                ("op", op.json.clone()),
+                // The op, by its span among the calls of the statement the
+                // caller's address names.
+                ("op", object_of(vec![("span", crate::code::span_js(op.span))])),
                 ("journal", serialize_journal(run, &journal, park)?),
                 ("scopeChain", scope_chain(run, &site.scope, park)?),
             ])
         }
-        Boundary::Arm { arm, body } => object_of(vec![kind("arm"), ("arm", Js::Number(*arm as f64)), ("body", run.program_code(&body.path)?)]),
+        Boundary::Arm { arm, body } => object_of(vec![kind("arm"), ("arm", Js::Number(*arm as f64)), ("body", code_ref(&body.path))]),
     })
 }
 
@@ -460,7 +476,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         // One written in a body holds its scope by reference: its code, an
         // empty capture, and a link to the scope (`scope`).
         Binding::Closure(closure) if closure.by_reference => {
-            let mut members = vec![kind("closure"), ("closure", run.parked_closure_code(&closure.code.path)?), ("captured", Js::object(JsObject::new()))];
+            let mut members = vec![kind("closure"), ("closure", code_ref(&closure.code.path)), ("captured", Js::object(JsObject::new()))];
             if let Some(name) = &closure.self_name {
                 members.push(("self", Js::str(name.clone())));
             }
@@ -468,7 +484,7 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
             object_of(members)
         }
         Binding::Closure(closure) => {
-            let mut members = vec![kind("closure"), ("closure", run.parked_closure_code(&closure.code.path)?), ("captured", serialize_captured(run, &closure.captured, park)?)];
+            let mut members = vec![kind("closure"), ("closure", code_ref(&closure.code.path)), ("captured", serialize_captured(run, &closure.captured, park)?)];
             if let Some(name) = &closure.self_name {
                 members.push(("self", Js::str(name.clone())));
             }
@@ -483,8 +499,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
         // resume finds it again (serialize.ts `declaringFile`).
         Binding::Movement(movement) => object_of(with_file(vec![kind("movement"), ("name", Js::str(movement.name.clone()))], &movement.file)),
         // One declared in a body has no name to re-resolve by: its
-        // declaration rides across (serialize.ts `localShape`).
-        Binding::Shape(shape) if shape.local => object_of(vec![kind("localShape"), ("declaration", crate::env::js_of_json(&serde_json::to_value(&shape.declared.declaration).expect("an AST is always JSON")))]),
+        // declaration's place does.
+        Binding::Shape(shape) if shape.local => match &shape.path {
+            Some(path) => object_of(vec![kind("localShape"), ("declaration", code_ref(path))]),
+            None => return Err(Failure::engine("MOVENG_RUNTIME", format!("park: the body-local node '{}' has no place in the program", shape.declared.declaration.name))),
+        },
         Binding::Shape(shape) => object_of(with_file(vec![kind("shape"), ("name", Js::str(shape.declared.declaration.name.clone()))], &shape.declared.file)),
         // A plugin travels as the import it is, re-resolved by its slot name.
         Binding::Plugin(_) => object_of(vec![kind("opaque"), ("what", Js::str("a plugin")), ("name", Js::str(name))]),
@@ -582,6 +601,12 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
     })
 }
 
+/// Code, as a park names it: its place in the pinned program (an engine AST
+/// path, crate::program `in_file`), read back by crate::code.
+fn code_ref(path: &str) -> Js {
+    Js::str(path)
+}
+
 /// `declaringFile`: a library's path beside a code ref declared there; the
 /// root program's says none.
 fn with_file<'k>(mut members: Vec<(&'k str, Js)>, file: &crate::program::DeclaringFile) -> Vec<(&'k str, Js)> {
@@ -604,9 +629,9 @@ fn serialize_captured(run: &Run<'_>, captured: &Rc<Scope>, park: &mut ParkWriter
 /// `serializeDeferredWalk`: the walk's head as the program holds it, the
 /// scope it captured, and its per-item mapping when it has one.
 fn serialize_deferred_walk(run: &Run<'_>, walk: &crate::bindings::DeferredWalk, park: &mut ParkWriter) -> Result<Js, Failure> {
-    let mut members = vec![("head", run.program_code(&walk.head_path)?), ("captured", serialize_captured(run, &walk.captured, park)?)];
+    let mut members = vec![("head", code_ref(&walk.head_path)), ("captured", serialize_captured(run, &walk.captured, park)?)];
     if let Some((_, path)) = &walk.mapping {
-        members.push(("mapping", run.program_code(path)?));
+        members.push(("mapping", code_ref(path)));
     }
     Ok(object_of(members))
 }
@@ -730,7 +755,7 @@ pub(crate) fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
 /// reads back as the syntax tree it rides as.
 pub fn resume_refusal(state: &Json) -> Option<String> {
     let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
-    if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == 1.0) {
+    if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == PARK_STATE_VERSION) {
         return Some("resume_state_version".into());
     }
     if at(&state, "suspended").is_some_and(|suspended| !matches!(suspended, Js::Bool(true))) {
@@ -791,7 +816,7 @@ fn frames_refusal(frames: &Js) -> Option<String> {
         Some("call" | "member") => scopes_refusal(at(frame, "scopeChain").unwrap_or(&Js::Undefined))
             .or_else(|| journal_refusal(at(frame, "journal").unwrap_or(&Js::Undefined))),
         // A run-time arm: its body is code.
-        Some("arm") => (!code_reads::<ast::ClosureExpression>(at(frame, "body"))).then(|| NOT_READ.to_string()),
+        Some("arm") => (!names_code(at(frame, "body"))).then(|| NOT_READ.to_string()),
         _ => Some("resume_state_does_not_read".into()),
     })
 }
@@ -804,7 +829,7 @@ fn map_refusal(entries: Option<&Js>) -> Option<String> {
 fn walk_refusal(walk: Option<&Js>) -> Option<String> {
     let walk = walk?;
     let mapping = at(walk, "mapping");
-    if !code_reads::<ast::PathHead>(at(walk, "head")) || mapping.is_some_and(|m| !code_reads::<ast::NodeLiteral>(Some(m))) {
+    if !names_code(at(walk, "head")) || mapping.is_some_and(|m| !names_code(Some(m))) {
         return Some(NOT_READ.into());
     }
     map_refusal(at(walk, "captured"))
@@ -829,12 +854,12 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
     match kind {
         "blockMeta" => Some(format!("resume_state_kind:{kind}")),
         "closure" => {
-            if !code_reads::<ast::ClosureExpression>(at(descriptor, "closure")) {
+            if !names_code(at(descriptor, "closure")) {
                 return Some(NOT_READ.into());
             }
             map_refusal(at(descriptor, "captured")).or_else(|| at(descriptor, "scope").and_then(scope_link_refusal))
         }
-        "localShape" => (!code_reads::<ast::ShapeDeclaration>(at(descriptor, "declaration"))).then(|| NOT_READ.to_string()),
+        "localShape" => (!names_code(at(descriptor, "declaration"))).then(|| NOT_READ.to_string()),
         "lazyWalk" => walk_refusal(at(descriptor, "walk")),
         "handle" => at(descriptor, "old").and_then(descriptor_refusal),
         "positions" => items(at(descriptor, "landings")).iter().find_map(descriptor_refusal),
@@ -852,9 +877,10 @@ fn descriptor_refusal(descriptor: &Js) -> Option<String> {
     }
 }
 
-/// Whether `tree` reads back as the AST `T` (crate::resume `parked_tree`).
-fn code_reads<T: serde::de::DeserializeOwned>(tree: Option<&Js>) -> bool {
-    tree.is_some_and(|tree| serde_json::from_value::<T>(crate::env::json_of_js(tree)).is_ok())
+/// Whether a descriptor's code is named as a park names it (`code_ref`).
+/// Whether the place holds that code is the resume's to find.
+fn names_code(code: Option<&Js>) -> bool {
+    matches!(code, Some(Js::String(_)))
 }
 
 // ── Suspension ──
@@ -931,7 +957,7 @@ impl Run<'_> {
     /// `at`. Asked only where the sink can suspend.
     async fn suspend_flow(&self, at: &Address, scope: &Rc<Scope>) -> Result<Stop, Stop> {
         let address = at.encode();
-        let state = suspended_state(self, &address, scope).map_err(Stop::Thrown)?;
+        let state = suspended_state(self, &address, scope).await.map_err(Stop::Thrown)?;
         let request = host::park::commit_suspension(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?);
         self.ask(request).await.map_err(Stop::Thrown)?;
         self.trace(TraceEntry::Gate { outcome: false });
@@ -1393,6 +1419,7 @@ mod tests {
             deferred_race_frames: RefCell::default(),
             call_stack: RefCell::default(),
             wire: crate::env::Wire::default(),
+            stored_sources: RefCell::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },
@@ -1407,7 +1434,16 @@ mod tests {
         });
         let scope = Scope::root();
         scope.declare("c", Binding::Landed(Rc::new(crate::bindings::Landed::new(Js::Undefined, None, read))));
-        for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
+        // A host that serves no source store is asked nothing: the writers
+        // are ready at once.
+        fn ready<T>(future: impl std::future::Future<Output = T>) -> T {
+            let mut future = std::pin::pin!(future);
+            match future.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
+                std::task::Poll::Ready(value) => value,
+                std::task::Poll::Pending => panic!("a park asked its host"),
+            }
+        }
+        for state in [ready(parked_state(&run, "s0", None, &scope)), ready(suspended_state(&run, "s0", &scope))] {
             let state = crate::env::encode_plain(&state.expect("a picked record parks"));
             let text = state.to_string();
             assert!(text.contains(r#"[["kind","sourcePosition"],["position",["u"]],["read",["o","#), "{text}");

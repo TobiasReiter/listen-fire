@@ -185,7 +185,6 @@ impl<'a, F: Firing> Builder<'a, F> {
                 let path = match &link.file {
                     DeclaringFile::Root => "the root file",
                     DeclaringFile::Library(path) => path,
-                    DeclaringFile::Parked(_) => "parked code",
                 };
                 SpecError::Runtime(format!("the file \"{path}\" that declares '{}' is not linked", link.declaration.name))
             })?;

@@ -32,7 +32,7 @@ use std::rc::Rc;
 use movement_parser::ast::{CallbackSubject, CallStatement, CombinatorArms, CombinatorExpression, CombinatorKind, MovementDeclaration, RValue, Statement, TraversalBlock};
 
 use crate::bindings::{Binding, Closure, DeferredWalk, Edge, Handle, InstanceBinding, Landed, Node, Scope};
-use crate::collection::{CollectionRun, OpCode, OpOrigin};
+use crate::collection::{CollectionRun, OpOrigin};
 use crate::combinator::null_slot;
 use crate::env::{Trail, ValueBinding};
 use crate::flow::{Boundary, CallRecord, Code, Site};
@@ -41,7 +41,6 @@ use crate::js::{Js, JsObject};
 use crate::park::{ParkReader, at, id_of, items, landing_shape_of, pairs, parse_address, text};
 use crate::run::{Address, Failure, Flow, RETURN_SLOT, Run, Stop};
 use crate::write::WriteRecord;
-use serde_json::Value as Json;
 
 /// What a resume does at its leaf statement (`ResumeLeaf`).
 pub(crate) enum Leaf {
@@ -124,22 +123,16 @@ enum LeafRun {
 
 type Pinned<'s, T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, Stop>> + 's>>;
 
-/// Code a parked state carries as its syntax tree (docs/contracts/
-/// park-state.md), read back as the AST it was written from, with the tree
-/// as it was parked. Admission refuses a state whose code does not read
-/// (`park::resume_refusal`), so this engine's own failure here is one the
-/// TypeScript would not meet.
-fn parked_tree<T: serde::de::DeserializeOwned>(tree: Option<&Js>, what: &str) -> Result<(T, Json), Stop> {
-    let tree = tree.map(crate::env::json_of_js).unwrap_or(Json::Null);
-    match serde_json::from_value(tree.clone()) {
-        Ok(ast) => Ok((ast, tree)),
-        Err(e) => Err(Stop::Thrown(Failure::unreproduced(&format!("resume: {what} the parked state carries ({e})"), "the Rust engine rebuilds parked code from its syntax tree"))),
+/// The code a parked state names by its place in the pinned program
+/// (park.rs `code_ref`), and that place. The program is the one the run was
+/// pinned to, its libraries as the park pinned them, so the place holds the
+/// code that parked; one that does not is a state of another program.
+fn parked_code<T>(checked: &crate::program::Checked, code: Option<&Js>, what: &str, read: impl FnOnce(crate::code::CodeAt) -> Option<T>) -> Result<(T, String), Stop> {
+    let path = text(code).ok_or_else(|| runtime(format!("resume: {what} the parked state names is not a place in the program")))?;
+    match checked.code(path).and_then(read) {
+        Some(found) => Ok((found, path.to_string())),
+        None => Err(runtime(format!("resume: the pinned program holds no {what} at {path}, where the park named one"))),
     }
-}
-
-/// An AST as its tree.
-fn to_tree<T: serde::Serialize>(ast: &T) -> Json {
-    serde_json::to_value(ast).expect("an AST is always JSON")
 }
 
 /// Where a parked code ref says it is declared, as a refusal names it.
@@ -295,7 +288,7 @@ impl Run<'_> {
                 let body = Rc::new(function.body_statements().to_vec());
                 let body_path = function.body_path().to_string();
                 let run = CollectionRun {
-                    op: Rc::new(OpCode { op: op.clone(), json: op_json }),
+                    op: Rc::new(op.clone()),
                     on_error,
                     function,
                     address: call_address.clone(),
@@ -684,7 +677,7 @@ impl Run<'_> {
     /// the answer in member order) and hands it back to its statement.
     async fn finish_resumed_member(&self, frame: &Spine, inner: Pinned<'_, Completion>, leaf_address: &str) -> Result<Completion, Stop> {
         let Spine::Member { caller, boundary, site, index, next, member, run, scope } = frame else { unreachable!("a member level") };
-        let spelling = crate::collection::spelling(run.op.op.op);
+        let spelling = crate::collection::spelling(run.op.op);
         let state = self.open_flow(self.fork_writes().branch(*member));
         let named = run.function.named_call().map(String::from);
         let flowed = async {
@@ -729,7 +722,7 @@ impl Run<'_> {
 
     /// What a member's body handed back as its answer.
     fn member_answer_of(&self, run: &CollectionRun, flow: Flow, scope: &Rc<Scope>) -> Result<Js, Stop> {
-        crate::collection::member_answer_in(run.op.op.op, crate::collection::spelling(run.op.op.op), flow, scope)
+        crate::collection::member_answer_in(run.op.op, crate::collection::spelling(run.op.op), flow, scope)
     }
 
     /// `resumedCollectionRun`: a parked op as its frame kept it — the
@@ -1088,9 +1081,12 @@ impl Run<'_> {
                 // parked; its words read the running file's scope now
                 // (serialize.ts `localShape`).
                 Some("localShape") => {
-                    let (declaration, _) = parked_tree::<movement_parser::ast::ShapeDeclaration>(at(descriptor, "declaration"), "a body's shape declaration")?;
-                    let declared = crate::program::DeclaredShape { declaration, file: crate::program::DeclaringFile::Root };
-                    Binding::Shape(Rc::new(crate::bindings::ShapeBinding { declared, local: true, declared_in: None }))
+                    let (declaration, path) = parked_code(&self.checked, at(descriptor, "declaration"), "body's node declaration", |code| match code {
+                        crate::code::CodeAt::Shape(shape) => Some(shape),
+                        _ => None,
+                    })?;
+                    let declared = crate::program::DeclaredShape { declaration, file: crate::program::file_of_path(&path).0 };
+                    Binding::Shape(Rc::new(crate::bindings::ShapeBinding { declared, local: true, declared_in: None, path: Some(path) }))
                 }
                 // Code refs, re-resolved by name from the re-parsed program —
                 // in the library a shape or movement was declared in, which
@@ -1286,36 +1282,29 @@ impl Run<'_> {
     /// `rehydrateDeferredWalk`: the walk as it was parked — its head and its
     /// mapping, one piece of parked code — in the scope it captured.
     async fn rehydrate_walk(&self, descriptor: &Js, park: &ParkReader) -> Result<Rc<DeferredWalk>, Stop> {
-        let (head, head_tree) = parked_tree::<movement_parser::ast::PathHead>(at(descriptor, "head"), "a kept walk's head")?;
+        let (head, head_path) = parked_code(&self.checked, at(descriptor, "head"), "kept walk's head", |code| match code {
+            crate::code::CodeAt::Head(head) => Some(head),
+            _ => None,
+        })?;
         let mapping = match at(descriptor, "mapping") {
-            None | Some(Js::Undefined) => None,
-            Some(mapping) => Some(parked_tree::<movement_parser::ast::NodeLiteral>(Some(mapping), "a kept walk's mapping")?),
+            None => None,
+            mapping => Some(parked_code(&self.checked, mapping, "kept walk's mapping", |code| match code {
+                crate::code::CodeAt::Literal(literal) => Some(literal),
+                _ => None,
+            })?),
         };
-        let as_parked = |head: Json, mapping: Option<Json>| {
-            let mut walk = serde_json::Map::new();
-            walk.insert("head".into(), head);
-            if let Some(mapping) = mapping {
-                walk.insert("mapping".into(), mapping);
-            }
-            Json::Object(walk)
-        };
-        let typed = as_parked(to_tree(&head), mapping.as_ref().map(|(m, _)| to_tree(m)));
-        let file = self.checked.park_code(typed, &as_parked(head_tree, mapping.as_ref().map(|(_, tree)| tree.clone())));
-        let walk_path = crate::program::in_file(&file, "");
         let captured = Scope::root();
         for (name, entry) in pairs(at(descriptor, "captured")) {
             captured.declare(name.clone(), self.rehydrate(entry, park).await?);
         }
-        let mapping = mapping.map(|(mapping, _)| (mapping, format!("{walk_path}/mapping")));
-        Ok(Rc::new(DeferredWalk { head, head_path: format!("{walk_path}/head"), captured, mapping }))
+        Ok(Rc::new(DeferredWalk { head, head_path, captured, mapping }))
     }
 
-    /// A closure the state carries, as it was parked: a piece of parked code
-    /// of its own, the file its body is written in.
+    /// A closure the state names, and the file its body is written in.
     fn closure_code(&self, closure: Option<&Js>) -> Result<(Code<movement_parser::ast::ClosureExpression>, crate::program::DeclaringFile), Stop> {
-        let (ast, tree) = parked_tree::<movement_parser::ast::ClosureExpression>(closure, "a closure")?;
-        let written = self.checked.park_code(to_tree(&ast), &tree);
-        Ok((Code { ast: Rc::new(ast), path: crate::program::in_file(&written, "") }, written))
+        let (ast, path) = parked_code(&self.checked, closure, "closure", crate::code::CodeAt::closure)?;
+        let written = crate::program::file_of_path(&path).0;
+        Ok((Code { ast: Rc::new(ast), path }, written))
     }
 
     /// `rehydrateEmission`.
