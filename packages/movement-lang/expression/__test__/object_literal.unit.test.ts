@@ -203,7 +203,18 @@ describe('statement parser — a write body vs an object literal', () => {
 describe('checker — names inside object values', () => {
   const catalog = mockCatalog({
     adapters: {
-      email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], triggerConfig: ['key'] },
+      // From 5 a read off an event the catalog does not describe is refused
+      // (MOV_EVENT_UNDESCRIBED), so the inbox's message is described.
+      email: {
+        constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+        triggerConfig: ['key'],
+        schema: {
+          positions: { message: { properties: { subject: 'text' }, edges: {} } },
+          collections: {},
+          writableRoots: {},
+          eventPosition: 'message',
+        },
+      },
       slack: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }] },
     },
     credentials: {
