@@ -151,9 +151,18 @@ const kgSchema: InstanceSchema = {
   },
 };
 
+// The run-now invocation as the manual adapter describes it: from 5 a read off
+// an event the catalog does not describe is refused (MOV_EVENT_UNDESCRIBED).
+const manualSchema: InstanceSchema = {
+  positions: { Invocation: { properties: { Text: 'text' }, edges: {} } },
+  collections: {},
+  writableRoots: {},
+  eventPosition: 'Invocation',
+};
+
 const catalog = staticCatalogSnapshot({
   credentials: { acme_main: { adapters: ['attio'] }, kg_cred: { adapters: ['kg'] } },
-  instanceSchemas: { kg: kgSchema },
+  instanceSchemas: { kg: kgSchema, manual: manualSchema },
 });
 
 const COMPANIES: NodeRow[] = [
