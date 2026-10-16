@@ -3117,6 +3117,28 @@
     "MOV_INTERNAL_UNTYPED_BINDING 4:13-4:33 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program",
     "MOV_INTERNAL_UNTYPED_BINDING 6:9-6:15 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program"
    ]
+  },
+  {
+   "name": "a walk or a match off a node declaration's own name starts at the declaration, a graph whose one collection is itself",
+   "snapshot": "none",
+   "version": 5,
+   "source": "node Note {\n  title: <text>\n}\nfunction m() {\n  found = match Note-[:item]-> { title: \"x\" }\n  w = Note-[:item]->\n  Note-[n:item]-> {\n    x = 1\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_LINKED_UNKNOWN_EDGE 5:17-5:32 'Note' (the instance itself) has no edge 'item' — a match looks along an edge the parent's type declares; it declares: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:7-6:21 'Note' has no collection 'item' — it has: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:3-7:18 'Note' has no collection 'item' — it has: Note"
+   ]
+  },
+  {
+   "name": "a walk or a match off a node declaration's own name starts at the declaration, a graph whose one collection is itself",
+   "snapshot": "none",
+   "version": 4,
+   "source": "node Note {\n  title: <text>\n}\nmovement m() {\n  found = match Note-[:item]-> { title: \"x\" }\n  w = Note-[:item]->\n  Note-[n:item]-> {\n    x = 1\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_LINKED_UNKNOWN_EDGE 5:17-5:32 'Note' (the instance itself) has no edge 'item' — a match looks along an edge the parent's type declares; it declares: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:7-6:21 'Note' has no collection 'item' — it has: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:3-7:18 'Note' has no collection 'item' — it has: Note"
+   ]
   }
  ]
 }
