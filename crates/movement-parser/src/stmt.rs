@@ -282,6 +282,9 @@ pub struct Parser {
     /// The local names imported from adapters so far: from version 5 setting
     /// one up is `connect`, and its old construction is refused.
     adapters: Vec<String>,
+    /// The local names imported from plugins so far: from version 5 one may
+    /// name a package, whose members are called `web.fetchUrl(u)`.
+    plugin_locals: Vec<String>,
 }
 
 impl Parser {
@@ -293,13 +296,23 @@ impl Parser {
                 line_starts.push(i + 1);
             }
         }
-        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new() }
+        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new(), plugin_locals: Vec::new() }
     }
 
     /// `parseNestedCall`'s reading: one call from `start` to the end of the
     /// text — the extraction call, or any other callee's call.
     pub fn parse_nested_call_value(&mut self, start: usize) -> SResult<RValue> {
         self.pos = start;
+        // Only a call that runs is read here, so a dotted head that is no
+        // standard namespace's names a package's member: the file's imports
+        // are not in sight of this parse.
+        if since(self.version, 5)
+            && let Some((head, end)) = scan_name(self.src.units(), start)
+            && self.src.at(end) == Some(unit('.'))
+            && !crate::surface::table::NAMESPACES.contains(&head.as_str())
+        {
+            self.plugin_locals.push(head);
+        }
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
         } else {
@@ -1094,7 +1107,21 @@ impl Parser {
         if let Some(block) = self.try_parse_traversal_block()? {
             return Ok(Statement::Block(BlockStatement { span: block.span, block }));
         }
+        // `web.fetchUrl(u)` run bare (version 5): a package's member is one name.
+        self.pos = start;
+        let head = self.scan_head();
         self.pos = after_word;
+        if !quoted
+            && let Some((dotted, end)) = head
+            && dotted.contains('.')
+        {
+            self.pos = end;
+            self.skip_inline_ws();
+            if self.is('(') {
+                return Ok(Statement::Call(self.parse_call_statement(dotted, start)?));
+            }
+            self.pos = after_word;
+        }
         if self.is('(') {
             return Ok(Statement::Call(self.parse_call_statement(word, start)?));
         }
@@ -1240,6 +1267,7 @@ impl Parser {
                 for (imported, &(start, end)) in names.iter_mut().zip(&name_spans) {
                     self.read_plugin_import(imported, start, end);
                 }
+                self.plugin_locals.extend(names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone())));
             }
             ImportSource::Builtin { namespace: ns }
         };
@@ -1417,7 +1445,7 @@ impl Parser {
             return Ok(self.try_parse_construction()?.map(|construct| RValue::Construct { construct }));
         }
         let start = self.pos;
-        let callee = self.read_name("the name being called")?;
+        let callee = self.read_callee("the name being called")?;
         self.skip_inline_ws();
         self.pos += 1;
         let args = self.parse_call_args(&callee, start)?;
@@ -1439,7 +1467,7 @@ impl Parser {
     /// BACKTRACKS, so anything that isn't one falls through to the slot.
     fn try_parse_construction(&mut self) -> SResult<Option<ConstructionCall>> {
         let save = self.pos;
-        let Some((callee, end)) = scan_name(self.src.units(), self.pos) else {
+        let Some((callee, end)) = self.scan_head() else {
             return Ok(None);
         };
         self.pos = end;
@@ -2022,7 +2050,7 @@ impl Parser {
     /// Is a NAMED invocation — `f(x: …)` — next? Consumes nothing.
     fn at_named_invocation(&mut self) -> bool {
         let save = self.pos;
-        let Some((_, end)) = scan_name(self.src.units(), self.pos) else {
+        let Some((_, end)) = self.scan_head() else {
             return false;
         };
         self.pos = end;
@@ -2519,7 +2547,8 @@ impl Parser {
     }
 
     /// The name being called at the cursor and where it ends — from version 5
-    /// also a standard namespace's member (`List.groupBy`), one name.
+    /// also a standard namespace's member (`List.groupBy`) or a plugin
+    /// package's (`web.fetchUrl`), one name.
     fn scan_callee(&self) -> Option<(String, usize)> {
         let (name, end) = scan_name(self.src.units(), self.pos)?;
         if since(self.version, 5)
@@ -2528,11 +2557,22 @@ impl Parser {
             && let Some((member, member_end)) = scan_ident(self.src.units(), end + 1)
         {
             let dotted = format!("{name}.{member}");
-            if crate::surface::table::by_v5(&dotted).is_some() {
+            if crate::surface::table::by_v5(&dotted).is_some() || self.plugin_locals.contains(&name) {
                 return Some((dotted, member_end));
             }
         }
         Some((name, end))
+    }
+
+    /// The name at the cursor as a call's head: a package's member as one
+    /// name (`web.research`), anything else as `scan_name` reads it. Unlike
+    /// `scan_callee` it leaves a standard namespace's member alone, which the
+    /// named and the empty call forms never read whole.
+    fn scan_head(&self) -> Option<(String, usize)> {
+        match self.scan_callee() {
+            Some((callee, end)) if callee.split_once('.').is_some_and(|(head, _)| self.plugin_locals.iter().any(|l| l == head)) => Some((callee, end)),
+            _ => scan_name(self.src.units(), self.pos),
+        }
     }
 
     fn read_callee(&mut self, what: &str) -> SResult<String> {
@@ -4533,7 +4573,15 @@ impl Parser {
                 break;
             }
             let plugin_start = self.pos;
-            let plugin = self.read_ident("a plugin name in 'through […]'")?;
+            let mut plugin = self.read_ident("a plugin name in 'through […]'")?;
+            // From version 5 a stage names a package's member (`web.linkedinEnrichment`).
+            if since(self.version, 5)
+                && self.is('.')
+                && let Some((member, end)) = scan_ident(self.src.units(), self.pos + 1)
+            {
+                plugin = format!("{plugin}.{member}");
+                self.pos = end;
+            }
             let mut args = Vec::new();
             let mut positional = Vec::new();
             self.skip_inline_ws();
