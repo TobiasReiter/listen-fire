@@ -302,7 +302,7 @@ const EVENT_PAYLOAD = {
 
 const TEAM = tenantIdOf('00000000-0000-0000-0000-0000000000f6');
 
-function sourceOf(program: Program): string {
+export function sourceOf(program: Program): string {
   if (program.file !== undefined) return PATTERNS_PRELUDE + program.file;
   return `${PATTERNS_PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${program.body ?? ''}\n}`;
 }

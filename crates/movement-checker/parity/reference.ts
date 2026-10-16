@@ -8,8 +8,9 @@
 //     its own version; and again under the current version, for the programs
 //     pinned at version 3 or later, where they still parse;
 //   - the engine oracles' programs (crates/movement-engine/tests/oracle):
-//     records (each case's own version), handles (version 4) and parallel
-//     (version 3), each against its oracle's catalog.
+//     records (each case's own version), handles (version 4), parallel
+//     (version 3) and patterns (each its own version, and the current one),
+//     each against its oracle's catalog.
 //
 // Usage (run.sh does this): node -r <ts-node>/register/transpile-only reference.ts <out-dir>
 import { checkNow, loadChecks, loadSnapshots, type CheckRecord } from '../../../packages/movement-lang/conformance/checks_corpus';
@@ -70,6 +71,30 @@ for (const { file, version } of oracles) {
     if (seen.has(`${v}\u0000${source}`)) continue;
     seen.add(`${v}\u0000${source}`);
     emit(`oracle ${file.replace('.json', '')}`, { source, snapshot: key, version: v, diagnostics: [] });
+  }
+}
+
+// The engine's pattern programs (patterns.json): every admission pattern
+// both engines run, under its own version and, from version 3, under the
+// current one — the programs a Rust run is checked on before its segment
+// opens, which the corpus above never held (gate 19 found four the Rust
+// checker passed and the TypeScript refuses).
+{
+  const { PATTERNS_CATALOG, sourceOf } = require(path.join(ORACLES, 'patterns_oracle.ts'));
+  const patterns = JSON.parse(fs.readFileSync(path.join(ORACLES, 'patterns.json'), 'utf8'));
+  const seen = new Set<string>();
+  for (const c of patterns.cases) {
+    const program = c.program;
+    const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
+    const key = `oracle:patterns:${program.files !== undefined ? JSON.stringify(program.files) : ''}`;
+    (table as Map<string, CatalogSnapshot>).set(key, catalog);
+    const source = sourceOf(program);
+    const own: number = program.version ?? 3;
+    for (const v of own >= 3 && own !== CURRENT_LANGUAGE_VERSION ? [own, CURRENT_LANGUAGE_VERSION] : [own]) {
+      if (seen.has(`${key}\u0000${v}\u0000${source}`)) continue;
+      seen.add(`${key}\u0000${v}\u0000${source}`);
+      emit(v === own ? 'oracle patterns' : `oracle patterns under v${v}`, { source, snapshot: key, version: v, diagnostics: [] });
+    }
   }
 }
 
