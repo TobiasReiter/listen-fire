@@ -258,6 +258,7 @@ import {
   describeBinding,
   evalMovementExpr,
   extractPositionOf,
+  keepInMemoryHop,
   evaluateMovementExpression,
   hopFilterKeeps,
   isCallableBinding,
@@ -8208,17 +8209,13 @@ class Interpreter {
         if (step.type !== 'edge') {
           throw unsupported(`'${step.type}' hops in a block head over an extract result`);
         }
-        if (step.expressionFilter) {
-          throw unsupported('WHERE filters on extract-result block heads');
-        }
         const next: typeof paths = [];
         for (const path of paths) {
-          for (const child of path.emission.children.get(step.edgeTypeId) ?? []) {
+          const children = (path.emission.children.get(step.edgeTypeId) ?? []).map(extractPositionOf);
+          for (const child of await keepInMemoryHop(children, step, this.exprContext(env))) {
             const aliases = new Map(path.aliases);
-            if (step.alias !== undefined) {
-              aliases.set(step.alias, binding({ kind: 'extractPosition', emission: child }));
-            }
-            next.push({ aliases, emission: child });
+            if (step.alias !== undefined) aliases.set(step.alias, child);
+            next.push({ aliases, emission: child.emission });
           }
         }
         paths = next;
@@ -8527,23 +8524,16 @@ class Interpreter {
       // A landed edge holds its landings in hand — a local graph's own — so a
       // hop WHERE keeps the ones it holds for, by the keep decision every
       // walker makes.
-      const next: Array<{ aliases: Map<string, Binding>; binding: Binding }> = [];
-      for (const landing of edge?.kind === 'landed' ? edge.landings : []) {
-        if (
-          step.expressionFilter
-          && !(await hopFilterKeeps({
-            step,
-            filter: step.expressionFilter,
-            landed: landing,
-            ctx: this.exprContext(env),
-          }))
-        ) {
-          continue;
-        }
+      const kept = await keepInMemoryHop(
+        edge?.kind === 'landed' ? edge.landings : [],
+        step,
+        this.exprContext(env),
+      );
+      const next = kept.map((landing) => {
         const aliases = new Map(path.aliases);
         if (step.alias !== undefined) aliases.set(step.alias, landing);
-        next.push({ aliases, binding: landing });
-      }
+        return { aliases, binding: landing };
+      });
       reached.push(...(await this.walkNodePlane(next, rest, env)));
     }
     return reached;

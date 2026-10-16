@@ -42,7 +42,7 @@ interface Site {
 
 /** Only ever goes DOWN. Closing a gap (a checker diagnostic, a dry-run flag,
  *  engine support) lowers it; nothing may raise it. */
-const KNOWN_GAPS = 66;
+const KNOWN_GAPS = 64;
 
 // Sites in source order within each file; a construct thrown from two places
 // is listed twice, in the order it appears.
@@ -91,12 +91,10 @@ const SITES: Site[] = [
     cover: { by: 'uncovered', gap: "an incoming hop in an expression read on an adapter without incoming traversal" } },
   { file: "expression.ts", construct: "'${step.type}' hops over the extract result ('${name}')",
     cover: { by: 'partial', codes: ["MOV_TRANSFORM_HOP_RETIRED"], gap: "a `#transform` meta hop over an extract result: refused under language version 3, still saved by a movement pinned to 1 or 2" } },
-  { file: "expression.ts", construct: "WHERE filters on extract-result hops ('${name}')",
-    cover: { by: 'uncovered', gap: "`COUNT(deals-[:company WHERE \u2026]->)` over an extract result: no hop capability for extract positions, so the checker is silent" } },
   { file: "expression.ts", construct: "'${step.type}' hops over a block meta-node ('${name}')",
     cover: { by: 'partial', codes: ["MOV_TRANSFORM_HOP_RETIRED"], gap: "a `#transform` meta hop over a meta-node: refused under language version 3, still saved by a movement pinned to 1 or 2" } },
   { file: "expression.ts", construct: "WHERE filters on block meta-node hops ('${name}')",
-    cover: { by: 'uncovered', gap: "a hop WHERE over a meta-node's in-memory landings (race receipts, extraction children); record landings now walk through the adapter" } },
+    cover: { by: 'uncovered', gap: "a hop WHERE over a meta-node's in-memory landings (race receipts); record landings now walk through the adapter" } },
   { file: "expression.ts", construct: "traversing '${step.edgeTypeId}' from ${describeBinding[binding.kind]} inside a meta-node read",
     cover: { by: 'uncovered', gap: "a hop off an in-memory landing kind the meta walk has no plane for (a scalar, a callback, a shape position)" } },
   { file: "expression.ts", construct: "traversing from a write handle ('${name}')",
@@ -197,8 +195,6 @@ const SITES: Site[] = [
     cover: { by: 'partial', codes: ["MOV_LINKED_HOP_RETIRED"], gap: "a `#linked` hop off an extract result is refused under language version 3 (a movement pinned to 1 or 2 still reaches it); any other non-traversal head here (a `_resources` head) is unconfirmed" } },
   { file: "run.ts", construct: "'${step.type}' hops in a block head over an extract result",
     cover: { by: 'partial', codes: ["MOV_TRANSFORM_HOP_RETIRED"], gap: "a `#transform` hop over an extract result: refused under language version 3, still saved by a movement pinned to 1 or 2" } },
-  { file: "run.ts", construct: "WHERE filters on extract-result block heads",
-    cover: { by: 'uncovered', gap: "a hop WHERE on an extract-result block head; no hop capability for extract positions" } },
   { file: "run.ts", construct: "this block head over ${describeBinding[rootBinding.kind]}",
     cover: { by: 'uncovered', gap: "a `_resources` head off a graph or write handle; untyped in the checker" } },
   { file: "run.ts", construct: "block heads rooted at '${root}' (a ${rootBinding.kind} binding)",

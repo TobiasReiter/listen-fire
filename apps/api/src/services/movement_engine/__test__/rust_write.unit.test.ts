@@ -979,7 +979,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
     await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
   });
 
-  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks (the checker, before either engine), a bare name in a hop WHERE over landings (in the engine)', async () => {
+  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks (the checker, before either engine), a bare name in a hop WHERE over landings before 5 (in the engine)', async () => {
     // The checker refuses the first four (MOV_TARGET_WHERE_LOCAL,
     // MOV_NODE_EDGE_UNDECLARED): each ends at its check on either engine.
     for (const [lines, endsAtCheckFrom] of [
@@ -987,11 +987,20 @@ describe('the graphs a run builds, in the Rust engine', () => {
       [['  d = node { companies: <Company> }', '  write d-[:nope]-> { name: "a" }'], 1],
       [['  d = node { companies: <Company> }', '  x = match d-[:nope]-> { unique by (`name`), name: "a" }'], 1],
       [['  n = node { a: 1 }', '  link n -[:kids]-> n'], 1],
-      [['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }'], undefined],
     ] as const) {
       const { rust } = await agree({ source: program([...lines]), event: webhook({ subject: 'Acme' }), ...(endsAtCheckFrom !== undefined ? { endsAtCheckFrom } : {}) });
       expect([lines, rust.failed]).toEqual([lines, true]);
     }
+    // A bare name in a hop WHERE over a node's landings: before 5 the engines
+    // read it as an edge property, which a landing has none of; from 5 the
+    // upgrade spells it as the hop's alias read, the landing's own field.
+    const overLandings = program(['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }']);
+    for (const languageVersion of [3, 4] as const) {
+      const { rust } = await agree({ source: overLandings, event: webhook({ subject: 'Acme' }), languageVersion });
+      expect([languageVersion, rust.failed]).toEqual([languageVersion, true]);
+    }
+    const { rust } = await agree({ source: overLandings, event: webhook({ subject: 'Acme' }), languageVersion: 5 });
+    expect(rust.failed).toBe(false);
   });
 
   it('parks a node with a declared edge as the TypeScript engine does, and resumes it on either engine', async () => {

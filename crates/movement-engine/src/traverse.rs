@@ -344,40 +344,6 @@ pub(crate) fn head_probe(root: &str, hops_raw: &str, extra: &[TraversalStep]) ->
     Ok(probed)
 }
 
-/// A hop over an extraction's entities: an edge, and no WHERE.
-fn extract_step(step: &TraversalStep) -> Result<&EdgeStep, Failure> {
-    let TraversalStep::Edge(step) = step else {
-        return Err(Failure::unsupported(&format!("'{}' hops in a block head over an extract result", step_type(step)), ""));
-    };
-    if step.expression_filter.is_some() {
-        return Err(Failure::unsupported("WHERE filters on extract-result block heads", ""));
-    }
-    Ok(step)
-}
-
-/// The extraction's paths: every hop an edge's children, each hop's alias
-/// binding its own level's entity.
-fn extract_paths(root: Binding, steps: &[TraversalStep]) -> Result<Paths, Failure> {
-    let mut paths: Paths = vec![(Vec::new(), root)];
-    for step in steps {
-        let step = extract_step(step)?;
-        let mut next = Vec::new();
-        for (aliases, binding) in &paths {
-            let Binding::Extracted { emission, .. } = binding else { unreachable!("an extraction's paths hold its entities") };
-            for child in emission.children_of(&step.edge_type_id) {
-                let landing = Binding::Extracted { emission: child.clone(), root: false, id: crate::bindings::Identity::new() };
-                let mut aliases = aliases.clone();
-                if let Some(alias) = &step.alias {
-                    aliases.push((alias.clone(), landing.clone()));
-                }
-                next.push((aliases, landing));
-            }
-        }
-        paths = next;
-    }
-    Ok(paths)
-}
-
 /// An edge of a node's arrow plane: the node's kept walk, or the landings
 /// it holds.
 enum PlaneEdge {
@@ -584,8 +550,7 @@ impl Run<'_> {
                     Ok(iterations)
                 }
                 // `deals-[c:company]-> { … }`: the extract's own entities under
-                // those edges, in hand; no host is asked. Its ORDER BY and LIMIT
-                // are not read, as the TypeScript does not read them.
+                // those edges, in hand; no host is asked.
                 // `deal-[f:_resources]-> { … }`: the content the extraction
                 // read, as it stamped it on the entity (no readback).
                 Binding::Extracted { emission, .. } if let Probe::Resources { alias, filter } = probe => {
@@ -594,7 +559,7 @@ impl Run<'_> {
                 }
                 extracted @ Binding::Extracted { .. } => {
                     let Some(steps) = steps else { return Err(over("an extract result".into())) };
-                    extract_paths(extracted, steps).map_err(Stop::Thrown)
+                    self.extract_paths(extracted, steps, scope, span).await.map_err(Stop::Thrown)
                 }
                 // `d-[c:company]-> { … }`: the node's arrow plane.
                 node @ Binding::Node(_) => {
@@ -849,21 +814,71 @@ impl Run<'_> {
                         continue;
                     }
                 };
-                let mut next = Vec::new();
-                for landing in landings {
-                    if !self.hop_keeps_binding(step, &landing, scope, span).await.map_err(Stop::Thrown)? {
-                        continue;
-                    }
+                let kept = self.keep_in_memory_hop(landings, step, scope, span).await.map_err(Stop::Thrown)?;
+                let next = kept
+                    .into_iter()
+                    .map(|landing| {
+                        let mut aliases = aliases.clone();
+                        if let Some(alias) = &step.alias {
+                            aliases.push((alias.clone(), landing.clone()));
+                        }
+                        (aliases, landing)
+                    })
+                    .collect();
+                reached.extend(self.walk_node_plane(next, rest, scope, span).await?);
+            }
+            Ok(reached)
+        })
+    }
+
+    /// The extraction's paths: every hop an edge's children, kept by the
+    /// hop (`keepInMemoryHop`), each hop's alias binding its own level's
+    /// entity.
+    async fn extract_paths(&self, root: Binding, steps: &[TraversalStep], scope: &Rc<Scope>, span: &Js) -> Result<Paths, Failure> {
+        let mut paths: Paths = vec![(Vec::new(), root)];
+        for step in steps {
+            let TraversalStep::Edge(step) = step else {
+                return Err(Failure::unsupported(&format!("'{}' hops in a block head over an extract result", step_type(step)), ""));
+            };
+            let mut next = Vec::new();
+            for (aliases, binding) in &paths {
+                let Binding::Extracted { emission, .. } = binding else { unreachable!("an extraction's paths hold its entities") };
+                let children = emission.children_of(&step.edge_type_id).iter().map(|child| Binding::Extracted { emission: child.clone(), root: false, id: crate::bindings::Identity::new() }).collect();
+                for landing in self.keep_in_memory_hop(children, step, scope, span).await? {
                     let mut aliases = aliases.clone();
                     if let Some(alias) = &step.alias {
                         aliases.push((alias.clone(), landing.clone()));
                     }
                     next.push((aliases, landing));
                 }
-                reached.extend(self.walk_node_plane(next, rest, scope, span).await?);
             }
-            Ok(reached)
-        })
+            paths = next;
+        }
+        Ok(paths)
+    }
+
+    /// `walkExtractSteps`: hops down an extraction's result, each to the
+    /// children under that edge the hop keeps (`keepInMemoryHop`).
+    pub(crate) async fn walk_extract(&self, root: &Rc<Emission>, steps: &[TraversalStep], name: &str, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Emission>>, Failure> {
+        let mut current = vec![root.clone()];
+        for step in steps {
+            let TraversalStep::Edge(step) = step else {
+                return Err(Failure::engine(
+                    "MOVENG_UNSUPPORTED",
+                    format!("'{}' hops over the extract result ('{name}') is not supported by the movement engine yet", step_type(step)),
+                ));
+            };
+            let mut next = Vec::new();
+            for emission in &current {
+                let children = emission.children_of(&step.edge_type_id).iter().map(|child| Binding::Extracted { emission: child.clone(), root: false, id: crate::bindings::Identity::new() }).collect();
+                for kept in self.keep_in_memory_hop(children, step, scope, span).await? {
+                    let Binding::Extracted { emission, .. } = kept else { unreachable!("an extraction's children are its entities") };
+                    next.push(emission);
+                }
+            }
+            current = next;
+        }
+        Ok(current)
     }
 
     /// Where a head walks from and through which graph (`headIterationsFrom`
@@ -1527,28 +1542,6 @@ pub(crate) fn block_value(returned: Vec<Binding>) -> Binding {
 struct Fetch<'a> {
     pushdown: &'a [(String, Js)],
     paged: bool,
-}
-
-/// `walkExtractSteps`: plain hops down an extraction's result, each to the
-/// children under that edge.
-pub(crate) fn walk_extract(root: &Rc<Emission>, steps: &[TraversalStep], name: &str) -> Result<Vec<Rc<Emission>>, Failure> {
-    let mut current = vec![root.clone()];
-    for step in steps {
-        let TraversalStep::Edge(step) = step else {
-            return Err(Failure::engine(
-                "MOVENG_UNSUPPORTED",
-                format!("'{}' hops over the extract result ('{name}') is not supported by the movement engine yet", step_type(step)),
-            ));
-        };
-        if step.expression_filter.is_some() {
-            return Err(Failure::engine(
-                "MOVENG_UNSUPPORTED",
-                format!("WHERE filters on extract-result hops ('{name}') is not supported by the movement engine yet"),
-            ));
-        }
-        current = current.iter().flat_map(|e| e.children_of(&step.edge_type_id).to_vec()).collect();
-    }
-    Ok(current)
 }
 
 /// A step's own `type`.
