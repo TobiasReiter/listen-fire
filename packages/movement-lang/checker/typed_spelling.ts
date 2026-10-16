@@ -140,7 +140,9 @@ export function walkFields(tree: MExpr, raw: string, binds: (name: string) => bo
         break;
       }
     }
-    return { alias, insert: { at: { start: open, end: open }, text: alias } };
+    // `[:label` takes the alias before its colon; a hop written without one
+    // (`[#linked`) takes the colon too.
+    return { alias, insert: { at: { start: open, end: open }, text: raw[open] === ':' ? alias : `${alias}:` } };
   };
   const visit = (e: MExpr, aliases: readonly string[]): void => {
     const here = e.kind === 'path' ? [...aliases, ...e.hops.flatMap((h) => (h.alias !== undefined ? [h.alias.text] : []))] : aliases;

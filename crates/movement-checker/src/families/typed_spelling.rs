@@ -307,7 +307,10 @@ fn alias_of(hop: &movement_parser::tree::Hop, taken: &[String], src: &Utf16, bin
     let free = |n: &str| !taken.iter().any(|t| t == n) && !binds(n);
     let alias = std::iter::once(stem.clone()).chain((2..).map(|i| format!("{stem}{i}"))).find(|n| free(n)).expect("a free name");
     let open = (hop.at.start..hop.label.at.start).find(|&i| src.units()[i] == b'[' as u16).map_or(hop.label.at.start, |i| i + 1);
-    (alias.clone(), Some((At { start: open, end: open }, alias)))
+    // `[:label` takes the alias before its colon; a hop written without one
+    // (`[#linked`) takes the colon too.
+    let text = if src.units().get(open) == Some(&(b':' as u16)) { alias.clone() } else { format!("{alias}:") };
+    (alias, Some((At { start: open, end: open }, text)))
 }
 
 impl Checker<'_> {
