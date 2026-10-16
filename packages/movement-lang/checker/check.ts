@@ -376,6 +376,13 @@ export const DiagnosticCodes = {
   IMPORT_DUPLICATE: 'MOV_IMPORT_DUPLICATE',
   IMPORT_FILE_UNSUPPORTED: 'MOV_IMPORT_FILE_UNSUPPORTED',
   EXPR_PARSE: 'MOV_EXPR_PARSE',
+  /** Language version 5: an old spelling, refused with its rewrite as the fix
+   *  (the parser's finding, crates/movement-parser/src/surface). */
+  V5_SPELLING: 'MOV_V5_SPELLING',
+  /** Language version 5: a standard namespace has no such member. */
+  V5_UNKNOWN_MEMBER: 'MOV_V5_UNKNOWN_MEMBER',
+  /** Language version 5: a v5 form the spelling rewrite cannot read yet. */
+  V5_NOT_YET: 'MOV_V5_NOT_YET',
   /** A closure literal (`(n) => { … }`) written where the formula grammar
    *  takes over — a call argument, a write field, a hop WHERE. The formula
    *  grammar has no closure production (it dies on the bare `>`), so this

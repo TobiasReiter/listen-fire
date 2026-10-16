@@ -7,6 +7,11 @@ pub const IMPORT_UNKNOWN: &str = "MOV_IMPORT_UNKNOWN";
 pub const IMPORT_DUPLICATE: &str = "MOV_IMPORT_DUPLICATE";
 pub const IMPORT_FILE_UNSUPPORTED: &str = "MOV_IMPORT_FILE_UNSUPPORTED";
 pub const EXPR_PARSE: &str = "MOV_EXPR_PARSE";
+/// Language version 5's surface findings, raised by the parser
+/// (movement_parser::surface) and reported as they come.
+pub const V5_SPELLING: &str = movement_parser::surface::SPELLING_CODE;
+pub const V5_UNKNOWN_MEMBER: &str = movement_parser::surface::UNKNOWN_MEMBER_CODE;
+pub const V5_NOT_YET: &str = movement_parser::surface::NOT_YET_CODE;
 pub const EXPR_CLOSURE_POSITION: &str = "MOV_EXPR_CLOSURE_POSITION";
 pub const NAME_UNRESOLVED: &str = "MOV_NAME_UNRESOLVED";
 pub const USE_BEFORE_BIND: &str = "MOV_USE_BEFORE_BIND";

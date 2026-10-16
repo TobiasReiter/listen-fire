@@ -46,7 +46,13 @@ interface WasmModule {
   readonly __wasmModule?: never;
 }
 
-type ParserFunction = 'parse_program' | 'parse_program_eager' | 'parse_expression' | 'parse_nested_call';
+type ParserFunction =
+  | 'parse_program'
+  | 'parse_program_eager'
+  | 'parse_expression'
+  | 'parse_nested_call'
+  | 'spell_message'
+  | 'surface_table';
 
 /** The lowering's exports take two inputs: the tree's JSON, and its source. */
 type LoweringFunction = 'lower_expression' | 'lower_condition';
@@ -454,6 +460,8 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     parse_program_eager: exported('parse_program_eager'),
     parse_expression: exported('parse_expression'),
     parse_nested_call: exported('parse_nested_call'),
+    spell_message: exported('spell_message'),
+    surface_table: exported('surface_table'),
     lower_expression: exported('lower_expression'),
     lower_condition: exported('lower_condition'),
     catalog_query: exported('catalog_query'),
