@@ -165,6 +165,13 @@ for byte; on text already in the version 5 spelling it changes nothing.
   admission; its code is deleted). A version 1–4 automation holding one still runs on the
   TypeScript engine, by its version, exactly as before; `lf` runs and `MOVEMENT_ENGINE=rust`
   with `MOVEMENT_ENGINE_FALLBACK=none` fail such a run with that reason.
+- **A null test on an extracted `<text>` field is refused for the call's records too**
+  (`MOV_PRESENCE_TEST_ON_TEXT`, from version 5): `if (r.title != null)` where `r` is a record
+  `extract(…)` or `extractOne(…)` handed back and `title` is `<text>`. Why: a text the model did
+  not find is `""`, never absent, so the test always answers the same; the keyword's result has
+  been refused since version 2, and versions 3 and 4 let the call's through. Annotate the field
+  `<text | null>` to keep the test, or test `r.title != ""`. Under 3 and 4 nothing changes; a
+  move up across 5 is an upgrade warning, which holds the pin.
 - **`race` and `all` take their arms as arguments** (`MOV_COMBINATOR_ARMS_ARE_ARGUMENTS`):
   `race([q, t])` is `race(q, t)`, which the diagnostic applies. Why: a closure is not data, so there
   is no list of them to pass. A name that is not a function is refused where it is passed
