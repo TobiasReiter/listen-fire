@@ -70,6 +70,8 @@ pub struct Checker<'c> {
     pub inference: crate::families::calls::Inference,
     /// Node declarations, as their uses read them.
     pub nodes: crate::families::nodes::NodeState,
+    /// What the check settles on nodes for the engine (crate::answer).
+    pub stamps: crate::answer::Stamps,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
@@ -170,6 +172,7 @@ impl<'c> Checker<'c> {
             effects: Default::default(),
             inference: Default::default(),
             nodes: Default::default(),
+            stamps: Default::default(),
         }
     }
 

@@ -424,6 +424,7 @@ impl Checker<'_> {
             && let Some(fields) = known_fields_of(position)
         {
             crate::types::position::note_fields_needed(Some(position), || format!("writes every field of it with '...{}' (line {})", spread.source, spread.span.start.line));
+            self.stamp(spread.span, crate::answer::StampKind::SpreadFields(fields.clone()));
             return Some(fields);
         }
         // A declared extract node's fields are its declaration's (the nodes
