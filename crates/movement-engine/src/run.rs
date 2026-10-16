@@ -2750,6 +2750,17 @@ fn restamp(position: &Position, natural: Option<String>, adapter_type: &str) -> 
     }
 }
 
+
+/// `fail(message)`'s words, as the run fails with them: a text as written,
+/// nothing as nothing, anything else as JavaScript writes it.
+pub(crate) fn failure_message(message: &Js) -> String {
+    match message {
+        Js::String(text) => text.clone().into_string(),
+        other if other.is_nullish() => String::new(),
+        other => other.to_js_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3478,15 +3489,5 @@ mod tests {
             narrowing: vec![("table".into(), "tblDeals".into()), ("base".into(), "app1".into())],
         };
         assert_eq!(event_address_key(&pinned), r#"["Record Change",[["base","app1"],["table","tblDeals"]]]"#);
-    }
-}
-
-/// `fail(message)`'s words, as the run fails with them: a text as written,
-/// nothing as nothing, anything else as JavaScript writes it.
-pub(crate) fn failure_message(message: &Js) -> String {
-    match message {
-        Js::String(text) => text.clone().into_string(),
-        other if other.is_nullish() => String::new(),
-        other => other.to_js_string(),
     }
 }

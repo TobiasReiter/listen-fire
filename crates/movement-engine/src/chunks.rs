@@ -113,7 +113,7 @@ fn is_blank(text: &[u16]) -> bool {
 
 fn by_size(text: &[u16], size: usize, overlap: usize) -> Vec<std::ops::Range<usize>> {
     if text.len() <= size {
-        return vec![0..text.len()];
+        return vec![std::ops::Range { start: 0, end: text.len() }];
     }
     let mut pieces = Vec::new();
     let mut start = 0;
@@ -397,7 +397,7 @@ fn lower(u: u16) -> u16 {
 
 /// `[^\s<>()[\]"']`: JavaScript's `\s` is its whitespace set.
 fn link_char(u: u16) -> bool {
-    !(is_js_space(u) || [b'<', b'>', b'(', b')', b'[', b']', b'"', b'\''].iter().any(|&c| u == c as u16))
+    !(is_js_space(u) || b"<>()[]\"'".iter().any(|&c| u == c as u16))
 }
 
 fn is_js_space(u: u16) -> bool {

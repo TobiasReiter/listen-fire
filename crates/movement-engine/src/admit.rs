@@ -467,7 +467,7 @@ fn admit_file<'p>(
     for (name, value) in &file_values {
         if let Some(value) = value {
             let names = Names {
-                reasons: &reasons,
+                reasons,
                 events: &none,
                 values: &values,
                 handles: &none,
@@ -509,7 +509,7 @@ fn admit_file<'p>(
     // A declared shape's words are read in the file's scope once an
     // extraction asks for them.
     let file_scope = Names {
-        reasons: &reasons,
+        reasons,
         events: &none,
         values: &file_values,
         handles: &none,
@@ -580,7 +580,7 @@ fn admit_file<'p>(
         let body_shapes: BTreeSet<String> = shapes.iter().cloned().chain(crate::code::shapes_declared_in(&movement.body)).collect();
         let shape_aliases = if language_version >= 3 { shape_aliases_in(&movement.body, &body_shapes) } else { BTreeSet::new() };
         let names = Names {
-            reasons: &reasons,
+            reasons,
             events: &events,
             values: &values,
             handles: &bound.handles,
@@ -1816,8 +1816,8 @@ impl<'c> Bound<'c> {
             match statement {
                 Statement::Assign(assign) => {
                     let kind = match &assign.value {
-                        RValue::Write { write } if self.into_node(&write.target) => Kind::Member,
-                        RValue::Match { r#match } if self.into_node(&r#match.target) => Kind::Member,
+                        RValue::Write { write } if self.lands_in_node(&write.target) => Kind::Member,
+                        RValue::Match { r#match } if self.lands_in_node(&r#match.target) => Kind::Member,
                         RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
                         RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call_kind(&construction_as_call(construct)),
                         RValue::Construct { construct } if self.calls_closure(&construct.callee) => {
@@ -2257,8 +2257,8 @@ impl<'c> Bound<'c> {
                 (None, Some(expr)) => self.expression_kind(&expr.raw),
                 (None, None) => Kind::Value,
             },
-            RValue::Write { write } if self.into_node(&write.target) => Kind::Member,
-            RValue::Match { r#match } if self.into_node(&r#match.target) => Kind::Member,
+            RValue::Write { write } if self.lands_in_node(&write.target) => Kind::Member,
+            RValue::Match { r#match } if self.lands_in_node(&r#match.target) => Kind::Member,
             RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
             RValue::Lazy { .. } => Kind::Lazy,
             _ => Kind::Value,
@@ -2324,7 +2324,7 @@ impl<'c> Bound<'c> {
         match arg {
             CallArg::Expr { .. } if takes_value => Some(Kind::Value),
             CallArg::Expr { expr, .. } => Some(self.expression_kind(&expr.raw)),
-            CallArg::Write { write, .. } => Some(if self.into_node(&write.target) { Kind::Member } else { Kind::Handle }),
+            CallArg::Write { write, .. } => Some(if self.lands_in_node(&write.target) { Kind::Member } else { Kind::Handle }),
             CallArg::Node { node, .. } => Some(if node.graph.is_some() { Kind::Graph } else { Kind::Node }),
             CallArg::Call { call, .. } if self.callee(&call.callee).is_some() => self.known_call_kind(call),
             CallArg::Call { call, .. } => Some(match &call.expression {
@@ -2340,7 +2340,7 @@ impl<'c> Bound<'c> {
     /// Whether a write into a node this run built holds a record in a
     /// field: the node it lands in then holds one (its root marked so).
     fn local_write_holds_record(&mut self, write: &WriteExpression) -> bool {
-        if !self.into_node(&write.target) {
+        if !self.lands_in_node(&write.target) {
             return false;
         }
         let spreads = write.spreads.iter().flatten().any(|spread| spread.path.is_some() || self.holder(&spread.source) == Holder::Other);
@@ -2359,7 +2359,7 @@ impl<'c> Bound<'c> {
         true
     }
 
-    fn into_node(&self, target: &WriteTarget) -> bool {
+    fn lands_in_node(&self, target: &WriteTarget) -> bool {
         let root = match target {
             WriteTarget::Linked { path, .. } => match &path.root {
                 Some(PathRoot::Name { name }) => name,
@@ -5617,11 +5617,8 @@ mod tests {
 
     #[test]
     fn refuses_each_record_verb_form_it_does_not_run_with_its_reason() {
-        for (body, reason) in [
-            ("  x = match crm-[:companies]-> { unique by (`name` CONTAINS \"a\"), name: \"a\" }", "unique_by_without_key"),
-        ] {
-            assert_eq!(refused(body).as_deref(), Some(reason), "{body}");
-        }
+        let body = "  x = match crm-[:companies]-> { unique by (`name` CONTAINS \"a\"), name: \"a\" }";
+        assert_eq!(refused(body).as_deref(), Some("unique_by_without_key"), "{body}");
     }
 
     /// Chunk 7A Task 2: a call reaches its callee, which is walked under
@@ -5782,9 +5779,8 @@ mod tests {
         }
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         // A file-level value reads only the file-level values before it.
-        for (value, reason) in [("y = @trigger", "meta:trigger")] {
-            assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some(reason), "{value}");
-        }
+        let value = "y = @trigger";
+        assert_eq!(file(&format!("{PRELUDE}{value}\n{movement}")).as_deref(), Some("meta:trigger"), "{value}");
         // A plugin or a movement called at file level, in either call form:
         // `fileLevelCall` fails the run before any body, on either engine.
         let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = @trigger\n}";

@@ -44,12 +44,10 @@ impl Utf16 {
 
     /// `src.startsWith(prefix, at)`.
     pub fn starts_with(&self, at: usize, prefix: &str) -> bool {
-        let mut i = at;
-        for unit in crate::util::form::units_of(prefix) {
+        for (i, unit) in (at..).zip(crate::util::form::units_of(prefix)) {
             if self.at(i) != Some(unit) {
                 return false;
             }
-            i += 1;
         }
         true
     }

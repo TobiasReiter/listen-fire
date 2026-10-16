@@ -60,6 +60,9 @@ use crate::trace::TraceEntry;
 use crate::unique::get;
 use crate::write::spell_name;
 
+/// A path a head walked so far: each hop's alias with its record, and where it landed.
+type PathSoFar = (Vec<(String, Binding)>, Rc<Landed>);
+
 /// The most pages one traversal walks (adapter.ts `MAX_RELATED_PAGES`).
 const MAX_RELATED_PAGES: usize = 10_000;
 
@@ -714,7 +717,7 @@ impl Run<'_> {
     /// reached, in order (breadth first, as the TypeScript asks), each hop's
     /// alias naming its own level's record on its path.
     pub(crate) async fn source_head_paths(&self, start: &Js, read: Rc<Read>, steps: &[TraversalStep], scope: &Rc<Scope>, span: &Js) -> Result<Paths, Failure> {
-        let mut paths: Vec<(Vec<(String, Binding)>, Rc<Landed>)> = vec![(Vec::new(), Rc::new(Landed::new(start.clone(), None, read.clone())))];
+        let mut paths: Vec<PathSoFar> = vec![(Vec::new(), Rc::new(Landed::new(start.clone(), None, read.clone())))];
         for step in steps {
             let TraversalStep::Edge(step) = step else {
                 return Err(Failure::unsupported(&format!("'{}' hops in a block head over the source graph", step_type(step)), ""));

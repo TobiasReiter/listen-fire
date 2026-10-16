@@ -462,7 +462,7 @@ pub enum LinkTarget {
         name: String,
     },
     Match {
-        r#match: MatchExpression,
+        r#match: Box<MatchExpression>,
         #[serde(rename = "impliedIdentity")]
         implied_identity: bool,
     },
@@ -1035,7 +1035,7 @@ pub struct ExtractCallExpression {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ExtractCallShape {
     Named { name: String, span: Span },
-    Inline { declaration: ShapeDeclaration, span: Span },
+    Inline { declaration: Box<ShapeDeclaration>, span: Span },
     Computed { expr: ExprSlot, span: Span },
 }
 

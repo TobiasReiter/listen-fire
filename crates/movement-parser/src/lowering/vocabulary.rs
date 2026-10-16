@@ -131,7 +131,7 @@ impl OptionsContract {
         let choices: String = self
             .exactly_one
             .iter()
-            .map(|c| format!(" (exactly one of {})", quoted_list(&c.keys, "'", " or ")))
+            .map(|c| format!(" (exactly one of {})", quoted_list(c.keys, "'", " or ")))
             .collect();
         format!("{options}{choices}")
     }

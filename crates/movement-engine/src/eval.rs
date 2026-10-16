@@ -566,7 +566,7 @@ impl<'a> Evaluator<'a> {
             None => Err(EvalError::engine("MOVENG_RUNTIME", format!("'{root}' is not in scope — the checker should have caught this"))),
             Some(Binding::Value(value)) => {
                 let trail = value.trail.clone().unwrap_or_default();
-                self.from_value(expr, root.to_string(), value, trail).await
+                self.reading_off_value(expr, root.to_string(), value, trail).await
             }
             Some(Binding::Event) if steps.is_empty() && field_terminal(expression).is_some_and(|f| f != POSITION_SENTINEL) => {
                 let field = field_terminal(expression).expect("checked above");
@@ -583,7 +583,7 @@ impl<'a> Evaluator<'a> {
     /// record (`heldRecords`); `m.k.f` reads on from what the key holds,
     /// bound as a name bound to it would be; `EXISTS(v)` asks whether it
     /// holds anything; else the value's own field (`readBindingField`).
-    fn from_value<'s>(&'s self, expr: &'s Expression, name: String, value: ValueBinding, trail: Trail) -> Evaluating<'s> {
+    fn reading_off_value<'s>(&'s self, expr: &'s Expression, name: String, value: ValueBinding, trail: Trail) -> Evaluating<'s> {
         Box::pin(async move {
             let Expression::Traverse { steps, expression, .. } = expr else { unreachable!("a rooted traversal") };
             if let Some(held) = crate::record::held_records(&value.value, expr) {
@@ -597,7 +597,7 @@ impl<'a> Evaluator<'a> {
             {
                 let member = format!("{name}.{key}");
                 return match crate::record::bind_value(crate::record::project(&value.value, key), Some(transformed.clone()), false) {
-                    Binding::Value(bound) => self.from_value(expression, member, bound, transformed).await,
+                    Binding::Value(bound) => self.reading_off_value(expression, member, bound, transformed).await,
                     held => self.ask_run(Ask::From { name: member, held, expr: expression.as_ref().clone() }).await,
                 };
             }

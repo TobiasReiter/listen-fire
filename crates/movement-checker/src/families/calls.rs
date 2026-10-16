@@ -728,6 +728,9 @@ pub fn closures_of_value(ty: &Ty) -> Option<Vec<ClosureType>> {
 }
 
 /// `CallReading`: how a call reads where it is written.
+// A reading handed straight back to its caller and matched at once, never
+// stored in bulk: boxing the large variant would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum CallReading {
     Function,
     Value(ExprSlot),

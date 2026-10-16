@@ -3,7 +3,7 @@
 //! comes back from its own syntax tree, never from here: crate::resume.)
 
 use movement_parser::ast::{
-    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorExpression, NodeEntry, NodeLiteral, Program,
+    ArmExpression, AwaitSource, CallArg, CallStatement, CallbackSubject, ClosureExpression, CombinatorExpression, Program,
     RValue, Span, Statement, UntilCondition,
 };
 use serde_json::Value as Json;
@@ -115,12 +115,8 @@ fn rvalue<'p>(value: &'p RValue, f: &mut dyn FnMut(Found<'p>)) {
             }
         },
         RValue::Closure { closure: c } => closure(c, f),
-        RValue::Node { node: n } => node(n, f),
-        RValue::Lazy { lazy } => {
-            if let Some(mapping) = &lazy.mapping {
-                node(mapping, f);
-            }
-        }
+        // A node literal's entries (a lazy walk's mapping too) are expression
+        // slots: they bind no name and declare no shape.
         _ => {}
     }
 }
@@ -160,22 +156,10 @@ fn call_args<'p>(call: &'p CallStatement, f: &mut dyn FnMut(Found<'p>)) {
 fn call_arg<'p>(arg: &'p CallArg, f: &mut dyn FnMut(Found<'p>)) {
     match arg {
         CallArg::Closure { closure: c, .. } => closure(c, f),
-        CallArg::Node { node: n, .. } => node(n, f),
         CallArg::Call { call, .. } => call_args(call, f),
+        // A node literal's entries are expression slots: they bind no name
+        // and declare no shape.
         _ => {}
     }
 }
 
-fn node<'p>(literal: &'p NodeLiteral, f: &mut dyn FnMut(Found<'p>)) {
-    for entry in &literal.entries {
-        match entry {
-            NodeEntry::Nodes { nodes, .. } => {
-                for n in nodes {
-                    node(n, f);
-                }
-            }
-            NodeEntry::Traversal { mapping: Some(mapping), .. } => node(mapping, f),
-            _ => {}
-        }
-    }
-}

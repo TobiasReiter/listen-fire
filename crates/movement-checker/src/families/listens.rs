@@ -1161,27 +1161,6 @@ fn callback_call_arity_message(movement: &str, arity: usize, given: usize) -> St
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slugs_a_movement_name() {
-        assert_eq!(suggested_listen_key("Log Sender"), "log-sender");
-        assert_eq!(suggested_listen_key("  "), "intake");
-        assert_eq!(suggested_listen_key("a__b9"), "a-b9");
-    }
-
-    #[test]
-    fn reads_durations_and_literals() {
-        assert!(is_valid_duration("1h30m"));
-        assert!(!is_valid_duration("1x"));
-        assert!(!is_valid_duration("h"));
-        assert_eq!(scalar_literal_kind("-3.5"), Some("number"));
-        assert_eq!(scalar_literal_kind("\"x\""), Some("text"));
-        assert_eq!(scalar_literal_kind("yes"), None);
-    }
-}
 
 /// `callbackType`: a callback is a local node with `.id` / `.url` reads and an
 /// awaitable `Called` edge, landing on the call — `At` plus one field per
@@ -1207,4 +1186,26 @@ pub fn callback_type(params: Vec<(String, Option<Ty>)>) -> Position {
     edges.insert("Called".to_string(), LocalEdge { schema, target: Some(call), structural: false, deferred: false, references: false });
     let reads = IndexMap::from([("id".to_string(), Some(Ty::Text)), ("url".to_string(), Some(Ty::Text))]);
     Position::Local(LocalNode { label: "a callback".to_string(), reads, edges: Some(edges), run_built: None, extracted: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugs_a_movement_name() {
+        assert_eq!(suggested_listen_key("Log Sender"), "log-sender");
+        assert_eq!(suggested_listen_key("  "), "intake");
+        assert_eq!(suggested_listen_key("a__b9"), "a-b9");
+    }
+
+    #[test]
+    fn reads_durations_and_literals() {
+        assert!(is_valid_duration("1h30m"));
+        assert!(!is_valid_duration("1x"));
+        assert!(!is_valid_duration("h"));
+        assert_eq!(scalar_literal_kind("-3.5"), Some("number"));
+        assert_eq!(scalar_literal_kind("\"x\""), Some("text"));
+        assert_eq!(scalar_literal_kind("yes"), None);
+    }
 }

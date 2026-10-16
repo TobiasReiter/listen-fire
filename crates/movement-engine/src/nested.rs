@@ -34,7 +34,7 @@ use movement_parser::tree::{At, BinaryOp, ListElement, MExpr, MapMember, StringP
 use movement_parser::util::utf16::Utf16;
 
 use crate::bindings::{Binding, Scope};
-use crate::run::{Address, Failure, Run, Stop};
+use crate::run::{Failure, Run, Stop};
 
 /// The built-ins that are no value: they run as calls (`form.kind !==
 /// 'value'`).
@@ -385,7 +385,7 @@ impl Run<'_> {
         let extent = At { start: call.at().start + staging.offset, end: call.at().end + staging.offset };
         let value = nested_call(staging.origin, extent, self.version())
             .map_err(|message| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid nested call (the checker should have caught this): {message}"))))?;
-        let at = self.call_sites.borrow().last().map(|site| site.address.clone()).unwrap_or_else(Address::default);
+        let at = self.call_sites.borrow().last().map(|site| site.address.clone()).unwrap_or_default();
         let name = self.nested_name(staging);
         let path = self.nested_path(staging.origin, extent, &value, &staging.scope.written_in());
         self.assign(&name, &value, &staging.scratch, &at, &path).await?;

@@ -691,7 +691,7 @@ pub fn math_round(x: f64) -> f64 {
     if x > 0.0 && x < 0.5 {
         return 0.0;
     }
-    if x < 0.0 && x >= -0.5 {
+    if (-0.5..0.0).contains(&x) {
         return -0.0;
     }
     let floor = x.floor();
@@ -865,6 +865,65 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
     }
 }
 
+
+/// Whether a value holds itself, through its lists and maps: every walker
+/// of a value's members asks first, since a GROUPBY filing can make one.
+pub fn holds_itself(value: &Js) -> bool {
+    fn walk(value: &Js, stack: &mut Vec<*const ()>) -> bool {
+        let (address, members): (*const (), Vec<Js>) = match value {
+            Js::Array(list) => (Rc::as_ptr(list).cast(), list.items().clone()),
+            Js::Object(object) => (Rc::as_ptr(object).cast(), object.entries().iter().map(|(_, item)| item.clone()).collect()),
+            _ => return false,
+        };
+        if stack.contains(&address) {
+            return true;
+        }
+        stack.push(address);
+        let found = members.iter().any(|member| walk(member, stack));
+        stack.pop();
+        found
+    }
+    walk(value, &mut Vec::new())
+}
+
+/// `value` with each edge that closes a circle cut (`null` in its place): what
+/// a walker that cannot fail reads, where the TypeScript would have thrown —
+/// a backstop no checked program the engine runs is known to reach.
+pub fn acyclic(value: &Js) -> Js {
+    fn copy(value: &Js, stack: &mut Vec<*const ()>) -> Js {
+        let address: *const () = match value {
+            Js::Array(list) => Rc::as_ptr(list).cast(),
+            Js::Object(object) => Rc::as_ptr(object).cast(),
+            other => return other.clone(),
+        };
+        if stack.contains(&address) {
+            return Js::Null;
+        }
+        stack.push(address);
+        let out = match value {
+            Js::Array(list) => Js::array(list.items().iter().map(|item| copy(item, stack)).collect()),
+            Js::Object(object) => {
+                let mut out = JsObject::new();
+                for (key, item) in object.entries() {
+                    out.set(key.clone(), copy(item, stack));
+                }
+                out.proto = object.proto.clone();
+                Js::object(out)
+            }
+            _ => unreachable!("matched above"),
+        };
+        stack.pop();
+        out
+    }
+    copy(value, &mut Vec::new())
+}
+
+/// What a walker the TypeScript recurses through without a guard throws on
+/// a value that holds itself.
+pub fn stack_overflow() -> Thrown {
+    Thrown { class: "RangeError", message: "Maximum call stack size exceeded".into() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1031,62 +1090,4 @@ mod tests {
         assert_eq!(json_stringify(&value, 2), "[\n  1,\n  {\n    \"k\": \"a\\\"\\u0001\"\n  },\n  [],\n  {}\n]");
         assert_eq!(json_stringify(&value, 0), "[1,{\"k\":\"a\\\"\\u0001\"},[],{}]");
     }
-}
-
-/// Whether a value holds itself, through its lists and maps: every walker
-/// of a value's members asks first, since a GROUPBY filing can make one.
-pub fn holds_itself(value: &Js) -> bool {
-    fn walk(value: &Js, stack: &mut Vec<*const ()>) -> bool {
-        let (address, members): (*const (), Vec<Js>) = match value {
-            Js::Array(list) => (Rc::as_ptr(list).cast(), list.items().clone()),
-            Js::Object(object) => (Rc::as_ptr(object).cast(), object.entries().iter().map(|(_, item)| item.clone()).collect()),
-            _ => return false,
-        };
-        if stack.contains(&address) {
-            return true;
-        }
-        stack.push(address);
-        let found = members.iter().any(|member| walk(member, stack));
-        stack.pop();
-        found
-    }
-    walk(value, &mut Vec::new())
-}
-
-/// `value` with each edge that closes a circle cut (`null` in its place): what
-/// a walker that cannot fail reads, where the TypeScript would have thrown —
-/// a backstop no checked program the engine runs is known to reach.
-pub fn acyclic(value: &Js) -> Js {
-    fn copy(value: &Js, stack: &mut Vec<*const ()>) -> Js {
-        let address: *const () = match value {
-            Js::Array(list) => Rc::as_ptr(list).cast(),
-            Js::Object(object) => Rc::as_ptr(object).cast(),
-            other => return other.clone(),
-        };
-        if stack.contains(&address) {
-            return Js::Null;
-        }
-        stack.push(address);
-        let out = match value {
-            Js::Array(list) => Js::array(list.items().iter().map(|item| copy(item, stack)).collect()),
-            Js::Object(object) => {
-                let mut out = JsObject::new();
-                for (key, item) in object.entries() {
-                    out.set(key.clone(), copy(item, stack));
-                }
-                out.proto = object.proto.clone();
-                Js::object(out)
-            }
-            _ => unreachable!("matched above"),
-        };
-        stack.pop();
-        out
-    }
-    copy(value, &mut Vec::new())
-}
-
-/// What a walker the TypeScript recurses through without a guard throws on
-/// a value that holds itself.
-pub fn stack_overflow() -> Thrown {
-    Thrown { class: "RangeError", message: "Maximum call stack size exceeded".into() }
 }

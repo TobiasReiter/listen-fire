@@ -123,7 +123,7 @@ pub(crate) struct PluginResult {
 
 impl PluginResult {
     fn of(answer: &Js) -> PluginResult {
-        let member = |key: &str| crate::unique::get(&answer, key);
+        let member = |key: &str| crate::unique::get(answer, key);
         let text = match member("text") {
             Js::String(text) => Some(text.into_string()),
             _ => None,

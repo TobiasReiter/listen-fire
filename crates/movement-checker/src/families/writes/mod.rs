@@ -86,6 +86,9 @@ pub struct Landing {
 }
 
 /// What a name holds, for a rule that needs a record (`recordOfName`).
+// A reading handed straight back to its caller and matched at once, never
+// stored in bulk: boxing the large variant would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum RecordOf {
     Record(Position),
     /// A value, described.

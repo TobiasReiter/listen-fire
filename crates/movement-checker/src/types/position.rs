@@ -759,6 +759,9 @@ pub fn narrow_present_node(position: &Position) -> Option<Position> {
 /// Where one edge step off a position lands, without reporting: the walks
 /// family turns each refusal into its diagnostic (`stepEdge`).
 #[derive(Debug, Clone)]
+// A reading handed straight back to its caller and matched at once, never
+// stored in bulk: boxing the large variant would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum EdgeLanding {
     Landed { landing: Position, edge: Option<EdgeSchema> },
     /// The edge leads somewhere nobody can type (an open schema, a variant

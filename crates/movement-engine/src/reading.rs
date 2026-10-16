@@ -31,9 +31,12 @@ fn parts(expr: &Expression) -> (&[TraversalStep], &Expression) {
     (steps, expression)
 }
 
+/// An `EXISTS` terminal's hops before it, and its own expression.
+type Terminal<'e> = (&'e [TraversalStep], Option<&'e Expression>);
+
 /// `existsTerminalOf`: the traversal's `EXISTS` terminal; without
 /// `allow_steps`, hops before one are refused.
-fn exists_terminal<'e>(expr: &'e Expression, name: &str, allow_steps: bool) -> Result<Option<(&'e [TraversalStep], Option<&'e Expression>)>, Failure> {
+fn exists_terminal<'e>(expr: &'e Expression, name: &str, allow_steps: bool) -> Result<Option<Terminal<'e>>, Failure> {
     let (steps, terminal) = parts(expr);
     let Expression::Exists { steps: hops, where_ } = terminal else { return Ok(None) };
     if !allow_steps && !steps.is_empty() {

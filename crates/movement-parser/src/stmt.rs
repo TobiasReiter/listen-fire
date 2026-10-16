@@ -3019,7 +3019,7 @@ impl Parser {
             fields,
             span: self.span_from(from_start),
         };
-        Ok(LinkExpression { from, edge, to: LinkTarget::Match { r#match, implied_identity }, span: self.span_from(start) })
+        Ok(LinkExpression { from, edge, to: LinkTarget::Match { r#match: Box::new(r#match), implied_identity }, span: self.span_from(start) })
     }
 
     /// The identity of a `link` body that names none: all of its fields,
@@ -3790,11 +3790,11 @@ impl Parser {
                 }
                 self.pos = word_start;
             }
-            if since(self.version, 5) {
-                if let Some((value, span)) = self.concise_body_call(stops)? {
-                    let body = vec![Statement::Return(ReturnStatement { value, span, concise: true })];
-                    return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
-                }
+            if since(self.version, 5)
+                && let Some((value, span)) = self.concise_body_call(stops)?
+            {
+                let body = vec![Statement::Return(ReturnStatement { value, span, concise: true })];
+                return Ok(ClosureExpression { params, return_type, body, span: self.span_from(start) });
             }
             let (slot, _) = self.read_expr_slot(Scan::new(stops, "for the closure body"))?;
             let span = slot.span;
@@ -3815,27 +3815,27 @@ impl Parser {
         }
         // `f()` — no argument to tell a call from a construction, so it is
         // recorded as `x = f()` is, and resolution decides.
-        if let Some((name, end)) = scan_name(self.src.units(), self.pos) {
-            if self.is('`') || !KEYWORDS.contains(&name.to_ascii_uppercase().as_str()) {
-                self.pos = end;
-                self.skip_inline_ws();
-                if self.is('(') {
+        if let Some((name, end)) = scan_name(self.src.units(), self.pos)
+            && (self.is('`') || !KEYWORDS.contains(&name.to_ascii_uppercase().as_str()))
+        {
+            self.pos = end;
+            self.skip_inline_ws();
+            if self.is('(') {
+                self.pos += 1;
+                self.skip_all_ws();
+                if self.is(')') {
                     self.pos += 1;
-                    self.skip_all_ws();
-                    if self.is(')') {
-                        self.pos += 1;
-                        let span = self.span_from(save);
-                        let end = self.pos;
-                        self.skip_inline_ws();
-                        let at_stop = match self.peek() {
-                            None => true,
-                            Some(next) => in_set(next, stops),
-                        };
-                        if at_stop {
-                            self.pos = end;
-                            let construct = ConstructionCall { callee: name, args: Vec::new(), span };
-                            return Ok(Some((RValue::Construct { construct }, span)));
-                        }
+                    let span = self.span_from(save);
+                    let end = self.pos;
+                    self.skip_inline_ws();
+                    let at_stop = match self.peek() {
+                        None => true,
+                        Some(next) => in_set(next, stops),
+                    };
+                    if at_stop {
+                        self.pos = end;
+                        let construct = ConstructionCall { callee: name, args: Vec::new(), span };
+                        return Ok(Some((RValue::Construct { construct }, span)));
                     }
                 }
             }
@@ -4590,7 +4590,7 @@ impl Parser {
         if self.at_node_declaration() {
             let declaration = self.parse_node_declaration()?;
             let span = declaration.span;
-            return Ok(ExtractCallShape::Inline { declaration, span });
+            return Ok(ExtractCallShape::Inline { declaration: Box::new(declaration), span });
         }
         if self.is('<') {
             return self.fail(
@@ -4999,6 +4999,31 @@ fn local_name_for_tag(tag: &str) -> String {
     if out.is_empty() { "pkg".to_string() } else { out }
 }
 
+/// `sort` in its v5 spelling.
+fn is_sort(callee: &str) -> bool {
+    crate::surface::table::by_v5(callee).is_some_and(|row| row.shape == crate::surface::table::Shape::SortKey)
+}
+
+/// `sort(xs, f)` / `sort(xs, f, settings)` with `f` no settings record and
+/// not the member itself (`(x) => x`): the tree's `SORTBY`, as the
+/// expression's rewrite reads it (crate::surface::canonical `sort_key`).
+fn sort_by_function(args: &[CallArg]) -> bool {
+    let settings = |arg: &CallArg| matches!(arg, CallArg::Expr { expr, .. } if expr.raw.trim_start().starts_with('{'));
+    let identity = |arg: &CallArg| match arg {
+        CallArg::Closure { closure, .. } => match (closure.params.as_slice(), closure.body.as_slice()) {
+            ([param], [Statement::Return(ReturnStatement { value: RValue::Expr { expr }, .. })]) => expr.raw.trim() == param.name,
+            _ => false,
+        },
+        _ => false,
+    };
+    match args {
+        [] | [_] => false,
+        [_, key] => !settings(key) && !identity(key),
+        [_, key, last] => !identity(key) || !settings(last),
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5139,30 +5164,5 @@ mod tests {
         // backticked arm name, so the span runs past the token.
         let ast = crate::parse_program("x = MAP(xs, `ab`  )", 2).unwrap();
         assert_eq!(ast.pointer("/statements/0/value/collection/fn/span/end/col"), Some(&json!(19)));
-    }
-}
-
-/// `sort` in its v5 spelling.
-fn is_sort(callee: &str) -> bool {
-    crate::surface::table::by_v5(callee).is_some_and(|row| row.shape == crate::surface::table::Shape::SortKey)
-}
-
-/// `sort(xs, f)` / `sort(xs, f, settings)` with `f` no settings record and
-/// not the member itself (`(x) => x`): the tree's `SORTBY`, as the
-/// expression's rewrite reads it (crate::surface::canonical `sort_key`).
-fn sort_by_function(args: &[CallArg]) -> bool {
-    let settings = |arg: &CallArg| matches!(arg, CallArg::Expr { expr, .. } if expr.raw.trim_start().starts_with('{'));
-    let identity = |arg: &CallArg| match arg {
-        CallArg::Closure { closure, .. } => match (closure.params.as_slice(), closure.body.as_slice()) {
-            ([param], [Statement::Return(ReturnStatement { value: RValue::Expr { expr }, .. })]) => expr.raw.trim() == param.name,
-            _ => false,
-        },
-        _ => false,
-    };
-    match args {
-        [] | [_] => false,
-        [_, key] => !settings(key) && !identity(key),
-        [_, key, last] => !identity(key) || !settings(last),
-        _ => true,
     }
 }

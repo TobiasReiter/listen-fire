@@ -651,7 +651,7 @@ impl<'de> Deserialize<'de> for AdapterSnapshot {
         use serde_json::value::RawValue;
         // Raw, so every member's maps keep the order the text has them in.
         let mut members = IndexMap::<String, Box<RawValue>>::deserialize(deserializer)?;
-        fn read<T: serde::de::DeserializeOwned, E: Error>(raw: Box<RawValue>) -> Result<T, E> {
+        fn read<T: serde::de::DeserializeOwned, E: Error>(raw: &RawValue) -> Result<T, E> {
             read_catalog(raw.get()).map_err(E::custom)
         }
         let schemas = members.shift_remove("schemas").ok_or_else(|| D::Error::missing_field("schemas"))?;
@@ -662,9 +662,9 @@ impl<'de> Deserialize<'de> for AdapterSnapshot {
             .map(|(k, v)| format!("{}:{}", serde_json::to_string(k).expect("a key always serialises"), v.get()))
             .collect();
         Ok(AdapterSnapshot {
-            schemas: read(schemas)?,
-            schema_notes: schema_notes.map(read).transpose()?,
-            construction_arg_options: construction_arg_options.map(read).transpose()?,
+            schemas: read(&schemas)?,
+            schema_notes: schema_notes.as_deref().map(read).transpose()?,
+            construction_arg_options: construction_arg_options.as_deref().map(read).transpose()?,
             spec: read_catalog(&format!("{{{}}}", spec.join(","))).map_err(D::Error::custom)?,
         })
     }

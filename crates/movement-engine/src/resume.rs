@@ -65,6 +65,9 @@ struct Sequence {
 }
 
 /// One level the descent passed through (`ResumeSpineFrame`).
+// One frame per level the descent passes through, a handful at most: boxing
+// the large variant would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 enum Spine {
     Container {
         parent: Sequence,

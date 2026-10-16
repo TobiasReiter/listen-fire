@@ -212,6 +212,9 @@ pub(crate) fn member_left_out(spelling: &str, index: usize, count: Option<usize>
 
 /// What a version-3 call of a built-in reads as (`readCall`): the op, or
 /// `MEMBERS`, or nothing this module runs.
+// Handed straight back to its caller and taken apart at once, never stored
+// in bulk: boxing the large variant would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Reading {
     Collection(CollectionOpExpression),
     Members(MembersExpression),

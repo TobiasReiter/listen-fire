@@ -407,7 +407,7 @@ impl Run<'_> {
             // Bound for this call only, as the checker scoped it: a local
             // declaration of the calling body's.
             ExtractCallShape::Inline { declaration, .. } => {
-                spec::ShapeLink { declaration: declaration.clone(), file: scope.file_env(), words: spec::WordsScope::Body(scope.clone()) }
+                spec::ShapeLink { declaration: (**declaration).clone(), file: scope.file_env(), words: spec::WordsScope::Body(scope.clone()) }
             }
             ExtractCallShape::Named { name, .. } => {
                 let declared = match scope.resolve(name) {

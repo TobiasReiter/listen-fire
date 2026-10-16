@@ -201,11 +201,12 @@ fn a_statement_of_every_kind_reads_back_by_its_tag() {
     fn walk(value: &Value, seen: &mut BTreeSet<&'static str>) {
         match value {
             Value::Object(map) => {
-                if map.contains_key("kind") && map.contains_key("span") {
-                    if let Ok(statement) = serde_json::from_value::<Statement>(value.clone()) {
-                        assert_eq!(serde_json::to_value(&statement).unwrap(), *value);
-                        seen.insert(statement.kind());
-                    }
+                if map.contains_key("kind")
+                    && map.contains_key("span")
+                    && let Ok(statement) = serde_json::from_value::<Statement>(value.clone())
+                {
+                    assert_eq!(serde_json::to_value(&statement).unwrap(), *value);
+                    seen.insert(statement.kind());
                 }
                 map.values().for_each(|v| walk(v, seen));
             }

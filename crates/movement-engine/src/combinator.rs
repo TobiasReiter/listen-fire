@@ -37,6 +37,9 @@ use crate::js::Js;
 use crate::run::{Address, Failure, Flow, RETURN_SLOT, Run, Stop};
 use crate::trace::TraceEntry;
 
+/// How one lane's arm ended, with the trace it wrote.
+type LaneEnding = (Ended, Vec<TraceEntry>);
+
 /// One arm, as a body to run (`ArmInvocation`): a closure written in place
 /// sees the scope around it; a name brings what it captured (a closure's
 /// capture, a movement's file scope) and is a call by that name.
@@ -133,7 +136,7 @@ impl Run<'_> {
         // included). Every lane starts its first arm, as the TypeScript's
         // lanes all start before any arm can fail; after that, no arm starts
         // once one has failed the combinator, and those running finish.
-        let ended: RefCell<Vec<Option<(Ended, Vec<TraceEntry>)>>> = RefCell::new((0..count).map(|_| None).collect());
+        let ended: RefCell<Vec<Option<LaneEnding>>> = RefCell::new((0..count).map(|_| None).collect());
         let lanes = concurrency.min(count);
         let next = Cell::new(lanes);
         let failed = Cell::new(false);

@@ -611,13 +611,13 @@ impl Lowering {
         let MExpr::Name { name, .. } = head else {
             return refuse(format!("'.', a call or a hop can only follow a name — not a {}", kind_of(head)));
         };
-        self.from_name(name, &segments, ctx, false)
+        self.lower_name(name, &segments, ctx, false)
     }
 
     /// `scoped`: this name is the member of a dot-chain (`DATETIME.AT(…)`),
     /// so a call here is named inside its root and is none of the bare
     /// built-ins.
-    fn from_name(&self, name: &Name, segments: &[Segment], ctx: Ctx, scoped: bool) -> Lowered<Expression> {
+    fn lower_name(&self, name: &Name, segments: &[Segment], ctx: Ctx, scoped: bool) -> Lowered<Expression> {
         let Some((first, rest)) = segments.split_first() else {
             return self.leaf(name, Leaf { ctx, field_only: false });
         };
@@ -636,7 +636,7 @@ impl Lowering {
                     }
                     return Ok(Expression::EdgeProperty { property_type_id: property.text.clone(), field_only: false });
                 }
-                let expression = self.from_name(property, rest, ctx, true)?;
+                let expression = self.lower_name(property, rest, ctx, true)?;
                 self.fold_namespace(Some(name.text.clone()), Vec::new(), expression)
             }
             Segment::Hops(hops) => self.traversal(Some(&name.text), hops, rest, ctx),
@@ -697,7 +697,7 @@ impl Lowering {
                 }
                 self.leaf(&Name { text: POSITION_SENTINEL.into(), quoted: true, at: last.at }, Leaf { ctx, field_only: false })?
             }
-            Some((Segment::Member(terminal), after)) => self.from_name(terminal, after, ctx, false)?,
+            Some((Segment::Member(terminal), after)) => self.lower_name(terminal, after, ctx, false)?,
             Some(_) => return refuse("Expected '.' after the walk"),
         };
         Ok(Expression::Traverse { alias_root: alias_root.map(String::from), steps, expression: Box::new(expression) })
@@ -770,7 +770,7 @@ impl Lowering {
                 }
                 Expression::Resource { field: (*field).into() }
             }
-            None => self.from_name(terminal, after, ctx, false)?,
+            None => self.lower_name(terminal, after, ctx, false)?,
         };
         Ok(Expression::ResourceTraverse { filter: None, expression_filter: expression_filter.map(Box::new), expression: Box::new(expression) })
     }

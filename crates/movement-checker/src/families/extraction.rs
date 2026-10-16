@@ -485,7 +485,7 @@ impl Checker<'_> {
             ExtractCallShape::Inline { declaration, .. } => {
                 // Written in the argument, it names the shape for this call and nothing after it.
                 let own = self.scopes.open(Some(scope));
-                self.check_statement(&movement_parser::ast::Statement::Shape(declaration.clone()), own);
+                self.check_statement(&movement_parser::ast::Statement::Shape((**declaration).clone()), own);
             }
             ExtractCallShape::Named { name, span } => {
                 let id = match self.scopes.resolve(scope, name) {
