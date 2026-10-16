@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **244 of 244** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 139822 of 139822; 0 extra in Rust.
+- Diagnostics matched: 139826 of 139826; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 28328 of 28328.
-- Rust side: 28.4s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 13.2s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -27,15 +27,15 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
 | (not in PORT.md) | 2 | 2 | 104457 | 104457 | 0 | 0 | 0 |
-| calls | 28 | 28 | 1655 | 1655 | 0 | 0 | 0 |
+| calls | 28 | 28 | 1657 | 1657 | 0 | 0 | 0 |
 | closures | 15 | 15 | 885 | 885 | 0 | 0 | 0 |
 | extraction | 20 | 20 | 441 | 441 | 0 | 0 | 0 |
 | flow | 10 | 10 | 108 | 108 | 0 | 0 | 0 |
 | imports | 5 | 5 | 66 | 66 | 0 | 0 | 0 |
-| listens | 12 | 12 | 24306 | 24306 | 0 | 0 | 0 |
+| listens | 12 | 12 | 24304 | 24304 | 0 | 0 | 0 |
 | names | 11 | 11 | 778 | 778 | 0 | 0 | 0 |
 | nodes | 28 | 28 | 712 | 712 | 0 | 0 | 0 |
-| records | 11 | 11 | 810 | 810 | 0 | 0 | 0 |
+| records | 11 | 11 | 814 | 814 | 0 | 0 | 0 |
 | systems | 8 | 8 | 166 | 166 | 0 | 0 | 0 |
 | values | 22 | 22 | 2280 | 2280 | 0 | 0 | 0 |
 | versions | 2 | 2 | 11 | 11 | 0 | 0 | 0 |
@@ -69,14 +69,14 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_BUILTIN_UNUSED | calls | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_CALLBACK_BAD_CONFIG | listens | 24 | 24 | 0 | 0 | 0 | yes |
 | MOV_CALLBACK_NOT_MOVEMENT | listens | 15 | 15 | 0 | 0 | 0 | yes |
-| MOV_CALLBACK_PARAM_NOT_VALUE | listens | 22 | 22 | 0 | 0 | 0 | yes |
+| MOV_CALLBACK_PARAM_NOT_VALUE | listens | 20 | 20 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_DUPLICATE | calls | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_CALL_ARG_MAYBE_RECORD | records | 99 | 99 | 0 | 0 | 0 | yes |
+| MOV_CALL_ARG_MAYBE_RECORD | records | 103 | 103 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_MISSING | calls | 43 | 43 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_OPAQUE_RECORD | records | 364 | 364 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_TYPE | calls | 954 | 954 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_UNKNOWN | calls | 28 | 28 | 0 | 0 | 0 | yes |
-| MOV_CALL_ARITY | calls | 42 | 42 | 0 | 0 | 0 | yes |
+| MOV_CALL_ARITY | calls | 44 | 44 | 0 | 0 | 0 | yes |
 | MOV_CALL_CLOSURE_RETURNS | calls | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_CALL_NESTED | calls | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_CALL_NOT_MOVEMENT | calls | 26 | 26 | 0 | 0 | 0 | yes |
