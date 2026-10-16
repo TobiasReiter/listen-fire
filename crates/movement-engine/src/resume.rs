@@ -473,7 +473,7 @@ impl Run<'_> {
     /// A collection op called inside one of the statement's expressions
     /// (crate::nested), by its span: read again from its slot, at its place.
     fn nested_op_in_statement(&self, statement: &Statement, span: Option<movement_parser::ast::Span>, scope: &Rc<Scope>) -> Result<Option<(movement_parser::ast::CollectionOpExpression, OpOrigin)>, Stop> {
-        if self.version() < 3 || span.is_none() {
+        if span.is_none() {
             return Ok(None);
         }
         for slot in crate::nested::direct_slots(statement) {
@@ -494,8 +494,8 @@ impl Run<'_> {
     }
 
     fn op_of_call(&self, call: &CallStatement, scope: &Rc<Scope>) -> Result<Option<movement_parser::ast::CollectionOpExpression>, Stop> {
-        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee, self.version()).is_some();
-        match crate::collection::reading(call, binds, self.version()) {
+        let binds = scope.resolve(&call.callee).is_some();
+        match crate::collection::reading(call, binds) {
             Ok(Some(crate::collection::Reading::Collection(op))) => Ok(Some(op)),
             Ok(_) => Ok(None),
             Err(refusal) => Err(runtime(format!("{refusal} — the checker should have caught this"))),

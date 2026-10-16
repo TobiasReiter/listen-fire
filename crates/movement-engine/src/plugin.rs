@@ -85,19 +85,19 @@ impl Run<'_> {
     pub(crate) async fn invoke_plugin(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
         let registered = self.registered_plugin(written, scope);
         let declared = self.plugin_spec(&registered).and_then(|spec| output_under(spec, self.version())).cloned();
-        // From version 5 a plugin that declares no output runs as a statement,
+        // A plugin that declares no output runs as a statement,
         // for its effects, and binds nothing; the checker refuses its value.
-        let for_effects = declared.is_none() && self.plugin_spec(&registered).is_some() && self.version() >= 5;
+        let for_effects = declared.is_none() && self.plugin_spec(&registered).is_some();
         if declared.is_none() && !for_effects {
             return Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
         }
-        // From version 5 its arguments are by position, bound to its
+        // Its arguments are by position, bound to its
         // parameters as the checker bound them.
         let bound = match self.plugin_spec(&registered) {
-            Some(spec) if self.version() >= 5 && args.iter().any(|arg| arg.name().is_none()) => {
+            Some(spec) if args.iter().any(|arg| arg.name().is_none()) => {
                 let callable = spec.under(self.version());
                 let bound = callable.bind_args(PluginCallSite::Plain, args);
                 if !bound.misfits.is_empty() {
@@ -120,9 +120,8 @@ impl Run<'_> {
         }
         let mut config = JsObject::new();
         // A plugin fed only by an extraction runs on a record's fields, which a
-        // stage handed it as the extracted context; from version 5 a call
-        // hands it the record as its argument, on the same wire.
-        let fed_record = self.version() >= 5 && self.plugin_spec(&registered).is_some_and(|spec| spec.fed_by_extraction == Some(true));
+        // stage handed it as the extracted context; a call hands it the record as its argument, on the same wire.
+        let fed_record = self.plugin_spec(&registered).is_some_and(|spec| spec.fed_by_extraction == Some(true));
         let mut extracted_context = JsObject::new();
         let mut origins: Vec<u32> = Vec::new();
         for (position, arg) in args.iter().enumerate() {

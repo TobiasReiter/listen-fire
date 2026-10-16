@@ -82,9 +82,6 @@ pub struct Envelope {
     pub env: Env,
     /// How many origin ids the caller assigned.
     pub origins: u32,
-    /// The movement's pin. Required: the engine knows no release, so it has
-    /// no version of its own to fall back to.
-    pub language_version: u32,
     /// The run's pinned instant, in milliseconds (`now`, a `toISOString`
     /// text on the wire): what `DATE.TODAY` reads.
     pub now: Option<f64>,
@@ -106,10 +103,6 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
         env.declare(name.clone(), ValueBinding { value, trail, many });
     }
     let origins = json.get("origins").and_then(Json::as_u64).unwrap_or(0) as u32;
-    let language_version = match json.get("languageVersion") {
-        Some(version) => version.as_u64().map(|v| v as u32).ok_or_else(|| format!("the language version is a number, not {version}"))?,
-        None => return Err("the envelope has no `languageVersion`: an expression is evaluated under its movement's pin, which the caller passes".into()),
-    };
     let now = match json.get("now") {
         None => None,
         Some(Json::String(iso)) => match crate::js_date::parse(iso, crate::js_date::LocalZone::UTC) {
@@ -123,7 +116,7 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
         Some(Json::String(zone)) => Some(zone.clone()),
         Some(other) => return Err(format!("the local zone is a text, not {other}")),
     };
-    Ok(Envelope { env, origins, language_version, now, local_zone })
+    Ok(Envelope { env, origins, now, local_zone })
 }
 
 #[cfg(test)]

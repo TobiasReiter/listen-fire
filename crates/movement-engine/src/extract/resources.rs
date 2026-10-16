@@ -1,12 +1,9 @@
 //! The content an extraction call reads, as resources (Layer 5
 //! provenance): a content file's text read once (`files.resolveFileText`,
-//! bounded for the prompt), and a resource with no id given one by the host
-//! (`ids.mint`), one request per batch.
-
-use serde_json::Value as Json;
+//! bounded for the prompt).
 
 use crate::host;
-use crate::js::{self, Js, JsObject};
+use crate::js::{self, Js};
 use crate::run::{Failure, Run};
 use crate::trace::TraceEntry;
 use crate::unique::get as member;
@@ -49,53 +46,6 @@ pub fn bound_text(text: &str, ceiling: f64) -> (String, f64, Option<usize>) {
 }
 
 impl Run<'_> {
-    /// `count` fresh ids from the host, refused unless they are `count`
-    /// distinct texts (run_context.ts `mintedFrom`).
-    pub(crate) async fn mint_ids(&self, count: usize) -> Result<Vec<String>, Failure> {
-        if count == 0 {
-            return Ok(Vec::new());
-        }
-        let answer = self.ask(host::ids::mint(self.segment(), count)).await?;
-        let ids: Option<Vec<String>> = answer
-            .as_ref()
-            .and_then(Json::as_array)
-            .filter(|ids| ids.len() == count)
-            .and_then(|ids| ids.iter().map(|id| id.as_str().filter(|id| !id.is_empty()).map(String::from)).collect());
-        let distinct = ids.as_ref().is_some_and(|ids| ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id)));
-        match ids {
-            Some(ids) if distinct => Ok(ids),
-            _ => {
-                let shown = answer.map_or_else(|| "undefined".to_string(), |a| a.to_string());
-                Err(Failure::Engine {
-                    class: crate::eval::ErrorClass::Error,
-                    message: format!("ids.mint was asked for {count} ids and answered {shown}, which is not {count} distinct strings"),
-                })
-            }
-        }
-    }
-
-    /// `stampResourceIds`: every resource without an id given one, all in
-    /// one request; one that has its id passes through.
-    pub(crate) async fn stamp_resources(&self, resources: Vec<Js>) -> Result<Vec<Js>, Failure> {
-        let unstamped = resources.iter().filter(|r| !member(r, "id").truthy()).count();
-        if unstamped == 0 {
-            return Ok(resources);
-        }
-        let mut ids = self.mint_ids(unstamped).await?.into_iter();
-        Ok(resources
-            .into_iter()
-            .map(|resource| {
-                if member(&resource, "id").truthy() {
-                    return resource;
-                }
-                let Js::Object(object) = &resource else { return resource };
-                let mut stamped = JsObject::clone_of(object);
-                stamped.set("id".into(), Js::str(ids.next().expect("one id per unstamped resource")));
-                Js::object(stamped)
-            })
-            .collect())
-    }
-
     /// The run's file→text seam (run.ts `fileTextResolver`): the host's
     /// reading, priced, and a file that was there but whose bytes could not
     /// be fetched warned of on the run, once per file.

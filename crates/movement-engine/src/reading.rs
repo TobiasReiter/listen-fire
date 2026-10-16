@@ -102,17 +102,16 @@ impl Run<'_> {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: Js::array(landings.iter().cloned().map(record::held).collect()), prov });
         }
-        // The receipt read as a plain list: its slots, in order. From
-        // version 5 a slot holding ONE record reads as that record, as a
-        // list literal's member does; before 5 it read null (`slotValue`).
+        // The receipt read as a plain list: its slots, in order; a slot
+        // holding ONE record reads as that record, as a list literal's
+        // member does.
         if let Binding::Tuple(slots) = &binding {
             let prov = origins(&binding)?;
-            let records_as_themselves = self.version() >= 5;
             let values = slots
                 .iter()
                 .map(|slot| match slot {
                     Binding::Value(value) => value.value.clone(),
-                    slot if records_as_themselves && record::is_one_record(slot) => record::held(slot.clone()),
+                    slot if record::is_one_record(slot) => record::held(slot.clone()),
                     _ => Js::Null,
                 })
                 .collect();
@@ -122,17 +121,15 @@ impl Run<'_> {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: record::held(binding), prov });
         }
-        // A function is a value from version 5, as a JavaScript function is:
+        // A function is a value, as a JavaScript function is:
         // a closure read bare is itself, (AST, scope), whoever holds it may
         // call it; a function declared with a name is a closure over the
         // file scope it was declared in — never the caller's — as a
         // collection op's named function already is.
-        if self.version() >= 5 {
-            match &binding {
-                Binding::Closure(_) => return Ok(Evaluated { value: record::held(binding), prov: none() }),
-                Binding::Movement(declared) => return Ok(Evaluated { value: record::held(self.function_value(declared)?), prov: none() }),
-                _ => {}
-            }
+        match &binding {
+            Binding::Closure(_) => return Ok(Evaluated { value: record::held(binding), prov: none() }),
+            Binding::Movement(declared) => return Ok(Evaluated { value: record::held(self.function_value(declared)?), prov: none() }),
+            _ => {}
         }
         Err(unsupported(&format!("reading '{name}' ({}) as a bare value", record::describe(&binding))))
     }
@@ -498,9 +495,6 @@ impl Run<'_> {
             if self.hop_keeps_binding(step, &landed, scope, span).await? {
                 kept.push(landed);
             }
-        }
-        if !movement_parser::version::since(self.version(), 5) {
-            return Ok(kept);
         }
         self.ordered_bindings(kept, step, scope, span).await
     }

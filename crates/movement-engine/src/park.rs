@@ -1340,7 +1340,7 @@ mod tests {
     #[test]
     fn a_picked_record_parks_as_the_typescript_writes_it() {
         let input: crate::run::SegmentInput = serde_json::from_value(serde_json::json!({
-            "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 3, "event": null,
+            "source": "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}", "languageVersion": 5, "event": null,
             "segmentId": "g1", "serves": [], "now": "2026-03-12T12:00:00.000Z",
             "catalog": { "adapters": {}, "credentials": {}, "plugins": {} },
         }))

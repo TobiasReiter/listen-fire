@@ -539,20 +539,6 @@ impl Scope {
         self.parent.as_ref().and_then(|p| p.resolve(name))
     }
 
-    /// `resolveFunction`: the declared name of a function in scope (a
-    /// movement, a plugin, an import, a closure) written `name` — under
-    /// versions 1–4 in any letter case, from 5 exactly (design §4.1).
-    pub fn resolve_function(&self, name: &str, language_version: u32) -> Option<String> {
-        let exact = movement_parser::version::since(language_version, 5);
-        let folded = crate::js::to_lower_case(name);
-        let own = self.bindings.borrow().iter().find_map(|(bound, binding)| {
-            let callable = matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Closure(_));
-            let same = if exact { bound == name } else { crate::js::to_lower_case(bound) == folded };
-            (callable && same).then(|| bound.clone())
-        });
-        own.or_else(|| self.parent.as_ref().and_then(|p| p.resolve_function(name, language_version)))
-    }
-
     /// This scope's own bindings, in declaration order.
     pub fn own_bindings(&self) -> Vec<(String, Binding)> {
         self.bindings.borrow().clone()

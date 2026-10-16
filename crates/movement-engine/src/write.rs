@@ -291,7 +291,6 @@ pub(crate) struct PositionTarget {
 pub(crate) enum Verb {
     Write,
     Match,
-    Link,
 }
 
 /// What `evaluateWriteFields` hands back.
@@ -449,7 +448,6 @@ impl Run<'_> {
             &constraints,
             &resolve_record,
             &evaluated.fields,
-            self.version(),
         );
         let written = self
             .with_locks(lock_names, self.find_then_write(&target, &evaluated, &resolve_record, &constraints, &identity.narrowings, &parent_links, scope))
@@ -1058,7 +1056,7 @@ impl Run<'_> {
             }
         }
         for field in &constraint_fields {
-            if unique::is_blank(record.get(field).unwrap_or(&Js::Undefined), self.version()) {
+            if unique::is_blank(record.get(field).unwrap_or(&Js::Undefined)) {
                 record.set(field.clone(), Js::Null);
             }
         }
@@ -1092,7 +1090,7 @@ impl Run<'_> {
         // The target's WHERE runs last, on the smallest list: it reads each
         // candidate as the record it is.
         let candidates = if target.where_.is_empty() { shortlist } else { self.narrow_by_target_where(target, shortlist, scope).await? };
-        let (chosen, judge_unavailable) = match unique::arbitrate_without_judge(asserted, &candidates, constraints, self.version()) {
+        let (chosen, judge_unavailable) = match unique::arbitrate_without_judge(asserted, &candidates, constraints) {
             Some(decided) => (decided, None),
             None => self.judge(asserted, &candidates, &target.record_type, constraints).await?,
         };
@@ -1243,16 +1241,13 @@ impl Run<'_> {
         self.with_locks(locks, self.merge_into_record(target, external_id, fields, parent_links, prior)).await
     }
 
-    /// `recordBefore` (version 4 on): the record an update found, as it
+    /// `recordBefore`: the record an update found, as it
     /// stood — the snapshot its handle's `-[:@old]->` lands on, and the
     /// values the new handle reads for the fields the write did not send.
     /// What the engine already held, under the read the merge has just made;
     /// nothing here asks the adapter again.
     fn record_before(&self, target: &Target, external_id: &Js, prior: Option<Prior>, current: &Js) -> (Option<Rc<Handle>>, Option<Js>) {
         let Some(prior) = prior else { return (None, None) };
-        if !movement_parser::version::since(self.version(), 4) {
-            return (None, None);
-        }
         let mut data = prior.data;
         if let Js::Object(current) = current {
             for (key, value) in current.entries() {
@@ -1489,10 +1484,9 @@ impl Run<'_> {
         // new record in place, so every scope holding it (an enclosing body
         // past an `if` arm, a closure, a second name) reads the update. A
         // found record or a landing is snapshotted from what was known of it
-        // (the merge did that above). Version 4 on; before it `org` keeps the
-        // values of its own write.
+        // (the merge did that above).
         let into = match &binding {
-            Some(Binding::Handle(handle)) if is_written_handle(handle) && movement_parser::version::since(self.version(), 4) => Some(handle.clone()),
+            Some(Binding::Handle(handle)) if is_written_handle(handle) => Some(handle.clone()),
             _ => None,
         };
         let written = match &into {
@@ -2046,7 +2040,6 @@ pub(crate) fn infer_linked_type(
     let keyword = match verb {
         Verb::Write => "write",
         Verb::Match => "match",
-        Verb::Link => "link",
     };
     let (creates, written) = if verb == Verb::Write { ("write creates", "written") } else { ("match finds", "found") };
     let edge = schema.and_then(|s| {

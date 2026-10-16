@@ -256,10 +256,6 @@ pub(crate) fn resources_alias(hops_raw: &str) -> Option<String> {
 /// resources are related through.
 const RESOURCES_REFERENCE_FIELD_ID: &str = "_resources";
 
-/// The envelope a `_resources` reference's answer is (rust_host.ts): the host
-/// makes each resource's `fileRef` slot a file (`withResourceFile`).
-const RESOURCES_ENVELOPE: &str = "resources";
-
 /// Since language version 5 (run.ts): `_resources` off an adapter's record,
 /// the TypeScript's message byte for byte.
 const RESOURCES_RETIRED: &str =
@@ -627,27 +623,12 @@ impl Run<'_> {
                         })
                         .collect())
                 }
-                // `msg-[f:_resources]-> { … }`: the record's resource bundle,
-                // read through the event's source (`resolvePositionResources`
-                // over `this.source.adapter`, whichever graph the record was
-                // landed in). Language versions 1–4 only, their quirk
-                // included; since version 5 `_resources` is an extraction's
-                // source content and nothing else's (the checker refuses the
-                // hop, MOV_RESOURCES_NOT_EXTRACTED), and the engine refuses it
-                // as the TypeScript's run.ts does, before the host is asked
-                // for the reserved reference or its `resources` envelope.
-                Binding::Event | Binding::Landed(_) if let Probe::Resources { alias, filter } = probe => {
-                    if movement_parser::version::since(self.version(), 5) {
-                        return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", RESOURCES_RETIRED.to_string())));
-                    }
-                    let source = self.source.borrow().clone().expect("the event is seeded before the body runs");
-                    let start = match &binding {
-                        Binding::Landed(landed) => landed.position().clone(),
-                        _ => source.position.to_js(),
-                    };
-                    let resources = self.position_resources(&start, &source.read).await.map_err(Stop::Thrown)?;
-                    let resources = self.filter_resources(resources, filter.as_deref(), scope, span).await?;
-                    Ok(resource_paths(resources, alias.as_deref()))
+                // `msg-[f:_resources]-> { … }`: `_resources` is an
+                // extraction's source content and nothing else's (the checker
+                // refuses the hop, MOV_RESOURCES_NOT_EXTRACTED); a program
+                // that slipped past it fails before the host is asked.
+                Binding::Event | Binding::Landed(_) if matches!(probe, Probe::Resources { .. }) => {
+                    Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", RESOURCES_RETIRED.to_string())))
                 }
                 binding @ (Binding::Instance(_) | Binding::Handle(_) | Binding::Event | Binding::Landed(_)) => {
                     let Some(steps) = steps else { return Err(over(crate::record::describe(&binding))) };
@@ -657,25 +638,6 @@ impl Run<'_> {
                 other => Err(Stop::Thrown(Failure::unsupported(&format!("block heads rooted at '{root}' (a {} binding)", crate::record::kind_of(&other)), ""))),
             }
         })
-    }
-
-    /// `resolvePositionResources`: the resources the record's reserved
-    /// `_resources` reference relates it to, each one's `data` (its `fileRef`
-    /// slot made a file by the host, `withResourceFile`), every one without
-    /// an id given one.
-    async fn position_resources(&self, start: &Js, read: &Rc<Read>) -> Result<Vec<Js>, Failure> {
-        let step = EdgeStep {
-            edge_type_id: RESOURCES_REFERENCE_FIELD_ID.into(),
-            direction: EdgeDirection::Outgoing,
-            alias: None,
-            cardinality: None,
-            filter: None,
-            expression_filter: None,
-        };
-        let args = vec![("fieldId", Js::str(RESOURCES_REFERENCE_FIELD_ID)), ("direction", Js::str("outgoing"))];
-        let related = self.related_items_as(start, &step, read, args, Some(RESOURCES_ENVELOPE)).await?;
-        let resources = related.into_iter().map(|(position, _)| position_data(&position)).filter(|data| !data.is_nullish()).collect();
-        self.stamp_resources(resources).await
     }
 
     /// `filterResources`: the WHERE evaluated over each resource, with the

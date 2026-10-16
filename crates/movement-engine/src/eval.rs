@@ -252,7 +252,6 @@ pub trait Reader {
 
 pub struct Evaluator<'a> {
     env: &'a dyn Names,
-    language_version: u32,
     around: Surroundings<'a>,
     mode: Mode<'a>,
     /// Position-scoped (`MovementExprContext.scope`): a hop's WHERE or ORDER
@@ -276,19 +275,19 @@ impl<'a> Evaluator<'a> {
     /// `first_literal` is the first origin id free for literals: the caller
     /// numbered its own origins below it.
     #[cfg(test)]
-    pub fn new(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, first_literal: u32) -> Self {
-        Evaluator { env, language_version, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
+    pub fn new(env: &'a dyn Names, around: Surroundings<'a>, first_literal: u32) -> Self {
+        Evaluator { env, around, mode: Mode::Pure { next_literal: Cell::new(first_literal) }, scoped: false }
     }
 
     /// Inside a run: what the evaluation cannot answer itself, it asks.
-    pub fn in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
-        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: false }
+    pub fn in_run(env: &'a dyn Names, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+        Evaluator { env, around, mode: Mode::Run(reader), scoped: false }
     }
 
     /// Inside a run, scoped at a landed record (its reader answers
     /// `Ask::ScopedField`).
-    pub fn scoped_in_run(env: &'a dyn Names, language_version: u32, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
-        Evaluator { env, language_version, around, mode: Mode::Run(reader), scoped: true }
+    pub fn scoped_in_run(env: &'a dyn Names, around: Surroundings<'a>, reader: &'a dyn Reader) -> Self {
+        Evaluator { env, around, mode: Mode::Run(reader), scoped: true }
     }
 
     fn reader(&self) -> Option<&'a dyn Reader> {
@@ -651,12 +650,11 @@ impl<'a> Evaluator<'a> {
         if let Some(name) = name
             && self.env.binds_non_value(name)
         {
-            // From version 5 `x != null` is how a program writes what
+            // `x != null` is how a program writes what
             // `EXISTS(x)` asked: a name bound to records that may be none (a
             // block's returned records, a kept walk) is present only when it
             // holds one, exactly as EXISTS answers.
-            if movement_parser::version::since(self.language_version, 5)
-                && matches!(self.env.binding(name), Some(Binding::Positions(_) | Binding::LazyWalk(_)))
+            if matches!(self.env.binding(name), Some(Binding::Positions(_) | Binding::LazyWalk(_)))
             {
                 let exists = Expression::Traverse {
                     alias_root: Some(name.clone()),
@@ -738,10 +736,9 @@ impl<'a> Evaluator<'a> {
                 }
                 present.first().map_or(Js::Null, |v| (*v).clone())
             }
-            // From version 5 a list's count is TypeScript's `.length`: every
-            // item, an empty one included.
-            AggregationFunction::Count if movement_parser::version::since(self.language_version, 5) => Js::Number(values.len() as f64),
-            AggregationFunction::Count => Js::Number(values.iter().filter(|v| !v.is_nullish()).count() as f64),
+            // A list's count is TypeScript's `.length`: every item, an empty
+            // one included.
+            AggregationFunction::Count => Js::Number(values.len() as f64),
             AggregationFunction::Sum => Js::Number(sum(&values)),
             AggregationFunction::Avg if values.is_empty() => Js::Null,
             AggregationFunction::Avg => Js::Number(sum(&values) / values.len() as f64),
@@ -842,9 +839,9 @@ impl<'a> Evaluator<'a> {
     }
 
     async fn function(&self, id: &str, args: &[Expression]) -> Eval {
-        // `fail("…")` inside an expression (version 5): the run fails with
+        // `fail("…")` inside an expression: the run fails with
         // the author's words, as the statement `fail("…")` does (run.rs).
-        if id == "error" && movement_parser::version::since(self.language_version, 5) {
+        if id == "error" {
             let message = match args.first() {
                 Some(message) => self.eval(message).await?.value,
                 None => Js::Null,
@@ -915,8 +912,8 @@ impl<'a> Evaluator<'a> {
             let value = reader.ask(Ask::FieldFunction { id: id.to_string(), args: values }).await?.value;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
-        if id == "coalesce" && self.language_version >= 3 {
-            // From version 3 COALESCE short-circuits, as `??` does.
+        if id == "coalesce" {
+            // COALESCE short-circuits, as `??` does.
             let mut seen = Vec::new();
             for a in args {
                 let result = self.eval(a).await?;
@@ -1282,7 +1279,7 @@ mod tests {
     }
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
-        Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
+        Evaluator::in_run(&EventOnly, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
     }
 
     /// `value[member.key] = …`: an object literal's `__proto__` key is

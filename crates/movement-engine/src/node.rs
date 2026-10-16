@@ -227,8 +227,7 @@ impl Run<'_> {
         let shape = self.resolved_shape(&declared).map_err(Stop::Thrown)?;
         let built = self.build_graph_body(literal, scope, path, Some(&shape)).await?;
         let spreads = spreads_anywhere(literal);
-        if (spreads || self.version() >= 3)
-            && let Some(misfit) = graph_value_misfit(&Binding::Node(built.clone()), &shape, "", !spreads)
+        if let Some(misfit) = graph_value_misfit(&Binding::Node(built.clone()), &shape, "", !spreads)
         {
             return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the value built for 'graph<{name}>' doesn't fit it: {misfit}"))));
         }

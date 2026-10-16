@@ -359,18 +359,18 @@ impl Run<'_> {
         self.within_named_call(arm.name.as_deref(), self.body(&arm.body, env, address, &arm.path, 0)).await
     }
 
-    /// `withinNamedCall`: `future` run as a call of the function `name` (from
-    /// version 3), counted towards the call depth, on this flow's stack.
+    /// `withinNamedCall`: `future` run as a call of the function `name`,
+    /// counted towards the call depth, on this flow's stack.
     pub(crate) async fn within_named_call<T>(&self, name: Option<&str>, future: impl std::future::Future<Output = Result<T, Stop>>) -> Result<T, Stop> {
-        let Some(name) = name.filter(|_| self.version() >= 3) else { return future.await };
+        let Some(name) = name else { return future.await };
         self.enter_named_call(name)?;
         self.within_called_name(Some(name), future).await
     }
 
-    /// `withinCalledName`: `future` run with `name` on this flow's stack
-    /// (from version 3), not measured against the limit.
+    /// `withinCalledName`: `future` run with `name` on this flow's stack,
+    /// not measured against the limit.
     pub(crate) async fn within_called_name<T>(&self, name: Option<&str>, future: impl std::future::Future<Output = T>) -> T {
-        let Some(name) = name.filter(|_| self.version() >= 3) else { return future.await };
+        let Some(name) = name else { return future.await };
         self.call_stack.borrow_mut().push(name.to_string());
         let outcome = future.await;
         self.call_stack.borrow_mut().pop();
@@ -380,13 +380,12 @@ impl Run<'_> {
     /// `x = (…) => { … }`: the closure, holding the scope it is written in
     /// by REFERENCE (run.ts `env`), as a JavaScript closure does: it sees the
     /// bindings made after it too, and a park writes the scope once and the
-    /// closure as a link to it. From version 3, the name its body may call
-    /// it by.
+    /// closure as a link to it, with the name its body may call it by.
     pub(crate) fn closure_binding(&self, closure: &ClosureExpression, name: Option<&str>, scope: &Rc<Scope>, path: &str) -> Binding {
         Binding::Closure(Rc::new(Closure {
             code: Code { ast: Rc::new(closure.clone()), path: path.to_string() },
             captured: scope.clone(),
-            self_name: name.filter(|_| self.version() >= 3).map(String::from),
+            self_name: name.map(String::from),
             file_name: None,
             by_reference: true,
         }))
@@ -402,7 +401,7 @@ impl Run<'_> {
         Binding::Closure(Rc::new(Closure {
             code: Code { ast: Rc::new(closure.clone()), path: path.to_string() },
             captured: file.clone(),
-            self_name: (self.version() >= 3).then(|| name.to_string()),
+            self_name: Some(name.to_string()),
             file_name: Some(name.to_string()),
             by_reference: false,
         }))

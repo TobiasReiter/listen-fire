@@ -71,6 +71,14 @@ use crate::stdlib::Surroundings;
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
 
+/// The first language version this engine runs; every earlier one runs on
+/// the TypeScript engine, and a segment pinned below it is refused by
+/// BELOW_FIRST_VERSION before anything is asked.
+pub const FIRST_VERSION: u32 = 5;
+
+/// Why a segment pinned below FIRST_VERSION is refused (`{refused}`).
+pub const BELOW_FIRST_VERSION: &str = "language_version_runs_on_typescript";
+
 /// The slot a `return` binds its value into (run.ts `RETURN_SLOT`): a name
 /// the grammar cannot spell.
 pub(crate) const RETURN_SLOT: &str = "#return";
@@ -223,7 +231,7 @@ pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
-        Err(Stop::Refused(reasons)) => return json!({ "refused": reasons[0], "reasons": reasons }),
+        Err(Stop::Refused(reason)) => return json!({ "refused": reason }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
         Err(Stop::Thrown(failure)) => failure.marked(json!({ "thrown": failure.to_json() })),
         Err(Stop::Failed(failure, result)) => failure.marked(json!({ "failed": { "error": failure.to_json(), "result": result } })),
@@ -251,10 +259,10 @@ fn legacy_extraction() -> Failure {
 
 /// How a run stops early.
 pub(crate) enum Stop {
-    /// Not admitted: nothing but the parse and the walk happened. Every
-    /// reason the walk met, the first first; never empty.
-    Refused(Vec<String>),
-    /// Past admission, before any host-visible effect.
+    /// Not run, before anything was asked: a pin below FIRST_VERSION.
+    Refused(String),
+    /// Before any host-visible effect, the run's input turned out to be
+    /// one this engine cannot read.
     Declined(String),
     Thrown(Failure),
     /// The body failed; the result so far rides with it.
@@ -490,8 +498,12 @@ pub(crate) struct Run<'a> {
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
     let version = input.language_version;
-    if !movement_parser::version::SUPPORTED_LANGUAGE_VERSIONS.contains(&version) {
-        return Err(Stop::Refused(vec!["language_version_unsupported".into()]));
+    // Language versions 1–4 run on the TypeScript engine, never here.
+    if version < FIRST_VERSION {
+        return Err(Stop::Refused(BELOW_FIRST_VERSION.into()));
+    }
+    if let Some(pin) = movement_checker::language_version_diagnostic(version).filter(|d| d.is_error()) {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_LANGUAGE_VERSION", pin.message)));
     }
     let root = match program::parse(&input.source, version) {
         Ok(root) => root,
@@ -618,10 +630,8 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
 /// diagnostics — errors only, and a retired write form that still runs does
 /// not block.
 fn native_check(program: &ast::Program, catalog: &CatalogSnapshot, version: u32, release_warning: Option<&VersionWarning>) -> Result<Json, Stop> {
+    // An error pin never gets here (the run's entry refused it).
     let pin = movement_checker::language_version_diagnostic(version);
-    if let Some(pin) = pin.as_ref().filter(|d| d.is_error()) {
-        return Err(Stop::Thrown(Failure::engine("MOVENG_LANGUAGE_VERSION", pin.message.clone())));
-    }
     let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &crate::env_services::EnvZones };
     let answer = movement_checker::answer::check_answer(program, catalog, options);
     let blocking: Vec<String> = answer
@@ -934,7 +944,7 @@ impl Run<'_> {
                         self.declare_file_imports(names, path, written, file).await?;
                     }
                     Statement::Assign(assign) => match &assign.value {
-                        RValue::Construct { construct } if self.file_callable(&construct.callee, file, program) => return Err(Stop::Thrown(file_level_call())),
+                        RValue::Construct { construct } if self.file_callable(&construct.callee, file) => return Err(Stop::Thrown(file_level_call())),
                         RValue::Construct { .. } => self.file_statement(statement, file, written),
                         // A call there is a built-in's value, or a call with
                         // nothing to run about (`resolvedRValue`, then
@@ -1034,7 +1044,7 @@ impl Run<'_> {
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
-        entry_of(movements, self.input.movement_name.as_deref(), self.version()).ok_or_else(|| {
+        entry_of(movements, self.input.movement_name.as_deref()).ok_or_else(|| {
             Stop::Thrown(Failure::engine(
                 "MOVENG_NOT_FOUND",
                 match self.input.movement_name.as_deref() {
@@ -1078,13 +1088,10 @@ impl Run<'_> {
         }
     }
 
-    /// `readCall`'s value reading: from version 3, a callee the scope does
-    /// not bind (nor names a function in any letter case) that the standard
-    /// library answers.
+    /// `readCall`'s value reading: a callee the scope does not bind that the
+    /// standard library answers.
     fn reads_as_builtin(&self, call: &ast::CallStatement, scope: &Scope) -> bool {
-        self.version() >= 3
-            && scope.resolve(&call.callee).is_none()
-            && scope.resolve_function(&call.callee, self.version()).is_none()
+        scope.resolve(&call.callee).is_none()
             && !call.callee.contains('.')
             && crate::stdlib::is_flat_builtin(&call.callee)
     }
@@ -1092,12 +1099,8 @@ impl Run<'_> {
     /// Whether a file-level construction or call names a movement or a
     /// plugin (`resolveCallee` at file scope), which has no event to run
     /// about.
-    fn file_callable(&self, callee: &str, file: &Scope, program: &ast::Program) -> bool {
-        match file.resolve(callee) {
-            Some(Binding::Movement(_) | Binding::Plugin(_)) => true,
-            Some(_) => false,
-            None => (3..5).contains(&self.version()) && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if js::to_lower_case(&m.name) == js::to_lower_case(callee))),
-        }
+    fn file_callable(&self, callee: &str, file: &Scope) -> bool {
+        matches!(file.resolve(callee), Some(Binding::Movement(_) | Binding::Plugin(_)))
     }
 
     fn original(&self, local: &str) -> String {
@@ -1296,7 +1299,7 @@ impl Run<'_> {
                 Ok(Flow::FellThrough)
             }
             Statement::Match(statement) => {
-                self.match_record(&statement.r#match, None, scope, self.match_miss_policy()).await?;
+                self.match_record(&statement.r#match, None, scope, crate::verbs::OnMiss::Absent).await?;
                 Ok(Flow::FellThrough)
             }
             Statement::Link(statement) => {
@@ -1408,7 +1411,7 @@ impl Run<'_> {
                 self.write(write, Some(name), scope, &format!("{path}/value/write")).await?;
             }
             RValue::Match { r#match } => {
-                self.match_record(r#match, Some(name), scope, self.match_miss_policy()).await?;
+                self.match_record(r#match, Some(name), scope, crate::verbs::OnMiss::Absent).await?;
             }
             RValue::Link { link } => self.link(link, Some(name), scope).await?,
             RValue::Block { block } => {
@@ -1516,15 +1519,15 @@ impl Run<'_> {
             ),
             _ => return None,
         };
-        let callable = matches!(scope.resolve(&self.callee_name(&call.callee, scope)), Some(Binding::Movement(_) | Binding::Plugin(_) | Binding::Closure(_)));
+        let callable = matches!(scope.resolve(&call.callee), Some(Binding::Movement(_) | Binding::Plugin(_) | Binding::Closure(_)));
         callable.then_some((call, call_path))
     }
 
     /// `readCallIn`'s reading of a call of a collection op or `MEMBERS` (a
-    /// built-in from version 3, when the program binds no such name).
+    /// built-in, when the program binds no such name).
     fn call_reading(&self, call: &ast::CallStatement, scope: &Scope) -> Result<Option<crate::collection::Reading>, Stop> {
-        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee, self.version()).is_some();
-        crate::collection::reading(call, binds, self.version())
+        let binds = scope.resolve(&call.callee).is_some();
+        crate::collection::reading(call, binds)
             .map_err(|refusal| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("{refusal} — the checker should have caught this"))))
     }
 
@@ -1542,12 +1545,12 @@ impl Run<'_> {
     }
 
     /// The expression a right-hand side reads as: itself, or a bound call
-    /// to a built-in (`n = UPPER(x)`, from version 3), which is the
+    /// to a built-in (`n = UPPER(x)`), which is the
     /// expression it is (`resolvedRValue`). The shim admits no other call.
     fn value_slot<'v>(&self, value: &'v RValue, scope: &Scope) -> Result<&'v ExprSlot, Stop> {
         match value {
             RValue::Expr { expr } => Ok(expr),
-            RValue::Call { call } if self.version() >= 3 && scope.resolve(&call.callee).is_none() => call
+            RValue::Call { call } if scope.resolve(&call.callee).is_none() => call
                 .expression
                 .as_ref()
                 .ok_or_else(|| Stop::Thrown(Failure::unreproduced(&format!("the call '{}'", call.callee), "a built-in's call reads as its expression"))),
@@ -1596,8 +1599,8 @@ impl Run<'_> {
             | Binding::Closure(_)
             | Binding::Callback(_)
             | Binding::ShapePosition(_)
-            | Binding::Resource(_) => true,
-            Binding::Shape(_) => self.version() >= 3,
+            | Binding::Resource(_)
+            | Binding::Shape(_) => true,
             Binding::Value(_) | Binding::Instance(_) | Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } => false,
         }
     }
@@ -1607,8 +1610,7 @@ impl Run<'_> {
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
         // A file-level value holding a nested call: this engine binds the
         // file's values before anything else, and stages none there.
-        if self.version() >= 3
-            && let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
+        if let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
             && !crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope)).is_empty()
         {
             return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
@@ -1737,7 +1739,7 @@ impl Run<'_> {
     pub(crate) async fn evaluate_over_resource(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, resource: &Js) -> Result<Evaluated, Stop> {
         let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
         let reader = Reading { run: self, scope, span, subject: None, field: None, resource: Some(resource) };
-        Evaluator::in_run(scope.as_ref(), self.version(), around, &reader).eval(expr).await.map_err(|error| {
+        Evaluator::in_run(scope.as_ref(), around, &reader).eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
         })
     }
@@ -1756,9 +1758,9 @@ impl Run<'_> {
         let scoped = subject.is_some();
         let reader = Reading { run: self, scope, span: span.clone(), subject, field, resource: None };
         let evaluator = if scoped {
-            Evaluator::scoped_in_run(scope.as_ref(), self.version(), around, &reader)
+            Evaluator::scoped_in_run(scope.as_ref(), around, &reader)
         } else {
-            Evaluator::in_run(scope.as_ref(), self.version(), around, &reader)
+            Evaluator::in_run(scope.as_ref(), around, &reader)
         };
         evaluator.eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
@@ -1777,10 +1779,10 @@ impl Run<'_> {
                 Scoped::Landed(landed) => self.scoped_field(landed, &field, crate::traverse::ScopedRead { edge, field_only }, scope).await.map(Ok),
                 // Only a walked hop's record carries inline edge properties.
                 // Over an in-memory edge (an extracted child, a node literal's
-                // landing) an alias read is that record's own field, and from 5
-                // a bare name is the variable it names, as everywhere else.
+                // landing) an alias read is that record's own field, and a
+                // bare name is the variable it names, as everywhere else.
                 Scoped::Emission(_) | Scoped::Binding(_) if edge && !field_only => match scope.resolve(&field) {
-                    Some(Binding::Value(value)) if movement_parser::version::since(self.version(), 5) => {
+                    Some(Binding::Value(value)) => {
                         Ok(Ok(Evaluated { value: value.value, prov: Prov::Built(value.trail.unwrap_or_default()) }))
                     }
                     _ => Ok(Err(EvalError::engine(
@@ -2413,30 +2415,19 @@ impl Scope {
 }
 
 /// The movement a segment runs (`selectMovement`): the one named, exactly
-/// or from version 3 in any letter case (the fired name is a function's),
-/// else the file's only movement. `None` when none is picked, and the run
-/// throws MOVENG_NOT_FOUND after the check, on either engine.
-fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
+/// or else in any letter case (the fired name is a function's), else the
+/// file's only movement. `None` when none is picked, and the run throws
+/// MOVENG_NOT_FOUND after the check.
+fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>) -> Option<&'m ast::MovementDeclaration> {
     match wanted.filter(|w| !w.is_empty()) {
-        Some(wanted) => spelled(movements, |m| &m.name, wanted, language_version >= 3),
+        Some(wanted) => movements.iter().find(|m| m.name == wanted).or_else(|| {
+            let folded = crate::js::to_lower_case(wanted);
+            movements.iter().find(|m| crate::js::to_lower_case(&m.name) == folded)
+        }),
         None if movements.len() == 1 => movements.first(),
         None => None,
     }
     .copied()
-}
-
-/// `resolveCallee`'s lookup, the one every name a call resolves goes
-/// through: the item named as written, else, where names read in any letter
-/// case (`any_case`: from version 3, and where the calling scope binds
-/// nothing under the name as written), the first named so in another case.
-fn spelled<'a, T: ?Sized + 'a, I>(items: I, name_of: impl Fn(&T) -> &str, written: &str, any_case: bool) -> Option<&'a T>
-where
-    I: IntoIterator<Item = &'a T> + Clone,
-{
-    items.clone().into_iter().find(|item| name_of(item) == written).or_else(|| {
-        let folded = crate::js::to_lower_case(written);
-        any_case.then(|| items.into_iter().find(|item| crate::js::to_lower_case(name_of(item)) == folded)).flatten()
-    })
 }
 
 /// A slot parsed and lowered (`expressionOfSlot` / `conditionOfSlot`); a
@@ -2728,7 +2719,7 @@ mod tests {
     /// A segment's input, its event an email webhook with `payload`.
     fn segment_input(source: &str, payload: Json, serves: &[&str]) -> Json {
         json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": serves,
+            "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
             "event": env::encode_plain(&env::decode(&json!(["o", 0, [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
@@ -2820,12 +2811,26 @@ mod tests {
         assert_eq!(reads(input), 0);
     }
 
+    /// A segment pinned below version 5 is refused by name before anything
+    /// is asked: those versions run on the TypeScript engine.
+    #[test]
+    fn a_run_pinned_below_five_is_refused_by_name_and_asks_nothing() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = 1\n}";
+        for version in 1..FIRST_VERSION {
+            let mut input = segment_input(source, json!(["o", 1, []]), &[]);
+            input["languageVersion"] = json!(version);
+            let (done, seen) = drive_input(input, plain_host(json!({})));
+            assert_eq!(done, json!({ "refused": BELOW_FIRST_VERSION }), "v{version}");
+            assert!(seen.is_empty(), "v{version}: {seen:?}");
+        }
+    }
+
     /// With `nativeCheck` the Rust checker answers `check.program`: the host
     /// is never asked, a clean program runs, and one it refuses ends with
     /// MOVENG_CHECK before any request at all.
     #[test]
     fn a_native_check_answers_in_place_of_the_host() {
-        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
+        let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
         let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
         input["nativeCheck"] = json!(true);
         let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
@@ -2837,20 +2842,21 @@ mod tests {
         assert!(done.to_string().contains("MOVENG_CHECK") && done.to_string().contains("MOV_NAME_UNRESOLVED"), "{done}");
         // A source the parser refuses ends at the check too, with its parse
         // error, and the host is asked nothing.
-        input["source"] = json!(source.replace("movement m(", "movement m(("));
+        input["source"] = json!(source.replace("function m(", "function m(("));
         let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
         assert!(seen.is_empty(), "{seen:?}");
         assert!(done.to_string().contains("MOVENG_PARSE") && done.to_string().contains("(line 3, col"), "{done}");
     }
 
     /// A null test of a credential reads it, and is refused as every other
-    /// read of one is, on every version, with the TypeScript engine's error
+    /// read of one is, with the TypeScript engine's error
     /// (`presenceCompare` there); another import is still present by being
     /// bound. The checker refuses the program first; this is the engine's own
     /// line behind it.
     #[test]
     fn a_null_test_of_a_credential_is_refused_not_answered() {
-        for version in 1..=5 {
+        {
+            let version = 5;
             for test in ["acme == null", "acme != null"] {
                 let source = format!("import {{ email }} from adapters\nimport {{ acme }} from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  if {test} {{ return 1 }}\n  return 2\n}}");
                 let mut input = segment_input(&source, json!(["o", 1, []]), &[]);
@@ -3109,7 +3115,7 @@ mod tests {
             (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "blockMeta", "edges": [] })) }), "resume_state_kind:blockMeta"),
         ] {
             let input = json!({
-                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+                "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
                 "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
                 "resume": { "state": wire(state) },
             });
@@ -3173,7 +3179,7 @@ mod tests {
         ] });
         assert_eq!(crate::park::resume_refusal(&wire(state.clone())), None);
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+            "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({ "adapterType": "email", "triggerType": "webhook", "payload": {} })),
             "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(), "resume": { "state": wire(state) },
         });
@@ -3208,7 +3214,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (`name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+            "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -3281,7 +3287,7 @@ mod tests {
         });
         let source = "import { email, attio } from adapters\ninbox = email()\ncrm = attio()\nmovement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> {\n    unique by (FUZZY `name`)\n    name: msg.`subject`\n  }\n}";
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
+            "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
             "catalog": catalog,
@@ -3339,7 +3345,7 @@ mod tests {
             "credentials": {}, "plugins": {},
         });
         let input = json!({
-            "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
+            "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
             "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
             "catalog": catalog,

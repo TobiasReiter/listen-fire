@@ -31,7 +31,7 @@ use crate::env;
 use crate::js::{self, Js, JsObject};
 use crate::run::{Failure, Run, Stop};
 use crate::unique;
-use crate::write::{Line, Target, Verb, WriteRecord, Written, candidate_data, describe_binding, record_head, thrown};
+use crate::write::{Line, Target, Verb, WriteRecord, Written, candidate_data, describe_binding, thrown};
 
 fn merge_into(into: &mut JsObject, bag: &Js) {
     if let Js::Object(bag) = bag {
@@ -129,11 +129,6 @@ struct LinkPlan {
 }
 
 impl Run<'_> {
-    /// What a match statement or a bound match does when it finds nothing.
-    pub(crate) fn match_miss_policy(&self) -> OnMiss {
-        if movement_parser::version::since(self.version(), 4) { OnMiss::Absent } else { OnMiss::EndScope }
-    }
-
     /// `missed`: a match that found nothing binds absent, or ends the
     /// enclosing scope. Under `Absent`, a judge that never answered leaves a
     /// warning: "not found" is then a guess, and a program that creates on
@@ -347,15 +342,6 @@ impl Run<'_> {
                 LinkTarget::Handle { name } => self.append_landing(&link.from, &link.edge, name, &node, scope),
             };
         }
-        // Version 1's body form was its own statement: criteria find the
-        // record and the link lands as one row. A body with an authored
-        // `unique by` never parsed under version 1, and runs as the match it is.
-        if let LinkTarget::Match { r#match, implied_identity } = &link.to {
-            let authored = !implied_identity && !r#match.unique_by.is_empty();
-            if !authored && self.version() < 2 {
-                return self.criteria_link(link, r#match, binding_name, scope).await;
-            }
-        }
         let (to_name, to) = match &link.to {
             LinkTarget::Match { r#match, .. } => {
                 // Version 4 refuses this form, so a miss here always ends
@@ -479,100 +465,6 @@ impl Run<'_> {
         let adapter = self.target_adapter(&graph).await?;
         let edge = Edge { adapter, name: edge.to_string(), from_type: from.target_type.clone(), from_id, to_type: to.target_type.clone(), to_id };
         Ok(LinkPlan { edge, from, to })
-    }
-
-    /// `executeCriteriaLink` (version 1): the body's fields are criteria
-    /// only, merged with the found type's native rules; the record found is
-    /// linked and bound, and the run log gets the link alone.
-    async fn criteria_link(&self, link: &LinkExpression, body: &MatchExpression, binding_name: Option<&str>, scope: &Rc<Scope>) -> Result<(), Stop> {
-        let at = format!("link {} -[:{}]-> {{ … }}", link.from, link.edge);
-        let from = endpoint_handle(&link.from, scope.resolve(&link.from), &at)?;
-        let graph = from.graph.clone();
-        let explicit = match &body.target {
-            WriteTarget::Linked { explicit_type, .. } => explicit_type.as_deref(),
-            _ => None,
-        };
-        let record_type = crate::write::infer_linked_type(graph.schema.as_ref(), &from.target_type, &link.edge, explicit, &link.from, Verb::Link)?;
-        let from_id = from.record().get("externalId");
-        if matches!(from_id, Js::Undefined) {
-            return Err(thrown(Failure::engine("MOVENG_RUNTIME", format!("{at}: '{}' carries no written record id to link", link.from))));
-        }
-        let adapter = self.target_adapter(&graph).await?;
-        let mut criteria = JsObject::new();
-        for field in &body.fields {
-            let value = self.evaluate_slot(&field.value, scope).await?.value;
-            if !matches!(value, Js::Undefined) {
-                criteria.set(field.name.clone(), value);
-            }
-        }
-        let keys: Vec<(String, bool)> = criteria.entries().iter().map(|(k, _)| (k.clone(), false)).collect();
-        let criteria = Js::object(criteria);
-        let descriptor = self.store_call(&adapter, "describe", env::object_of(vec![("typeId", Js::str(record_type.clone()))])).await.map_err(thrown)?;
-        let authored = if keys.is_empty() { Vec::new() } else { vec![unique::branch(keys)] };
-        let constraints = unique::merge(&unique::get(&descriptor, "uniquenessConstraints"), authored);
-        let target = crate::write::Target::bare(adapter.clone(), record_type.clone(), graph.clone());
-        let (matched, _) = self.resolve_identity(&target, &criteria, &criteria, &constraints, &[], scope).await?;
-        let Some(matched) = matched else { return Err(Stop::EndedQuietly) };
-        if !adapter.has("linkRecords") {
-            return Err(thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("{at}: the '{}' adapter cannot link two existing records (no linkRecords capability)", adapter.adapter_type),
-            )));
-        }
-        let to_id = unique::get(&matched, "externalId");
-        let edge = Edge {
-            adapter: adapter.clone(),
-            name: link.edge.clone(),
-            from_type: from.target_type.clone(),
-            from_id: from_id.clone(),
-            to_type: record_type.clone(),
-            to_id: to_id.clone(),
-        };
-        let linked = self.edge_call(&edge, "linkRecords").await?;
-        let mut data = candidate_data(&matched);
-        if adapter.has("readRecord") {
-            let current = self.read_record(&adapter, &record_type, &to_id).await?;
-            if current.truthy() {
-                merge_into(&mut data, &current);
-            }
-        }
-        let write_index = self.writes.borrow().len();
-        let mut record = JsObject::new();
-        record.set("kind".into(), Js::str("link"));
-        record.set("adapterType".into(), Js::str(adapter.adapter_type.clone()));
-        record.set("recordType".into(), Js::str(from.target_type.clone()));
-        record.set("created".into(), unique::get(&linked, "created"));
-        record.set("committed".into(), Js::Bool(!adapter.dry));
-        record.set("externalId".into(), from_id);
-        record.set("writtenValues".into(), Js::object(JsObject::new()));
-        record.set(
-            "link".into(),
-            env::object_of(vec![
-                ("edgeName", Js::str(link.edge.clone())),
-                ("toRecordType", Js::str(record_type.clone())),
-                ("toExternalId", to_id.clone()),
-                ("foundTarget", Js::Bool(true)),
-            ]),
-        );
-        // The to side was found, not written: no write origin to chain.
-        record.set("provenance".into(), env::object_of(vec![("from", handle_provenance(&from)), ("to", Js::array(vec![]))]));
-        if let Some(name) = binding_name {
-            record.set("bindingName".into(), Js::str(name));
-        }
-        self.append_write(Rc::new(WriteRecord { object: Js::object(record) }));
-        if let Some(name) = binding_name {
-            let mut handle = record_head(&adapter, &record_type, false, !adapter.dry, to_id.clone());
-            handle.set("writtenValues".into(), Js::object(JsObject::new()));
-            handle.set("resultData".into(), Js::object(data));
-            handle.set("provenance".into(), Js::object(JsObject::new()));
-            handle.set(
-                "origin".into(),
-                env::object_of(vec![("kind", Js::str("write")), ("writeIndex", Js::Number(write_index as f64)), ("externalId", to_id)]),
-            );
-            let handle = Handle::new(Rc::new(WriteRecord { object: Js::object(handle) }), crate::bindings::Old::Nothing, record_type, graph);
-            scope.declare(name, Binding::Handle(Rc::new(handle)));
-        }
-        Ok(())
     }
 
     /// `executeDeleteStatement`.

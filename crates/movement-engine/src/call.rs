@@ -44,29 +44,16 @@ pub(crate) struct CallEvent {
 type Bound<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Binding, Stop>> + 's>>;
 
 impl Run<'_> {
-    /// `calleeName`: the name a callee was declared with — from version 3 a
-    /// function's call may spell it in another letter case.
-    pub(crate) fn callee_name(&self, written: &str, scope: &Scope) -> String {
-        if scope.resolve(written).is_some() || self.version() < 3 {
-            return written.to_string();
-        }
-        scope.resolve_function(written, self.version()).unwrap_or_else(|| written.to_string())
-    }
-
     /// Whether `written` names a plugin (`runCall`'s `callee.kind ===
-    /// 'plugin'`): as imported, or from version 3 in another letter case.
+    /// 'plugin'`).
     pub(crate) fn calls_plugin(&self, written: &str, scope: &Scope) -> bool {
-        matches!(scope.resolve(&self.callee_name(written, scope)), Some(Binding::Plugin(_)))
+        matches!(scope.resolve(written), Some(Binding::Plugin(_)))
     }
 
-    /// Whether `written` names a function this run calls: a movement, or
-    /// from version 3 a closure bound to a name.
+    /// Whether `written` names a function this run calls: a movement or a
+    /// closure bound to a name.
     pub(crate) fn calls_function(&self, written: &str, scope: &Scope) -> bool {
-        match scope.resolve(&self.callee_name(written, scope)) {
-            Some(Binding::Movement(_)) => true,
-            Some(Binding::Closure(_)) => self.version() >= 3,
-            _ => false,
-        }
+        matches!(scope.resolve(written), Some(Binding::Movement(_) | Binding::Closure(_)))
     }
 
     /// `executeCall`: the statement's next call opened, then the callee run.
@@ -87,7 +74,7 @@ impl Run<'_> {
     /// order, its body run inside the call's boundary.
     fn run_call<'s>(&'s self, call: &'s CallStatement, scope: &'s Rc<Scope>, at: &'s Address, path: &'s str, event: &'s CallEvent) -> Called<'s> {
         Box::pin(async move {
-            let name = self.callee_name(&call.callee, scope);
+            let name = call.callee.clone();
             let declared_file;
             let callee = scope.resolve(&name);
             let declaration = match callee {
@@ -95,8 +82,8 @@ impl Run<'_> {
                     declared_file = declared.file.clone();
                     self.declaration(&declared)?
                 }
-                // A closure bound to a name is a function too (language version 3).
-                Some(Binding::Closure(closure)) if self.version() >= 3 => return self.closure_call(call, &closure, scope, at, path, event).await,
+                // A closure bound to a name is a function too.
+                Some(Binding::Closure(closure)) => return self.closure_call(call, &closure, scope, at, path, event).await,
                 // One function sort: a plugin's call, its value what the
                 // plugin declared it hands back (`executePluginCall`).
                 Some(Binding::Plugin(_)) => return Ok(Some(self.invoke_plugin(&call.callee, &call.args, scope, at, path).await?)),
@@ -195,7 +182,7 @@ impl Run<'_> {
             // more arguments than it declares: they are evaluated, in order,
             // and dropped, as JavaScript drops them.
             let positional = call.args.first().is_some_and(|arg| arg.name().is_none());
-            let kept = if self.version() >= 5 && positional && call.args.len() > params.len() { params.len() } else { call.args.len() };
+            let kept = if positional && call.args.len() > params.len() { params.len() } else { call.args.len() };
             let (args, extra) = call.args.split_at(kept);
             if args.len() != params.len() {
                 return Err(Stop::Thrown(Failure::engine(
@@ -217,7 +204,7 @@ impl Run<'_> {
                 // typed by where the closure is handed — a closure type's
                 // parameter — and takes whatever the argument evaluates to,
                 // a record included.
-                let untyped = declared.type_.is_none() && self.version() >= 5;
+                let untyped = declared.type_.is_none();
                 let takes_value = untyped || self.takes_value(declared.type_.as_ref(), &scope.file_env());
                 let binding = self.call_arg(arg, scope, at, &format!("{path}/args/{position}"), takes_value).await?;
                 match bound.iter_mut().find(|(p, _)| *p == declared.name) {
@@ -228,7 +215,7 @@ impl Run<'_> {
             for (position, arg) in extra.iter().enumerate() {
                 self.call_arg(arg, scope, at, &format!("{path}/args/{}", kept + position), true).await?;
             }
-            let name = self.callee_name(&call.callee, scope);
+            let name = call.callee.clone();
             let address = self.call_address(event, at);
             let ran = self.within_call(event, &name, self.within_named_call(Some(&name), self.invoke_closure_bound(closure, bound, &address))).await;
             match ran {
@@ -241,11 +228,10 @@ impl Run<'_> {
         })
     }
 
-    /// `readCall` in an argument: from version 3 a callee the program does
-    /// not bind is a built-in, read as the expression the call is.
+    /// `readCall` in an argument: a callee the program does not bind is a built-in, read as the expression the call is.
     pub(crate) fn builtin_reading<'c>(&self, call: &'c CallStatement, scope: &Scope) -> Option<&'c movement_parser::ast::ExprSlot> {
-        let name = self.callee_name(&call.callee, scope);
-        (self.version() >= 3 && scope.resolve(&name).is_none()).then_some(call.expression.as_ref()).flatten()
+        let name = call.callee.clone();
+        scope.resolve(&name).is_none().then_some(call.expression.as_ref()).flatten()
     }
 
     /// `callAddress`: what runs inside a call is under its statement's
@@ -310,18 +296,11 @@ impl Run<'_> {
         outcome
     }
 
-    /// Before version 3 a movement already running is not called again;
-    /// from it, the depth is bounded (`assertCallDepth`: the run's own
-    /// movement is not a call).
+    /// The depth is bounded (`assertCallDepth`: the run's own movement is
+    /// not a call).
     fn enter_call(&self, callee: &str) -> Result<(), Stop> {
         let stack = self.call_stack.borrow();
         let chain = || stack.iter().cloned().chain(std::iter::once(callee.to_string())).collect::<Vec<_>>();
-        if self.version() < 3 {
-            if stack.iter().any(|running| running == callee) {
-                return Err(Stop::Thrown(Failure::unsupported(&format!("recursive movement calls ('{}')", chain().join(" → ")), "")));
-            }
-            return Ok(());
-        }
         let limit = self.input.max_call_depth;
         if stack.len().saturating_sub(1) < limit {
             return Ok(());
@@ -393,7 +372,7 @@ impl Run<'_> {
                 // place as an argument it is (AST, scope), holding the scope
                 // it is written in by reference, as a closure bound to a
                 // name does.
-                CallArg::Closure { closure, .. } if takes_value && self.version() >= 5 => Ok(Binding::Closure(Rc::new(crate::bindings::Closure {
+                CallArg::Closure { closure, .. } if takes_value => Ok(Binding::Closure(Rc::new(crate::bindings::Closure {
                     code: crate::flow::Code { ast: Rc::new(closure.clone()), path: format!("{path}/closure") },
                     captured: scope.clone(),
                     self_name: None,

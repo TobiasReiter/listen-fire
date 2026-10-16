@@ -425,7 +425,7 @@ impl Run<'_> {
         let declared: Vec<ast::MovementParam> = match subject {
             CallbackSubject::Inline { closure, .. } => closure.params.clone(),
             CallbackSubject::Named { movement, args, .. } => {
-                let name = self.callee_name(movement, scope);
+                let name = movement.to_string();
                 let Some(Binding::Movement(declared)) = scope.resolve(&name) else {
                     return Err(Stop::Thrown(Failure::engine(
                         "MOVENG_RUNTIME",

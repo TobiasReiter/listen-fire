@@ -394,7 +394,7 @@ impl Run<'_> {
         let identity = self.unique_by_identity(&write.unique_by, &target)?;
         let constraints = unique::merge(&Js::Undefined, identity.branches.clone());
         let resolve_record = overlaid(&fields.fields, &identity.overlay);
-        let locks = unique::identity_lock_requests(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields, self.version());
+        let locks = unique::identity_lock_requests(LOCAL_ADAPTER_TYPE, &edge_name, &constraints, &resolve_record, &fields.fields);
         let record = self
             .with_locks(locks, self.find_then_write(&target, &fields, &resolve_record, &constraints, &identity.narrowings, &[], scope))
             .await?
@@ -575,7 +575,7 @@ impl Run<'_> {
             Some(reference) => {
                 let real = self.real_record(edge, &reference).await?;
                 let mut locks = vec![crate::flow::LockRequest::exclusive(unique::record_lock_name(&real.adapter.adapter_type, &real.external_id))];
-                locks.extend(unique::identity_lock_requests(&real.adapter.adapter_type, &real.record_type, constraints, resolve_record, fields, self.version()));
+                locks.extend(unique::identity_lock_requests(&real.adapter.adapter_type, &real.record_type, constraints, resolve_record, fields));
                 Ok(locks)
             }
         }

@@ -220,11 +220,10 @@ pub(crate) enum Reading {
     Members(MembersExpression),
 }
 
-/// `lookupBuiltin(written)` for the forms this module runs; from version 5
-/// also `sort` by a function key, which the tree calls `SORTBY`
+/// `lookupBuiltin(written)` for the forms this module runs, and `sort` by a function key, which the tree calls `SORTBY`
 /// (movement_parser::surface::table::SORT_BY).
-fn builtin_form(written: &str, language_version: u32) -> Option<Option<CollectionOp>> {
-    if language_version >= 5 && written == movement_parser::surface::table::SORT_BY {
+fn builtin_form(written: &str) -> Option<Option<CollectionOp>> {
+    if written == movement_parser::surface::table::SORT_BY {
         return Some(Some(CollectionOp::Sort));
     }
     match crate::js::to_lower_case(written).as_str() {
@@ -251,13 +250,13 @@ pub(crate) fn spelling(op: CollectionOp) -> &'static str {
 }
 
 /// `readCall`'s collection and `MEMBERS` readings of a call whose callee
-/// the program does not bind, from version 3; `None` for any other call.
+/// the program does not bind; `None` for any other call.
 /// `binds` is the call scope's `binds`.
-pub(crate) fn reading(call: &CallStatement, binds: bool, language_version: u32) -> Result<Option<Reading>, String> {
-    if binds || language_version < 3 {
+pub(crate) fn reading(call: &CallStatement, binds: bool) -> Result<Option<Reading>, String> {
+    if binds {
         return Ok(None);
     }
-    let Some(form) = builtin_form(&call.callee, language_version) else { return Ok(None) };
+    let Some(form) = builtin_form(&call.callee) else { return Ok(None) };
     if call.args.iter().any(|arg| arg.name().is_some()) {
         return Err(format!("'{}' is a built-in, and a built-in takes its arguments in order", call.callee));
     }
@@ -612,9 +611,6 @@ impl Run<'_> {
     /// their place in the chain, the same on the writing run and the
     /// resuming one.
     pub(crate) fn live_answer_chain(&self, run: &CollectionRun) -> Option<Vec<Rc<Scope>>> {
-        if self.version() < 5 {
-            return None;
-        }
         let Some(site) = &run.site else { return Some(Vec::new()) };
         Some(site.scope.chain_from_root().into_iter().filter(|scope| !scope.is_file_scope()).collect())
     }
@@ -706,12 +702,12 @@ impl Run<'_> {
             ArmExpression::Closure { closure, .. } => Ok(Function {
                 params: closure.params.clone(),
                 body: closure.body.clone(),
-                captured: if self.version() >= 5 { scope.written_scope() } else { scope.capture() },
+                captured: scope.written_scope(),
                 path: format!("{fn_path}/closure/body"),
                 named: None,
                 closure: None,
                 self_name: None,
-                by_reference: self.version() >= 5,
+                by_reference: true,
             }),
             ArmExpression::Ref { name, .. } => match scope.resolve(name) {
                 Some(Binding::Closure(closure)) => Ok(Function {

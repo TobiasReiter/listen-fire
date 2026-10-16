@@ -259,19 +259,19 @@ pub fn branch(entries: Vec<(String, bool)>) -> Js {
     Js::object(object)
 }
 
-/// `isBlankIdentityValue`: absent, or (from version 2) text with nothing in it.
-pub fn is_blank(value: &Js, language_version: u32) -> bool {
+/// `isBlankIdentityValue`: absent, or text with nothing in it.
+pub fn is_blank(value: &Js) -> bool {
     match value {
         Js::Undefined | Js::Null => true,
-        Js::String(text) => language_version >= 2 && js::trim(text.as_form()).is_empty(),
+        Js::String(text) => js::trim(text.as_form()).is_empty(),
         _ => false,
     }
 }
 
 /// `fieldValuesMatch`: case-insensitive equality, a multi-value candidate
 /// matching when the asserted scalar is among its values.
-fn values_match(asserted: &Js, candidate: &Js, version: u32) -> bool {
-    if is_blank(asserted, version) || is_blank(candidate, version) {
+fn values_match(asserted: &Js, candidate: &Js) -> bool {
+    if is_blank(asserted) || is_blank(candidate) {
         return false;
     }
     let target = js::to_lower_case(&asserted.to_js_string());
@@ -283,13 +283,13 @@ fn values_match(asserted: &Js, candidate: &Js, version: u32) -> bool {
 }
 
 /// `candidateIsAllExact`.
-fn all_exact(constraints: &Js, asserted: &Js, data: &Js, version: u32) -> bool {
+fn all_exact(constraints: &Js, asserted: &Js, data: &Js) -> bool {
     branches(constraints).iter().any(|branch| {
         let all = entries(branch);
         !all.is_empty()
             && all.iter().all(|entry| {
                 let field = field_of(entry);
-                values_match(&get(asserted, &field), &get(data, &field), version)
+                values_match(&get(asserted, &field), &get(data, &field))
             })
     })
 }
@@ -301,14 +301,14 @@ pub fn has_fuzzy(constraints: &Js) -> bool {
 
 /// What the rules decide with no judge (`arbitrateWithoutJudge`): `Some(None)`
 /// no match, `Some(Some(i))` candidate `i`, `None` only a judge can say.
-pub fn arbitrate_without_judge(asserted: &Js, candidates: &[Js], constraints: &Js, version: u32) -> Option<Option<usize>> {
+pub fn arbitrate_without_judge(asserted: &Js, candidates: &[Js], constraints: &Js) -> Option<Option<usize>> {
     if candidates.is_empty() {
         return Some(None);
     }
     let exact: Vec<usize> = candidates
         .iter()
         .enumerate()
-        .filter(|(_, c)| all_exact(constraints, asserted, &get(c, "data"), version))
+        .filter(|(_, c)| all_exact(constraints, asserted, &get(c, "data")))
         .map(|(i, _)| i)
         .collect();
     if exact.len() == 1 {
@@ -325,7 +325,7 @@ pub fn arbitrate_without_judge(asserted: &Js, candidates: &[Js], constraints: &J
 /// values), taken by this run only — plus a lock over its record type shared
 /// with every write searching by the same set of keys; a fuzzy key, or a key
 /// value with no exact text, holds the record type alone, exclusively.
-pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js, version: u32) -> Vec<crate::flow::LockRequest> {
+pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js) -> Vec<crate::flow::LockRequest> {
     use crate::flow::{LockMode, LockRequest};
     let any = branches(constraints);
     if any.is_empty() {
@@ -358,7 +358,7 @@ pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, cons
         for field in fields_of {
             let mut values: Vec<String> = Vec::new();
             for raw in [get(record, field), get(fields, field)] {
-                if is_blank(&raw, version) {
+                if is_blank(&raw) {
                     continue;
                 }
                 let Some(folded) = fold_key_value(&raw) else { return whole_type };
@@ -397,8 +397,8 @@ pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, cons
 
 /// The cross-run names an identity write takes (`identityLocks` through
 /// `crossRunNames`): its record type's lock, or nothing.
-pub fn identity_lock_names(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js, version: u32) -> Vec<String> {
-    crate::flow::cross_run_names(&identity_lock_requests(adapter_type, record_type, constraints, record, fields, version))
+pub fn identity_lock_names(adapter_type: &str, record_type: &str, constraints: &Js, record: &Js, fields: &Js) -> Vec<String> {
+    crate::flow::cross_run_names(&identity_lock_requests(adapter_type, record_type, constraints, record, fields))
 }
 
 /// `cartesian`: every combination, one value from each set, in order.
@@ -510,12 +510,12 @@ mod tests {
         let constraints = merge(&Js::Undefined, vec![branch(vec![("name".into(), false)])]);
         let asserted = object(&[("name", Js::str("Acme"))]);
         let candidate = |name: &str| object(&[("data", object(&[("name", Js::str(name))]))]);
-        assert_eq!(arbitrate_without_judge(&asserted, &[], &constraints, 2), Some(None));
-        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("ACME")], &constraints, 2), Some(Some(0)));
-        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("x"), candidate("acme")], &constraints, 2), Some(Some(1)));
-        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("x"), candidate("y")], &constraints, 2), None);
+        assert_eq!(arbitrate_without_judge(&asserted, &[], &constraints), Some(None));
+        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("ACME")], &constraints), Some(Some(0)));
+        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("x"), candidate("acme")], &constraints), Some(Some(1)));
+        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("x"), candidate("y")], &constraints), None);
         let fuzzy = merge(&Js::Undefined, vec![branch(vec![("name".into(), true)])]);
-        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("Acme Inc")], &fuzzy, 2), None);
+        assert_eq!(arbitrate_without_judge(&asserted, &[candidate("Acme Inc")], &fuzzy), None);
     }
 
     #[test]
@@ -523,13 +523,13 @@ mod tests {
         let constraints = merge(&Js::Undefined, vec![branch(vec![("name".into(), false)])]);
         let named = object(&[("name", Js::str("Acme"))]);
         let blank = object(&[("name", Js::str("  "))]);
-        assert_eq!(identity_lock_names("attio", "company", &constraints, &named, &named, 2), [r#"identity "attio" "company""#]);
+        assert_eq!(identity_lock_names("attio", "company", &constraints, &named, &named), [r#"identity "attio" "company""#]);
         // A record's lock names its id as the adapter answered it.
         assert_eq!(record_lock_name("attio", &Js::Number(42.0)), r#"record "attio" 42"#);
         assert_eq!(record_lock_name("attio", &Js::str("42")), r#"record "attio" "42""#);
-        assert!(identity_lock_names("attio", "company", &constraints, &blank, &blank, 2).is_empty());
-        assert!(identity_lock_names("attio", "company", &merge(&Js::Undefined, vec![]), &named, &named, 2).is_empty());
+        assert!(identity_lock_names("attio", "company", &constraints, &blank, &blank).is_empty());
+        assert!(identity_lock_names("attio", "company", &merge(&Js::Undefined, vec![]), &named, &named).is_empty());
         let listed = object(&[("name", Js::array(vec![Js::str("a")]))]);
-        assert_eq!(identity_lock_names("attio", "company", &constraints, &listed, &listed, 2).len(), 1);
+        assert_eq!(identity_lock_names("attio", "company", &constraints, &listed, &listed).len(), 1);
     }
 }

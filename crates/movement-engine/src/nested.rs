@@ -324,10 +324,7 @@ impl Run<'_> {
         if let Some(binding) = scope.resolve(written) {
             return matches!(binding, Binding::Movement(_) | Binding::Plugin(_) | Binding::Opaque { .. } | Binding::Closure(_));
         }
-        if self.version() < 3 {
-            return false;
-        }
-        scope.resolve_function(written, self.version()).is_some() || (!written.contains('.') && is_call_form(written))
+        !written.contains('.') && is_call_form(written)
     }
 
     /// `stageNestedCalls`: the slot with its nested calls run, as the text
@@ -339,9 +336,6 @@ impl Run<'_> {
 
     /// `staged` of `slot`, a part of `origin` starting `offset` units in.
     async fn staged_part(&self, origin: &ExprSlot, slot: &ExprSlot, offset: usize, scope: &Rc<Scope>) -> Result<Option<(ExprSlot, Rc<Scope>)>, Stop> {
-        if self.version() < 3 {
-            return Ok(None);
-        }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return Ok(None) };
         let calls = staged_calls(&tree, &|call| self.runs_as_call(call, scope));
         if calls.is_empty() {
@@ -476,16 +470,13 @@ impl Run<'_> {
 
     /// Whether `callee` resolves to the built-in `COALESCE`.
     fn is_coalesce(&self, callee: &str, scope: &Scope) -> bool {
-        scope.resolve(callee).is_none() && scope.resolve_function(callee, self.version()).is_none() && crate::js::to_upper_case(callee) == "COALESCE"
+        scope.resolve(callee).is_none() && crate::js::to_upper_case(callee) == "COALESCE"
     }
 
     /// `evaluateStagedCondition`: a condition holding nested calls, its
     /// top-level `AND` conjuncts in order, each with its own nested calls
     /// run only once the ones before it held.
     pub(crate) async fn staged_condition(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<Option<bool>, Stop> {
-        if self.version() < 3 {
-            return Ok(None);
-        }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return Ok(None) };
         if staged_calls(&tree, &|call| self.runs_as_call(call, scope)).is_empty() {
             return Ok(None);
