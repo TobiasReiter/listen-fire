@@ -123,7 +123,7 @@ import {
   type ValueTypeMember,
   type ClosureTypeRef,
 } from '../parser/ast';
-import { argumentBindings, isPositionalCall, isValueTypeRef, spellName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
+import { argumentBindings, isPositionalCall, isValueTypeRef, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
 
 export type { ReturnShape } from './typing';
@@ -8019,6 +8019,14 @@ class Checker {
       return;
     }
     if (members.element !== undefined && isPlainValue(members.element) && keyReadsOffMember(expr.fn)) {
+      // This says it of the key; the read's own refusal (a field off text)
+      // would say it twice.
+      const order = (a: Loc, b: Loc): number => a.line - b.line || a.col - b.col;
+      const inside = (d: Diagnostic): boolean => order(d.span.start, span.start) >= 0 && order(d.span.end, span.end) <= 0;
+      for (let i = this.diagnostics.length - 1; i >= 0; i--) {
+        const d = this.diagnostics[i]!;
+        if (d.code === TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS && inside(d)) this.diagnostics.splice(i, 1);
+      }
       this.report(
         TypedDiagnosticCodes.SORT_KEY_ON_SCALAR,
         'sort reads this key off each member, and these members are plain values — there is nothing to read it from. Order them by themselves: `sort(…)` or `sort(…, { order: "desc" })`.',

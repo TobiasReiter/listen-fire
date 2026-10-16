@@ -131,7 +131,7 @@ describe('the #transform hop shows the plugin as a function under Dancing Wren (
     const message = said('vc_url_retrieval', 5);
     expect(message).toContain('a plugin is a function');
     expect(message).toContain("'import { vc_url_retrieval } from plugins'");
-    expect(message).toContain("'out = vc_url_retrieval(text: …)'");
+    expect(message).toContain("'out = vc_url_retrieval(text)'");
   });
 
   it('a plugin only an extraction can feed: written as its stage', () => {
