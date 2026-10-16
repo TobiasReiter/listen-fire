@@ -57,11 +57,20 @@ pub struct ParseRefusal {
     pub message: String,
 }
 
-/// Parses `source` and checks it.
+/// Parses `source`, text from outside (UTF-8), and checks it. The
+/// diagnostics are in the engine's text form, as `check_form`'s are.
 pub fn check_source(source: &str, catalog: &CatalogSnapshot, options: CheckOptions) -> Result<Vec<Diagnostic>, ParseRefusal> {
-    let text = form_of_text(source);
+    check_form(&form_of_text(source), catalog, options)
+}
+
+/// `check_source` over a source already in the engine's text form (as its
+/// JSON reader writes every host text: a lone surrogate held in-band, a
+/// U+FDD0 written twice). Forming it again would double what is doubled.
+/// Its diagnostics quote the source in that form; a writer for a reader
+/// outside undoes it (`external_text`).
+pub fn check_form(source: &str, catalog: &CatalogSnapshot, options: CheckOptions) -> Result<Vec<Diagnostic>, ParseRefusal> {
     let parse_version = options.parse_version.unwrap_or(options.language_version);
-    let program = movement_parser::stmt::parse_program(&text, parse_version, false)
+    let program = movement_parser::stmt::parse_program(source, parse_version, false)
         .map_err(|e| ParseRefusal { message: format!("{} at line {}, column {}", e.message, e.loc.line, e.loc.col) })?;
     Ok(check_program(&program, catalog, options))
 }
@@ -69,7 +78,8 @@ pub fn check_source(source: &str, catalog: &CatalogSnapshot, options: CheckOptio
 /// The check as JSON: `{diagnostics}`, or `{error}` for a source that does
 /// not parse or a catalog that does not load.
 pub fn check_json(source: &str, catalog_json: &str, options: CheckOptions) -> serde_json::Value {
-    let catalog = match CatalogSnapshot::load(catalog_json) {
+    // Read as `JSON.parse` reads it: a lone surrogate's escape included.
+    let catalog = match CatalogSnapshot::load(&movement_parser::util::form::read_json_text(catalog_json)) {
         Ok(catalog) => catalog,
         Err(message) => return serde_json::json!({ "error": { "message": message } }),
     };

@@ -40,7 +40,8 @@ pub unsafe fn check_program_with(
         Err(error) => serde_json::json!({ "error": error }),
     };
     let status = u32::from(answer.get("error").is_some());
-    let bytes = movement_parser::to_sorted_json(&answer);
+    // Out as `JSON.stringify` writes: the engine's text form undone.
+    let bytes = movement_parser::util::form::external_bytes(movement_parser::to_sorted_json(&answer));
     unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
     status
 }

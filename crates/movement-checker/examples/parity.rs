@@ -19,6 +19,7 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use movement_checker::{CheckOptions, check_source};
+use movement_parser::util::form::{read_json_text, units_vec};
 use movement_parser::catalog::types::CatalogSnapshot;
 use serde_json::Value;
 
@@ -53,7 +54,8 @@ fn main() {
             #[serde(borrow)]
             snapshot: &'a serde_json::value::RawValue,
         }
-        let row: Row = serde_json::from_str(line).expect("a snapshot row");
+        let line = read_json_text(line);
+        let row: Row = serde_json::from_str(&line).expect("a snapshot row");
         catalogs.insert(row.key, CatalogSnapshot::load(row.snapshot.get()));
     }
     let catalogs = Arc::new(catalogs);
@@ -75,7 +77,9 @@ fn main() {
         if trace {
             eprintln!("record {index}");
         }
-        let record: Value = serde_json::from_str(line).expect("a reference row");
+        // Read as `JSON.parse` reads it, in the engine's text form: a lone
+        // surrogate held in-band, both sides' texts alike.
+        let record: Value = serde_json::from_str(&read_json_text(line)).expect("a reference row");
         let source = record["source"].as_str().expect("a source");
         let version = record["version"].as_u64().expect("a version") as u32;
         let upgrading_from = record["upgradingFrom"].as_u64().map(|v| v as u32);
@@ -91,7 +95,11 @@ fn main() {
             entry.0 += 1;
             continue;
         }
-        let job = Job { source: source.to_string(), snapshot, version, upgrading_from, parse_version };
+        // The source as the checker's export is handed it, UTF-8 (`TextEncoder`
+        // writes a lone surrogate as U+FFFD), which is how the TypeScript's
+        // own parse (the same export's parser) reads it.
+        let handed = String::from_utf16_lossy(&units_vec(source));
+        let job = Job { source: handed, snapshot, version, upgrading_from, parse_version };
         let rust = match worker.check(job, limit) {
             Some(Outcome::Checked(diagnostics)) => diagnostics,
             Some(Outcome::Refused(message)) => {

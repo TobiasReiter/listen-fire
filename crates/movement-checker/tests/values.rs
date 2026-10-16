@@ -48,3 +48,22 @@ fn an_identifying_field_is_gated_not_given_a_fallback() {
     assert!(found.message.ends_with("and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if n != null { … }'"));
     assert!(found.fix.is_none());
 }
+
+/// A U+FDD0 in the source: the engine's text form writes it twice, so a
+/// source already in that form is checked as it is (`check_form`), and a
+/// message quoting it reads once outside (`external_text`).
+#[test]
+fn a_source_in_the_engines_text_form_is_not_formed_twice() {
+    use movement_checker::{CheckOptions, check_form, check_source};
+    use movement_parser::catalog::types::CatalogSnapshot;
+    use movement_parser::util::form::{external_text, form_of_text};
+    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
+    let options = || CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let source = "movement m(nope: <text>) {\n  y = \"\u{FDD0}\" + nope\n}";
+    let hint = |diagnostics: Vec<movement_checker::Diagnostic>| {
+        diagnostics.into_iter().find(|d| d.code == "MOV_ARITH_NON_NUMERIC").map(|d| external_text(&d.message).into_owned()).unwrap()
+    };
+    let outside = hint(check_source(source, &catalog, options()).unwrap());
+    assert!(outside.ends_with("instead: \"\u{FDD0}${nope}\"."), "{outside}");
+    assert_eq!(hint(check_form(&form_of_text(source), &catalog, options()).unwrap()), outside);
+}
