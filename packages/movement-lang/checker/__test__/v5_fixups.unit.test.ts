@@ -139,3 +139,13 @@ describe('count from version 5 counts every item', () => {
     ]);
   });
 });
+
+describe('a message calls a declaration a function from 5', () => {
+  const unknown = (version: 4 | 5) =>
+    errors(version === 5 ? 'function f() {\n  return nope(1)\n}' : 'movement f() {\n  return nope(1)\n}', version).join('\n');
+
+  it('under 5, and as before under 4', () => {
+    expect(unknown(5)).toContain('a call names a function declared or imported here, or a built-in');
+    expect(unknown(4)).toContain('a call names a movement or function declared or imported here, or a built-in');
+  });
+});

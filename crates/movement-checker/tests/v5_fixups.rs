@@ -116,3 +116,11 @@ fn length_and_exists_of_a_list_rewrite_to_count_marked_safe() {
         .collect();
     assert_eq!(fixes, vec![("count(xs)".to_string(), true), ("count(xs) > 0".to_string(), true)]);
 }
+
+#[test]
+fn a_message_calls_a_declaration_a_function_from_5() {
+    let v5 = errors("function f() {\n  return nope(1)\n}", 5).join("\n");
+    assert!(v5.contains("a call names a function declared or imported here, or a built-in"), "{v5}");
+    let v4 = errors("movement f() {\n  return nope(1)\n}", 4).join("\n");
+    assert!(v4.contains("a call names a movement or function declared or imported here, or a built-in"), "{v4}");
+}

@@ -255,14 +255,54 @@ pub fn spell(canonical: &str, version: u32) -> String {
     canonical.to_string()
 }
 
+/// What a message calls a declaration, in the wording versions 1–4 use,
+/// and from 5, where it is declared `function`: the wording a sentence needs
+/// first, then the plain noun.
+const DECLARATION_PHRASES: &[(&str, &str)] = &[
+    ("a movement or function declared or imported here", "a function declared or imported here"),
+    ("only movements are called", "only functions are called"),
+    ("A movement, a traversal-headed block", "A function, a traversal-headed block"),
+    ("its movement with", "its function with"),
+];
+
+/// "movement" where it names a program, a file or the engine — the
+/// product — not the declared thing: kept from 5 as it was.
+const PRODUCT_AFTER: &[&str] = &[" run", " file", " engine", " librar"];
+
+/// A message's "a movement" (the declared thing) as "a function" from 5.
+fn spell_declarations(message: &str) -> String {
+    let mut out = message.to_string();
+    for (old, new) in DECLARATION_PHRASES {
+        out = out.replace(old, new);
+    }
+    let mut spelled = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(at) = rest.find("a movement") {
+        let after = &rest[at + "a movement".len()..];
+        let word_before = rest[..at].chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let word_after = after.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+        spelled.push_str(&rest[..at]);
+        if word_before || word_after || PRODUCT_AFTER.iter().any(|p| after.starts_with(p)) {
+            spelled.push_str("a movement");
+        } else {
+            spelled.push_str("a function");
+        }
+        rest = after;
+    }
+    spelled.push_str(rest);
+    spelled
+}
+
 /// Rewrites every built-in a message names (`UPPER`, `UPPER(text)`,
 /// `DATE.TODAY`: a word in capitals the table holds) into the program's
-/// spelling: the one place both checkers route a message through, so a
-/// message's wording never carries its own copy of a spelling.
+/// spelling, and calls a declaration a function: the one place both
+/// checkers route a message through, so a message's wording never carries
+/// its own copy of a spelling.
 pub fn spell_message(message: &str, version: u32) -> String {
     if !crate::version::since(version, 5) {
         return message.to_string();
     }
+    let message = &spell_declarations(message);
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let mut out = String::with_capacity(message.len());
     let mut chars = message.char_indices().peekable();
@@ -377,6 +417,13 @@ mod tests {
         assert_eq!(spell_message("`Name` is not `AT`", 5), "`Name` is not `AT`");
         assert_eq!(spell_message("UPPER's 'text' takes text — UPPER(text)", 5), "Text.upper's 'text' takes text — Text.upper(text)");
         assert_eq!(spell_message("DATE.TODAY needs a zone. MAPPED UPPERCASE COUNT.", 5), "Date.today needs a zone. MAPPED UPPERCASE count.");
+        assert_eq!(
+            spell_message("'go' is a movement, not a credential — a call names a movement or function declared or imported here; only movements are called", 5),
+            "'go' is a function, not a credential — a call names a function declared or imported here; only functions are called"
+        );
+        let product = "a movement run does not have it; No movement file named \"x\"; the movement engine";
+        assert_eq!(spell_message(product, 5), product);
+        assert_eq!(spell_message("'go' is a movement", 4), "'go' is a movement");
         assert_eq!(
             spell_message("`COUNT(crm-[c:Companies WHERE LOWER(c.Name) == \"x\"]->)` and LOWER", 5),
             "`count(crm-[c:Companies WHERE LOWER(c.Name) == \"x\"]->)` and Text.lower"
