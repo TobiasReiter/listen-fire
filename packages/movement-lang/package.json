@@ -12,6 +12,7 @@
     "watch": "tsc --project tsconfig.build.json -w",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
     "language:conformance": "node -r ../../apps/api/node_modules/ts-node/register/transpile-only conformance/language_conformance.ts",
+    "language:upgrade": "node -r ../../apps/api/node_modules/ts-node/register/transpile-only conformance/upgrade_text.ts",
     "test:conformance:v1": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v1.cjs",
     "test:conformance:v2": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v2.cjs",
     "test:conformance:v3": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.conformance.v3.cjs",

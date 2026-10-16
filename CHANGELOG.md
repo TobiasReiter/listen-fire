@@ -20,6 +20,15 @@ version, shows Review and behaves exactly as before; rewrite the form and upgrad
 corpus). Every rule, with rewrites, is in the [Dancing Wren migration
 guide](docs/language/dancing-wren-migration.md).
 
+**The old spellings rewrite themselves.** `upgradeAutomation` and the deploy check first rewrite an
+automation by the fixes the checker offers under 5 (every old spelling, and any other repair it is
+certain of); only the rewritten text is judged, and when it is clean the text and the pin move in
+one save. An automation left with errors keeps its text and its pin, and what is left is listed
+against the rewritten text. For a local project, `lf upgrade` rewrites the movement files in place
+(`lf upgrade --check` prints the diff); `pnpm --filter movement-lang language:upgrade` does the same
+for any file or a program on stdin. Comments and layout outside the rewritten spans are kept byte
+for byte; on text already in the version 5 spelling it changes nothing.
+
 ### Language version 5, Dancing Wren: what breaks
 
 - **The everyday spelling outside walk brackets** (`MOV_V5_SPELLING`, with the exact rewrite as

@@ -14,6 +14,14 @@
 //      validation under the current version, shown to the caller first; the pin
 //      moves only when the caller acknowledges a clean result.
 //
+// Both first REWRITE the text by the fixes the checker offers under the current
+// version (movement-lang checker/upgrade.ts — the loop `lf upgrade` runs too):
+// every old spelling, and any other repair the checker is certain of. What
+// is judged is the rewritten text, and when the pin moves, the rewritten text
+// is saved with it, in one save under the new pin. A movement that is not clean
+// after the rewrite keeps its text and its pin; what is left is reported
+// against the rewritten text (`upgradedSource`), each with its source line.
+//
 // An edit or re-save never moves the pin (store.ts).
 //
 // See plans/language-versioning-2026-09-29/1_design.md, "Deploy check".
@@ -22,6 +30,7 @@ import {
   CURRENT_LANGUAGE_VERSION,
   THIS_RELEASE,
   before,
+  upgradeSourceAsync,
   describeLanguageVersion,
   languageVersionDiagnostic,
   languageVersionStanding,
@@ -29,6 +38,7 @@ import {
   type LanguageRelease,
   type LanguageVersion,
   type LanguageVersionView,
+  type Diagnostic,
 } from 'movement-lang';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
@@ -54,6 +64,7 @@ import {
   type TeamMovementValidation,
 } from './authoring';
 import { withTeamContext } from './firing_context';
+import { saveMovement } from './provision';
 import {
   advanceMovementLanguageVersion,
   getMovementRow,
@@ -100,7 +111,73 @@ export type ValidateUnder = (input: {
   movement: MovementRow;
   languageVersion: LanguageVersion;
   upgradingFrom?: LanguageVersion;
+  /** The text to validate, when it is not the movement's own (the upgrade's
+   *  rewrite of it). */
+  source?: string;
 }) => Promise<Pick<TeamMovementValidation, 'diagnostics' | 'gaps'>>;
+
+/** What moving a pin did. Moving it with a rewritten text is a save, which
+ *  can still land short of shipping. */
+export type AdvanceOutcome = { ok: true } | { ok: false; detail: string };
+
+/** Move `movement`'s pin to `to` — with `source`, saving that text with it. */
+export type Advance = (input: { movement: MovementRow; to: LanguageVersion; source?: string }) => Promise<AdvanceOutcome>;
+
+// ── The rewrite ─────────────────────────────────────────────────────────────
+
+/** The movement's text rewritten for `to`, and the validation of the result. */
+export interface UpgradeRewrite {
+  source: string;
+  changed: boolean;
+  validation: Pick<TeamMovementValidation, 'diagnostics' | 'gaps'>;
+}
+
+/** An authoring diagnostic back in the checker's terms — what the upgrade
+ *  loop reads its fixes from. */
+function checkerDiagnostic(d: AuthoringDiagnostic): Diagnostic {
+  return {
+    code: d.code,
+    message: d.message,
+    span: { start: { line: d.line, col: d.col }, end: { line: d.endLine, col: d.endCol } },
+    ...(d.severity !== 'error' ? { severity: d.severity } : {}),
+    ...(d.upgrade === true ? { upgrade: true } : {}),
+    ...(d.fix !== undefined
+      ? {
+          fix: {
+            edits: d.fix.edits.map((e) => ({
+              span: { start: { line: e.line, col: e.col }, end: { line: e.endLine, col: e.endCol } },
+              text: e.text,
+            })),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Rewrite `movement`'s text by the fixes a validation under `to` offers, until
+ * none is left (movement-lang `upgradeSourceAsync`), and return the rewrite
+ * with the validation of its final text. A text with nothing to rewrite costs
+ * the one validation it always needed.
+ */
+export async function rewriteForUpgrade(input: {
+  movement: MovementRow;
+  to: LanguageVersion;
+  validate: ValidateUnder;
+}): Promise<UpgradeRewrite> {
+  const validations = new Map<string, Pick<TeamMovementValidation, 'diagnostics' | 'gaps'>>();
+  const result = await upgradeSourceAsync(input.movement.source, async (source) => {
+    const validation = await input.validate({
+      ...validationUnder(input.movement, input.to),
+      ...(source !== input.movement.source ? { source } : {}),
+    });
+    validations.set(source, validation);
+    return validation.diagnostics.map(checkerDiagnostic);
+  });
+  const validation = validations.get(result.source);
+  if (validation === undefined) throw new Error('the upgrade loop answered a text it never validated');
+  return { source: result.source, changed: result.changed, validation };
+}
 
 /** A validation of `movement` under `languageVersion`. A version newer than
  *  the movement's pin makes it an UPGRADE check: the checker is told the pin
@@ -214,7 +291,7 @@ export interface DeployCheckDeps {
     diagnostics: AuthoringDiagnostic[];
     checkedAgainst: LanguageVersion;
   }): Promise<void>;
-  advance(input: { movement: MovementRow; to: LanguageVersion }): Promise<void>;
+  advance: Advance;
   emit(input: { teamId: string; kind: SystemEventKind; payload: SystemEventPayload }): Promise<void>;
   /** Record the run — what makes a second run on this release a no-op. */
   recordRun(input: { tag: string; languageRelease: string; summary: DeployCheckSummary }): Promise<void>;
@@ -342,8 +419,9 @@ async function checkOne(input: {
     return entryFor(movement, 'current', pin, releaseLanguage, '');
   }
 
-  // (b) Under the current version — whether the pin may move.
-  const underCurrent = await deps.validate(validationUnder(movement, current));
+  // (b) Under the current version, after the rewrite — whether the pin may move.
+  const rewrite = await rewriteForUpgrade({ movement, to: current, validate: deps.validate });
+  const underCurrent = rewrite.validation;
   const blocking = blockingDiagnostics(underCurrent.diagnostics);
   await deps.recordUpgradeCheck({ movement, diagnostics: blocking, checkedAgainst: current });
   const notes = noteDiagnostics(underCurrent.diagnostics);
@@ -369,8 +447,16 @@ async function checkOne(input: {
     return withNotes(entryFor(movement, 'unverified', pin, releaseLanguage, gapsText(underCurrent.gaps)));
   }
 
-  await deps.advance({ movement, to: current });
-  await deps.recordValidity({ movement, validation: underCurrent, checkedAgainst: current });
+  const advanced = await deps.advance({ movement, to: current, ...(rewrite.changed ? { source: rewrite.source } : {}) });
+  if (!advanced.ok) {
+    await emitDeprecation(deps, movement, pin, at);
+    return withNotes(entryFor(movement, 'unverified', pin, releaseLanguage, advanced.detail));
+  }
+  await deps.recordValidity({
+    movement: { ...movement, source: rewrite.source },
+    validation: underCurrent,
+    checkedAgainst: current,
+  });
   await emitDeprecation(deps, movement, current, at);
   return withNotes(entryFor(movement, 'advanced', current, releaseLanguage, ''));
 }
@@ -476,11 +562,11 @@ function releaseAppliedReason(
 // ── The real dependencies ───────────────────────────────────────────────────
 
 /** Validate against the team's live catalog, inside the team. */
-export const validateUnderLiveCatalog: ValidateUnder = ({ movement, languageVersion, upgradingFrom }) =>
+export const validateUnderLiveCatalog: ValidateUnder = ({ movement, languageVersion, upgradingFrom, source }) =>
   withTeamContext(movement.teamId as TeamId, () =>
     validateMovementForTeam({
       teamId: movement.teamId,
-      source: movement.source,
+      source: source ?? movement.source,
       languageVersion,
       // Reaches imported library files too: the checker checks them under the
       // importer's version and move, and surfaces their warnings.
@@ -518,8 +604,7 @@ export function liveDeployCheckDeps(release: DeployCheckRelease): DeployCheckDep
     },
     recordUpgradeCheck: ({ movement, diagnostics, checkedAgainst }) =>
       recordUpgradeCheck({ id: movement.id, diagnostics, checkedAgainst }),
-    advance: ({ movement, to }) =>
-      advanceMovementLanguageVersion({ teamId: movement.teamId, id: movement.id, to }),
+    advance: advanceLive,
     emit: recordSystemEvent,
     recordRun: async ({ tag, languageRelease, summary }) => {
       await getAutomationsQb(['deploy_check'])
@@ -531,6 +616,25 @@ export function liveDeployCheckDeps(release: DeployCheckRelease): DeployCheckDep
     now: () => new Date(),
   };
 }
+
+/**
+ * Move a pin for real. Without a rewrite, the pin moves on its own (and the
+ * current snapshot is re-minted under it). With one, the rewritten text is
+ * saved under the new pin in one save — the text and the pin it is written in
+ * move together, its listeners are reconciled and its snapshot minted — so no
+ * run ever sees the new spelling under the old pin or the old under the new.
+ */
+export const advanceLive: Advance = async ({ movement, to, source }) => {
+  if (source === undefined) {
+    await advanceMovementLanguageVersion({ teamId: movement.teamId, id: movement.id, to });
+    return { ok: true };
+  }
+  const saved = await withTeamContext(movement.teamId as TeamId, () =>
+    saveMovement({ teamId: movement.teamId, id: movement.id, source, languageUpgrade: { to } }),
+  );
+  if (saved.ok) return { ok: true };
+  return { ok: false, detail: `the rewritten text did not ship: ${(saved.errors ?? []).join('; ') || 'the save stopped short of shipping'}` };
+};
 
 /** The most recent check's summary — what `deploy/up.sh` prints. */
 export async function latestDeployCheckSummary(): Promise<DeployCheckSummary | null> {
@@ -552,8 +656,14 @@ export type UpgradeMovementResult =
       automation: { id: string; name: string };
       from: LanguageVersionView;
       to: LanguageVersionView;
-      /** The blocking diagnostics under the target version — empty when clean. */
+      /** The blocking diagnostics under the target version — empty when clean.
+       *  Their places are in `upgradedSource` when it is present. */
       diagnostics: AuthoringDiagnostic[];
+      /** The text rewritten into the target version's spelling, when the
+       *  rewrite changed it: saved with the pin on `upgraded`, shown otherwise. */
+      upgradedSource?: string;
+      /** Why a clean, acknowledged move still did not land. */
+      detail?: string;
     };
 
 /**
@@ -566,6 +676,7 @@ export async function upgradeMovement(input: {
   id: string;
   acknowledge: boolean;
   validate?: ValidateUnder;
+  advance?: Advance;
 }): Promise<UpgradeMovementResult> {
   const movement = await getMovementRow({ teamId: input.teamId, id: input.id });
   if (!movement) return { status: 'not_found' };
@@ -579,25 +690,30 @@ export async function upgradeMovement(input: {
     return { status: 'already_current', ...base, diagnostics: [] };
   }
 
-  const validation = await (input.validate ?? validateUnderLiveCatalog)(
-    validationUnder(movement, to),
-  );
+  const rewrite = await rewriteForUpgrade({ movement, to, validate: input.validate ?? validateUnderLiveCatalog });
+  const { validation } = rewrite;
   const diagnostics = blockingDiagnostics(validation.diagnostics);
+  const shown = { ...base, ...(rewrite.changed ? { upgradedSource: rewrite.source } : {}) };
   await recordUpgradeCheck({ id: movement.id, diagnostics, checkedAgainst: to });
-  if (hardErrors(diagnostics).length > 0) return { status: 'blocked', ...base, diagnostics };
-  if (validation.gaps.length > 0) return { status: 'unverified', ...base, diagnostics };
-  if (!input.acknowledge) return { status: 'needs_acknowledgement', ...base, diagnostics };
+  if (hardErrors(diagnostics).length > 0) return { status: 'blocked', ...shown, diagnostics };
+  if (validation.gaps.length > 0) return { status: 'unverified', ...shown, diagnostics };
+  if (!input.acknowledge) return { status: 'needs_acknowledgement', ...shown, diagnostics };
 
-  await advanceMovementLanguageVersion({ teamId: movement.teamId, id: movement.id, to });
+  const advanced = await (input.advance ?? advanceLive)({
+    movement,
+    to,
+    ...(rewrite.changed ? { source: rewrite.source } : {}),
+  });
+  if (!advanced.ok) return { status: 'unverified', ...shown, diagnostics, detail: advanced.detail };
   const assessment = assessMovementValidity({ diagnostics: validation.diagnostics, gaps: [] });
   await recordValidityOutcome({
     id: movement.id,
     status: assessment.status,
     reason: assessment.reason,
-    sourceHash: movementSourceHash(movement.source),
+    sourceHash: movementSourceHash(rewrite.source),
     checkedAgainst: to,
   });
-  return { status: 'upgraded', ...base, diagnostics };
+  return { status: 'upgraded', ...shown, diagnostics };
 }
 
 /** The standing release, for the entry points. */

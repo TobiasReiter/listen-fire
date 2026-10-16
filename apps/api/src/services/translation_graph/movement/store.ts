@@ -194,7 +194,9 @@ export async function listMovementRows(teamId: string): Promise<MovementRow[]> {
  * editor's re-save path, which may rename), else by `(team_id, name)`.
  *
  * The FIRST save stamps the movement's language version with the current
- * one; an update never touches it, so an edit keeps the movement's pin.
+ * one; an update never touches it, so an edit keeps the movement's pin —
+ * except the language upgrade's own save (`languageVersion`), which writes the
+ * rewritten text and the version it is written in together.
  */
 export async function upsertMovementRow(input: {
   teamId: string;
@@ -203,6 +205,8 @@ export async function upsertMovementRow(input: {
   source: string;
   description?: string;
   userId?: string;
+  /** Only the language upgrade passes it: the pin `source` is written in. */
+  languageVersion?: LanguageVersion;
 }): Promise<MovementRow> {
   const qb = getAutomationsQb(['movement']);
   const existing = input.id
@@ -216,6 +220,9 @@ export async function upsertMovementRow(input: {
         name: input.name,
         source: input.source,
         ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.languageVersion !== undefined
+          ? { language_version: input.languageVersion, upgrade_diagnostics: null, upgrade_checked_against: input.languageVersion }
+          : {}),
         updated_at: new Date(),
       })
       .where('id', '=', existing.id as MovementId)

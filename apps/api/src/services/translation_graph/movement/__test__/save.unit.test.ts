@@ -1391,3 +1391,82 @@ describe('the language version pin', () => {
     expect(JSON.stringify(row.validity_reason)).toContain('MOV_LANGUAGE_VERSION_UNSUPPORTED');
   });
 });
+
+describe('the language upgrade, through the real save', () => {
+  // A movement saved under version 4 in its spelling; the upgrade rewrites it
+  // by the checker's fixes and saves the rewrite with the pin, in one save.
+  const OLD = `import { email } from adapters
+
+inbox = email()
+
+# hand each deal to the team
+movement intake(m: <inbox-[:message]->>) {
+  subject = UPPER(TRIM(m.Subject))
+}
+
+listen to inbox { key: "deals" } fire intake
+`;
+  const NEW = `import { email } from adapters
+
+inbox = connect email
+
+# hand each deal to the team
+function intake(m: <inbox-[:message]->>) {
+  subject = Text.upper(Text.trim(m.Subject))
+}
+
+listen to inbox { key: "deals" } fire intake
+`;
+
+  // The upgrade validates and saves inside the team, as one of its members;
+  // the request Context is faked in this file, so that wrapper only runs.
+  let inTeam: jest.SpyInstance | undefined;
+  beforeEach(() => {
+    inTeam = jest
+      .spyOn(jest.requireActual<typeof import('../firing_context')>('../firing_context'), 'withTeamContext')
+      .mockImplementation((_teamId, fn) => fn());
+  });
+  afterEach(() => inTeam?.mockRestore());
+
+  /** A movement as a version 4 save left it: the row, and its snapshot. */
+  async function savedUnderFour(): Promise<string> {
+    const first = await saveMovement({ teamId: TEAM, source: NEW });
+    if (!first.ok) throw new Error(`first save failed: ${(first.errors ?? []).join('; ')}`);
+    const [row] = db.__tables.movement;
+    Object.assign(row, { source: OLD, language_version: 4 });
+    Object.assign(db.__tables.movement_version[0], { source: OLD, language_version: 4 });
+    return first.movementId;
+  }
+
+  it('shows the rewrite, then saves it with the pin once acknowledged', async () => {
+    const { upgradeMovement } = await import('../language_upgrade');
+    const id = await savedUnderFour();
+
+    const shown = await upgradeMovement({ teamId: TEAM, id, acknowledge: false });
+    expect(shown).toMatchObject({ status: 'needs_acknowledgement', upgradedSource: NEW, diagnostics: [] });
+    expect(db.__tables.movement[0]).toMatchObject({ source: OLD, language_version: 4 });
+
+    const done = await upgradeMovement({ teamId: TEAM, id, acknowledge: true });
+    expect(done).toMatchObject({ status: 'upgraded', upgradedSource: NEW });
+    expect(db.__tables.movement[0]).toMatchObject({ source: NEW, language_version: 5, upgrade_diagnostics: null });
+    const current = db.__tables.movement_version.find((v) => v.id === db.__tables.movement[0].current_version_id);
+    expect(current).toMatchObject({ source: NEW, language_version: 5 });
+
+    const again = await upgradeMovement({ teamId: TEAM, id, acknowledge: true });
+    expect(again.status).toBe('already_current');
+  });
+
+  it('a movement the rewrite cannot make clean keeps its text and its pin', async () => {
+    const { upgradeMovement } = await import('../language_upgrade');
+    const id = await savedUnderFour();
+    const broken = (text: string, upper: string) => text.replace('# hand', `write nowhere-[:thing]-> { x: ${upper}("a") }\n# hand`);
+    db.__tables.movement[0].source = broken(OLD, 'UPPER');
+
+    const result = await upgradeMovement({ teamId: TEAM, id, acknowledge: true });
+    expect(result.status).toBe('blocked');
+    expect(result).toMatchObject({ upgradedSource: broken(NEW, 'Text.upper') });
+    if (result.status === 'not_found') return;
+    expect(result.diagnostics.map((d) => [d.severity, d.line])).toEqual([['error', 5]]);
+    expect(db.__tables.movement[0]).toMatchObject({ source: broken(OLD, 'UPPER'), language_version: 4 });
+  });
+});
