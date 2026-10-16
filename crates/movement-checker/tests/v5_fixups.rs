@@ -228,3 +228,19 @@ fn a_listens_pasteable_signature_joins_its_pins_with_the_v5_conjunction() {
     let d = found.iter().find(|d| d.code == "MOV_LISTEN_PARAM_MISMATCH").expect("a mismatch");
     assert!(d.message.contains("'m(event: <graph-[e:`Change` WHERE e.action == \"record.created\" && e.type == \"Ticket\"]->>)'"), "{}", d.message);
 }
+
+#[test]
+fn includes_inside_walk_brackets_reads_as_the_contains_or_in_written_there() {
+    let walk = |where_: &str| -> Vec<String> {
+        let source = format!("import {{ registry }} from adapters\nimport {{ public_registry }} from credentials\nreg = connect registry using public_registry\n\nfunction f() {{\n  rows = reg-[e:entities WHERE {where_}]-> {{ return e }}\n  return rows\n}}");
+        let catalog = CatalogSnapshot::load(REGISTRY).unwrap();
+        let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+        check_source(&source, &catalog, options).unwrap().into_iter().filter(|d| d.is_error()).map(|d| d.code).collect()
+    };
+    for (everyday, caps) in [("Text.includes(e.City, \"a\")", "e.City CONTAINS \"a\""), ("List.includes([\"a\", \"b\"], e.City)", "e.City IN [\"a\", \"b\"]")] {
+        assert_eq!(walk(everyday), Vec::<String>::new(), "{everyday}");
+        assert_eq!(walk(caps), Vec::<String>::new(), "{caps}");
+        assert_eq!(walk(&everyday.replace("e.City", "e.Nope")), ["MOV_UNKNOWN_PROPERTY"], "{everyday}");
+        assert_eq!(walk(&caps.replace("e.City", "e.Nope")), ["MOV_UNKNOWN_PROPERTY"], "{caps}");
+    }
+}

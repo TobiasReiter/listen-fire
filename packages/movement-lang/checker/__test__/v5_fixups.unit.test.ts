@@ -308,3 +308,32 @@ describe("a listen's pasteable signature joins its pins with 5's &&", () => {
     expect(d?.message).toContain("'m(event: <graph-[e:\`Change\` WHERE e.action == \"record.created\" && e.type == \"Ticket\"]->>)'");
   });
 });
+
+describe("includes inside walk brackets reads as the CONTAINS or IN written there", () => {
+  const registry = mockCatalog({
+    adapters: {
+      registry: {
+        constructionArgs: [],
+        schema: { positions: { entity: { properties: { Name: 'text', City: 'text' }, edges: {} } }, collections: { entities: { target: 'entity' } }, writableRoots: {} },
+      },
+    },
+  });
+  const walk = (where: string) =>
+    checkProgram(
+      parseProgram(`import { registry } from adapters\nreg = connect registry\n\nfunction f() {\n  rows = reg-[e:entities WHERE ${where}]-> { return e }\n  return rows\n}`, { languageVersion: 5 }),
+      registry,
+      { languageVersion: 5 },
+    )
+      .filter((d) => (d.severity ?? 'error') === 'error')
+      .map((d) => d.code);
+
+  it.each([['Text.includes(e.City, "a")', 'e.City CONTAINS "a"'], ['List.includes(["a", "b"], e.City)', 'e.City IN ["a", "b"]']])(
+    '`%s` checks as `%s` does',
+    (everyday, caps) => {
+      expect(walk(everyday)).toEqual([]);
+      expect(walk(caps)).toEqual([]);
+      expect(walk(everyday.replace('e.City', 'e.Nope'))).toEqual(walk(caps.replace('e.City', 'e.Nope')));
+      expect(walk(everyday.replace('e.City', 'e.Nope'))).toEqual(['MOV_UNKNOWN_PROPERTY']);
+    },
+  );
+});

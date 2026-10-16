@@ -264,6 +264,13 @@ impl<'s> Canon<'s> {
         if let Some((caps, _)) = table::WALK_CAPS.iter().find(|(_, everyday)| *everyday == written) {
             let message = format!("inside walk brackets `{written}` is written `{caps}`");
             self.old(*at, message, Some(Edit { at: *at, text: caps.to_string() }));
+            return;
+        }
+        // `Text.includes(t, v)` and `List.includes(xs, v)` read inside the
+        // brackets as they read outside: the `t CONTAINS v` and `v IN xs`
+        // written there.
+        if let Some(row) = table::by_v5(&written).filter(|row| matches!(row.shape, Shape::Contains | Shape::ListIncludes)) {
+            self.rewrite(row, e);
         }
     }
 
