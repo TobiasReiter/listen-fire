@@ -292,6 +292,14 @@ describe('describeMovementInstance — the default connection', () => {
     );
   });
 
+  it('reads a narrowing in the current language, `&&` included, unless a pin says otherwise', async () => {
+    const narrow = { type: 'thing', where: '`kind` == "a" && `kind` != "b"' };
+    const current = await describeMovementInstance({ teamId: TEAM, adapter: 'slack', narrow });
+    expect(current.notes.join('\n')).not.toContain('could not parse');
+    const pinned = await describeMovementInstance({ teamId: TEAM, adapter: 'slack', narrow, languageVersion: 4 });
+    expect(pinned.notes.join('\n')).toContain('could not parse');
+  });
+
   it('prefers the connection named for the system over its siblings', async () => {
     const result = await describeMovementInstance({ teamId: TEAM, adapter: 'notion' });
 

@@ -1854,6 +1854,7 @@ async function applyNarrowing(input: {
   instance: Awaited<ReturnType<typeof cachedAdapterInstance>>;
   adapterType: string;
   narrow: { type: string; where: string };
+  languageVersion: LanguageVersion;
 }): Promise<{
   schema: InstanceSchema | null;
   notes: string[];
@@ -1874,7 +1875,7 @@ async function applyNarrowing(input: {
 
   let filter: Expression;
   try {
-    filter = parseMovementExpression(narrow.where);
+    filter = parseMovementExpression(narrow.where, input.languageVersion);
   } catch (err) {
     return miss(
       `narrow: could not parse \`where\` (${err instanceof Error ? err.message : String(err)}) — ` +
@@ -1988,6 +1989,10 @@ export async function describeMovementInstance(input: {
    *  parser, so exploring and authoring share one vocabulary (the string that
    *  narrows here is the string that goes in the `WHERE`). */
   narrow?: { type: string; where: string };
+  /** The language `narrow.where` is written in — the program's pin when a
+   *  program asks; absent means the current version, which is what an agent
+   *  inspecting a system writes. */
+  languageVersion?: LanguageVersion;
   /**
    * WHERE TO STAND. An address handed back by a previous call — one of the
    * edges' `position` strings — echoed verbatim. Absent means the root, which
@@ -2063,7 +2068,12 @@ export async function describeMovementInstance(input: {
       ...(types !== undefined ? { types } : {}),
     });
     const narrowed = input.narrow
-      ? await applyNarrowing({ instance, adapterType, narrow: input.narrow })
+      ? await applyNarrowing({
+          instance,
+          adapterType,
+          narrow: input.narrow,
+          languageVersion: input.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+        })
       : undefined;
 
     const walked = await walkFor({ instance, at: input.position });
