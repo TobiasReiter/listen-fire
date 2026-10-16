@@ -150,8 +150,10 @@ import {
   endingHop,
   isTransformHop,
   LoweringError,
+  lowerExpression,
   specialRecordField,
 } from '../parser/expression/lower';
+import { typedSpellings, type ValueKind } from './typed_spelling';
 import { ExpressionSyntaxError, parseExpression } from '../parser/expression/parse_expression';
 import { isMapSpread, type At, type Hop, type MapEntry, type MExpr } from '../parser/expression/tree';
 import { MovementParseError, parseNestedCall } from '../parser/parse';
@@ -1378,12 +1380,11 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => ({
-    code: f.code,
-    message: f.message,
-    span: f.span,
-    ...(f.fix ? { fix: f.fix } : {}),
-  }));
+  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => {
+    const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
+    if (typed !== undefined) return { code: f.code, message: typed.message, span: f.span, fix: typed.fix };
+    return { code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) };
+  });
   const found = checker.diagnostics
     .map(withHandbookPointer)
     .map(d => ({ ...d, message: spellMessage(d.message, languageVersion) }));
@@ -2099,6 +2100,10 @@ function repairAt(at: string | HeldHandle, repair: string): string {
 /** A path head as the author wrote it — diagnostics currency. */
 function rawPath(path: PathHead): string {
   return spellPathHead(path);
+}
+
+function spanKey(span: Span): string {
+  return `${span.start.line}:${span.start.col}-${span.end.line}:${span.end.col}`;
 }
 
 /** Maps a character offset inside a slot's raw text back to a source location. */
@@ -3880,6 +3885,10 @@ interface CheckerOptions {
 
 class Checker {
   readonly diagnostics: Diagnostic[] = [];
+  /** The parser's MOV_V5_SPELLING findings whose fix depends on a type, by
+   *  span: the message and fix the checker, which knows the type, gives them
+   *  instead (`typed_spelling`). */
+  readonly respelled = new Map<string, { message: string; fix: DiagnosticFix }>();
 
   /** Node declarations made in the files being checked, by the symbol that
    *  declares them — how `extends` reaches a base declared in the same file,
@@ -6338,6 +6347,7 @@ class Checker {
     } catch {
       return; // the syntax error is reported where the slot is read
     }
+    if (since(this.languageVersion, 5)) this.checkTypedSpelling(tree, slot, scope);
     this.checkExpressionTree(tree, {
       spanOf: (at) => spanWithin(slot, at.start),
       extentOf: (at) => spanOfExtent(slot, at),
@@ -6345,6 +6355,35 @@ class Checker {
       scope,
       writeField: options?.writeField === true,
     });
+  }
+
+  /** Version 5's namespace functions chosen by what a value is
+   *  (`typed_spelling`): the parser's fix for an old spelling of a list's
+   *  length, membership or presence rewritten, and a v5 call given the wrong
+   *  kind refused. */
+  private checkTypedSpelling(tree: MExpr, slot: ExprSlot, scope: Scope): void {
+    if (this.typeOnly) return;
+    const kindOf = (e: MExpr): ValueKind => {
+      let type: FieldType | undefined;
+      try {
+        type = this.silentTyping(scope, slot.span).infer(lowerExpression(e, slot.raw));
+      } catch {
+        return undefined;
+      }
+      if (type === undefined) return undefined;
+      const variant = variantOf(stripAbsent(type));
+      return variant.kind === 'list' || variant.kind === 'tuple'
+        ? 'list'
+        : variant.kind === 'text' || variant.kind === 'enum'
+          ? 'text'
+          : undefined;
+    };
+    for (const found of typedSpellings(tree, slot.raw, kindOf)) {
+      const span = spanOfExtent(slot, found.at);
+      const fix: DiagnosticFix = { edits: [{ span, text: found.text }] };
+      if (found.kind === 'respell') this.respelled.set(spanKey(span), { message: found.message, fix });
+      else this.reportWithFix({ code: DiagnosticCodes.BUILTIN_ARG_TYPE, message: found.message, span, fix });
+    }
   }
 
   /** `checkSlotExpression` over a tree that is not a slot's — a block head's

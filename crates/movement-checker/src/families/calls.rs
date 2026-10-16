@@ -1098,6 +1098,9 @@ impl Checker<'_> {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
+        if since(self.version, 5) {
+            self.check_typed_spelling(&tree, slot, scope);
+        }
         self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
 

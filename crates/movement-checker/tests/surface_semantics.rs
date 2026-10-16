@@ -119,3 +119,34 @@ fn narrowing_on_null_tests_is_what_exists_and_isnull_gave() {
     assert_eq!(chat_codes(&pairs[0].1, 5), vec!["MOV_ABSENT_REQUIRED"]);
     assert_eq!(chat_codes(&pairs[8].1, 5), vec!["MOV_ABSENT_REQUIRED"]);
 }
+
+fn fixes_of(source: &str) -> Vec<String> {
+    check(source, 5)
+        .into_iter()
+        .filter(|d| d.code == "MOV_V5_SPELLING" || d.code == "MOV_BUILTIN_ARG_TYPE")
+        .map(|d| d.fix.map(|f| f["edits"][0]["text"].as_str().unwrap().to_string()).unwrap_or_default())
+        .collect()
+}
+
+#[test]
+fn a_list_s_length_membership_and_presence_follow_the_operand_s_type() {
+    let fn4 = |body: &str| format!("{HEAD4}movement go(xs: <text[]>, t: <text>, s: <text>) {{\n{body}\n}}");
+    let fn5 = |body: &str| format!("{HEAD5}function go(xs: <text[]>, t: <text>, s: <text>) {{\n{body}\n}}");
+    assert_eq!(codes(&fn4("  a = LENGTH(xs)\n  b = LENGTH(t)\n  c = xs CONTAINS s\n  d = t CONTAINS s\n  if EXISTS(xs) {\n    e = 1\n  }"), 4), Vec::<String>::new());
+    assert_eq!(fixes_of(&fn5("  a = LENGTH(xs)")), ["count(xs)"]);
+    assert_eq!(fixes_of(&fn5("  a = LENGTH(t)")), ["Text.length"]);
+    assert_eq!(codes(&upgraded(&fn5("  a = LENGTH(xs)\n  b = LENGTH(t)")), 5), Vec::<String>::new());
+    assert_eq!(fixes_of(&fn5("  c = xs CONTAINS s")), ["List.includes(xs, s)"]);
+    assert_eq!(fixes_of(&fn5("  d = t CONTAINS s")), ["Text.includes(t, s)"]);
+    assert_eq!(fixes_of(&fn5("  d = t CONTAINS \"x\"")), ["Text.includes(t, \"x\")"]);
+    assert!(upgraded(&fn5("  c = xs CONTAINS s\n  d = t CONTAINS s")).contains("c = List.includes(xs, s)\n  d = Text.includes(t, s)"));
+    assert_eq!(fixes_of(&fn5("  if (EXISTS(xs)) {\n    e = 1\n  }")), ["count(xs) > 0"]);
+    assert_eq!(fixes_of(&fn5("  e = EXISTS(xs) && true")), ["(count(xs) > 0)"]);
+    assert_eq!(fixes_of(&fn5("  if (EXISTS(t)) {\n    e = 1\n  }")), ["t != null"]);
+    assert_eq!(fixes_of(&fn5("  a = Text.length(xs)")), ["count(xs)"]);
+    assert_eq!(fixes_of(&fn5("  c = Text.includes(xs, s)")), ["List.includes(xs, s)"]);
+    assert_eq!(fixes_of(&fn5("  c = List.includes(t, s)")), ["Text.includes(t, s)"]);
+    assert_eq!(codes(&fn5("  a = count(xs)\n  b = Text.length(t)\n  c = List.includes(xs, s)\n  d = Text.includes(t, s)"), 5), Vec::<String>::new());
+    let walk = format!("{HEAD5}function go(c: <chat-[:channel]->>) {{\n  ms = c-[m:Messages WHERE m.Tags CONTAINS \"x\" AND LENGTH(m.Text) > 2]->\n}}");
+    assert_eq!(fixes_of(&walk), Vec::<String>::new());
+}

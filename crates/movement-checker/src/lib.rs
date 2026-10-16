@@ -60,7 +60,12 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
     checker.run(&program.statements);
     let diagnostics = version::standing_diagnostic(options.language_version)
         .into_iter()
-        .chain(program.spelling.iter().map(diagnostic::of_spelling))
+        .chain(program.spelling.iter().map(|f| match checker.respelled.get(&families::typed_spelling::span_key(&f.span)) {
+            Some((message, fix)) if f.code == movement_parser::surface::SPELLING_CODE => {
+                diagnostic::Diagnostic { fix: Some(fix.clone()), ..diagnostic::Diagnostic::error(&f.code, message.clone(), f.span) }
+            }
+            _ => diagnostic::of_spelling(f),
+        }))
         .chain(problems)
         .chain(
             std::mem::take(&mut checker.diagnostics)

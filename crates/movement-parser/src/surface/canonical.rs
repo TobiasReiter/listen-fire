@@ -281,11 +281,12 @@ impl<'s> Canon<'s> {
                     self.old(word_at, format!("`{word}` is written `{new}` outside walk brackets"), Some(Edit { at: word_at, text: new.into() }));
                 }
             }
+            // `Text.includes(l, r)` is the call whose tree is `l CONTAINS r`,
+            // whatever `l` is; the checker, which knows when `l` is a list,
+            // writes `List.includes` there (checker typed_spelling).
             BinaryOp::Contains if word.eq_ignore_ascii_case("CONTAINS") => {
-                let right_text = self.text(right);
-                let namespace = if right_text.starts_with('"') || right_text.starts_with('\'') { "Text" } else { "List" };
-                let text = format!("{namespace}.includes({}, {right_text})", self.text(left));
-                self.old(whole, format!("`CONTAINS` outside walk brackets is written `{namespace}.includes(…)`"), Some(Edit { at: whole, text }));
+                let text = format!("Text.includes({}, {})", self.text(left), self.text(right));
+                self.old(whole, "`CONTAINS` outside walk brackets is written `Text.includes(t, v)` (a list's is `List.includes(xs, v)`)".into(), Some(Edit { at: whole, text }));
             }
             BinaryOp::In if word.eq_ignore_ascii_case("IN") => {
                 let text = format!("List.includes({}, {})", self.text(right), self.text(left));

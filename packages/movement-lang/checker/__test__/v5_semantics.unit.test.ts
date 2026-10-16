@@ -147,3 +147,47 @@ describe('narrowing on `!= null` and `== null { fail(…) }` is what EXISTS and 
     expect(fixedCheck(source)).toEqual([]);
   });
 });
+
+describe('a list\'s length, membership and presence are chosen by the operand\'s type', () => {
+  const fn4 = (body: string): string => `${HEAD4}movement go(xs: <text[]>, t: <text>, s: <text>) {\n${body}\n}`;
+  const fn5 = (body: string): string => `${HEAD5}function go(xs: <text[]>, t: <text>, s: <text>) {\n${body}\n}`;
+  const fixesOf = (source: string): string[] =>
+    check(source, 5)
+      .filter((d) => d.code === 'MOV_V5_SPELLING' || d.code === 'MOV_BUILTIN_ARG_TYPE')
+      .map((d) => d.fix?.edits[0].text ?? '');
+
+  it('under 4 nothing changes', () => {
+    expect(codes(fn4('  a = LENGTH(xs)\n  b = LENGTH(t)\n  c = xs CONTAINS s\n  d = t CONTAINS s\n  if EXISTS(xs) {\n    e = 1\n  }'), 4)).toEqual([]);
+  });
+
+  it('LENGTH: a list\'s is `count`, text\'s `Text.length`', () => {
+    expect(fixesOf(fn5('  a = LENGTH(xs)'))).toEqual(['count(xs)']);
+    expect(fixesOf(fn5('  a = LENGTH(t)'))).toEqual(['Text.length']);
+    expect(codes(upgraded(fn5('  a = LENGTH(xs)\n  b = LENGTH(t)')), 5)).toEqual([]);
+  });
+
+  it('CONTAINS outside a walk: by the left operand\'s type, not by how the right is written', () => {
+    expect(fixesOf(fn5('  c = xs CONTAINS s'))).toEqual(['List.includes(xs, s)']);
+    // Text with a variable on the right stays text's (`List.includes(t, s)` is `s IN t`: always false).
+    expect(fixesOf(fn5('  d = t CONTAINS s'))).toEqual(['Text.includes(t, s)']);
+    expect(fixesOf(fn5('  d = t CONTAINS "x"'))).toEqual(['Text.includes(t, "x")']);
+    expect(upgraded(fn5('  c = xs CONTAINS s\n  d = t CONTAINS s'))).toContain('c = List.includes(xs, s)\n  d = Text.includes(t, s)');
+  });
+
+  it('EXISTS of a list is `count(xs) > 0` (an empty list is absent), of a value `!= null`', () => {
+    expect(fixesOf(fn5('  if (EXISTS(xs)) {\n    e = 1\n  }'))).toEqual(['count(xs) > 0']);
+    expect(fixesOf(fn5('  e = EXISTS(xs) && true'))).toEqual(['(count(xs) > 0)']);
+    expect(fixesOf(fn5('  if (EXISTS(t)) {\n    e = 1\n  }'))).toEqual(['t != null']);
+  });
+
+  it('a v5 call given the wrong kind is refused with the right one', () => {
+    expect(fixesOf(fn5('  a = Text.length(xs)'))).toEqual(['count(xs)']);
+    expect(fixesOf(fn5('  c = Text.includes(xs, s)'))).toEqual(['List.includes(xs, s)']);
+    expect(fixesOf(fn5('  c = List.includes(t, s)'))).toEqual(['Text.includes(t, s)']);
+    expect(codes(fn5('  a = count(xs)\n  b = Text.length(t)\n  c = List.includes(xs, s)\n  d = Text.includes(t, s)'), 5)).toEqual([]);
+  });
+
+  it('inside walk brackets nothing is respelled', () => {
+    expect(fixesOf(`${HEAD5}function go(c: <chat-[:channel]->>) {\n  ms = c-[m:Messages WHERE m.Tags CONTAINS "x" AND LENGTH(m.Text) > 2]->\n}`)).toEqual([]);
+  });
+});
