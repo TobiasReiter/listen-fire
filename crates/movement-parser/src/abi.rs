@@ -117,6 +117,25 @@ pub unsafe extern "C" fn spell_message(
     unsafe { emit(spelled, out_ptr_ptr, out_len_ptr) }
 }
 
+/// A plugin's name from version 5 (crate::surface::table::plugin_name): the
+/// registry name or catalog key in camelCase, as a JSON string.
+///
+/// # Safety
+/// As `parse_program`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn plugin_name(
+    src_ptr: *const u8,
+    src_len: u32,
+    _version: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let spelled =
+        unsafe { utf8(src_ptr, src_len, "plugin") }.map(|key| serde_json::Value::String(crate::surface::table::plugin_name(key)));
+    unsafe { emit(spelled, out_ptr_ptr, out_len_ptr) }
+}
+
 /// The spelling table (crate::surface::table::TABLE) as JSON; the input is
 /// ignored.
 ///

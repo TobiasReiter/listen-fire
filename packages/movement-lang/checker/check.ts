@@ -179,7 +179,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
-import { spellMessage } from '../parser/surface';
+import { pluginName, spellMessage } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -5635,9 +5635,12 @@ class Checker {
               ? this.catalog.credential(name) !== undefined
               : this.catalog.plugin(name) !== undefined;
         if (!known) {
+          // From version 5 a plugin is imported by its camelCase name, read
+          // into the catalog's key: the message names it as written.
+          const named = namespace === 'plugins' && since(this.languageVersion, 5) ? pluginName(name) : name;
           this.report(
             DiagnosticCodes.IMPORT_UNKNOWN,
-            `Unknown ${namespace === 'adapters' ? 'adapter' : namespace === 'credentials' ? 'credential' : 'plugin'} '${name}' in '${namespace}'`,
+            `Unknown ${namespace === 'adapters' ? 'adapter' : namespace === 'credentials' ? 'credential' : 'plugin'} '${named}' in '${namespace}'`,
             statement.span,
           );
         }

@@ -172,6 +172,43 @@ pub const OPERATORS: &[(&str, &str)] =
 /// Statement words retired or respelled from version 5 (§2.11, §2.12).
 pub const STATEMENT_WORDS: &[(&str, &str)] = &[("movement", "function")];
 
+/// A plugin's name from version 5 (§2.10): its registry name in camelCase,
+/// one spelling, matched exactly. The registry writes `fetch-url`; the catalog
+/// keys it `fetch_url` (the name versions 1–4 import); version 5 imports
+/// `fetchUrl`. Either key reads here.
+pub fn plugin_name(registry: &str) -> String {
+    let mut out = String::with_capacity(registry.len());
+    let mut upper = false;
+    for c in registry.chars() {
+        if c == '-' || c == '_' {
+            upper = !out.is_empty();
+        } else if upper {
+            out.push(c.to_ascii_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The catalog's key of the plugin version 5 imports as `written`
+/// (`fetchUrl` → `fetch_url`): the key whose `plugin_name` is exactly
+/// `written`. None when no key spells that way (`fetch_url`, `FetchUrl`).
+pub fn plugin_key(written: &str) -> Option<String> {
+    let mut key = String::with_capacity(written.len() + 4);
+    for c in written.chars() {
+        if c.is_ascii_uppercase() {
+            key.push('_');
+            key.push(c.to_ascii_lowercase());
+        } else {
+            key.push(c);
+        }
+    }
+    let starts_lower = written.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+    (starts_lower && written.chars().all(|c| c.is_ascii_alphanumeric()) && plugin_name(&key) == written).then_some(key)
+}
+
 /// The row a v5 spelling (`Text.upper`, `map`) reads as, exactly as written.
 pub fn by_v5(written: &str) -> Option<&'static Spelling> {
     SPELLINGS.iter().find(|s| !s.old_only && s.v5 == written)
@@ -279,6 +316,21 @@ mod tests {
         for s in SPELLINGS.iter().filter(|s| !s.old_only) {
             assert!(seen.insert(s.v5), "{} twice", s.v5);
         }
+    }
+
+    #[test]
+    fn a_plugin_is_named_in_camel_case_one_way_round() {
+        assert_eq!(plugin_name("fetch-url"), "fetchUrl");
+        assert_eq!(plugin_name("fetch_url"), "fetchUrl");
+        assert_eq!(plugin_name("linkedin_enrichment"), "linkedinEnrichment");
+        assert_eq!(plugin_name("research"), "research");
+        assert_eq!(plugin_name("web_research_v2"), "webResearchV2");
+        for key in ["fetch_url", "linkedin_enrichment", "research", "web_research_v2", "vc_url_retrieval"] {
+            assert_eq!(plugin_key(&plugin_name(key)).as_deref(), Some(key));
+        }
+        assert_eq!(plugin_key("fetch_url"), None);
+        assert_eq!(plugin_key("FetchUrl"), None);
+        assert_eq!(plugin_key("fetch-url"), None);
     }
 
     #[test]

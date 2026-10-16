@@ -69,3 +69,38 @@ describe('a block closure nested in an expression', () => {
     expect(spellings(check(source, 4))).toEqual([]);
   });
 });
+
+describe('a plugin', () => {
+  const plugins = mockCatalog({ plugins: { fetch_url: { args: ['url'] } } });
+  const checkWith = (source: string, languageVersion: number): Diagnostic[] =>
+    checkProgram(parseProgram(source, { languageVersion }), plugins, { languageVersion });
+  const codes = (found: Diagnostic[]): string[] => found.map((d) => d.code);
+  const old = 'import { fetch_url } from plugins\nmovement go(u: <text>) {\n  p = fetch_url(url: u)\n}';
+
+  it('is imported by its exact camelCase name under 5, as by the catalog key under 4', () => {
+    const v5 = 'import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(url: u)\n}';
+    const aliased = 'import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(url: u)\n}';
+    expect(codes(checkWith(v5, 5))).toEqual(codes(checkWith(old, 4)));
+    expect(codes(checkWith(aliased, 5))).toEqual(codes(checkWith(old, 4)));
+  });
+
+  it("is refused under 5 by the catalog's key, the local name kept by the fix", () => {
+    const found = spellings(checkWith('import { fetch_url } from plugins\n', 5));
+    expect(found.map((d) => [d.message, d.fix?.edits[0]?.text])).toEqual([
+      ['from language version 5 the plugin `fetch_url` is imported as `fetchUrl`', 'fetchUrl as fetch_url'],
+    ]);
+    expect(spellings(checkWith('import { fetch_url as get } from plugins\n', 5))[0]?.fix?.edits[0]?.text).toBe('fetchUrl');
+  });
+
+  it('in another letter case is unknown under 5, named as written', () => {
+    const unknown = checkWith('import { fetchURL } from plugins\n', 5).filter((d) => d.code === 'MOV_IMPORT_UNKNOWN');
+    expect(unknown.map((d) => d.message)).toEqual(["Unknown plugin 'fetchURL' in 'plugins'"]);
+  });
+
+  it("is imported by the catalog's key under 4, the camelCase name unknown", () => {
+    expect(codes(checkWith('import { fetch_url } from plugins\n', 4))).not.toContain('MOV_IMPORT_UNKNOWN');
+    expect(checkWith('import { fetchUrl } from plugins\n', 4).map((d) => d.message)).toContain(
+      "Unknown plugin 'fetchUrl' in 'plugins'",
+    );
+  });
+});

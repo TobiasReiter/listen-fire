@@ -12,7 +12,7 @@
 
 use movement_parser::ast::{ImportSource, ImportStatement, Span};
 use movement_parser::catalog::helpers::credential_arg_of;
-use movement_parser::version::before;
+use movement_parser::version::{before, since};
 use serde_json::json;
 
 use crate::checker::Checker;
@@ -265,7 +265,15 @@ impl Checker<'_> {
                         _ => (SymbolKind::Plugin, self.catalog.plugin(&imported.name).is_some(), "plugin"),
                     };
                     if !known {
-                        self.report(codes::IMPORT_UNKNOWN, format!("Unknown {what} '{}' in '{namespace}'", imported.name), statement.span);
+                        // From version 5 a plugin is imported by its camelCase
+                        // name, read into the catalog's key: the message names
+                        // it as written.
+                        let named = if what == "plugin" && since(self.version, 5) {
+                            movement_parser::surface::table::plugin_name(&imported.name)
+                        } else {
+                            imported.name.clone()
+                        };
+                        self.report(codes::IMPORT_UNKNOWN, format!("Unknown {what} '{named}' in '{namespace}'"), statement.span);
                     }
                     kind
                 }

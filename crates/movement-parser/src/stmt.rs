@@ -1147,13 +1147,16 @@ impl Parser {
         self.skip_inline_ws();
         self.expect("{", "after 'import'")?;
         let mut names = Vec::new();
+        let mut name_spans = Vec::new();
         loop {
             self.skip_all_ws();
             if self.is('}') {
                 self.pos += 1;
                 break;
             }
+            let name_start = self.pos;
             let name = self.read_name("an imported name")?;
+            name_spans.push((name_start, self.pos));
             self.skip_all_ws();
             let mut alias = None;
             if self.at_word("as") {
@@ -1207,10 +1210,37 @@ impl Parser {
                 }
                 self.adapters.extend(names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone())));
             }
+            if ns == "plugins" && since(self.version, 5) {
+                for (imported, &(start, end)) in names.iter_mut().zip(&name_spans) {
+                    self.read_plugin_import(imported, start, end);
+                }
+            }
             ImportSource::Builtin { namespace: ns }
         };
         self.expect_statement_end()?;
         Ok(ImportStatement { names, source, span: self.span_from(start) })
+    }
+
+    /// A plugin imported under version 5 by its exact camelCase name
+    /// (`fetchUrl`, crate::surface::table::plugin_name), read into the import
+    /// versions 1–4 write: the catalog's key, under the name as written
+    /// (`fetch_url as fetchUrl`). The catalog's key written as the name is
+    /// the old spelling, refused with the rewrite, the local name kept.
+    fn read_plugin_import(&mut self, imported: &mut ImportedName, start: usize, end: usize) {
+        use crate::surface::table::{plugin_key, plugin_name};
+        if let Some(key) = plugin_key(&imported.name) {
+            if key != imported.name {
+                let written = std::mem::replace(&mut imported.name, key);
+                imported.alias.get_or_insert(written);
+            }
+            return;
+        }
+        let name = plugin_name(&imported.name);
+        if plugin_key(&name).is_none() {
+            return;
+        }
+        let text = if imported.alias.is_some() { name.clone() } else { format!("{name} as {}", imported.name) };
+        self.spelling(format!("from language version 5 the plugin `{}` is imported as `{name}`", imported.name), start, end, vec![(start, end, text)]);
     }
 
     // ── Assignment right-hand sides ──

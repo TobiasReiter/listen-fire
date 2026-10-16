@@ -24,6 +24,14 @@ export function spellMessage(message: string, version: number): string {
   return json;
 }
 
+/** A plugin's name from version 5: its registry name or catalog key in
+ *  camelCase (`fetch_url` → `fetchUrl`), one spelling, matched exactly. */
+export function pluginName(key: string): string {
+  const { ok, json } = callParser('plugin_name', key, [0]);
+  if (!ok || typeof json !== 'string') throw new Error(`plugin_name: ${JSON.stringify(json)}`);
+  return json;
+}
+
 export interface SpellingRow {
   canonical: string;
   v5: string;
