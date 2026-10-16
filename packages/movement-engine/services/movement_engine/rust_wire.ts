@@ -124,47 +124,20 @@ export function optionalStringRecord(value: unknown, what: string): Record<strin
 
 export const REFUSED: unique symbol = Symbol('refused');
 
-/** A lone surrogate: a text holding one crosses the eval wire as its code
- *  units (`["s16", units]`), since a JSON reader may refuse its escape. */
-export const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/** A lone surrogate, which crosses the eval wire as U+FFFD. */
+const LONE_SURROGATES = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-/** A text on the wire: itself, or `["s16", units]` when it holds a lone
- *  surrogate (a value, a key, a file's display alike). */
-function wireText(text: string): unknown {
-  if (!LONE_SURROGATE.test(text)) return text;
-  const units: number[] = [];
-  for (let i = 0; i < text.length; i++) units.push(text.charCodeAt(i));
-  return ['s16', units];
+/** A text on the wire: each lone surrogate U+FFFD (a value, a key, a
+ *  file's display alike). */
+function wireText(text: string): string {
+  return text.replace(LONE_SURROGATES, '\uFFFD');
 }
 
-/** A text off the wire: itself, or the code units `["s16", units]` names. */
+/** A text off the wire. */
 function textOfWire(wire: unknown, what: string): string {
   if (typeof wire === 'string') return wire;
-  if (Array.isArray(wire) && wire[0] === 's16' && Array.isArray(wire[1])) {
-    const units: unknown[] = wire[1];
-    if (units.every((unit): unit is number => typeof unit === 'number' && Number.isInteger(unit) && unit >= 0 && unit <= 0xffff)) {
-      return String.fromCharCode(...units);
-    }
-  }
-  throw new RustShimError(`${what} is a text or ["s16", units]`);
+  throw new RustShimError(`${what} is a text`);
 }
-
-/**
- * The built-ins a read of an `Object.prototype` name off a plain object finds
- * (`{}.toString`, `{}.constructor`): the engine holds each by the name it
- * prints, and the wire carries that name (`["f", name]`).
- */
-const OBJECT_PROTOTYPE_BUILTINS: ReadonlyMap<string, unknown> = new Map<string, unknown>([
-  ['Object', Object],
-  ...Object.getOwnPropertyNames(Object.prototype)
-    .filter((name) => name !== 'constructor' && name !== '__proto__')
-    .map((name): [string, unknown] => [name, Reflect.get(Object.prototype, name)]),
-  // A list's methods, `Array#<name>`: what an object whose prototype a
-  // GROUPBY filing made a list reads under those names.
-  ...Object.getOwnPropertyNames(Array.prototype)
-    .filter((name) => typeof Reflect.get(Array.prototype, name) === 'function')
-    .map((name): [string, unknown] => [`Array#${name}`, Reflect.get(Array.prototype, name)]),
-]);
 
 /**
  * `object[key] = value` as `JSON.parse` and a spread write it: an own,
@@ -176,17 +149,6 @@ const OBJECT_PROTOTYPE_BUILTINS: ReadonlyMap<string, unknown> = new Map<string, 
  */
 export function ownEntry(object: object, key: string, value: unknown): void {
   Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
-}
-
-function builtinName(value: unknown): ['f', string] | undefined {
-  for (const [name, builtin] of OBJECT_PROTOTYPE_BUILTINS) if (builtin === value) return ['f', name];
-  return undefined;
-}
-
-function builtinNamed(name: unknown): unknown {
-  const builtin = typeof name === 'string' ? OBJECT_PROTOTYPE_BUILTINS.get(name) : undefined;
-  if (builtin === undefined) throw new RustShimError(`the wire names no built-in ${String(name)}`);
-  return builtin;
 }
 
 export function isCallbackParam(value: unknown): value is CallbackParamSpec {
@@ -217,16 +179,19 @@ function bindingFromWire(descriptor: unknown): Binding {
 }
 
 /**
- * The wire to the Rust evaluator and back (crates/movement-engine/src/env.rs
- * says the format): values with their identity, and the origins of the trails
- * they carry, numbered. A value is data or one of the engine's records, and
- * the two never share a form: every object the host writes is data, whatever
+ * The wire to the Rust engine and back (crates/movement-engine/src/env.rs
+ * says the format): plain JSON values, and the origins of the trails they
+ * carry, numbered. A list is `["l", items]` and an object `["o", entries]`;
+ * `undefined`, `NaN`, `±Infinity` and `-0` cross as `null`, a lone surrogate
+ * as U+FFFD, and nothing crosses by identity (an object reached twice is
+ * written twice). A value is data or one of the engine's records, and the
+ * two never share a form: every object the host writes is data, whatever
  * keys it carries; a record is only ever one the engine handed out
  * (`["x", id, descriptor]`), handed back by its id. A file crosses as an
  * opaque handle (`["F", id, { handle, name, contentType, size }]` to the
- * engine, `["F", id]` back): the segment's `files` table keeps the descriptor
- * — its source, credential, store and URL never reach the engine — and the
- * tag, never a descriptor's keys, is what makes a file.
+ * engine, `["F", id]` back): the segment's `files` table keeps the
+ * descriptor — its source, credential, store and URL never reach the engine
+ * — and the tag, never a descriptor's keys, is what makes a file.
  */
 export class FileTable {
   private readonly byId: FileValue[] = [];
@@ -252,13 +217,7 @@ export class FileTable {
 }
 
 export class WireOut {
-  /** `whole`: each value is written whole — a back-reference only within
-   *  it — because a segment's engine decodes each answer on its own, in the
-   *  order it reads them, and an object re-sent after a mutation must cross
-   *  as it now is. An object keeps the id it was first sent under, so the
-   *  engine knows an object sent twice for the one object it is (the same
-   *  object a host hands the TypeScript engine twice is `===` itself). */
-  constructor(private readonly options: { whole?: true; files?: FileTable } = {}) {
+  constructor(options: { files?: FileTable } = {}) {
     this.files = options.files ?? new FileTable();
   }
 
@@ -269,51 +228,29 @@ export class WireOut {
   private readonly records = new Map<number, Binding>();
   private readonly recordIds = new Map<object, number>();
 
-  /** The objects and lists sent, by the id the wire gave them. */
-  private readonly sent: object[] = [];
-  /** The ids of the objects written so far: a back-reference names one. */
-  private readonly ids = new Map<object, number>();
-  /** The id each object was first sent under, kept across values. */
-  private readonly identity = new Map<object, number>();
+  /** The objects being written now: one met again inside itself is a cycle. */
   private readonly open = new Set<object>();
   readonly origins: ProvenanceOrigin[] = [];
   private readonly originIds = new Map<ProvenanceOrigin, number>();
 
-  /** How deep the value being written is: 0 between values. */
-  private writing = 0;
-
-  /** `value` on the wire, or REFUSED where it would not cross as itself: a
-   *  function, a Date, a class instance (an own `__proto__` key crosses as
-   *  the key it is; a lone surrogate as its code units). A record the
-   *  engine handed out crosses back as itself; nothing else is a record. */
+  /** `value` on the wire, or REFUSED where it would not cross as data: a
+   *  function, a Date, a class instance, a cycle (an own `__proto__` key
+   *  crosses as the key it is). A record the engine handed out crosses back
+   *  as itself; nothing else is a record. */
   value(value: unknown): unknown {
-    if (this.options.whole === true && this.writing === 0) this.ids.clear();
-    this.writing += 1;
-    try {
-      return this.write(value);
-    } finally {
-      this.writing -= 1;
-    }
-  }
-
-  private write(value: unknown): unknown {
     const kind = typeof value;
     switch (kind) {
       case 'undefined':
-        return ['u'];
+        return null;
       case 'boolean':
         return value;
       case 'string':
         return typeof value === 'string' ? wireText(value) : value;
       case 'number':
-        if (Number.isNaN(value)) return ['n', 'NaN'];
-        if (value === Infinity) return ['n', 'Infinity'];
-        if (value === -Infinity) return ['n', '-Infinity'];
-        return Object.is(value, -0) ? ['n', '-0'] : value;
+        return typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0) ? value : null;
       case 'object':
-        return value === Object.prototype ? ['p'] : this.composite(value);
+        return this.composite(value);
       case 'function':
-        return builtinName(value) ?? REFUSED;
       case 'bigint':
       case 'symbol':
         return REFUSED;
@@ -337,24 +274,10 @@ export class WireOut {
     }
     const record = this.recordIds.get(value);
     if (record !== undefined) return ['x', record];
-    const seen = this.ids.get(value);
-    if (seen !== undefined) return this.open.has(value) ? REFUSED : ['r', seen];
+    if (this.open.has(value)) return REFUSED;
     const proto: unknown = Object.getPrototypeOf(value);
     const isList = Array.isArray(value) && proto === Array.prototype;
-    // A plain object whose prototype was assigned (an object literal's
-    // `__proto__`, `null` included) crosses with that prototype as the
-    // fourth member, `["o", id, entries, prototype]`, which is how the engine
-    // hands one out; a class instance's prototype holds its methods, which
-    // are no entries, so it is refused below.
-    const assigned = !isList && !Array.isArray(value) && proto !== Object.prototype && (proto === null || typeof proto === 'object');
-    if (!isList && proto !== Object.prototype && !assigned) return REFUSED;
-    let id = this.identity.get(value);
-    if (id === undefined) {
-      id = this.sent.length;
-      this.sent.push(value);
-      this.identity.set(value, id);
-    }
-    this.ids.set(value, id);
+    if (!isList && proto !== Object.prototype && proto !== null) return REFUSED;
     this.open.add(value);
     try {
       if (Array.isArray(value)) {
@@ -362,11 +285,11 @@ export class WireOut {
         for (let i = 0; i < value.length; i++) {
           // A hole is not `undefined` to every array method.
           if (!(i in value)) return REFUSED;
-          const item = this.write(value[i]);
+          const item = this.value(value[i]);
           if (item === REFUSED) return REFUSED;
           items.push(item);
         }
-        return ['l', id, items];
+        return ['l', items];
       }
       // An own `__proto__` key (`JSON.parse` makes one) is a key like any
       // other: the engine holds it as an own entry, and `read` hands it back
@@ -375,13 +298,11 @@ export class WireOut {
       if (Object.getOwnPropertyNames(value).length !== keys.length) return REFUSED;
       const entries: unknown[] = [];
       for (const key of keys) {
-        const item = this.write(Reflect.get(value, key));
+        const item = this.value(Reflect.get(value, key));
         if (item === REFUSED) return REFUSED;
         entries.push([wireText(key), item]);
       }
-      if (!assigned) return ['o', id, entries];
-      const prototype = proto === null ? null : this.write(proto);
-      return prototype === REFUSED ? REFUSED : ['o', id, entries, prototype];
+      return ['o', entries];
     } finally {
       this.open.delete(value);
     }
@@ -404,60 +325,31 @@ export class WireOut {
     return id;
   }
 
-  /** A value back from the wire: the objects sent as themselves, the new
-   *  ones built once each. */
-  read(wire: unknown, made: Map<number, unknown> = new Map()): unknown {
+  /** A value back from the wire. */
+  read(wire: unknown): unknown {
     if (!Array.isArray(wire)) return wire;
     const [tag, a, b] = wire;
     switch (tag) {
-      case 'u':
-        return undefined;
-      case 's16':
-        return textOfWire(wire, 'a wire text');
-      case 'n':
-        return a === 'NaN' ? NaN : a === 'Infinity' ? Infinity : a === '-Infinity' ? -Infinity : -0;
-      case 'f':
-        return builtinNamed(a);
-      case 'p':
-        return Object.prototype;
-      case 'i':
-        if (typeof a !== 'number' || this.sent[a] === undefined) throw new RustShimError(`the wire names no sent value ${String(a)}`);
-        return this.sent[a];
-      case 'r':
-        if (typeof a !== 'number' || !made.has(a)) throw new RustShimError(`the wire names no value ${String(a)} it made`);
-        return made.get(a);
       case 'x': {
         if (typeof a !== 'number') throw new RustShimError(`the engine handed the host a record it cannot carry (${String(a)})`);
         const held = this.records.get(a);
         if (held !== undefined) return held;
-        const record = bindingFromWire(this.read(b, made));
+        const record = bindingFromWire(this.read(b));
         this.records.set(a, record);
         this.recordIds.set(record, a);
         return record;
       }
       case 'F':
         return this.files.file(a);
-      case 'l': {
-        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire list is ["l", id, items]');
-        const list: unknown[] = [];
-        made.set(a, list);
-        for (const item of b) list.push(this.read(item, made));
-        return list;
-      }
+      case 'l':
+        if (!Array.isArray(a)) throw new RustShimError('a wire list is ["l", items]');
+        return a.map((item) => this.read(item));
       case 'o': {
-        if (typeof a !== 'number' || !Array.isArray(b)) throw new RustShimError('a wire object is ["o", id, entries]');
+        if (!Array.isArray(a)) throw new RustShimError('a wire object is ["o", entries]');
         const object: Record<string, unknown> = {};
-        made.set(a, object);
-        for (const entry of b) {
+        for (const entry of a) {
           if (!Array.isArray(entry)) throw new RustShimError('a wire entry is [key, value]');
-          ownEntry(object, textOfWire(entry[0], 'a wire entry\'s key'), this.read(entry[1], made));
-        }
-        // `["o", id, entries, prototype]`: what a GROUPBY or KEYBY filing
-        // under `__proto__` made the object's prototype.
-        if (wire.length > 3) {
-          const proto = this.read(wire[3], made);
-          if (typeof proto !== 'object' && typeof proto !== 'function') throw new RustShimError('a wire prototype is an object');
-          Object.setPrototypeOf(object, proto);
+          ownEntry(object, textOfWire(entry[0], "a wire entry's key"), this.read(entry[1]));
         }
         return object;
       }
@@ -466,8 +358,6 @@ export class WireOut {
     }
   }
 }
-
-
 
 // ── Files the host makes for the engine ─────────────────────────────────────
 

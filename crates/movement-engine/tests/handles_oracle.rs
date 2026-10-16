@@ -27,53 +27,24 @@ use movement_engine::executor::{PendingRequest, Step};
 /// What the segment's wire has carried, by the id the wire gave each object
 /// and list, so a reference (`["i", id]`) reads as what it names.
 #[derive(Default)]
-struct Sent(HashMap<u64, Json>);
+struct Sent;
 
 impl Sent {
-    fn register(&mut self, wire: &Json) {
-        let Some(items) = wire.as_array() else { return };
-        match items.first().and_then(Json::as_str) {
-            Some("o") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for entry in items[2].as_array().expect("entries") {
-                    self.register(&entry[1]);
-                }
-            }
-            Some("l") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for item in items[2].as_array().expect("items") {
-                    self.register(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn resolve<'s>(&'s self, wire: &'s Json) -> &'s Json {
-        match wire.as_array().map(Vec::as_slice) {
-            // A reference to an object sent before (`i`), or a back-reference
-            // to one earlier in the same value (`r`): the very object again.
-            Some([tag, id]) if tag == "i" || tag == "r" => self.resolve(&self.0[&id.as_u64().expect("an id")]),
-            _ => wire,
-        }
-    }
-
     /// A wire value as JSON writes it (`JSON.parse(JSON.stringify(v))`): an
     /// `undefined` member left out, an `undefined` item null.
     fn plain(&self, wire: &Json) -> Json {
-        let wire = self.resolve(wire);
-        let Some(items) = wire.as_array() else { return integral(wire) };
+                let Some(items) = wire.as_array() else { return integral(wire) };
         match items.first().and_then(Json::as_str) {
             Some("o") => Json::Object(
-                items[2]
+                items[1]
                     .as_array()
                     .expect("entries")
                     .iter()
-                    .filter(|e| self.resolve(&e[1]) != &json!(["u"]))
+                    .filter(|e| &e[1] != &json!(["u"]))
                     .map(|e| (e[0].as_str().expect("a key").to_string(), self.plain(&e[1])))
                     .collect(),
             ),
-            Some("l") => Json::Array(items[2].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
+            Some("l") => Json::Array(items[1].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
             Some("u") | Some("n") => Json::Null,
             _ => integral(wire),
         }
@@ -82,34 +53,33 @@ impl Sent {
     /// A wire value as `JSON.stringify` writes it, its keys in the order
     /// the wire carried them.
     fn text(&self, wire: &Json) -> String {
-        let wire = self.resolve(wire);
-        if let Some(n) = wire.as_f64() {
+                if let Some(n) = wire.as_f64() {
             return movement_engine::js::number_to_string(n);
         }
         let Some(items) = wire.as_array() else { return serde_json::to_string(wire).expect("JSON") };
         match items.first().and_then(Json::as_str) {
             Some("o") => {
-                let members: Vec<String> = items[2]
+                let members: Vec<String> = items[1]
                     .as_array()
                     .expect("entries")
                     .iter()
-                    .filter(|e| self.resolve(&e[1]) != &json!(["u"]))
+                    .filter(|e| &e[1] != &json!(["u"]))
                     .map(|e| format!("{}:{}", serde_json::to_string(&e[0]).expect("a key"), self.text(&e[1])))
                     .collect();
                 format!("{{{}}}", members.join(","))
             }
-            Some("l") => format!("[{}]", items[2].as_array().expect("items").iter().map(|i| self.text(i)).collect::<Vec<_>>().join(",")),
+            Some("l") => format!("[{}]", items[1].as_array().expect("items").iter().map(|i| self.text(i)).collect::<Vec<_>>().join(",")),
             Some("u") | Some("n") => "null".into(),
             _ => serde_json::to_string(wire).expect("JSON"),
         }
     }
 
     fn member<'s>(&'s self, object: &'s Json, key: &str) -> Option<&'s Json> {
-        let object = self.resolve(object).as_array()?;
+        let object = object.as_array()?;
         if object.first()? != "o" {
             return None;
         }
-        object[2].as_array()?.iter().find(|e| e[0] == json!(key)).map(|e| self.resolve(&e[1]))
+        object[1].as_array()?.iter().find(|e| e[0] == json!(key)).map(|e| &e[1])
     }
 }
 
@@ -151,13 +121,11 @@ impl Host<'_> {
     }
 
     fn object(&mut self, members: Vec<(&str, Json)>) -> Json {
-        let id = self.id();
-        json!(["o", id, members.into_iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()])
+        json!(["o", members.into_iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()])
     }
 
     fn list(&mut self, items: Vec<Json>) -> Json {
-        let id = self.id();
-        json!(["l", id, items])
+        json!(["l", items])
     }
 
     fn data(&mut self, data: &[(String, Json)]) -> Json {
@@ -185,7 +153,6 @@ impl Host<'_> {
             ("control.cancel", _) => json!({ "value": false }),
             ("clock", "now") => json!({ "value": { "nowIso": "2026-01-01T00:00:00.000Z" } }),
             ("trace", "append") => {
-                self.sent.register(&request.args["entries"]);
                 if let Json::Array(entries) = self.sent.plain(&request.args["entries"]) {
                     self.trace.extend(entries);
                 }
@@ -198,7 +165,6 @@ impl Host<'_> {
             }
             ("locks", "release") => json!({ "value": null }),
             ("park.sink", "commitTimerPark") => {
-                self.sent.register(&request.args["state"]);
                 let state = self.sent.text(&request.args["state"]);
                 self.parked.push(json!({ "address": request.args["address"], "state": state, "wakeAt": request.args["wakeAt"] }));
                 json!({ "value": null })
@@ -209,7 +175,6 @@ impl Host<'_> {
             },
             ("adapters", "call") => {
                 let result = self.call(request);
-                self.sent.register(&result);
                 json!({ "value": { "result": result } })
             }
             other => panic!("the oracle's programs ask nothing else: {other:?} {}", request.args),
@@ -217,11 +182,9 @@ impl Host<'_> {
     }
 
     fn call(&mut self, request: &PendingRequest) -> Json {
-        self.sent.register(&request.args["args"]);
         if let Some(reference) = request.args.get("positionRef").and_then(Json::as_u64)
             && let Some(position) = request.args.get("position")
         {
-            self.sent.register(position);
             self.positions.insert(reference, position.clone());
         }
         let instance = request.args["instance"].as_str().expect("an instance");
@@ -311,7 +274,7 @@ impl Host<'_> {
                 if let (Some(company), Json::Object(fields)) = (self.companies.iter_mut().find(|c| c.id == id), &args["fields"]) {
                     // `Object.assign` in the fields' order.
                     let wire_fields = self.sent.member(&request.args["args"], "fields").cloned().unwrap_or(Json::Null);
-                    let order: Vec<String> = wire_fields.as_array().and_then(|o| o.get(2)).and_then(Json::as_array).map(|e| e.iter().filter_map(|e| e[0].as_str().map(String::from)).collect()).unwrap_or_default();
+                    let order: Vec<String> = wire_fields.as_array().and_then(|o| o.get(1)).and_then(Json::as_array).map(|e| e.iter().filter_map(|e| e[0].as_str().map(String::from)).collect()).unwrap_or_default();
                     for key in order {
                         let value = fields[&key].clone();
                         match company.data.iter_mut().find(|(k, _)| *k == key) {
@@ -360,7 +323,7 @@ fn run_handles(native: bool) {
     let mut tally: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for case in cases {
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
-        let event = json!(["o", 0, [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]]);
+        let event = json!(["o", [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]]);
         let input = json!({
             "entry": "segment",
             "source": source,
@@ -396,7 +359,6 @@ fn run_handles(native: bool) {
             trace: Vec::new(),
             parked: Vec::new(),
         };
-        host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
         let mut waiting = std::collections::VecDeque::new();
@@ -418,7 +380,6 @@ fn run_handles(native: bool) {
         }
         let writes = match done.get("result") {
             Some(result) => {
-                host.sent.register(&result["writes"]);
                 host.sent.plain(&result["writes"])
             }
             None => Json::Null,

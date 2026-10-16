@@ -6,7 +6,8 @@
 //! swapped for the same scalars, and the items kept must be the same, in the
 //! same order.
 
-use movement_engine::env::decode;
+mod oracle_wire;
+use oracle_wire::decode;
 use movement_engine::js::{self, Js, JsObject};
 use movement_engine::order_limit::{Substitution, apply_hop_order_limit, hop_pushdown};
 use movement_parser::lowering::expression::{EdgeStep, Expression, TraversalStep};

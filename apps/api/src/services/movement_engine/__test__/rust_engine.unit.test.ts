@@ -16,7 +16,7 @@ import { MovementRunFailed, runFailureCause, runMovement, type RunMovementInput 
 import { openRunContext, RunLedger } from 'movement-engine/services/movement_engine/run_context';
 import { ENGINE_OWN_ROUTES, shimRoutePaths } from 'movement-engine/services/movement_engine/rust_host';
 import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
-import { WireOut } from 'movement-engine/services/movement_engine/rust_wire';
+import { REFUSED, WireOut } from 'movement-engine/services/movement_engine/rust_wire';
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import {
   assertEngineChoiceConfigured,
@@ -419,7 +419,7 @@ describe('the Rust engine shim', () => {
               seen.length === 0
                 ? [
                     request(1, 'adapters', 'resolve', inSegment(segmentId, RESOLVE)),
-                    request(2, 'trace', 'append', inSegment(segmentId, { entries: ['l', 0, []], wire: true })),
+                    request(2, 'trace', 'append', inSegment(segmentId, { entries: ['l', []], wire: true })),
                   ]
                 : [],
           }
@@ -569,14 +569,14 @@ describe('the Rust engine shim', () => {
       adapterType: 'attio', recordType: 'company', created: true, committed: false, externalId: 'x1',
       writtenValues: { name: 'Acme' }, outcome: 'create', provenance: { name: [] },
     };
-    const wired = ['l', 0, [['o', 1, Object.entries(write).map(([k, v]) => [k, typeof v === 'object' ? ['o', 2, Object.entries(v).map(([a, b]) => [a, Array.isArray(b) ? ['l', 3, []] : b])] : v])]]];
+    const wired = ['l', [['o', Object.entries(write).map(([k, v]) => [k, typeof v === 'object' ? ['o', Object.entries(v).map(([a, b]) => [a, Array.isArray(b) ? ['l', []] : b])] : v])]]];
     expect(readRunResult({ result: { movementName: 'm', writes: wired, parked: true, parkedAddress: 's0' } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [write], trace: [], extractionSites: {}, parked: true, parkedAddress: 's0' },
     });
     expect(() => readRunResult({ result: { movementName: 'm', counted: {} } }, { context: context(), hostErrors: [] })).toThrow(
       'the Rust engine result has counted, which this shim does not decode yet',
     );
-    expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
+    expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(() => readRunResult({ parked: true }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
   });
 
@@ -713,19 +713,19 @@ describe('choosing the engine', () => {
 
 describe("a segment's wire", () => {
   it('hands a record the engine handed out back by its id, and carries every other object as data, whatever its kind', () => {
-    const wire = new WireOut({ whole: true });
-    const event = wire.read(['x', 0, ['o', 0, [['kind', 'event']]]]);
+    const wire = new WireOut();
+    const event = wire.read(['x', 0, ['o', [['kind', 'event']]]]);
     expect(event).toEqual({ kind: 'event' });
     expect(wire.read(['x', 0])).toBe(event);
     expect(wire.value(event)).toEqual(['x', 0]);
-    expect(wire.value([event, { kind: 'event' }])).toEqual(['l', 0, [['x', 0], ['o', 1, [['kind', 'event']]]]]);
-    expect(wire.value({ kind: 'lazyWalk', walk: {} })).toEqual(['o', 2, [['kind', 'lazyWalk'], ['walk', ['o', 3, []]]]]);
+    expect(wire.value([event, { kind: 'event' }])).toEqual(['l', [['x', 0], ['o', [['kind', 'event']]]]]);
+    expect(wire.value({ kind: 'lazyWalk', walk: {} })).toEqual(['o', [['kind', 'lazyWalk'], ['walk', ['o', []]]]]);
     expect(() => wire.read(['x', 'handle'])).toThrow('the engine handed the host a record it cannot carry (handle)');
-    expect(() => wire.read(['x', 1, ['o', 4, [['kind', 'lazyWalk']]]])).toThrow('a record of kind lazyWalk, which the shim does not rebuild');
+    expect(() => wire.read(['x', 1, ['o', [['kind', 'lazyWalk']]]])).toThrow('a record of kind lazyWalk, which the shim does not rebuild');
   });
 
   it('hands the engine a file as an opaque handle, keeps its descriptor, and carries a dict that spells one as data', () => {
-    const wire = new WireOut({ whole: true });
+    const wire = new WireOut();
     const descriptor = { __brand: 'FileRef' as const, name: 'deck.pdf', source: { store: 'document' as const, objectUri: 's3://x/deck.pdf' } };
     const file = fileValue(descriptor);
     // The id, the opaque identity, what it may print: no source, no URI's
@@ -739,19 +739,23 @@ describe("a segment's wire", () => {
     expect(() => wire.read(['F', 7])).toThrow('a file 7 this segment never handed it');
     // The same keys as data: an object, never a file, on either side.
     expect(wire.value(descriptor)).toEqual(expect.arrayContaining(['o']));
-    expect(isFileValue(wire.read(['o', 9, [['__brand', 'FileRef'], ['name', 'x']]]))).toBe(false);
+    expect(isFileValue(wire.read(['o', [['__brand', 'FileRef'], ['name', 'x']]]))).toBe(false);
   });
 
-  it('writes each value whole, an object again under the id it was first sent under, and hands each id back as its object', () => {
-    const wire = new WireOut({ whole: true });
+  it('carries plain JSON: what JSON cannot say is null, a lone surrogate U+FFFD, an object reached twice written twice, a cycle refused', () => {
+    const wire = new WireOut();
+    expect(wire.value([undefined, NaN, Infinity, -Infinity, -0, 0])).toEqual(['l', [null, null, null, null, null, 0]]);
+    expect(wire.value({ ['\uD83D']: 'a\uDE00', k: '😀' })).toEqual(['o', [['\uFFFD', 'a\uFFFD'], ['k', '😀']]]);
     const shared = { n: 1 };
-    expect(wire.value({ a: shared, b: shared })).toEqual(['o', 0, [['a', ['o', 1, [['n', 1]]]], ['b', ['r', 1]]]]);
-    // The one object, as it now is: the engine reads it as the object it
-    // holds while it is unchanged, and as it is when it changed.
-    expect(wire.value(shared)).toEqual(['o', 1, [['n', 1]]]);
-    shared.n = 2;
-    expect(wire.value(shared)).toEqual(['o', 1, [['n', 2]]]);
-    expect(wire.value({ other: 1 })).toEqual(['o', 2, [['other', 1]]]);
-    expect(wire.read(['i', 1])).toBe(shared);
+    expect(wire.value({ a: shared, b: shared })).toEqual(['o', [['a', ['o', [['n', 1]]]], ['b', ['o', [['n', 1]]]]]]);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(wire.value(cycle)).toBe(REFUSED);
+    expect(wire.value(Object.prototype.toString)).toBe(REFUSED);
+    expect(wire.value(Object.assign(Object.create(null), { a: 1 }))).toEqual(['o', [['a', 1]]]);
+    for (const gone of [['u'], ['n', 'NaN'], ['i', 0], ['r', 0], ['s16', [0xd83d]], ['p'], ['f', 'toString']]) {
+      expect(() => wire.read(gone)).toThrow('an unknown wire tag');
+    }
   });
+});
 });

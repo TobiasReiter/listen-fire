@@ -2732,7 +2732,7 @@ mod tests {
         json!({
             "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
-            "event": env::encode_plain(&env::decode(&json!(["o", 0, [
+            "event": env::encode_plain(&env::decode(&json!(["o", [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
             ]])).unwrap()),
             "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
@@ -2804,7 +2804,7 @@ mod tests {
     #[test]
     fn the_pinned_instant_with_no_offset_is_utc() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-15\" {\n    s = msg.`subject`\n  }\n}";
-        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
+        let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["now"] = json!("2026-07-15T00:30");
         input["localZone"] = json!("America/Los_Angeles");
         let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
@@ -2818,7 +2818,7 @@ mod tests {
     #[test]
     fn a_native_check_answers_in_place_of_the_host() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
-        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
+        let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["nativeCheck"] = json!(true);
         let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
         assert!(done.get("result").is_some(), "{done}");
@@ -2845,7 +2845,7 @@ mod tests {
         for version in 1..=5 {
             for test in ["acme == null", "acme != null"] {
                 let source = format!("import {{ email }} from adapters\nimport {{ acme }} from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  if {test} {{ return 1 }}\n  return 2\n}}");
-                let mut input = segment_input(&source, json!(["o", 1, []]), &[]);
+                let mut input = segment_input(&source, json!(["o", []]), &[]);
                 input["languageVersion"] = json!(version);
                 let (done, _) = drive_input(input, plain_host(json!({})));
                 let error = if done.get("thrown").is_some() { &done["thrown"] } else { &done["failed"]["error"] };
@@ -2853,7 +2853,7 @@ mod tests {
                 assert_eq!(error["message"], json!("reading 'acme' (an import) as a bare value is not supported by the movement engine yet"), "v{version} {test}: {done}");
             }
             let source = "import { email, attio } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  if attio != null {\n    ERROR(\"present\")\n  }\n}";
-            let mut input = segment_input(source, json!(["o", 1, []]), &[]);
+            let mut input = segment_input(source, json!(["o", []]), &[]);
             input["languageVersion"] = json!(version);
             let (done, _) = drive_input(input, plain_host(json!({})));
             let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
@@ -2868,7 +2868,7 @@ mod tests {
     fn a_credential_import_parks_as_any_import_does() {
         let source = "import { email } from adapters\nimport { acme } from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(source, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -2890,7 +2890,7 @@ mod tests {
     #[test]
     fn a_sleep_wakes_at_the_host_clocks_answer_plus_the_sleep() {
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(SLEEPS, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -2910,7 +2910,7 @@ mod tests {
     #[test]
     fn a_clock_answer_naming_no_instant_fails_the_run() {
         let host = plain_host(json!({}));
-        let (done, _) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, _) = drive_serving(SLEEPS, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "now": "2026-10-07T12:00:00.000Z" } }),
                 _ => host(request),
@@ -2924,7 +2924,7 @@ mod tests {
     /// park: the sleep fails the run first, as the TypeScript engine's does.
     #[test]
     fn a_sleep_on_a_host_with_no_timer_park_asks_nothing_and_fails() {
-        let (done, seen) = drive(SLEEPS, json!(["o", 1, []]), plain_host(json!({})));
+        let (done, seen) = drive(SLEEPS, json!(["o", []]), plain_host(json!({})));
         assert!(!seen.iter().any(|r| r.family == "clock" || r.family == "park.sink"));
         let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
         assert!(message.contains("with no park sink"), "{done}");
@@ -2934,8 +2934,8 @@ mod tests {
     fn a_run_reads_binds_and_branches_through_its_host() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  if s == \"Hi\" {\n    t = \"${s}!\"\n    return t\n  }\n  u = msg.`text`\n}";
         let payload = json!({ "subject": "Hi" });
-        let (done, seen) = drive(source, json!(["o", 1, [["subject", "Hi"]]]), plain_host(payload));
-        assert_eq!(done, json!({ "result": { "movementName": "m", "writes": ["l", 0, []] } }));
+        let (done, seen) = drive(source, json!(["o", [["subject", "Hi"]]]), plain_host(payload));
+        assert_eq!(done, json!({ "result": { "movementName": "m", "writes": ["l", []] } }));
         let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
         assert_eq!(
             calls,
@@ -2962,7 +2962,7 @@ mod tests {
     fn a_position_crosses_once_and_is_named_by_handle_after() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = \"${msg.`subject`} ${msg.`text`}\"\n}";
         let payload = json!({ "subject": "Hi", "text": "there" });
-        let (_, seen) = drive(source, json!(["o", 1, [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
+        let (_, seen) = drive(source, json!(["o", [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
         let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
         assert_eq!(reads.len(), 2);
         assert_eq!((reads[0].args["positionRef"].clone(), reads[1].args["positionRef"].clone()), (json!(0), json!(0)));
@@ -2978,14 +2978,14 @@ mod tests {
     #[test]
     fn a_streamed_landing_crosses_once_however_many_fields_are_read() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  msg-[a:attachments]-> {\n    s = \"${a.`name`} ${a.`subject`}\"\n  }\n}";
-        let landing = json!(["o", 1, [["adapterType", "email"], ["recordType", null], ["identity", ["o", 2, [["kind", "unstable"], ["data", ["o", 3, [["name", "a"]]]]]]]]]);
-        let (done, seen) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+        let landing = json!(["o", [["adapterType", "email"], ["recordType", null], ["identity", ["o", [["kind", "unstable"], ["data", ["o", [["name", "a"]]]]]]]]]);
+        let (done, seen) = drive(source, json!(["o", []]), move |request| match (request.family, request.method.as_str()) {
             ("check", "program") => json!({ "value": { "diagnostics": [], "stamps": [] } }),
             ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["iterateRelated"] } }),
             ("control.cancel", _) => json!({ "value": false }),
             ("trace", "append") => json!({}),
             ("adapters", "call") if request.args["method"] == json!("iterateRelatedPage") => {
-                json!({ "value": { "result": ["o", 0, [["items", ["l", 4, [["o", 5, [["position", landing.clone()]]]]]]]] } })
+                json!({ "value": { "result": ["o", [["items", ["l", [["o", [["position", landing.clone()]]]]]]]] } })
             }
             ("adapters", "call") => json!({ "value": { "result": "x" } }),
             other => panic!("unexpected {other:?}"),
@@ -3005,17 +3005,17 @@ mod tests {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
         let payload = json!({});
         let host = plain_host(payload);
-        let (done, _) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+        let (done, _) = drive(source, json!(["o", []]), move |request| match (request.family, request.method.as_str()) {
             ("adapters", "call") => json!({ "value": { "error": { "kind": "adapter_error", "message": "down", "ref": 4 } } }),
             _ => host(request),
         });
-        assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", 0, []] } } }));
+        assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", []] } } }));
     }
 
     #[test]
     fn what_it_does_not_run_is_declined_before_anything_happens() {
         let source = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}";
-        let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
+        let (done, seen) = drive(source, json!(["o", []]), plain_host(json!({})));
         // Refused on this engine's own parse: not even the check is asked.
         assert_eq!(done, json!({ "refused": "plugin_call", "reasons": ["plugin_call"] }));
         assert!(seen.is_empty());
@@ -3057,7 +3057,7 @@ mod tests {
     fn file_level_declarations_bind_and_park_as_the_typescript_engine_writes_them() {
         let source = "import { email } from adapters\nimport { fetch_url as fetch } from plugins\ninbox = email()\ntype Stage = <\"a\" | \"b\">\nrules = \"route\"\nnode Lead {\n  name: <text> \"its name ${rules}\"\n}\ntag = \"${UPPER(rules)}!\"\nmovement m(msg: <inbox-[:message]->>) {\n  label = \"${tag} ${rules}\"\n  await sleep(1h)\n}";
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(source, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -3096,7 +3096,7 @@ mod tests {
     fn an_extraction_call_with_a_model_and_no_model_list_is_declined_unreproduced() {
         let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
-        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
+        let (done, seen) = drive(source, json!(["o", [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
             ("ids", "mint") => json!({ "value": ["id-1"] }),
             ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
             ("llm.client" | "llm.extractCall", _) => panic!("the model is never asked: {request:?}"),
@@ -3115,7 +3115,7 @@ mod tests {
     fn the_extraction_keyword_is_refused_by_name_and_asks_nothing() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n  }\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
-        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), host);
+        let (done, seen) = drive(source, json!(["o", [["text", "Acme raised."]]]), host);
         assert_eq!(done["refused"], json!(crate::admit::LEGACY_EXTRACTION), "{done}");
         assert!(seen.is_empty(), "{seen:?}");
     }
@@ -3239,7 +3239,7 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]],
             "catalog": catalog,
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();
@@ -3259,8 +3259,8 @@ mod tests {
                         ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
                             "getFieldValue" => json!("Acme"),
                             "describe" => json!(null),
-                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, []]]]]),
-                            "createRecord" => json!(["o", 0, [["externalId", "co-1"], ["data", ["o", 1, []]]]]),
+                            "resolveEntity" => json!(["o", [["candidates", ["l", []]]]]),
+                            "createRecord" => json!(["o", [["externalId", "co-1"], ["data", ["o", []]]]]),
                             other => panic!("unexpected call {other}"),
                         } } }),
                         ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
@@ -3312,14 +3312,14 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]],
             "catalog": catalog,
             "spend": { "priorMicrodollars": 1200, "capBaselineMicrodollars": 0, "capMicrodollars": 1000 },
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();
         let mut seen = Vec::new();
         let mut step = segment.start().unwrap();
-        let candidate = |id: &str, name: &str| json!(["o", 0, [["adapterType", "attio"], ["externalId", id], ["data", ["o", 1, [["name", name]]]]]]);
+        let candidate = |id: &str, name: &str| json!(["o", [["adapterType", "attio"], ["externalId", id], ["data", ["o", [["name", name]]]]]]);
         let done = loop {
             match step {
                 Step::Done(done) => break done,
@@ -3334,7 +3334,7 @@ mod tests {
                         ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
                             "getFieldValue" => json!("Acme"),
                             "describe" => json!(null),
-                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
+                            "resolveEntity" => json!(["o", [["candidates", ["l", [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
                             other => panic!("unexpected call {other}"),
                         } } }),
                         ("llm", "arbitrateEntities") => json!({ "value": { "error": { "kind": "budget", "message": "spent" }, "cost": [] } }),
@@ -3370,7 +3370,7 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", []]]]],
             "catalog": catalog,
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();

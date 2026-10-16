@@ -26,43 +26,17 @@ use movement_engine::executor::{PendingRequest, Step};
 /// each object and list: an id the engine hands back (`["i", id]`) names
 /// the last one sent under it, as the engine's own table does.
 #[derive(Default)]
-struct Sent(HashMap<u64, Json>);
+struct Sent;
 
 impl Sent {
-    fn register(&mut self, wire: &Json) {
-        let Some(items) = wire.as_array() else { return };
-        match items.first().and_then(Json::as_str) {
-            Some("o") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for entry in items[2].as_array().expect("entries") {
-                    self.register(&entry[1]);
-                }
-            }
-            Some("l") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for item in items[2].as_array().expect("items") {
-                    self.register(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// `wire` with a reference to what was sent read as what it names.
-    fn resolve<'s>(&'s self, wire: &'s Json) -> &'s Json {
-        match wire.as_array().map(Vec::as_slice) {
-            Some([tag, id]) if tag == "i" => self.resolve(&self.0[&id.as_u64().expect("an id")]),
-            _ => wire,
-        }
-    }
-
     /// An object's member, as written on the wire.
     fn member<'s>(&'s self, object: &'s Json, key: &str) -> Option<&'s Json> {
-        let object = self.resolve(object).as_array()?;
+        let object = object.as_array()?;
         if object.first()? != "o" {
             return None;
         }
-        object[2].as_array()?.iter().find(|e| e[0] == json!(key)).map(|e| self.resolve(&e[1]))
+        object[1].as_array()?.iter().find(|e| e[0] == json!(key)).map(|e| &e[1])
     }
 }
 
@@ -89,7 +63,6 @@ impl Host<'_> {
             ("adapters", "call") => self.call(request),
             other => panic!("the oracle's programs ask nothing else: {other:?} {}", request.args),
         };
-        self.sent.register(&answer);
         json!({ "value": { "result": answer } })
     }
 
@@ -124,26 +97,21 @@ impl Host<'_> {
                 let data = self.sent.member(&position, "identity").and_then(|identity| self.sent.member(identity, "data"));
                 match data.and_then(|data| self.sent.member(data, &field)) {
                     Some(value) => value.clone(),
-                    None if movement_engine::js::is_object_prototype_name(&field) => match field.as_str() {
-                        "constructor" => json!(["f", "Object"]),
-                        "__proto__" => json!(["p"]),
-                        other => json!(["f", other]),
-                    },
-                    None => json!(["u"]),
+                    None => Json::Null,
                 }
             }
             Some("getRelated") => {
                 let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
-                self.related.get(field).cloned().unwrap_or_else(|| json!(["l", 990_000, []]))
+                self.related.get(field).cloned().unwrap_or_else(|| json!(["l", []]))
             }
             Some("iterateRelatedPage") => {
                 let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
-                let items = self.related.get(field).cloned().unwrap_or_else(|| json!(["l", 990_000, []]));
-                json!(["o", 990_005, [["items", items]]])
+                let items = self.related.get(field).cloned().unwrap_or_else(|| json!(["l", []]));
+                json!(["o", [["items", items]]])
             }
-            Some("createRecord") => json!(["o", 990_001, [["adapterType", "email"], ["externalId", "w1"], ["data", ["o", 990_002, [["name", "w"]]]]]]),
+            Some("createRecord") => json!(["o", [["adapterType", "email"], ["externalId", "w1"], ["data", ["o", [["name", "w"]]]]]]),
             Some("describe") => Json::Null,
-            Some("resolveEntity") => json!(["o", 990_003, [["candidates", ["l", 990_004, []]]]]),
+            Some("resolveEntity") => json!(["o", [["candidates", ["l", []]]]]),
             other => panic!("the oracle's adapter answers nothing else: {other:?} {}", request.args),
         }
     }
@@ -201,7 +169,7 @@ fn run_records(native: bool) {
         let version = case["version"].as_u64().expect("a version");
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
         let payload = &case["payload"];
-        let event = json!(["o", 0, [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload]]]);
+        let event = json!(["o", [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload]]]);
         let input = json!({
             "entry": "segment",
             "source": source,
@@ -216,7 +184,6 @@ fn run_records(native: bool) {
         });
         let check = (!native).then_some(&case["check"]);
         let mut host = Host { sent: Sent::default(), errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check };
-        host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
         // Requests in flight together (an `EXISTS` over several records)

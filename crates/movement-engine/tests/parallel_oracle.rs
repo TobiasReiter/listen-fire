@@ -25,35 +25,15 @@ use movement_engine::executor::{PendingRequest, Step};
 /// Every object and list on the segment's wire, by its id, so a reference
 /// (`["i", id]`) reads as what it names.
 #[derive(Default)]
-struct Sent(HashMap<u64, Json>);
+struct Sent;
 
 impl Sent {
-    fn register(&mut self, wire: &Json) {
-        let Some(items) = wire.as_array() else { return };
-        match items.first().and_then(Json::as_str) {
-            Some("o") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for entry in items[2].as_array().expect("entries") {
-                    self.register(&entry[1]);
-                }
-            }
-            Some("l") => {
-                self.0.insert(items[1].as_u64().expect("an id"), wire.clone());
-                for item in items[2].as_array().expect("items") {
-                    self.register(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// A wire value as plain JSON (`undefined` as `null`).
     fn plain(&self, wire: &Json) -> Json {
         let Some(items) = wire.as_array() else { return wire.clone() };
         match items.first().and_then(Json::as_str) {
-            Some("i") => self.plain(&self.0[&items[1].as_u64().expect("an id")]),
-            Some("o") => Json::Object(items[2].as_array().expect("entries").iter().map(|e| (e[0].as_str().expect("a key").to_string(), self.plain(&e[1]))).collect()),
-            Some("l") => Json::Array(items[2].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
+            Some("o") => Json::Object(items[1].as_array().expect("entries").iter().map(|e| (e[0].as_str().expect("a key").to_string(), self.plain(&e[1]))).collect()),
+            Some("l") => Json::Array(items[1].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
             Some("u") => Json::Null,
             _ => wire.clone(),
         }
@@ -66,22 +46,15 @@ struct Host<'o> {
     check: Option<&'o Json>,
     created: usize,
     tokens: usize,
-    next_id: u64,
     events: Vec<Json>,
     /// The id each create was minted, by its body and payload.
     minted: HashMap<String, String>,
 }
 
 impl Host<'_> {
-    fn id(&mut self) -> u64 {
-        self.next_id += 1;
-        self.next_id
-    }
-
     /// What the oracle records of a request: an adapter call or a lock
     /// taken, as the TypeScript's fakes record it; `None` for the rest.
     fn event(&mut self, request: &PendingRequest) -> Option<Json> {
-        self.sent.register(&request.args);
         match (request.family, request.method.as_str()) {
             ("locks", "acquire") => Some(json!(["acquire", request.args["names"]])),
             ("adapters", "call") => {
@@ -117,7 +90,6 @@ impl Host<'_> {
             ("locks", "release") => json!({ "value": null }),
             ("adapters", "call") => {
                 let result = self.call(request);
-                self.sent.register(&result);
                 json!({ "value": { "result": result } })
             }
             other => panic!("the oracle's programs ask nothing else: {other:?} {}", request.args),
@@ -128,26 +100,21 @@ impl Host<'_> {
         let args = self.sent.plain(&request.args["args"]);
         match request.args["method"].as_str() {
             Some("resolveEntity") => {
-                let (o, l) = (self.id(), self.id());
-                json!(["o", o, [["candidates", ["l", l, []]]]])
+                                json!(["o", [["candidates", ["l", []]]]])
             }
             Some("getRelated") => {
-                let l = self.id();
-                json!(["l", l, []])
+                json!(["l", []])
             }
             Some("createRecord") => {
                 self.created += 1;
                 self.minted.insert(json!([field(&args["fields"], "body"), field(&args["fields"], "payload")]).to_string(), format!("n{}", self.created));
-                let (o, d) = (self.id(), self.id());
-                json!(["o", o, [["adapterType", "kg"], ["externalId", format!("n{}", self.created)], ["data", ["o", d, []]]]])
+                                json!(["o", [["adapterType", "kg"], ["externalId", format!("n{}", self.created)], ["data", ["o", []]]]])
             }
             Some("updateRecord") => {
-                let (o, d) = (self.id(), self.id());
-                json!(["o", o, [["adapterType", "kg"], ["externalId", args["externalId"]], ["data", ["o", d, []]], ["association", "none"]]])
+                                json!(["o", [["adapterType", "kg"], ["externalId", args["externalId"]], ["data", ["o", []]], ["association", "none"]]])
             }
             Some("linkRecords") => {
-                let o = self.id();
-                json!(["o", o, [["created", true]]])
+                json!(["o", [["created", true]]])
             }
             Some("describe") => Json::Null,
             other => panic!("the oracle's adapter answers nothing else: {other:?} {}", request.args),
@@ -335,7 +302,7 @@ fn run_parallel(native: bool) {
     let mut attributed = 0;
     for case in cases {
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
-        let event = json!(["o", 0, [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]]);
+        let event = json!(["o", [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]]);
         let input = json!({
             "entry": "segment",
             "source": source,
@@ -348,8 +315,7 @@ fn run_parallel(native: bool) {
             "credentialIds": { "inbox_cred": "cred-inbox_cred", "kg_cred": "cred-kg_cred" },
             "nativeCheck": native,
         });
-        let mut host = Host { sent: Sent::default(), check: (!native).then_some(&case["check"]), created: 0, tokens: 0, next_id: 990_000, events: Vec::new(), minted: HashMap::new() };
-        host.sent.register(&event);
+        let mut host = Host { sent: Sent::default(), check: (!native).then_some(&case["check"]), created: 0, tokens: 0, events: Vec::new(), minted: HashMap::new() };
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
         // What is in flight, each with what the oracle records of it.

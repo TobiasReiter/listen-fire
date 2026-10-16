@@ -1411,7 +1411,7 @@ mod tests {
         for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
             let state = crate::env::encode_plain(&state.expect("a picked record parks"));
             let text = state.to_string();
-            assert!(text.contains(r#"[["kind","sourcePosition"],["position",["u"]],["read",["o","#), "{text}");
+            assert!(text.contains(r#"[["kind","sourcePosition"],["position",null],["read",["o",[["instanceName","kg"]]]), "{text}");
             assert!(text.contains(r#"[["instanceName","kg"]]"#), "{text}");
         }
     }

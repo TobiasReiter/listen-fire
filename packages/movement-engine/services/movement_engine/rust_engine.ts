@@ -327,7 +327,7 @@ async function segmentInRust(
   // asked the host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
-  const wire = new WireOut({ whole: true });
+  const wire = new WireOut();
   const localZone = processLocalZone();
   if (localZone === undefined) return notAdmitted(input, fallback, LOCAL_ZONE_UNVERIFIED);
   const start = segmentInput(input, context, { resume, localZone, nativeCheck: true }, wire);
@@ -642,7 +642,7 @@ function admissionReasons(
 ): string[] {
   const localZone = processLocalZone();
   if (localZone === undefined) return [LOCAL_ZONE_UNVERIFIED];
-  const start = segmentInput(input, context, { resume, localZone, nativeCheck: false }, new WireOut({ whole: true }));
+  const start = segmentInput(input, context, { resume, localZone, nativeCheck: false }, new WireOut());
   if (start === undefined) return [EVENT_DOES_NOT_CROSS];
   // Never answered: a lowering miss a real run leaves to its check is named
   // here, as the refusal it is until the check passes it.
@@ -682,7 +682,7 @@ export async function driveEngine(
     ...input,
     hostErrors: input.hostErrors ?? [],
     positions: new Map(),
-    wire: input.wire ?? new WireOut({ whole: true }),
+    wire: input.wire ?? new WireOut(),
     // The run's own check, made before the segment opened, is the program
     // `check.compatible` asks about too.
     checked: new Map(

@@ -10,7 +10,8 @@
 
 use std::collections::BTreeMap;
 
-use movement_engine::env::{decode, encode};
+mod oracle_wire;
+use oracle_wire::{decode, encode};
 use movement_engine::eval::{ErrorClass, EvalError};
 use movement_engine::filter::compare_values;
 use movement_engine::js::Js;
@@ -90,7 +91,18 @@ fn code_point_order(fn_: &str, case: &Json) -> bool {
 /// A case where version 5 answers differently from the TypeScript on
 /// purpose, each kind named by its own function above.
 fn accepted_difference(fn_: &str, case: &Json) -> bool {
-    regex_over_astral(fn_, case) || date_v8_read(fn_, case) || number_text_v5(case) || negative_half(fn_, case) || code_point_order(fn_, case)
+    regex_over_astral(fn_, case)
+        || date_v8_read(fn_, case)
+        || number_text_v5(case)
+        || negative_half(fn_, case)
+        || code_point_order(fn_, case)
+        || empty_text_is_no_number(fn_, case)
+}
+
+/// `NUMBER` of a text that is empty once trimmed: version 5 answers null
+/// (JavaScript's `Number("")` is 0).
+fn empty_text_is_no_number(fn_: &str, case: &Json) -> bool {
+    fn_ == "flat.tonumber" && case["args"][0].as_str().is_some_and(|t| t.trim().is_empty())
 }
 
 fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {

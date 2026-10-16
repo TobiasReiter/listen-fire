@@ -5,6 +5,7 @@
 
 use movement_engine::extract::bound_text;
 use movement_engine::js;
+mod oracle_wire;
 use serde_json::Value as Json;
 
 /// A source file bounded for the prompt under a seeded
@@ -62,7 +63,7 @@ fn case_maps_by_rusts_tables() {
 /// them there too.
 #[test]
 fn mixed_keys_sort_as_v8s_timsort_sorts_them() {
-    use movement_engine::env::decode;
+    use crate::oracle_wire::decode;
     use movement_engine::order_limit::sort_by_order_key;
     use movement_parser::lowering::expression::OrderDirection;
     let cases: Vec<Json> = serde_json::from_str(include_str!("oracle/mixed_sort.json")).expect("mixed_sort.json reads");

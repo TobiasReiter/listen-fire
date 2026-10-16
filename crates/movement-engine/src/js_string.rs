@@ -263,6 +263,22 @@ pub fn json_quote(text: &str) -> String {
     out
 }
 
+/// The text with each lone surrogate made U+FFFD: what crosses a boundary
+/// that carries only Unicode text.
+pub fn well_formed(text: &str) -> Cow<'_, str> {
+    if is_well_formed(text) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        pieces(text)
+            .map(|piece| match piece {
+                Piece::Char(c) => c,
+                Piece::Lone(_) => '\u{FFFD}',
+            })
+            .collect(),
+    )
+}
+
 // ── The JSON text boundary ────────────────────────────────────────────────────
 
 /// A JSON text serde_json wrote, as `JSON.stringify` writes it: each lone

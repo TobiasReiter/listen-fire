@@ -11,6 +11,7 @@
 use movement_engine::filter::compare_values;
 use movement_engine::js::Js;
 use movement_engine::js_date;
+mod oracle_wire;
 use movement_engine::stdlib::{self, Surroundings};
 use movement_parser::lowering::expression::FilterOperator;
 use serde_json::{Value as Json, json};
@@ -44,11 +45,11 @@ fn dates_read_as_node_reads_iso_texts_in_utc() {
         if parsed != want {
             mismatches.push(format!("{} = {parsed:?}, Node {want:?}", label("Date.parse")));
         }
-        let date = stdlib::apply_flat("date", &[Js::str(text)]).map(|v| movement_engine::env::encode(&v));
+        let date = stdlib::apply_flat("date", &[Js::str(text)]).map(|v| oracle_wire::encode(&v));
         if date.as_ref().ok() != Some(&case["date"][z]) {
             mismatches.push(format!("{} = {date:?}, TypeScript {}", label("DATE"), case["date"][z]));
         }
-        let formatted = stdlib::apply_namespaced("date.format", &[Js::str(text), Js::str(format)], around).map(|v| movement_engine::env::encode(&v));
+        let formatted = stdlib::apply_namespaced("date.format", &[Js::str(text), Js::str(format)], around).map(|v| oracle_wire::encode(&v));
         if formatted.as_ref().ok() != Some(&case["format"][z]) {
             mismatches.push(format!("{} = {formatted:?}, TypeScript {}", label("DATE.FORMAT"), case["format"][z]));
         }

@@ -265,6 +265,15 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   shows `$0.0312` (it showed `$0.0313`).
 - **Texts order by code point.** An ORDER BY, SORT or `<` over texts puts `"｡"` (U+FF61) before
   an emoji; JavaScript ordered by UTF-16 unit and put it after.
+- **An empty text is no number.** `NUMBER("")` and `NUMBER("  ")` are absent (JavaScript's
+  `Number("")` made them 0).
+- **Self-hosting: values cross between the engine and its host as plain JSON.** A list is
+  `["l", items]` and a map `["o", entries]`, in its own key order. `NaN`, `±Infinity`, `-0` and
+  JavaScript's `undefined` cross as `null`; a lone surrogate crosses as U+FFFD. Nothing crosses by
+  identity: an adapter that hands back the same object twice hands the engine two equal maps,
+  and an object it changes after answering is not seen to change. A built-in function or
+  `Object.prototype` no longer crosses; an adapter answering one is refused as any other
+  non-JSON value is.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

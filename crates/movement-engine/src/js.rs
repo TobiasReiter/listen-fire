@@ -7,8 +7,7 @@
 //!
 //! Objects and arrays are shared (`Rc`), because `===` compares them by
 //! identity: `x == x` is true for a dict, and two equal-looking literals are
-//! not equal. A value that came from the caller remembers its `origin`, so
-//! handing it back hands back the caller's own object.
+//! not equal.
 
 use std::rc::Rc;
 
@@ -174,13 +173,11 @@ pub struct JsArray {
     /// Its members; a GROUPBY filing pushes onto a list its answer's
     /// prototype holds, as JavaScript's `push` does, so every holder sees it.
     cells: std::cell::RefCell<Vec<Js>>,
-    /// The caller's id for this array, when it came from the caller.
-    pub origin: Option<u32>,
 }
 
 impl JsArray {
     pub fn new(items: Vec<Js>) -> JsArray {
-        JsArray { cells: std::cell::RefCell::new(items), origin: None }
+        JsArray { cells: std::cell::RefCell::new(items) }
     }
 
     /// Its members as they are now.
@@ -199,7 +196,6 @@ impl JsArray {
 #[derive(Debug, Default)]
 pub struct JsObject {
     entries: Vec<(String, Js)>,
-    pub origin: Option<u32>,
     /// What `object.__proto__ = …` made its prototype (a GROUPBY or KEYBY
     /// filing a member under the key `__proto__`); `None` is
     /// `Object.prototype`. An object with one is no dict (`isDictValue`).
@@ -217,7 +213,7 @@ impl JsObject {
 
     /// A fresh object with `other`'s own entries (`{...other}`).
     pub fn clone_of(other: &JsObject) -> JsObject {
-        JsObject { entries: other.entries.clone(), origin: None, proto: None }
+        JsObject { entries: other.entries.clone(), proto: None }
     }
 
     pub fn get(&self, key: &str) -> Option<&Js> {
