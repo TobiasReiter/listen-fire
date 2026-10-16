@@ -19,6 +19,9 @@ const SYSTEM_IS_ITS_ADDRESS =
 const WRITTEN_IN_V4 = "written in the v4 surface; version 5 respells it — the v5 behaviour is held by the rewritten current suites";
 const VERSION_5_ROW = (row) => (Array.isArray(row) ? row[0] : row) === 5;
 
+const EXTRACT_KEYWORD_V5_ROW =
+  "a table over the current release's versions whose version 5 row extracts with the retired `extract from [...] { ... }` keyword (MOV_EXTRACT_KEYWORD_RETIRED from 5 on; `extract(content, Shape)` replaces it) and writes the v4 surface; a version 5 rule, not this version's behaviour. Its rows under 1 to 4 still run; the v5 behaviour is held by the current tree's absent_equality_and_conditions suite";
+
 exports.triage = [
   { file: VERSIONS, test: 'names each integer once; the current version is the newest and supported', reason: RELEASE_TABLE },
   { file: VERSIONS, test: 'a version outside the supported set is an error naming it and the fix', reason: RELEASE_TABLE },
@@ -28,4 +31,5 @@ exports.triage = [
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'the entry IS the graph token the type checker compares by, not the spelling', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/one_grammar_rulings.unit.test.ts', test: 'a bare walk is its landings in any value position (version %d)', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/absent_equality_and_conditions.unit.test.ts', test: 'under language version %s', rows: VERSION_5_ROW, reason: EXTRACT_KEYWORD_V5_ROW },
 ];

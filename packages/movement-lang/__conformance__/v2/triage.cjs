@@ -12,6 +12,10 @@ const RELEASE_TABLE =
 const SYSTEM_IS_ITS_ADDRESS =
   "pinned that two instances constructed the same way (the same adapter, credential and arguments) are two graphs; since B12 a system is its address, not the name a file binds it to, so a record of one passes to a parameter typed by the other (in one file or across a file import) and the effect row lists the system once. A refusal turned into an acceptance — no movement that validated under this version does anything different (the rule of 8c9ee246: a refusal relaxed is never gated). The current tree's tests pin both halves with two different credentials";
 
+const VERSION_5_ROW = (row) => (Array.isArray(row) ? row[0] : row) === 5;
+const EXTRACT_KEYWORD_V5_ROW =
+  "a table over the current release's versions whose version 5 row extracts with the retired `extract from [...] { ... }` keyword (MOV_EXTRACT_KEYWORD_RETIRED from 5 on; `extract(content, Shape)` replaces it) and writes the v4 surface; a version 5 rule, not this version's behaviour. Its rows under 1 to 4 still run; the v5 behaviour is held by the current tree's absent_equality_and_conditions suite";
+
 exports.triage = [
   { file: VERSIONS, test: 'names each integer once; the current version is the newest and supported', reason: RELEASE_TABLE },
   { file: VERSIONS, test: 'a version outside the supported set is an error naming it and the fix', reason: RELEASE_TABLE },
@@ -19,4 +23,5 @@ exports.triage = [
   { file: 'checker/__test__/check_typed.unit.test.ts', test: 'MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'the entry IS the graph token the type checker compares by, not the spelling', reason: SYSTEM_IS_ITS_ADDRESS },
+  { file: 'checker/__test__/absent_equality_and_conditions.unit.test.ts', test: 'under language version %s', rows: VERSION_5_ROW, reason: EXTRACT_KEYWORD_V5_ROW },
 ];
