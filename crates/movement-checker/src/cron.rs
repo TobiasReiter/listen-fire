@@ -53,15 +53,11 @@ fn parse_value(token: &str, spec: &Field) -> Result<u32, String> {
     }
     let value: f64 = token.parse().unwrap_or(f64::INFINITY);
     if value < f64::from(spec.min) || value > f64::from(spec.max) {
-        return Err(format!("{} value {} is out of range ({}-{})", spec.name, js_number(value), spec.min, spec.max));
+        return Err(format!("{} value {} is out of range ({}-{})", spec.name, movement_parser::util::js::number_to_string(value), spec.min, spec.max));
     }
     Ok(value as u32)
 }
 
-/// A whole number as JavaScript prints it.
-fn js_number(value: f64) -> String {
-    if value.is_finite() && value.abs() < 1e21 { format!("{value}") } else { "Infinity".into() }
-}
 
 fn parse_field(field: &str, spec: &Field) -> Result<(), String> {
     for part in field.split(',') {

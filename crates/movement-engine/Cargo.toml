@@ -19,9 +19,6 @@ movement-parser = { path = "../movement-parser" }
 # `SegmentInput::native_check` (off by default). Its ABI export
 # (`check_program`) is linked into this crate's artifact as the parser's is.
 movement-checker = { path = "../movement-checker" }
-# Number::toString exactly: Rust's own shortest form breaks 17-digit ties
-# differently (16086.196899414062 prints …063).
-ryu-js = "1.0.3"
 serde = { version = "1", features = ["derive"] }
 # As the parser's: `preserve_order` off, so every emitted object's keys sort.
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }

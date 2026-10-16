@@ -222,6 +222,16 @@ for byte; on text already in the version 5 spelling it changes nothing.
   required field refuses it (`MOV_ABSENT_REQUIRED`). Why: each was untyped and ran unchecked. Under
   3 and 4 what this refuses is an upgrade warning; a closure value is called only from 5.
 
+### shrink-parity: version 5 runs as Rust does, not as JavaScript did
+
+Version 5 runs only on the Rust engine, so the machinery that copied JavaScript's quirks is gone.
+Each line is a difference a version 5 run can show; versions 1 to 4 are unchanged.
+
+- **Numbers print with Rust's shortest digits.** On a 17-digit tie the last digit can differ:
+  `TEXT(16086.196899414062)` is `"16086.196899414063"` (JavaScript printed `…062`); both read
+  back as the same number. The layout is unchanged (`1e+21`, `1.5e-7`, `0.000001`).
+<!-- shrink-parity:end -->
+
 ### Language version 5, Dancing Wren: new
 
 - **`fail("…")` inside an expression**: `coalesce(x, fail("no x"))`, `c ? a : fail("…")`. It

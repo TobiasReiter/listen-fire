@@ -513,7 +513,7 @@ pub fn observe_hop_order(typing: &mut Typing, step: &EdgeStep, ordering: Collect
     if cardinality.order_by.is_some() || ordering != CollectionOrder::Unordered {
         return;
     }
-    let n = js_number(limit.0);
+    let n = movement_parser::util::js::number_to_string(limit.0);
     let edge = &step.edge_type_id;
     typing.report(
         codes::LIMIT_NEEDS_ORDER,
@@ -523,11 +523,6 @@ pub fn observe_hop_order(typing: &mut Typing, step: &EdgeStep, ordering: Collect
     );
 }
 
-/// A number as JavaScript prints it, for the integers and plain decimals a
-/// LIMIT holds.
-fn js_number(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e21 { format!("{}", n as i64) } else { format!("{n}") }
-}
 
 /// Called by the type core once a hop's WHERE and ORDER BY are typed
 /// (`gateHopCapability`): `from` is where the hop left, `target` where it landed.

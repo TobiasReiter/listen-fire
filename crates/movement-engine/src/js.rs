@@ -668,13 +668,10 @@ fn radix_digits(digits: &str, radix: u32) -> f64 {
     (m as f64) * 2f64.powi(scale)
 }
 
-/// `Number.prototype.toString()`: ECMAScript's Number::toString, from
-/// `ryu-js`. Rust's own shortest form picks a different digit string on a
-/// 17-digit tie (where JavaScript takes the closer one, then the even one),
-/// so it is not used for text.
-pub fn number_to_string(x: f64) -> String {
-    ryu_js::Buffer::new().format(x).to_string()
-}
+/// A number as text: the shortest digits that read back as the same number,
+/// laid out positionally between 1e-7 and 1e21, else `1.5e+21`. One
+/// formatter serves the parser, the checker and the engine.
+pub use movement_parser::util::js::number_to_string;
 
 /// `Number.isInteger`.
 pub fn is_integer(x: f64) -> bool {
@@ -963,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn number_to_string_matches_javascript() {
+    fn number_to_string_prints_shortest_digits() {
         let cases: &[(f64, &str)] = &[
             (0.0, "0"),
             (-0.0, "0"),
@@ -983,11 +980,16 @@ mod tests {
             (f64::INFINITY, "Infinity"),
             (f64::NEG_INFINITY, "-Infinity"),
             (1234.5, "1234.5"),
-            // A 17-digit tie: JavaScript prints the closer digits.
-            (16086.196899414062, "16086.196899414062"),
+            // A 17-digit tie: version 5 prints Rust's shortest digits, where
+            // JavaScript took the closer ones (`…062`); both read back as the
+            // same number.
+            (16086.196899414062, "16086.196899414063"),
         ];
         for (x, want) in cases {
             assert_eq!(number_to_string(*x), *want, "{x:?}");
+            if x.is_finite() {
+                assert_eq!(want.parse::<f64>().unwrap(), *x, "{want} reads back");
+            }
         }
     }
 
