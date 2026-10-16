@@ -106,6 +106,7 @@ ok = true
 
 - An `if` condition is parenthesised. `rec IS <T>` is `rec is <T>` outside brackets.
 - `exists(…)` takes a walk only. On a value it is refused with the `!= null` rewrite. `x != null` narrows `x` inside the arm, and `if (x == null) { fail(…) }` narrows it after, as before.
+- One answer changes. `found != null` on the records a block returned (`found = c-[m:Messages]-> { return m }`) says whether the block returned any, as `EXISTS(found)` did. Under 4 and earlier those records always counted as present, so `found != NULL` was always true. A move up across 5 warns each such test (`MOV_PRESENCE_OF_RETURNED`): if the program relied on the old answer, change it, then upgrade.
 - Unchanged: `== != < <= > >=`, arithmetic, `"${…}"`, `[a, ...xs]`, `{ k: v }`, durations, `@` fields, and `Owner ?: x` in a write.
 
 ### Walk brackets
@@ -404,6 +405,7 @@ r = all(a, () => { … })
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#11-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) |
 | `MOV_PARALLEL_RETIRED` | [`parallel` is retired for `all`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (with the `all` rewrite for arms written down) |
+| `MOV_PRESENCE_OF_RETURNED` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a null test on a block's returned records) |
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#10-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#8-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#6-_resources-only-on-an-extractions-result) |

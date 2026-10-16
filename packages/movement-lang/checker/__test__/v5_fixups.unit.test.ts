@@ -72,3 +72,41 @@ describe('a callback whose closure takes the parameters the acting side fills', 
     expect(errors('function chase(name: <text>) {\n  return name\n}\n\nfunction offer() {\n  again = callback(() => chase("Acme"))\n  return again.url\n}', 5)).toEqual([]);
   });
 });
+
+describe("a move up across 5 warns a null test on a block's returned records", () => {
+  const chat = mockCatalog({
+    adapters: {
+      slack: {
+        constructionArgs: [],
+        schema: {
+          positions: {
+            channel: { properties: { Name: 'text' }, edges: { Messages: { target: 'message', readable: true, sequenced: 'chronological' } } },
+            message: { properties: { Text: 'text' }, edges: {} },
+          },
+          collections: { Channels: { target: 'channel' } },
+          writableRoots: {},
+        },
+      },
+    },
+  });
+  const v4 = (test: string) =>
+    `import { slack } from adapters\nchat = slack()\n\nmovement go(c: <chat-[:channel]->>) {\n  found = c-[m:Messages WHERE \`Text\` == "x"]-> { return m }\n  n = IF ${test} THEN 1 ELSE 0 END\n  return n\n}`;
+  const v5 = (test: string) =>
+    `import { \`@lf/slack\` as slack } from adapters\nchat = connect slack\n\nfunction go(c: <chat-[:channel]->>) {\n  found = c-[m:Messages WHERE m.Text == "x"]-> { return m }\n  n = ${test} ? 1 : 0\n  return n\n}`;
+  const warned = (source: string, options: { languageVersion: 4 | 5; upgradingFrom?: 4 }) =>
+    checkProgram(parseProgram(source, { languageVersion: options.languageVersion }), chat, options)
+      .filter((d) => d.code === 'MOV_PRESENCE_OF_RETURNED');
+
+  it('on the v4 program checked for 5, and on its rewrite', () => {
+    const [d] = warned(v4('found != NULL'), { languageVersion: 5, upgradingFrom: 4 });
+    expect(d).toMatchObject({ severity: 'warning', upgrade: true });
+    expect(d.message).toContain("'found != null' says whether the block returned any records into 'found'");
+    expect(warned(v5('found == null'), { languageVersion: 5, upgradingFrom: 4 })).toHaveLength(1);
+  });
+
+  it('nowhere else: not under 4, not under 5 without a move up, not on EXISTS', () => {
+    expect(warned(v4('found != NULL'), { languageVersion: 4 })).toEqual([]);
+    expect(warned(v5('found != null'), { languageVersion: 5 })).toEqual([]);
+    expect(warned(v4('EXISTS(found)'), { languageVersion: 5, upgradingFrom: 4 })).toEqual([]);
+  });
+});

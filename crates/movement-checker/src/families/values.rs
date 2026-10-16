@@ -560,6 +560,7 @@ fn check_null_comparison(typing: &mut Typing, op: FilterOperator, left: &Express
         if is_null_literal(subject) {
             continue;
         }
+        report_presence_of_returned(typing, subject, eq);
         if refuse_text_presence_test(typing, subject, if eq { PresenceAsk::Absent } else { PresenceAsk::Present }) {
             continue;
         }
@@ -581,6 +582,25 @@ fn check_null_comparison(typing: &mut Typing, op: FilterOperator, left: &Express
             Severity::Info,
         );
     }
+}
+
+/// `reportPresenceOfReturned`: the block's returned records, tested against
+/// null on a move up across 5 — the answer was fixed before (present) and is
+/// the real one from 5.
+fn report_presence_of_returned(typing: &mut Typing, subject: &Expression, eq: bool) {
+    let Some(name) = bare_name(subject) else { return };
+    if typing.env.plural_order_of(name).is_none() || !typing.upgrade_crosses(5) {
+        return;
+    }
+    let test = format!("{name} {} null", if eq { "==" } else { "!=" });
+    typing.report_upgrade(
+        codes::PRESENCE_OF_RETURNED,
+        format!(
+            "since {} '{test}' says whether the block returned any records into '{name}'; before, a block's returned records always counted as present, so it was {}. If the program relied on the old answer, change it, then upgrade.",
+            crate::version::describe(5),
+            if eq { "always false" } else { "always true" }
+        ),
+    );
 }
 
 /// `subjectLabel`: a presence test's subject as the author spelled it.

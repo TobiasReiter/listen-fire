@@ -56,3 +56,32 @@ fn a_callback_closure_with_parameters_calls_the_function_checked_as_one() {
     let deferred = "function chase(name: <text>) {\n  return name\n}\n\nfunction offer() {\n  again = callback(() => chase(\"Acme\"))\n  return again.url\n}";
     assert_eq!(errors(deferred, 5), Vec::<String>::new());
 }
+
+const CHAT: &str = r#"{"adapters":{"slack":{"constructionArgs":[],"schemas":{"":{"positions":{
+  "channel":{"properties":{"Name":"text"},"edges":{"Messages":{"target":"message","readable":true,"sequenced":"chronological"}}},
+  "message":{"properties":{"Text":"text"},"edges":{}}},
+  "collections":{"Channels":{"target":"channel"}},"writableRoots":{}}}}},"credentials":{},"plugins":{}}"#;
+
+fn presence_warnings(source: &str, version: u32, upgrading_from: Option<u32>) -> Vec<Diagnostic> {
+    let catalog = CatalogSnapshot::load(CHAT).unwrap();
+    let options = CheckOptions { language_version: version, upgrading_from, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    check_source(source, &catalog, options).unwrap().into_iter().filter(|d| d.code == "MOV_PRESENCE_OF_RETURNED").collect()
+}
+
+#[test]
+fn a_move_up_across_5_warns_a_null_test_on_a_blocks_returned_records() {
+    let v4 = |test: &str| {
+        format!("import {{ slack }} from adapters\nchat = slack()\n\nmovement go(c: <chat-[:channel]->>) {{\n  found = c-[m:Messages WHERE `Text` == \"x\"]-> {{ return m }}\n  n = IF {test} THEN 1 ELSE 0 END\n  return n\n}}")
+    };
+    let v5 = |test: &str| {
+        format!("import {{ `@lf/slack` as slack }} from adapters\nchat = connect slack\n\nfunction go(c: <chat-[:channel]->>) {{\n  found = c-[m:Messages WHERE m.Text == \"x\"]-> {{ return m }}\n  n = {test} ? 1 : 0\n  return n\n}}")
+    };
+    let warned = presence_warnings(&v4("found != NULL"), 5, Some(4));
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert_eq!(warned[0].upgrade, Some(true));
+    assert!(warned[0].message.contains("'found != null' says whether the block returned any records into 'found'"), "{}", warned[0].message);
+    assert_eq!(presence_warnings(&v5("found == null"), 5, Some(4)).len(), 1);
+    assert!(presence_warnings(&v4("found != NULL"), 4, None).is_empty());
+    assert!(presence_warnings(&v5("found != null"), 5, None).is_empty());
+    assert!(presence_warnings(&v4("EXISTS(found)"), 5, Some(4)).is_empty());
+}
