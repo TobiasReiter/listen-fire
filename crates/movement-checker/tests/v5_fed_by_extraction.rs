@@ -10,7 +10,9 @@ use movement_parser::catalog::plugin_args::PluginCallSite;
 use movement_parser::catalog::types::CatalogSnapshot;
 
 const CATALOG: &str = r#"{"adapters":{},"credentials":{},"plugins":{
-  "linkedin_enrichment":{"args":[],"priced":false,"argTypes":{},"effects":{"reads":["the web"],"ai":true},"fedByExtraction":true,"output":{"kind":"record","fields":{"linkedin_url":{"kind":"maybeAbsent","of":"text"},"linkedin_profile":{"kind":"maybeAbsent","of":"text"}}}}
+  "linkedin_enrichment":{"args":[],"priced":false,"argTypes":{},"effects":{"reads":["the web"],"ai":true},"fedByExtraction":true,"output":{"kind":"record","fields":{"linkedin_url":{"kind":"maybeAbsent","of":"text"},"linkedin_profile":{"kind":"maybeAbsent","of":"text"}}}},
+  "hidden_row":{"args":["text"],"requiredArgs":["text"],"priced":false,"argTypes":{"text":"text"}},
+  "no_output":{"args":["text"],"requiredArgs":["text"],"priced":false,"argTypes":{"text":"text"},"effects":{"reads":["the web"]}}
 }}"#;
 
 fn catalog() -> CatalogSnapshot {
@@ -83,4 +85,15 @@ fn versions_1_to_4_keep_it_a_stage() {
     let refused = errors(program, 4);
     assert_eq!(refused.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_PLUGIN_FED_BY_EXTRACTION"]);
     assert!(refused[0].message.contains("runs on what an extraction gives it and takes nothing of its own"));
+}
+
+/// Two plugins that never said what they do or hand back: a stage was their
+/// only way in before 5, and from 5, with no stage, they are ordinary calls.
+#[test]
+fn a_plugin_that_has_not_declared_its_row_or_output_is_an_ordinary_call_from_5() {
+    let v5 = "import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n";
+    assert_eq!(codes(v5, 5), Vec::<String>::new());
+    let v4 = "import { hidden_row, no_output } from plugins\n\nmovement go(n: <text>) {\n  a = hidden_row(text: n)\n  b = no_output(text: n)\n}\n";
+    assert_eq!(codes(v4, 4), vec!["MOV_PLUGIN_ROW_UNDECLARED", "MOV_PLUGIN_OUTPUT_UNDECLARED"]);
+    assert!(errors(v4, 4).iter().all(|d| d.message.contains("through [")));
 }

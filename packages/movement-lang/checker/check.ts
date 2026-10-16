@@ -15727,6 +15727,11 @@ class Checker {
    * reporting the reason when it cannot. A plugin is a function whose body
    * isn't visible, so everything a call needs to know has to have been
    * declared: what running it does, what it hands back, and what it runs ON.
+   *
+   * From version 5 there is no stage to send it to: the extraction keyword is
+   * retired, so every plugin is an ordinary call. One that has not declared
+   * what it does or hands back is called all the same — its row is partial and
+   * its value unknown, as an undeclared function's would be.
    */
   private refusePlainPluginCall(
     statement: CallStatement,
@@ -15735,7 +15740,8 @@ class Checker {
   ): boolean {
     if (spec === undefined) return false;
     const stage = `write it in a 'through [ … ]' (\`extract from [ … ] through [${statement.callee}] { … }\`)`;
-    if (spec.effects === undefined) {
+    const stagesExist = before(this.languageVersion, 5);
+    if (spec.effects === undefined && stagesExist) {
       this.report(
         DiagnosticCodes.PLUGIN_ROW_UNDECLARED,
         `'${statement.callee}' is a plugin that hasn't declared what it does, so it can only run as an extraction stage — ${stage}.`,
@@ -15751,7 +15757,7 @@ class Checker {
       );
       return true;
     }
-    if (spec.output === undefined) {
+    if (spec.output === undefined && stagesExist) {
       this.report(
         DiagnosticCodes.PLUGIN_OUTPUT_UNDECLARED,
         `'${statement.callee}' is a plugin that hasn't declared what it hands back, so there is nothing to bind — it can only run as an extraction stage, where its output goes to the extractor: ${stage}.`,
@@ -15765,9 +15771,12 @@ class Checker {
       fed => fed.required === true && !supplied.has(fed.name),
     );
     if (unfed.length > 0) {
+      const missing = `'${statement.callee}' is missing ${unfed.length === 1 ? 'the argument' : 'the arguments'} ${unfed.map(fed => `'${fed.name}'`).join(', ')}`;
       this.report(
         DiagnosticCodes.PLUGIN_FED_BY_EXTRACTION,
-        `'${statement.callee}' is missing ${unfed.length === 1 ? 'the argument' : 'the arguments'} ${unfed.map(fed => `'${fed.name}'`).join(', ')} — inside a 'through [ … ]' the extraction supplies ${unfed.length === 1 ? 'it' : 'them'}, so a call on its own has to say ${unfed.length === 1 ? 'it' : 'them'} (\`${statement.callee}(${unfed.map(fed => (since(this.languageVersion, 5) ? fed.name : `${fed.name}: …`)).join(', ')})\`).`,
+        stagesExist
+          ? `${missing} — inside a 'through [ … ]' the extraction supplies ${unfed.length === 1 ? 'it' : 'them'}, so a call on its own has to say ${unfed.length === 1 ? 'it' : 'them'} (\`${statement.callee}(${unfed.map(fed => `${fed.name}: …`).join(', ')})\`).`
+          : `${missing} — a plugin's inputs are its arguments, by position (\`${statement.callee}(${unfed.map(fed => fed.name).join(', ')})\`).`,
         statement.span,
       );
       return true;

@@ -19,7 +19,11 @@ const linkedinEnrichment: PluginSpec = {
     fields: { linkedin_url: { kind: 'maybeAbsent', of: 'text' }, linkedin_profile: { kind: 'maybeAbsent', of: 'text' } },
   },
 };
-const catalog = mockCatalog({ plugins: { linkedin_enrichment: linkedinEnrichment } });
+// Two plugins that never said what they do or hand back: a stage was their
+// only way in before 5, and from 5, with no stage, they are ordinary calls.
+const hiddenRow: PluginSpec = { args: ['text'], requiredArgs: ['text'], priced: false, argTypes: { text: 'text' } };
+const noOutput: PluginSpec = { args: ['text'], requiredArgs: ['text'], priced: false, argTypes: { text: 'text' }, effects: { reads: ['the web'] } };
+const catalog = mockCatalog({ plugins: { linkedin_enrichment: linkedinEnrichment, hidden_row: hiddenRow, no_output: noOutput } });
 
 function check(source: string, languageVersion: number): Diagnostic[] {
   return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter((d) => d.severity === undefined);
@@ -74,5 +78,21 @@ describe('versions 1–4', () => {
     const program = 'import { linkedin_enrichment } from plugins\n\nmovement go(n: <text>) {\n  found = linkedin_enrichment()\n}\n';
     expect(codes(program, 4)).toEqual(['MOV_PLUGIN_FED_BY_EXTRACTION']);
     expect(check(program, 4)[0]!.message).toContain('runs on what an extraction gives it and takes nothing of its own');
+  });
+});
+
+describe('a plugin that has not declared what it does or hands back', () => {
+  const program = (version: number): string =>
+    version >= 5
+      ? 'import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n'
+      : 'import { hidden_row, no_output } from plugins\n\nmovement go(n: <text>) {\n  a = hidden_row(text: n)\n  b = no_output(text: n)\n}\n';
+
+  it('is an ordinary call from 5: there is no stage to send it to', () => {
+    expect(check(program(5), 5)).toEqual([]);
+  });
+
+  it('is still sent to a stage under 4', () => {
+    expect(codes(program(4), 4)).toEqual(['MOV_PLUGIN_ROW_UNDECLARED', 'MOV_PLUGIN_OUTPUT_UNDECLARED']);
+    expect(check(program(4), 4).every((d) => d.message.includes("through ["))).toBe(true);
   });
 });

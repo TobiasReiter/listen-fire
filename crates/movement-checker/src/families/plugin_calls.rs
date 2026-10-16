@@ -142,12 +142,16 @@ impl Checker<'_> {
     }
 
     /// `refusePlainPluginCall`: whether this plugin can only run as an
-    /// extraction stage, reporting why.
+    /// extraction stage, reporting why. From version 5 there is no stage: the
+    /// extraction keyword is retired, so every plugin is an ordinary call, and
+    /// one that has not declared what it does or hands back is called all the
+    /// same (its row partial, its value unknown).
     fn refuse_plain_plugin_call(&mut self, call: &CallStatement, spec: Option<&PluginSpec>, supplied: &HashSet<&str>) -> bool {
         let Some(spec) = spec else { return false };
         let callee = &call.callee;
         let stage = format!("write it in a 'through [ … ]' (`extract from [ … ] through [{callee}] {{ … }}`)");
-        if spec.effects.is_none() {
+        let stages_exist = before(self.version, 5);
+        if spec.effects.is_none() && stages_exist {
             self.report(
                 codes::PLUGIN_ROW_UNDECLARED,
                 format!("'{callee}' is a plugin that hasn't declared what it does, so it can only run as an extraction stage — {stage}."),
@@ -163,7 +167,7 @@ impl Checker<'_> {
             );
             return true;
         }
-        if spec.output.is_none() {
+        if spec.output.is_none() && stages_exist {
             self.report(
                 codes::PLUGIN_OUTPUT_UNDECLARED,
                 format!("'{callee}' is a plugin that hasn't declared what it hands back, so there is nothing to bind — it can only run as an extraction stage, where its output goes to the extractor: {stage}."),
@@ -175,18 +179,18 @@ impl Checker<'_> {
         if !unfed.is_empty() {
             let one = unfed.len() == 1;
             let listed = unfed.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
-            // From version 5 they are written by position.
-            let spelled = unfed.iter().map(|n| if before(self.version, 5) { format!("{n}: …") } else { n.to_string() }).collect::<Vec<_>>().join(", ");
-            self.report(
-                codes::PLUGIN_FED_BY_EXTRACTION,
+            let missing = format!("'{callee}' is missing {} {listed}", if one { "the argument" } else { "the arguments" });
+            let message = if stages_exist {
+                let spelled = unfed.iter().map(|n| format!("{n}: …")).collect::<Vec<_>>().join(", ");
                 format!(
-                    "'{callee}' is missing {} {listed} — inside a 'through [ … ]' the extraction supplies {}, so a call on its own has to say {} (`{callee}({spelled})`).",
-                    if one { "the argument" } else { "the arguments" },
+                    "{missing} — inside a 'through [ … ]' the extraction supplies {}, so a call on its own has to say {} (`{callee}({spelled})`).",
                     if one { "it" } else { "them" },
                     if one { "it" } else { "them" },
-                ),
-                call.span,
-            );
+                )
+            } else {
+                format!("{missing} — a plugin's inputs are its arguments, by position (`{callee}({})`).", unfed.join(", "))
+            };
+            self.report(codes::PLUGIN_FED_BY_EXTRACTION, message, call.span);
             return true;
         }
         false
