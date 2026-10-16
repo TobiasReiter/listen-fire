@@ -545,6 +545,22 @@ impl Checker<'_> {
         // A MAP function with no `return` leaves each slot absent.
         let shape = if op.op == CollectionOp::Map && !shape.returns { ReturnShape { returns: true, plane: as_value(Some(Ty::Absent)), may_hold: None } } else { shape };
         let returned = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
+        if since(self.version, 5) {
+            // A closure is not data: an op never files closures as its answer
+            // — a MAP's members, a GROUPBY's groups or a KEYBY's values.
+            use crate::types::field::{closure_not_data_message, may_be_closure};
+            let returns_closure = shape.plane.pos.as_deref().is_some_and(crate::types::position::Position::is_closure) || may_be_closure(returned.as_ref()) || may_be_closure(shape.may_hold.as_ref());
+            if op.op == CollectionOp::Map && returns_closure {
+                self.report(
+                    codes::CLOSURE_NOT_DATA,
+                    closure_not_data_message(&format!("'{spelling}' answers a list of what its function returns, and its function returns")),
+                    op.span,
+                );
+            }
+            if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) && may_be_closure(element.as_ref()) {
+                self.report(codes::CLOSURE_NOT_DATA, closure_not_data_message(&format!("'{spelling}' files each member under a key, and each member is")), op.source.span);
+            }
+        }
         if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
             let diagnostics = {
                 let env = self.typing_env(scope);

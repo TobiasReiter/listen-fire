@@ -121,6 +121,9 @@ pub struct Typing<'a> {
     walk_orderings: HashMap<usize, (CollectionOrder, Option<String>)>,
     /// Where each traversal landed (`walkDestinations`).
     walk_destinations: HashMap<usize, Position>,
+    /// Expressions a closure operand was refused in (`closureOperandRefused`),
+    /// so a list or map holding one does not say so again.
+    closure_operand_refused: std::collections::HashSet<usize>,
 }
 
 impl<'a> Typing<'a> {
@@ -146,11 +149,42 @@ impl<'a> Typing<'a> {
             bare_names: HashMap::new(),
             walk_orderings: HashMap::new(),
             walk_destinations: HashMap::new(),
+            closure_operand_refused: std::collections::HashSet::new(),
         }
     }
 
     pub fn report(&mut self, code: &str, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic::error(code, message, self.span));
+    }
+
+    /// `refuseClosureAsData` (language version 5): a value whose type is —
+    /// or may be, or holds — a closure is refused where it would be kept.
+    pub fn refuse_closure_as_data(&mut self, expr: &Expression, ty: Option<&Ty>, where_: &str) {
+        if self.version < 5 || self.closure_operand_refused.contains(&key(expr)) {
+            return;
+        }
+        if crate::types::field::may_be_closure(ty) || crate::types::field::may_be_closure(self.may_hold_type(expr).as_ref()) {
+            self.report(crate::codes::CLOSURE_NOT_DATA, crate::types::field::closure_not_data_message(where_));
+        }
+    }
+
+    /// `refuseClosureOperands` (language version 5): a closure as an operand
+    /// of a value expression, refused once for the whole expression, which
+    /// is remembered so a list or map holding it does not say so again. True
+    /// when it fired.
+    pub fn refuse_closure_operands(&mut self, operands: &[(&Expression, Option<&Ty>)], whole: &Expression, operation: &str) -> bool {
+        if self.version < 5 {
+            return false;
+        }
+        let closure = operands.iter().any(|(operand, ty)| {
+            crate::types::field::may_be_closure(*ty) || crate::types::field::may_be_closure(self.may_hold_type(operand).as_ref())
+        });
+        if !closure {
+            return false;
+        }
+        self.report(crate::codes::CLOSURE_NOT_DATA, crate::types::field::closure_not_data_message(&format!("a value {operation} is")));
+        self.closure_operand_refused.insert(key(whole));
+        true
     }
 
     pub fn report_with(&mut self, code: &str, message: impl Into<String>, severity: Severity) {
@@ -686,6 +720,11 @@ impl<'a> Typing<'a> {
                 };
                 let then_ty = self.with_presence(&proofs, position, |t, narrowed| t.infer_at(then, narrowed));
                 let else_ty = self.infer_at(else_, position);
+                // A closure is not data (language version 5): IF chooses
+                // between values, never between closures.
+                if self.refuse_closure_operands(&[(then, then_ty.as_ref()), (else_, else_ty.as_ref())], expr, "chosen by IF … THEN … ELSE … END") {
+                    return (None, vec![condition_ty, then_ty, else_ty]);
+                }
                 let ty = match (&then_ty, &else_ty) {
                     (Some(a), Some(b)) if field_type_equals(a, b) => then_ty.clone(),
                     _ => None,
@@ -831,10 +870,17 @@ impl<'a> Typing<'a> {
         let mut parts: Vec<Part> = Vec::new();
         for element in elements {
             match element {
-                ListElement::Expression(e) => parts.push(Part::Slot(self.infer_exact_at(e, position))),
-                ListElement::Spread(spread) => parts.extend(self.spread_parts(&spread.expression, position).into_iter().map(|(run, ty)| {
-                    if run { Part::Run(ty) } else { Part::Slot(ty) }
-                })),
+                ListElement::Expression(e) => {
+                    let slot = self.infer_exact_at(e, position);
+                    self.refuse_closure_as_data(e, slot.as_ref(), "a list's element is");
+                    parts.push(Part::Slot(slot));
+                }
+                ListElement::Spread(spread) => {
+                    let spread_parts = self.spread_parts(&spread.expression, position);
+                    let held: Vec<Ty> = spread_parts.iter().filter_map(|(_, ty)| ty.clone()).collect();
+                    self.refuse_closure_as_data(&spread.expression, value_union(&held).as_ref(), "a spread into a list holds");
+                    parts.extend(spread_parts.into_iter().map(|(run, ty)| if run { Part::Run(ty) } else { Part::Slot(ty) }));
+                }
             }
         }
         let slots_of = |run: &[Part]| -> Vec<Option<Ty>> {
@@ -905,6 +951,7 @@ impl<'a> Typing<'a> {
             match member {
                 ObjectMember::Entry { key: name, value } => {
                     let exact = self.infer_exact_at(value, position);
+                    self.refuse_closure_as_data(value, exact.as_ref(), &format!("'{name}' holds"));
                     read_types.push(widen_tuples(exact.clone(), self.version));
                     shape.insert(name.clone(), exact);
                     written.insert(name.clone());
@@ -914,6 +961,12 @@ impl<'a> Typing<'a> {
                         untyped_spread = true;
                         continue;
                     };
+                    let copied = match strip_absent(&held) {
+                        Ty::Dict { shape: Some(keys), .. } => value_union(&keys.values().flatten().cloned().collect::<Vec<_>>()),
+                        Ty::Dict { of, shape: None } => Some((**of).clone()),
+                        _ => None,
+                    };
+                    self.refuse_closure_as_data(&spread.expression, copied.as_ref(), "a spread into a map holds");
                     let may_be_absent = is_maybe_absent(Some(&held));
                     let keys: Option<IndexMap<String, Option<Ty>>> = match strip_absent(&held) {
                         Ty::Json => {

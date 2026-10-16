@@ -30,7 +30,7 @@
 //! named ones it calls mid-node); the statement rules (a write's absent
 //! field, a collection operation's order) are the walk's, in `checker.rs`.
 
-use movement_parser::lowering::expression::{AggregationFunction, ArithmeticOp, Expression, FilterOperator, StaticValue};
+use movement_parser::lowering::expression::{AggregationFunction, ArithmeticOp, Expression, FilterOperator, LogicalOp, StaticValue};
 
 use crate::codes;
 use crate::diagnostic::Severity;
@@ -82,11 +82,21 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
         }
         Expression::Compare { op, left, right } => {
             let (l, r) = (operands[0].clone(), operands[1].clone());
-            // A closure compared is the closures family's to refuse, said once.
-            if closure_operand(typing, &[(left, l.as_ref()), (right, r.as_ref())]) {
+            if typing.refuse_closure_operands(&[(left, l.as_ref()), (right, r.as_ref())], expr, "compared") {
                 return;
             }
             check_compare_operands(typing, *op, left, right, l.as_ref(), r.as_ref());
+        }
+        Expression::Logical { op, operands: written } => {
+            let pairs: Vec<(&Expression, Option<&Ty>)> = written.iter().zip(operands).map(|(o, t)| (o, t.as_ref())).collect();
+            let spelled = match op {
+                LogicalOp::And => "AND",
+                LogicalOp::Or => "OR",
+            };
+            typing.refuse_closure_operands(&pairs, expr, &format!("joined by {spelled}"));
+        }
+        Expression::Not { expression } => {
+            typing.refuse_closure_operands(&[(expression, operands[0].as_ref())], expr, "negated by NOT");
         }
         Expression::Traverse { .. } => {
             if let Some(name) = crate::types::narrowing::exists_subject(expr) {
@@ -188,12 +198,6 @@ fn refuse_file_in_text(typing: &mut Typing, part: &Expression, ty: Option<&Ty>) 
             if definite { "is" } else { "may be" }
         ),
     );
-}
-
-/// A closure among a value expression's operands (language version 5): the
-/// closures family refuses it, and nothing else is said of the expression.
-fn closure_operand(typing: &Typing, operands: &[(&Expression, Option<&Ty>)]) -> bool {
-    typing.version >= 5 && operands.iter().any(|(operand, ty)| may_be_closure(*ty) || may_be_closure(typing.may_hold_type(operand).as_ref()))
 }
 
 // ── Structured values ──

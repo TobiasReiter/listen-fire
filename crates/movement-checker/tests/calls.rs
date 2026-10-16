@@ -110,3 +110,19 @@ fn a_chain_of_closures_returning_the_last_twice_checks_in_linear_time() {
         assert_eq!(found, ["MOV_GRAPH_ENTRY_RECORD"]);
     }
 }
+
+#[test]
+fn a_closure_is_not_held_as_data_under_version_5() {
+    let not_data = |line: &str, version: u32| {
+        let source = format!("movement m(c: <boolean>) {{\n  label = (x: <number>) => \"x\"\n  {line}\n}}");
+        codes(&source, version).into_iter().filter(|(c, _)| c == "MOV_CLOSURE_NOT_DATA").map(|(_, m)| m).collect::<Vec<_>>()
+    };
+    assert_eq!(not_data("fs = [label]", 5).len(), 1);
+    assert!(not_data("box = { g: label }", 5)[0].starts_with("'g' holds a closure"));
+    // Refused once, as the IF's operand, not again as the list's element.
+    let chosen = not_data("fs = [IF c THEN label ELSE 1 END]", 5);
+    assert_eq!(chosen.len(), 1, "{chosen:?}");
+    assert!(chosen[0].starts_with("a value chosen by IF"));
+    assert!(not_data("d = MAP([1, 2], (x) => { return label })", 5)[0].starts_with("'MAP' answers a list"));
+    assert!(not_data("fs = [label]", 4).is_empty());
+}
