@@ -35,6 +35,13 @@ const plugins: Record<string, PluginSpec> = {
     output: { kind: 'value', type: 'text' },
   },
 };
+plugins.linkedin_enrichment = {
+  args: ['depth'],
+  priced: false,
+  fedArgs: [{ name: 'text', required: true }],
+  requiredArgs: ['depth'],
+  argTypes: { depth: 'number' },
+};
 const catalog = mockCatalog({ plugins });
 
 const HEAD4 = 'import { fetch_url, research, vc_url_retrieval } from plugins\n\n';
@@ -140,6 +147,28 @@ describe('version 5', () => {
     expect(upgraded.source).toContain('research(n, { context: s, questions: t })');
     expect(upgraded.source).toContain('vc_url_retrieval(t, { email: u })');
     expect(upgraded.held).toEqual([]);
+    expect(check(upgraded.source, 5)).toEqual([]);
+  });
+});
+
+describe('a through stage under 5', () => {
+  const stage = (through: string): string =>
+    `import { research, linkedinEnrichment } from plugins\n\nfunction go(u: <text>, n: <text>, s: <text>) {\n  found = extract from [u] {\n    name: "the name"\n  } through [${through}] {\n    detail: "more"\n  }\n}\n`;
+
+  it('takes its arguments by position too, and is never fed by its author', () => {
+    expect(check(stage('linkedinEnrichment(2)'), 5)).toEqual([]);
+    expect(check(stage('research(n, { context: s })'), 5)).toEqual([]);
+    expect(codes(stage('linkedinEnrichment'), 5)).toEqual(['MOV_THROUGH_ARG_MISSING']);
+    expect(codes(stage('linkedinEnrichment(u, 2)'), 5)).toEqual(['MOV_THROUGH_BAD_ARG']);
+    expect(codes(stage('research(n, { name: s })'), 5)).toEqual(['MOV_THROUGH_BAD_ARG']);
+  });
+
+  it('rewrites its named arguments by position, and the rewrite checks clean', () => {
+    const program = stage('research(name: n, context: s)');
+    const fixes = check(program, 5).filter((d) => d.code === 'MOV_V5_SPELLING').map((d) => d.fix?.edits[0]?.text);
+    expect(fixes).toEqual(['n, { context: s }']);
+    const upgraded = upgradeSource(program, typescriptCheck({ catalog, languageVersion: 5 }));
+    expect(upgraded.source).toContain('research(n, { context: s })');
     expect(check(upgraded.source, 5)).toEqual([]);
   });
 });

@@ -71,15 +71,15 @@ describe('a block closure nested in an expression', () => {
 });
 
 describe('a plugin', () => {
-  const plugins = mockCatalog({ plugins: { fetch_url: { args: ['url'] } } });
+  const plugins = mockCatalog({ plugins: { fetch_url: { args: ['url'], requiredArgs: ['url'] } } });
   const checkWith = (source: string, languageVersion: number): Diagnostic[] =>
     checkProgram(parseProgram(source, { languageVersion }), plugins, { languageVersion });
   const codes = (found: Diagnostic[]): string[] => found.map((d) => d.code);
   const old = 'import { fetch_url } from plugins\nmovement go(u: <text>) {\n  p = fetch_url(url: u)\n}';
 
   it('is imported by its exact camelCase name under 5, as by the catalog key under 4', () => {
-    const v5 = 'import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(url: u)\n}';
-    const aliased = 'import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(url: u)\n}';
+    const v5 = 'import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(u)\n}';
+    const aliased = 'import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(u)\n}';
     expect(codes(checkWith(v5, 5))).toEqual(codes(checkWith(old, 4)));
     expect(codes(checkWith(aliased, 5))).toEqual(codes(checkWith(old, 4)));
   });
