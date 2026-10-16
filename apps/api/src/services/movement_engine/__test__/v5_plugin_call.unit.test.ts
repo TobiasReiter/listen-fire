@@ -394,3 +394,30 @@ describe.each(ENGINES)('a plugin fed only by an extraction, called on %s', (_nam
     expect(contexts).toEqual([{ name: 'Acme', company: { name: 'Acme Corp' } }, {}]);
   });
 });
+
+// A plugin that declares no output is an ordinary call to the checkers from
+// language version 5 (its value unknown). The Rust engine admits the run (a
+// plugin with no output is `PluginBinds::Nothing`, admitted). Both engines
+// then end the run at the call (the TypeScript before invoking it), saying the
+// checker should have refused it: what such a call hands back is not yet
+// decided, so the engines and the checkers disagree here.
+const UNDECLARED = ['import { `@lf/email` as email } from adapters', 'import { hiddenRow, noOutput } from plugins', '', 'inbox = connect email', ''].join('\n');
+const undeclared: typeof catalog = {
+  ...catalog,
+  plugins: {
+    ...catalog.plugins,
+    hidden_row: { args: ['text'], requiredArgs: ['text'], priced: false, argTypes: { text: 'text' } },
+    no_output: { args: ['text'], requiredArgs: ['text'], priced: false, argTypes: { text: 'text' }, effects: { reads: ['the web'] } },
+  },
+};
+
+describe.each(ENGINES)('a plugin with no declared output, called on %s', (_name, config, engine) => {
+  it.each(['hiddenRow', 'noOutput'])('%s: the run is admitted, and ends at the call', async (callee) => {
+    const ended = await run([`  said = ${callee}(m.\`subject\`)`], config, {}, { prelude: UNDECLARED, catalog: undeclared }).then(
+      (calls) => ({ calls }),
+      (error: unknown) => ({ error: String(error) }),
+    );
+    expect(recorded.map((r) => [r.engine, r.reason])).toEqual([[engine, 'admitted']]);
+    expect(ended).toEqual({ error: expect.stringContaining(`MOVENG_RUNTIME: '${callee}' declares no output`) });
+  });
+});
