@@ -126,3 +126,15 @@ fn a_closure_is_not_held_as_data_under_version_5() {
     assert!(not_data("d = MAP([1, 2], (x) => { return label })", 5)[0].starts_with("'MAP' answers a list"));
     assert!(not_data("fs = [label]", 4).is_empty());
 }
+
+/// A function's call handed to a plugin is a value bound (`boundCallShape`):
+/// one that returns nothing has none to hand. The plugin declares no
+/// `priced`, which reads as unpriced.
+#[test]
+fn a_call_handed_to_a_plugin_that_returns_nothing_is_refused() {
+    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{"relay":{"args":["data"],"output":{"kind":"value","type":"text"}}}}"#).unwrap();
+    let source = "import { relay } from plugins\nmovement none(n: <text>) {\n  x = 1\n}\nmovement m(s: <text>) {\n  r = relay(data: none(n: \"x\"))\n}";
+    let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let found: Vec<(String, String)> = check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code, d.message)).collect();
+    assert!(found.iter().any(|(c, m)| c == "MOV_CALL_RETURNS_NOTHING" && m.starts_with("'none' returns nothing")), "{found:?}");
+}

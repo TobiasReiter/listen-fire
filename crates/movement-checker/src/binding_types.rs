@@ -89,6 +89,11 @@ impl Checker<'_> {
         if let Some((_, hoisted)) = self.nested_call_rewrite(slot, scope) {
             return self.type_of_bound_slot(&hoisted, scope, holds_value);
         }
+        // A bare `null` short-circuits the slot's check (`EXPR_LITERALS`) and
+        // binds no type: nothing said, not "always absent".
+        if slot.raw.trim().eq_ignore_ascii_case("null") {
+            return Some(SymbolTypes::default());
+        }
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
         let mut typing = Typing::new(&env, self.version, slot.span);

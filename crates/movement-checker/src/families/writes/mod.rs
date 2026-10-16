@@ -294,9 +294,11 @@ impl Checker<'_> {
             }
             let path = root_description.contains('.').then(|| format!("{root_description}.{}", field.name));
             let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref(), path);
-            // Only against a target the walk typed: one it could not (a node
-            // this run built) may declare the field maybe-absent itself.
-            if root.is_some()
+            // Against a target the walk typed, or a linked one it refused
+            // (a maybe-empty parent): the TypeScript holds every field to it.
+            // Not against a node this run built that the walk could not
+            // type: it may declare the field maybe-absent itself.
+            if (root.is_some() || (matches!(write.target, WriteTarget::Linked { .. }) && !local))
                 && is_maybe_absent(value_type.as_ref())
                 && field.semantics != Some(FieldWriteMode::Fill)
                 && !is_maybe_absent(target_type.as_ref())

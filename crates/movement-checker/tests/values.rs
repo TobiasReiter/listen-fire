@@ -67,3 +67,30 @@ fn a_source_in_the_engines_text_form_is_not_formed_twice() {
     assert!(outside.ends_with("instead: \"\u{FDD0}${nope}\"."), "{outside}");
     assert_eq!(hint(check_form(&form_of_text(source), &catalog, options()).unwrap()), outside);
 }
+
+fn codes_of(source: &str, version: u32) -> Vec<(String, String)> {
+    use movement_checker::{CheckOptions, check_source};
+    use movement_parser::catalog::types::CatalogSnapshot;
+    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
+    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code, d.message)).collect()
+}
+
+/// `blank = null` binds no type (the slot's bare literal short-circuits),
+/// so nothing says a presence test of it is constant.
+#[test]
+fn a_name_bound_to_null_is_not_always_present() {
+    let found = codes_of("movement m(s: <text>) {\n  blank = null\n  t = \"${EXISTS(s)} ${EXISTS(blank)}\"\n}", 5);
+    let constant: Vec<_> = found.iter().filter(|(c, _)| c == "MOV_PRESENCE_TEST_CONSTANT").collect();
+    assert_eq!(constant.len(), 1, "{found:?}");
+    assert!(constant[0].1.starts_with("'s' always has a value"));
+}
+
+/// `...held.k` copies the keys of the map the path reads.
+#[test]
+fn a_graph_spread_through_a_path_carries_the_keys_it_reads() {
+    let found = codes_of("movement m(s: <text>) {\n  held = { k: { name: s } }\n  g = graph { ...held.k, stage: \"new\" }\n  x = g.name\n  y = g.nope\n}", 5);
+    let unknown: Vec<_> = found.iter().filter(|(c, _)| c == "MOV_UNKNOWN_PROPERTY").collect();
+    assert_eq!(unknown.len(), 1, "{found:?}");
+    assert!(unknown[0].1.contains("'nope'"), "{found:?}");
+}
