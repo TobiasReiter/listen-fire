@@ -4,8 +4,10 @@
 // parameter, and every read off it used to pass unsaid and be null at run
 // time — an undescribed position accepting any field.
 //
-// From version 5 a read or a write off it is refused (MOV_EVENT_UNDESCRIBED);
-// before, it stays unsaid. The Rust checker's twin is crates/movement-checker/tests/
+// From version 5 a read or a write off it is refused (MOV_EVENT_UNDESCRIBED) —
+// a movement's, a closure's or a library function's parameter; on a check for
+// a move up across 5 it is the upgrade warning instead; before 5 it stays
+// unsaid. The Rust checker's twin is crates/movement-checker/tests/
 // event_undescribed.rs, on the same catalog.
 
 import { parseProgram } from '../../parser/parse';
@@ -26,9 +28,19 @@ const MANUAL_DESCRIBED = {
   },
 };
 
-function check(source: string, version: number, manual: object = MANUAL_UNDESCRIBED) {
+function check(
+  source: string,
+  version: number,
+  manual: object = MANUAL_UNDESCRIBED,
+  options: { upgradingFrom?: number; library?: string } = {},
+) {
   const snapshot = { adapters: { manual }, credentials: {}, plugins: {} } as unknown as CatalogSnapshot;
-  return checkProgram(parseProgram(source, { languageVersion: version }), fromCatalogSnapshot(snapshot), { languageVersion: version });
+  const library = options.library;
+  return checkProgram(parseProgram(source, { languageVersion: version }), fromCatalogSnapshot(snapshot), {
+    languageVersion: version,
+    ...(options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+    ...(library !== undefined ? { resolveFile: (path: string) => (path === 'lib/recap' ? { source: library } : undefined) } : {}),
+  });
 }
 
 const V5 = [
@@ -66,6 +78,44 @@ describe('MOV_EVENT_UNDESCRIBED', () => {
 
   it.each([1, 2, 3, 4])('says nothing under version %i, as before', version => {
     expect(check(BEFORE_5, version)).toEqual([]);
+  });
+
+  it.each([3, 4])('is the upgrade warning on a check for a move up from %i, which holds the pin', from => {
+    const found = check(V5, 5, MANUAL_UNDESCRIBED, { upgradingFrom: from });
+    expect(found.map(d => [d.code, d.severity, d.upgrade])).toEqual([
+      ['MOV_EVENT_UNDESCRIBED', 'warning', true],
+      ['MOV_EVENT_UNDESCRIBED', 'warning', true],
+    ]);
+    expect(found[0].message).toBe(
+      "since \"Dancing Wren\" (5) a read or write off 'go' is refused while 'runs-[:Invocation]->' has no description in the catalog; before, it read null. "
+        + "The catalog describes it from the system behind 'runs': check that its connection resolves and the system answers, then upgrade.",
+    );
+  });
+
+  it("refuses a read off a closure's parameter typed as the event", () => {
+    const source = [
+      'import { manual } from adapters',
+      'runs = connect manual',
+      'function recap(n: <number>) {',
+      '  subject = (go: <runs-[:Invocation]->>) => go.`text`',
+      '  return n',
+      '}',
+    ].join('\n');
+    expect(check(source, 5).map(d => [d.code, d.span.start.line])).toEqual([['MOV_EVENT_UNDESCRIBED', 4]]);
+  });
+
+  it("refuses a read off a library function's parameter, reported at the import", () => {
+    const library = [
+      'import { manual } from adapters',
+      'runs = connect manual',
+      'export function recap(go: <runs-[:Invocation]->>) {',
+      '  return go.`text`',
+      '}',
+    ].join('\n');
+    const source = ['import { recap } from "lib/recap"', 'x = 1'].join('\n');
+    const found = check(source, 5, MANUAL_UNDESCRIBED, { library });
+    expect(found.map(d => d.code)).toEqual(['MOV_EVENT_UNDESCRIBED']);
+    expect(found[0].message).toMatch(/^"lib\/recap" line 4: /);
   });
 
   it('is silent when the catalog describes the event', () => {

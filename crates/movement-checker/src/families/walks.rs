@@ -243,15 +243,36 @@ pub struct UndescribedEvent {
 
 /// MOV_EVENT_UNDESCRIBED for a read or write off `param`, at `span`
 /// (`undescribedEventSeverity`, `undescribedEventMessage`): refused from
-/// version 5; unsaid before.
-pub fn undescribed_event_diagnostic(version: u32, param: &str, event: &UndescribedEvent, span: movement_parser::ast::Span) -> Option<crate::diagnostic::Diagnostic> {
+/// version 5; on a check for a move up across 5 the upgrade warning instead,
+/// which holds the pin where the program read null without a word; unsaid
+/// before 5.
+pub fn undescribed_event_diagnostic(
+    version: u32,
+    upgrading_from: Option<u32>,
+    param: &str,
+    event: &UndescribedEvent,
+    span: movement_parser::ast::Span,
+) -> Option<crate::diagnostic::Diagnostic> {
     if version < 5 {
         return None;
     }
+    let address = format!("'{}-[:{}]->'", event.instance, event.event);
+    let source = format!(
+        "The catalog describes it from the system behind '{}': check that its connection resolves and the system answers",
+        event.instance
+    );
+    if upgrading_from.is_some_and(|from| from < 5) {
+        let message = format!(
+            "since {} a read or write off '{param}' is refused while {address} has no description in the catalog; before, it read null. {source}, then upgrade.",
+            crate::version::describe(5)
+        );
+        let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::EVENT_UNDESCRIBED, message, span);
+        diagnostic.severity = Some(Severity::Warning);
+        diagnostic.upgrade = Some(true);
+        return Some(diagnostic);
+    }
     let message = format!(
-        "'{instance}-[:{ev}]->' has no description in the catalog, so a read or write off '{param}' can't be checked — it would be null at run time. The catalog describes it from the system behind '{instance}': check that its connection resolves and the system answers, then check again.",
-        instance = event.instance,
-        ev = event.event,
+        "{address} has no description in the catalog, so a read or write off '{param}' can't be checked — it would be null at run time. {source}, then check again."
     );
     Some(crate::diagnostic::Diagnostic::error(codes::EVENT_UNDESCRIBED, message, span))
 }
@@ -1411,6 +1432,21 @@ impl crate::checker::Checker<'_> {
         }
     }
 
+    /// `closureParamUndescribedEvent`: `note_undescribed_event` for a
+    /// closure's parameter, whose type `type_param` has already resolved (and
+    /// reported on).
+    pub(crate) fn note_closure_undescribed_event(&mut self, body: ScopeId, param: &str, type_: &movement_parser::ast::ParamTypeRef, scope: ScopeId) {
+        let movement_parser::ast::ParamTypeRef::Name(reference) = type_ else { return };
+        let crate::scope::Resolution::Found(graph) = self.scopes.resolve(scope, &reference.graph) else { return };
+        if let Some(id) = self.scopes.scope(body).symbols.get(param).copied() {
+            let types = &self.scopes.symbol(id).types;
+            if types.pos.is_some() || types.field.is_some() {
+                return;
+            }
+        }
+        self.note_undescribed_event(body, param, type_, Some(graph));
+    }
+
     /// `reportUndescribedEvent` (check.ts): a walk or a write off `name`.
     pub(crate) fn report_undescribed_event_head(&mut self, id: crate::scope::SymbolId, name: &str, span: movement_parser::ast::Span) {
         let symbol = self.scopes.symbol(id);
@@ -1418,7 +1454,7 @@ impl crate::checker::Checker<'_> {
             return;
         }
         let Some(event) = symbol.undescribed_event.clone() else { return };
-        if let Some(diagnostic) = undescribed_event_diagnostic(self.version, name, &event, span) {
+        if let Some(diagnostic) = undescribed_event_diagnostic(self.version, self.upgrading_from, name, &event, span) {
             self.push(diagnostic);
         }
     }

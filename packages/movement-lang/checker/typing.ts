@@ -208,7 +208,8 @@ export const TypedDiagnosticCodes = {
   /** A read or a write off a movement's EVENT parameter whose event the
    *  catalog has no description for (`UndescribedEvent`): the instance's
    *  system answered nothing, so the fields can't be checked and the read is
-   *  null at run time. An error from version 5; unsaid before. */
+   *  null at run time. An error from version 5 (an upgrade warning on a move
+   *  up across 5); unsaid before. */
   EVENT_UNDESCRIBED: 'MOV_EVENT_UNDESCRIBED',
   /** A property read names a WRITE-ONLY field — declared on the type's write
    *  shape only (`readable: false`): a value a write SETS (WhatsApp Message's
@@ -4707,18 +4708,28 @@ export interface UndescribedEvent {
 
 /**
  * MOV_EVENT_UNDESCRIBED's severity under `languageVersion`: refused from
- * version 5; `undefined` — unsaid, as it always was — before.
+ * version 5; on a check for a move up across 5 (`upgradingFrom`) the upgrade
+ * warning instead, which holds the pin where the program read null without a
+ * word; `undefined` — unsaid, as it always was — before 5.
  */
-export function undescribedEventSeverity(languageVersion: LanguageVersion): 'error' | 'warning' | undefined {
-  if (since(languageVersion, 5)) return 'error';
-  return undefined;
+export function undescribedEventSeverity(
+  languageVersion: LanguageVersion,
+  upgradingFrom: LanguageVersion | undefined,
+): 'error' | 'upgrade' | undefined {
+  if (!since(languageVersion, 5)) return undefined;
+  if (upgradingFrom !== undefined && changedBetween(upgradingFrom, languageVersion, 5)) return 'upgrade';
+  return 'error';
 }
 
 /** MOV_EVENT_UNDESCRIBED's message: which event, and where its description
- *  would have come from. */
-export function undescribedEventMessage(param: string, event: UndescribedEvent): string {
-  return `'${event.instance}-[:${event.event}]->' has no description in the catalog, so a read or write off '${param}' can't be checked — it would be null at run time. `
-    + `The catalog describes it from the system behind '${event.instance}': check that its connection resolves and the system answers, then check again.`;
+ *  would have come from — on a move up, what changed across 5. */
+export function undescribedEventMessage(param: string, event: UndescribedEvent, severity: 'error' | 'upgrade'): string {
+  const address = `'${event.instance}-[:${event.event}]->'`;
+  const source = `The catalog describes it from the system behind '${event.instance}': check that its connection resolves and the system answers`;
+  if (severity === 'upgrade') {
+    return `since ${describeLanguageVersion(5)} a read or write off '${param}' is refused while ${address} has no description in the catalog; before, it read null. ${source}, then upgrade.`;
+  }
+  return `${address} has no description in the catalog, so a read or write off '${param}' can't be checked — it would be null at run time. ${source}, then check again.`;
 }
 
 export class ExpressionTyping {
@@ -7879,9 +7890,9 @@ export class ExpressionTyping {
     if (this.narrowedRoots.has(name) || this.locals.has(name)) return;
     const event = this.options.undescribedEventOf?.(name);
     if (event === undefined) return;
-    const severity = undescribedEventSeverity(this.options.languageVersion);
+    const severity = undescribedEventSeverity(this.options.languageVersion, this.options.upgradingFrom);
     if (severity === undefined) return;
-    this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), severity);
+    this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event, severity), severity);
   }
 
   /** A read traversal walked a WRITE-ONLY edge — a pure create path with no

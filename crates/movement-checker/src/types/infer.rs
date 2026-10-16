@@ -295,7 +295,7 @@ impl<'a> Typing<'a> {
             return;
         }
         let Some(event) = self.env.undescribed_event(name) else { return };
-        if let Some(diagnostic) = crate::families::walks::undescribed_event_diagnostic(self.version, name, &event, self.span) {
+        if let Some(diagnostic) = crate::families::walks::undescribed_event_diagnostic(self.version, self.env.upgrading_from(), name, &event, self.span) {
             self.diagnostics.push(diagnostic);
         }
     }

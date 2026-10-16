@@ -366,6 +366,7 @@ import {
   WriteTargetRef,
   type TypingReporter,
   undescribedEventMessage,
+  type UndescribedEvent,
   undescribedEventSeverity,
 } from './typing';
 
@@ -7175,6 +7176,9 @@ class Checker {
         this.reportParamNeedsType(param.name, param.span, options.label);
       }
       params.push({ name: param.name, ...shape });
+      const undescribedEvent = shape.posType === undefined && shape.fieldType === undefined
+        ? this.closureParamUndescribedEvent(param, scope)
+        : undefined;
       const existing = this.declareAuthored(
         bodyScope,
         {
@@ -7187,6 +7191,7 @@ class Checker {
                 bindingPlane: 'scalar' as const,
                 ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
               }),
+          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
         },
         param.span,
       );
@@ -7302,6 +7307,15 @@ class Checker {
       ...(shape.posType !== undefined ? { posType: shape.posType } : {}),
       ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
     };
+  }
+
+  /** `undescribedEventOfParam` for a closure's parameter, whose type
+   *  `closureParamShape` has already resolved (and reported on). */
+  private closureParamUndescribedEvent(param: MovementParam, scope: Scope): UndescribedEvent | undefined {
+    const written = typeNameOf(param.type);
+    if (written === undefined) return undefined;
+    const resolution = scope.resolve(written.graph);
+    return resolution.kind === 'found' ? this.undescribedEventOfParam(resolution.symbol, written) : undefined;
   }
 
   /** A closure parameter's type — the same two things a movement parameter may
@@ -11752,14 +11766,27 @@ class Checker {
     };
   }
 
+  /** A parameter typed as an event on an instance the catalog has no
+   *  description of — a movement's, a closure's or a library function's:
+   *  nothing types it, so what is read or written off it is said where it is
+   *  (MOV_EVENT_UNDESCRIBED). */
+  private undescribedEventOfParam(graphSymbol: ScopeSymbol | undefined, typeRef: TypeRef): UndescribedEvent | undefined {
+    if (graphSymbol?.kind !== 'instance' || graphSymbol.schema !== undefined) return undefined;
+    // An adapter the catalog doesn't know is its own error already.
+    if (graphSymbol.adapter === undefined || this.catalog.adapter(graphSymbol.adapter) === undefined) return undefined;
+    if (typeRef.hopsRaw === undefined) return undefined;
+    const event = addressOfTypeRef(typeRef.hopsRaw, this.languageVersion)?.event;
+    return event !== undefined ? { instance: typeRef.graph, event } : undefined;
+  }
+
   /** A walk or a write off `name`, a movement parameter whose event the
    *  catalog does not describe (`ScopeSymbol.undescribedEvent`). */
   private reportUndescribedEvent(symbol: ScopeSymbol | undefined, name: string, span: Span): void {
     const event = symbol?.undescribedEvent;
     if (event === undefined) return;
-    const severity = undescribedEventSeverity(this.languageVersion);
-    if (severity === 'error') this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), span);
-    else if (severity === 'warning') this.reportWarning(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), span);
+    const severity = undescribedEventSeverity(this.languageVersion, this.options.upgradingFrom);
+    if (severity === 'error') this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event, severity), span);
+    else if (severity === 'upgrade') this.reportUpgradeWarning(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event, severity), span);
   }
 
   /**
@@ -13695,18 +13722,7 @@ class Checker {
         graphSymbol && graphSymbol.kind !== 'adapter'
           ? this.positionFromTypeRefStrict(graphSymbol, paramTypeRef, paramTypeRef.span)
           : undefined;
-      // An event on an instance the catalog has no description of: nothing
-      // types the parameter, so what is read or written off it is said where
-      // it is (MOV_EVENT_UNDESCRIBED).
-      const event =
-        graphSymbol?.kind === 'instance'
-        && graphSymbol.schema === undefined
-        // An adapter the catalog doesn't know is its own error already.
-        && graphSymbol.adapter !== undefined
-        && this.catalog.adapter(graphSymbol.adapter) !== undefined
-        && paramTypeRef.hopsRaw !== undefined
-          ? addressOfTypeRef(paramTypeRef.hopsRaw, this.languageVersion)?.event
-          : undefined;
+      const undescribedEvent = this.undescribedEventOfParam(graphSymbol, paramTypeRef);
       const info = scope.symbols.get(statement.name)?.movement;
       const posType =
         declared !== undefined && info?.decl === statement
@@ -13719,7 +13735,7 @@ class Checker {
           kind: 'param',
           span: param.span,
           ...(posType ? { posType } : {}),
-          ...(event !== undefined ? { undescribedEvent: { instance: paramTypeRef.graph, event } } : {}),
+          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
         },
         param.span,
       );

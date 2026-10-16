@@ -1,6 +1,7 @@
 //! MOV_EVENT_UNDESCRIBED: a read or a write off a movement's event parameter
-//! whose instance the catalog has no description of. Refused from version 5,
-//! unsaid before. The TypeScript twin is
+//! — or a closure's, or a library function's — whose instance the catalog has
+//! no description of. Refused from version 5 (the upgrade warning on a check
+//! for a move up across 5), unsaid before. The TypeScript twin is
 //! packages/movement-lang/checker/__test__/event_undescribed.unit.test.ts.
 
 use movement_checker::{CheckOptions, Diagnostic, check_source};
@@ -13,9 +14,13 @@ const V5: &str = "import { manual } from adapters\nruns = connect manual\nfuncti
 const BEFORE_5: &str = "import { manual } from adapters\nruns = manual()\nmovement recap(go: <runs-[:Invocation]->>) {\n  t = go.`text`\n  go-[r:record]-> { ERROR(\"${r.`Name`}\") }\n}\nlisten to runs {} fire recap";
 
 fn check(source: &str, version: u32, manual: &str) -> Vec<Diagnostic> {
-    let snapshot = format!(r#"{{"adapters":{{{manual}}},"credentials":{{}},"plugins":{{}}}}"#);
+    check_with(source, version, manual, None, "{}")
+}
+
+fn check_with(source: &str, version: u32, manual: &str, upgrading_from: Option<u32>, files: &str) -> Vec<Diagnostic> {
+    let snapshot = format!(r#"{{"adapters":{{{manual}}},"credentials":{{}},"plugins":{{}},"files":{files}}}"#);
     let catalog = CatalogSnapshot::load(&snapshot).unwrap();
-    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let options = CheckOptions { language_version: version, upgrading_from, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     check_source(source, &catalog, options).unwrap()
 }
 
@@ -49,4 +54,31 @@ fn a_described_event_a_parameter_nothing_reads_and_an_unknown_adapter_are_silent
         let diagnostics = check(source, 5, manual);
         assert!(!diagnostics.iter().any(|d| d.code == "MOV_EVENT_UNDESCRIBED"), "{source}: {diagnostics:?}");
     }
+}
+
+#[test]
+fn a_check_for_a_move_up_across_5_gives_the_upgrade_warning_which_holds_the_pin() {
+    for from in [3, 4] {
+        let diagnostics = check_with(V5, 5, UNDESCRIBED, Some(from), "{}");
+        assert_eq!(found(&diagnostics), [("MOV_EVENT_UNDESCRIBED", "Some(Warning)".to_string(), 4), ("MOV_EVENT_UNDESCRIBED", "Some(Warning)".to_string(), 5)]);
+        assert!(diagnostics.iter().all(|d| d.upgrade == Some(true)), "from {from}");
+        assert_eq!(
+            diagnostics[0].message,
+            "since \"Dancing Wren\" (5) a read or write off 'go' is refused while 'runs-[:Invocation]->' has no description in the catalog; before, it read null. The catalog describes it from the system behind 'runs': check that its connection resolves and the system answers, then upgrade."
+        );
+    }
+}
+
+#[test]
+fn version_5_refuses_a_read_off_a_closures_parameter_typed_as_the_event() {
+    let source = "import { manual } from adapters\nruns = connect manual\nfunction recap(n: <number>) {\n  subject = (go: <runs-[:Invocation]->>) => go.`text`\n  return n\n}";
+    assert_eq!(found(&check(source, 5, UNDESCRIBED)), [("MOV_EVENT_UNDESCRIBED", "None".to_string(), 4)]);
+}
+
+#[test]
+fn version_5_refuses_a_read_off_a_library_functions_parameter_at_the_import() {
+    let library = r#"{"lib/recap":{"source":"import { manual } from adapters\nruns = connect manual\nexport function recap(go: <runs-[:Invocation]->>) {\n  return go.`text`\n}"}}"#;
+    let diagnostics = check_with("import { recap } from \"lib/recap\"\nx = 1", 5, UNDESCRIBED, None, library);
+    assert_eq!(diagnostics.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), ["MOV_EVENT_UNDESCRIBED"]);
+    assert!(diagnostics[0].message.starts_with("\"lib/recap\" line 4: "), "{}", diagnostics[0].message);
 }

@@ -931,6 +931,7 @@ impl<'c> Checker<'c> {
             if let Some(type_) = &param.type_ {
                 self.report_param_position(type_, scope);
                 self.type_param(body, &param.name, type_, scope, &crate::binding_types::ParamOf::closure(closure, self_name));
+                self.note_closure_undescribed_event(body, &param.name, type_, scope);
             } else if let Some(given) = types.get(index) {
                 let types = crate::types::scope_env::SymbolTypes { pos: given.pos.as_deref().cloned(), field: given.field.clone(), ..Default::default() };
                 self.set_types(body, &param.name, types);
