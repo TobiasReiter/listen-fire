@@ -92,6 +92,7 @@ differ.
 | `parse_program_eager` | as `parse_program` | the same `Program`, each slot also carrying `tree` (its `MExpr`) or `error` (`{message, pos}`) |
 | `parse_expression` | `(src_ptr, src_len, version, out_ptr_ptr, out_len_ptr) -> status` | from 5 the v5 surface, read into the canonical tree; 0 reads as versions 1–4 do |
 | `spell_message` | as `parse_expression`, the message in | the message (a JSON string) naming built-ins as `version` spells them |
+| `spell_code` | as `parse_expression`, the code in | the program text (a JSON string) a diagnostic suggests, as `version` spells it |
 | `surface_table` | as `parse_expression`, input ignored | the spelling table (`surface::table::TABLE`) |
 | `parse_nested_call` | `(raw_ptr, raw_len, at_start, at_end, origin_line, origin_col, version, out_ptr_ptr, out_len_ptr) -> status` | |
 | `lower_expression` | `(tree_ptr, tree_len, src_ptr, src_len, out_ptr_ptr, out_len_ptr) -> status` | the tree's JSON and its source text in; the `Expression`, or `{"error": {message, code?, class?}}` |

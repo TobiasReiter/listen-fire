@@ -208,8 +208,17 @@ pub fn spell_message(message: &str, version: u32) -> String {
     let mut out = String::with_capacity(message.len());
     let mut chars = message.char_indices().peekable();
     let mut previous: Option<char> = None;
+    // Inside walk brackets (`-[c:Companies WHERE LOWER(c.Name) …]->`) a
+    // built-in keeps its CAPS walk word in every version (§2.5).
+    let mut walk_depth = 0usize;
     while let Some((i, c)) = chars.next() {
-        let starts_word = c.is_ascii_uppercase() && !previous.is_some_and(|p| is_word(p) || p == '.');
+        let next = chars.peek().map(|&(_, d)| d);
+        if c == '-' && next == Some('[') {
+            walk_depth += 1;
+        } else if c == ']' && walk_depth > 0 && next == Some('-') {
+            walk_depth -= 1;
+        }
+        let starts_word = walk_depth == 0 && c.is_ascii_uppercase() && !previous.is_some_and(|p| is_word(p) || p == '.');
         if !starts_word {
             out.push(c);
             previous = Some(c);
@@ -292,5 +301,9 @@ mod tests {
         assert_eq!(spell_message("`Name` is not `AT`", 5), "`Name` is not `AT`");
         assert_eq!(spell_message("UPPER's 'text' takes text — UPPER(text)", 5), "Text.upper's 'text' takes text — Text.upper(text)");
         assert_eq!(spell_message("DATE.TODAY needs a zone. MAPPED UPPERCASE COUNT.", 5), "Date.today needs a zone. MAPPED UPPERCASE count.");
+        assert_eq!(
+            spell_message("`COUNT(crm-[c:Companies WHERE LOWER(c.Name) == \"x\"]->)` and LOWER", 5),
+            "`count(crm-[c:Companies WHERE LOWER(c.Name) == \"x\"]->)` and Text.lower"
+        );
     }
 }

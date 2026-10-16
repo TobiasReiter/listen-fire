@@ -24,6 +24,32 @@ export function spellMessage(message: string, version: number): string {
   return json;
 }
 
+/** Program text a diagnostic suggests (`EXISTS(x)`, `AT(r, 0)`, `IF … THEN
+ *  "Yes" ELSE "No" END`), written in the canonical spelling, as `version`
+ *  spells it: as it is under 1–4, rewritten by the parser's own spelling
+ *  fixes from 5 (`x != null`, `r[0]`, `… ? "Yes" : "No"`). `…` stands for any
+ *  expression. Pass only code: a text that parses is rewritten. */
+export function spellCode(code: string, version: number): string {
+  if (version < 5) return code;
+  const { ok, json } = callParser('spell_code', code, [version]);
+  if (!ok || typeof json !== 'string') throw new Error(`spell_code: ${JSON.stringify(json)}`);
+  return json;
+}
+
+/** A word of code in prose (`negated by NOT`, `narrow with an IS test`): bare
+ *  up to version 4, where it is a CAPS word; quoted from 5, where it is a
+ *  symbol or lower case (`negated by '!'`). */
+export function spellWord(word: string, version: number): string {
+  return version < 5 ? word : `'${spellCode(word, version)}'`;
+}
+
+/** The head of an `if` a diagnostic suggests (`if EXISTS(x)`), as
+ *  `version` spells it: from 5 its condition is parenthesised and respelled
+ *  (`if (x != null)`). For a suggestion whose body is not code. */
+export function spellIf(condition: string, version: number): string {
+  return version < 5 ? `if ${condition}` : `if (${spellCode(condition, version)})`;
+}
+
 export interface SpellingRow {
   canonical: string;
   v5: string;

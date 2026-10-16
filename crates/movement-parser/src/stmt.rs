@@ -44,7 +44,8 @@ const NODE_ENTRY_EFFECTS: [&str; 10] =
 
 const LAZY_AWAIT: &str = "'lazy await' can't be both: 'await' waits for the edge to resolve and continues the run there, 'lazy' waits to look until something reads. Pick the one you meant";
 
-const ELVIS_MISUSE: &str = "`?:` is the set-if-empty write-field marker (`Field ?: value`), only valid inside a write body — for a value fallback use `COALESCE(a, b)`; to branch, use an `if` block";
+const ELVIS_MISUSE: &str = "`?:` is the set-if-empty write-field marker (`Field ?: value`), only valid inside a write body — for a value fallback use `{}`; to branch, use an `if` block";
+const ELVIS_MISUSE_FALLBACK: &str = "COALESCE(a, b)";
 
 const ASK_STATEMENT_REPLACED: &str = "the `ask` statement was replaced by the ask adapter — construct `ask()`, write the question along a family edge (Check / Provide / Choose / Select / Review / Correct / Draft / Form), then `await` its Response:  asks = ask(); q = write asks-[:Check]-> { Prompt: \"Ship it?\" }; answer = await q-[:Response]->.  For a timeout or escalation, `race` the await against `await sleep(…)` (and a re-delivery branch); the delivery link is the record's readable `Url` field.";
 
@@ -67,6 +68,9 @@ const ALL_RETIRED: &str =
     "`all` was replaced by `parallel` — parallel implies all, and all does not imply parallel: `r = await parallel([f, g])`.";
 
 const UNTIL_CADENCE_IS_NAMED: &str = "'until' takes its cadence by name: `await until(<condition>, every: 5m)`. There is no second positional argument — a value to wait FOR is an equality in the condition itself (`await until(a.state == \"done\", every: 5m)`).";
+/// `UNTIL_CADENCE_IS_NAMED` from language version 5, where the cadence is a
+/// setting.
+const UNTIL_CADENCE_IS_A_SETTING: &str = "'until' takes its cadence as a setting: `await until(<condition>, { every: 5m })`. There is no second positional argument — a value to wait FOR is an equality in the condition itself (`await until(a.state == \"done\", { every: 5m })`).";
 
 fn type_values_are_text(name: &str) -> String {
     format!(
@@ -391,6 +395,12 @@ impl Parser {
             }
         }
         ExprSlot { raw, span, eager: self.eager }
+    }
+
+    /// `template` with its one `{}` filled by `code`, spelled as this
+    /// parse's version writes it (crate::surface::phrase::spell_code).
+    fn code(&self, code: &str, template: &str) -> String {
+        template.replacen("{}", &crate::surface::phrase::spell_code(code, self.version), 1)
     }
 
     /// An old spelling under version 5 at `start..end`, and its rewrite as
@@ -848,7 +858,7 @@ impl Parser {
             // `?:` is never valid in expression text — it is the write-body
             // marker reached for outside a write body.
             if c == unit('?') && self.is_at(1, ':') {
-                return self.fail(ELVIS_MISUSE);
+                return self.fail(self.code(ELVIS_MISUSE_FALLBACK, ELVIS_MISUSE));
             }
             // Identifiers are consumed whole so `IF`/`END` never match inside
             // a longer word (`notify`, `endpoint`).
@@ -1073,7 +1083,7 @@ impl Parser {
             return Ok(Statement::Call(self.parse_call_statement(word, start)?));
         }
         if self.is('?') && self.is_at(1, ':') {
-            return self.fail(ELVIS_MISUSE);
+            return self.fail(self.code(ELVIS_MISUSE_FALLBACK, ELVIS_MISUSE));
         }
         if !quoted {
             if word == "ask" {
@@ -2805,9 +2815,10 @@ impl Parser {
                 self.pos += 1;
                 self.skip_all_ws();
                 if self.is('{') {
-                    return self.fail(
-                        "an 'until' condition that needs statements is a closure: `await until(() => { refresh a; return a.`State` == \"done\" }, every: 5m)`",
-                    );
+                    return self.fail(format!(
+                        "an 'until' condition that needs statements is a closure: `{}`",
+                        self.code("await until(() => { refresh a; return a.`State` == \"done\" }, every: 5m)", "{}")
+                    ));
                 }
                 let condition = if self.at_closure() {
                     UntilCondition::Closure { closure: self.parse_closure(self.pos, ",)")? }
@@ -2830,11 +2841,11 @@ impl Parser {
                         self.skip_all_ws();
                     }
                     if !self.at_word("every") {
-                        return self.fail_at(UNTIL_CADENCE_IS_NAMED, arg_start);
+                        return self.fail_at(if since(self.version, 5) { UNTIL_CADENCE_IS_A_SETTING } else { UNTIL_CADENCE_IS_NAMED }, arg_start);
                     }
                     self.pos += "every".len();
                     self.skip_inline_ws();
-                    self.expect(":", "after 'every' in 'await until(<condition>, every: <duration>)'")?;
+                    self.expect(":", if settings { "after 'every' in 'await until(<condition>, { every: <duration> })'" } else { "after 'every' in 'await until(<condition>, every: <duration>)'" })?;
                     self.skip_inline_ws();
                     every = Some(self.parse_duration()?);
                     self.skip_all_ws();
@@ -2853,7 +2864,10 @@ impl Parser {
                         );
                     }
                 }
-                self.expect(")", "to close 'await until(<condition>, every: <duration>)'")?;
+                self.expect(
+                    ")",
+                    if since(self.version, 5) { "to close 'await until(<condition>, { every: <duration> })'" } else { "to close 'await until(<condition>, every: <duration>)'" },
+                )?;
                 return Ok(AwaitExpression {
                     source: AwaitSource::Until { condition, every, span: self.span_from(source_start) },
                     span: self.span_from(start),
@@ -3313,7 +3327,7 @@ impl Parser {
     /// the vocabulary.
     fn parse_callback_config(&mut self) -> SResult<Vec<NamedArg>> {
         let brace_offset = self.pos;
-        self.expect("{", "to open a callback's config (e.g. { once: FALSE, ttl: 2d })")?;
+        self.expect("{", if since(self.version, 5) { "to open a callback's config (e.g. { once: false, ttl: 2d })" } else { "to open a callback's config (e.g. { once: FALSE, ttl: 2d })" })?;
         let mut config = Vec::new();
         loop {
             self.skip_all_ws();
@@ -3583,7 +3597,11 @@ impl Parser {
     }
 
     fn parse_error_call(&mut self) -> SResult<ExprSlot> {
+        let start = self.pos;
         self.expect_word("ERROR", "an 'ERROR(…)' call")?;
+        if since(self.version, 5) {
+            self.spelling("`ERROR` is written `fail` from language version 5", start, self.pos, vec![(start, self.pos, "fail".into())]);
+        }
         self.skip_inline_ws();
         self.expect("(", "after 'ERROR'")?;
         let (slot, _) = self.read_expr_slot(Scan::new(")", "for the ERROR message"))?;
@@ -4562,18 +4580,11 @@ impl Parser {
         if !since(self.version, 5) || !self.adapters.contains(&construct.callee) {
             return;
         }
-        let mut text = format!("connect {}", construct.callee);
-        let mut settings = Vec::new();
-        for arg in &construct.args {
-            if arg.name == "credentials" {
-                text.push_str(&format!(" using {}", arg.value.raw.trim()));
-            } else {
-                settings.push(format!("{}: {}", camel_case(&arg.name), arg.value.raw.trim()));
-            }
-        }
-        if !settings.is_empty() {
-            text.push_str(&format!(" {{ {} }}", settings.join(", ")));
-        }
+        let args: Vec<(&str, &str)> = construct.args.iter().map(|a| (a.name.as_str(), a.value.raw.trim())).collect();
+        let text = crate::surface::phrase::connection(
+            &crate::surface::phrase::Connection { adapter: &construct.callee, args: &args, credential: Some("credentials") },
+            self.version,
+        );
         let end = self.pos;
         let message = format!("from language version 5 an adapter is set up with `{text}`");
         self.spelling(message, start, end, vec![(start, end, text)]);
@@ -4586,22 +4597,6 @@ fn snake_case(name: &str) -> String {
         if c.is_ascii_uppercase() {
             out.push('_');
             out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn camel_case(name: &str) -> String {
-    let mut out = String::new();
-    let mut upper = false;
-    for c in name.chars() {
-        if c == '_' {
-            upper = true;
-        } else if upper {
-            out.push(c.to_ascii_uppercase());
-            upper = false;
         } else {
             out.push(c);
         }
