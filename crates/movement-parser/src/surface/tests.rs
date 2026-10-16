@@ -169,7 +169,14 @@ fn presence_and_walks() {
     // Inside walk brackets nothing is respelled: CAPS words, AND, any case.
     let walk = "crm-[c:Companies WHERE c.Categories == \"Customer\" AND LOWER(c.Name) CONTAINS \"x\" ORDER BY c.`Created At` DESC LIMIT 10]->";
     assert!(findings(walk).is_empty(), "{:?}", findings(walk));
-    assert_eq!(lowered(walk, 5), lowered(walk, 4));
+    // A field read through the hop's alias is the bare field versions 1–4
+    // wrote (the gates and the pushdown see the field they always saw).
+    let bare = "crm-[c:Companies WHERE Categories == \"Customer\" AND LOWER(Name) CONTAINS \"x\" ORDER BY `Created At` DESC LIMIT 10]->";
+    assert_eq!(lowered(walk, 5), lowered(bare, 4));
+    // Another hop's alias, and a walk nested in the WHERE, keep their reads.
+    let nested = "crm-[c:Companies]->-[t:Team WHERE c.Name == t.Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
+    let nested_bare = "crm-[c:Companies]->-[t:Team WHERE c.Name == Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
+    assert_eq!(lowered(nested, 5), lowered(nested_bare, 4));
     assert!(findings("ch-[m:Messages WHERE lower(m.Text) CONTAINS \"urgent\"]->").is_empty());
     let everyday = findings("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->");
     assert_eq!(everyday.len(), 1);
@@ -251,4 +258,39 @@ fn until_takes_its_cadence_as_a_setting() {
     assert!(program(new, 5).spelling.is_empty());
     assert_eq!(serde_json::to_value(&program(new, 5).statements).unwrap().pointer("/0/body/0/await/source/every/raw"), Some(&serde_json::json!("1h")));
     assert_eq!(spelling(old)[1].1, "{ every: 1h }");
+}
+
+#[test]
+fn bang_binds_as_typescript_s_unary_operator() {
+    // Under 4 `!` reaches over the comparison; under 5 it takes the operand beside it.
+    assert_eq!(lowered("!a == b", 4), lowered("NOT (a == b)", 4));
+    assert_eq!(lowered("!a == b", 5), lowered("(NOT a) == b", 4));
+    assert_eq!(lowered("!a && b", 5), lowered("NOT a AND b", 4));
+    assert_eq!(lowered("!x.done", 5), lowered("NOT x.done", 4));
+    // The text whose reading changed is refused; the fix writes out the old reading.
+    let f = findings("!a == b");
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].edits.as_ref().unwrap()[0].text, "!(a == b)");
+    assert_eq!(lowered(&upgraded("!a == b"), 5), lowered("!a == b", 4));
+    assert_eq!(upgraded("!a + 1 > b && c"), "!(a + 1 > b) && c");
+    assert_eq!(lowered(&upgraded("!!a == b"), 5), lowered("!!a == b", 4));
+    assert_eq!(lowered(&upgraded("!a IS <crm-[:People]->>"), 5), lowered("NOT a IS <crm-[:People]->>", 4));
+    // Written with the parentheses either way, or with nothing for `!` to reach: clean.
+    for clean in ["(!a) == b", "!(a == b)", "!a && b", "f(!a, b == c)", "Text.includes(x, \"y\") == !b"] {
+        assert!(findings(clean).is_empty(), "{clean}: {:?}", findings(clean));
+    }
+    // `NOT` keeps its reach (it is refused as a spelling, its fix `!(…)`).
+    assert_eq!(upgraded("NOT a == b"), "!(a == b)");
+}
+
+#[test]
+fn fail_is_the_error_statement() {
+    let new = program("function f() {\n  fail(\"no\")\n}\n", 5);
+    assert!(new.spelling.is_empty(), "{:?}", new.spelling);
+    let (n, o) = (serde_json::to_value(&new.statements).unwrap(), statements("movement f() {\n  ERROR(\"no\")\n}\n", 4));
+    assert!(n.pointer("/0/body/0").is_some(), "{n}");
+    assert_eq!(n.pointer("/0/body/0").map(|s| s.as_object().unwrap().keys().cloned().collect::<Vec<_>>()), o.pointer("/0/body/0").map(|s| s.as_object().unwrap().keys().cloned().collect::<Vec<_>>()));
+    assert_eq!(spelling("function f() {\n  ERROR(\"no\")\n}\n"), vec![("`ERROR` is written `fail` from language version 5".to_string(), "fail".to_string())]);
+    // Under 4 `fail` is no statement word.
+    assert!(crate::stmt::parse_program("movement f() {\n  ERROR(\"no\")\n}\n", 4, false).unwrap().spelling.is_empty());
 }

@@ -165,3 +165,49 @@ describe('the v5 surface on the Rust engine', () => {
     expect(recorded.at(-1)).toEqual({ runId: 'run-v5-park', engine: 'rust', reason: 'admitted' });
   });
 });
+
+// `x != null` under 5 answers what `EXISTS(x)` answered under 4, records a
+// block returned included: none returned is absent (on Rust, and on the
+// TypeScript reference engine).
+describe('a presence test on the Rust engine from version 5', () => {
+  const itemsSchema: InstanceSchema = {
+    positions: {
+      message: { properties: { subject: 'text', text: 'text' }, edges: { items: { target: 'item', readable: true } } },
+      item: { properties: { name: 'text' }, edges: {} },
+    },
+    collections: {},
+    writableRoots: {},
+  };
+  const itemsCatalog = mockCatalogSnapshot({
+    adapters: { email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: itemsSchema } },
+    credentials: { dealflow_inbox: { adapters: ['email'] } },
+  });
+  const outcome = async (source: string, version: LanguageVersion, config: Config): Promise<string> => {
+    try {
+      await under(config, () => runMovement({ ...inputOf(source, version, `run-presence-${version}`), catalog: itemsCatalog }));
+      return 'ran';
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  const v4 = [
+    'import { email } from adapters',
+    'import { dealflow_inbox } from credentials',
+    'inbox = email(credentials: dealflow_inbox)',
+    'movement m(msg: <inbox-[:message]->>) {',
+    '  found = msg-[i:items]-> { return i }',
+    '  if EXISTS(found) {',
+    '    ERROR("present")',
+    '  }',
+    '  ERROR("absent")',
+    '}',
+  ].join('\n');
+  const v5 = V5('  found = msg-[i:items]-> { return i }', '  if (found != null) {', '    fail("present")', '  }', '  fail("absent")');
+
+  it('none returned is absent, as EXISTS answered', async () => {
+    const old = await outcome(v4, 4, BY_VERSION);
+    expect(old).toContain('absent');
+    expect(await outcome(v5, 5, BY_VERSION)).toBe(old);
+    expect(await outcome(v5, 5, { MOVEMENT_ENGINE_V5_ON_TS: 'true' })).toBe(old);
+  });
+});

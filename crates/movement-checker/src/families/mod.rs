@@ -17,6 +17,7 @@ pub mod plugin_calls;
 pub mod records;
 pub mod returns;
 pub mod systems;
+pub mod typed_spelling;
 pub mod values;
 pub mod versions;
 pub mod walks;

@@ -917,7 +917,7 @@ pub enum TreeAt<'s> {
 }
 
 impl TreeAt<'_> {
-    fn span_of(&self, at: At) -> Span {
+    pub fn span_of(&self, at: At) -> Span {
         match self {
             TreeAt::Slot(slot) => span_within(slot, Some(at.start)),
             TreeAt::Head { head, .. } => head.span,
@@ -1098,6 +1098,10 @@ impl Checker<'_> {
             return;
         }
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
+        if since(self.version, 5) {
+            self.check_typed_spelling(&tree, slot, scope);
+            self.check_walk_fields(&tree, &slot.raw, TreeAt::Slot(slot), scope);
+        }
         self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
 
@@ -1114,6 +1118,9 @@ impl Checker<'_> {
             _ => None,
         };
         let at_ = TreeAt::Head { head, probe_len: probe.encode_utf16().count() };
+        if since(self.version, 5) {
+            self.check_walk_fields(&tree, probe, at_, scope);
+        }
         self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
     }
 
@@ -1333,6 +1340,13 @@ impl Checker<'_> {
             }
         }
         let names: Option<Vec<String>> = params.as_ref().map(|ps| ps.iter().map(|p| p.name.clone()).collect());
+        if since(self.version, 5)
+            && let (Some(names), Some(first)) = (&names, call.args.first())
+            && first.name().is_some()
+        {
+            let at = call_arg_span(first).start;
+            self.named_orders.insert((at.line, at.col), names.clone());
+        }
         self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
         // A plugin's argument values are held to what it declares it takes.
         let plugin = match self.scopes.resolve(scope, &callee) {

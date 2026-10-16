@@ -1891,6 +1891,21 @@ async function presenceCompare(
       : undefined;
   const binding = name !== undefined ? ctx.env.resolve(name) : undefined;
   if (binding !== undefined && binding.kind !== 'value' && !(binding.kind === 'opaque' && binding.credential === true)) {
+    // From version 5 `x != null` is how a program writes what `EXISTS(x)`
+    // asked: records that may be none (a block's returned records, a kept
+    // walk) are present only when there is one, exactly as EXISTS answers.
+    if (
+      name !== undefined &&
+      (binding.kind === 'positions' || binding.kind === 'lazyWalk') &&
+      ctx.languageVersion !== undefined &&
+      since(ctx.languageVersion, 5)
+    ) {
+      const exists = await evalMovementExpr(
+        { type: 'traverse', aliasRoot: name, steps: [], expression: { type: 'exists', steps: [] } },
+        ctx,
+      );
+      return { value: compareToNull(op, exists.value === true ? true : null), provenance: exists.provenance };
+    }
     return { value: compareToNull(op, true), provenance: NO_PROVENANCE };
   }
   const result = await evalMovementExpr(subject, ctx);

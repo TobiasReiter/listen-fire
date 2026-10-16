@@ -150,8 +150,10 @@ import {
   endingHop,
   isTransformHop,
   LoweringError,
+  lowerExpression,
   specialRecordField,
 } from '../parser/expression/lower';
+import { typedSpellings, walkFields, type ValueKind } from './typed_spelling';
 import { ExpressionSyntaxError, parseExpression } from '../parser/expression/parse_expression';
 import { isMapSpread, type At, type Hop, type MapEntry, type MExpr } from '../parser/expression/tree';
 import { MovementParseError, parseNestedCall } from '../parser/parse';
@@ -179,7 +181,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
-import { spellMessage } from '../parser/surface';
+import { spellMessage, type NamedCall, type SpellingFinding } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -1378,12 +1380,12 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => ({
-    code: f.code,
-    message: f.message,
-    span: f.span,
-    ...(f.fix ? { fix: f.fix } : {}),
-  }));
+  const spelling: Diagnostic[] = (program.spelling ?? []).flatMap((f): Diagnostic[] => {
+    if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
+    const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
+    if (typed !== undefined) return [{ code: f.code, message: typed.message, span: f.span, fix: typed.fix }];
+    return [{ code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) }];
+  });
   const found = checker.diagnostics
     .map(withHandbookPointer)
     .map(d => ({ ...d, message: spellMessage(d.message, languageVersion) }));
@@ -2099,6 +2101,28 @@ function repairAt(at: string | HeldHandle, repair: string): string {
 /** A path head as the author wrote it — diagnostics currency. */
 function rawPath(path: PathHead): string {
   return spellPathHead(path);
+}
+
+/** The parser's finding for a call with named arguments (version 5), its
+ *  fix the arguments in the order of the callee's parameters: kept only for
+ *  a callee whose parameters the check saw (a function, not a plugin), and
+ *  without a fix where the names do not match the parameters one for one
+ *  (the call's own diagnostics say why). */
+function positional(f: SpellingFinding, named: NamedCall, orders: ReadonlyMap<string, string[]>): Diagnostic[] {
+  const first = named.args[0];
+  if (first === undefined) return [];
+  const params = orders.get(`${first.at.line}:${first.at.col}`);
+  if (params === undefined) return [];
+  const ordered = params.map(p => named.args.find(a => a.name === p)?.text);
+  const texts = ordered.flatMap(t => (t === undefined ? [] : [t]));
+  const fix = texts.length === params.length && texts.length === named.args.length
+    ? { edits: [{ span: f.span, text: texts.join(', ') }] }
+    : undefined;
+  return [{ code: f.code, message: f.message, span: f.span, ...(fix ? { fix } : {}) }];
+}
+
+function spanKey(span: Span): string {
+  return `${span.start.line}:${span.start.col}-${span.end.line}:${span.end.col}`;
 }
 
 /** Maps a character offset inside a slot's raw text back to a source location. */
@@ -3880,6 +3904,14 @@ interface CheckerOptions {
 
 class Checker {
   readonly diagnostics: Diagnostic[] = [];
+  /** The parser's MOV_V5_SPELLING findings whose fix depends on a type, by
+   *  span: the message and fix the checker, which knows the type, gives them
+   *  instead (`typed_spelling`). */
+  readonly respelled = new Map<string, { message: string; fix: DiagnosticFix }>();
+  /** A call with named arguments to a function whose parameters are known
+   *  (version 5): its parameters in order, by where its first argument's
+   *  value starts — what the parser's finding for it needs for its fix. */
+  readonly namedOrders = new Map<string, string[]>();
 
   /** Node declarations made in the files being checked, by the symbol that
    *  declares them — how `extends` reaches a base declared in the same file,
@@ -6338,6 +6370,10 @@ class Checker {
     } catch {
       return; // the syntax error is reported where the slot is read
     }
+    if (since(this.languageVersion, 5)) {
+      this.checkTypedSpelling(tree, slot, scope);
+      this.checkWalkFields(tree, slot.raw, { spanOf: (at) => spanWithin(slot, at.start), extentOf: (at) => spanOfExtent(slot, at) }, scope);
+    }
     this.checkExpressionTree(tree, {
       spanOf: (at) => spanWithin(slot, at.start),
       extentOf: (at) => spanOfExtent(slot, at),
@@ -6345,6 +6381,58 @@ class Checker {
       scope,
       writeField: options?.writeField === true,
     });
+  }
+
+  /** Version 5's namespace functions chosen by what a value is
+   *  (`typed_spelling`): the parser's fix for an old spelling of a list's
+   *  length, membership or presence rewritten, and a v5 call given the wrong
+   *  kind refused. */
+  private checkTypedSpelling(tree: MExpr, slot: ExprSlot, scope: Scope): void {
+    if (this.typeOnly) return;
+    const kindOf = (e: MExpr): ValueKind => {
+      let type: FieldType | undefined;
+      try {
+        type = this.silentTyping(scope, slot.span).infer(lowerExpression(e, slot.raw));
+      } catch {
+        return undefined;
+      }
+      if (type === undefined) return undefined;
+      const variant = variantOf(stripAbsent(type));
+      return variant.kind === 'list' || variant.kind === 'tuple'
+        ? 'list'
+        : variant.kind === 'text' || variant.kind === 'enum'
+          ? 'text'
+          : undefined;
+    };
+    for (const found of typedSpellings(tree, slot.raw, kindOf)) {
+      const span = spanOfExtent(slot, found.at);
+      const fix: DiagnosticFix = { edits: [{ span, text: found.text }] };
+      if (found.kind === 'respell') this.respelled.set(spanKey(span), { message: found.message, fix });
+      else this.reportWithFix({ code: DiagnosticCodes.BUILTIN_ARG_TYPE, message: found.message, span, fix });
+    }
+  }
+
+  /** A walk's fields through its alias (version 5, `typed_spelling`), in a
+   *  slot or a block head (read through its probe, `raw`). */
+  private checkWalkFields(
+    tree: MExpr,
+    raw: string,
+    place: { spanOf: (at: At) => Span; extentOf: (at: At) => Span | undefined },
+    scope: Scope,
+  ): void {
+    if (this.typeOnly) return;
+    const binds = (name: string): boolean => {
+      const kind = scope.resolve(name).kind;
+      return kind === 'found' || kind === 'pending';
+    };
+    for (const found of walkFields(tree, raw, binds)) {
+      const placed = found.edits.flatMap((e) => {
+        const span = place.extentOf(e.at);
+        return span !== undefined ? [{ span, text: e.text }] : [];
+      });
+      const fix = placed.length > 0 && placed.length === found.edits.length ? { edits: placed } : undefined;
+      this.reportWithFix({ code: 'MOV_V5_SPELLING', message: found.message, span: place.spanOf(found.at), ...(fix ? { fix } : {}) });
+    }
   }
 
   /** `checkSlotExpression` over a tree that is not a slot's — a block head's
@@ -10973,6 +11061,9 @@ class Checker {
           if (!(e instanceof ExpressionSyntaxError)) throw e;
         }
         if (tree !== undefined) {
+          if (since(this.languageVersion, 5)) {
+            this.checkWalkFields(tree, probeText, { spanOf: () => head.span, extentOf: (at) => headHopsExtent(head, at) }, scope);
+          }
           // The probe reads a field off the head's walk; that walk is the head.
           const walk = tree.kind === 'member' ? tree.object : undefined;
           this.checkExpressionTree(tree, {
@@ -11221,6 +11312,11 @@ class Checker {
           );
         }
       }
+    }
+    const first = statement.args[0];
+    if (since(this.languageVersion, 5) && params !== undefined && first !== undefined && first.name !== undefined) {
+      const at = callArgSpan(first).start;
+      this.namedOrders.set(`${at.line}:${at.col}`, params.map(p => p.name));
     }
     const bound = this.checkArgumentBindings({
       callee: statement.callee,

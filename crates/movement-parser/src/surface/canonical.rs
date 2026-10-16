@@ -62,6 +62,56 @@ fn is_ident(text: &str) -> bool {
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// From version 5 a hop's WHERE and ORDER BY read its record's fields
+/// through its alias (`c.Name`, design §2.5); the canonical tree reads them
+/// bare, as versions 1–4 wrote them, so the gates and the pushdown see the
+/// field they always saw. The bare name keeps the alias read's extent, which
+/// is how the checker tells it from a name written bare (an outer variable
+/// from 5, refused when it is not one). A walk nested in the WHERE keeps its
+/// own hops' reads: a bare name there is ITS record's field.
+fn through_alias(e: &mut MExpr, alias: &str) {
+    if let MExpr::Member { object, property, at } = e
+        && matches!(object.as_ref(), MExpr::Name { name, .. } if name.text == alias && !name.quoted)
+    {
+        *e = MExpr::Name { name: Name { text: property.text.clone(), quoted: property.quoted, at: *at }, at: *at };
+        return;
+    }
+    match e {
+        MExpr::Path { root, .. } => {
+            if let Some(root) = root {
+                through_alias(root, alias);
+            }
+        }
+        MExpr::Where { source, .. } => through_alias(source, alias),
+        _ => tree::exclusive::expr(e, &mut |child| through_alias(child, alias)),
+    }
+}
+
+/// The `!` an expression tighter than `&&` begins with, when versions 1–4
+/// would have read that `!` over the whole of it.
+fn bang_on_left(e: &MExpr) -> Option<At> {
+    let left = match e {
+        MExpr::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => return None,
+        MExpr::Binary { left, .. } => left,
+        MExpr::Is { subject, .. } => subject,
+        MExpr::Within { operand, .. } | MExpr::Exists { operand, .. } => operand,
+        _ => return None,
+    };
+    let mut first = left.as_ref();
+    loop {
+        first = match first {
+            MExpr::Unary { op: UnaryOp::Not, at, .. } => {
+                return (at.start == e.at().start && at.end > at.start).then_some(*at);
+            }
+            MExpr::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => return None,
+            MExpr::Binary { left, .. } => left,
+            MExpr::Is { subject, .. } => subject,
+            MExpr::Within { operand, .. } | MExpr::Exists { operand, .. } => operand,
+            _ => return None,
+        };
+    }
+}
+
 fn is_walk(e: &MExpr) -> bool {
     matches!(e, MExpr::Path { .. } | MExpr::Where { .. })
 }
@@ -91,8 +141,13 @@ impl<'s> Canon<'s> {
         self.src.text(at.start, at.end)
     }
 
+    /// `at` is the whole text, or the whole of a parenthesised one (an `if`
+    /// condition from version 5): a rewrite there needs no parentheses.
     fn whole(&self, at: At) -> bool {
-        self.text(At { start: 0, end: at.start }).trim().is_empty() && self.text(At { start: at.end, end: self.src.len() }).trim().is_empty()
+        let before = self.text(At { start: 0, end: at.start });
+        let after = self.text(At { start: at.end, end: self.src.len() });
+        let (before, after) = (before.trim(), after.trim());
+        (before.is_empty() && after.is_empty()) || (before == "(" && after == ")")
     }
 
     /// `text`, parenthesised unless it is the whole expression.
@@ -117,6 +172,9 @@ impl<'s> Canon<'s> {
                 for hop in hops {
                     if let Some(w) = &mut hop.where_ {
                         self.visit(w, true);
+                        if let Some(alias) = &hop.alias {
+                            through_alias(w, &alias.text);
+                        }
                     }
                     if let Some(config) = &mut hop.config {
                         for member in &mut config.entries {
@@ -128,6 +186,9 @@ impl<'s> Canon<'s> {
                     }
                     if let Some(order) = &mut hop.order_by {
                         self.visit(&mut order.key, true);
+                        if let Some(alias) = &hop.alias {
+                            through_alias(&mut order.key, &alias.text);
+                        }
                     }
                 }
             }
@@ -137,7 +198,34 @@ impl<'s> Canon<'s> {
             }
             _ => tree::exclusive::expr(e, &mut |child| self.visit(child, in_walk)),
         }
+        self.negation_reach(e);
         if in_walk { self.inside_walk(e) } else { self.outside_walk(e) }
+    }
+
+    // ── `!` binds as TypeScript's unary operator ──
+
+    /// `!a == b` is `(!a) == b` from version 5; versions 1–4 read the `!`
+    /// over the whole comparison, `!(a == b)`. The meaning changed, not the
+    /// spelling, so the text is refused and the fix writes the old reading
+    /// out: an upgrade keeps what the movement did, and a new author writes
+    /// the parentheses they mean. The outermost expression the old `!` would
+    /// have reached carries the finding (it is visited after the inner ones).
+    fn negation_reach(&mut self, e: &MExpr) {
+        let Some(bang) = bang_on_left(e) else { return };
+        let at = e.at();
+        let rest = self.text(At { start: bang.start + 1, end: at.end });
+        let message = format!(
+            "from language version 5 `!` applies to the operand beside it: `{}` is `(!{}) …`, where versions 1–4 read `!({})` — write the parentheses",
+            self.text(at),
+            self.text(At { start: bang.start + 1, end: bang.end }).trim_start(),
+            rest.trim_start()
+        );
+        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]) };
+        let same_bang = |f: &Finding| f.code == SPELLING_CODE && f.at.start == bang.start && f.message.starts_with("from language version 5 `!`");
+        match self.findings.iter_mut().find(|f| same_bang(f)) {
+            Some(inner) => *inner = finding,
+            None => self.findings.push(finding),
+        }
     }
 
     // ── Inside walk brackets: CAPS words in any case; the everyday spelling is refused ──
@@ -224,11 +312,12 @@ impl<'s> Canon<'s> {
                     self.old(word_at, format!("`{word}` is written `{new}` outside walk brackets"), Some(Edit { at: word_at, text: new.into() }));
                 }
             }
+            // `Text.includes(l, r)` is the call whose tree is `l CONTAINS r`,
+            // whatever `l` is; the checker, which knows when `l` is a list,
+            // writes `List.includes` there (checker typed_spelling).
             BinaryOp::Contains if word.eq_ignore_ascii_case("CONTAINS") => {
-                let right_text = self.text(right);
-                let namespace = if right_text.starts_with('"') || right_text.starts_with('\'') { "Text" } else { "List" };
-                let text = format!("{namespace}.includes({}, {right_text})", self.text(left));
-                self.old(whole, format!("`CONTAINS` outside walk brackets is written `{namespace}.includes(…)`"), Some(Edit { at: whole, text }));
+                let text = format!("Text.includes({}, {})", self.text(left), self.text(right));
+                self.old(whole, "`CONTAINS` outside walk brackets is written `Text.includes(t, v)` (a list's is `List.includes(xs, v)`)".into(), Some(Edit { at: whole, text }));
             }
             BinaryOp::In if word.eq_ignore_ascii_case("IN") => {
                 let text = format!("List.includes({}, {})", self.text(right), self.text(left));

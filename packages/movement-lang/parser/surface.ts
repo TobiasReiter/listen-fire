@@ -13,6 +13,15 @@ export interface SpellingFinding {
   message: string;
   span: Span;
   fix?: DiagnosticFix;
+  /** A call with named arguments (from version 5 they are positional): its
+   *  arguments as written, for the checker to order by the callee's
+   *  parameters. The finding stands only where the checker can. */
+  named?: NamedCall;
+}
+
+export interface NamedCall {
+  callee: string;
+  args: Array<{ name: string; text: string; at: { line: number; col: number } }>;
 }
 
 /** `message` naming every built-in it quotes as `version` spells it

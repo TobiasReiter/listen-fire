@@ -72,6 +72,14 @@ pub struct Checker<'c> {
     pub nodes: crate::families::nodes::NodeState,
     /// What the check settles on nodes for the engine (crate::answer).
     pub stamps: crate::answer::Stamps,
+    /// The parser's MOV_V5_SPELLING findings whose fix depends on a type, by
+    /// span: the message and fix the checker, which knows the type, gives
+    /// them instead (families::typed_spelling).
+    pub respelled: std::collections::HashMap<(usize, usize, usize, usize), (String, serde_json::Value)>,
+    /// A call with named arguments to a function whose parameters are known
+    /// (version 5): its parameters in order, by where its first argument's
+    /// value starts — what the parser's finding for it needs for its fix.
+    pub named_orders: std::collections::HashMap<(usize, usize), Vec<String>>,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
@@ -173,6 +181,8 @@ impl<'c> Checker<'c> {
             inference: Default::default(),
             nodes: Default::default(),
             stamps: Default::default(),
+            respelled: Default::default(),
+            named_orders: Default::default(),
         }
     }
 
