@@ -36,7 +36,7 @@ use crate::types::field::{
     HeldHandle, HeldWalk, Ty, closure_not_data_message, describe_field_type, field_assignable, field_type_compatible, handle_within,
     holds_records, is_list, is_maybe_absent, may_be_closure, spell_held_steps, strip_absent,
 };
-use crate::types::position::{HandlePosition, InstanceRef, Position, describe_position, position_schema_of_ref};
+use crate::types::position::{HandlePosition, InstanceRef, Position, describe_position, position_schema_of_ref, same_starting_point};
 use crate::types::scope_env::SymbolTypes;
 use crate::types::Typing;
 use crate::version;
@@ -1494,10 +1494,49 @@ pub fn record_of(types: &SymbolTypes, kind: SymbolKind) -> RecordOf {
         }
         return if holds_records(Some(field)) { RecordOf::Unknown } else { RecordOf::Value(describe_field_type(field)) };
     }
+    if kind == SymbolKind::Binding
+        && types.plural.is_none()
+        && let Some(may_hold) = &types.may_hold
+    {
+        return record_of_may_hold(may_hold);
+    }
     match kind {
         SymbolKind::Alias | SymbolKind::Param | SymbolKind::Binding | SymbolKind::Instance | SymbolKind::Shape => RecordOf::Unknown,
         other => RecordOf::Value(other.describe().to_string()),
     }
+}
+
+/// `recordOfMayHold`: the record a name bound to an `IF` or a `COALESCE`
+/// whose arms have no one type is. Records alone are one record, as `A | B` of
+/// two `Org`s is an `Org`: theirs when they start at the same place, one
+/// nobody can name (so nothing is refused) when they do not; one that may be
+/// absent may be empty. A member that is not a record makes it a value.
+fn record_of_may_hold(may_hold: &Ty) -> RecordOf {
+    fn visit(member: &Ty, positions: &mut Vec<Option<std::rc::Rc<Position>>>, may_be_absent: &mut bool) -> bool {
+        if matches!(member, Ty::Absent | Ty::MaybeAbsent(_)) {
+            *may_be_absent = true;
+        }
+        match strip_absent(member) {
+            Ty::Absent => true,
+            Ty::Union(members) => members.iter().all(|member| visit(member, positions, may_be_absent)),
+            Ty::Record(position) => {
+                positions.push(position.clone());
+                true
+            }
+            _ => false,
+        }
+    }
+    let mut positions = Vec::new();
+    let mut may_be_absent = false;
+    if !visit(may_hold, &mut positions, &mut may_be_absent) || positions.is_empty() {
+        return RecordOf::Value("a value that may hold something other than one record".to_string());
+    }
+    let Some(Some(first)) = positions.first() else { return RecordOf::Unknown };
+    if !positions.iter().all(|position| position.as_ref().is_some_and(|position| same_starting_point(position, first))) {
+        return RecordOf::Unknown;
+    }
+    let first = (**first).clone();
+    RecordOf::Record(if may_be_absent { Position::MaybeEmpty(Box::new(first)) } else { first })
 }
 
 fn target_span(target: &WriteTarget) -> Span {
