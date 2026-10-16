@@ -13,6 +13,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
+### shrink-routes (for the integrator's consolidated version 5 entry)
+
+- The Rust engine runs only language version 5 and later. A run pinned to 1–4 sent to it is refused
+  by name (`language_version_runs_on_typescript`) before anything is asked.
+- Admission is gone: the checker is the one gate. A construct the Rust engine does not run now fails
+  the run where it is met (`MOVENG_UNSUPPORTED`), not before the run starts.
+- A parked state the Rust engine cannot read fails its resume, naming why.
+- For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
+  exports `callEvalExpression`. `MOVEMENT_ENGINE=rust` no longer sends single expressions of a
+  TypeScript run to Rust.
+
 Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in
 it is a refusal, so an automation that uses a retired form has an error under 5, stays on its
 version, shows Review and behaves exactly as before; rewrite the form and upgrade (`lf upgrade`,
