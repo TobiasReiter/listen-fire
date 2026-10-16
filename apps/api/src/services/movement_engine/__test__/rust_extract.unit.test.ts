@@ -1,5 +1,10 @@
 // The extraction keyword and plugin calls in the Rust engine (chunk 6A Task
-// 3b), held to the TypeScript engine: each program runs under
+// 3b), held to the TypeScript engine. Since Henry's ruling of 2026-10-16 the
+// Rust engine refuses the keyword by name on every version
+// (`legacy_extraction`), so a program holding it runs on the TypeScript
+// engine under both settings and the two still agree; the programs here are
+// written for version 4, whose keyword the TypeScript engine keeps. Each
+// program runs under
 // MOVEMENT_ENGINE=ts and =rust against the same fakes, and the two must agree
 // on the result (or the error), the trace, and every request the model client
 // and the plugin invoker received. The corpora (`extraction.unit` and its
@@ -110,6 +115,12 @@ interface Case {
   models?: string[];
 }
 
+/** Every program here is written for version 4. */
+const LANGUAGE_VERSION = 4;
+
+/** The extraction keyword, which the Rust engine refuses on every version. */
+const holdsExtractionKeyword = (source: string): boolean => /\bextract\s+("[^"]*"\s+)?from\s*\[/.test(source);
+
 /** A park sink that suspends, recording each call (its state key for key). */
 function suspendingSink(parked: unknown[]) {
   const base = makeFakeParkSink().sink;
@@ -137,6 +148,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
   const fileText = c.fileText;
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
+    languageVersion: LANGUAGE_VERSION,
     event: c.event ?? EVENT,
     teamId: TEAM_ID,
     catalog: { ...catalog, ...(c.files !== undefined ? { files: c.files } : {}), ...(c.models !== undefined ? { models: c.models } : {}) },
@@ -181,7 +193,11 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
 /** The case on both engines: they agree. `onRust` says what the Rust engine
  *  did with it: ran it whole, refused it (for the TypeScript engine), or
  *  was never asked, the checker having ended the run on either engine. */
-async function agree(c: Case, onRust: { runsWhole: true } | { refused: string } | { endsAtCheck: true }) {
+async function agree(c: Case, expected: { runsWhole: true } | { refused: string } | { endsAtCheck: true }) {
+  // A program the Rust engine would have run whole, but for the extraction
+  // keyword, is refused by that name and run on the TypeScript engine.
+  const keyword = [c.source, ...Object.values(c.files ?? {}).map((f) => f.source)].some(holdsExtractionKeyword);
+  const onRust = 'runsWhole' in expected && keyword ? { refused: 'legacy_extraction' } : expected;
   const ts = await runOn('ts', c);
   resetRustRunStats();
   const rust = await runOn('rust', c);
@@ -387,13 +403,14 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         const creates: unknown[] = [];
         resetRustRunStats();
         const result = await resumeMovement({ ...input, state: JSON.parse(state) as ParkedScopeState, host: hostWith(makeFakeParkSink(), creates) });
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {}, shimFaults: 0 });
+        // The extraction keyword: refused by name, so the TypeScript engine parks it.
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { legacy_extraction: 1 }, shimFaults: 0 });
         return { creates, writes: result.writes, trace: result.trace };
       });
     const ts = await parkOn('ts');
     resetRustRunStats();
     const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { legacy_extraction: 1 }, shimFaults: 0 });
     expect(rust).toBe(ts);
     expect(ts).toContain('"kind":"localShape"');
     const resumed = await resumedOn('ts', ts);
@@ -769,7 +786,8 @@ describe('the extraction keyword and plugin calls on both engines', () => {
         const parsed: ParkedScopeState = JSON.parse(state);
         resetRustRunStats();
         const result = await resumeMovement({ ...baseInput(source), state: parsed, host: hostWith(makeFakeParkSink(), creates) });
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {}, shimFaults: 0 });
+        // The extraction keyword: refused by name, so the TypeScript engine parks it.
+        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { legacy_extraction: 1 }, shimFaults: 0 });
         return { creates, writes: result.writes, trace: result.trace };
       } finally {
         if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
@@ -779,7 +797,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const ts = await parkOn('ts');
     resetRustRunStats();
     const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
+    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 0, notAdmitted: { legacy_extraction: 1 }, shimFaults: 0 });
     expect(rust).toBe(ts);
     // What the extraction yielded, its records and the citations to it.
     for (const kind of ['"kind":"extractRoot"', '"kind":"extractPosition"', '"kind":"extraction"']) expect(ts).toContain(kind);
@@ -804,6 +822,6 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 
 /** A run's input on the shared catalog, its host the caller's. */
 function baseInput(source: string): Omit<RunMovementInput, 'host'> {
-  return { source: PRELUDE + source, event: EVENT, teamId: TEAM_ID, catalog, credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`) };
+  return { source: PRELUDE + source, languageVersion: LANGUAGE_VERSION, event: EVENT, teamId: TEAM_ID, catalog, credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`) };
 }
 

@@ -17,6 +17,7 @@ import { combinatorsSpelledFor } from './combinator_spelling';
 import { spelledFor } from './surface_spelling';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -73,7 +74,7 @@ const PRELUDE = [
 ].join('\n');
 
 const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 

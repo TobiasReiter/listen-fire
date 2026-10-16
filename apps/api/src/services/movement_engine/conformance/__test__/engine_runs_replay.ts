@@ -49,8 +49,12 @@ const FIXTURES = path.resolve(__dirname, '../__fixtures__');
  *  lifts runs. Never lower one to pass. PLAN-08A Task 2 (a head off a kept
  *  walk runs, 2026-10-12): 431 and 520. */
 const FLOORS = {
-  v1: { recordings: 443, rust: 431 },
-  v2: { recordings: 542, rust: 520 },
+  // Lowered by Henry's ruling of 2026-10-16, the extraction keyword retired
+  // from the Rust engine on every version (`legacy_extraction`): 431 to 345
+  // and 520 to 403, every recording it no longer runs refused by that name
+  // (95 and 135 of them, the skip ceilings below).
+  v1: { recordings: 443, rust: 345 },
+  v2: { recordings: 542, rust: 403 },
 } as const;
 
 /** The most recordings the Rust target may skip (one its engine refused or
@@ -62,18 +66,15 @@ const FLOORS = {
  *  nothing. Each task that closes a refusal lowers them; a ceiling never
  *  rises. At none the Rust target skips nothing (`skipped` is `{}`). */
 const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
+  // Since 2026-10-16 the one reason is the extraction keyword, which the Rust
+  // engine refuses by name on every version (Henry's ruling): measured 95 and
+  // 135. The reasons listed before were closed by the tasks since and skip
+  // nothing.
   v1: {
-    'the Rust engine refused it: block_head_resources': 5,
-    'the Rust engine refused it: function:chunks': 3,
-    'the Rust engine refused it: write_root_not_held': 2,
-    'the Rust engine refused it: block_multi_hop': 2,
+    'the Rust engine refused it: legacy_extraction': 95,
   },
   v2: {
-    'the Rust engine refused it: block_head_resources': 8,
-    'the Rust engine refused it: import_from_file': 7,
-    'the Rust engine refused it: function:chunks': 3,
-    'the Rust engine refused it: write_root_not_held': 2,
-    'the Rust engine refused it: block_multi_hop': 2,
+    'the Rust engine refused it: legacy_extraction': 135,
   },
 };
 

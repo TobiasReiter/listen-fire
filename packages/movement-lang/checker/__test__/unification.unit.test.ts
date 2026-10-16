@@ -48,7 +48,7 @@ function diagnose(source: string, schema: InstanceSchema, plugins = {}): Diagnos
   });
   // These fixtures are about one construct each; none declares a trigger, and
   // "nothing fires this file" is not what any of them is pinning.
-  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(
+  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(notKeywordRetirement).filter(
     (d) => d.code !== C.LISTEN_MISSING,
   );
 }
@@ -76,6 +76,7 @@ svc = desk()
 movement look(t: <svc-[:ticket]->>) {
 ${call}
 }`;
+import { notKeywordRetirement } from './keyword_retirement';
 
 /** A plugin that has said everything a plain call needs: what running it does,
  *  and what it hands back. The fixtures below vary one of those at a time. */

@@ -11,6 +11,7 @@ import { effectRowOf, isPureRow, type EffectRow } from '../effects';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { Scope } from '../scopes';
 import { storyOf, type Step } from '../../story/story';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -85,7 +86,7 @@ const writes = (source: string, movement: string): string[] =>
   rowOf(source, movement).write.map((instance) => instance.name);
 
 const errors = (source: string): string[] =>
-  checkProgram(parseProgram(`${PRELUDE}${source}`), catalog)
+  checkProgram(parseProgram(`${PRELUDE}${source}`), catalog).filter(notKeywordRetirement)
     .filter((d) => (d.severity ?? 'error') === 'error')
     .map((d) => d.code);
 

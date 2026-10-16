@@ -15,6 +15,7 @@ import { checkProgram, type Diagnostic } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import { spelledFor } from './surface_spelling';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -60,7 +61,7 @@ ${EXTRACT}${body}
     ),
     catalog,
     { languageVersion },
-  ).filter((d) => (d.severity ?? 'error') === 'error');
+  ).filter(notKeywordRetirement).filter((d) => (d.severity ?? 'error') === 'error');
 
 const VERSIONS = [...SUPPORTED_LANGUAGE_VERSIONS];
 

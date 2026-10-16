@@ -15,8 +15,7 @@
 //   - order_limit.json: a hop's pushdown and ORDER BY / LIMIT plan
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
 //     the .json beside it);
-//   - extraction.json: the extraction keyword's specs, regions, prompts and
-//     reply verdicts, and the priced-plugin cap (./extraction_oracle.ts);
+//   - priced.json: the priced-plugin cap (./priced_oracle.ts);
 //   - records.json: records held as values, whole programs run on the
 //     TypeScript engine (./records_oracle.ts);
 //   - parallel.json: `parallel` and `race` programs run on the TypeScript
@@ -74,7 +73,7 @@ import {
 import { applyMovementFunction } from '../../../../packages/movement-engine/services/movement_engine/builtins';
 import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
-import { writeExtractionOracle } from './extraction_oracle';
+import { writePricedOracle } from './priced_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
 import { writeHandlesOracle } from './handles_oracle';
 import { writeParallelOracle } from './parallel_oracle';
@@ -373,7 +372,7 @@ console.log(`regex.json: ${regexCases.length} cases`);
 // must not pass on a pin that was never written.
 (async () => {
   await writeOrderLimitOracle(mulberry32(5));
-  await writeExtractionOracle(mulberry32(20261009));
+  await writePricedOracle(mulberry32(20261009));
   await writeRecordsOracle(mulberry32(20261010), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeParallelOracle(mulberry32(20261011), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));

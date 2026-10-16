@@ -10,7 +10,8 @@ export const HANDBOOK_POINTERS = {
   maybeAbsent: 'front#maybe-absent',
   /** A call to a name nothing declares — usually a TypeScript method or a guessed built-in. */
   functions: 'front#functions-not-methods',
-  /** An extraction call written where a value is read many times. */
+  /** An extraction call written where a value is read many times; the
+   *  extraction keyword's retirement. */
   extraction: 'front#extraction',
   /** A write or find that cannot say which record it means. */
   identity: 'front#identity',
@@ -35,6 +36,7 @@ export const HANDBOOK_POINTER_BY_CODE: Readonly<Record<string, HandbookPointer>>
   MOV_ABSENT_REQUIRED: HANDBOOK_POINTERS.maybeAbsent,
   MOV_FUNCTION_UNKNOWN: HANDBOOK_POINTERS.functions,
   MOV_EXTRACT_CALL_NESTED: HANDBOOK_POINTERS.extraction,
+  MOV_EXTRACT_KEYWORD_RETIRED: HANDBOOK_POINTERS.extraction,
   MOV_MATCH_NO_IDENTITY: HANDBOOK_POINTERS.identity,
   MOV_UNIQUE_UNKNOWN_FIELD: HANDBOOK_POINTERS.identity,
   MOV_LINKED_HOP_RETIRED: HANDBOOK_POINTERS.identity,

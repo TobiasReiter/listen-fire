@@ -1,12 +1,13 @@
-//! The extraction keyword (`x = extract from […] { tree }`), as extraction.ts
-//! materialises it: the spec resolved per firing and the calls planned over
-//! it (`spec`), what each call says to the model (`prompt`), how its reply is
-//! read (`validate`), the content read and fetched as resources
-//! (`resources`), what the walk yields (`emission`), and the walk itself —
-//! the model loop, the `through` stages, the fences (`run`). `spec`,
-//! `prompt` and `validate` are held to the TypeScript's own answers by
-//! tests/extraction_pin.rs (tests/oracle/extraction.json); the walk, by the
-//! corpora and the recorded runs.
+//! The extraction call (`extract(content, Shape, { … })`, `extractOne(…)`,
+//! `call`), as extraction_call.ts runs it: a declaration's spec resolved per
+//! firing (`spec`), the reply read as zod reads it (`validate`), content files
+//! read and resources stamped (`resources`), and what the call shares with the
+//! `AI()` expression and plain plugin calls — tier settings, priced calls,
+//! plugin invocation (`run`). `emission` is the record an ask's correction
+//! answers (and a parked TypeScript state's extracted record, resumed).
+//!
+//! The extraction keyword (`x = extract from […] { … }`) is not run here on
+//! any version: admission refuses it (crate::admit::LEGACY_EXTRACTION).
 
 /// What a deployment buys for one extraction tier (ai_tiers.ts
 /// `ExtractionTierAssignment`): each member over the built-in row's.
@@ -21,10 +22,9 @@ pub struct TierAssignment {
 pub(crate) use resources::{file_handle, is_file_ref};
 
 pub(crate) mod call;
-pub mod emission;
-pub mod prompt;
+pub(crate) mod emission;
 pub(crate) mod resources;
 pub use resources::bound_text;
 pub(crate) mod run;
-pub mod spec;
-pub mod validate;
+pub(crate) mod spec;
+pub(crate) mod validate;

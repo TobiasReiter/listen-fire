@@ -9,6 +9,7 @@ import { checkProgram, checkProgramWithLink, Diagnostic, DiagnosticCodes as C } 
 import { effectRowOf } from '../effects';
 import { SchemaFieldType, InstanceSchema, mockCatalog, unionDisplay, unionKey } from '../catalog';
 import { fieldAssignable } from '../typing';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
 
@@ -433,12 +434,12 @@ const catalog = mockCatalog({
 // movement without a listen, which legitimately carries an info-severity
 // MOV_LISTEN_MISSING (covered in check.unit.test.ts).
 const check = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog).filter(d => (d.severity ?? 'error') === 'error');
+  checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
 const codes = (source: string): string[] => check(source).map(d => d.code);
 const infos = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog).filter(d => d.severity === 'info');
+  checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(d => d.severity === 'info');
 const warnings = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog).filter(d => d.severity === 'warning');
+  checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(d => d.severity === 'warning');
 
 function expectClean(source: string): void {
   const diagnostics = check(source);
@@ -447,7 +448,7 @@ function expectClean(source: string): void {
 
 // Under a named language version — for a construct a later version retires.
 const checkUnder = (languageVersion: number, source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+  checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
 
 const PRELUDE = [
   'import { email, attio, slack, affinity, dropbox, messaging, kg } from adapters',
@@ -581,7 +582,7 @@ describe('hop capability gating', () => {
     'c = connect cap using cap_cred',
   ].join('\n');
   const capCodes = (body: string): string[] =>
-    checkProgram(parseProgram(`${capPrelude}\nfunction main(msg: <c-[:company]->>) {\n${body}\n}`), capCatalog)
+    checkProgram(parseProgram(`${capPrelude}\nfunction main(msg: <c-[:company]->>) {\n${body}\n}`), capCatalog).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
   // A collection block: head traversal + a trivial body referencing the alias.
@@ -690,7 +691,7 @@ describe('hop capability gating', () => {
     checkProgram(
       parseProgram(`${capPrelude}\nfunction main(msg: <c-[:company]->>) {\n${body}\n}`),
       capCatalog,
-    );
+    ).filter(notKeywordRetirement);
 
   it('a path key on a native-order edge warns that the engine sorts, and refuses nothing', () => {
     const diags = capDiags(coll('c-[x:companies ORDER BY x-[:Owner]->.`name`]->'));
@@ -802,7 +803,7 @@ describe('comparison category type-check (MOV_COMPARE_TYPE_MISMATCH)', () => {
           '  }\n}',
       ),
       cmpCatalog,
-    ).filter(d => (d.severity ?? 'error') === 'error');
+    ).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
   const cmpCodes = (where: string): string[] => cmpDiags(where).map(d => d.code);
 
   it('a date field vs @current_date (date) does not flag a mismatch', () => {
@@ -920,7 +921,7 @@ describe('enum-literal membership (MOV_ENUM_UNKNOWN_VALUE)', () => {
     'c = ce(credentials: ce_cred)',
   ].join('\n');
   const enumDiags = (body: string): Diagnostic[] =>
-    checkProgram(parseProgram(`${enumPrelude}\nfunction main(msg: <c-[:ticket]->>) {\n${body}\n}`), enumCatalog)
+    checkProgram(parseProgram(`${enumPrelude}\nfunction main(msg: <c-[:ticket]->>) {\n${body}\n}`), enumCatalog).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error');
   const enumCodes = (body: string): string[] => enumDiags(body).map(d => d.code);
   // A hop WHERE block (compare site).
@@ -1028,7 +1029,7 @@ describe('empty enum domain (MOV_ENUM_EMPTY_DOMAIN)', () => {
         ].join('\n'),
       ),
       emptyCatalog,
-    ).filter(d => (d.severity ?? 'error') === 'error');
+    ).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
   const emptyCodes = (body: string): string[] => emptyDiags(body).map(d => d.code);
 
   it('a literal written into an empty-domain field is REJECTED', () => {
@@ -1102,7 +1103,7 @@ describe('empty enum domain (MOV_ENUM_EMPTY_DOMAIN)', () => {
         ].join('\n'),
       ),
       openCatalog,
-    ).map(d => d.code);
+    ).filter(notKeywordRetirement).map(d => d.code);
     expect(codes).not.toContain('MOV_ENUM_EMPTY_DOMAIN');
   });
 });
@@ -1146,7 +1147,7 @@ describe('meta key typing', () => {
           '  }\n}',
       ),
       cmpCatalog,
-    )
+    ).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
 
@@ -2648,7 +2649,7 @@ describe('annotation vs write target (MOV_EXTRACT_TYPE_CONFLICT)', () => {
         ].join('\n'),
       ),
       trackerCatalog,
-    ).filter(d => (d.severity ?? 'error') === 'error');
+    ).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
 
   it('an annotated <text> written into a DATE field conflicts (the gate would parse it silently)', () => {
     const diagnostics = trackerDiags('<text>', 'Due');
@@ -3167,7 +3168,7 @@ describe('unique by as an expression predicate (chunk 8)', () => {
 
 describe('native uniqueness', () => {
   const warnings = (source: string): Diagnostic[] =>
-    checkProgram(parseProgram(source), catalog).filter(d => d.severity === 'warning');
+    checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(d => d.severity === 'warning');
   const HUBSPOT_PRELUDE = [
     'import { email, hubspot } from adapters',
     'import { dealflow_inbox, acme_hubspot } from credentials',
@@ -3394,7 +3395,7 @@ describe('match', () => {
       ].join('\n'),
     );
     it('is a plain statement (a gate) before language version 4', () => {
-      const found = checkProgram(parseProgram(source), catalog, { languageVersion: 3 }).filter(
+      const found = checkProgram(parseProgram(source), catalog, { languageVersion: 3 }).filter(notKeywordRetirement).filter(
         (d) => (d.severity ?? 'error') === 'error',
       );
       expect(found.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
@@ -3502,7 +3503,7 @@ describe('match', () => {
         '}',
       ].join('\n');
     const under = (version: number, source: string) =>
-      checkProgram(parseProgram(source), catalog, { languageVersion: version }).filter(d => (d.severity ?? 'error') === 'error');
+      checkProgram(parseProgram(source), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
     for (const field of ['created', 'committed']) {
       expect(under(3, read('write', field)).map((d) => d.code)).toEqual([]);
       expect(under(4, read('write', field)).map((d) => d.code)).toEqual([C.HANDLE_FIELD_RETIRED]);
@@ -3562,7 +3563,7 @@ describe('link statements', () => {
   // before it.
   const pinned = { languageVersion: 3 };
   const checkPinned = (source: string): Diagnostic[] =>
-    checkProgram(parseProgram(source), catalog, pinned).filter(d => (d.severity ?? 'error') === 'error');
+    checkProgram(parseProgram(source), catalog, pinned).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
   const codesPinned = (source: string): string[] => checkPinned(source).map(d => d.code);
   const expectCleanPinned = (source: string): void =>
     expect(checkPinned(source).map(d => `${d.code}: ${d.message}`)).toEqual([]);
@@ -3664,7 +3665,7 @@ describe('link statements', () => {
         '}',
       ].join('\n');
     const errors = (source: string) =>
-      checkProgram(parseProgram(source), listsCatalog, pinned).filter((d) => (d.severity ?? 'error') === 'error');
+      checkProgram(parseProgram(source), listsCatalog, pinned).filter(notKeywordRetirement).filter((d) => (d.severity ?? 'error') === 'error');
 
     it('takes the body as its lookup, with no unique by to refuse', () => {
       expect(errors(inLists('  link entry -[:Owners]-> { `Full name`: msg.`subject` }')).map((d) => d.code)).toEqual([]);
@@ -3864,7 +3865,7 @@ describe('required edges', () => {
 
 describe('required fields', () => {
   const warnings = (source: string): Diagnostic[] =>
-    checkProgram(parseProgram(source), catalog).filter(d => d.severity === 'warning');
+    checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(d => d.severity === 'warning');
 
   it('a write that never sets a required field errors, naming it', () => {
     const found = check(inMovement('  write graph-[:contact]-> { name: msg.`subject` }'));
@@ -4116,7 +4117,7 @@ movement log(m: <Meeting>) { write graph-[:people]-> { name: m.\`Title\` } }
 listen to src {} fire log`;
 
   const errorCodes = (adapter: string) =>
-    checkProgram(parseProgram(prog(adapter)), conf)
+    checkProgram(parseProgram(prog(adapter)), conf).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
 
@@ -4206,7 +4207,7 @@ movement log(m: <WithAttendees>) { write graph-[:people]-> { name: m.\`Title\` }
 listen to src {} fire log`;
 
   const errorCodes = (adapter: string) =>
-    checkProgram(parseProgram(prog(adapter)), recursiveConf)
+    checkProgram(parseProgram(prog(adapter)), recursiveConf).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
 
@@ -4260,7 +4261,7 @@ movement log(m: <Loop>) { write graph-[:people]-> { name: m.\`name\` } }
 listen to src {} fire log`;
 
     // Test simply completing (no infinite loop / stack overflow) proves the cycle guard works.
-    const result = checkProgram(parseProgram(selfProg), selfRefConf)
+    const result = checkProgram(parseProgram(selfProg), selfRefConf).filter(notKeywordRetirement)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
     expect(result).not.toContain('MOV_LISTEN_SHAPE_MISMATCH');
@@ -4278,7 +4279,7 @@ function main(x: <ga-[:event]->>) { write graph-[:people]-> { name: x.\`id\` } }
 listen as "${a1}" to ga {} fire main
 listen as "${a2}" to gb {} fire main`;
   const codesFor = (a1: string, a2: string) =>
-    checkProgram(parseProgram(src(a1, a2)), catalog).map(d => d.code);
+    checkProgram(parseProgram(src(a1, a2)), catalog).filter(notKeywordRetirement).map(d => d.code);
 
   it('duplicate aliases firing the same movement error', () => {
     expect(codesFor('Same', 'Same')).toContain('MOV_LISTEN_ALIAS_DUPLICATE');
@@ -4323,7 +4324,7 @@ describe('a write handle is a traversal head (checker agrees with the engine)', 
   const handleCodes = (body: string): string[] =>
     // The movement param TypeRef names the POSITION (`ping`), not the collection
     // (`pings`) — same as the existing capCatalog fixture's `<c-[:company]->>`.
-    checkProgram(parseProgram(`${handlePrelude}\nfunction main(p: <s-[:ping]->>) {\n${body}\n}`), handleCatalog)
+    checkProgram(parseProgram(`${handlePrelude}\nfunction main(p: <s-[:ping]->>) {\n${body}\n}`), handleCatalog).filter(notKeywordRetirement)
       .filter((d) => (d.severity ?? 'error') === 'error')
       .map((d) => d.code);
 

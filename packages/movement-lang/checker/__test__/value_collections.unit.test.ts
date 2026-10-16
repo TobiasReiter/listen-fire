@@ -10,6 +10,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -71,7 +72,7 @@ function check(body: string): Diagnostic[] {
 function m(c: <chat-[:channel]->>) {
 ${body}
 }`;
-  return checkProgram(parseProgram(source), catalog).filter(
+  return checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
@@ -406,7 +407,7 @@ describe('MEMBERS — a closed type, in declaration order', () => {
     // (checker/nested_calls.ts). Before it, nesting one is the parser's
     // pointed refusal.
     const source = `${PRELUDE}\nfunction m(c: <chat-[:channel]->>) {\n  x = map(members(<Thesis>), (t) => { return t })\n}`;
-    const found = checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error');
+    const found = checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement).filter((d) => (d.severity ?? 'error') === 'error');
     expect(found).toEqual([]);
     const before3 = `import { slack, attio } from adapters\ntype Thesis = <"Consumer" | "Infra" | "Health">\nchat = slack()\ncrm = attio()\nmovement m(c: <chat-[:channel]->>) {\n  x = MAP(MEMBERS(<Thesis>), (t) => { return t })\n}`;
     expect(() => parseProgram(before3, { languageVersion: 2 })).toThrow(/bind it first/);
@@ -500,7 +501,7 @@ describe('a parameter with no type, where nothing supplies one', () => {
   it('a movement parameter is refused too — its type is the promise to callers', () => {
     const source = `${PRELUDE}\nfunction other(x) {\n  y = x\n}`;
     expect(
-      checkProgram(parseProgram(source), catalog)
+      checkProgram(parseProgram(source), catalog).filter(notKeywordRetirement)
         .filter((d) => (d.severity ?? 'error') === 'error')
         .map((d) => d.code),
     ).toContain('MOV_PARAM_NEEDS_TYPE');

@@ -8,6 +8,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, type Diagnostic } from '../check';
 import { bindPluginArgs, mockCatalog, pluginPositionalParams, type PluginSpec } from '../catalog';
 import { typescriptCheck, upgradeSource } from '../upgrade';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const plugins: Record<string, PluginSpec> = {
   fetch_url: {
@@ -50,7 +51,7 @@ const v4 = (body: string): string => `${HEAD4}movement go(u: <text>, n: <text>, 
 const v5 = (body: string): string => `${HEAD5}function go(u: <text>, n: <text>, s: <text>, t: <text>) {\n${body}\n}\n`;
 
 function check(source: string, languageVersion: number): Diagnostic[] {
-  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(
+  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).filter(
     (d) => d.severity === undefined,
   );
 }
@@ -175,7 +176,7 @@ describe('a through stage under 5', () => {
 
 describe("a record value handed to a plugin's text input", () => {
   const all = (source: string, languageVersion: number) =>
-    checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).map((d) => [d.code, d.severity ?? 'error', d.message]);
+    checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).map((d) => [d.code, d.severity ?? 'error', d.message]);
 
   it('is refused from 5', () => {
     expect(all(v5('  r = research({ context: s })'), 5)).toEqual([

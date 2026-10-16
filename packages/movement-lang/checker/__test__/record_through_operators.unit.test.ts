@@ -26,6 +26,7 @@ import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import { spelledFor } from './surface_spelling';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -102,7 +103,7 @@ const HELD = ['  org = write crm-[:companies]-> { name: "Acme Inc." }', '  f = F
 const program = (body: string[]): string => `${PRELUDE}\nmovement m() {\n${[...HELD, ...body].join('\n')}\n}`;
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 
@@ -571,7 +572,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
   const SHAPED = 'node Held {\n  k: <text | null>\n}\n';
   const errorsOf = (body: string[], shaped = false): Diagnostic[] => {
     const source = shaped ? program(body).replace('movement m()', `${SHAPED}movement m()`) : program(body);
-    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   };
@@ -628,7 +629,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
   // a record in an operator's arm would be stored as a field when the graph is
   // built. Refused on B3's terms, with the path.
   const errorsOf = (body: string[]): Diagnostic[] =>
-    checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   const refusedAs = (body: string[], said: string): void => {
@@ -711,7 +712,7 @@ const PICK = [
 
 const errorsWithFunctions = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\n${PICK}\nmovement m() {\n${[...HELD, ...body].join('\n')}\n}`;
-  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 };
@@ -864,7 +865,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B14 review: under language vers
   ].join('\n');
   const withTwo = (body: string[]): Diagnostic[] => {
     const source = `${PRELUDE}\n${TWO}\nmovement m() {\n${[...HELD, ...two, ...body].join('\n')}\n}`;
-    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(notKeywordRetirement).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   };

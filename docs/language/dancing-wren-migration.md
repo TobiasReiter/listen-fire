@@ -21,7 +21,8 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 - [13. A value that is a closure is called](#13-a-value-that-is-a-closure-is-called)
 - [14. A closure's type is written `<(params) => <return>>`](#14-a-closures-type-is-written-params--return)
 - [15. `parallel` is retired for `all`; combinators take arguments and no `await`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
-- [16. Diagnostic code index](#16-diagnostic-code-index)
+- [16. The extraction keyword is retired](#16-the-extraction-keyword-is-retired)
+- [17. Diagnostic code index](#17-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -388,7 +389,37 @@ r = all(a, () => { … })
 - Arms built at run time (`parallel(fs)`) have no fix: name each function as an argument, `all(f, g)`.
 - The refusal of the `parallel { … }` block points at `all` under 5. Under 4 and earlier `await race([…])` and `await parallel([…])` are unchanged, and `all` is still a retired name.
 
-## 16. Diagnostic code index
+## 16. The extraction keyword is retired
+
+- Under Dancing Wren (5) the keyword `x = extract from […] { … }` is `MOV_EXTRACT_KEYWORD_RETIRED`, with its inline node shapes and its `through […]` stages. An extraction is the call over a declared node shape: `extract(content, Shape, { tier })` hands back each record the content holds, and `extractOne(content, Shape, { tier })` the one it describes, or nothing. A plugin is a function you call. Why: one way to extract, whose shape is an ordinary declaration you can reuse, spread into a graph and pass around.
+- Where the rewrite is mechanical the diagnostic carries it. It declares the tree as a node shape named after the binding (`found` is `FoundShape`; a name the file already holds gets the next number, `FoundShape2`), and calls `extractOne` over the same content and tier:
+
+```
+# before
+found = extract "careful" from [m.Body] {
+  node company: "each company named" {
+    name: <text> "its name"
+    website: "its website"
+  }
+}
+
+# after
+node FoundShape: "the relevant information in the content" {
+  node company: "each company named" {
+    name: <text> "its name"
+    website: <text> "its website"
+  }
+}
+
+found = extractOne([m.Body], FoundShape, { tier: "careful" })
+```
+
+- `found` is the one record the keyword's result was: its fields read off it (`found.summary`) and its nodes walk from it (`found-[c:company]-> { … }`) as before. A node that took a declaration (`node lead: <Lead>`) is written out in place, its words the use site's. A declaration whose words interpolate a value of the body (`"the topic of ${m.Subject}"`) stays in the body, where they are read; any other goes before the function at file level.
+- The fix is offered, never applied on its own. Check three things: the record may be absent where the keyword's result never was, so a field read off it where a value is needed is `MOV_ABSENT_REQUIRED` (write `coalesce(found.summary, "")`, which that diagnostic offers); a field written without a type becomes `<text>`; and the model is asked through the call's prompt, which lays out the content for the prompt cache.
+- A `through […]` stage has no fix. It hands each record's plugin answers to a further extraction of that record and merges what that finds into it; plugins called as functions hand back values of their own, so no rewrite is provably the same. Write the composition out: declare the shape, `extract` it, `map` over the records calling each plugin, `extractOne` over the content plus what the plugin returned, and merge the two with a spread into `graph<Shape> { ...c, ...details }`. The handbook's enrichment example is exactly this.
+- The Rust engine does not run the keyword on any version. A Quiet Heron (1) to Luminous Owl (4) automation that holds one runs on the TypeScript engine by its version, exactly as before; a run forced onto the Rust engine (`lf`, or `MOVEMENT_ENGINE=rust` with `MOVEMENT_ENGINE_FALLBACK=none`) fails naming `legacy_extraction`.
+
+## 17. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
@@ -405,6 +436,7 @@ r = all(a, () => { … })
 | `MOV_COUNT_COUNTS_EMPTY` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a count of a list that may hold an empty item) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#5-delete-only-where-the-system-declares-it) |
 | `MOV_EXPR_CLOSURE_POSITION` | [A closure is not data](#12-a-closure-is-not-data) (under 4 and earlier; under 5 a closure written in a list or map is `MOV_CLOSURE_NOT_DATA`) |
+| `MOV_EXTRACT_KEYWORD_RETIRED` | [The extraction keyword is retired](#16-the-extraction-keyword-is-retired) (the rewrite to `extractOne` over a declared shape where it is mechanical; none for a `through […]` stage) |
 | `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods) (a dotted call of no built-in, `box.g()` included; version 5) |
 | `MOV_FILE_IN_TEXT` | [A file is never joined into text](#7-a-file-is-never-joined-into-text) |
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#11-a-write-handles-unsent-file-is-not-a-file) |

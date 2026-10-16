@@ -142,23 +142,33 @@ fn stage(through: &str) -> String {
     )
 }
 
+/// A `through` stage's own checks, beside the keyword's retirement under 5
+/// (MOV_EXTRACT_KEYWORD_RETIRED, which has no rewrite for a stage).
+fn stage_diagnostics(found: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    found.into_iter().filter(|d| d.code != "MOV_EXTRACT_KEYWORD_RETIRED").collect()
+}
+
+fn stage_codes(source: &str) -> Vec<String> {
+    stage_diagnostics(check(source, 5)).into_iter().map(|d| d.code).collect()
+}
+
 #[test]
 fn a_through_stage_takes_its_arguments_by_position_too() {
-    assert_eq!(check(&stage("linkedinEnrichment(2)"), 5), Vec::<Diagnostic>::new());
-    assert_eq!(check(&stage("research(n, { context: s })"), 5), Vec::<Diagnostic>::new());
-    assert_eq!(check(&stage("linkedinEnrichment"), 5).iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_THROUGH_ARG_MISSING"]);
+    assert_eq!(stage_diagnostics(check(&stage("linkedinEnrichment(2)"), 5)), Vec::<Diagnostic>::new());
+    assert_eq!(stage_diagnostics(check(&stage("research(n, { context: s })"), 5)), Vec::<Diagnostic>::new());
+    assert_eq!(stage_diagnostics(check(&stage("linkedinEnrichment"), 5)).iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_THROUGH_ARG_MISSING"]);
     // A stage is never fed by its author: the fed input is no positional parameter.
-    assert_eq!(codes(&stage("linkedinEnrichment(u, 2)"), 5), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
-    assert_eq!(codes(&stage("research(n, { name: s })"), 5), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
+    assert_eq!(stage_codes(&stage("linkedinEnrichment(u, 2)")), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
+    assert_eq!(stage_codes(&stage("research(n, { name: s })")), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
 }
 
 #[test]
 fn a_through_stage_s_named_arguments_under_5_are_rewritten_by_position() {
     let program = stage("research(name: n, context: s)");
-    let found = check(&program, 5);
+    let found = stage_diagnostics(check(&program, 5));
     let fixes: Vec<_> = found.iter().filter(|d| d.code == "MOV_V5_SPELLING").map(|d| d.fix.as_ref().map(|f| f["edits"][0]["text"].clone())).collect();
     assert_eq!(fixes, vec![Some(serde_json::json!("n, { context: s }"))]);
-    assert_eq!(check(&apply_fixes(&program, &found), 5), Vec::<Diagnostic>::new());
+    assert_eq!(stage_diagnostics(check(&apply_fixes(&program, &found), 5)), Vec::<Diagnostic>::new());
 }
 
 fn all(source: &str, version: u32) -> Vec<(String, bool, String)> {

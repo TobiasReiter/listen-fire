@@ -16,6 +16,7 @@ import { checkProgram } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
 import { spelledFor } from './surface_spelling';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -53,7 +54,7 @@ movement m(c: <chat-[:channel]->>) {
 ${SETUP}${body}
 }`, catalog);
   const options = languageVersion !== undefined ? { languageVersion } : undefined;
-  return checkProgram(parseProgram(source, options), catalog, options)
+  return checkProgram(parseProgram(source, options), catalog, options).filter(notKeywordRetirement)
     .filter(d => (d.severity ?? 'error') === 'error')
     .map(d => d.code);
 }

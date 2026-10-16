@@ -8,6 +8,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { ResolveFile } from '../link';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -54,7 +55,7 @@ const ENTRY = [
 ].join('\n');
 
 const errors = (source: string, resolveFile?: ResolveFile): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog, resolveFile ? { resolveFile } : undefined).filter(
+  checkProgram(parseProgram(source), catalog, resolveFile ? { resolveFile } : undefined).filter(notKeywordRetirement).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 
@@ -317,7 +318,7 @@ describe('a spread of any record whose fields the program spells out', () => {
 
   it("records the declaration's field list on the spread, for the engine to write", () => {
     const parsed = parseProgram(withCallee('write graph-[:company]-> { ...d }'));
-    checkProgram(parsed, catalog);
+    checkProgram(parsed, catalog).filter(notKeywordRetirement);
     const callee = parsed.statements.find((s) => s.kind === 'movement');
     if (callee?.kind !== 'movement') throw new Error('expected the callee');
     const write = callee.body[0];

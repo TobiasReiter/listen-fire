@@ -15,6 +15,7 @@ import {
 } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { ResolveFile } from '../link';
+import { notKeywordRetirement } from './keyword_retirement';
 
 // The programs are written in the old spelling; every parse reads the version 5 surface.
 const parseProgram = (source: string) => parseSource(spelledFor(5, source, catalog));
@@ -77,7 +78,7 @@ const RECAP_INLINE = [
 ].join('\n');
 
 const errors = (source: string, resolveFile?: ResolveFile): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog, resolveFile ? { resolveFile } : undefined).filter(
+  checkProgram(parseProgram(source), catalog, resolveFile ? { resolveFile } : undefined).filter(notKeywordRetirement).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 
@@ -262,7 +263,7 @@ describe('everywhere else a declaration goes', () => {
       '}',
     ].join('\n');
     const parsed = parseProgram(source);
-    expect(checkProgram(parsed, catalog).filter((d) => (d.severity ?? 'error') === 'error')).toEqual(
+    expect(checkProgram(parsed, catalog).filter(notKeywordRetirement).filter((d) => (d.severity ?? 'error') === 'error')).toEqual(
       [],
     );
     const callee = parsed.statements.find((s) => s.kind === 'movement');

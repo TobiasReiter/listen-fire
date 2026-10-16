@@ -13,6 +13,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import { spelledFor } from './surface_spelling';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const inboxSchema: InstanceSchema = {
   positions: {
@@ -75,7 +76,7 @@ function diagnostics(body: string, param = '<inbox-[:message]->>'): Diagnostic[]
 movement m(e: ${param}) {
 ${body}
 }`;
-  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog);
+  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(notKeywordRetirement);
 }
 const errors = (body: string, param?: string): Diagnostic[] =>
   diagnostics(body, param).filter((d) => (d.severity ?? 'error') === 'error');

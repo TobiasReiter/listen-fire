@@ -27,8 +27,11 @@ const FIXTURES = path.join(__dirname, '__fixtures__');
 const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/oracle/handles.json');
 
 /** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records.
- *  2026-10-16, v5b-upgrade: 4,082 of 4,449 programs (91.8%). */
-const FLOOR = 0.915;
+ *  2026-10-16, v5b-upgrade: 4,082 of 4,449 programs (91.8%).
+ *  Lowered the same day by Henry's ruling retiring the extraction keyword
+ *  (MOV_EXTRACT_KEYWORD_RETIRED, whose fix is never safe, so the loop leaves
+ *  it for a person): 3,862 of 4,449, with 241 programs left holding it. */
+const FLOOR = 0.868;
 
 interface Program {
   source: string;

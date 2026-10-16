@@ -7,6 +7,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -41,7 +42,7 @@ movement m(c: <chat-[:channel]->>) {
 ${body}
 }`;
   // Errors carry no explicit severity, so a filter on 'error' alone is vacuous.
-  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter((d) => (d.severity ?? 'error') === 'error');
+  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).filter((d) => (d.severity ?? 'error') === 'error');
 }
 const codes = (body: string): string[] => errors(body).map((d) => d.code);
 

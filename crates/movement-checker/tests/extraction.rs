@@ -48,6 +48,8 @@ fn stages_calls_and_annotations_say_what_the_typescript_says() {
     assert_eq!(
         places,
         vec![
+            // Under 5 the keyword itself is retired, its tree still checked.
+            ("MOV_EXTRACT_KEYWORD_RETIRED", (10, 11), (14, 4)),
             ("MOV_THROUGH_FORWARD_REF", (12, 21), (12, 27)),
             ("MOV_THROUGH_BAD_ARG", (12, 38), (12, 39)),
             ("MOV_UNKNOWN_TYPE_NAME", (13, 5), (13, 28)),
@@ -57,8 +59,8 @@ fn stages_calls_and_annotations_say_what_the_typescript_says() {
             ("MOV_PLUGIN_ROW_UNDECLARED", (17, 3), (17, 14)),
         ]
     );
-    assert_eq!(found[2].message, "'nubmer' is not a type — annotate with a primitive (text, number, boolean, date, datetime, file, json), a type you declare (`type nubmer = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>) — did you mean 'number'?");
-    assert_eq!(found[4].message, "'extract': 'claude-opus-6' is not a model this deployment reaches — did you mean 'claude-opus-5'? — it reaches 'claude-opus-5'");
+    assert_eq!(found[3].message, "'nubmer' is not a type — annotate with a primitive (text, number, boolean, date, datetime, file, json), a type you declare (`type nubmer = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>) — did you mean 'number'?");
+    assert_eq!(found[5].message, "'extract': 'claude-opus-6' is not a model this deployment reaches — did you mean 'claude-opus-5'? — it reaches 'claude-opus-5'");
 }
 
 const RESOURCES: &str = r#"import { registry } from adapters
