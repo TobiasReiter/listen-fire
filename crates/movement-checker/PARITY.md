@@ -4,19 +4,19 @@ Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **242 of 242** codes the TypeScript checker reports on this corpus.
 - Diagnostics matched: 35347 of 35347; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 28307 of 28328.
-- Rust side: 23.7s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Records with exactly the TypeScript's diagnostics, in its order: 28328 of 28328.
+- Rust side: 11.0s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 5805 | 5801 | 5805 |
-| checks v1 | 2246 | 2245 | 2246 |
-| checks v2 | 2544 | 2543 | 2544 |
-| checks v3 | 3339 | 3335 | 3339 |
-| checks v4 | 5450 | 5446 | 5450 |
-| checks v5 | 5759 | 5752 | 5759 |
+| checks under v5 | 5805 | 5805 | 5805 |
+| checks v1 | 2246 | 2246 | 2246 |
+| checks v2 | 2544 | 2544 | 2544 |
+| checks v3 | 3339 | 3339 | 3339 |
+| checks v4 | 5450 | 5450 | 5450 |
+| checks v5 | 5759 | 5759 | 5759 |
 | checks v99 | 9 | 9 | 9 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
