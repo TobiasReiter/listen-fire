@@ -55,3 +55,20 @@ describe("an address's WHERE read through the hop's alias", () => {
     expect(eventAddressOfHops(aliased)).toBeUndefined();
   });
 });
+
+describe('a callback whose closure takes the parameters the acting side fills', () => {
+  const program = (param: string) =>
+    `function book(name: <text>, day: <date>) {\n  return "\${name} \${day}"\n}\n\nfunction offer() {\n  pick = callback((day: ${param}) => book("Acme", day))\n  return pick.url\n}`;
+
+  it('reads as the closure calling the function, checked as one', () => {
+    expect(errors(program('<date>'), 5)).toEqual([]);
+  });
+
+  it('holds the call to what the parameter is declared as', () => {
+    expect(errors(program('<number>'), 5).join('\n')).toMatch(/MOV_CALL_ARG_TYPE/);
+  });
+
+  it('a closure with no parameters still defers the call with its arguments fixed now', () => {
+    expect(errors('function chase(name: <text>) {\n  return name\n}\n\nfunction offer() {\n  again = callback(() => chase("Acme"))\n  return again.url\n}', 5)).toEqual([]);
+  });
+});

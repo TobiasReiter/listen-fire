@@ -44,3 +44,15 @@ fn an_address_reads_the_event_through_the_hops_alias_from_5() {
     assert_eq!(movement_parser::surface::with_version(4, || event_address_of_hops(bare)), Some(address));
     assert_eq!(movement_parser::surface::with_version(4, || event_address_of_hops(aliased)), None);
 }
+
+#[test]
+fn a_callback_closure_with_parameters_calls_the_function_checked_as_one() {
+    let program = |param: &str| {
+        format!("function book(name: <text>, day: <date>) {{\n  return \"${{name}} ${{day}}\"\n}}\n\nfunction offer() {{\n  pick = callback((day: {param}) => book(\"Acme\", day))\n  return pick.url\n}}")
+    };
+    assert_eq!(errors(&program("<date>"), 5), Vec::<String>::new());
+    let mistyped = errors(&program("<number>"), 5);
+    assert!(mistyped.iter().any(|e| e.starts_with("MOV_CALL_ARG_TYPE")), "{mistyped:?}");
+    let deferred = "function chase(name: <text>) {\n  return name\n}\n\nfunction offer() {\n  again = callback(() => chase(\"Acme\"))\n  return again.url\n}";
+    assert_eq!(errors(deferred, 5), Vec::<String>::new());
+}
