@@ -179,6 +179,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
+import { spellMessage } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -1370,15 +1371,23 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const found = checker.diagnostics.map(withHandbookPointer);
+  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => ({
+    code: f.code,
+    message: f.message,
+    span: f.span,
+    ...(f.fix ? { fix: f.fix } : {}),
+  }));
+  const found = checker.diagnostics
+    .map(withHandbookPointer)
+    .map(d => ({ ...d, message: spellMessage(d.message, languageVersion) }));
   if (!link) {
     return {
-      diagnostics: [...versionDiagnostics, ...found],
+      diagnostics: [...versionDiagnostics, ...spelling, ...found],
       ...(recording ? { recording } : {}),
     };
   }
   return {
-    diagnostics: [...versionDiagnostics, ...link.problems, ...found],
+    diagnostics: [...versionDiagnostics, ...spelling, ...link.problems, ...found],
     link,
     ...(recording ? { recording } : {}),
   };

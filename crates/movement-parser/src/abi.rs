@@ -98,6 +98,43 @@ pub unsafe extern "C" fn parse_expression(
     unsafe { emit(parsed, out_ptr_ptr, out_len_ptr) }
 }
 
+/// A diagnostic's message with every built-in it quotes in the spelling of
+/// `version` (crate::surface::table::spell_message), as a JSON string.
+///
+/// # Safety
+/// As `parse_program`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn spell_message(
+    src_ptr: *const u8,
+    src_len: u32,
+    version: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let spelled = unsafe { utf8(src_ptr, src_len, "message") }
+        .map(|m| serde_json::Value::String(crate::surface::table::spell_message(m, version)));
+    unsafe { emit(spelled, out_ptr_ptr, out_len_ptr) }
+}
+
+/// The spelling table (crate::surface::table::TABLE) as JSON; the input is
+/// ignored.
+///
+/// # Safety
+/// As `parse_program`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn surface_table(
+    _src_ptr: *const u8,
+    _src_len: u32,
+    _version: u32,
+    out_ptr_ptr: *mut usize,
+    out_len_ptr: *mut usize,
+) -> u32 {
+    install_panic_hook();
+    let table = serde_json::to_value(crate::surface::table::TABLE).map_err(|e| json!({ "message": e.to_string() }));
+    unsafe { emit(table, out_ptr_ptr, out_len_ptr) }
+}
+
 /// # Safety
 /// As `parse_program`.
 #[unsafe(no_mangle)]

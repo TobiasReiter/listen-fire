@@ -13,6 +13,7 @@ import type { EdgeSequencing } from '@listen-fire/shared/expression/types';
 
 import { neverAsAny } from '../never';
 import { scanMemberPath } from './scan';
+import type { SpellingFinding } from './surface';
 
 export interface Loc {
   line: number; // 1-based
@@ -141,6 +142,10 @@ export function memberPathBindingName(expr: ExprSlot): string | undefined {
 
 export interface Program {
   statements: Statement[];
+  /** Every old spelling a version 5 program is written in, with its rewrite
+   *  (parser/surface.ts). Absent under versions 1–4 and for a program in the
+   *  v5 surface. */
+  spelling?: SpellingFinding[];
 }
 
 export type Statement =

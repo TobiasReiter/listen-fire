@@ -223,6 +223,9 @@ type Task = Pin<Box<dyn Future<Output = Json>>>;
 pub struct Segment {
     host: Host,
     task: Option<Task>,
+    /// The language version the run's source is written in: every poll reads
+    /// slot text under it (movement_parser::surface).
+    version: u32,
 }
 
 impl Segment {
@@ -234,7 +237,12 @@ impl Segment {
     {
         let host = Host::default();
         let task: Task = Box::pin(task(host.clone()));
-        Segment { host, task: Some(task) }
+        Segment { host, task: Some(task), version: 0 }
+    }
+
+    /// The segment reading its slots under `version`.
+    pub fn written_in(self, version: u32) -> Segment {
+        Segment { version, ..self }
     }
 
     pub fn start(&mut self) -> Result<Step, ProtocolError> {
@@ -250,6 +258,11 @@ impl Segment {
     }
 
     fn poll(&mut self) -> Result<Step, ProtocolError> {
+        let version = self.version;
+        movement_parser::surface::with_version(version, || self.poll_here())
+    }
+
+    fn poll_here(&mut self) -> Result<Step, ProtocolError> {
         let Some(task) = self.task.as_mut() else {
             return Err(ProtocolError("the segment has already finished".into()));
         };

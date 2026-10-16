@@ -236,3 +236,12 @@ fn declarations_conditions_and_errors() {
     // Under 4 nothing is refused, and the old surface parses as before.
     assert!(program("movement f() {\n  if x {\n    ERROR(\"no\")\n  }\n}\n", 4).spelling.is_empty());
 }
+
+#[test]
+fn until_takes_its_cadence_as_a_setting() {
+    let new = "function f(a: <number>) {\n  await until(a > 1, { every: 1h })\n}\n";
+    let old = "movement f(a: <number>) {\n  await until(a > 1, every: 1h)\n}\n";
+    assert!(program(new, 5).spelling.is_empty());
+    assert_eq!(serde_json::to_value(&program(new, 5).statements).unwrap().pointer("/0/body/0/await/source/every/raw"), Some(&serde_json::json!("1h")));
+    assert_eq!(spelling(old)[1].1, "{ every: 1h }");
+}

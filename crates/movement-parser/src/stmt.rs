@@ -2823,6 +2823,12 @@ impl Parser {
                     self.pos += 1;
                     self.skip_all_ws();
                     let arg_start = self.pos;
+                    // From version 5 the cadence is a setting: `{ every: 1h }`.
+                    let settings = since(self.version, 5) && self.is('{');
+                    if settings {
+                        self.pos += 1;
+                        self.skip_all_ws();
+                    }
                     if !self.at_word("every") {
                         return self.fail_at(UNTIL_CADENCE_IS_NAMED, arg_start);
                     }
@@ -2832,6 +2838,20 @@ impl Parser {
                     self.skip_inline_ws();
                     every = Some(self.parse_duration()?);
                     self.skip_all_ws();
+                    if settings {
+                        self.expect("}", "to close 'await until(<condition>, { every: <duration> })'")?;
+                        self.skip_all_ws();
+                    } else if since(self.version, 5) {
+                        let end = self.pos;
+                        let written = self.text(arg_start, end).trim_end().to_string();
+                        let written_end = arg_start + crate::util::form::utf16_len(&written);
+                        self.spelling(
+                            "from language version 5 `until`'s cadence is a setting: `{ every: … }`",
+                            arg_start,
+                            written_end,
+                            vec![(arg_start, written_end, format!("{{ {written} }}"))],
+                        );
+                    }
                 }
                 self.expect(")", "to close 'await until(<condition>, every: <duration>)'")?;
                 return Ok(AwaitExpression {

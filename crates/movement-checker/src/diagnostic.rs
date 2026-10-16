@@ -36,3 +36,20 @@ impl Diagnostic {
         self.severity.is_none()
     }
 }
+
+/// An old spelling under language version 5 (`Program.spelling`): refused,
+/// its rewrite as the fix.
+pub fn of_spelling(finding: &movement_parser::surface::SpellingFinding) -> Diagnostic {
+    Diagnostic {
+        fix: finding.fix.as_ref().map(|f| serde_json::to_value(f).expect("a fix is JSON")),
+        ..Diagnostic::error(&finding.code, finding.message.clone(), finding.span)
+    }
+}
+
+/// The diagnostic's message naming built-ins as the program's own version
+/// spells them (`UPPER` under 4, `Text.upper` under 5): the one place the
+/// spelling table reaches every message.
+pub fn in_spelling_of(mut d: Diagnostic, version: u32) -> Diagnostic {
+    d.message = movement_parser::surface::table::spell_message(&d.message, version);
+    d
+}

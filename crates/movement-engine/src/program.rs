@@ -240,7 +240,7 @@ impl Checked {
         if let Some(index) = parked.iter().position(|file| file.tree == tree && file.stamps == stamps) {
             return DeclaringFile::Parked(index);
         }
-        parked.push(std::rc::Rc::new(File { program: ast::Program { statements: Vec::new() }, tree, stamps, version: self.root.version }));
+        parked.push(std::rc::Rc::new(File { program: ast::Program { statements: Vec::new(), spelling: Vec::new() }, tree, stamps, version: self.root.version }));
         DeclaringFile::Parked(parked.len() - 1)
     }
 

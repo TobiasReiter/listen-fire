@@ -45,6 +45,13 @@ pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: Chec
 /// `check_program`, and the walk it made: what it settled on nodes and the
 /// link it resolved imports through (crate::answer).
 pub(crate) fn run_check<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: CheckOptions<'c>) -> (Vec<Diagnostic>, checker::Checker<'c>) {
+    // Every slot is re-read under the version its source is written in
+    // (movement_parser::surface).
+    let written_in = options.parse_version.unwrap_or(options.language_version);
+    movement_parser::surface::with_version(written_in, || run_check_here(program, catalog, options))
+}
+
+fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: CheckOptions<'c>) -> (Vec<Diagnostic>, checker::Checker<'c>) {
     let resolves_files = catalog.files.is_some();
     let mut link = resolves_files.then(|| families::imports::link_imports(program, catalog, options.language_version));
     let problems = link.as_mut().map(|l| std::mem::take(&mut l.problems)).unwrap_or_default();
@@ -53,8 +60,14 @@ pub(crate) fn run_check<'c>(program: &Program, catalog: &'c CatalogSnapshot, opt
     checker.run(&program.statements);
     let diagnostics = version::standing_diagnostic(options.language_version)
         .into_iter()
+        .chain(program.spelling.iter().map(diagnostic::of_spelling))
         .chain(problems)
-        .chain(std::mem::take(&mut checker.diagnostics).into_iter().map(version::with_handbook_pointer))
+        .chain(
+            std::mem::take(&mut checker.diagnostics)
+                .into_iter()
+                .map(version::with_handbook_pointer)
+                .map(|d| diagnostic::in_spelling_of(d, options.language_version)),
+        )
         .collect();
     (diagnostics, checker)
 }

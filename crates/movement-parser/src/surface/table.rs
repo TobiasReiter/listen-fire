@@ -196,42 +196,49 @@ pub fn spell(canonical: &str, version: u32) -> String {
     canonical.to_string()
 }
 
-/// Rewrites every built-in name a message quotes in backticks into the
-/// program's spelling: the one place both checkers route a message through,
-/// so a message's wording never carries its own copy of a spelling.
+/// Rewrites every built-in a message names (`UPPER`, `UPPER(text)`,
+/// `DATE.TODAY`: a word in capitals the table holds) into the program's
+/// spelling: the one place both checkers route a message through, so a
+/// message's wording never carries its own copy of a spelling.
 pub fn spell_message(message: &str, version: u32) -> String {
-    if !crate::version::since(version, 5) || !message.contains('`') {
+    if !crate::version::since(version, 5) {
         return message.to_string();
     }
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(open) = rest.find('`') {
-        out.push_str(&rest[..=open]);
-        rest = &rest[open + 1..];
-        let Some(close) = rest.find('`') else {
-            out.push_str(rest);
-            return out;
-        };
-        let quoted = &rest[..close];
-        out.push_str(&quoted_spelling(quoted, version));
-        out.push('`');
-        rest = &rest[close + 1..];
+    let mut chars = message.char_indices().peekable();
+    let mut previous: Option<char> = None;
+    while let Some((i, c)) = chars.next() {
+        let starts_word = c.is_ascii_uppercase() && !previous.is_some_and(|p| is_word(p) || p == '.');
+        if !starts_word {
+            out.push(c);
+            previous = Some(c);
+            continue;
+        }
+        let mut end = i + c.len_utf8();
+        while let Some(&(j, d)) = chars.peek() {
+            if d.is_ascii_uppercase() || d.is_ascii_digit() || d == '_' || d == '.' {
+                end = j + d.len_utf8();
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        let next_is_word = chars.peek().is_some_and(|&(_, d)| is_word(d));
+        let mut word = &message[i..end];
+        let mut trailing = "";
+        if let Some(stripped) = word.strip_suffix('.') {
+            word = stripped;
+            trailing = ".";
+        }
+        match by_canonical(word) {
+            Some(s) if !next_is_word && s.canonical == word && !s.old_only && !s.new_only => out.push_str(s.v5),
+            _ => out.push_str(word),
+        }
+        out.push_str(trailing);
+        previous = message[..end].chars().last();
     }
-    out.push_str(rest);
     out
-}
-
-/// A quoted built-in name, or a quoted call of one (`UPPER(x)`), respelled.
-fn quoted_spelling(quoted: &str, version: u32) -> String {
-    let head_end = quoted.find('(').unwrap_or(quoted.len());
-    let head = &quoted[..head_end];
-    let is_builtin_word = !head.is_empty()
-        && head.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c == '.')
-        && by_canonical(head).is_some_and(|s| !s.old_only && s.shape != Shape::NullTest);
-    if is_builtin_word {
-        return format!("{}{}", spell(head, version), &quoted[head_end..]);
-    }
-    quoted.to_string()
 }
 
 /// The table as the TypeScript reads it (`surface_table` across the WASM).
@@ -283,5 +290,7 @@ mod tests {
         assert_eq!(spell_message("`UPPER(x)` expects text; `MAP` too", 5), "`Text.upper(x)` expects text; `map` too");
         assert_eq!(spell_message("`UPPER(x)` expects text", 4), "`UPPER(x)` expects text");
         assert_eq!(spell_message("`Name` is not `AT`", 5), "`Name` is not `AT`");
+        assert_eq!(spell_message("UPPER's 'text' takes text — UPPER(text)", 5), "Text.upper's 'text' takes text — Text.upper(text)");
+        assert_eq!(spell_message("DATE.TODAY needs a zone. MAPPED UPPERCASE COUNT.", 5), "Date.today needs a zone. MAPPED UPPERCASE count.");
     }
 }

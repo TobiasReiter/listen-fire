@@ -22,6 +22,19 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Language version 5, Dancing Wren: what breaks
 
+- **The everyday spelling outside walk brackets** (`MOV_V5_SPELLING`, with the exact rewrite as
+  the diagnostic's fix; the design is `plans/naming-rethink-2026-10-14/5_design.md`). Why: code
+  that runs step by step reads like TypeScript, and a walk's brackets read like a query. Core words
+  are lower case (`map filter reduce count first only exists coalesce sort members ai fail`);
+  the other built-ins live in namespaces (`UPPER(t)` is `Text.upper(t)`, `DATE.TODAY(z)` is
+  `Date.today(z)`, `SUM(xs)` is `List.sum(xs)`); `&& || ! c ? a : b true false null` replace
+  `AND OR NOT IF … END TRUE FALSE NULL`; `ISNULL(x)` is `x == null`, `EXISTS(value)` is
+  `value != null`, `AT(xs, i)` is `xs[i]`; settings go last (`map(xs, f, { concurrency: 2 })`,
+  `ai(p, { tier: "careful" })`, `await until(c, { every: 1h })`); `ERROR` is `fail`;
+  `movement` is `function`; an `if` condition is parenthesised; an adapter is set up with
+  `crm = connect attio using acme { dryRun: true }` and imported by its package tag
+  (`` import { `@lf/attio` as attio } from adapters ``). Inside walk brackets nothing changes.
+  Messages name built-ins in the program's own version's spelling.
 - **`write … bind` is retired** (`MOV_WRITE_BIND_RETIRED`). Why: the engine kept the
   correspondence in a store no system holds. Store the link in the system that holds it: a field
   the next write finds the record by (`unique by`), or an edge there.
