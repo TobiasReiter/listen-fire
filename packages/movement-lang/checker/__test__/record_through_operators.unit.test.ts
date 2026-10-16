@@ -24,6 +24,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
+import { spelledFor } from './surface_spelling';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
@@ -101,7 +102,7 @@ const HELD = ['  org = write crm-[:companies]-> { name: "Acme Inc." }', '  f = F
 const program = (body: string[]): string => `${PRELUDE}\nmovement m() {\n${[...HELD, ...body].join('\n')}\n}`;
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 
@@ -570,7 +571,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
   const SHAPED = 'node Held {\n  k: <text | null>\n}\n';
   const errorsOf = (body: string[], shaped = false): Diagnostic[] => {
     const source = shaped ? program(body).replace('movement m()', `${SHAPED}movement m()`) : program(body);
-    return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   };
@@ -627,7 +628,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
   // a record in an operator's arm would be stored as a field when the graph is
   // built. Refused on B3's terms, with the path.
   const errorsOf = (body: string[]): Diagnostic[] =>
-    checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   const refusedAs = (body: string[], said: string): void => {
@@ -637,11 +638,11 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
   };
 
   it('a record in one arm of a COALESCE', () => {
-    refusedAs(['  g = graph { a: COALESCE(org, "x") }'], `'a' is a field, and 'COALESCE(org, "x")' may be `);
+    refusedAs(['  g = graph { a: COALESCE(org, "x") }'], `'a' is a field, and '${version >= 5 ? 'coalesce' : 'COALESCE'}(org, "x")' may be `);
   });
 
   it('a record in one arm of an IF', () => {
-    refusedAs(['  g = graph { a: IF 1 > 0 THEN org ELSE "x" END }'], `'IF 1 > 0 THEN org ELSE "x" END' may be `);
+    refusedAs(['  g = graph { a: IF 1 > 0 THEN org ELSE "x" END }'], `'${version >= 5 ? '1 > 0 ? org : "x"' : 'IF 1 > 0 THEN org ELSE "x" END'}' may be `);
   });
 
   it('a record deep in an arm, with the path', () => {
@@ -656,7 +657,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B3: under language version %i, 
 
   it('a connection (an adapter instance) is no field: bare, or in an arm', () => {
     refusedAs(['  g = graph { a: crm }'], `'a' is a field, and 'crm' is 'crm' (the instance itself) — a connection, not a value a field holds`);
-    refusedAs(['  g = graph { a: COALESCE(crm, "x") }'], `'COALESCE(crm, "x")' may be `);
+    refusedAs(['  g = graph { a: COALESCE(crm, "x") }'], `'${version >= 5 ? 'coalesce' : 'COALESCE'}(crm, "x")' may be `);
     refusedAs(['  g = graph { a: COALESCE(crm, "x") }'], 'a connection, not a value a field holds');
   });
 
@@ -680,7 +681,12 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B5: under language version %i, 
   });
 
   it('a field of it is taken', () => {
-    expect(errorsUnder(version, ['  s = tag(label: { a: org.name })'])).toEqual([]);
+    // A map is no text: version 5 refuses it as a union that may be a record
+    // (TypeScript's `{a: string}` is no `string`); before it, the record
+    // handle inside was the only thing refused, and a field is no handle.
+    const refused = errorsUnder(version, ['  s = tag(label: { a: org.name })']).map(d => d.code);
+    expect(refused).toEqual(version >= 5 ? ['MOV_CALL_ARG_MAYBE_RECORD'] : []);
+    expect(errorsUnder(version, ['  s = tag(label: org.name)'])).toEqual([]);
   });
 });
 
@@ -705,7 +711,7 @@ const PICK = [
 
 const errorsWithFunctions = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\n${PICK}\nmovement m() {\n${[...HELD, ...body].join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 };
@@ -858,7 +864,7 @@ describe.each([...SUPPORTED_LANGUAGE_VERSIONS])('B14 review: under language vers
   ].join('\n');
   const withTwo = (body: string[]): Diagnostic[] => {
     const source = `${PRELUDE}\n${TWO}\nmovement m() {\n${[...HELD, ...two, ...body].join('\n')}\n}`;
-    return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+    return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
       d => (d.severity ?? 'error') === 'error',
     );
   };

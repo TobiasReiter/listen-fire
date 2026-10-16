@@ -8,6 +8,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: { company: { properties: { name: 'text' }, edges: {} } },
@@ -44,7 +45,7 @@ const prelude = (version: LanguageVersion): string =>
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${prelude(version)}\nmovement m() {\n${body.join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 };
@@ -82,7 +83,7 @@ describe('a credential read as a value', () => {
 
     it('a type written against it is refused', () => {
       const source = `${prelude(version)}\nmovement m(c: <acme-[:company]->>) {\n  x = 1\n}`;
-      const errors = checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version })
+      const errors = checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version })
         .filter(d => (d.severity ?? 'error') === 'error')
         .map(d => d.code);
       expect(errors).toContain(REFUSED);
@@ -92,7 +93,7 @@ describe('a credential read as a value', () => {
       ['listened to', 'listen to acme fire m', 'MOV_LISTEN_NOT_INSTANCE'],
     ])('%s, it is refused by the listen rule', (_label, line, code) => {
       const source = `${prelude(version)}\nmovement m() {\n  x = 1\n}\n${line}`;
-      const errors = checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version })
+      const errors = checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version })
         .filter(d => (d.severity ?? 'error') === 'error')
         .map(d => d.code);
       expect(errors).toContain(code);
@@ -115,6 +116,6 @@ describe('a credential read as a value', () => {
 
   it('says where a credential IS named', () => {
     const [refusal] = errorsUnder(5, ['  x = acme']).filter(d => d.code === REFUSED);
-    expect(refusal?.message).toContain("'credentials:' argument");
+    expect(refusal?.message).toContain("named after 'using' where an adapter is connected");
   });
 });

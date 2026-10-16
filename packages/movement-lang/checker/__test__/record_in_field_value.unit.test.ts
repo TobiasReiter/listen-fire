@@ -13,6 +13,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { combinatorsSpelledFor } from './combinator_spelling';
+import { spelledFor } from './surface_spelling';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
 import { fieldAssignable, fieldTypeCompatible, handleWithin, spellHeldSteps } from '../typing';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
@@ -84,7 +85,7 @@ const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
  *  combinators (`all(…)` / `race(…)`, the arms as arguments, no `await`),
  *  which must answer the same. */
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkUnder(version, combinatorsSpelledFor(version, program(body), source => checkUnder(version, source)));
+  checkUnder(version, combinatorsSpelledFor(version, spelledFor(version, program(body), catalog), source => checkUnder(version, source)));
 
 const note = (company: string): string[] => [`  write crm-[:notes]-> { title: "hello", company: ${company} }`];
 

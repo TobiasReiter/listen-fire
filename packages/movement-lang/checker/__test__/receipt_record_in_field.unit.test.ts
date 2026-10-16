@@ -14,6 +14,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { combinatorsSpelledFor } from './combinator_spelling';
+import { spelledFor } from './surface_spelling';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
 
@@ -82,7 +83,7 @@ const checkUnder = (version: LanguageVersion, source: string): Diagnostic[] =>
  * must answer what the version-4 receipt did.
  */
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkUnder(version, rewrittenUnder(version, `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`));
+  checkUnder(version, rewrittenUnder(version, spelledFor(version, `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`, catalog)));
 
 function rewrittenUnder(version: LanguageVersion, written: string): string {
   return combinatorsSpelledFor(version, written, source => checkUnder(version, source));
@@ -154,7 +155,7 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, a r
       const errors = errorsUnder(version, [...arms, '  g = graph { a: r }']);
       expect(errors.map(d => d.code)).toEqual(['MOV_GRAPH_ENTRY_RECORD']);
       expect(errors[0]!.message).toContain("'r[0]' is a crm.company handle");
-      expect(errors[0]!.message).toContain("'a: AT(r, 0)'");
+      expect(errors[0]!.message).toContain(version >= 5 ? "'a: r[0]'" : "'a: AT(r, 0)'");
       expect(errors[0]!.message).not.toContain("'a: r'");
     });
 
@@ -262,13 +263,13 @@ describe.each([1, 3, 4, 5] as LanguageVersion[])('under language version %i, an 
   const extract = (input: string): string[] => [`  d = extract from [${input}] {`, '    a: "the thing"', '  }'];
   const source = (body: string[]): Diagnostic[] => {
     const withFound = `${PRELUDE}\nfunction found() {\n  c = ONLY(crm-[:companies]->)\n  return c\n}\nmovement m() {\n${body.join('\n')}\n}`;
-    return checkUnder(version, rewrittenUnder(version, withFound));
+    return checkUnder(version, rewrittenUnder(version, spelledFor(version, withFound, catalog)));
   };
 
   it('a found record in a slot is refused as an input', () => {
     const errors = source([...FOUND, ...extract('{ k: AT(r, 0) }')]);
     expect(errors.map(d => d.code)).toEqual(['MOV_EXTRACT_CONTENT']);
-    expect(errors[0]!.message).toContain("'{ k: AT(r, 0) }' holds crm.company");
+    expect(errors[0]!.message).toContain(version >= 5 ? "'{ k: r[0] }' holds crm.company" : "'{ k: AT(r, 0) }' holds crm.company");
   });
 
   it('a written record in a slot is an input, as the direct form is', () => {

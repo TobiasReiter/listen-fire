@@ -452,6 +452,25 @@ const checkUnder = (languageVersion: number, source: string): Diagnostic[] =>
 const PRELUDE = [
   'import { email, attio, slack, affinity, dropbox, messaging, kg } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace, acme_affinity, team_drive, team_chat, native_knowledge } from credentials',
+  'import { scrubSensitive as scrub_sensitive, vcUrlRetrieval as vc_url_retrieval } from plugins',
+  '',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
+  'team  = connect slack using acme_workspace',
+  'aff   = connect affinity using acme_affinity',
+  'drive = connect dropbox using team_drive',
+  'chan  = connect messaging using team_chat',
+  'graph = connect kg using native_knowledge',
+].join('\n');
+
+const inMovement = (body: string) =>
+  `${PRELUDE}\nfunction main(msg: <inbox-[:message]->>) {\n${body}\n}`;
+
+// Language versions 1–4 read the original spelling; a test about one of them
+// pins its version and keeps this text.
+const PRELUDE_V4 = [
+  'import { email, attio, slack, affinity, dropbox, messaging, kg } from adapters',
+  'import { dealflow_inbox, acme_main, acme_workspace, acme_affinity, team_drive, team_chat, native_knowledge } from credentials',
   'import { scrub_sensitive, vc_url_retrieval } from plugins',
   '',
   'inbox = email(credentials: dealflow_inbox)',
@@ -463,8 +482,8 @@ const PRELUDE = [
   'graph = kg(credentials: native_knowledge)',
 ].join('\n');
 
-const inMovement = (body: string) =>
-  `${PRELUDE}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`;
+const inMovementV4 = (body: string) =>
+  `${PRELUDE_V4}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
 describe('fieldAssignable (width-subtype of one field)', () => {
   const folderEnum: SchemaFieldType = { kind: 'enum', options: ['Sales', 'Eng'] };
@@ -559,10 +578,10 @@ describe('hop capability gating', () => {
     'import { cap } from adapters',
     'import { cap_cred } from credentials',
     '',
-    'c = cap(credentials: cap_cred)',
+    'c = connect cap using cap_cred',
   ].join('\n');
   const capCodes = (body: string): string[] =>
-    checkProgram(parseProgram(`${capPrelude}\nmovement main(msg: <c-[:company]->>) {\n${body}\n}`), capCatalog)
+    checkProgram(parseProgram(`${capPrelude}\nfunction main(msg: <c-[:company]->>) {\n${body}\n}`), capCatalog)
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => d.code);
   // A collection block: head traversal + a trivial body referencing the alias.
@@ -651,7 +670,7 @@ describe('hop capability gating', () => {
     // server-side `lte` field), so the WHERE checks clean. Mirrors the
     // UnsnoozeActions case (`\`Snoozed Until\` <= c`).
     const codes = capCodes(
-      ['  cutoff = @current_date', coll('c-[x:companies WHERE `Created` <= cutoff]->')].join('\n'),
+      ['  cutoff = @current_date', coll('c-[x:companies WHERE x.`Created` <= cutoff]->')].join('\n'),
     );
     expect(codes).not.toContain('MOV_HOP_FILTER_UNSUPPORTED');
     expect(codes).toHaveLength(0);
@@ -669,7 +688,7 @@ describe('hop capability gating', () => {
   // a refusal.
   const capDiags = (body: string): Diagnostic[] =>
     checkProgram(
-      parseProgram(`${capPrelude}\nmovement main(msg: <c-[:company]->>) {\n${body}\n}`),
+      parseProgram(`${capPrelude}\nfunction main(msg: <c-[:company]->>) {\n${body}\n}`),
       capCatalog,
     );
 
@@ -772,13 +791,13 @@ describe('comparison category type-check (MOV_COMPARE_TYPE_MISMATCH)', () => {
     'import { cmp } from adapters',
     'import { cmp_cred } from credentials',
     '',
-    'c = cmp(credentials: cmp_cred)',
+    'c = connect cmp using cmp_cred',
   ].join('\n');
   const cmpDiags = (where: string): Diagnostic[] =>
     checkProgram(
       parseProgram(
-        `${cmpPrelude}\nmovement main(msg: <c-[:company]->>) {\n` +
-          `  blk = c-[x:companies WHERE ${where}]-> {\n` +
+        `${cmpPrelude}\nfunction main(msg: <c-[:company]->>) {\n` +
+          `  blk = c-[x:companies WHERE x.${where}]-> {\n` +
           '    write c-[:companies]-> { unique by (`Name`) Name: x.`Name` }\n' +
           '  }\n}',
       ),
@@ -795,7 +814,7 @@ describe('comparison category type-check (MOV_COMPARE_TYPE_MISMATCH)', () => {
     expect(diag).toBeDefined();
     expect(diag!.message).toContain('date');
     expect(diag!.message).toContain('number');
-    expect(diag!.message).toMatch(/DATE\(|DATETIME\(|NUMBER\(/);
+    expect(diag!.message).toMatch(/Date\.from\(|DateTime\.from\(|Number\.parse\(/);
   });
 
   it('a number field vs a text literal flags a mismatch (equality uses the same rule)', () => {
@@ -901,7 +920,7 @@ describe('enum-literal membership (MOV_ENUM_UNKNOWN_VALUE)', () => {
     'c = ce(credentials: ce_cred)',
   ].join('\n');
   const enumDiags = (body: string): Diagnostic[] =>
-    checkProgram(parseProgram(`${enumPrelude}\nmovement main(msg: <c-[:ticket]->>) {\n${body}\n}`), enumCatalog)
+    checkProgram(parseProgram(`${enumPrelude}\nfunction main(msg: <c-[:ticket]->>) {\n${body}\n}`), enumCatalog)
       .filter(d => (d.severity ?? 'error') === 'error');
   const enumCodes = (body: string): string[] => enumDiags(body).map(d => d.code);
   // A hop WHERE block (compare site).
@@ -1003,7 +1022,7 @@ describe('empty enum domain (MOV_ENUM_EMPTY_DOMAIN)', () => {
           'import { ee_cred } from credentials',
           '',
           'c = ee(credentials: ee_cred)',
-          'movement main(msg: <c-[:badge]->>) {',
+          'function main(msg: <c-[:badge]->>) {',
           body,
           '}',
         ].join('\n'),
@@ -1077,7 +1096,7 @@ describe('empty enum domain (MOV_ENUM_EMPTY_DOMAIN)', () => {
           'import { ee_cred } from credentials',
           '',
           'c = ee(credentials: ee_cred)',
-          'movement main(msg: <c-[:badge]->>) {',
+          'function main(msg: <c-[:badge]->>) {',
           '  write c-[:badges]-> { Label: "l", Tier: "Gold" }',
           '}',
         ].join('\n'),
@@ -1116,13 +1135,13 @@ describe('meta key typing', () => {
     'import { cmp } from adapters',
     'import { cmp_cred } from credentials',
     '',
-    'c = cmp(credentials: cmp_cred)',
+    'c = connect cmp using cmp_cred',
   ].join('\n');
   const cmpCodes = (where: string): string[] =>
     checkProgram(
       parseProgram(
-        `${cmpPrelude}\nmovement main(msg: <c-[:company]->>) {\n` +
-          `  blk = c-[x:companies WHERE ${where}]-> {\n` +
+        `${cmpPrelude}\nfunction main(msg: <c-[:company]->>) {\n` +
+          `  blk = c-[x:companies WHERE x.${where}]-> {\n` +
           '    write c-[:companies]-> { unique by (`Name`) Name: x.`Name` }\n' +
           '  }\n}',
       ),
@@ -1180,11 +1199,11 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         '  Prefer the legal entity name over the brand name;',
         "  ignore the sender's own firm.\"",
         '',
-        'movement dealflow_intake(msg: <inbox-[:message]->>) {',
+        'function dealflow_intake(msg: <inbox-[:message]->>) {',
         '',
         '  company = write crm-[:companies]-> {',
         '    unique by (`domains`)',
-        '    name:    AI(company_prompt)',
+        '    name:    ai(company_prompt)',
         '    domains: [msg-[:sender]->.`domain`]',
         '  }',
         '',
@@ -1212,13 +1231,13 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
       [
         PRELUDE,
         '',
-        'movement log_dealflow(msg: <inbox-[:message]->>) {',
+        'function log_dealflow(msg: <inbox-[:message]->>) {',
         '',
         '  deals = extract from [msg.`text`, msg-[:files]->.`data`] {',
         '    node company: "each company seeking investment in this message" {',
         '      name: "the company\'s name"',
         '      urls: "URLs in the message associated with this company"',
-        '    } through [vc_url_retrieval(urls: urls)] {',
+        '    } through [vc_url_retrieval({ urls: urls })] {',
         '      name: "the company\'s name"',
         '',
         '      node round: "the funding round this company is raising" {',
@@ -1239,13 +1258,13 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         '',
         '    c-[r:round]-> {',
         '      fr = write co-[:rounds]-> {',
-        '        unique by (co AND `stage`)',
+        '        unique by (co && `stage`)',
         '        stage: r.`stage`',
         '      }',
         '',
         '      r-[i:investor]-> {',
         '        write fr-[:participants]-> {',
-        '          unique by (fr AND `investor_name`)',
+        '          unique by (fr && `investor_name`)',
         '          investor_name: i.`name`',
         '          lead ?:        i.`lead`',
         '        }',
@@ -1262,7 +1281,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
       [
         PRELUDE,
         '',
-        'movement nightly_mirror(root: <crm>) {',
+        'function nightly_mirror(root: <crm>) {',
         '',
         '  root-[c:companies]-> {',
         '    write graph-[:companies]-> { unique by (`domains`), name: c.`Name`, domains: c.`Domains` }',
@@ -1275,7 +1294,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         // FIRST can come up empty (a deal with no company, a company with no
         // domain), so the field is a `?:` fill — the write omits it rather than
         // silently landing a null.
-        '      company ?: ONLY(d-[:Company]->.`Domains`)',
+        '      company ?: only(d-[:Company]->.`Domains`)',
         '    }',
         '  }',
         '}',
@@ -1288,10 +1307,10 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
       [
         PRELUDE,
         '',
-        'movement attio_to_kg(rec: <crm-[:record]->>) {',
-        '  if rec IS <crm-[:company]->> {',
+        'function attio_to_kg(rec: <crm-[:record]->>) {',
+        '  if (rec is <crm-[:company]->>) {',
         '    write graph-[:companies]-> { unique by (`domains`), name: rec.`Name`, domains: rec.`Domains` }',
-        '  } else if rec IS <crm-[:person]->> AND EXISTS(rec-[:Company]->) {',
+        '  } else if (rec is <crm-[:person]->> && exists(rec-[:Company]->)) {',
         '    write graph-[:people]-> { name: rec.`Name`, company: rec-[:Company]->.`Name` }',
         '  }',
         '}',
@@ -1327,7 +1346,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
           '',
           '  write team-[:messages]-> {',
           '    channel: "#deals"',
-          '    text: "Logged ${COUNT(mentioned-[:company]->)} companies. Urls: ${orgs.`url`}"',
+          '    text: "Logged ${count(mentioned-[:company]->)} companies. Urls: ${orgs.`url`}"',
           '  }',
         ].join('\n'),
       ),
@@ -1348,7 +1367,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
           '    }',
           '  }',
           '',
-          '  deck-[file:_resources WHERE `contentType` == "application/pdf"]-> {',
+          '  deck-[file:_resources WHERE file.`contentType` == "application/pdf"]-> {',
           '    write drive-[:files]-> {',
           '      name: file.`name`',
           '      data: file.`file`',
@@ -1377,18 +1396,18 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
         '  }',
         '}',
         '',
-        'movement files_to_dropbox(f: <Files>) {',
+        'function files_to_dropbox(f: <Files>) {',
         '  write drive-[:files]-> {',
         '    name: f.`name`',
         '    data: f.`data`',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  d = node { name: "Series A", amount: 5000000, participants: node { name: "Acme Ventures" } }',
         '',
         '  msg-[f:files]-> {',
-        '    files_to_dropbox(f: node { name: f.`filename`, data: f.`data` })',
+        '    files_to_dropbox(node { name: f.`filename`, data: f.`data` })',
         '  }',
         '}',
       ].join('\n'),
@@ -1399,12 +1418,12 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
     expectClean(
       [
         PRELUDE,
-        'movement sync(co: <crm-[:company]->>) {',
+        'function sync(co: <crm-[:company]->>) {',
         '  …',
         '}',
-        'movement main(msg: <inbox-[:message]->>) {',
+        'function main(msg: <inbox-[:message]->>) {',
         '  company = write crm-[:companies]-> { name: msg.`subject` }',
-        '  sync(co: company)',
+        '  sync(company)',
         '}',
       ].join('\n'),
     );
@@ -1467,7 +1486,7 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
   it('_resources positions are untyped — reads through them stay silent (versions 1–4)', () => {
     expect(checkUnder(
       4,
-      inMovement(
+      inMovementV4(
         [
           '  msg-[f:_resources]-> {',
           '    write drive-[:files]-> { name: f.`anything_at_all`, data: f.`whatever` }',
@@ -1480,15 +1499,15 @@ describe('worked examples under full schemas (zero diagnostics)', () => {
 
 // ── Position & property existence (strict where the schema is known) ──
 
-// Unified on-demand source: `web()` folded into `manual()` (the merge in
+// Unified on-demand source: `web()` folded into `connect manual` (the merge in
 // services/translation_graph/adapters/manual). The fixture binds the manual
 // source's positions.
 const WEB_PRELUDE = [
   'import { manual, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'input = manual()',
-  'crm   = attio(credentials: acme_main)',
+  'input = connect manual',
+  'crm   = connect attio using acme_main',
 ].join('\n');
 
 describe('position existence (MOV_UNKNOWN_POSITION)', () => {
@@ -1496,7 +1515,7 @@ describe('position existence (MOV_UNKNOWN_POSITION)', () => {
     const diagnostics = check(
       [
         WEB_PRELUDE,
-        'movement SyncToAttio(item: <input-[:message]->>) {',
+        'function SyncToAttio(item: <input-[:message]->>) {',
         '  write crm-[:companies]-> { name: item.`text` }',
         '}',
       ].join('\n'),
@@ -1512,7 +1531,7 @@ describe('position existence (MOV_UNKNOWN_POSITION)', () => {
     expectClean(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
+        'function main(rec: <crm-[:record]->>) {',
         '  write graph-[:companies]-> { name: rec.`Name` }',
         '}',
       ].join('\n'),
@@ -1526,10 +1545,10 @@ describe('position existence (MOV_UNKNOWN_POSITION)', () => {
       codes(
         [
           PRELUDE,
-          'movement outer(msg: <inbox-[:message]->>) {',
+          'function outer(msg: <inbox-[:message]->>) {',
           '  …',
           '}',
-          'movement inner(x: <crm-[:organisation]->>) {',
+          'function inner(x: <crm-[:organisation]->>) {',
           '  …',
           '}',
         ].join('\n'),
@@ -1541,8 +1560,8 @@ describe('position existence (MOV_UNKNOWN_POSITION)', () => {
     const diagnostics = check(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
-        '  if rec IS <crm-[:organisation]->> {',
+        'function main(rec: <crm-[:record]->>) {',
+        '  if (rec is <crm-[:organisation]->>) {',
         '    write graph-[:companies]-> { name: rec.`Name` }',
         '  }',
         '}',
@@ -1561,7 +1580,7 @@ describe('position existence (MOV_UNKNOWN_POSITION)', () => {
         'node Deal {',
         '  name: <text>',
         '}',
-        'movement main(d: <Deal-[:item]->>) {',
+        'function main(d: <Deal-[:item]->>) {',
         '  …',
         '}',
       ].join('\n'),
@@ -1576,7 +1595,7 @@ describe('property existence (MOV_UNKNOWN_PROPERTY)', () => {
     const diagnostics = check(
       [
         WEB_PRELUDE,
-        'movement SyncToAttio(item: <input-[:event]->>) {',
+        'function SyncToAttio(item: <input-[:event]->>) {',
         '  write crm-[:companies]-> { name: item.`text` }',
         '}',
       ].join('\n'),
@@ -1590,7 +1609,7 @@ describe('property existence (MOV_UNKNOWN_PROPERTY)', () => {
     expectClean(
       [
         WEB_PRELUDE,
-        'movement SyncToAttio(item: <input-[:event]->>) {',
+        'function SyncToAttio(item: <input-[:event]->>) {',
         '  write crm-[:companies]-> { name: item-[:body]->.`whatever_the_sender_posted` }',
         '}',
       ].join('\n'),
@@ -1601,7 +1620,7 @@ describe('property existence (MOV_UNKNOWN_PROPERTY)', () => {
     const diagnostics = check(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
+        'function main(rec: <crm-[:record]->>) {',
         '  write graph-[:companies]-> { name: rec.`Ghost` }',
         '}',
       ].join('\n'),
@@ -1718,19 +1737,19 @@ describe('position writes (`write a { … }`)', () => {
 describe('bound writes (`write … bind other { … }`), under Luminous Owl (4)', () => {
   it('a create bound to a traversed source record checks clean', () => {
     expect(checkUnder(4,
-      inMovement('  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }'),
+      inMovementV4('  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }'),
     )).toEqual([]);
   });
 
   it('MOV_WRITE_BIND_NOT_RECORD when the bind target is not a record position', () => {
     // `crm` resolves to the instance meta position — not a single record.
-    const diagnostics = checkUnder(4, inMovement('  write graph-[:companies]-> bind crm { name: "x" }'));
+    const diagnostics = checkUnder(4, inMovementV4('  write graph-[:companies]-> bind crm { name: "x" }'));
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_BIND_NOT_RECORD]);
   });
 
   it('MOV_WRITE_BIND_UNIQUE rejects `unique by` together with `bind`', () => {
     const diagnostics = checkUnder(4,
-      inMovement(
+      inMovementV4(
         '  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { unique by (`name`)\n      name: "x" }\n  }',
       ),
     );
@@ -1739,13 +1758,13 @@ describe('bound writes (`write … bind other { … }`), under Luminous Owl (4)'
 
   it('MOV_WRITE_BIND_POSITION rejects `bind` on a position write', () => {
     const diagnostics = checkUnder(4,
-      inMovement('  graph-[c:companies]-> {\n    write c bind c { name: "x" }\n  }'),
+      inMovementV4('  graph-[c:companies]-> {\n    write c bind c { name: "x" }\n  }'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_BIND_POSITION]);
   });
 
   it('NAME_UNRESOLVED when the bind name is not in scope', () => {
-    expect(checkUnder(4, inMovement('  write graph-[:companies]-> bind ghost { name: "x" }')).map(d => d.code)).toEqual([
+    expect(checkUnder(4, inMovementV4('  write graph-[:companies]-> bind ghost { name: "x" }')).map(d => d.code)).toEqual([
       C.NAME_UNRESOLVED,
     ]);
   });
@@ -1754,12 +1773,13 @@ describe('bound writes (`write … bind other { … }`), under Luminous Owl (4)'
     // `person` requires `name` on create; a bound write may still mint a
     // fresh record (self-heal), so the gate stands.
     expect(
-      checkUnder(4, inMovement('  crm-[c:companies]-> {\n    write graph-[:people]-> bind c { company: "Acme" }\n  }')).map(d => d.code),
+      checkUnder(4, inMovementV4('  crm-[c:companies]-> {\n    write graph-[:people]-> bind c { company: "Acme" }\n  }')).map(d => d.code),
     ).toEqual([C.WRITE_MISSING_REQUIRED_FIELD]);
   });
 });
 describe('bound writes are retired under Dancing Wren (5)', () => {
-  const bound = inMovement('  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }');
+  const body = '  crm-[c:companies]-> {\n    write graph-[:companies]-> bind c { name: "x" }\n  }';
+  const bound = inMovement(body);
 
   it('MOV_WRITE_BIND_RETIRED, the message saying where the link is stored instead', () => {
     const found = check(bound);
@@ -1776,7 +1796,7 @@ describe('bound writes are retired under Dancing Wren (5)', () => {
   });
 
   it('under Luminous Owl (4) the same write is clean', () => {
-    expect(checkUnder(4, bound)).toEqual([]);
+    expect(checkUnder(4, inMovementV4(body))).toEqual([]);
   });
 });
 
@@ -1792,7 +1812,7 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
 
   it('a meta-typed parameter as an instance-form write target errors', () => {
     const diagnostics = check(
-      `${PRELUDE}\nmovement publish(root: <crm>) {\n  write root-[:companies]-> { name: "Acme" }\n}`,
+      `${PRELUDE}\nfunction publish(root: <crm>) {\n  write root-[:companies]-> { name: "Acme" }\n}`,
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_TARGET_NOT_GRAPH]);
     expect(diagnostics[0].message).toContain(DOOR_PHRASE);
@@ -1800,13 +1820,13 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
 
   it('a linked write off a position param errors on an edge that position lacks', () => {
     expect(
-      codes(`${PRELUDE}\nmovement main(rec: <crm-[:person]->>) {\n  write rec-[:companies]-> { name: "Acme" }\n}`),
+      codes(`${PRELUDE}\nfunction main(rec: <crm-[:person]->>) {\n  write rec-[:companies]-> { name: "Acme" }\n}`),
     ).toEqual([C.LINKED_UNKNOWN_EDGE]);
   });
 
   it('a meta-typed parameter as a linked-write path root errors', () => {
     const diagnostics = check(
-      `${PRELUDE}\nmovement publish(root: <crm>) {\n  write root-[:companies]-> { name: "Acme" }\n}`,
+      `${PRELUDE}\nfunction publish(root: <crm>) {\n  write root-[:companies]-> { name: "Acme" }\n}`,
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.WRITE_TARGET_NOT_GRAPH]);
     expect(diagnostics[0].message).toContain(DOOR_PHRASE);
@@ -1815,7 +1835,7 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
   it('a meta-typed parameter as a match root errors', () => {
     expect(
       codes(
-        `${PRELUDE}\nmovement publish(root: <crm>) {\n  found = match root-[:companies]-> { unique by (\`name\`), name: "Acme" }\n}`,
+        `${PRELUDE}\nfunction publish(root: <crm>) {\n  found = match root-[:companies]-> { unique by (\`name\`), name: "Acme" }\n}`,
       ),
     ).toEqual([C.WRITE_TARGET_NOT_GRAPH]);
   });
@@ -1823,7 +1843,7 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
   it('meta-typed parameters as tuple-write path roots error per path', () => {
     expect(
       codes(
-        `${PRELUDE}\nmovement publish(root: <crm>) {\n  write (root-[:companies]->, root-[:deals]->) { name: "Acme" }\n}`,
+        `${PRELUDE}\nfunction publish(root: <crm>) {\n  write (root-[:companies]->, root-[:deals]->) { name: "Acme" }\n}`,
       ),
     ).toEqual([C.WRITE_TARGET_NOT_GRAPH, C.WRITE_TARGET_NOT_GRAPH]);
   });
@@ -1832,7 +1852,7 @@ describe('the instance-param door (MOV_WRITE_TARGET_NOT_GRAPH)', () => {
     expectClean(
       [
         PRELUDE,
-        'movement nightly(root: <crm>) {',
+        'function nightly(root: <crm>) {',
         '  root-[c:companies]-> {',
         '    write graph-[:companies]-> { unique by (`name`), name: c.Name }',
         '  }',
@@ -1880,7 +1900,7 @@ describe('open known-values fields (MOV_VALUE_UNLISTED)', () => {
     const source = inMovement(
       [
         '  co = write graph-[:companies]-> { name: "Acme" }',
-        '  if co.`channel` == "dealflw" {',
+        '  if (co.`channel` == "dealflw") {',
         '    write graph-[:people]-> { name: "x" }',
         '  }',
       ].join('\n'),
@@ -1978,7 +1998,7 @@ describe('linked writes', () => {
       withCompany(
         [
           '  fr = write co-[:rounds]-> { stage: "Seed" }',
-          '  write fr-[:participants]-> { investor_name: "Acme Ventures", lead: TRUE }',
+          '  write fr-[:participants]-> { investor_name: "Acme Ventures", lead: true }',
         ].join('\n'),
       ),
     );
@@ -1989,7 +2009,7 @@ describe('per-edge create capability (createShapes)', () => {
   it('a lookup-block write along a writable edge checks clean', () => {
     expectClean(inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    write ch-[:messages]-> { Message: "hello" }',
         '  }',
       ].join('\n'),
@@ -1999,7 +2019,7 @@ describe('per-edge create capability (createShapes)', () => {
   it('a reply chained off the written handle checks clean (self-referential writable edge)', () => {
     expectClean(inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    m = write ch-[:messages]-> { Message: "hello" }',
         '    write m-[:replies]-> { Message: "again" }',
         '  }',
@@ -2010,7 +2030,7 @@ describe('per-edge create capability (createShapes)', () => {
   it('the write body checks against the createShapes shape (unknown field errors)', () => {
     expect(codes(inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    write ch-[:messages]-> { Text: "wrong field name" }',
         '  }',
       ].join('\n'),
@@ -2020,7 +2040,7 @@ describe('per-edge create capability (createShapes)', () => {
   it('an edge with no write promise gates, naming the writable edges', () => {
     const diagnostics = check(inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    write ch-[:members]-> { Name: "x" }',
         '  }',
       ].join('\n'),
@@ -2052,7 +2072,7 @@ describe('write-only / read-only surfaces (the WhatsApp File duality)', () => {
   const inMessageBlock = (body: string) =>
     inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    ch-[m:messages]-> {',
         `      ${body}`,
         '    }',
@@ -2091,7 +2111,7 @@ describe('write-only / read-only surfaces (the WhatsApp File duality)', () => {
   });
 
   it('setting the write-only field IN a write stays clean — write-only, not unusable', () => {
-    expectClean(inMessageBlock('write m-[:replies]-> { Message: "doc", File: FILE("contents", "pdf") }'));
+    expectClean(inMessageBlock('write m-[:replies]-> { Message: "doc", File: File.from("contents", "pdf") }'));
   });
 });
 
@@ -2102,7 +2122,7 @@ describe('ambiguous property names', () => {
   const inMembersBlock = (body: string) =>
     inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    ch-[u:members]-> {',
         `      ${body}`,
         '    }',
@@ -2139,7 +2159,7 @@ describe('ephemeral edges (action-not-record — typing indicators)', () => {
   const inListener = (body: string) =>
     inMovement(
       [
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    m = write ch-[:messages]-> { Message: "hello" }',
         body,
         '  }',
@@ -2165,13 +2185,13 @@ describe('ephemeral edges (action-not-record — typing indicators)', () => {
     const diagnostics = check(
       [
         PRELUDE,
-        'movement callee(t: <chan-[:message]->>) {',
+        'function callee(t: <chan-[:message]->>) {',
         '  …',
         '}',
-        'movement main(msg: <inbox-[:message]->>) {',
-        '  chan-[ch:Channels WHERE `Name` == "general"]-> {',
+        'function main(msg: <inbox-[:message]->>) {',
+        '  chan-[ch:Channels WHERE ch.`Name` == "general"]-> {',
         '    m = write ch-[:messages]-> { Message: "hello" }',
-        '    callee(t: write m-[:typing]-> {})',
+        '    callee(write m-[:typing]-> {})',
         '  }',
         '}',
       ].join('\n'),
@@ -2184,7 +2204,7 @@ describe('WHERE-literal known-values warning (the lookup-miss safety net)', () =
   const lookup = (name: string) =>
     inMovement(
       [
-        `  chan-[ch:Channels WHERE \`Name\` == ${name}]-> {`,
+        `  chan-[ch:Channels WHERE ch.\`Name\` == ${name}]-> {`,
         '    write ch-[:messages]-> { Message: "hello" }',
         '  }',
       ].join('\n'),
@@ -2236,7 +2256,7 @@ describe('traversal validity', () => {
       codes(
         [
           PRELUDE,
-          'movement main(root: <crm>) {',
+          'function main(root: <crm>) {',
           '  root-[c:typo]-> {',
           '    write team-[:messages]-> { channel: "#d", text: "x" }',
           '  }',
@@ -2303,7 +2323,7 @@ describe('extract result typing', () => {
           '    node company: "each company" {',
           '      name: "the name"',
           '      urls: "associated URLs"',
-          '    } through [vc_url_retrieval(urls: urls)] {',
+          '    } through [vc_url_retrieval({ urls: urls })] {',
           '      name: "the name, corrected against the fetched pages"',
           '    }',
           '  }',
@@ -2323,7 +2343,7 @@ describe('extract result typing', () => {
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
           '      urls: "associated URLs"',
-          '    } through [vc_url_retrieval(urls: urls)] {',
+          '    } through [vc_url_retrieval({ urls: urls })] {',
           '      name: "the name"',
           '    }',
           '  }',
@@ -2612,10 +2632,10 @@ describe('annotation vs write target (MOV_EXTRACT_TYPE_CONFLICT)', () => {
           'import { email, tracker } from adapters',
           'import { dealflow_inbox, tracker_cred } from credentials',
           '',
-          'inbox = email(credentials: dealflow_inbox)',
-          'trk   = tracker(credentials: tracker_cred)',
+          'inbox = connect email using dealflow_inbox',
+          'trk   = connect tracker using tracker_cred',
           '',
-          'movement main(msg: <inbox-[:message]->>) {',
+          'function main(msg: <inbox-[:message]->>) {',
           '  work = extract from [msg.`text`] {',
           '    node item: "each work item" {',
           `      value: ${annotation} "the value"`,
@@ -2664,13 +2684,13 @@ describe('union narrowing', () => {
     const diagnostics = check(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
+        'function main(rec: <crm-[:record]->>) {',
         '  write graph-[:companies]-> { name: rec.`Name`, domains: rec.`Domains` }',
         '}',
       ].join('\n'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.NARROWING]);
-    expect(diagnostics[0].message).toContain('IS');
+    expect(diagnostics[0].message).toContain("an 'is' test");
   });
 
   it('MOV_NARROWING for a variant-only edge traversed without narrowing', () => {
@@ -2678,7 +2698,7 @@ describe('union narrowing', () => {
       codes(
         [
           PRELUDE,
-          'movement main(rec: <crm-[:record]->>) {',
+          'function main(rec: <crm-[:record]->>) {',
           '  write graph-[:people]-> { name: rec.`Name`, company: rec-[:Company]->.`Name` }',
           '}',
         ].join('\n'),
@@ -2690,7 +2710,7 @@ describe('union narrowing', () => {
     expectClean(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
+        'function main(rec: <crm-[:record]->>) {',
         '  write graph-[:companies]-> { name: rec.`Name` }',
         '}',
       ].join('\n'),
@@ -2701,8 +2721,8 @@ describe('union narrowing', () => {
     expectClean(
       [
         PRELUDE,
-        'movement main(rec: <crm-[:record]->>) {',
-        '  if rec IS <crm-[:person]->> AND EXISTS(rec-[:Company]->) {',
+        'function main(rec: <crm-[:record]->>) {',
+        '  if (rec is <crm-[:person]->> && exists(rec-[:Company]->)) {',
         '    write graph-[:people]-> { name: rec.`Name` }',
         '  }',
         '}',
@@ -2717,7 +2737,7 @@ describe('union narrowing', () => {
   // the existing union machinery, applying because the hop now has a type.
   describe('through a polymorphic edge', () => {
     const inDeal = (body: string) =>
-      [PRELUDE, 'movement main(d: <crm-[:deal]->>) {', body, '}'].join('\n');
+      [PRELUDE, 'function main(d: <crm-[:deal]->>) {', body, '}'].join('\n');
 
     it('a field shared by every variant reads clean through the hop', () => {
       expectClean(inDeal('  write graph-[:companies]-> { name: d-[:Related]->.`Name` }'));
@@ -2728,7 +2748,7 @@ describe('union narrowing', () => {
         inDeal('  write graph-[:companies]-> { domains: d-[:Related]->.`Domains` }'),
       );
       expect(diagnostics.map(d => d.code)).toEqual([C.NARROWING]);
-      expect(diagnostics[0].message).toContain('IS');
+      expect(diagnostics[0].message).toContain("an 'is' test");
     });
 
     it('a field NO variant carries is still an error — the hop is typed, not silent', () => {
@@ -2742,7 +2762,7 @@ describe('union narrowing', () => {
         inDeal(
           [
             '  d-[r:Related]-> {',
-            '    if r IS <crm-[:company]->> {',
+            '    if (r is <crm-[:company]->>) {',
             '      write graph-[:companies]-> { domains: r.`Domains` }',
             '    }',
             '  }',
@@ -2757,7 +2777,7 @@ describe('union narrowing', () => {
           inDeal(
             [
               '  d-[r:Related]-> {',
-              '    if r IS <crm-[:company]->> {',
+              '    if (r is <crm-[:company]->>) {',
               '      write graph-[:people]-> { name: r.`Email` }',
               '    }',
               '  }',
@@ -2776,13 +2796,13 @@ describe('union narrowing', () => {
   // undiscriminated event used to fall in here typed as "not that kind").
   describe('an else arm eliminates what the arms above tested', () => {
     const inRecord = (body: string) =>
-      [PRELUDE, 'movement main(rec: <crm-[:record]->>) {', body, '}'].join('\n');
+      [PRELUDE, 'function main(rec: <crm-[:record]->>) {', body, '}'].join('\n');
 
     it('the else sees the other variant — its variant-only field reads clean', () => {
       expectClean(
         inRecord(
           [
-            '  if rec IS <crm-[:company]->> {',
+            '  if (rec is <crm-[:company]->>) {',
             '  } else {',
             '    write graph-[:people]-> { name: rec.`Email` }',
             '  }',
@@ -2796,7 +2816,7 @@ describe('union narrowing', () => {
         codes(
           inRecord(
             [
-              '  if rec IS <crm-[:person]->> {',
+              '  if (rec is <crm-[:person]->>) {',
               '  } else {',
               '    write graph-[:people]-> { name: rec.`Email` }',
               '  }',
@@ -2810,7 +2830,7 @@ describe('union narrowing', () => {
       expectClean(
         inRecord(
           [
-            '  if rec IS <crm-[:company]->> {',
+            '  if (rec is <crm-[:company]->>) {',
             '  } else {',
             '    write graph-[:people]-> { name: rec-[:Company]->.`Name` }',
             '  }',
@@ -2824,7 +2844,7 @@ describe('union narrowing', () => {
         codes(
           inRecord(
             [
-              '  if rec IS <crm-[:person]->> {',
+              '  if (rec is <crm-[:person]->>) {',
               '  } else {',
               '    write graph-[:people]-> { name: rec-[:Company]->.`Name` }',
               '  }',
@@ -2842,7 +2862,7 @@ describe('union narrowing', () => {
         codes(
           inRecord(
             [
-              '  if rec IS <crm-[:company]->> AND rec.`Name` != "" {',
+              '  if (rec is <crm-[:company]->> && rec.`Name` != "") {',
               '  } else {',
               '    write graph-[:people]-> { name: rec.`Email` }',
               '  }',
@@ -2859,7 +2879,7 @@ describe('union narrowing', () => {
         codes(
           inRecord(
             [
-              '  if rec IS <graph-[:company]->> {',
+              '  if (rec is <graph-[:company]->>) {',
               '  } else {',
               '    write graph-[:people]-> { name: rec.`Email` }',
               '  }',
@@ -2874,7 +2894,7 @@ describe('union narrowing', () => {
         codes(
           inRecord(
             [
-              '  if rec IS <crm-[:company]->> {',
+              '  if (rec is <crm-[:company]->>) {',
               '  } else {',
               '    write graph-[:people]-> { name: rec.`Email` }',
               '  }',
@@ -2892,10 +2912,10 @@ describe('union narrowing', () => {
       expectClean(
         inRecord(
           [
-            '  if rec IS <crm-[:company]->> {',
+            '  if (rec is <crm-[:company]->>) {',
             '  } else {',
-            '    e = ONLY(rec.`Email`)',
-            '    if e != null {',
+            '    e = only(rec.`Email`)',
+            '    if (e != null) {',
             '      write graph-[:people]-> { name: e }',
             '    }',
             '  }',
@@ -2907,14 +2927,14 @@ describe('union narrowing', () => {
 
   describe('an else-if chain eliminates progressively', () => {
     const inSubject = (body: string) =>
-      [PRELUDE, 'movement main(rec: <crm-[:subject]->>) {', body, '}'].join('\n');
+      [PRELUDE, 'function main(rec: <crm-[:subject]->>) {', body, '}'].join('\n');
 
     it('one test leaves a smaller union — a two-of-three field is still ambiguous', () => {
       expect(
         codes(
           inSubject(
             [
-              '  if rec IS <crm-[:company]->> {',
+              '  if (rec is <crm-[:company]->>) {',
               '  } else {',
               '    write graph-[:people]-> { name: rec.`Email` }',
               '  }',
@@ -2928,8 +2948,8 @@ describe('union narrowing', () => {
       expectClean(
         inSubject(
           [
-            '  if rec IS <crm-[:company]->> {',
-            '  } else if rec IS <crm-[:deal]->> {',
+            '  if (rec is <crm-[:company]->>) {',
+            '  } else if (rec is <crm-[:deal]->>) {',
             '  } else {',
             '    write graph-[:people]-> { name: rec.`Email` }',
             '  }',
@@ -2942,8 +2962,8 @@ describe('union narrowing', () => {
       expectClean(
         inSubject(
           [
-            '  if rec IS <crm-[:company]->> {',
-            '  } else if rec IS <crm-[:person]->> {',
+            '  if (rec is <crm-[:company]->>) {',
+            '  } else if (rec is <crm-[:person]->>) {',
             '  } else {',
             '    write graph-[:companies]-> { name: rec-[:Related]->.`Name` }',
             '  }',
@@ -2959,8 +2979,8 @@ describe('union narrowing', () => {
         codes(
           inSubject(
             [
-              '  if rec IS <crm-[:company]->> {',
-              '  } else if rec IS <crm-[:person]->> {',
+              '  if (rec is <crm-[:company]->>) {',
+              '  } else if (rec is <crm-[:person]->>) {',
               '    write graph-[:companies]-> { domains: rec.`Domains` }',
               '  }',
             ].join('\n'),
@@ -2976,13 +2996,13 @@ describe('union narrowing', () => {
   // author to add an `IS` that could never match.
   describe('a fully eliminated union is never', () => {
     const inRecord = (body: string) =>
-      [PRELUDE, 'movement main(rec: <crm-[:record]->>) {', body, '}'].join('\n');
+      [PRELUDE, 'function main(rec: <crm-[:record]->>) {', body, '}'].join('\n');
 
     const exhausted = (use: string) =>
       inRecord(
         [
-          '  if rec IS <crm-[:company]->> {',
-          '  } else if rec IS <crm-[:person]->> {',
+          '  if (rec is <crm-[:company]->>) {',
+          '  } else if (rec is <crm-[:person]->>) {',
           '  } else {',
           `    ${use}`,
           '  }',
@@ -3011,8 +3031,8 @@ describe('union narrowing', () => {
       codes(
         [
           PRELUDE,
-          'movement main(rec: <crm-[:record]->>) {',
-          '  if rec IS <crm-[:company]->> {',
+          'function main(rec: <crm-[:record]->>) {',
+          '  if (rec is <crm-[:company]->>) {',
           '    write graph-[:companies]-> { name: rec.`Name` }',
           '  }',
           '  write graph-[:companies]-> { domains: rec.`Domains` }',
@@ -3041,11 +3061,11 @@ describe('call fit', () => {
       [
         PRELUDE,
         SHAPES,
-        'movement callee(f: <Files>) {',
+        'function callee(f: <Files>) {',
         '  …',
         '}',
-        'movement caller(msg: <inbox-[:message]->>) {',
-        '  callee(f: msg)',
+        'function caller(msg: <inbox-[:message]->>) {',
+        '  callee(msg)',
         '}',
       ].join('\n'),
     );
@@ -3059,11 +3079,11 @@ describe('call fit', () => {
         [
           PRELUDE,
           SHAPES,
-          'movement callee(f: <Files>) {',
+          'function callee(f: <Files>) {',
           '  …',
           '}',
-          'movement caller(msg: <inbox-[:message]->>) {',
-          '  callee(f: node { name: "Series A" })',
+          'function caller(msg: <inbox-[:message]->>) {',
+          '  callee(node { name: "Series A" })',
           '}',
         ].join('\n'),
       ),
@@ -3075,13 +3095,13 @@ describe('call fit', () => {
       codes(
         [
           PRELUDE.replace('import { dealflow_inbox, acme_main,', 'import { dealflow_inbox, acme_main, acme_second,'),
-          'crm2 = attio(credentials: acme_second)',
-          'movement sync(co: <crm-[:company]->>) {',
+          'crm2 = connect attio using acme_second',
+          'function sync(co: <crm-[:company]->>) {',
           '  …',
           '}',
-          'movement main(msg: <inbox-[:message]->>) {',
+          'function main(msg: <inbox-[:message]->>) {',
           '  company = write crm2-[:companies]-> { name: msg.`subject` }',
-          '  sync(co: company)',
+          '  sync(company)',
           '}',
         ].join('\n'),
       ),
@@ -3093,13 +3113,13 @@ describe('call fit', () => {
       codes(
         [
           PRELUDE,
-          'crm2 = attio(credentials: acme_main)',
-          'movement sync(co: <crm-[:company]->>) {',
+          'crm2 = connect attio using acme_main',
+          'function sync(co: <crm-[:company]->>) {',
           '  …',
           '}',
-          'movement main(msg: <inbox-[:message]->>) {',
+          'function main(msg: <inbox-[:message]->>) {',
           '  company = write crm2-[:companies]-> { name: msg.`subject` }',
-          '  sync(co: company)',
+          '  sync(company)',
           '}',
         ].join('\n'),
       ),
@@ -3112,11 +3132,11 @@ describe('call fit', () => {
         [
           PRELUDE,
           SHAPES,
-          'movement callee(f: <Files>) {',
+          'function callee(f: <Files>) {',
           '  …',
           '}',
-          'movement caller(msg: <inbox-[:message]->>) {',
-          '  callee(f: node { name: msg.`nope` })',
+          'function caller(msg: <inbox-[:message]->>) {',
+          '  callee(node { name: msg.`nope` })',
           '}',
         ].join('\n'),
       ),
@@ -3136,7 +3156,7 @@ describe('unique by as an expression predicate (chunk 8)', () => {
   });
 
   // The compound (handle AND field) form is exercised by the linked-write
-  // tests above (`unique by (co AND \`stage\`)`).
+  // tests above (`unique by (co && \`stage\`)`).
 
   it('rejects a predicate field the written record does not have', () => {
     expect(
@@ -3152,11 +3172,11 @@ describe('native uniqueness', () => {
     'import { email, hubspot } from adapters',
     'import { dealflow_inbox, acme_hubspot } from credentials',
     '',
-    'inbox = email(credentials: dealflow_inbox)',
-    'crm2  = hubspot(credentials: acme_hubspot)',
+    'inbox = connect email using dealflow_inbox',
+    'crm2  = connect hubspot using acme_hubspot',
   ].join('\n');
   const inHubspotMovement = (body: string) =>
-    `${HUBSPOT_PRELUDE}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`;
+    `${HUBSPOT_PRELUDE}\nfunction main(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
   it('an authored clause duplicating a native rule is an info-severity suggestion', () => {
     const source = inHubspotMovement(
@@ -3220,11 +3240,11 @@ describe('FUZZY uniqueness modifier', () => {
     'import { email, hubspot } from adapters',
     'import { dealflow_inbox, acme_hubspot } from credentials',
     '',
-    'inbox = email(credentials: dealflow_inbox)',
-    'crm2  = hubspot(credentials: acme_hubspot)',
+    'inbox = connect email using dealflow_inbox',
+    'crm2  = connect hubspot using acme_hubspot',
   ].join('\n');
   const inFuzzy = (body: string) =>
-    `${FUZZY_PRELUDE}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`;
+    `${FUZZY_PRELUDE}\nfunction main(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
   it('FUZZY on a fuzzy-capable target (the KG) is accepted', () => {
     const source = inFuzzy('write graph-[:companies]-> { unique by (FUZZY `name`)\n  name: msg.`subject` }');
@@ -3250,9 +3270,9 @@ describe('FUZZY uniqueness modifier', () => {
       [
         'import { email, registry } from adapters',
         'import { dealflow_inbox, public_registry } from credentials',
-        'inbox = email(credentials: dealflow_inbox)',
-        'reg   = registry(credentials: public_registry)',
-        'movement main(msg: <inbox-[:message]->>) {',
+        'inbox = connect email using dealflow_inbox',
+        'reg   = connect registry using public_registry',
+        'function main(msg: <inbox-[:message]->>) {',
         `  found = match reg-[:entities]-> { unique by (${clause}), Name: msg.\`subject\`, \`Legal Name\`: msg.\`subject\`, City: "Berlin" }`,
         '}',
       ].join('\n');
@@ -3332,14 +3352,14 @@ describe('append operators (+: / +?:)', () => {
 describe('bind against an unupdatable target (WRITE_BIND_NO_UPDATE), under Luminous Owl (4)', () => {
   it('rejects bind on a create-only target — a bound write re-fires as an update', () => {
     // `drive` (dropbox) is create-only: no supportsInPlaceUpdate.
-    const source = inMovement('write drive-[:files]-> bind msg { name: "x" }');
+    const source = inMovementV4('write drive-[:files]-> bind msg { name: "x" }');
     const found = checkUnder(4, source).filter((d) => d.code === C.WRITE_BIND_NO_UPDATE);
     expect(found).toHaveLength(1);
     expect(found[0].message).toMatch(/update/i);
   });
 
   it('allows bind on an updatable target (the KG)', () => {
-    const source = inMovement('write graph-[:companies]-> bind msg { name: msg.`subject` }');
+    const source = inMovementV4('write graph-[:companies]-> bind msg { name: msg.`subject` }');
     expect(checkUnder(4, source).map(d => d.code)).not.toContain(C.WRITE_BIND_NO_UPDATE);
   });
 });
@@ -3355,9 +3375,9 @@ describe('match', () => {
         [
           '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
           '  fr = match co-[:rounds]-> { unique by (`stage`), stage: "Seed" }',
-          '  if fr != null {',
+          '  if (fr != null) {',
           '    write fr-[:participants]-> {',
-          '      unique by (fr AND `investor_name`)',
+          '      unique by (fr && `investor_name`)',
           '      investor_name: msg.`subject`',
           '    }',
           '  }',
@@ -3393,7 +3413,7 @@ describe('match', () => {
           '    unique by (`domains`)',
           '    name: msg.`subject`',
           '  }',
-          '  if co != null {',
+          '  if ((co != null)) {',
           '    write co-[:rounds]-> { stage: co.name }',
           '  }',
         ].join('\n'),
@@ -3418,9 +3438,9 @@ describe('match', () => {
     const source = [
       'import { email, hubspot } from adapters',
       'import { dealflow_inbox, acme_hubspot } from credentials',
-      'inbox = email(credentials: dealflow_inbox)',
-      'crm2  = hubspot(credentials: acme_hubspot)',
-      'movement main(msg: <inbox-[:message]->>) {',
+      'inbox = connect email using dealflow_inbox',
+      'crm2  = connect hubspot using acme_hubspot',
+      'function main(msg: <inbox-[:message]->>) {',
       '  found = match crm2-[:companies]-> { domain: msg.`subject` }',
       '}',
     ].join('\n');
@@ -3474,11 +3494,11 @@ describe('match', () => {
       [
         'import { email, hubspot } from adapters',
         'import { dealflow_inbox, acme_hubspot } from credentials',
-        'inbox = email(credentials: dealflow_inbox)',
-        'crm2  = hubspot(credentials: acme_hubspot)',
-        'movement main(msg: <inbox-[:message]->>) {',
+        'inbox = connect email using dealflow_inbox',
+        'crm2  = connect hubspot using acme_hubspot',
+        'function main(msg: <inbox-[:message]->>) {',
         `  co = ${verb} crm2-[:companies]-> { domain: msg.\`subject\` }`,
-        `  if co != null { write crm2-[:companies]-> { domain: "x", name: co.${field} } }`,
+        `  if ((co != null)) { write crm2-[:companies]-> { domain: "x", name: co.${field} } }`,
         '}',
       ].join('\n');
     const under = (version: number, source: string) =>
@@ -3636,9 +3656,9 @@ describe('link statements', () => {
       [
         'import { email, lists } from adapters',
         'import { dealflow_inbox, team_lists } from credentials',
-        'inbox = email(credentials: dealflow_inbox)',
-        'crm = lists(credentials: team_lists)',
-        'movement main(msg: <inbox-[:message]->>) {',
+        'inbox = connect email using dealflow_inbox',
+        'crm = connect lists using team_lists',
+        'function main(msg: <inbox-[:message]->>) {',
         '  entry = write crm-[:entries]-> { stage: "Seed" }',
         body,
         '}',
@@ -3738,7 +3758,7 @@ describe('tuple-path writes', () => {
         [
           TUPLE_PARENTS,
           '  write (co-[:investments]->, inv-[:investments]->) {',
-          '    unique by (co AND inv)',
+          '    unique by (co && inv)',
           '    amount: 5',
           '  }',
         ].join('\n'),
@@ -3768,7 +3788,7 @@ describe('tuple-path writes', () => {
           [
             TUPLE_PARENTS,
             '  write (co-[:investments]->, inv-[:investments]->) {',
-            '    unique by (co AND inv)',
+            '    unique by (co && inv)',
             '    ghost: 5',
             '  }',
           ].join('\n'),
@@ -3869,7 +3889,7 @@ describe('required fields', () => {
       [
         '  write graph-[:contact]-> {',
         '    name: msg.`subject`',
-        '    email: AI("the email address")',
+        '    email: ai("the email address")',
         '  }',
       ].join('\n'),
     );
@@ -3941,40 +3961,40 @@ describe('AI(prompt, tier)', () => {
     );
 
   it('accepts each tier, and a call with none', () => {
-    expect(codes(withNote('AI("a note", "quick")'))).toEqual([]);
-    expect(codes(withNote('AI("a note", "careful")'))).toEqual([]);
-    expect(codes(withNote('AI("a note", "thorough")'))).toEqual([]);
-    expect(codes(withNote('AI("a note")'))).toEqual([]);
-    expect(codes(withNote('AI(CONCAT("about ", AI("the sender", "quick")), "thorough")')))
+    expect(codes(withNote('ai("a note", { tier: "quick" })'))).toEqual([]);
+    expect(codes(withNote('ai("a note", { tier: "careful" })'))).toEqual([]);
+    expect(codes(withNote('ai("a note", { tier: "thorough" })'))).toEqual([]);
+    expect(codes(withNote('ai("a note")'))).toEqual([]);
+    expect(codes(withNote('ai(Text.concat("about ", ai("the sender", { tier: "quick" })), { tier: "thorough" })')))
       .toEqual([]);
   });
 
   it('refuses a tier it does not have, suggesting the closest', () => {
-    const diagnostics = check(withNote('AI("a note", "thourough")'));
+    const diagnostics = check(withNote('ai("a note", { tier: "thourough" })'));
     expect(diagnostics.map(d => d.code)).toContain(C.ENUM_UNKNOWN_VALUE);
     expect(diagnostics.map(d => d.message).join('\n')).toContain('Did you mean "thorough"?');
   });
 
   it('refuses a word that is no tier at all', () => {
-    expect(codes(withNote('AI("a note", "loud")'))).toContain(C.ENUM_UNKNOWN_VALUE);
+    expect(codes(withNote('ai("a note", { tier: "loud" })'))).toContain(C.ENUM_UNKNOWN_VALUE);
   });
 
   // The tier is READ where the program is saved, so it has to be written down
   // — the rule a date format pattern lives under.
   it('refuses a computed tier, and one passed by name', () => {
-    expect(codes(withNote('AI("a note", msg.`subject`)'))).toContain(C.EXPR_PARSE);
-    expect(codes(withNote('AI("a note", `Preferred Tier`)'))).toContain(C.EXPR_PARSE);
+    expect(codes(withNote('ai("a note", { tier: msg.`subject` })'))).toContain(C.EXPR_PARSE);
+    expect(codes(withNote('ai("a note", { tier: `Preferred Tier` })'))).toContain(C.EXPR_PARSE);
   });
 
   it('rejects a third argument', () => {
-    expect(codes(withNote('AI("a note", "careful", "extra")'))).toContain(C.EXPR_PARSE);
+    expect(codes(withNote('ai("a note", { tier: "careful" }, "extra")'))).toContain(C.EXPR_PARSE);
   });
 
   // The spelling that predates the tiers still runs, and still means what it
   // meant — so it is a nudge toward the word we teach, never a refusal.
   it('accepts the legacy "smart" spelling with an info nudge naming the tier', () => {
-    expect(codes(withNote('AI("a note", "smart")'))).toEqual([]);
-    const legacy = infos(withNote('AI("a note", "smart")'))
+    expect(codes(withNote('ai("a note", { tier: "smart" })'))).toEqual([]);
+    const legacy = infos(withNote('ai("a note", { tier: "smart" })'))
       .filter(d => d.code === C.AI_TIER_LEGACY);
     expect(legacy).toHaveLength(1);
     expect(legacy[0].message).toContain('"careful"');
@@ -4048,7 +4068,7 @@ describe('a <Declaration> parameter types the body', () => {
   const withShape = (body: string) =>
     `${PRELUDE}
 node Meeting { \`Title\`: <text> }
-movement log_meeting(m: <Meeting>) {
+function log_meeting(m: <Meeting>) {
 ${body}
 }`;
 
@@ -4087,7 +4107,7 @@ describe('per-listen shape conformance', () => {
   const prog = (adapter: string) => `
 import { ${adapter}, kg } from adapters
 src = ${adapter}()
-graph = kg()
+graph = connect kg
 node Meeting {
   \`Title\`: <text>
   \`Folder\`: <text>
@@ -4180,7 +4200,7 @@ node WithAttendees {
   const prog = (adapter: string) => `
 import { ${adapter}, kg } from adapters
 src = ${adapter}()
-graph = kg()
+graph = connect kg
 ${withAttendeesShape}
 movement log(m: <WithAttendees>) { write graph-[:people]-> { name: m.\`Title\` } }
 listen to src {} fire log`;
@@ -4229,7 +4249,7 @@ listen to src {} fire log`;
     const selfProg = `
 import { selfref, kg } from adapters
 src = selfref()
-graph = kg()
+graph = connect kg
 node Loop {
   \`name\`: <text>
   node self {
@@ -4251,10 +4271,10 @@ describe('alias uniqueness within a movement', () => {
   const src = (a1: string, a2: string) => `
 import { manual, kg } from adapters
 import { native_knowledge } from credentials
-ga = manual()
-gb = manual()
-graph = kg(credentials: native_knowledge)
-movement main(x: <ga-[:event]->>) { write graph-[:people]-> { name: x.\`id\` } }
+ga = connect manual
+gb = connect manual
+graph = connect kg using native_knowledge
+function main(x: <ga-[:event]->>) { write graph-[:people]-> { name: x.\`id\` } }
 listen as "${a1}" to ga {} fire main
 listen as "${a2}" to gb {} fire main`;
   const codesFor = (a1: string, a2: string) =>
@@ -4297,13 +4317,13 @@ describe('a write handle is a traversal head (checker agrees with the engine)', 
     'import { src, kg } from adapters',
     'import { src_cred } from credentials',
     '',
-    's = src(credentials: src_cred)',
-    'graph = kg()',
+    's = connect src using src_cred',
+    'graph = connect kg',
   ].join('\n');
   const handleCodes = (body: string): string[] =>
     // The movement param TypeRef names the POSITION (`ping`), not the collection
     // (`pings`) — same as the existing capCatalog fixture's `<c-[:company]->>`.
-    checkProgram(parseProgram(`${handlePrelude}\nmovement main(p: <s-[:ping]->>) {\n${body}\n}`), handleCatalog)
+    checkProgram(parseProgram(`${handlePrelude}\nfunction main(p: <s-[:ping]->>) {\n${body}\n}`), handleCatalog)
       .filter((d) => (d.severity ?? 'error') === 'error')
       .map((d) => d.code);
 
@@ -4349,7 +4369,7 @@ describe('READ(file)', () => {
 
   it('types as text — a COALESCE fill writes into a text field cleanly', () => {
     expectClean(
-      inAttachment('write graph-[:contact]-> { name: COALESCE(READ(f.`data`), ""), email: "a@b.c" }'),
+      inAttachment('write graph-[:contact]-> { name: coalesce(File.read(f.`data`), ""), email: "a@b.c" }'),
     );
   });
 
@@ -4381,7 +4401,7 @@ describe('READ(file)', () => {
 
   it('an untyped argument stays silent — an unknown surface is not a claim', () => {
     expectClean(
-      inAttachment('write graph-[:contact]-> { name: COALESCE(READ(AI("the deck")), ""), email: "a@b.c" }'),
+      inAttachment('write graph-[:contact]-> { name: coalesce(File.read(ai("the deck")), ""), email: "a@b.c" }'),
     );
   });
 });
@@ -4396,7 +4416,7 @@ describe('CHUNKS(text, { size | entities, overlap })', () => {
   it('types as a collection of TEXT — a piece added up is the arithmetic error', () => {
     expect(
       codes(inMovement([
-        '  pieces = CHUNKS(msg.`text`, { size: 2000, overlap: 200 })',
+        '  pieces = Text.chunks(msg.`text`, { size: 2000, overlap: 200 })',
         '  bad = MAP(pieces, (p) => { return p + 1 })',
       ].join('\n'))),
     ).toContain(C.ARITH_NON_NUMERIC);
@@ -4404,8 +4424,8 @@ describe('CHUNKS(text, { size | entities, overlap })', () => {
 
   it('reads as a collection, so the collection ops take it with nothing in between', () => {
     expectClean(inMovement([
-      '  pieces = CHUNKS(msg.`text`, { size: 2000, overlap: 200 })',
-      '  loud = MAP(pieces, (p) => { return UPPER(p) })',
+      '  pieces = Text.chunks(msg.`text`, { size: 2000, overlap: 200 })',
+      '  loud = map(pieces, (p) => { return Text.upper(p) })',
     ].join('\n')));
   });
 
@@ -4419,8 +4439,8 @@ describe('CHUNKS(text, { size | entities, overlap })', () => {
     expectClean(
       inMovement([
         '  msg-[f:files]-> {',
-        '    pieces = CHUNKS(READ(f.`data`), { size: 2000 })',
-        '    loud = MAP(pieces, (p) => { return UPPER(p) })',
+        '    pieces = Text.chunks(File.read(f.`data`), { size: 2000 })',
+        '    loud = map(pieces, (p) => { return Text.upper(p) })',
         '  }',
       ].join('\n')),
     );
@@ -4439,7 +4459,7 @@ describe('CHUNKS(text, { size | entities, overlap })', () => {
   });
 
   it('a computed size is fine — only the KEYS are written down', () => {
-    expectClean(inMovement('  pieces = CHUNKS(msg.`text`, { size: LENGTH(msg.`text`) / 3 })'));
+    expectClean(inMovement('  pieces = Text.chunks(msg.`text`, { size: Text.length(msg.`text`) / 3 })'));
   });
 
   it('a size that is not a number names the option and the type it got', () => {
@@ -4476,8 +4496,8 @@ describe('CHUNKS(text, { size | entities, overlap })', () => {
 
   it('a count of expected records types the same way a size does', () => {
     expectClean(inMovement([
-      '  pieces = CHUNKS(msg.`text`, { entities: 20 })',
-      '  loud = MAP(pieces, (p) => { return UPPER(p) })',
+      '  pieces = Text.chunks(msg.`text`, { entities: 20 })',
+      '  loud = map(pieces, (p) => { return Text.upper(p) })',
     ].join('\n')));
   });
 

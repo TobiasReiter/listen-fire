@@ -17,6 +17,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog, type FieldType } from '../catalog';
 import { fieldAssignable, fieldTypeCompatible, handleWithin } from '../typing';
+import { spelledFor } from './surface_spelling';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
@@ -102,7 +103,7 @@ const F = '  f = FILE("contents", "pdf")';
 const program = (body: string[]): string => `${PRELUDE}\nmovement m() {\n${[F, ...body].join('\n')}\n}`;
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 
@@ -113,11 +114,15 @@ const GOES_TO_A_FILE_FIELD = 'A file goes only into a field that holds files';
 
 const VERSIONS = [...SUPPORTED_LANGUAGE_VERSIONS];
 
+// A message quotes the fix in the spelling its version reads.
+const quotedFor = (version: LanguageVersion, message: string): string =>
+  version < 5 ? message : message.replace(/COALESCE\(READ\(f\), /g, 'coalesce(File.read(f), ').replace(/READ\(f\)/g, 'File.read(f)');
+
 describe.each(VERSIONS)('under language version %i, a file inside a field\'s value is refused', version => {
   const refused = (body: string[], where: string): void => {
     const errors = errorsUnder(version, body);
     expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
-    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(quotedFor(version, where));
     expect(errors[0]!.message).toContain(FILE_NOT_A_VALUE);
     expect(errors[0]!.message).toContain(GOES_TO_A_FILE_FIELD);
   };
@@ -205,7 +210,7 @@ describe.each(VERSIONS)('under language version %i, a file field takes a file an
   const refusedRecord = (body: string[], where: string): void => {
     const errors = errorsUnder(version, [ORG, ...body]);
     expect(errors.map(d => d.code)).toEqual(['MOV_WRITE_FIELD_TYPE']);
-    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(quotedFor(version, where));
     expect(errors[0]!.message).toContain('a record, not a value');
   };
 
@@ -253,7 +258,7 @@ describe.each(VERSIONS)('under language version %i, a plugin argument of a decla
   const refused = (use: string, said: string): void => {
     const errors = errorsUnder(version, [use]);
     expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
-    expect(errors[0]!.message).toContain(said);
+    expect(errors[0]!.message).toContain(quotedFor(version, said));
     expect(errors[0]!.message).toContain(FILE_NOT_A_VALUE);
   };
 
@@ -344,7 +349,7 @@ describe.each(VERSIONS)('under language version %i, a file in a plugin\'s struct
   const refused = (body: string[], where: string): void => {
     const errors = errorsUnder(version, body);
     expect(errors.map(d => d.code)).toEqual(['MOV_CALL_ARG_TYPE']);
-    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(quotedFor(version, where));
     expect(errors[0]!.message).toContain(FILE_NOT_A_VALUE);
   };
 
@@ -381,7 +386,7 @@ describe.each([3, 4])('under language version %i, a file a closure returns is re
   const refusedAs = (code: string, body: string[], where: string): void => {
     const errors = errorsUnder(version, body);
     expect(errors.map(d => d.code)).toEqual([code]);
-    expect(errors[0]!.message).toContain(where);
+    expect(errors[0]!.message).toContain(quotedFor(version, where));
     expect(errors[0]!.message).toContain(FILE_NOT_A_VALUE);
   };
 
