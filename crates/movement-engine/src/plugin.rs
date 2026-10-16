@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use movement_parser::catalog::plugin_args::PluginCallSite;
+use movement_parser::catalog::plugin_args::{EXTRACTED_RECORD_PARAM, PluginCallSite};
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 
 use crate::bindings::{Binding, Node, Scope};
@@ -95,9 +95,10 @@ impl Run<'_> {
         // parameters as the checker bound them.
         let bound = match self.plugin_spec(&registered) {
             Some(spec) if self.version() >= 5 && args.iter().any(|arg| arg.name().is_none()) => {
-                let bound = spec.bind_args(PluginCallSite::Plain, args);
+                let callable = spec.under(self.version());
+                let bound = callable.bind_args(PluginCallSite::Plain, args);
                 if !bound.misfits.is_empty() {
-                    let positional = spec.positional_params(PluginCallSite::Plain);
+                    let positional = callable.positional_params(PluginCallSite::Plain);
                     return Err(Stop::Thrown(Failure::engine(
                         "MOVENG_RUNTIME",
                         format!("{} — the checker should have caught this", bound.misfits[0].message(written, &positional)),
@@ -115,6 +116,11 @@ impl Run<'_> {
             )));
         }
         let mut config = JsObject::new();
+        // A plugin fed only by an extraction runs on a record's fields, which a
+        // stage handed it as the extracted context; from version 5 a call
+        // hands it the record as its argument, on the same wire.
+        let fed_record = self.version() >= 5 && self.plugin_spec(&registered).is_some_and(|spec| spec.fed_by_extraction == Some(true));
+        let mut extracted_context = JsObject::new();
         let mut origins: Vec<u32> = Vec::new();
         for (position, arg) in args.iter().enumerate() {
             let Some(name) = arg.name() else { continue };
@@ -152,7 +158,13 @@ impl Run<'_> {
                 Some(record) => Js::object(crate::record::fields_of(&record).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")))?),
                 None => value,
             };
-            config.set(name.to_string(), value);
+            if fed_record && name == EXTRACTED_RECORD_PARAM {
+                if let Js::Object(record) = &value {
+                    extracted_context = JsObject::clone_of(record);
+                }
+            } else {
+                config.set(name.to_string(), value);
+            }
             for origin in trail.origins {
                 if !origins.contains(&origin) {
                     origins.push(origin);
@@ -163,7 +175,7 @@ impl Run<'_> {
         // that pointed at it: the origins survive, the direct citation not.
         let trail = Trail { origins, direct: None };
         let started = self.clock_now().await.map_err(Stop::Thrown)?;
-        let result = self.invoke(&registered, &config, &JsObject::new()).await.map_err(Stop::Thrown)?;
+        let result = self.invoke(&registered, &config, &extracted_context).await.map_err(Stop::Thrown)?;
         let duration = self.clock_now().await.map_err(Stop::Thrown)? - started;
         let (binding, handed_back) = match declared {
             PluginOutput::Value { .. } => {

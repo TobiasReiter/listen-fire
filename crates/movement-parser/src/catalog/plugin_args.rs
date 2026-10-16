@@ -7,7 +7,7 @@
 //! bind through these two and nothing else.
 
 use crate::ast::{CallArg, ExprSlot, NamedArg, PluginCall, Span};
-use crate::catalog::types::PluginSpec;
+use crate::catalog::types::{FieldType, PluginFedArg, PluginSpec, Scalar};
 use crate::tree::{MExpr, MapKey, MapMember};
 use crate::util::utf16::Utf16;
 
@@ -63,7 +63,32 @@ pub struct PluginArgBinding {
     pub misfits: Vec<PluginArgMisfit>,
 }
 
+/// `EXTRACTED_RECORD_PARAM`: the parameter a plain call hands a plugin fed
+/// only by an extraction (from language version 5) — the record it runs on,
+/// which a `through [ … ]` stage fed it implicitly.
+pub const EXTRACTED_RECORD_PARAM: &str = "record";
+
 impl PluginSpec {
+    /// `pluginSpecUnder`: the plugin as a plain call sees it under
+    /// `language_version`. From version 5 a plugin is a function, so one fed
+    /// only by an extraction is no longer a stage: the record the stage fed it
+    /// becomes its one required input, written by position like any fed
+    /// argument and taking structured data. Versions 1–4 read it as it is.
+    pub fn under(&self, language_version: u32) -> PluginSpec {
+        if self.fed_by_extraction != Some(true) || crate::version::before(language_version, 5) {
+            return self.clone();
+        }
+        let mut callable = self.clone();
+        callable.fed_by_extraction = None;
+        let mut fed = vec![PluginFedArg { name: EXTRACTED_RECORD_PARAM.to_string(), required: Some(true) }];
+        fed.extend(self.fed_args.iter().flatten().cloned());
+        callable.fed_args = Some(fed);
+        let mut arg_types = self.arg_types.clone().unwrap_or_else(|| std::iter::empty().collect());
+        arg_types.insert(EXTRACTED_RECORD_PARAM.to_string(), FieldType::Scalar(Scalar::Json));
+        callable.arg_types = Some(arg_types);
+        callable
+    }
+
     /// The parameters a call fills by position, in the manifest's declared
     /// order. The spec keeps the fed parameters apart from the author's, and
     /// every plugin declares its fed one first, so fed-then-author is that order.

@@ -155,11 +155,16 @@ interface Recorded {
   config: Record<string, unknown>;
 }
 
+/** The extracted context each invocation was handed, in order. */
+const contexts: Array<Record<string, unknown>> = [];
+
 function stubInvoker(answers: Record<string, TransformInvocationResult>): { invoker: MovementTransformInvoker; calls: Recorded[] } {
   const calls: Recorded[] = [];
+  contexts.length = 0;
   const invoker: MovementTransformInvoker = {
-    async invoke({ plugin, config }) {
+    async invoke({ plugin, config, extractedContext }) {
       calls.push({ plugin, config });
+      contexts.push(extractedContext);
       return answers[plugin] ?? {};
     },
   };
@@ -359,5 +364,41 @@ describe.each(ENGINES)("a package's member called on %s", (_name, config, engine
     );
     expect(recorded.map((r) => r.engine)).toEqual([engine]);
     expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
+  });
+});
+
+// A plugin fed only by an extraction (linkedin_enrichment reads the record a
+// stage enriched) is a function from language version 5: the record is its
+// one argument, handed to the plugin as the extracted context a stage handed
+// it, and the call is bound as the record of fields it declares.
+const ENRICHING = [
+  'import { `@lf/email` as email } from adapters',
+  'import { fetchUrl, linkedinEnrichment } from plugins',
+  '',
+  'inbox = connect email',
+  '',
+].join('\n');
+
+describe.each(ENGINES)('a plugin fed only by an extraction, called on %s', (_name, config, engine) => {
+  it('is handed the record as its extracted context, and hands back its fields', async () => {
+    const calls = await run(
+      [
+        '  person = { name: m.`subject`, company: { name: "Acme Corp" } }',
+        '  found = linkedinEnrichment(person)',
+        '  page = fetchUrl(coalesce(found.linkedin_url, "none"))',
+      ],
+      config,
+      {
+        linkedin_enrichment: { data: { linkedin_url: 'https://linkedin.com/in/ada', linkedin_profile: 'Ada, CTO' } },
+        fetch_url: { text: 'Profile' },
+      },
+      { prelude: ENRICHING },
+    );
+    expect(recorded.map((r) => r.engine)).toEqual([engine]);
+    expect(calls).toEqual([
+      { plugin: 'linkedin_enrichment', config: {} },
+      { plugin: 'fetch_url', config: { url: 'https://linkedin.com/in/ada' } },
+    ]);
+    expect(contexts).toEqual([{ name: 'Acme', company: { name: 'Acme Corp' } }, {}]);
   });
 });

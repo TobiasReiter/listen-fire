@@ -160,9 +160,9 @@ describe('the shipped plugin sections', () => {
     expect(chapters['plugin:fetch_url']?.content).toContain('called once per record');
   });
 
-  it('documents no plugin that runs only as an extraction stage', () => {
-    // `linkedin_enrichment` declares no output, so it cannot be called plainly;
-    // the handbook teaches only the forms to write.
+  it('documents no plugin that has no chapter of its own', () => {
+    // `linkedin_enrichment` is callable only from language version 5 and has
+    // no chapter yet; the handbook teaches only the forms to write.
     expect(getMovementHandbook().chapters['plugin:linkedin_enrichment']).toBeUndefined();
   });
 

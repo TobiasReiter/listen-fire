@@ -469,6 +469,29 @@ export function expandPackageImports(
   };
 }
 
+/** The parameter a plain call hands a plugin fed only by an extraction (from
+ *  language version 5): the record it runs on, which a `through [ … ]` stage
+ *  fed it implicitly. */
+export const EXTRACTED_RECORD_PARAM = 'record';
+
+/**
+ * A plugin as a plain call sees it under `languageVersion`. From version 5 a
+ * plugin is a function, so one fed only by an extraction is no longer a
+ * stage: what the stage fed it implicitly — the record it enriched — becomes
+ * its one required input, written by position like any fed argument and
+ * taking structured data. Versions 1–4 read the spec as it is, and refuse the
+ * call. The Rust twin is `PluginSpec::under` (crates/movement-parser/src/catalog/plugin_args.rs).
+ */
+export function pluginSpecUnder(spec: PluginSpec, languageVersion: LanguageVersion): PluginSpec {
+  if (spec.fedByExtraction !== true || before(languageVersion, 5)) return spec;
+  const { fedByExtraction: _fed, ...callable } = spec;
+  return {
+    ...callable,
+    fedArgs: [{ name: EXTRACTED_RECORD_PARAM, required: true }, ...(spec.fedArgs ?? [])],
+    argTypes: { ...spec.argTypes, [EXTRACTED_RECORD_PARAM]: 'json' },
+  };
+}
+
 /** Where a plugin is called: a plain call writes the arguments a stage is
  *  fed, a `through [ … ]` stage never does. */
 export type PluginCallSite = 'plain' | 'stage';

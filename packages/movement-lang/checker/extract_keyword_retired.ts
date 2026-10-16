@@ -33,6 +33,9 @@ export interface ExtractKeywordContext {
   /** The node declaration a declared node names, as the checker resolved it
    *  (its base folded in). */
   resolveDeclared: (type: string) => ShapeNode | undefined;
+  /** A `through […]` stage's plugin as the function call that replaces it,
+   *  in the spelling the stage wrote it (`linkedinEnrichment(record)`). */
+  pluginCall: (plugin: string) => string;
 }
 
 export interface ExtractKeywordRetirement {
@@ -41,7 +44,7 @@ export interface ExtractKeywordRetirement {
 }
 
 export function extractKeywordRetirement(extract: ExtractExpression, context: ExtractKeywordContext): ExtractKeywordRetirement {
-  const blocker = blockerOf(extract.stages, context);
+  const blocker = blockerOf(extract.stages, context, throughBlocker(stagePlugins(extract.stages).map(context.pluginCall)));
   if (blocker !== undefined) return { message: `${RETIRED}. ${blocker}` };
   const name = shapeName(context.binding, context.taken);
   context.taken.add(name);
@@ -71,22 +74,38 @@ function shortCall(name: string, tier: string | undefined): string {
   return `extractOne(content, ${name}${tier !== undefined ? `, { tier: ${JSON.stringify(tier)} }` : ''})`;
 }
 
-/** Why no rewrite keeps this tree's meaning, if one is why. */
-function blockerOf(stages: readonly ExtractStage[], context: ExtractKeywordContext): string | undefined {
-  if (stages.length !== 1 || stages.some((stage) => stage.through !== undefined)) return THROUGH;
+/** Why no rewrite keeps this tree's meaning, if one is why; `through` is
+ *  the reason when a stage is. */
+function blockerOf(stages: readonly ExtractStage[], context: ExtractKeywordContext, through: string): string | undefined {
+  if (stages.length !== 1 || stages.some((stage) => stage.through !== undefined)) return through;
   for (const child of stages[0].children) {
-    const blocker = isDeclared(child) ? declaredBlocker(child, context) : blockerOf(child.stages, context);
+    const blocker = isDeclared(child) ? declaredBlocker(child, context, through) : blockerOf(child.stages, context, through);
     if (blocker !== undefined) return blocker;
   }
   return undefined;
 }
 
-const THROUGH =
-  "No rewrite keeps a 'through […]' stage's meaning: it hands each record's plugin answers to a further extraction of that record, merged into it, where a plugin called as a function hands back a value of its own."
-  + ' Rewrite it by hand: declare the shape, extract it, map over the records calling each plugin, extractOne over the content plus what the plugin returned, and merge the two with a spread';
+/** Every `through […]` stage's plugin in the tree, once each, in the order written. */
+function stagePlugins(stages: readonly ExtractStage[]): string[] {
+  const plugins: string[] = [];
+  const visit = (stage: ExtractStage): void => {
+    for (const call of stage.through ?? []) if (!plugins.includes(call.plugin)) plugins.push(call.plugin);
+    for (const child of stage.children) child.stages.forEach(visit);
+  };
+  stages.forEach(visit);
+  return plugins;
+}
 
-function declaredBlocker(node: DeclaredExtractNode, context: ExtractKeywordContext): string | undefined {
-  if (node.stages.length > 0) return THROUGH;
+/** The hand rewrite of a tree with stages, naming each stage's plugin as the
+ *  call that replaces it. */
+function throughBlocker(calls: readonly string[]): string {
+  const each = calls.length > 0 ? ` (${calls.map((call) => `'${call}'`).join(', ')})` : '';
+  return "No rewrite keeps a 'through […]' stage's meaning: it hands each record's plugin answers to a further extraction of that record, merged into it, where a plugin called as a function hands back a value of its own."
+    + ` Rewrite it by hand: declare the shape, extract it, map over the records calling each plugin${each}, extractOne over the content plus what the plugin returned, and merge the two with a spread`;
+}
+
+function declaredBlocker(node: DeclaredExtractNode, context: ExtractKeywordContext, through: string): string | undefined {
+  if (node.stages.length > 0) return through;
   const shape = context.resolveDeclared(node.declared.type);
   if (shape === undefined) return `The node '${node.name}' names <${node.declared.type}>, which is no node declaration in scope: declare the shape by hand`;
   if (shapeInterpolates(shape)) {

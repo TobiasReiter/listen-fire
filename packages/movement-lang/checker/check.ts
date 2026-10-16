@@ -200,6 +200,7 @@ import {
   type PluginOutput,
   type PluginSpec,
   pluginOutputUnder,
+  pluginSpecUnder,
   bindPluginArgs,
   bindStageArgs,
   callArgSpan,
@@ -6832,7 +6833,7 @@ class Checker {
     const plugin = named?.value.kind === 'string' && named.value.parts.length === 1 && typeof named.value.parts[0] === 'string'
       ? named.value.parts[0]
       : undefined;
-    const spec = plugin === undefined ? undefined : this.catalog.plugin(plugin);
+    const spec = plugin === undefined ? undefined : this.plainPluginSpec(plugin);
     if (plugin === undefined || spec === undefined) {
       return `${lead}, e.g. '${importLine('fetch_url', 'plugins')}', then 'page = fetch_url(${since(this.languageVersion, 5) ? 'm.u' : 'url: m.u'})'`;
     }
@@ -11675,7 +11676,7 @@ class Checker {
       } else if (callee.kind === 'plugin') {
         // One function sort: a plugin is a function whose body isn't visible.
         value = this.checkPluginApplication(statement, callee, scope);
-        pluginArgTypes = { declared: this.catalog.plugin(callee.importedName ?? statement.callee)?.argTypes ?? {} };
+        pluginArgTypes = { declared: this.plainPluginSpec(callee.importedName ?? statement.callee)?.argTypes ?? {} };
       } else if (closure !== undefined) {
         // A closure bound to a name is a function: its signature is its
         // parameters, its value what its body returns, and calling it does
@@ -14631,12 +14632,24 @@ class Checker {
       topLevel,
       taken: this.fileNames,
       resolveDeclared: (type) => declaredExtractShape(scope.resolve(type))?.declaration.root,
+      pluginCall: (plugin) => this.pluginCallSpelling(plugin, scope),
     });
     if (retirement.fix === undefined) {
       this.report(DiagnosticCodes.EXTRACT_KEYWORD_RETIRED, retirement.message, extract.span);
       return;
     }
     this.reportWithFix({ code: DiagnosticCodes.EXTRACT_KEYWORD_RETIRED, message: retirement.message, span: extract.span, fix: retirement.fix });
+  }
+
+  /** A stage's plugin written as the call of it, its positional parameters
+   *  in place (`linkedinEnrichment(record)`); `…` where its spec is unknown. */
+  private pluginCallSpelling(plugin: string, scope: Scope): string {
+    const resolution = scope.resolve(plugin);
+    const spec = resolution.kind === 'found' && resolution.symbol.kind === 'plugin'
+      ? this.plainPluginSpec(resolution.symbol.importedName ?? plugin)
+      : undefined;
+    const params = spec === undefined ? ['…'] : pluginPositionalParams(spec, 'plain');
+    return `${plugin}(${params.join(', ')})`;
   }
 
   /**
@@ -15216,6 +15229,13 @@ class Checker {
     );
   }
 
+  /** A plugin as a plain call of it reads it under this program's pin
+   *  (`pluginSpecUnder`); a stage reads the catalog's spec as it is. */
+  private plainPluginSpec(name: string): PluginSpec | undefined {
+    const spec = this.catalog.plugin(name);
+    return spec === undefined ? undefined : pluginSpecUnder(spec, this.languageVersion);
+  }
+
   /**
    * A plugin's call with arguments by position (version 5), as the named call
    * versions 1–4 write, each misfit reported; undefined where there is
@@ -15226,7 +15246,7 @@ class Checker {
     if (before(this.languageVersion, 5)) return undefined;
     const resolution = this.calleeResolution(statement.callee, scope);
     if (resolution.kind !== 'found' || resolution.symbol.kind !== 'plugin') return undefined;
-    const spec = this.catalog.plugin(resolution.symbol.importedName ?? statement.callee);
+    const spec = this.plainPluginSpec(resolution.symbol.importedName ?? statement.callee);
     const first = statement.args[0];
     if (spec === undefined || first === undefined) return undefined;
     if (first.name !== undefined) {
@@ -15254,7 +15274,7 @@ class Checker {
    * widen what the movement does.
    */
   private checkPluginApplication(statement: CallStatement, symbol: ScopeSymbol, scope: Scope): ReturnShape {
-    const spec = this.catalog.plugin(symbol.importedName ?? statement.callee);
+    const spec = this.plainPluginSpec(symbol.importedName ?? statement.callee);
     this.absorbPluginRow(spec);
     // Before version 5 a plugin's parameters are a registry's flat config, in
     // no order anyone designed — so there is no position for an argument to

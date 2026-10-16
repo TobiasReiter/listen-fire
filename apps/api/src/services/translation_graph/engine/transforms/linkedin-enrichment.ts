@@ -61,6 +61,24 @@ export const LINKEDIN_ENRICHMENT_SIGNATURE: TransformSignature = {
       linkedin_profile: { kind: 'string' },
     },
   },
+  // What a call hands back from language version 5, where the record a stage
+  // fed it is the call's argument. Before 5 nothing can call it — it is fed
+  // only by an extraction — so this is read by version 5 alone.
+  output: {
+    kind: 'record',
+    fields: {
+      linkedin_url: {
+        type: { kind: 'string' },
+        optional: true,
+        description: "The person's LinkedIn profile address, when a confident match was found.",
+      },
+      linkedin_profile: {
+        type: { kind: 'string' },
+        optional: true,
+        description: 'The text of that profile page.',
+      },
+    },
+  },
 };
 
 /**
@@ -83,8 +101,8 @@ export const LINKEDIN_ENRICHMENT_PLUGIN_MANIFEST: PluginManifest = {
     'it found, and the text of that profile page (both left empty when no ' +
     'confident match exists).',
   additions: LINKEDIN_ENRICHMENT_SIGNATURE.additions,
-  // No handbook section: it declares no output, so it runs only as a `through`
-  // stage of the extraction keyword, and the handbook documents only the forms
+  // No handbook section yet: it is callable only from language version 5
+  // (`linkedinEnrichment(record)`), and the handbook documents only the forms
   // to write. `research` resolves a person's profile address from a name.
 };
 
