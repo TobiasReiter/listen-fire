@@ -82,3 +82,56 @@ fn version_5_refuses_a_read_off_a_library_functions_parameter_at_the_import() {
     assert_eq!(diagnostics.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), ["MOV_EVENT_UNDESCRIBED"]);
     assert!(diagnostics[0].message.starts_with("\"lib/recap\" line 4: "), "{}", diagnostics[0].message);
 }
+
+/// Undescribed, the event is still a record, only not which one: from
+/// version 5 a value it reaches is refused as a record is, however it got
+/// there. Before 5 it stays untyped. (The TypeScript twin: "an undescribed
+/// event held as a value".)
+mod held_as_a_value {
+    use super::*;
+
+    const KG: &str = r#""kg":{"constructionArgs":[],"schemas":{"":{"positions":{"note":{"properties":{"payload":"json"},"edges":{}}},"collections":{"note":{"target":"note"}},"writableRoots":{"note":{"fields":{"payload":"json"},"resultShape":{"externalId":"text"}}}}}}"#;
+    const LIBRARY: &str = "import { manual } from adapters\nruns = connect manual\nexport function mk(a: <number>) {\n  return (b: <runs-[:Invocation]->>) => {\n    return (c: <number>) => b\n  }\n}";
+
+    fn codes(body: &[&str], version: u32) -> Vec<String> {
+        let v5 = version >= 5;
+        let source = [
+            "import { mk } from \"lib/mk\"",
+            "import { manual, kg } from adapters",
+            if v5 { "runs = connect manual" } else { "runs = manual()" },
+            if v5 { "graph = connect kg" } else { "graph = kg()" },
+            if v5 { "function recap(go: <runs-[:Invocation]->>) {" } else { "movement recap(go: <runs-[:Invocation]->>) {" },
+        ]
+        .into_iter()
+        .chain(body.iter().copied())
+        .chain(["}", "listen to runs {} fire recap"])
+        .collect::<Vec<_>>()
+        .join("\n");
+        let library = if v5 { LIBRARY.to_string() } else { LIBRARY.replace("connect manual", "manual()").replace("export function", "export movement") };
+        let files = serde_json::json!({ "lib/mk": { "source": library } }).to_string();
+        check_with(&source, version, &format!("{UNDESCRIBED},{KG}"), None, &files).into_iter().map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn is_refused_in_a_json_field_however_it_got_there() {
+        for body in [
+            &["  write graph-[:note]-> { payload: go }"][..],
+            &["  write graph-[:note]-> { payload: { r: [go] } }"],
+            &["  x = go", "  write graph-[:note]-> { payload: { r: x } }"],
+            &["  f = (b: <runs-[:Invocation]->>) => b", "  write graph-[:note]-> { payload: { r: f(go) } }"],
+            &["  h = mk(2)", "  k = h(go)", "  r = k(1)", "  write graph-[:note]-> { payload: { r: r } }"],
+        ] {
+            assert_eq!(codes(body, 5), ["MOV_WRITE_FIELD_TYPE"], "{body:?}");
+        }
+    }
+
+    #[test]
+    fn keeps_the_read_refusal_through_a_name() {
+        assert_eq!(codes(&["  x = go", "  t = x.`text`"], 5), ["MOV_EVENT_UNDESCRIBED"]);
+    }
+
+    #[test]
+    fn says_nothing_under_version_4_as_before() {
+        assert!(codes(&["  write graph-[:note]-> { payload: go }"], 4).is_empty());
+    }
+}

@@ -61,6 +61,10 @@ pub struct Checker<'c> {
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
     /// The bodies being walked, innermost last, each collecting its `return`s.
     pub return_stack: Vec<crate::families::returns::ReturnCollector>,
+    /// The file-level value being checked (version 5), while its right-hand
+    /// side is: a call the engine would run inside it is refused where it is
+    /// written (`hoist_nested_calls`, crate::families::file_values).
+    pub file_value: Option<String>,
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
@@ -241,6 +245,7 @@ impl<'c> Checker<'c> {
             schemas: Default::default(),
             upgrading_from: options.upgrading_from,
             return_stack: Vec::new(),
+            file_value: None,
             function_returns: Default::default(),
             reported_receipts: Default::default(),
             function_values: Default::default(),
@@ -394,7 +399,13 @@ impl<'c> Checker<'c> {
             Statement::Import(import) => self.check_import(import, scope),
             Statement::Assign(assign) => {
                 self.check_reserved_name(&assign.name, assign.span);
+                let at_file = self.return_stack.is_empty() && self.version >= 5;
+                if at_file {
+                    self.report_file_value_kind(&assign.name, &assign.value, assign.span, scope);
+                }
+                let outer = std::mem::replace(&mut self.file_value, at_file.then(|| assign.name.clone()));
                 let bound = self.check_rvalue(&assign.value, scope, Some(&assign.name), assign.span);
+                self.file_value = outer;
                 self.declare_binding(&assign.name, assign.span, &bound, scope);
                 if bound.is_closure
                     && let Some(id) = self.scopes.scope(scope).symbols.get(&assign.name).copied()
@@ -406,6 +417,7 @@ impl<'c> Checker<'c> {
                     self.set_types(scope, &assign.name, types);
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
+                self.note_undescribed_alias(&assign.name, &assign.value, scope);
                 self.note_closure_returns(&assign.name, &assign.value, scope);
                 self.narrow_after_value(&assign.value, scope);
             }

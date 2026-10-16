@@ -13,6 +13,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
+### sr-bugs (for the integrator's consolidated version 5 entry)
+
+- Version 5: an event whose system the catalog does not describe is still a record. Written into a json field (whole, inside a value, through a name, or handed back by a closure) it is refused at save (MOV_WRITE_FIELD_TYPE), as a described one is; before, the run wrote the engine's own description of it. A second name for it keeps the read refusal (MOV_EVENT_UNDESCRIBED). Versions 1–4 unchanged.
+- Version 5: a file-level value holds a value only (new MOV_FILE_VALUE_RUNS). A call to a function or a plugin (written whole or nested in the value), a write, an extraction, a walk, a wait, a callback or a node there is refused at save. The engines already failed such a run; a file's values are worked out before every run and again on every resume, so a call there would run, and spend, each time. A literal, a built-in's value, a closure and a construction stay.
+- The Rust engine runs an extraction call's written `model` when the run carries no model list (a custom embedder), instead of refusing it: the checker held the model to nothing, so the host's model call answers for it.
+
 ### shrink-routes (for the integrator's consolidated version 5 entry)
 
 - The Rust engine runs only language version 5 and later. A run pinned to 1–4 sent to it is refused

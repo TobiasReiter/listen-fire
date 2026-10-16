@@ -1477,7 +1477,14 @@ impl crate::checker::Checker<'_> {
         let Some(address) = crate::types::event_address::event_address_of_hops(hops) else { return };
         let event = UndescribedEvent { instance: reference.graph.clone(), event: address.event };
         if let Some(id) = self.scopes.scope(body).symbols.get(param).copied() {
-            self.scopes.symbol_mut(id).undescribed_event = Some(event);
+            let symbol = self.scopes.symbol_mut(id);
+            symbol.undescribed_event = Some(event);
+            // From version 5 it is still a record, only not which one: a
+            // value it reaches is refused as a record is (check.ts
+            // `undescribedEventPlane`). Before 5 it stays untyped.
+            if self.version >= 5 {
+                symbol.types.is_record = true;
+            }
         }
     }
 
@@ -1494,6 +1501,26 @@ impl crate::checker::Checker<'_> {
             }
         }
         self.note_undescribed_event(body, param, type_, Some(graph));
+    }
+
+    /// `x = go`, `go` an undescribed event (version 5): the second name
+    /// keeps what reads off it are refused for, as the first does (check.ts,
+    /// the alias branch of `checkRValue`).
+    pub(crate) fn note_undescribed_alias(&mut self, name: &str, value: &movement_parser::ast::RValue, scope: ScopeId) {
+        let movement_parser::ast::RValue::Expr { expr } = value else { return };
+        let raw = expr.raw.trim();
+        if self.version < 5 || !crate::slots::is_bare_ident(raw) {
+            return;
+        }
+        let crate::scope::Resolution::Found(aliased) = self.scopes.resolve(scope, raw) else { return };
+        let aliased = self.scopes.symbol(aliased);
+        if aliased.types.pos.is_some() {
+            return;
+        }
+        let Some(event) = aliased.undescribed_event.clone() else { return };
+        if let Some(id) = self.scopes.scope(scope).symbols.get(name).copied() {
+            self.scopes.symbol_mut(id).undescribed_event = Some(event);
+        }
     }
 
     /// `reportUndescribedEvent` (check.ts): a walk or a write off `name`.

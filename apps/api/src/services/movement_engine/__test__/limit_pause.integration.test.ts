@@ -259,7 +259,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   // Pin a runnable version + set current_version_id (the resume re-parses THIS).
@@ -299,21 +299,21 @@ function webhookEvent(): TriggerEvent {
 const FETCH_TWICE = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl } from plugins',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement fetch_twice(ev: <crm-[:`Webhook Event`]->>) {',
-  '  page = fetch_url(url: "a")',
+  'function fetch_twice(ev: <crm-[:`Webhook Event`]->>) {',
+  '  page = fetchUrl("a")',
   '  write chat-[:messages]-> {',
   '    channel: "#a"',
-  '    text: COALESCE(page, "none")',
+  '    text: coalesce(page, "none")',
   '  }',
-  '  more = fetch_url(url: "b")',
+  '  more = fetchUrl("b")',
   '  write chat-[:messages]-> {',
   '    channel: "#b"',
-  '    text: COALESCE(more, "none")',
+  '    text: coalesce(more, "none")',
   '  }',
   '}',
   '',
@@ -439,10 +439,10 @@ describe('a run paused at its cost cap (real DB)', () => {
       'import { attio, slack } from adapters',
       'import { acme_main, acme_slack } from credentials',
       '',
-      'crm = attio(credentials: acme_main)',
-      'chat = slack(credentials: acme_slack)',
+      'crm = connect attio using acme_main',
+      'chat = connect slack using acme_slack',
       '',
-      'movement judged_twice(ev: <crm-[:`Webhook Event`]->>) {',
+      'function judged_twice(ev: <crm-[:`Webhook Event`]->>) {',
       '  write chat-[:messages]-> {',
       '    unique by (FUZZY `text`)',
       '    channel: "#a"',

@@ -3065,21 +3065,21 @@ mod tests {
     }
 
     /// An extraction call whose written `model` meets a run input that carries
-    /// no `models` list fails (README `extract_call_model`): the model
-    /// registry is the host's, and the shim always sends the run's list. The
-    /// call fails before the model is asked anything.
+    /// no `models` list (an embedder that sends none): the checker held the
+    /// model to nothing, so the call is made with it and the host answers.
     #[test]
-    fn an_extraction_call_with_a_model_and_no_model_list_fails_unsupported() {
-        let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }\n}";
+    fn an_extraction_call_with_a_model_and_no_model_list_asks_the_host_with_it() {
+        let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
         let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
             ("ids", "mint") => json!({ "value": ["id-1"] }),
             ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
-            ("llm.client" | "llm.extractCall", _) => panic!("the model is never asked: {request:?}"),
+            ("llm.extractCall", _) => json!({ "error": { "message": "the host knows no model 'claude-opus-5'" } }),
             _ => host(request),
         });
-        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
-        assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
+        let asked = seen.iter().find(|r| r.family == "llm.extractCall").expect("the model is asked");
+        assert_eq!(asked.args["model"], json!("claude-opus-5"));
+        assert_ne!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
     }
 
     /// The extraction keyword fails by name where it is met: this engine
@@ -3326,6 +3326,67 @@ mod tests {
         };
         assert!(!seen.iter().any(|s| s.starts_with("park.sink")), "{seen:?}");
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
+    }
+
+    /// A run that meets its cost cap pauses before the statement that would
+    /// spend, and its resume, with the usage reset, runs that statement and
+    /// the rest: the call before the pause is not made again.
+    #[test]
+    fn a_run_paused_at_its_cost_cap_resumes_at_the_statement_that_would_spend() {
+        let source = "import { email } from adapters\nimport { fetchUrl } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  page = fetchUrl(\"a\")\n  more = fetchUrl(\"b\")\n}";
+        let input = |spend: Json, resume: Option<Json>| {
+            let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+            catalog["plugins"] = json!({ "fetch_url": {
+                "args": ["url"], "requiredArgs": ["url"], "priced": true, "output": { "kind": "value", "type": "text" },
+            } });
+            let mut input = segment_input(source, json!(["o", 1, []]), &["park.sink.commitSuspension", "park.sink.commitLimitPause"]);
+            input["catalog"] = catalog;
+            input["spend"] = spend;
+            if let Some(state) = resume {
+                // The operator's resume re-enters the suspended statement
+                // (resume_step.ts: anything but a slept timer re-enters).
+                input["resume"] = json!({ "state": state, "reenter": true });
+            }
+            input
+        };
+        let fetched = RefCell::new(Vec::<String>::new());
+        let parked = RefCell::new(None::<Json>);
+        let paused = RefCell::new(None::<Json>);
+        let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+            ("llm.transforms", "invoke") => {
+                let config = env::json_of_js(&env::decode(&request.args["config"]).unwrap());
+                let url = config["url"].as_str().unwrap().to_string();
+                fetched.borrow_mut().push(url.clone());
+                let answer = json!({ "text": format!("got-{url}"), "cost": [{ "source": "service:test.fetch", "microdollars": 1_000_000 }] });
+                json!({ "value": wire(answer) })
+            }
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+            ("park.sink", "commitLimitPause") => {
+                *paused.borrow_mut() = Some(request.args.clone());
+                json!({})
+            }
+            ("park.sink", "commitSuspension") => {
+                *parked.borrow_mut() = Some(json!({ "address": request.args["address"], "state": request.args["state"] }));
+                json!({})
+            }
+            _ => plain_host(json!({}))(request),
+        };
+        let cap = |prior: f64, baseline: f64| json!({ "priorMicrodollars": prior, "capBaselineMicrodollars": baseline, "capMicrodollars": 1_000_000.0 });
+
+        let (done, _) = drive_input(input(cap(0.0, 0.0), None), host);
+        assert_eq!(done["result"]["parked"], json!(true), "{done}");
+        assert_eq!(*fetched.borrow(), ["a"]);
+        let pause = paused.borrow().clone().expect("the pause is committed");
+        assert_eq!((pause["limit"].clone(), pause["spentMicrodollars"].clone()), (json!("cost"), json!(1_000_000.0)));
+        let park = parked.borrow_mut().take().expect("the run parks");
+        assert_eq!(park["address"], json!("s1"));
+
+        // The operator's resume resets the usage: the baseline moves to what
+        // the run had spent.
+        let (done, _) = drive_input(input(cap(1_000_000.0, 1_000_000.0), Some(park["state"].clone())), host);
+        assert!(done.get("failed").is_none() && done.get("thrown").is_none(), "{done}");
+        assert_ne!(done["result"]["parked"], json!(true), "{done}");
+        assert_eq!(*fetched.borrow(), ["a", "b"]);
     }
 
     /// A segment whose check answers `check`, with a dated event field;

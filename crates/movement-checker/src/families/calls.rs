@@ -606,7 +606,12 @@ impl Checker<'_> {
         let written = self.written_text(slot).to_string();
         self.note_hoisted(&rewritten, written);
         let units: Vec<u16> = slot.raw.encode_utf16().collect();
-        for HoistedCall { at, span, name } in calls {
+        for HoistedCall { at, span, name, callee } in calls {
+            if let Some(value) = self.file_value.clone()
+                && self.return_stack.is_empty()
+            {
+                self.report_file_value(&value, &format!("a call to '{callee}'"), span);
+            }
             let head = String::from_utf16_lossy(&units[..at.end]);
             let mut bound = crate::checker::Bound::default();
             let parsed = movement_parser::stmt::Parser::new(&head, self.version, slot.span.start, true).parse_nested_call_value(at.start);
@@ -685,7 +690,14 @@ impl Checker<'_> {
             }
             rewritten.extend_from_slice(&spelled);
             from = at.end;
-            hoisted.push(HoistedCall { at, span, name });
+            let callee = match call {
+                MExpr::Call { callee, .. } => match callee.as_ref() {
+                    MExpr::Name { name, .. } => name.text.clone(),
+                    other => String::from_utf16_lossy(&units[other.at().start..other.at().end]),
+                },
+                _ => String::new(),
+            };
+            hoisted.push(HoistedCall { at, span, name, callee });
         }
         rewritten.extend_from_slice(&units[from..]);
         Some((hoisted, ExprSlot::plain(String::from_utf16_lossy(&rewritten), slot.span)))
@@ -697,6 +709,8 @@ pub struct HoistedCall {
     pub at: At,
     pub span: Span,
     pub name: String,
+    /// The callee as written (`echo`, `web.fetchUrl`).
+    pub callee: String,
 }
 
 /// `closureOfValue`: a value that is a closure (every member of a union one).
@@ -763,7 +777,7 @@ fn args_refusal(message: String, span: Span) -> CallReading {
 }
 
 /// `readOneCall`.
-fn read_one_call(call: &CallStatement, resolution: &Callee, position: CallPosition) -> CallReading {
+pub(crate) fn read_one_call(call: &CallStatement, resolution: &Callee, position: CallPosition) -> CallReading {
     let Callee::Builtin { builtin, version } = *resolution else { return CallReading::Function };
     let callee = &call.callee;
     if call.args.iter().any(|arg| arg.name().is_some()) {

@@ -681,6 +681,11 @@ export const DiagnosticCodes = {
    *  and a later one may hand back a record the first does not. From 5 the
    *  call is any of their returns, and each use of it is checked as such. */
   CALL_CLOSURE_RETURNS: 'MOV_CALL_CLOSURE_RETURNS',
+  /** From version 5: a file-level value is worked out with no event in
+   *  scope, before every run of every function in the file, so it holds a
+   *  value only — no call to a function or plugin, no write, no walk, no
+   *  wait (`fileValueRefusal`). */
+  FILE_VALUE_RUNS: 'MOV_FILE_VALUE_RUNS',
   // Listeners (trigger rows are derived from `listen` statements)
   LISTEN_FILE_LEVEL: 'MOV_LISTEN_FILE_LEVEL',
   LISTEN_NOT_INSTANCE: 'MOV_LISTEN_NOT_INSTANCE',
@@ -6047,6 +6052,85 @@ class Checker {
     return withoutValueType(shape);
   }
 
+  /** The file-level value being checked (version 5), while its right-hand
+   *  side is: a call the engine would run inside it is refused where it is
+   *  written (`hoistNestedCalls`). */
+  private fileValue: string | undefined;
+
+  /**
+   * A file-level value's right-hand side, from version 5. The file's values
+   * are worked out before every run of every function in it, with no event
+   * in scope, and again on every resume: a call there (a function's, a
+   * plugin's, a collection op's) would run again each time, spending again
+   * and answering differently, and a write, a walk or a wait has nothing to
+   * run about. So a file-level value is a value: a literal, a built-in's
+   * value, a closure, a construction. Before 5 the save scan refused the
+   * same forms (interpretable.ts), and a run that met one failed.
+   */
+  private reportFileValueKind(statement: AssignStatement, scope: Scope): void {
+    const holding = this.fileValueRefusal(statement.value, scope);
+    if (holding !== undefined) this.reportFileValue(statement.name, holding, statement.span);
+  }
+
+  private fileValueRefusal(value: RValue, scope: Scope): string | undefined {
+    switch (value.kind) {
+      case 'expr':
+      case 'closure':
+        return undefined;
+      case 'construct':
+        return this.callInConstructPosition(value.construct, scope) !== undefined ? `a call to '${value.construct.callee}'` : undefined;
+      case 'call': {
+        const callScope = this.callScope(scope);
+        const reading = readCall(value.call, callee => resolveCallee(callee, callScope, this.languageVersion), 'value');
+        switch (reading.kind) {
+          case 'value':
+          case 'refused':
+            return undefined;
+          case 'function':
+          case 'collection':
+          case 'members':
+            return `a call to '${value.call.callee}'`;
+          default:
+            return neverAsAny(reading);
+        }
+      }
+      case 'write':
+        return 'a write';
+      case 'match':
+        return 'a match';
+      case 'link':
+        return 'a link';
+      case 'extract':
+      case 'extractCall':
+        return 'an extraction';
+      case 'block':
+      case 'inlineBlock':
+        return 'a block';
+      case 'await':
+      case 'combinator':
+        return 'a wait';
+      case 'collection':
+      case 'members':
+        return 'a collection operation';
+      case 'callback':
+        return 'a callback';
+      case 'node':
+        return 'a node';
+      case 'lazy':
+        return 'a walk';
+      default:
+        return neverAsAny(value);
+    }
+  }
+
+  private reportFileValue(name: string, holding: string, span: Span): void {
+    this.report(
+      DiagnosticCodes.FILE_VALUE_RUNS,
+      `'${name}' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not ${holding}. Do it inside the function that uses it.`,
+      span,
+    );
+  }
+
   private checkAssign(statement: AssignStatement, scope: Scope): void {
     // `#` marks the engine's own names (`#resources` is the other one), and the
     // engine binds a body's `return` under such a name so it survives a park.
@@ -6059,7 +6143,17 @@ class Checker {
         statement.span,
       );
     }
-    const shape = this.withinTypeLimit(statement.name, this.checkRValue(statement.value, scope, statement.name, statement.span), statement.span);
+    const atFile = this.returnStack.length === 0 && since(this.languageVersion, 5);
+    if (atFile) this.reportFileValueKind(statement, scope);
+    const outer = this.fileValue;
+    this.fileValue = atFile ? statement.name : undefined;
+    let checked: Partial<ScopeSymbol>;
+    try {
+      checked = this.checkRValue(statement.value, scope, statement.name, statement.span);
+    } finally {
+      this.fileValue = outer;
+    }
+    const shape = this.withinTypeLimit(statement.name, checked, statement.span);
     const symbol: ScopeSymbol = {
       name: statement.name,
       kind: 'binding',
@@ -6399,6 +6493,13 @@ class Checker {
           // (`functionAsValue`): `g = made` and `return made` carry its type,
           // as TypeScript's `const g = made` does.
           const aliasType = aliased.posType ?? this.functionAsValue(aliased);
+          // An undescribed event is still a record, only not which one: the
+          // name holds a record as a value, and keeps what its reads are
+          // refused for (MOV_EVENT_UNDESCRIBED).
+          if (aliasType === undefined && aliased.undescribedEvent !== undefined && since(this.languageVersion, 5)) {
+            symbol = { ...symbol, bindingPlane: 'scalar', fieldType: recordOf(undefined), undescribedEvent: aliased.undescribedEvent };
+            break;
+          }
           symbol = {
             ...symbol,
             ...(aliasType !== undefined ? { posType: aliasType } : {}),
@@ -6710,6 +6811,10 @@ class Checker {
     for (const call of calls) {
       const span = spanOfExtent(slot, call.at);
       const name = nestedCallName(span);
+      if (this.fileValue !== undefined && this.returnStack.length === 0) {
+        const callee = call.callee.kind === 'name' ? call.callee.name.text : slot.raw.slice(call.callee.at.start, call.callee.at.end);
+        this.reportFileValue(this.fileValue, `a call to '${callee}'`, span);
+      }
       let shape: Partial<ScopeSymbol> = {};
       let value: RValue | undefined;
       try {
@@ -7227,7 +7332,7 @@ class Checker {
                 bindingPlane: 'scalar' as const,
                 ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
               }),
-          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
+          ...(undescribedEvent !== undefined ? { undescribedEvent, ...this.undescribedEventPlane() } : {}),
         },
         param.span,
       );
@@ -11820,6 +11925,14 @@ class Checker {
     return event !== undefined ? { instance: typeRef.graph, event } : undefined;
   }
 
+  /** From version 5 an undescribed event is still a record, only not which
+   *  one: the parameter is bound on the record plane, so a value it reaches
+   *  (a json field, a list, a closure's return) is refused as a record is.
+   *  Before 5 it stays untyped, as it always was. */
+  private undescribedEventPlane(): { bindingPlane?: 'node' } {
+    return since(this.languageVersion, 5) ? { bindingPlane: 'node' } : {};
+  }
+
   /** A walk or a write off `name`, a movement parameter whose event the
    *  catalog does not describe (`ScopeSymbol.undescribedEvent`). */
   private reportUndescribedEvent(symbol: ScopeSymbol | undefined, name: string, span: Span): void {
@@ -13832,7 +13945,7 @@ class Checker {
           kind: 'param',
           span: param.span,
           ...(posType ? { posType } : {}),
-          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
+          ...(undescribedEvent !== undefined ? { undescribedEvent, ...this.undescribedEventPlane() } : {}),
         },
         param.span,
       );
