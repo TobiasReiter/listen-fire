@@ -2,9 +2,10 @@
 // TypeScript's `A | A` IS `A`, records of one type are that type — two write
 // handles of one system's Companies are a Company, so a write in place to it is
 // held to a Company's fields and a read off it is typed. Records of different
-// types stay a union: a record nobody can name, and nothing is refused. One
-// that may be absent may be empty, and is no record to update in place; a value
-// among them is no record at all.
+// types (or one type read through different surfaces — a found Company and a
+// written one) are a union, held to every member (record_unions). One that may
+// be absent may be empty, and is no record to update in place; a value among
+// them is no record at all.
 //
 // Versions. The write in place was the checker's own internal error
 // (MOV_INTERNAL_UNTYPED_BINDING) until it read what the value may hold, so it
@@ -71,12 +72,16 @@ describe.each<LanguageVersion>([3, 4, 5])('writing in place to a value that may 
     expect(errorsUnder(version, [ORG, PICK, '  c = 1 > 0', '  v = IF c THEN pick ELSE org END', '  write v { nope: 1 }'])).toEqual(unknown);
   });
 
-  it('one of two records of different types is a record nobody can name, and nothing is refused', () => {
+  it('one of two records of different types is held to both: a field both have is written', () => {
     expect(errorsUnder(version, [ORG, PERSON, '  v = COALESCE(per, org)', '  write v { name: "B" }'])).toEqual([]);
   });
 
-  it('a walked record or a write handle is a record nobody can name, and nothing is refused', () => {
-    expect(errorsUnder(version, ['  crm-[a:companies]-> {', `  ${ORG}`, '    v = COALESCE(a, org)', '    write v { nope: "B" }', '  }'])).toEqual([]);
+  it('a walked record or a write handle is held to both: a field neither has is refused of each', () => {
+    const union = ' (this may be crm.company or a crm.company handle, and a write to it is held to every one of them)';
+    expect(errorsUnder(version, ['  crm-[a:companies]-> {', `  ${ORG}`, '    v = COALESCE(a, org)', '    write v { nope: "B" }', '  }'])).toEqual([
+      ['MOV_WRITE_UNKNOWN_FIELD', `crm.company has no field 'nope' — it has: name, size${union}`],
+      ['MOV_WRITE_UNKNOWN_FIELD', `a crm.company handle has no field 'nope' — it has: name, size${union}`],
+    ]);
   });
 
   it('a record or a value is no record to update in place', () => {
@@ -110,7 +115,7 @@ describe.each<LanguageVersion>([3, 4, 5])('reading off one of several records (v
     expect(refusedFrom5(version, notes('name: v.nope'))).toEqual([['MOV_UNKNOWN_PROPERTY', typedRead(version)]]);
   });
 
-  it('records of different types stay a union: nothing is said of a field off it', () => {
-    expect(refusedFrom5(version, [ORG, PERSON, '  write crm-[:companies]-> { size: COALESCE(per, org).nope }'])).toEqual([]);
+  it('records of different types are a union: a field off it is held to every member', () => {
+    expect(refusedFrom5(version, [ORG, PERSON, '  write crm-[:companies]-> { size: COALESCE(per, org).nope }'])).toEqual([['MOV_UNKNOWN_PROPERTY', typedRead(version)]]);
   });
 });

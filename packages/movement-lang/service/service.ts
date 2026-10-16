@@ -947,7 +947,7 @@ function chainPositionAt(
     // A completion walks hops only; nothing a version changes is read here.
     const typing = new ExpressionTyping({
       languageVersion: CURRENT_LANGUAGE_VERSION,
-      joinsRecordsOfOneType: true,
+      recordJoin: { joins: true },
       resolveRoot: name => {
         const s = scope.get(name);
         return s ? positionTypeOf(s) : undefined;
@@ -960,6 +960,12 @@ function chainPositionAt(
     if (e instanceof BridgeError) return undefined;
     throw e;
   }
+}
+
+/** The completions every member of a union offers — what it can be read by. */
+function offeredByEvery(each: MovementCompletionItem[][]): MovementCompletionItem[] {
+  const [head = [], ...rest] = each;
+  return head.filter(item => rest.every(items => items.some(other => other.label === item.label)));
 }
 
 function edgeItems(position: PositionTypeRef): MovementCompletionItem[] {
@@ -1019,6 +1025,9 @@ function edgeItems(position: PositionTypeRef): MovementCompletionItem[] {
       }));
     case 'maybeEmpty':
       return edgeItems(position.of);
+    // What every record it may be offers.
+    case 'oneOf':
+      return offeredByEvery(position.members.map(edgeItems));
   }
 }
 
@@ -1128,6 +1137,8 @@ function propertyItems(position: PositionTypeRef): MovementCompletionItem[] {
       return Object.entries(position.reads).map(([n, t]) => item(n, t));
     case 'maybeEmpty':
       return propertyItems(position.of);
+    case 'oneOf':
+      return offeredByEvery(position.members.map(propertyItems));
     case 'closure':
       // A closure carries no data — only a signature.
       return [];
