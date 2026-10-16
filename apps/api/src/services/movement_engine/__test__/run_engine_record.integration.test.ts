@@ -27,7 +27,7 @@ async function engineOf(runId: TriggerRunId) {
   return getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
     .where('id', '=', runId)
-    .select(['engine', 'engine_reason'])
+    .select(['engine'])
     .executeTakeFirstOrThrow();
 }
 
@@ -41,24 +41,24 @@ afterAll(async () => {
 describe('a run row records its engine', () => {
   it('is null before the engine has decided, additive for runs from before the columns', async () => {
     const runId = await seedRun();
-    expect(await engineOf(runId)).toEqual({ engine: null, engine_reason: null });
+    expect(await engineOf(runId)).toEqual({ engine: null });
   });
 
-  it('keeps the engine, the reason left empty, and the latest segment overwrites an earlier one', async () => {
+  it('keeps the engine, and the latest segment overwrites an earlier one', async () => {
     const runId = await seedRun();
     recordRunEngine({ runId, engine: 'ts' });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'ts', engine_reason: null });
+    expect(await engineOf(runId)).toEqual({ engine: 'ts' });
     recordRunEngine({ runId, engine: 'rust' });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: null });
+    expect(await engineOf(runId)).toEqual({ engine: 'rust' });
   });
 
   it('writes in the order the decisions were made', async () => {
     const runId = await seedRun();
     for (const engine of ['ts', 'rust', 'ts', 'rust'] as const) recordRunEngine({ runId, engine });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: null });
+    expect(await engineOf(runId)).toEqual({ engine: 'rust' });
   });
 
   it('ignores a run id that is not a trigger run, and a run with no row', async () => {
@@ -71,9 +71,9 @@ describe('a run row records its engine', () => {
     const runId = await seedRun();
     recordRunEngine({ runId, engine: 'ts' });
     await settleRunEngineRecords();
-    expect(await getTgRun({ teamId: TEAM_ID, runId })).toMatchObject({ engine: 'ts', engineReason: null });
+    expect(await getTgRun({ teamId: TEAM_ID, runId })).toMatchObject({ engine: 'ts' });
     expect(await listTgRuns({ teamId: TEAM_ID })).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: runId, engine: 'ts', engineReason: null })]),
+      expect.arrayContaining([expect.objectContaining({ id: runId, engine: 'ts' })]),
     );
   });
 });

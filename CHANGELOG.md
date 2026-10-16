@@ -31,7 +31,9 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 - Self-hosting: `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`, `MOVEMENT_ENGINE_DRY_RUN_EVERY` and
   `MOVEMENT_ENGINE_V5_ON_TS` are retired, and boot refuses any of them set. The admission dry run,
   its daily roll-up and `pnpm engine:refusals` are gone. `GET /api/v1/system/engine-stats` answers
-  only the Rust segments' counters. A run row's `engine_reason` is no longer written.
+  only the Rust segments' counters.
+- The `trigger_run.engine_reason` column is dropped (it was always null), by an ordinary migration
+  operators run normally; the operator run views no longer carry `engineReason`. `engine` stays.
 - `lf` refuses a project, or a parked run, pinned below version 5, saying to run `lf upgrade`.
 
 Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in

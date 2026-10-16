@@ -6,33 +6,24 @@ own shapes (docs/contracts/host-families.md); `apps/api/src/services/movement_en
 rust_engine.ts` drives it, and `rust_host.ts` forwards each request to the
 run's `EngineHost`.
 
-Which runs reach it is `MOVEMENT_ENGINE`'s (`engineRoute` in rust_engine.ts).
-Under `by-version`, production's default, a run pinned to language version 5
-or later runs here and one pinned to 1–4 on the TypeScript engine; a version-5
-run this engine refuses or declines fails with the reason (no fallback), the
-emergency switch `MOVEMENT_ENGINE_V5_ON_TS=true` sends version-5 runs to the
-TypeScript engine instead, and a resume goes back to the engine that parked
-it (the run row's `engine`, handed in as `parkedOnEngine`) whatever the switch
-says. `rust` and `ts` force one engine for every version: the test harness's
-setting (jest defaults to `ts`), so the corpora, recordings and oracles can
-hold this engine to the TypeScript engine on any version.
+Which runs reach it is decided by the run's pinned language version alone
+(`engineRoute` in rust_engine.ts): version 5 or later runs here, 1–4 on the
+TypeScript engine, which no longer runs version 5. There is no fallback and
+no admission step: the checker is the one gate, and a version-5 run this
+engine will not run fails where it is met with `MOVENG_UNSUPPORTED`, naming
+the reason. A resume goes back to the engine that parked it (the run row's
+`engine`, handed in as `parkedOnEngine`); a version-5 state the TypeScript
+engine parked cannot resume, and fails saying so. `MOVEMENT_ENGINE`,
+`MOVEMENT_ENGINE_FALLBACK`, `MOVEMENT_ENGINE_DRY_RUN_EVERY` and
+`MOVEMENT_ENGINE_V5_ON_TS` are retired, and boot refuses any of them set.
 
-Under `MOVEMENT_ENGINE=rust` the engine runs two things (under `by-version`,
-the whole run only):
-
-- **an expression** over value bindings, which the TypeScript evaluator hands
-  to `eval_expression` (slice 1, "The evaluator" below);
-- **a whole run** of a program it admits on its own parse ("Admission"
-  below): bindings, `if`
-  and `return` over reads of the event and of values (slice 2a), writes with
-  identity (`unique by`) and the nodes a run builds (slice 2b), `sleep`,
-  parked and resumed in the TypeScript engine's own state (slice 2b),
-  traversal blocks over adapter edges (chunk 5B), plugin calls (chunk 6A)
-  and the extraction call — "The run" below. The extraction keyword
-  (`x = extract from […] { … }`) is refused on every version
-  (`legacy_extraction`, "The port list"). apps/api's `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
-  hold these runs to the TypeScript engine; the conformance corpora route
-  their admitted cases whole.
+The engine runs a whole run, and only that (`eval_expression` is gone):
+bindings, `if` and `return` over reads of the event and of values (slice
+2a), writes with identity (`unique by`) and the nodes a run builds (slice
+2b), `sleep`, parked and resumed in its own state, traversal blocks over
+adapter edges, plugin calls and the extraction call ("The run" below). The
+extraction keyword (`x = extract from […] { … }`) is a version-5 refusal in
+the checker. The conformance corpora run on this engine for version 5.
 
 ## Modules
 
@@ -275,39 +266,19 @@ hand back to TypeScript no more than its recorded share. All three files are
 written by tests/oracle/generate.ts, deterministically; CI regenerates and
 diffs them.
 
-The evaluator switch counts what it did (`rustEvalStats` in rust_engine.ts:
-not admitted, admitted, answered, fallback by reason). Under
-`MOVEMENT_ENGINE=rust` the conformance runs print the totals and fail when Rust
-answered nothing.
+## Refusals
 
-## Admission
-
-Whether this engine runs a program whole is decided in three places, in
-this order, and this engine parses the program once, here. Before any of
-them, the run's check: run.ts checks the program (`checkPinned`: its pin,
-its parse, the checker) where the TypeScript route checks it, before the run
-host opens the segment, so a program that fails it (MOVENG_LANGUAGE_VERSION,
-MOVENG_PARSE, MOVENG_CHECK) ends there on either engine and its host sees no
-request at all, `segment.open` included (`rustRunStats.endedAtCheck`; never
-routed). That check answers this engine's own `check.program` request.
-
-1. **The shim's input checks** (rust_engine.ts: an event, source or parked
-   state that cannot cross the eval wire), on what the run is handed,
-   before a segment opens.
-2. **This engine's admission** (`admit.rs`, and `park::resume_refusal` for a
-   resume), on its own parse (a plugin call's declared output is read off
-   the input's catalog snapshot, its `plugins` alone), before
-   the catalog loads, before `check.program`, before any request: a refused
-   run costs one parse and one walk, and no host call
-   (`rustRunStats.hostCalls` stays `{}`).
-3. **The declines**, after the check and before anything the host can see
-   (the version warning's trace entry included): a slot this engine's
-   lowering misses and the checker passes. (The one stamp decline,
-   `event_field_dated`, retired with PLAN-08A group F′.) A refusal of this
-   engine's own met mid-run before the run's first effect declines too
-   (`unreproduced`, below).
-
-Either way the shim runs the program on the TypeScript engine.
+There is no admission step: this engine no longer parses a program ahead of
+the run to decide whether to run it. Before any run, run.ts checks the
+program (`checkPinned`: its pin, its parse, the checker), so a program that
+fails it (MOVENG_LANGUAGE_VERSION, MOVENG_PARSE, MOVENG_CHECK) ends there
+and its host sees no request at all (`rustRunStats.endedAtCheck`). A run
+pinned below version 5 is refused by name (`language_version_runs_on_typescript`)
+before anything is asked. Past the check, a construct this engine does not
+run, or a slot its lowering misses, fails the run where it is met with
+MOVENG_UNSUPPORTED naming the reason; the TypeScript engine does not run it
+instead. The reason tables below name those reasons (their "admission"
+wording predates this).
 
 ### What admission walks
 
@@ -656,80 +627,19 @@ mutation — the TypeScript engine throws the same.
 
 ### The evidence
 
-- **One log line per run**, at the decision point:
-  `movement engine: engine=rust|ts run=<id> reason=<reason|admitted>`
-  (`admitted` for a run this engine ran, to its end or its own failure;
-  `shim_fault` for one the shim faulted; `mirrored_failure` for one this
-  engine admitted that ended mid-run in the TypeScript's own
-  `MOVENG_UNSUPPORTED`, which both engines end it with;
-  `unreproduced_mid_run` for one that ended mid-run, after an effect, in
-  this engine's own refusal of what the TypeScript runs on through (the
-  `done`'s `unreproduced` marker, a divergence); `ended_at_check` for a
-  Rust-routed run that failed
-  its check, which no engine ran (`isCheckFailure`: MOVENG_LANGUAGE_VERSION,
-  MOVENG_PARSE, MOVENG_CHECK; anything else the check throws is a
-  `shim_fault`); `movement_engine_ts` when
-  the run's route did not choose this engine). At info for a run routed
-  here; at debug for one that was not.
-- **`rustRunStats`** (rust_stats.ts): `notAdmitted` by first reason,
-  `allReasons` by each statement's first reason in a run not admitted (one
-  count per run per reason; "What admission walks"), and `declined` by reason;
-  `routed`, the segments this engine started, its admission's refusals
-  among them; `admitted`, those its admission let by (`routed` less the
-  refusals); `ranWhole`, the runs it ran to their end (a run's own
-  failure included); `mirroredFailure`, the admitted runs that ended
-  mid-run in the TypeScript's own `MOVENG_UNSUPPORTED`, mirrored, and
-  `unreproduced`, those that ended mid-run in this engine's own refusal
-  after an effect (what admission should have refused: a divergence),
-  neither counted in `ranWhole`, so the routing floors count only runs that
-  ended as a run ends; `shimFaults`; `hostCalls` by `family.method`. The admission dry run
-  runs nothing, so it has no such ending.
+- **One log line per segment**, at the decision point:
+  `movement engine: engine=rust|ts run=<id> outcome=<outcome>` (the outcome
+  only for a Rust segment that ended at its check, or failed a check
+  mid-run). At info for a Rust segment; at debug for a TypeScript one.
+- **`rustRunStats`** (rust_stats.ts): `segments`, the segments this engine
+  started; `unsupported`, those that failed because it would not run them,
+  by reason (each is a checker or engine bug); `endedAtCheck`, runs that
+  failed their check before a segment opened; `failedCheckMidRun`, segments
+  that passed their check and failed a check mid-run (`IS <Decl>`);
+  `shimFaults`; `hostCalls` by `family.method`.
 - **`GET /api/v1/system/engine-stats`** (system scope, like `/tg-runs`):
-  `{engine, fallback, v5OnTs, uptimeSeconds, since, runs, evaluator}`, the
-  settings and this process's counters
+  `{engine, uptimeSeconds, since, runs}`, this process's Rust counters
   since it started.
-- **The admission dry run** (`rustRunStats.dryRun`, under `runs.dryRun` in
-  engine-stats): every run, resume, race settlement and callback firing the
-  TypeScript engine runs because
-  its route did not choose this engine is also put to this engine's
-  admission, without running it: under `by-version` only a version-5 one
-  (under the emergency switch, or one the TypeScript engine parked), since
-  versions 1–4 never reach this engine. The shim builds the segment input a real
-  run would, calls the start entry, and reads the first step: a `refused`
-  done is the verdict, and an admitted run's first step (`check.program`) is
-  never answered; the segment is finished there. So the dry run makes no
-  host call and changes nothing about the run, and a fault in it is counted
-  (`faults`) and logged at warn, never thrown. It counts `firings` (runs it
-  could ask about), `sampled` (runs it asked about), `admitted`, `first` (refused
-  runs by the reason named first, the one a real run is counted by), `all`
-  (refused runs by every reason named, once each: the engine's admission
-  names each statement's first reason since chunk 7A's walk, so `all` counts the
-  same reasons `rustRunStats.allReasons` does for a routed run) and `byVersion` (the same, by the run's
-  pinned language version). It misses what admission cannot see: declines
-  after the check (a lowering miss) and mid-run hand-backs.
-  A rehearsal is not asked about. `MOVEMENT_ENGINE_DRY_RUN_EVERY=N` asks
-  about one firing in N (default 1, every firing; 0 turns it off; every
-  entry that runs movements refuses anything but a whole number at boot).
-  What one costs: the event and the catalog serialised onto the wire, a
-  fresh WASM instance, this engine's parse of the program and of its
-  plugins, and, for an admitted run, the catalog load. So every run the
-  TypeScript engine runs now also opens a WASM instance: memory and garbage
-  collection under load grow with the firing rate, and sampling is the
-  remedy. `pnpm dev:engine-dry-run-latency` measures it over the recorded
-  corpora (p50 about 0.9 ms, p95 about 2 ms, p99 about 4 ms on a laptop);
-  `dryRun.durationMs` in engine-stats is the same over this process's last
-  1,000 dry runs (timed by the host's clock, which the engine never reads).
-- **The daily roll-up**: each process holds its verdicts and, at most once a
-  minute after a drain pass, writes them into one `ops_event` row per day
-  (`detail.kind = "engine_admission_dry_run"`: tallies by version, refused
-  runs by reason and automation id, at most 100 automations named per
-  reason with the rest counted, at most 200 reasons with the rest as
-  `other`). Reasons, versions and opaque ids only. The admin ops views
-  leave these rows out. drain:once writes its own before it exits.
-  `pnpm engine:refusals --days N [--json]` sums the rows into the burn-down
-  in demand order: for each reason, the runs it blocked, how many
-  automations, and the five with the most runs; by first reason and by every
-  reason. The operator event store keeps 14 days, so N is at most 14.
 
 ## The run
 
@@ -1089,8 +999,7 @@ admission refuses it as `legacy_extraction` (Henry's ruling, 2026-10-16).
 Version 5 refuses it at the check (`MOV_EXTRACT_KEYWORD_RETIRED`, with the
 upgrade to a declared shape and `extract(…)` where that is mechanical), and a
 version 1–4 program holding one runs on the TypeScript engine, which keeps
-the keyword as those versions' reference. `lf` and `MOVEMENT_ENGINE=rust`
-with `MOVEMENT_ENGINE_FALLBACK=none` fail such a run with that reason. The
+the keyword as those versions' reference. `lf` refuses such a project, saying to run `lf upgrade`. The
 extraction call (`extract(content, Shape, { … })`, `extractOne(…)`) runs
 whole (crate::extract::call).
 
@@ -1782,81 +1691,12 @@ The TypeScript side: `apps/api/src/services/movement_engine/__test__/rust_engine
 manifest), `rust_engine_abi.unit.test.ts` and `rust_eval.unit.test.ts` (the
 committed artifact), `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
 (whole runs on both engines, compared). The oracle for the evaluator and the
-runs is the conformance corpora run with `MOVEMENT_ENGINE=rust`.
+runs is the version 5 conformance corpus.
 
 **Running a corpus case on Rust.** In apps/api, after
-`scripts/build-movement-wasm.sh` if a crate changed:
+`scripts/build-movement-wasm.sh` if a crate changed, run the version 5
+conformance corpus and the engine's unit suites (`pnpm test:unit
+--testPathPattern movement_engine`). The Rust engine is the only engine for
+version 5, so there is no engine setting to pass; the TypeScript engine stays
+as the reference the version 5 corpora were checked against.
 
-```bash
-MOVEMENT_ENGINE=rust pnpm test:conformance:v2                       # the whole corpus (v1, v2, v3 alike): routing floors apply
-MOVEMENT_ENGINE=rust pnpm test:conformance:v2 --testPathPattern refs  # one file: no floor, every other check
-MOVEMENT_RUST_RUNS_BY_FILE=1 MOVEMENT_ENGINE=rust pnpm test:conformance:v1  # per-file routed counts
-```
-
-The teardown prints `Rust evaluator: {…}` (expressions not admitted,
-admitted, answered, fallbacks by reason), `Rust runs: {runsRouted,
-runsAdmitted, ranWhole, mirroredFailure, unreproduced, shimFaults,
-endedAtCheck, declined, hostCalls}` (routed counts the segments admission
-refused too; admitted does not), every count with its denominator (`Rust
-runs, ran whole N of M runs attempted (…)`: each run the Rust route was
-entered for ends under exactly one of these), `Rust runs not admitted:
-{reason: count}` (by first reason, largest first), `Rust runs not
-admitted, every reason: {reason: count}` (each run counted under each
-statement's first reason) and a `Rust ceiling (<corpus>):` line per
-ceilinged class, its count beside its ceiling. The endings:
-
-- `ranWhole`: the engine ran it to its end, its own failure included;
-- `mirroredFailure`: admitted, then ended mid-run in the TypeScript's own
-  `MOVENG_UNSUPPORTED`, which this engine mirrors: both engines end the
-  run so, and every corpus case that ends so pins it;
-- `unreproduced`: admitted, then ended mid-run, after an effect, in this
-  engine's own refusal of what the TypeScript runs on through ("Errors a
-  run can meet mid-run"; the `done`'s `unreproduced` marker): a divergence;
-- refused at admission by name (`notAdmitted`, the shim's input checks
-  among them) and `declined`: the TypeScript engine ran it;
-- `endedAtCheck`: it failed its check, which the Rust route makes before
-  the segment opens, as the TypeScript route does ("Admission" above): it
-  never reached this engine, and ends the same on either;
-- `shimFaults`: a fault of the shim's own.
-
-It fails a run in which Rust answered nothing, admitted runs none of which
-ran whole, any decline outside the lowering's misses or any shim fault, a
-whole-corpus run whose `ranWhole` is under its routing floor (v1 1030, v2
-1260, v3 2215: the measurement, with no margin), or any run with a class
-over its ceiling. Any filter (a
-path or name pattern, related or changed files, a shard, positional paths)
-makes a run partial, and the floor does not apply to it; a ceiling is an
-upper bound, so it applies to every run.
-
-**The ceilings** (PLAN-08A Task 1): the most runs each corpus may end in
-each class that is not a run this engine ran. Each starts at its count when
-set (2026-10-12) and only falls: a task that closes a reason lowers its
-ceiling, and a reason a closed one hid inside the same statement gets its
-own ceiling at its first measurement. Floors and ceilings move together
-with the measurement, never with a margin: a task that lifts runs raises
-the floors to its new measurement in the same commit. Zero refusals is
-every ceiling at 0.
-
-| class | what it counts | v1 | v2 | v3 |
-|---|---|---|---|---|
-| `refused` | runs refused at admission by name, under each run's first reason | 10 | 19 | 79 |
-| `everyReason` | the same runs under each statement's first reason, by reason (a reason not named: 0) | 10 | 21 | 88 |
-| `declined` | runs declined after the check before any effect, by reason (a reason not named: 0) | 0 | 0 | 3 |
-| `unreproduced` | runs that ended mid-run in this engine's own refusal: a divergence | 0 | 0 | 0 |
-| `shimFaults` | runs that ended in a fault of the shim's own | 0 | 0 | 0 |
-| `handBacks` | what a run still asks the TypeScript to compute: `builtins.function` calls (and, until 2026-10-15, `builtins.compare` for a `WITHIN`), and the evaluator's `fallback`s | 0, 0, 0 | 0, 0, 0 | 0, 0, 0 |
-| `evaluatorNotAdmitted` | expressions the evaluator switch kept for the TypeScript evaluator, never sent to Rust: mostly the TypeScript engine's runs asking it, so it falls as refused runs fall | 79 | 97 | 580 |
-| `mirroredFailure` | runs that ended mid-run in the TypeScript's own `MOVENG_UNSUPPORTED`, both engines alike: held where measured, as a port may change one | 6 | 6 | 4 |
-
-Zero refusals is not zero TypeScript until the hand-backs are 0 too. The
-other gates for zero sit beside their own tests: the binding × consumer
-matrix's refused cells per version (rust_admission_matrix.unit.test.ts:
-2 / 2 / 7 / 7), the recordings the Rust replay target skips, by the skip's reason
-(engine_runs_replay.ts: v1 12, v2 22 in all, `{}` at 0; its floors 431 and
-520, the measurement), where every recording that encoded a fixed bug is
-accounted for as itself, run and diverging where the bug says or skipped
-(v2's one is among the skips today), and the patterns oracle, whose
-`by_contract` (both engines refuse by the park-state contract) and
-`unrecordable` (the eval wire cannot carry the input) are not ports left
-to make, and which fails a program refused or declined for a reason the
-port list has retired.

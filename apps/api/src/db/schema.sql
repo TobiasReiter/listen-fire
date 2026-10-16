@@ -3768,13 +3768,9 @@ CREATE TABLE automations.trigger_run (
     lease_owner text,
     lease_until timestamptz,
     lease_token uuid,
-    -- Which engine ran the run's latest segment ('ts' | 'rust') and why: the
-    -- first reason the Rust engine's admission gave for not running it,
-    -- 'admitted' when it would have (or did), or 'shim_fault' when the Rust
-    -- engine faulted in the shim. Null when the admission dry run was not asked
-    -- or faulted, and on runs from before these existed.
-    engine text,
-    engine_reason text
+    -- Which engine ran the run's latest segment ('ts' | 'rust'). Null on runs
+    -- from before this existed.
+    engine text
 );
 
 ALTER TABLE ONLY automations.trigger_run

@@ -4,6 +4,8 @@ The movement engine (`apps/api/src/services/movement_engine/`) runs a program, a
 
 This page is the engine side only: how this repository's two hosts serve the contract, and what stays outside it.
 
+**Which engine serves a run is its pinned language version, with no fallback:** version 5 and later runs on the Rust engine, versions 1 to 4 on the TypeScript engine. Both are driven through this same contract. There is no admission step and no engine setting (`MOVEMENT_ENGINE` and its three companions are retired, and boot refuses them). A version-5 run the Rust engine will not run fails with `MOVENG_UNSUPPORTED`, naming the reason.
+
 ## Spend
 
 The production host meters each priced call under its budget (`withSpendMeter`, `lib/run_spend.ts`). The model and service clients far below the call charge the meter and check it before they start. A client past the budget throws `BudgetExhausted` inside the host, and the host turns it into the refusal. The meter and the billing context are host state, set around each call; the engine imports neither.
