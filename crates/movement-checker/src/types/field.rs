@@ -646,11 +646,31 @@ impl HeldHandle {
 }
 
 /// `HeldWalk`: the handle kinds a destination takes (those are not reported).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HeldWalk {
     pub steps: Vec<HeldStep>,
     pub accepts_record: bool,
     pub accepts_file: bool,
+    /// `HeldWalk.inspect`: for a target that takes an object only on terms
+    /// (an extraction prompt renders a record as its fields, which must be in
+    /// hand) — asked of EVERY accepted object the walk meets, at any depth
+    /// and in any arm, instead of passing over it. What it answers is what
+    /// the walk found.
+    pub inspect: Option<InspectHeld>,
+}
+
+/// What `HeldWalk::inspect` asks of an accepted object.
+pub type InspectHeld = std::rc::Rc<dyn Fn(HeldHandle) -> Option<HeldHandle>>;
+
+impl std::fmt::Debug for HeldWalk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeldWalk")
+            .field("steps", &self.steps)
+            .field("accepts_record", &self.accepts_record)
+            .field("accepts_file", &self.accepts_file)
+            .field("inspect", &self.inspect.is_some())
+            .finish()
+    }
 }
 
 /// `HandleKind`s a target takes (`ReadonlySet<HandleKind>`).
@@ -669,7 +689,7 @@ impl HandleKinds {
 
     /// `heldWalk(kinds)`.
     pub fn walk(self) -> HeldWalk {
-        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file }
+        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file, inspect: None }
     }
 }
 
@@ -688,7 +708,12 @@ impl HeldWalk {
     /// `heldWalk(handleKindsTaken(target))`: the kinds `target` holds.
     pub fn taken_by(target: Option<&Ty>) -> HeldWalk {
         let (record, file) = target.map(kinds_held_by).unwrap_or((false, false));
-        HeldWalk { steps: Vec::new(), accepts_record: record, accepts_file: file }
+        HeldWalk { steps: Vec::new(), accepts_record: record, accepts_file: file, inspect: None }
+    }
+
+    /// An accepted object, handed to the walk's inspection if it has one (`acceptedHandle`).
+    fn accepted(&self, handle: Ty) -> Option<HeldHandle> {
+        self.inspect.as_ref().and_then(|inspect| inspect(HeldHandle { steps: self.steps.clone(), handle, may: false }))
     }
 }
 
@@ -715,11 +740,11 @@ pub fn shows_more_handles(wider: &Ty, ty: Option<&Ty>) -> bool {
 /// `handleWithin`: the first record or file inside `ty` the walk does not accept.
 pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
     match strip_absent(ty?) {
-        Ty::Record(position) => {
-            (!walk.accepts_record).then(|| HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false })
-        }
-        Ty::File => (!walk.accepts_file).then(|| HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
-        list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk),
+        Ty::Record(position) if walk.accepts_record => walk.accepted(Ty::Record(position.clone())),
+        Ty::Record(position) => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false }),
+        Ty::File if walk.accepts_file => walk.accepted(Ty::File),
+        Ty::File => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
+        list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk, HeldStep::Slot),
         Ty::Dict { of, shape } => {
             for (key, value) in shape.iter().flat_map(|s| s.iter()) {
                 if let Some(held) = handle_within(value.as_ref(), &walk.into(HeldStep::Key(key.clone()))) {
@@ -733,19 +758,21 @@ pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
     }
 }
 
-/// `handleAmongMembers`: a handle among a collection's members.
-pub fn handle_among_members(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
+/// `handleAmongMembers`: a handle among a collection's members, each one
+/// `step_for(slot)` further into the walk (a spread splices members, so it
+/// asks with every slot unnumbered: `|_| HeldStep::Member`).
+pub fn handle_among_members(ty: Option<&Ty>, walk: &HeldWalk, step_for: fn(usize) -> HeldStep) -> Option<HeldHandle> {
     match strip_absent(ty?) {
         Ty::List { of, .. } => handle_within(Some(of), &walk.into(HeldStep::Member)),
         Ty::Tuple { of, rest } => {
             for (index, slot) in of.iter().enumerate() {
-                if let Some(held) = handle_within(slot.as_ref(), &walk.into(HeldStep::Slot(index))) {
+                if let Some(held) = handle_within(slot.as_ref(), &walk.into(step_for(index))) {
                     return Some(held);
                 }
             }
             handle_within(rest.as_ref().and_then(|r| r.of.as_deref()), &walk.into(HeldStep::Member))
         }
-        Ty::Union(members) => members.iter().find_map(|m| handle_among_members(Some(m), walk)).map(|held| HeldHandle { may: true, ..held }),
+        Ty::Union(members) => members.iter().find_map(|m| handle_among_members(Some(m), walk, step_for)).map(|held| HeldHandle { may: true, ..held }),
         _ => None,
     }
 }

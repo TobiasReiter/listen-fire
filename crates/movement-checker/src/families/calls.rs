@@ -91,7 +91,7 @@ pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Positi
                 if refuse_closure_operands(typing, builtin, expr, args, operands) {
                     return;
                 }
-                check_builtin_args(typing, builtin, operands);
+                check_builtin_args(typing, builtin, operands, args);
             }
             check_stdlib_literal_args(typing, fn_, args);
             if let Some(function) = stdlib_function_by_id(fn_) {
@@ -99,9 +99,9 @@ pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Positi
                 crate::families::records::check_stdlib_whole_value_arg(typing, function, operands);
             }
         }
-        Expression::Llm { .. } => {
+        Expression::Llm { prompt_expression, .. } => {
             if let Some(ai) = lookup_builtin("AI") {
-                check_builtin_args(typing, ai, operands);
+                check_builtin_args(typing, ai, operands, prompt_expression.as_deref().map_or(&[], std::slice::from_ref));
             }
         }
         _ => {}
@@ -124,18 +124,24 @@ fn refuse_closure_operands(typing: &mut Typing, builtin: &Builtin, whole: &Expre
 /// `checkBuiltinArgs` (language version 3): each argument a value of the
 /// kind its parameter takes. A record or a json value is the rule every
 /// value-reading site shares; an argument nobody can type stays silent.
-fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>]) {
+fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>], exprs: &[Expression]) {
     if typing.version < 3 {
         return;
     }
     for (index, ty) in args.iter().enumerate() {
-        let (Some(param), Some(ty)) = (builtin.param_at(index), ty) else { continue };
+        let Some(param) = builtin.param_at(index) else { continue };
         if !reads_as_value(param.ty) {
             continue;
         }
-        if crate::families::values::require_transparent(typing, Some(ty), &format!("handed to {}", builtin.name)) {
+        if ty.as_ref().is_some_and(|ty| crate::families::values::require_transparent(typing, Some(ty), &format!("handed to {}", builtin.name))) {
             continue;
         }
+        if let Some(expr) = exprs.get(index)
+            && refuse_maybe_record_for_builtin(typing, builtin, param, ty.as_ref(), expr)
+        {
+            continue;
+        }
+        let Some(ty) = ty else { continue };
         if param_accepts(param.ty, ty) {
             continue;
         }
@@ -150,6 +156,58 @@ fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>
                 builtin.describe()
             ),
         );
+    }
+}
+
+/// `refuseMaybeRecordForBuiltin`: a value that MAY be a record (or a file)
+/// and may be something else — `ROUND(COALESCE(org, 1))` — handed to a
+/// built-in's argument that does not take one. Its type cannot say it; what
+/// it may hold does. Refused from version 5; an older pin is warned, and the
+/// warning blocks the move up. True when it fired.
+fn refuse_maybe_record_for_builtin(typing: &mut Typing, builtin: &Builtin, param: &crate::types::stdlib::Param, ty: Option<&Ty>, expr: &Expression) -> bool {
+    use crate::types::field::BaseKind;
+    let takes_file = param.ty == ParamType::File;
+    let shown = ty.map(crate::types::field::base_kinds).unwrap_or_default();
+    let hidden = top_level_handles(typing.may_hold_type(expr).as_ref()).into_iter().find(|handle| {
+        let kind = if matches!(handle, Ty::File) { BaseKind::File } else { BaseKind::Record };
+        !(kind == BaseKind::File && takes_file) && !shown.contains(&kind)
+    });
+    let Some(hidden) = hidden else { return false };
+    let file = matches!(hidden, Ty::File);
+    let message = format!(
+        "{}'s '{}' takes {}, but this may be {} — {}, not a value, and such a union is not {}, as in TypeScript. {}, or fill every arm with a value",
+        builtin.name,
+        param.name,
+        describe_param_type(param.ty),
+        describe_field_type(&hidden),
+        if file { "a file" } else { "a record" },
+        describe_param_type(param.ty),
+        if file { "Pass its text ('READ(f)')" } else { "Narrow it to the record with IS and pass a field off it ('r.`Name`')" }
+    );
+    if typing.version >= 5 {
+        typing.report(codes::CALL_ARG_MAYBE_RECORD, message);
+    } else {
+        typing.report_upgrade(
+            codes::CALL_ARG_MAYBE_RECORD,
+            format!(
+                "{message}. Before {} {} runs on the {} as it is; from it, this is refused",
+                crate::version::describe(5),
+                builtin.name,
+                if file { "file" } else { "record" }
+            ),
+        );
+    }
+    true
+}
+
+/// `topLevelHandles`: the records and files a value is, through a union's arms.
+fn top_level_handles(ty: Option<&Ty>) -> Vec<Ty> {
+    let Some(ty) = ty else { return Vec::new() };
+    match strip_absent(ty) {
+        record @ Ty::Record(_) => vec![record.clone()],
+        Ty::File => vec![Ty::File],
+        Ty::Union(members) => members.iter().flat_map(|m| top_level_handles(Some(m))).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -811,11 +869,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkRValue`'s call case: a built-in is the value, collection op or
-    /// type query it computes.
-    /// What a function's call hands back, where it binds (`boundCallShape`'s
-    /// value); `None` for a built-in read as what it computes.
-    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) -> Option<crate::types::position::ReturnShape> {
+    /// `checkRValue`'s call case: what a function's call hands back where it
+    /// binds (`boundCallShape`'s value), or the collection op it computes;
+    /// nothing for a built-in read as a value.
+    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) -> crate::checker::Bound {
         match self.read_call(call, scope, CallPosition::Value) {
             CallReading::Function => {
                 let returned = self.check_call(call, scope);
@@ -823,16 +880,19 @@ impl Checker<'_> {
                 if self.callee_returns(&call.callee, scope) == Some(false) {
                     self.report_call_returns_nothing(&call.callee, span);
                 }
-                return Some(returned);
+                return crate::checker::Bound { returned: Some(returned), ..Default::default() };
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Collection(collection) => return Some(self.check_collection_op(&collection, scope)),
+            CallReading::Collection(collection) => {
+                let (returned, arms_each_return) = self.check_collection_op_arms(&collection, scope);
+                return crate::checker::Bound { returned: Some(returned), arms_each_return, ..Default::default() };
+            }
             CallReading::Members(members) => {
                 self.check_members(&members, scope);
             }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
         }
-        None
+        crate::checker::Bound::default()
     }
 }
 

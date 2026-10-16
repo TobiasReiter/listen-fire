@@ -14,7 +14,7 @@
 //! - MOV_NODE_ARG_SHAPE
 //! - MOV_GRAPH_* (graph literals), MOV_MEMBERS_NOT_CLOSED
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use movement_parser::ast::{ShapeDeclaration, ShapeNode, Span};
 use movement_parser::catalog::types::{InstanceSchema, SchemaFieldType};
@@ -62,6 +62,11 @@ impl NodeState {
     /// `declaredShapeTokens`: a declaration this file wrote (not an imported one).
     pub fn is_local(&self, symbol: SymbolId) -> bool {
         self.local.contains_key(&symbol)
+    }
+
+    /// Every declaration this file wrote, for a check that outlives a borrow.
+    pub fn local_symbols(&self) -> HashSet<SymbolId> {
+        self.local.keys().copied().collect()
     }
 }
 
@@ -1300,9 +1305,30 @@ impl Checker<'_> {
             };
             return Some(Reference { position, sequenced: Some(Arrival) });
         }
-        let held = record_in(ty)?;
+        let Some(held) = record_in(ty) else {
+            // A union whose every member is a record (`COALESCE(a, b)`, a call
+            // that returns one of two) is ONE record: an edge to whichever it
+            // is, at the members' position when they agree. A receipt's tuple
+            // types a record slot as untyped, so its type shows no record
+            // while what it may hold is records alone.
+            let records = if ty.is_none_or(|ty| matches!(strip_absent(ty), Ty::Tuple { .. })) { crate::types::field::records_alone(may_hold) } else { None };
+            let positions: Vec<Option<&Position>> = records
+                .as_ref()?
+                .iter()
+                .map(|record| match record {
+                    Ty::Record(position) => position.as_deref(),
+                    _ => None,
+                })
+                .collect();
+            // A connection is no record to point at (as a bare one is not).
+            if positions.iter().any(|p| matches!(p, Some(Position::Meta { .. } | Position::Closure(_)))) {
+                return None;
+            }
+            let first = positions[0];
+            let agree = first.is_some_and(|first| positions.iter().all(|p| p.is_some_and(|p| crate::types::position::same_starting_point(p, first))));
+            return Some(Reference { position: if agree { first.cloned() } else { None }, sequenced: Some(Arrival) });
+        };
         let unordered = matches!(ty.map(strip_absent), Some(Ty::List { unordered: true, .. }));
-        let _ = may_hold;
         Some(Reference { position: held, sequenced: (!unordered).then_some(Arrival) })
     }
 
@@ -1804,7 +1830,7 @@ fn last_hop_ordered(head: &movement_parser::ast::PathHead) -> bool {
 
 /// `placeInInput`: where a held object sits in an input as written — the
 /// input itself, a path under a name, or a path inside a written value.
-fn place_in_input(written: &str, held: &HeldHandle, kind: &str) -> String {
+pub(crate) fn place_in_input(written: &str, held: &HeldHandle, kind: &str) -> String {
     let steps = crate::types::field::spell_held_steps(&held.steps);
     let verb = if held.may { "may be" } else { "is" };
     if steps.is_empty() {

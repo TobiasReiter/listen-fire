@@ -113,7 +113,9 @@ impl Checker<'_> {
         }
         let ty = if holds_value { typing.infer_exact(&expr) } else { typing.infer(&expr) };
         let may_hold = typing.may_hold_type(&expr);
-        let may_hold = if ty.is_none() { may_hold } else { None };
+        // The arms a value was built of travel with it where its type no
+        // longer shows an engine object they hold.
+        let may_hold = may_hold.filter(|held| crate::types::field::shows_more_handles(held, ty.as_ref()));
         let many_valued = crate::types::narrowing::is_walk_projection(&expr)
             || crate::types::narrowing::bare_name(&expr).is_some_and(|n| env.is_many_valued_name(n));
         Some(SymbolTypes { field: ty, may_hold, many_valued, ..SymbolTypes::default() })
@@ -157,7 +159,39 @@ impl Checker<'_> {
         if let Some((returned, ordering)) = &bound.collected {
             types = Some(collected_types(returned, *ordering));
         }
+        if let (Some(each), Some(types)) = (&bound.arms_each_return, types.as_mut()) {
+            types.arms_each_return = Some(each.clone());
+        }
+        if let (Some(_), RValue::Expr { expr }, Some(types)) = (name, value, types.as_mut())
+            && types.pos.is_none()
+        {
+            types.arm_returns = self.arm_returns_of_list(expr, scope);
+        }
         types
+    }
+
+    /// `armReturnsOfList`: what each element of a list of functions written
+    /// down returns — `None` unless every element is a function bound here.
+    fn arm_returns_of_list(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<Vec<crate::types::position::ReturnShape>> {
+        let Ok(Expression::List { elements }) = expression_of_slot(slot) else { return None };
+        if elements.is_empty() {
+            return None;
+        }
+        let mut shapes = Vec::new();
+        for element in &elements {
+            let movement_parser::lowering::expression::ListElement::Expression(element) = element else { return None };
+            let name = crate::types::narrowing::bare_name(element)?;
+            let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
+            let symbol = self.scopes.symbol(id);
+            if symbol.kind == SymbolKind::Movement {
+                shapes.push(self.movement_return(id));
+            } else if let Some(Position::Closure(closure)) = &symbol.types.pos {
+                shapes.push(closure.returns.clone());
+            } else {
+                return None;
+            }
+        }
+        Some(shapes)
     }
 
     /// `bound_types`' first step: the value as written. A name holds it
@@ -364,7 +398,7 @@ impl Checker<'_> {
                 if returned.field.is_none() && returned.pos.is_none() {
                     return None;
                 }
-                let label = format!("a closure <{}>", spell_value_type(value));
+                let label = format!("a closure <{}>", crate::families::listens::spell_value_type(value));
                 let closure = ClosureType::new(label, planes, ReturnShape { returns: true, plane: returned, may_hold: None }, None);
                 Some(Ty::record(Some(Position::Closure(closure))))
             }
@@ -413,40 +447,6 @@ fn collected_types(returned: &ReturnShape, ordering: crate::types::field::Collec
         return SymbolTypes { pos: Some((**pos).clone()), plural: Some(ordering), ..SymbolTypes::default() };
     }
     SymbolTypes { may_hold, ..SymbolTypes::default() }
-}
-
-/// `spellValueType`: a written value type as the author wrote it.
-pub fn spell_value_type(value: &ValueType) -> String {
-    match value {
-        ValueType::Name { name, .. } => name.clone(),
-        ValueType::List { of, .. } => format!("list of {}", spell_value_type(of)),
-        ValueType::Record { keys, .. } => {
-            let keys: Vec<String> =
-                keys.iter().map(|k| format!("{}{}: {}", k.name, if k.optional == Some(true) { "?" } else { "" }, spell_value_type(&k.type_))).collect();
-            format!("{{ {} }}", keys.join(", "))
-        }
-        ValueType::Closure { params, returns, .. } => {
-            let params: Vec<String> = params.iter().map(|p| format!("{}: {}", p.name, p.type_.as_ref().map_or("?".to_string(), spell_param_type))).collect();
-            format!("({}) => {}", params.join(", "), spell_param_type(returns))
-        }
-    }
-}
-
-fn spell_param_type(type_: &ParamTypeRef) -> String {
-    match type_ {
-        ParamTypeRef::Value(value) => format!("<{}>", spell_value_type(value)),
-        ParamTypeRef::Name(reference) => {
-            let mut spelled = reference.graph.clone();
-            if let Some(position) = &reference.position {
-                spelled.push('.');
-                spelled.push_str(position);
-            }
-            if let Some(hops) = &reference.hops_raw {
-                spelled.push_str(hops);
-            }
-            format!("<{spelled}>")
-        }
-    }
 }
 
 /// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` over a walk read for its landings.

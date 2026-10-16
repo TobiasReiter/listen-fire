@@ -35,6 +35,8 @@ use movement_parser::ast::{
 };
 
 use crate::checker::{Checker, SlotOptions};
+use crate::families::nodes::place_in_input;
+use crate::types::field::{HandleKinds, HeldHandle, HeldStep, spell_held_steps};
 use crate::codes;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
 use crate::meta::did_you_mean;
@@ -53,6 +55,60 @@ use crate::types::field::{record_head_position, widen_tuples};
 use crate::types::position::describe_position;
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
 use crate::types::position::{ExtractField, ExtractNode as ExtractNodeType, LocalEdge, LocalNode, Position};
+
+impl Checker<'_> {
+    /// `checkExtractInput`: one input of `extract from [ … ]`, against what
+    /// the prompt is built of. An input is text, a file (read as a file), a
+    /// record (rendered as its fields — the fields in hand), or a map or list
+    /// of those; a list's members are inputs of their own. A file anywhere
+    /// below an input would reach the prompt as the engine's own descriptor.
+    pub(crate) fn check_extract_input(&mut self, slot: &ExprSlot, scope: ScopeId) {
+        let purpose = format!("hands it to an extraction as an input, which reads every field (line {})", slot.span.start.line);
+        let locals = self.nodes.local_symbols();
+        let inspect: crate::checker::SlotInspect = Rc::new(move |found: HeldHandle, shape: Option<&Ty>| {
+            if !found.is_file() {
+                return crate::families::plugin_calls::record_as_fields_problem(found, &purpose, &|symbol| locals.contains(&symbol));
+            }
+            // A file is an input of its own: the value itself, or a member of
+            // the list it is (a list's members are inputs).
+            let items = usize::from(shape.is_some_and(|shape| matches!(strip_absent(shape), Ty::List { .. } | Ty::Tuple { .. })));
+            let own = found.steps.len() <= items && found.steps.iter().all(|step| !matches!(step, HeldStep::Key(_)));
+            if own { None } else { Some(found) }
+        });
+        let options = SlotOptions { held_takes: Some(HandleKinds { record: true, file: true }), inspect_held: Some(&inspect), ..SlotOptions::default() };
+        let Some(found) = self.check_expr_slot_with(slot, scope, options).held else { return };
+        let written = slot.raw.trim();
+        if found.is_file() {
+            let own = if is_bare_ident(written) { format!(" (`from [{written}{}]`)", spell_held_steps(&found.steps)) } else { String::new() };
+            let repair = match found.steps.last() {
+                Some(HeldStep::Key(key)) => format!("'{key}: READ(f)'"),
+                _ => "'READ(f)'".to_string(),
+            };
+            self.report(
+                codes::EXTRACT_CONTENT,
+                format!(
+                    "An extraction reads a file only as an input of its own, and {} — a file, not a value. Hand it over as its own input{own}, or put its text in its place ({repair})",
+                    place_in_input(written, &found, "a file")
+                ),
+                slot.span,
+            );
+            return;
+        }
+        let Ty::Record(Some(position)) = strip_absent(&found.handle) else { return };
+        let message = if matches!(**position, Position::Meta { .. }) {
+            format!(
+                "An extraction reads text, files and records, and {} — a connection, not a record. Pass a record read through it, or the fields you want ('{{ name: r.name, … }}')",
+                place_in_input(written, &found, &describe_position(position))
+            )
+        } else {
+            format!(
+                "An extraction reads a record as its fields, and {}, whose fields are read from its system one at a time. Pass a dict of the fields it needs in its place ('{{ name: r.name, … }}')",
+                place_in_input(written, &found, &describe_position(position))
+            )
+        };
+        self.report(codes::EXTRACT_CONTENT, message, slot.span);
+    }
+}
 
 /// `ThroughFieldsContext`: the names a `through` stage's arguments may read
 /// besides the scope's — the fields of the node's earlier stages and its

@@ -26,6 +26,8 @@ use movement_parser::version::{before, since};
 use serde_json::json;
 
 use crate::checker::Checker;
+use crate::slots::is_bare_ident;
+use crate::types::scope_env::SymbolTypes;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
@@ -340,8 +342,30 @@ impl Checker<'_> {
         let arms = match &combinator.arms {
             CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
             CombinatorArms::Dynamic { expr, .. } => {
-                self.check_expr_slot(expr, scope);
-                return Receipt::default();
+                // A name bound to a list of functions written down, or to a
+                // MAP that builds them from a closure, is as known as a literal
+                // arm list: what each arm returns is what the receipt may hold.
+                // Arms known only at run time stay untyped.
+                let parsed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions::default()).expr;
+                let raw = expr.raw.trim();
+                let arm_name = if is_bare_ident(raw) { Some(raw) } else { parsed.as_ref().and_then(crate::types::narrowing::bare_name) };
+                let types = match arm_name.map(|name| self.scopes.resolve(scope, name)) {
+                    Some(Resolution::Found(id)) => Some(self.scopes.symbol(id).types.clone()),
+                    _ => None,
+                };
+                let nullable = combinator_may_leave_slots_null(combinator);
+                let may_hold = match types {
+                    Some(SymbolTypes { arm_returns: Some(arms), .. }) => Some(receipt_may_hold(nullable, &arms)),
+                    Some(SymbolTypes { arms_each_return: Some(each), .. }) => match receipt_may_hold(nullable, std::slice::from_ref(&each)) {
+                        Ty::Tuple { of, .. } => match of.into_iter().next().flatten() {
+                            Some(Ty::Absent) | None => None,
+                            Some(slot) => Some(list_of(slot, crate::types::field::CollectionOrder::Unknown)),
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                return Receipt { may_hold, ..Receipt::default() };
             }
         };
         let nullable = combinator_may_leave_slots_null(combinator);
@@ -462,6 +486,12 @@ impl Checker<'_> {
     /// the op's value — what the function hands back, collected as the op
     /// collects it.
     pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) -> ReturnShape {
+        self.check_collection_op_arms(op, scope).0
+    }
+
+    /// `checkCollectionOp`, and — for a `MAP` whose function hands back
+    /// functions — what each of those returns (`collectionArmsReturn`).
+    pub fn check_collection_op_arms(&mut self, op: &CollectionOpExpression, scope: ScopeId) -> (ReturnShape, Option<ReturnShape>) {
         let spelling = op_spelling(op.op);
         let source = self.check_expr_slot_with(&op.source, scope, crate::checker::SlotOptions::default());
         let init = op.init.as_ref().map(|init| self.check_expr_slot_with(init, scope, crate::checker::SlotOptions::default()));
@@ -581,12 +611,16 @@ impl Checker<'_> {
         };
         // What the function's returns may hold beyond that type travels with
         // the op's value, as a call's does: MAP's as members, REDUCE's as itself.
+        let arms_each_return = match shape.plane.pos.as_deref() {
+            Some(crate::types::position::Position::Closure(closure)) if op.op == CollectionOp::Map => Some(closure.returns.clone()),
+            _ => None,
+        };
         let may_hold = match op.op {
             CollectionOp::Map => shape.may_hold.map(|held| list_of(held, ordering)),
             CollectionOp::Reduce => shape.may_hold,
             _ => None,
         };
-        ReturnShape { returns: true, plane: as_value(value), may_hold }
+        (ReturnShape { returns: true, plane: as_value(value), may_hold }, arms_each_return)
     }
 
     /// The parameters of a function named as an op's function, with the
@@ -704,6 +738,11 @@ impl Checker<'_> {
         let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return crate::families::returns::unknown_return() };
         if self.scopes.symbol(id).kind == SymbolKind::Movement {
             return self.movement_return(id);
+        }
+        // A closure arm hands back what it returns on every version, called
+        // or not (`checkArm`).
+        if let Some(crate::types::position::Position::Closure(closure)) = &self.scopes.symbol(id).types.pos {
+            return closure.returns.clone();
         }
         self.called_closure(id).map_or_else(crate::families::returns::unknown_return, |closure| closure.returns)
     }

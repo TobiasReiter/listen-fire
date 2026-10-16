@@ -1081,6 +1081,24 @@ impl crate::checker::Checker<'_> {
         {
             self.declare_narrowed(subject, scope, into, Some(Position::record(instance.clone(), position.clone())));
         }
+        // The same type guard on a value that may be a record or may be
+        // something else (`v = COALESCE(org, "x")`): inside the arm it IS the
+        // record the test names — TypeScript's `Org | string` narrowed.
+        if let (None, Some(position), None) = (&subject_pos, &type_.position, &type_.hops_raw)
+            && let Resolution::Found(id) = self.scopes.resolve(scope, subject)
+            && {
+                let types = &self.scopes.symbol(id).types;
+                crate::types::field::mixes_record_with_value(types.field.as_ref()) || crate::types::field::mixes_record_with_value(types.may_hold.as_ref())
+            }
+        {
+            let narrowed = Position::record(instance.clone(), position.clone());
+            let mut symbol = self.scopes.symbol(id).clone();
+            symbol.types.may_hold = None;
+            symbol.types.field = Some(Ty::record(Some(narrowed.clone())));
+            symbol.types.pos = Some(narrowed);
+            let narrowed = self.scopes.add_symbol(symbol);
+            self.scopes.declare(into, narrowed);
+        }
         let Some(hops) = &type_.hops_raw else { return };
         let Some(test) = crate::types::event_address::event_address_of_hops(hops) else { return };
         let (subject_instance, subject_address) = match &subject_pos {
