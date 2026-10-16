@@ -849,6 +849,7 @@ impl Checker<'_> {
     /// `readCallAt`: how the call reads where it is written. A built-in's
     /// reading also reads every call among its arguments, as an argument.
     pub fn read_call(&self, call: &CallStatement, scope: ScopeId, position: CallPosition) -> CallReading {
+        self.note_call_statement(call, scope);
         let reading = read_one_call(call, &self.resolve_callee(&call.callee, scope), position);
         if matches!(reading, CallReading::Function | CallReading::Refused { .. }) {
             return reading;
@@ -1202,6 +1203,7 @@ impl Checker<'_> {
         write_field: bool,
     ) {
         let span = at_.span_of(call.at());
+        self.note_callee(written, span.start, scope);
         match self.resolve_callee(written, scope) {
             Callee::Builtin(builtin) => {
                 let form = builtin_form(builtin);

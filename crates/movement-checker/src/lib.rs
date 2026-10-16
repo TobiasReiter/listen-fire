@@ -58,9 +58,11 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
     let mut checker = checker::Checker::new(catalog, &options, resolves_files);
     checker.imports = families::imports::ImportState::new(link);
     checker.run(&program.statements);
-    let diagnostics = version::standing_diagnostic(options.language_version)
-        .into_iter()
-        .chain(program.spelling.iter().filter_map(|f| {
+    let spelling: Vec<Diagnostic> = program
+        .spelling
+        .iter()
+        .filter(|f| checker.spelling_stands(f, None))
+        .filter_map(|f| {
             if let Some(named) = &f.named {
                 return families::typed_spelling::positional(f, named, &checker.named_orders);
             }
@@ -70,7 +72,12 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
                 }
                 _ => diagnostic::of_spelling(f),
             })
-        }))
+        })
+        .collect();
+    let diagnostics = version::standing_diagnostic(options.language_version)
+        .into_iter()
+        .chain(spelling)
+        .chain(std::mem::take(&mut checker.imports.spelling))
         .chain(problems)
         .chain(
             std::mem::take(&mut checker.diagnostics)

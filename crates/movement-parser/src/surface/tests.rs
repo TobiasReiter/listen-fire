@@ -294,3 +294,26 @@ fn fail_is_the_error_statement() {
     // Under 4 `fail` is no statement word.
     assert!(crate::stmt::parse_program("movement f() {\n  ERROR(\"no\")\n}\n", 4, false).unwrap().spelling.is_empty());
 }
+
+#[test]
+fn a_block_closure_inside_an_expression_is_read_for_old_spellings() {
+    // The `if` condition is an expression slot; the statements of the block
+    // closure inside it are read by the statement grammar only when the
+    // nested call is (long after the parse).
+    let source = "function go(xs) {\n  if (count(filter(xs, (r) => {\n    return LENGTH(r) > 0\n  })) > 0) {\n    y = 1\n  }\n}\n";
+    let found = program(source, 5).spelling;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].message, "`LENGTH` is written `Text.length` from language version 5");
+    assert_eq!((found[0].span.start.line, found[0].span.start.col), (3, 12));
+    // Nested a level deeper, and placed in the file.
+    let deeper = "function go(xs) {\n  n = Text.length(Text.trim(f(xs, (r) => {\n    m = Text.trim(g((s) => {\n      return UPPER(s)\n    }))\n    return m\n  })))\n}\n";
+    let found = program(deeper, 5).spelling;
+    assert_eq!(found.iter().map(|f| (f.span.start.line, f.span.start.col)).collect::<Vec<_>>(), vec![(4, 14)], "{found:?}");
+    // A block closure the statement grammar reads at once (a call written
+    // as a statement) is reported once, not again through its slot.
+    let statement = "function go(xs) {\n  ys = map(xs, (r) => {\n    return UPPER(r)\n  })\n}\n";
+    assert_eq!(program(statement, 5).spelling.len(), 1);
+    // Under 4 nothing is read for spellings.
+    let v4 = "movement go(xs) {\n  if count(FILTER(xs, (r) => {\n    return LENGTH(r) > 0\n  })) > 0 {\n    y = 1\n  }\n}\n";
+    assert!(program(v4, 4).spelling.is_empty());
+}

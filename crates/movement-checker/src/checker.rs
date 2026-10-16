@@ -45,6 +45,11 @@ pub struct Checker<'c> {
     pub listens: crate::families::listens::ListenState,
     /// The resolved file imports, and each library once checked.
     pub imports: crate::families::imports::ImportState,
+    /// Where a call is written with a bare name the program binds there
+    /// (language version 5), by file (none for the root) and line and column:
+    /// a spelling finding about that name does not stand there
+    /// (crate::families::names, `spelling_stands`).
+    pub bound_callees: std::cell::RefCell<std::collections::HashSet<(Option<String>, usize, usize)>>,
     /// Checking for a move up from this version (`upgradingFrom`).
     pub upgrading_from: Option<u32>,
     /// The host's zone database.
@@ -169,6 +174,7 @@ impl<'c> Checker<'c> {
             type_only: 0,
             listens: Default::default(),
             imports: Default::default(),
+            bound_callees: Default::default(),
             schemas: Default::default(),
             upgrading_from: options.upgrading_from,
             return_stack: Vec::new(),

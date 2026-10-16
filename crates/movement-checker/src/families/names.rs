@@ -10,9 +10,10 @@
 //! `reportResolutionFailure`, `declareAuthored`, `checkFunctionName`,
 //! `checkImport`, `checkAssign`; scopes.ts.
 
-use movement_parser::ast::{ImportSource, ImportStatement, Span};
+use movement_parser::ast::{CallArg, CallStatement, ImportSource, ImportStatement, Loc, Span};
+use movement_parser::surface::SpellingFinding;
 use movement_parser::catalog::helpers::credential_arg_of;
-use movement_parser::version::before;
+use movement_parser::version::{before, since};
 use serde_json::json;
 
 use crate::checker::Checker;
@@ -55,6 +56,17 @@ fn insert_line_at_top(line: &str) -> serde_json::Value {
     json!({ "span": { "start": { "line": 1, "col": 1 }, "end": { "line": 1, "col": 1 } }, "text": format!("{line}\n") })
 }
 
+/// A name that hides a core word or a namespace (language version 5, §4.2).
+/// The design allows it with a warning, a call going to the name; refused for
+/// now, because the spelling rewrite reads a core word's or a namespace's call
+/// before any name is bound (movement_parser::surface::canonical), so a call
+/// written with the name would still run the built-in.
+fn hides_builtin_message(name: &str, hidden: &str) -> String {
+    format!(
+        "'{name}' would hide {hidden} — not yet allowed: inside an expression a call written with '{name}' is read as {hidden} before any name is bound, so it would not reach this binding. Name it something else"
+    )
+}
+
 impl Checker<'_> {
     /// `declareAuthored`: binds a name the author wrote, refusing one that
     /// hides a binding of an enclosing scope. The same-scope binding it
@@ -66,6 +78,11 @@ impl Checker<'_> {
                 "'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
                 span,
             );
+        }
+        if since(self.version, 5)
+            && let Some(hidden) = movement_parser::surface::table::hidden_by(&symbol.name)
+        {
+            self.report(codes::V5_HIDES_BUILTIN, hides_builtin_message(&symbol.name, &hidden), span);
         }
         if let Some(shadowing) = self.scopes.shadowing(scope, &symbol.name) {
             let place = match shadowing {
@@ -214,7 +231,16 @@ impl Checker<'_> {
             return;
         }
         let folded = name.to_uppercase();
-        if let Some(builtin) = FLAT_BUILTINS.iter().find(|b| **b == folded) {
+        // From version 5 letter case counts: a built-in the spelling table
+        // respells is no longer named `upper` in any case, and a name that
+        // hides a core word or a namespace is `declare_authored`'s to report.
+        let respelled = |builtin: &str| {
+            since(self.version, 5)
+                && (movement_parser::surface::table::by_canonical(builtin).is_some() || movement_parser::surface::table::hidden_by(name).is_some())
+        };
+        if let Some(builtin) = FLAT_BUILTINS.iter().find(|b| **b == folded)
+            && !respelled(builtin)
+        {
             self.report(
                 codes::FUNCTION_NAME_COLLISION,
                 format!(
@@ -236,6 +262,34 @@ impl Checker<'_> {
                 );
             }
         }
+    }
+
+    /// Notes a call written `written(…)` at `at` where the program binds
+    /// `written` itself (language version 5, §4.2: a call goes to what is in
+    /// scope), so the spelling finding about that name does not stand there.
+    pub fn note_callee(&self, written: &str, at: Loc, scope: ScopeId) {
+        if since(self.version, 5) && !matches!(self.scopes.resolve(scope, written), Resolution::Unknown) {
+            self.bound_callees.borrow_mut().insert((self.imports.current_path().map(str::to_string), at.line, at.col));
+        }
+    }
+
+    /// `note_callee` for a call statement and every call among its arguments,
+    /// which are read in the same scope.
+    pub fn note_call_statement(&self, call: &CallStatement, scope: ScopeId) {
+        self.note_callee(&call.callee, call.span.start, scope);
+        for arg in &call.args {
+            if let CallArg::Call { call: nested, .. } = arg {
+                self.note_call_statement(nested, scope);
+            }
+        }
+    }
+
+    /// Whether a spelling finding of the file at `path` (none for the root)
+    /// stands: one about a call's bare name does not where the program binds
+    /// that name.
+    pub fn spelling_stands(&self, finding: &SpellingFinding, path: Option<&str>) -> bool {
+        finding.unless_bound.is_none()
+            || !self.bound_callees.borrow().contains(&(path.map(str::to_string), finding.span.start.line, finding.span.start.col))
     }
 
     /// `checkImport`.
@@ -265,7 +319,15 @@ impl Checker<'_> {
                         _ => (SymbolKind::Plugin, self.catalog.plugin(&imported.name).is_some(), "plugin"),
                     };
                     if !known {
-                        self.report(codes::IMPORT_UNKNOWN, format!("Unknown {what} '{}' in '{namespace}'", imported.name), statement.span);
+                        // From version 5 a plugin is imported by its camelCase
+                        // name, read into the catalog's key: the message names
+                        // it as written.
+                        let named = if what == "plugin" && since(self.version, 5) {
+                            movement_parser::surface::table::plugin_name(&imported.name)
+                        } else {
+                            imported.name.clone()
+                        };
+                        self.report(codes::IMPORT_UNKNOWN, format!("Unknown {what} '{named}' in '{namespace}'"), statement.span);
                     }
                     kind
                 }

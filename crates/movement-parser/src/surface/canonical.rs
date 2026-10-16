@@ -156,11 +156,11 @@ impl<'s> Canon<'s> {
     }
 
     fn old(&mut self, at: At, message: String, edit: Option<Edit>) {
-        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]) });
+        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None });
     }
 
     fn not_yet(&mut self, at: At, message: String) {
-        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None });
+        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None, unless_bound: None });
     }
 
     pub fn visit(&mut self, e: &mut MExpr, in_walk: bool) {
@@ -220,7 +220,7 @@ impl<'s> Canon<'s> {
             self.text(At { start: bang.start + 1, end: bang.end }).trim_start(),
             rest.trim_start()
         );
-        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]) };
+        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]), unless_bound: None };
         let same_bang = |f: &Finding| f.code == SPELLING_CODE && f.at.start == bang.start && f.message.starts_with("from language version 5 `!`");
         match self.findings.iter_mut().find(|f| same_bang(f)) {
             Some(inner) => *inner = finding,
@@ -293,7 +293,19 @@ impl<'s> Canon<'s> {
                 };
                 *e = call;
             }
-            MExpr::Call { .. } => self.call(e),
+            MExpr::Call { callee, .. } => {
+                // A finding about a bare callee's name stands only where the
+                // program does not bind that name (§4.2).
+                let bare = match callee.as_ref() {
+                    MExpr::Name { name, .. } if !name.quoted => Some(name.text.clone()),
+                    _ => None,
+                };
+                let before = self.findings.len();
+                self.call(e);
+                for finding in &mut self.findings[before..] {
+                    finding.unless_bound.clone_from(&bare);
+                }
+            }
             _ => {}
         }
     }
@@ -360,7 +372,7 @@ impl<'s> Canon<'s> {
                 None => format!("`{ns}` has no member `{member}`"),
             };
             let edits = near.map(|s| vec![Edit { at: callee_at, text: s.v5.to_string() }]);
-            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits });
+            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits, unless_bound: None });
             return;
         }
         // An old spelling: refused with its rewrite.

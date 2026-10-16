@@ -400,7 +400,7 @@ impl Parser {
         let fix = (!edits.is_empty()).then(|| Fix {
             edits: edits.into_iter().map(|(s, e, text)| SourceEdit { span: self.span_between(s, e), text }).collect(),
         });
-        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None });
+        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None, unless_bound: None });
     }
 
     /// From version 5 an `if` condition is parenthesised, as TypeScript's.
@@ -1160,13 +1160,16 @@ impl Parser {
         self.skip_inline_ws();
         self.expect("{", "after 'import'")?;
         let mut names = Vec::new();
+        let mut name_spans = Vec::new();
         loop {
             self.skip_all_ws();
             if self.is('}') {
                 self.pos += 1;
                 break;
             }
+            let name_start = self.pos;
             let name = self.read_name("an imported name")?;
+            name_spans.push((name_start, self.pos));
             self.skip_all_ws();
             let mut alias = None;
             if self.at_word("as") {
@@ -1220,10 +1223,37 @@ impl Parser {
                 }
                 self.adapters.extend(names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone())));
             }
+            if ns == "plugins" && since(self.version, 5) {
+                for (imported, &(start, end)) in names.iter_mut().zip(&name_spans) {
+                    self.read_plugin_import(imported, start, end);
+                }
+            }
             ImportSource::Builtin { namespace: ns }
         };
         self.expect_statement_end()?;
         Ok(ImportStatement { names, source, span: self.span_from(start) })
+    }
+
+    /// A plugin imported under version 5 by its exact camelCase name
+    /// (`fetchUrl`, crate::surface::table::plugin_name), read into the import
+    /// versions 1–4 write: the catalog's key, under the name as written
+    /// (`fetch_url as fetchUrl`). The catalog's key written as the name is
+    /// the old spelling, refused with the rewrite, the local name kept.
+    fn read_plugin_import(&mut self, imported: &mut ImportedName, start: usize, end: usize) {
+        use crate::surface::table::{plugin_key, plugin_name};
+        if let Some(key) = plugin_key(&imported.name) {
+            if key != imported.name {
+                let written = std::mem::replace(&mut imported.name, key);
+                imported.alias.get_or_insert(written);
+            }
+            return;
+        }
+        let name = plugin_name(&imported.name);
+        if plugin_key(&name).is_none() {
+            return;
+        }
+        let text = if imported.alias.is_some() { name.clone() } else { format!("{name} as {}", imported.name) };
+        self.spelling(format!("from language version 5 the plugin `{}` is imported as `{name}`", imported.name), start, end, vec![(start, end, text)]);
     }
 
     // ── Assignment right-hand sides ──
@@ -2653,6 +2683,7 @@ impl Parser {
             span: self.span_between(marks[0].0, end),
             fix: None,
             named: Some(crate::surface::NamedCall { callee: callee.to_string(), args }),
+            unless_bound: None,
         });
     }
 
@@ -4647,6 +4678,15 @@ pub fn parse_program(source: &str, version: u32, eager: bool) -> SResult<Program
     let mut program = program?;
     program.spelling = spelling;
     Ok(program)
+}
+
+/// A block closure's text (`{ … }`, starting at `origin` in the file) read
+/// for the old spellings its statements hold, which are reported into the
+/// gathering scope (crate::surface::slot_findings). A text that does not parse
+/// reports nothing here: the call it sits in reports why when it is read.
+pub(crate) fn read_block_for_findings(text: &str, origin: Loc) {
+    let mut parser = Parser::new(text, crate::surface::version(), origin, false);
+    let _ = parser.parse_block_body("the closure's body");
 }
 
 /// An adapter package's tag (`` `@lf/attio` ``), until packages are more than

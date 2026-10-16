@@ -181,7 +181,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
-import { spellMessage, type NamedCall, type SpellingFinding } from '../parser/surface';
+import { hiddenBy, isRespelled, pluginName, spellMessage, type NamedCall, type SpellingFinding } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -385,6 +385,8 @@ export const DiagnosticCodes = {
   V5_UNKNOWN_MEMBER: 'MOV_V5_UNKNOWN_MEMBER',
   /** Language version 5: a v5 form the spelling rewrite cannot read yet. */
   V5_NOT_YET: 'MOV_V5_NOT_YET',
+  /** Language version 5: a name bound that hides a core word or a namespace. */
+  V5_HIDES_BUILTIN: 'MOV_V5_HIDES_BUILTIN',
   /** A closure literal (`(n) => { … }`) written where the formula grammar
    *  takes over — a call argument, a write field, a hop WHERE. The formula
    *  grammar has no closure production (it dies on the bare `>`), so this
@@ -1352,6 +1354,17 @@ export function checkProgram(
   return checkProgramWithLink(program, catalog, options).diagnostics;
 }
 
+/** The old spellings a program holds under language version 5 (the parser's
+ *  `Program.spelling`), refused, each with its rewrite as the fix. */
+function spellingDiagnostics(program: Program, checker: Checker): Diagnostic[] {
+  return (program.spelling ?? []).filter(f => checker.spellingStands(f)).flatMap((f): Diagnostic[] => {
+    if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
+    const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
+    if (typed !== undefined) return [{ code: f.code, message: typed.message, span: f.span, fix: typed.fix }];
+    return [{ code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) }];
+  });
+}
+
 /**
  * `checkProgram` plus the resolved import structure (`ProgramLink`) — the
  * movement engine's seam: it validates through this call and then executes
@@ -1380,12 +1393,7 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const spelling: Diagnostic[] = (program.spelling ?? []).flatMap((f): Diagnostic[] => {
-    if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
-    const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
-    if (typed !== undefined) return [{ code: f.code, message: typed.message, span: f.span, fix: typed.fix }];
-    return [{ code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) }];
-  });
+  const spelling = [...spellingDiagnostics(program, checker), ...checker.librarySpelling];
   const found = checker.diagnostics
     .map(withHandbookPointer)
     .map(d => ({ ...d, message: spellMessage(d.message, languageVersion) }));
@@ -3912,6 +3920,37 @@ class Checker {
    *  (version 5): its parameters in order, by where its first argument's
    *  value starts — what the parser's finding for it needs for its fix. */
   readonly namedOrders = new Map<string, string[]>();
+  /** The old spellings (language version 5) of the libraries this file
+   *  imports, each at the import that pulled its library in. Kept apart from
+   *  `diagnostics`: a finding's message names the old spelling, which the
+   *  program's own spelling must not rewrite. */
+  readonly librarySpelling: Diagnostic[] = [];
+  /** Where a call is written with a bare name the program binds there
+   *  (language version 5), as `line:col`: a spelling finding about that name
+   *  does not stand there (`spellingStands`). */
+  private readonly boundCallees = new Set<string>();
+
+  /** Notes a call written `written(…)` at `at` where the program binds
+   *  `written` itself (language version 5, a call goes to what is in scope),
+   *  so the spelling finding about that name does not stand there. */
+  private noteCallee(written: string, at: Loc, scope: Scope): void {
+    if (since(this.languageVersion, 5) && scope.resolve(written).kind !== 'unknown') {
+      this.boundCallees.add(`${at.line}:${at.col}`);
+    }
+  }
+
+  /** `noteCallee` for a call statement and every call among its arguments,
+   *  which are read in the same scope. */
+  private noteCallStatement(call: CallStatement, scope: Scope): void {
+    this.noteCallee(call.callee, call.span.start, scope);
+    for (const arg of call.args) if (arg.kind === 'call') this.noteCallStatement(arg.call, scope);
+  }
+
+  /** Whether a spelling finding of this file stands: one about a call's bare
+   *  name does not where the program binds that name. */
+  spellingStands(finding: SpellingFinding): boolean {
+    return finding.unlessBound === undefined || !this.boundCallees.has(`${finding.span.start.line}:${finding.span.start.col}`);
+  }
 
   /** Node declarations made in the files being checked, by the symbol that
    *  declares them — how `extends` reaches a base declared in the same file,
@@ -4147,6 +4186,19 @@ class Checker {
       this.report(
         DiagnosticCodes.NAME_PROTO,
         `'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name`,
+        span,
+      );
+    }
+    const hidden = since(this.languageVersion, 5) ? hiddenBy(symbol.name) : undefined;
+    if (hidden !== undefined) {
+      // The design allows it with a warning, a call going to the name; refused
+      // for now, because the spelling rewrite reads a core word's or a
+      // namespace's call before any name is bound (crates/movement-parser/src/
+      // surface/canonical.rs), so a call written with the name would still
+      // run the built-in.
+      this.report(
+        DiagnosticCodes.V5_HIDES_BUILTIN,
+        `'${symbol.name}' would hide ${hidden} — not yet allowed: inside an expression a call written with '${symbol.name}' is read as ${hidden} before any name is bound, so it would not reach this binding. Name it something else`,
         span,
       );
     }
@@ -5565,6 +5617,15 @@ class Checker {
         span: at,
       });
     }
+    // A fix's edits are the library file's, so none is carried to the import.
+    const spelling = [...spellingDiagnostics(file.program, checker), ...checker.librarySpelling];
+    for (const diagnostic of this.typeOnly ? [] : spelling) {
+      this.librarySpelling.push({
+        code: diagnostic.code,
+        message: `"${file.path}" line ${diagnostic.span.start.line}: ${diagnostic.message}`,
+        span: at,
+      });
+    }
     return result;
   }
 
@@ -5647,9 +5708,12 @@ class Checker {
               ? this.catalog.credential(name) !== undefined
               : this.catalog.plugin(name) !== undefined;
         if (!known) {
+          // From version 5 a plugin is imported by its camelCase name, read
+          // into the catalog's key: the message names it as written.
+          const named = namespace === 'plugins' && since(this.languageVersion, 5) ? pluginName(name) : name;
           this.report(
             DiagnosticCodes.IMPORT_UNKNOWN,
-            `Unknown ${namespace === 'adapters' ? 'adapter' : namespace === 'credentials' ? 'credential' : 'plugin'} '${name}' in '${namespace}'`,
+            `Unknown ${namespace === 'adapters' ? 'adapter' : namespace === 'credentials' ? 'credential' : 'plugin'} '${named}' in '${namespace}'`,
             statement.span,
           );
         }
@@ -6165,6 +6229,7 @@ class Checker {
 
   /** How a call reads where it is written, once its callee is looked up. */
   private readCallAt(call: CallStatement, scope: Scope, position: CallPosition): CallReading {
+    this.noteCallStatement(call, scope);
     const callScope = this.callScope(scope);
     const reading = readCall(call, callee => resolveCallee(callee, callScope, this.languageVersion), position);
     if (reading.kind !== 'function') {
@@ -6257,7 +6322,12 @@ class Checker {
   private checkFunctionName(name: string, span: Span, scope: Scope): void {
     if (before(this.languageVersion, 3)) return;
     const builtin = lookupBuiltin(name);
-    if (builtin !== undefined && !builtin.name.includes('.')) {
+    // From version 5 letter case counts: a built-in the spelling table
+    // respells is no longer named `upper` in any case, and a name that hides
+    // a core word or a namespace is `declareAuthored`'s to report.
+    const respelled = (canonical: string): boolean =>
+      since(this.languageVersion, 5) && (isRespelled(canonical) || hiddenBy(name) !== undefined);
+    if (builtin !== undefined && !builtin.name.includes('.') && !respelled(builtin.name)) {
       this.report(
         DiagnosticCodes.FUNCTION_NAME_COLLISION,
         `'${name}' is the built-in ${builtin.name} — function names are case-insensitive, so a function cannot share a built-in's name in any letter case. Name it something else (an import can rename one: \`import { x as y }\`)`,
@@ -6665,6 +6735,7 @@ class Checker {
     at: { spanOf: (at: At) => Span; slot?: ExprSlot; scope: Scope; writeField: boolean },
   ): void {
     const span = at.spanOf(call.at);
+    this.noteCallee(written, span.start, at.scope);
     const resolution = resolveCallee(written, this.callScope(at.scope), this.languageVersion);
     switch (resolution.kind) {
       case 'builtin': {
