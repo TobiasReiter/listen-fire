@@ -615,20 +615,20 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     if text.is_nullish() || pattern.is_nullish() {
         return Ok(Js::Null);
     }
-    let regex = match Regex::new(&pattern.to_js_string()) {
+    // The regex reads code points: a lone surrogate is U+FFFD to it.
+    let plain = |value: Js| String::from_utf16_lossy(&crate::js_string::units_vec(&value.to_js_string()));
+    let regex = match Regex::new(&plain(pattern)) {
         Ok(regex) => regex,
         Err(RegexError::Syntax) => return Ok(Js::Null),
-        Err(RegexError::Unsupported(what)) => return Err(EvalError::Fallback(what)),
     };
-    let Some(groups) = regex.exec(&text.to_js_string()) else { return Ok(Js::Null) };
+    let Some(groups) = regex.exec(&plain(text)) else { return Ok(Js::Null) };
     let index = if args.len() > 2 { group.to_number() } else if groups.len() > 1 { 1.0 } else { 0.0 };
     if !js::is_integer(index) || index < 0.0 || index >= groups.len() as f64 {
         return Ok(Js::Null);
     }
     match &groups[index as usize] {
         None => Ok(Js::Null),
-        // A match through a pair holds its half, as JavaScript's does.
-        Some(units) => Ok(Js::String(crate::js::JsString::from_units(units))),
+        Some(found) => Ok(Js::str(found.as_str())),
     }
 }
 

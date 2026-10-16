@@ -699,7 +699,7 @@ fn hostname_labels(normalised: &str) -> Option<Vec<String>> {
     let shape = crate::js_regex::Regex::new(HOSTNAME_SHAPE).expect("the hostname shape is a valid pattern");
     let found = shape.exec(normalised)?;
     let labels = found.get(1).cloned().flatten()?;
-    Some(crate::js_string::text_of_units(&labels).split('.').map(String::from).collect())
+    Some(labels.split('.').map(String::from).collect())
 }
 
 /// `distinctiveTokens`: the words of a value, the kind-naming ones dropped.

@@ -223,7 +223,7 @@ pieces = Text.chunks(text, { size: 40000, overlap: 2000 })
 
 ### TEXT.REGEX_EXTRACT
 
-\`Text.regexExtract(text, pattern, group?)\` → \`text\`, empty when nothing matches — the first regex match, or the first capture group when the pattern has one.
+\`Text.regexExtract(text, pattern, group?)\` → \`text\`, empty when nothing matches — the first regex match, or the first capture group when the pattern has one. The pattern reads whole characters (\`.\` matches an emoji) and is absent when malformed: escape only punctuation (\`\\\\.\`, \`\\\\-\`) or a known escape (\`\\\\d\`, \`\\\\s\`, \`\\\\x41\`, \`\\\\u{1F600}\`); an octal escape or an unknown letter escape is malformed.
 
 \`\`\`
 ref = Text.regexExtract(m.Subject, "(DEAL-\\\\d+)")

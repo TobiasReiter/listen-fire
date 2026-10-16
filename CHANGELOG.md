@@ -240,6 +240,11 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - **LOWER and UPPER use Rust's Unicode tables** (Unicode 17; Node's ICU was 16). Letters Unicode 17
   gave a case now map: `UPPER("ꟓ")` is `"꟒"` (it stayed `"ꟓ"`). `ʕ` is no longer a cased letter, so a
   sigma beside it can lower differently: `LOWER("ΑΣʕ")` is `"αςʕ"` (it was `"ασʕ"`).
+- **REGEX_EXTRACT reads whole characters and no Annex B.** `.` matches a whole emoji
+  (`REGEX_EXTRACT("x😀y", ".(.)")` is `"😀"`; it was half of it); `\u{1F600}` names one. An octal
+  escape (`\1` with no group was U+0001), `\c` without a letter and an unknown letter escape
+  (`\p`, `\a`) are malformed patterns, so the call is absent. Escaped punctuation (`\-`, `\@`)
+  is still itself. Groups nested past 1,000 deep are malformed (they were handed to TypeScript).
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new
