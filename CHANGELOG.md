@@ -235,8 +235,11 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `द`). The CHUNKS entities estimate reads capitals with `char::is_uppercase`.
 - **A regex group name is ASCII** (`$`, `_`, letters, digits): `(?<𝒜>.)` is a malformed pattern.
 - **ONLY's failure quotes its argument as you wrote it.** `ONLY( [a,  b] )` fails with
-  `ONLY([a,  b]) says there is exactly one, and there are 2.` (it re-spelled the expression in the
-  formula grammar before, so `x.name` read back as `` `x`.`name` `` style spellings).
+  `ONLY([a,  b]) says there is exactly one, and there are 2.` (before, it re-spelled the
+  expression in the old formula grammar).
+- **LOWER and UPPER use Rust's Unicode tables** (Unicode 17; Node's ICU was 16). Letters Unicode 17
+  gave a case now map: `UPPER("ꟓ")` is `"꟒"` (it stayed `"ꟓ"`). A final sigma beside `ʕ` lowers to
+  `σ`, not `ς`.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

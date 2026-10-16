@@ -1084,13 +1084,15 @@ mod tests {
         assert_eq!(host("http://a%41.com"), "aa.com");
     }
 
-    /// Node 22's ICU (Unicode 16), not Rust's tables (Unicode 17): U+0295
-    /// is cased for the final-sigma rule in the older one, so the sigma
-    /// before it is not final.
+    /// Rust's own tables (the toolchain's Unicode, 17 today), not Node's
+    /// ICU (Unicode 16): a letter pair Unicode 17 added maps (U+A7D3 upper
+    /// is U+A7D2; Node left it), and the final sigma reads Rust's cased and
+    /// case-ignorable sets.
     #[test]
-    fn case_mapping_follows_nodes_icu() {
-        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "ασʕ");
+    fn case_mapping_follows_rusts_tables() {
+        assert_eq!(text(call("upper", vec![s("ꟓ")])), "\u{A7D2}");
         assert_eq!(text(call("lower", vec![s("ΑΣ ʕ")])), "ας ʕ");
+        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "ΑΣʕ".to_lowercase());
         assert_eq!(text(call("lower", vec![s("AΣ\u{345}")])), "aς\u{345}");
     }
 
