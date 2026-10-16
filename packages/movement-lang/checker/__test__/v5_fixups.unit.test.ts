@@ -71,6 +71,20 @@ describe('a callback whose closure takes the parameters the acting side fills', 
   it('a closure with no parameters still defers the call with its arguments fixed now', () => {
     expect(errors('function chase(name: <text>) {\n  return name\n}\n\nfunction offer() {\n  again = callback(() => chase("Acme"))\n  return again.url\n}', 5)).toEqual([]);
   });
+
+  const leaving = (subject: string, keyword: string) =>
+    `${keyword} book(name: <text>, day: <date>) {\n  return "\${name} \${day}"\n}\n\n${keyword} offer() {\n  pick = callback(${subject})\n  return pick.url\n}`;
+
+  it("a closure with no parameters that leaves its function's parameter open is an arity error from 5", () => {
+    expect(errors(leaving('() => book("Acme")', 'function'), 5)).toEqual([
+      "MOV_CALL_ARITY: 'book' takes 2 arguments, got 1 — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => book(…, d))",
+    ]);
+  });
+
+  it('a function named bare still leaves its parameters to the platform, and 1–4 are unchanged', () => {
+    expect(errors(leaving('book', 'function'), 5)).toEqual([]);
+    expect(errors(leaving('book("Acme")', 'movement'), 4)).toEqual([]);
+  });
 });
 
 describe("a move up across 5 warns a null test on a block's returned records", () => {

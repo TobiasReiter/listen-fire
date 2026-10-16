@@ -57,6 +57,20 @@ fn a_callback_closure_with_parameters_calls_the_function_checked_as_one() {
     assert_eq!(errors(deferred, 5), Vec::<String>::new());
 }
 
+#[test]
+fn a_callback_closure_that_leaves_its_function_a_parameter_open_is_an_arity_error_from_5() {
+    let program = |subject: &str, keyword: &str| {
+        format!("{keyword} book(name: <text>, day: <date>) {{\n  return \"${{name}} ${{day}}\"\n}}\n\n{keyword} offer() {{\n  pick = callback({subject})\n  return pick.url\n}}")
+    };
+    let open = errors(&program("() => book(\"Acme\")", "function"), 5);
+    assert_eq!(
+        open,
+        vec!["MOV_CALL_ARITY: 'book' takes 2 arguments, got 1 — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => book(…, d))".to_string()]
+    );
+    assert_eq!(errors(&program("book", "function"), 5), Vec::<String>::new(), "a function named bare leaves its parameters to the platform");
+    assert_eq!(errors(&program("book(\"Acme\")", "movement"), 4), Vec::<String>::new(), "versions 1–4 unchanged");
+}
+
 const CHAT: &str = r#"{"adapters":{"slack":{"constructionArgs":[],"schemas":{"":{"positions":{
   "channel":{"properties":{"Name":"text"},"edges":{"Messages":{"target":"message","readable":true,"sequenced":"chronological"}}},
   "message":{"properties":{"Text":"text"},"edges":{}}},

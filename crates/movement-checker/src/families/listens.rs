@@ -28,6 +28,8 @@ use movement_parser::catalog::types::EdgeSchema;
 
 use movement_parser::surface::phrase::{Connection, connection};
 
+use movement_parser::version::since;
+
 use crate::checker::Checker;
 use crate::codes;
 use crate::types::Ty;
@@ -834,6 +836,18 @@ impl Checker<'_> {
         }
         let Some(info) = callee.and_then(|id| self.listens.movements.get(&id)) else { return Vec::new() };
         let params = info.params.clone();
+        // From version 5 a call written in place (`() => f(x)`) is a closure
+        // with no parameters calling `f`, so `f` is held to its arity as
+        // TypeScript holds `() => f(x)`: the platform fills only what the
+        // closure declares. A function named bare (`callback(f)`) still
+        // leaves every parameter for the platform.
+        if since(self.version, 5) && span.end != name_span.end {
+            if args.len() != params.len() {
+                let message = callback_call_arity_message(movement, params.len(), args.len());
+                self.report(codes::CALL_ARITY, message, span);
+            }
+            return Vec::new();
+        }
         let mut supplied = HashSet::new();
         for (index, arg) in args.iter().enumerate() {
             match call_arg_name(arg) {
@@ -1148,4 +1162,13 @@ pub fn callback_type(params: Vec<(String, Option<Ty>)>) -> Position {
     edges.insert("Called".to_string(), LocalEdge { schema, target: Some(call), structural: false, deferred: false, references: false });
     let reads = IndexMap::from([("id".to_string(), Some(Ty::Text)), ("url".to_string(), Some(Ty::Text))]);
     Position::Local(LocalNode { label: "a callback".to_string(), reads, edges: Some(edges), run_built: None, extracted: None })
+}
+
+/// A callback's call written in place under version 5 that leaves its
+/// function a parameter open, or passes one too many.
+fn callback_call_arity_message(movement: &str, arity: usize, given: usize) -> String {
+    format!(
+        "'{movement}' takes {arity} argument{}, got {given} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => {movement}(…, d))",
+        if arity == 1 { "" } else { "s" }
+    )
 }

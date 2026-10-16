@@ -8827,6 +8827,22 @@ class Checker {
       this.checkCallArg(subject.movement, arg, param, index, scope);
     }
     if (declared === undefined || callee?.movement === undefined) return [];
+    // From version 5 a call written in place (`() => f(x)`) is a closure with
+    // no parameters calling `f`, so `f` is held to its arity as TypeScript
+    // holds `() => f(x)`: the platform fills only what the closure declares.
+    // A function named bare (`callback(f)`) still leaves every parameter for
+    // the platform.
+    if (since(this.languageVersion, 5) && (subject.span.end.line !== subject.nameSpan.end.line || subject.span.end.col !== subject.nameSpan.end.col)) {
+      const arity = callee.movement.decl.params.length;
+      if (subject.args.length !== arity) {
+        this.report(
+          DiagnosticCodes.CALL_ARITY,
+          `'${subject.movement}' takes ${arity} argument${arity === 1 ? '' : 's'}, got ${subject.args.length} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => ${subject.movement}(…, d))`,
+          subject.span,
+        );
+      }
+      return [];
+    }
     const supplied = new Set(bound.flatMap(b => (b.param !== undefined ? [b.param.name] : [])));
     const params: Array<{ name: string; type: FieldType | undefined }> = [];
     for (const param of callee.movement.decl.params) {
