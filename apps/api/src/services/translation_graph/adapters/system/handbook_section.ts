@@ -8,20 +8,20 @@ export const SYSTEM_HANDBOOK_SECTION: HandbookSection = {
   title: 'Platform events — when an automation fails (system)',
   content: `## Platform events — when an automation fails (system)
 
-Use \`system()\` to run an automation when something happens to your other automations. Post a failure to Slack:
+Use \`connect system\` to run an automation when something happens to your other automations. Post a failure to Slack:
 
 \`\`\`
-import { system, slack } from adapters
+import { \`@lf/system\` as system, \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-sys  = system()
-team = slack(credentials: team_workspace)
+sys  = connect system
+team = connect slack using team_workspace
 
 function \`Report Failure\`(failed: <sys-[:\`Run Failed\`]->>) {
-  alerts = ONLY(team-[ch:Channels WHERE \`Name\` == "alerts"]->)
-  if alerts == null { ERROR("no #alerts channel") }
+  alerts = only(team-[ch:Channels WHERE ch.Name == "alerts"]->)
+  if (alerts == null) { fail("no #alerts channel") }
   write alerts-[:Messages]-> {
-    Message: "\${failed.\`Automation\`} failed: \${failed.\`Reason\`} \${failed.\`Url\`}"
+    Message: "\${failed.Automation} failed: \${failed.Reason} \${failed.Url}"
   }
 }
 
@@ -38,17 +38,17 @@ listen as "Report failures" to sys { events: ["Run Failed"] } fire \`Report Fail
       construct: 'system-channel listeners (runs over the Run Failed position)',
       status: 'runs',
       probe: `
-import { system, slack } from adapters
+import { \`@lf/system\` as system, \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-sys  = system()
-team = slack(credentials: team_workspace)
+sys  = connect system
+team = connect slack using team_workspace
 
 function \`Report Failure\`(failed: <sys-[:\`Run Failed\`]->>) {
-  alerts = ONLY(team-[ch:Channels WHERE \`Name\` == "alerts"]->)
-  if alerts == null { ERROR("no #alerts channel") }
+  alerts = only(team-[ch:Channels WHERE ch.Name == "alerts"]->)
+  if (alerts == null) { fail("no #alerts channel") }
   write alerts-[:Messages]-> {
-    Message: "\${failed.\`Automation\`} failed: \${failed.\`Reason\`} \${failed.\`Url\`}"
+    Message: "\${failed.Automation} failed: \${failed.Reason} \${failed.Url}"
   }
 }
 

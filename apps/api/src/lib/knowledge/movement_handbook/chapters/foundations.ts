@@ -60,12 +60,12 @@ exists:
 
 \`\`\`
 parent = write crm-[:Companies]-> {
-  unique by (\`Name\`)
-  Name: msg.\`Subject\`
+  unique by (Name)
+  Name: msg.Subject
 }
 
 write parent-[:People]-> {
-  unique by (\`Email\`)
+  unique by (Email)
   Email: contact.email
 }
 \`\`\`
@@ -95,27 +95,34 @@ These hold everywhere, in every chapter, and are not restated per situation:
 
 - No magic values: every adapter, credential, and plugin name is imported;
   every other name is bound by assignment or received as a parameter.
-- Everything happens on a constructed instance: parameter types, traversal
-  roots, writes, and listens all name an instance you constructed
-  (\`crm = attio(credentials: acme)\`) — never a bare adapter type.
+- Everything happens on a connected instance: parameter types, traversal
+  roots, writes, and listens all name an instance you connected
+  (\`crm = connect attio using acme\`) — never a bare adapter type.
 - Types always wear angle brackets (\`m: <inbox-[:Email]->>\`, \`amount: <number>\`,
-  \`rec IS <crm-[:companies]->>\`); positions, values, and handles never do.
+  \`rec is <crm-[:companies]->>\`); positions, values, and handles never do.
   Inside a type, \`-[:…]->\` names the edge the type sits behind; \`.\` is only
-  ever property access (\`msg.\`Subject\`\`, and the field tail of a borrowed
-  type: \`<crm-[:companies]->.\`funding_stage\`>\`).
-- Declare functions with \`function\`. Calls pass arguments in the order the
-  callee declares them (\`\`Log Lead\`(msg)\`), as TypeScript calls a function;
-  an adapter's and a plugin's arguments are named
-  (\`fetch_url(url: c.website)\`). A function, a plugin, a built-in and a
-  closure bound to a name are all called the same way, and function names are
-  case-insensitive. Write your own as \`name(data…, config record, lambda)\` —
-  data first, then a record of options, then a function — each left out when
-  it makes no sense. Braces are declarative bodies.
-- Fields read with a dot (\`msg.subject\`); "double quotes" are literal strings;
-  \${…} interpolates into strings; == compares, = binds.
+  ever property access (\`msg.Subject\`, and the field tail of a borrowed
+  type: \`<crm-[:companies]->.funding_stage>\`).
+- Declare functions with \`function\`. Calls pass arguments by position, in the
+  order the callee declares them (\`\`Log Lead\`(msg)\`), as TypeScript calls a
+  function, with an optional settings record last
+  (\`map(xs, (x) => x.Name, { concurrency: 2 })\`). A plugin's arguments are
+  named (\`fetch_url(url: c.website)\`). A function, a plugin, a built-in and a
+  closure bound to a name are all called the same way. Names are exact in
+  case outside walk brackets. Braces are declarative bodies.
+- Fields read with a dot (\`msg.Subject\`); "double quotes" are strings;
+  \${…} interpolates into them; == compares, = binds.
+- Outside walk brackets the code reads like TypeScript (\`&&\`, \`||\`, \`!\`,
+  \`c ? a : b\`, \`if (…) { … }\`, \`true\`, \`false\`, \`null\`). Inside
+  \`-[…]->\` it reads like SQL (\`WHERE\`, \`AND\`, \`ORDER BY\`), and a field is
+  read through the alias (\`c.Name\`).
+- Built-ins are always there: core words in lower case (\`map\`, \`filter\`,
+  \`count\`, \`first\`, \`coalesce\`, \`ai\`, \`fail\`) and namespaces in PascalCase
+  (\`Text.trim\`, \`Number.round\`, \`Date.today\`, \`List.sum\`). Only adapters,
+  plugins and credentials are imported.
 - Backticks wrap any name that isn't a bare identifier: a field with spaces
   (\`msg.\`Sender Name\`\`), a credential's saved name
-  (\`attio(credentials: \`Acme Prod\`)\`), an automation's own name
+  (\`connect attio using \`Acme Prod\`\`), an automation's own name
   (\`function \`Unsnooze Actions\`(…)\`). Coin names the way the team already says
   them — \`Name: \`Subject Line\`\`, not \`Name: subject_line\` — so the brief, the
   page and the channel use the same words. Short instance names (\`crm = …\`)

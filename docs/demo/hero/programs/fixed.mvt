@@ -1,9 +1,9 @@
-import { gmail, attio, slack } from adapters
-import { `Dev Loop Gmail`, `Dev Loop Attio`, `Dev Loop Slack` } from credentials
+import { `@lf/gmail` as gmail, `@lf/attio` as attio, `@lf/slack` as slack } from adapters
+import { `Dev Loop Gmail` as gmailCred, `Dev Loop Attio` as attioCred, `Dev Loop Slack` as slackCred } from credentials
 
-mail = gmail(credentials: `Dev Loop Gmail`)
-crm  = attio(credentials: `Dev Loop Attio`)
-chat = slack(credentials: `Dev Loop Slack`)
+mail = connect gmail using gmailCred
+crm  = connect attio using attioCred
+chat = connect slack using slackCred
 
 node Pitch: "the startup pitching us in this email" {
   company: <text> "the startup's name"
@@ -12,12 +12,12 @@ node Pitch: "the startup pitching us in this email" {
 }
 
 function `Founder Intake`(msg: <mail-[:Message]->>) {
-  address = COALESCE(TEXT.REGEX_EXTRACT(msg.From, "<(.+)>", 1), msg.From)
-  founder = TRIM(TEXT.REGEX_EXTRACT(msg.From, "^([^<]+)<", 1))
-  domain  = TEXT.REGEX_EXTRACT(address, "@(.+)$", 1)
-  pitch   = extractOne([msg.Body], Pitch, { tier: 'quick' })
-  if pitch == null { ERROR("no pitch found in ${msg.Subject}") }
-  raise   = COALESCE(pitch.raise, "raise not stated")
+  address = coalesce(Text.regexExtract(msg.From, "<(.+)>", 1), msg.From)
+  founder = Text.trim(Text.regexExtract(msg.From, "^([^<]+)<", 1))
+  domain  = Text.regexExtract(address, "@(.+)$", 1)
+  pitch   = extractOne([msg.Body], Pitch, { tier: "quick" })
+  if (pitch == null) { fail("no pitch found in ${msg.Subject}") }
+  raise   = coalesce(pitch.raise, "raise not stated")
 
   company = write crm-[:Companies]-> {
     Name:        pitch.company
@@ -31,7 +31,7 @@ function `Founder Intake`(msg: <mail-[:Message]->>) {
   write company-[:`VC Deal Flow`]-> { Stage: "Sourced" }
   write company-[:Notes]-> { Title: msg.Subject, Content: msg.`Plain Body` }
 
-  chat-[ch:Channels WHERE `Name` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.Name == "dealflow"]-> {
     write ch-[:Messages]-> { Message: "New inbound: ${pitch.company}, ${raise}, from ${founder}" }
   }
 }

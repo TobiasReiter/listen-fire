@@ -9,7 +9,9 @@ import { exampleText } from '../front_page';
 import {
   CONTROL_FORMS,
   MAX_RESULTS,
+  builtinName,
   builtinSignature,
+  builtinSummary,
   languageIndex,
   searchLanguage,
   searchableBuiltins,
@@ -23,35 +25,35 @@ const top = (query: string, kind?: 'function' | 'concept' | 'recipe') =>
 describe('built-ins come from the registry', () => {
   it('every documented registry function has an entry carrying its generated signature', () => {
     for (const builtin of searchableBuiltins()) {
-      const entry = index.find((e) => e.kind === 'function' && e.name === builtin.name);
+      const entry = index.find((e) => e.kind === 'function' && e.name === builtinName(builtin) && e.detail === builtinSignature(builtin));
       if (!entry) throw new Error(`the standard library's ${builtin.name} has no search entry`);
-      expect(entry.detail).toBe(builtinSignature(builtin));
-      expect(entry.purpose).toBe(builtin.summary);
+      expect(entry.purpose).toBe(builtinSummary(builtin));
     }
   });
 
   it('leaves out only what the registry marks retired', () => {
     const left = standardLibrary().filter((b) => !searchableBuiltins().includes(b));
     expect(left.length).toBeGreaterThan(0);
-    for (const b of left) expect(b.summary).toMatch(/^RETIRED/);
+    // Retired, or written as an operator rather than called (`x == null`, `xs[i]`).
+    for (const b of left) expect(b.summary.startsWith('RETIRED') || ['ISNULL', 'AT', 'TONUMBER'].includes(b.name)).toBe(true);
     for (const b of left) expect(index.some((e) => e.name === b.name)).toBe(false);
   });
 
   it('a built-in with a section of its own borrows its example from it', () => {
-    const join = index.find((e) => e.name === 'JOIN');
+    const join = index.find((e) => e.name === 'Text.join');
     expect(join?.anchor).toBe('builtins#JOIN');
-    expect(join?.example).toMatch(/JOIN\(/);
+    expect(join?.example).toMatch(/Text\.join\(/);
   });
 });
 
 describe('ranking', () => {
   it('finds a built-in by what it does', () => {
-    expect(top('join text').slice(0, 2)).toContain('JOIN');
+    expect(top('join text').slice(0, 2)).toContain('Text.join');
   });
 
   it('finds a built-in by name, whatever its case', () => {
-    expect(top('coalesce')[0]).toBe('COALESCE');
-    expect(top('format_figure')[0]).toBe('CURRENCY.FORMAT_FIGURE');
+    expect(top('coalesce')[0]).toBe('coalesce');
+    expect(top('formatFigure')[0]).toBe('Currency.formatFigure');
   });
 
   it('answers "update or create a record" with identity', () => {

@@ -38,13 +38,13 @@ export function exampleText(example: FrontExample): string {
   return example.file;
 }
 
-const PRELUDE = `import { email, attio, slack, ask } from adapters
+const PRELUDE = `import { \`@lf/email\` as email, \`@lf/attio\` as attio, \`@lf/slack\` as slack, \`@lf/ask\` as ask } from adapters
 import { acme, team_chat } from credentials
 
-inbox = email()
-crm   = attio(credentials: acme)
-chat  = slack(credentials: team_chat)
-asks  = ask()
+inbox = connect email
+crm   = connect attio using acme
+chat  = connect slack using team_chat
+asks  = connect ask
 `;
 
 /** Where a TypeScript habit is wrong here. Each claim was tried against the
@@ -58,12 +58,12 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'operators',
     title: 'Operators',
-    text: '`==` and `!=` compare (no `===`). Logic is `AND`, `OR`, `NOT` (no `&&`, `||`). `IF c THEN a ELSE b END` replaces `? :`; statements branch with `if c { … } else { … }`.',
+    text: '`==` compares and never converts (no `===`). Inside a walk\'s brackets a test reads like SQL: `AND`, `OR`, `NOT`, `CONTAINS`, `IN`.',
   },
   {
     anchor: 'strings-and-names',
     title: 'Strings and names',
-    text: 'Strings are `"…"` or `\'…\'`, interpolating `${…}`. Backticks are not strings: they quote a name with spaces. `+` only adds numbers.',
+    text: 'Strings are `"…"`, interpolating `${…}`. Backticks are not strings: they quote a name with spaces. `+` only adds numbers.',
     example: { body: 'line = "From ${m.From}: ${m.`Plain Body`}"' },
   },
   {
@@ -74,32 +74,32 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'functions-not-methods',
     title: 'Functions, not methods',
-    text: 'No methods and no `[i]`: `UPPER(s)`, `LENGTH(xs)`, `AT(list, 0)`. Function names ignore letter case.',
-    example: { body: 'words = length(SPLIT(TRIM(m.Subject), " "))' },
+    text: 'No methods: a dot reads a field, or a namespace\'s function (`Text.upper(s)`). Core functions are unqualified (`map`, `count`, `first`, `coalesce`).',
+    example: { body: 'words = count(Text.split(Text.trim(m.Subject), " "))' },
   },
   {
     anchor: 'calls',
     title: 'Calls',
-    text: 'Arguments go data first, then one settings record, then a function.',
+    text: 'Arguments go by position, settings last: `map(xs, (x) => …, { concurrency: 2 })`.',
   },
   {
     anchor: 'no-loops',
     title: 'No loops',
-    text: 'No `for` or `while`. A block after a path runs once per record reached, and collects what it `return`s. `MAP`, `FILTER` and `REDUCE` iterate lists.',
-    example: { body: 'names = m-[a:Attachments]-> { return a.Name }\nlisted = JOIN(names, ", ")' },
+    text: 'No `for` or `while`. A block after a path runs once per record reached, and collects what it `return`s. `map`, `filter` and `reduce` iterate lists.',
+    example: { body: 'names = m-[a:Attachments]-> { return a.Name }\nlisted = Text.join(names, ", ")' },
   },
   {
     anchor: 'maybe-absent',
     title: 'Absent, not undefined',
-    text: 'No `undefined`, `??` or `?.`. What might not be there (`FIRST`, `ONLY`, `AT`, `extractOne`, a named `match`) is `T | absent`, refused where a value is required until narrowed: `if x == null { ERROR("…") }`, `EXISTS(x)`, `COALESCE(x, fallback)`, or `Field ?: x` in a write.',
+    text: 'No `undefined`, `??` or `?.`. What might not be there (`first`, `only`, `xs[i]`, `extractOne`, a named `match`) is `T | absent`, refused where a value is required until narrowed: `if (x == null) { fail("…") }`, `coalesce(x, fallback)`, or `Field ?: x` in a write.',
     example: {
-      body: 'co = ONLY(crm-[c:Companies WHERE Name == m.Subject]->)\nif co == null { ERROR("no company ${m.Subject}") }\nseen = match crm-[:People]-> { unique by (Email), Email: m.From }\nif seen != null { link seen -[:Company]-> co }',
+      body: 'co = only(crm-[c:Companies WHERE c.Name == m.Subject]->)\nif (co == null) { fail("no company ${m.Subject}") }\nseen = match crm-[:People]-> { unique by (Email), Email: m.From }\nif (seen != null) { link seen -[:Company]-> co }',
     },
   },
   {
     anchor: 'errors-and-return',
     title: 'Errors and return',
-    text: '`ERROR("reason")` fails the run; no `throw` or `try`. `return` always hands back a value.',
+    text: '`fail("reason")` fails the run; no `throw` or `try`. `return` always hands back a value.',
   },
   {
     anchor: 'immutable-values',
@@ -112,7 +112,7 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
   {
     anchor: 'await',
     title: 'Await',
-    text: '`await` starts a statement, never inside an expression: `a = await FIRST(q-[:Response]->)`, then use `a`.',
+    text: '`await` starts a statement, never inside an expression: `a = await first(q-[:Response]->)`, then use `a`.',
   },
 ];
 
@@ -120,16 +120,16 @@ export const TS_EXCEPT: readonly FrontEntry[] = [
 export const CONCEPTS: readonly FrontEntry[] = [
   {
     anchor: 'systems',
-    title: 'Import, then construct',
-    text: 'Import a system from `adapters` and its connection from `credentials`, then construct it once. An email listen needs a `key`, the address mail goes to.',
+    title: 'Import, then connect',
+    text: 'Import a system by its package tag and its connection from `credentials`, then connect it once. An email listen needs a `key`, the address mail goes to.',
     example: {
-      file: 'import { email, attio } from adapters\nimport { acme } from credentials\n\ninbox = email()\ncrm = attio(credentials: acme)\n\nfunction `Log Sender`(m: <inbox-[:Email]->>) {\n  write crm-[:People]-> { unique by (Email), Email: m.From, Name: m.From }\n}\n\nlisten to inbox { key: "senders" } fire `Log Sender`',
+      file: 'import { `@lf/email` as email, `@lf/attio` as attio } from adapters\nimport { acme } from credentials\n\ninbox = connect email\ncrm = connect attio using acme\n\nfunction `Log Sender`(m: <inbox-[:Email]->>) {\n  write crm-[:People]-> { unique by (Email), Email: m.From, Name: m.From }\n}\n\nlisten to inbox { key: "senders" } fire `Log Sender`',
     },
   },
   {
     anchor: 'graph-and-paths',
     title: 'Systems are graphs; paths are values',
-    text: '`crm-[:Companies]->` is a path to its records; `-[c:Companies WHERE …]->` filters the hop. A `listen` line fires a function with the event\'s record as its one parameter.',
+    text: '`crm-[:Companies]->` is a path to its records; `-[c:Companies WHERE c.Name == n]->` filters the hop. A `listen` line fires a function with the event\'s record as its one parameter.',
   },
   {
     anchor: 'identity',
@@ -144,15 +144,15 @@ export const CONCEPTS: readonly FrontEntry[] = [
     title: 'Extraction is a function backed by a model',
     text: 'A `node` declaration is a type and a schema; its descriptions are the model\'s instructions. `extract(content, Shape, settings)` returns a list, `extractOne` one record or absent.',
     example: {
-      program: 'node Company: "the company this email is about" {\n  Name: <text> "its name"\n}\nfunction `File Company`(m: <inbox-[:Email]->>) {\n  co = extractOne([m.Body, m.Subject], Company, { tier: \'careful\' })\n  if co == null { ERROR("no company") }\n  write crm-[:Companies]-> { unique by (Name), Name: co.Name }\n}',
+      program: 'node Company: "the company this email is about" {\n  Name: <text> "its name"\n}\nfunction `File Company`(m: <inbox-[:Email]->>) {\n  co = extractOne([m.Body, m.Subject], Company, { tier: "careful" })\n  if (co == null) { fail("no company") }\n  write crm-[:Companies]-> { unique by (Name), Name: co.Name }\n}',
     },
   },
   {
     anchor: 'runs',
     title: 'Runs: effects, waiting, cost',
-    text: 'A run parks at an `await` (an approval, `sleep`) and resumes when it settles; `race` and `MAP` combine waits. It pauses at its cost cap.',
+    text: 'A run parks at an `await` (an approval, `sleep`) and resumes when it settles; `race` and `all` combine waits. It pauses at its cost cap.',
     example: {
-      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = AT(r, 0) == TRUE',
+      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await first(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = r[0] == true',
     },
   },
 ];

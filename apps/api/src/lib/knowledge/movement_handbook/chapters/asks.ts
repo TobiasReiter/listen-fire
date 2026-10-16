@@ -12,14 +12,14 @@ Reach for one only when a *judgement* is genuinely needed. A value you can compu
 ### how-it-works
 
 \`\`\`
-asks = ask()
+asks = connect ask
 
 q = write asks-[:Check]-> { Prompt: "Pursue this company?" }
 \`\`\`
 
 - The **family** edge (\`Check\` here) is the kind of question, and it fixes the type of the answer.
 - \`q.Url\` is the link a person opens — the only delivery affordance. Nothing is sent for you; you interpolate that \`Url\` into a message yourself.
-- \`await FIRST(q-[:Response]->)\` is the only way to read the answer. \`FIRST(…)\` is the ordinary read — nothing answered yet reads as nothing; \`await\` in front of it holds the run until there *is* something to read.
+- \`await first(q-[:Response]->)\` is the only way to read the answer. \`first(…)\` is the ordinary read — nothing answered yet reads as nothing; \`await\` in front of it holds the run until there *is* something to read.
 
 ### the-families
 
@@ -30,7 +30,7 @@ Every family takes \`Prompt\` (the question) and an optional \`Detail\` (a longe
 - **Choose** — pick ONE. \`Options\` (required, at least one) is the set; \`Answer\` is the option they chose.
 - **Select** — pick a SUBSET. \`Options\` (required) again; \`Answer\` is the list they ticked, possibly empty.
 - **Review** — an acknowledgement. Nothing to fill in and nothing extra to supply: the person confirms they have read the \`Detail\`, and \`Answer\` carries no value. Await it and carry on.
-- **Form** — collect several named fields at once. \`Fields\` (required) names them; name them literally and each becomes a field of the answer you read like any record's, \`\` a.\`Budget\` \`\`, every one text.
+- **Form** — collect several named fields at once. \`Fields\` (required) names them; name them literally and each becomes a field of the answer you read like any record's, \`a.Budget\`, every one text.
 
 Spell a parameter out as a literal and the answer narrows while you write it: a \`Choose\` over \`["ship", "hold"]\` answers one of exactly those two, and comparing it to anything else is caught then and there; \`Answer Type: "number"\` answers a number. Build the options at run time instead and the answer is plain text — still correct, just unnarrowed. A literal \`Fields\` narrows the same way, into one field per name.
 
@@ -40,10 +40,10 @@ q = write asks-[:Form]-> {
   Fields: ["Company", "Contact", "Budget"]
 }
 
-a = await FIRST(q-[:Response]->)
+a = await first(q-[:Response]->)
 write company-[:Notes]-> {
   Title:   "Intake details"
-  Payload: a.\`Budget\`
+  Payload: a.Budget
 }
 \`\`\`
 
@@ -56,13 +56,13 @@ So when you need a value to *act* on — a name to look up, a number to write in
 \`\`\`
 q = write asks-[:Check]-> { Prompt: "Pursue this company?" }
 
-deals = ONLY(chat-[ch:Channels WHERE \`Name\` == "deals"]->)
-if deals == null { ERROR("no #deals channel") }
+deals = only(chat-[ch:Channels WHERE ch.Name == "deals"]->)
+if (deals == null) { fail("no #deals channel") }
 write deals-[:Messages]-> { Message: "New company — pursue it? \${q.Url}" }
 
-answer = await FIRST(q-[:Response]->)
-if answer.Answer {
-  write crm-[:Companies]-> { unique by (FUZZY \`Name\`), Name: \`Company Name\` }
+answer = await first(q-[:Response]->)
+if (answer.Answer) {
+  write crm-[:Companies]-> { unique by (FUZZY Name), Name: \`Company Name\` }
 }
 \`\`\`
 
@@ -75,8 +75,8 @@ if answer.Answer {
 Letting a person pick a **live record** — one company out of the several you found — needs no special family. Compose it: offer the names, then filter the graph on the answer.
 
 \`\`\`
-found = crm-[c:Companies WHERE \`Categories\` == "Lead"]-> {
-  return c.\`Name\`
+found = crm-[c:Companies WHERE c.Categories == "Lead"]-> {
+  return c.Name
 }
 
 q = write asks-[:Choose]-> {
@@ -84,10 +84,10 @@ q = write asks-[:Choose]-> {
   Options: found
 }
 
-a = await FIRST(q-[:Response]->)
-pick = ONLY(crm-[co:Companies WHERE \`Name\` == a.Answer]->)
-if pick == null { ERROR("no company named \${a.Answer}") }
-write pick-[:Notes]-> { Title: "Chosen", Content: "Picked from \${COUNT(found)} candidates." }
+a = await first(q-[:Response]->)
+pick = only(crm-[co:Companies WHERE co.Name == a.Answer]->)
+if (pick == null) { fail("no company named \${a.Answer}") }
+write pick-[:Notes]-> { Title: "Chosen", Content: "Picked from \${count(found)} candidates." }
 \`\`\`
 
 Options gathered at run time are ordinary — the answer is plain text rather than one of a known set, which is what it honestly is. The answer names the record; the lookup after it keys on that name.
@@ -97,12 +97,12 @@ Options gathered at run time are ordinary — the answer is plain text rather th
 Give an unattended question a deadline by racing the wait for it against a \`sleep\` and proceeding with whichever settles first. There is no \`fallback\` clause — a deadline, a reminder, and an escalation are all **composed** from those two pieces:
 
 \`\`\`
-deals = ONLY(chat-[ch:Channels WHERE \`Name\` == "deals"]->)
-if deals == null { ERROR("no #deals channel") }
+deals = only(chat-[ch:Channels WHERE ch.Name == "deals"]->)
+if (deals == null) { fail("no #deals channel") }
 
 r = race(
   () => {
-    a = await FIRST(q-[:Response]->)
+    a = await first(q-[:Response]->)
     return a.Answer
   },
   () => {
@@ -112,18 +112,18 @@ r = race(
   },
 )
 
-decision = AT(r, 0)
-if decision == null {
+decision = r[0]
+if (decision == null) {
   write deals-[:Messages]-> { Message: "Nobody decided in time — holding." }
 }
-if decision == TRUE {
-  write crm-[:Companies]-> { unique by (FUZZY \`Name\`), Name: \`Company Name\` }
+if (decision == true) {
+  write crm-[:Companies]-> { unique by (FUZZY Name), Name: \`Company Name\` }
 }
 \`\`\`
 
-- \`await\` marks where the run itself waits: on the answer (\`await FIRST(q-[:Response]->)\`) and on the clock (\`await sleep(2d)\`), inside the arms. \`race\` says only how several waits **combine** — it settles on the first of them. It does not wait for anything on its own, so it is written without \`await\`.
+- \`await\` marks where the run itself waits: on the answer (\`await first(q-[:Response]->)\`) and on the clock (\`await sleep(2d)\`), inside the arms. \`race\` says only how several waits **combine** — it settles on the first of them. It does not wait for anything on its own, so it is written without \`await\`.
 - Each arm is a **function**, passed as an argument: \`() => { … }\` written where it stands, or the name of one declared elsewhere. An arm takes no parameters — it already sees everything in scope where you wrote it — and it starts the moment the combinator does.
-- The value is a **receipt**: one slot per arm, in the order written, holding whatever that arm \`return\`ed. \`AT(r, 0)\` reads the first arm's slot, \`AT(r, 1)\` the second. An arm that hands nothing back has an always-null slot.
+- The value is a **receipt**: one slot per arm, in the order written, holding whatever that arm \`return\`ed. \`r[0]\` reads the first arm's slot, \`r[1]\` the second. An arm that hands nothing back has an always-null slot.
 - Under \`race\`, only the arm that settled first has its slot filled and every other slot is null — so **a null test on a slot is the branch**, as \`decision == null\` is here. Arms still parked when one settles are dropped where they stand: their waiting stops, and whatever they had already done stays done. Arms that settle in the same moment all land.
 - To wait for **every** one instead, use \`all\` (below): every one runs to the end and every slot is filled.
 - Arms run at once. Arms writing the same \`unique by\` key take turns, so the record is made once.
@@ -133,13 +133,13 @@ if decision == TRUE {
   \`\`\`
   await until(() => {
     refresh company
-    return company.\`Stage\` == "Won"
-  }, every: 1h)
+    return company.Stage == "Won"
+  }, { every: 1h })
   \`\`\`
 
-  \`(…) => { … }\` is a **closure**: a body written where it stands and run later, holding everything in scope at the point you wrote it. The run resumes the moment the closure returns true. \`refresh\` re-reads a handle so each check sees the record as it is now; a condition that needs no refresh can be a plain boolean expression instead (\`await until(COUNT(q-[:Response]->) >= 3, every: 10m)\`). A condition takes no parameters and may only read — a write or an \`await\` inside one is refused, as is a cadence under a minute.
+  \`(…) => { … }\` is a **closure**: a body written where it stands and run later, holding everything in scope at the point you wrote it. The run resumes the moment the closure returns true. \`refresh\` re-reads a handle so each check sees the record as it is now; a condition that needs no refresh can be a plain boolean expression instead (\`await until(count(q-[:Response]->) >= 3, { every: 10m })\`). A condition takes no parameters and may only read — a write or an \`await\` inside one is refused, as is a cadence under a minute.
 
-- Which of the two you write is the relationship's to decide, and you are told when you save. Where the system announces what landed — a question's \`Response\`, a chat thread's \`Replies\`, a callback's \`Called\` — \`await FIRST(…)\` is the form: the run sleeps and is woken the moment it arrives, so there is no cadence to name. Where nothing announces it, \`await FIRST(…)\` is refused and \`until\` with an \`every:\` is the form, because someone has to say how often to look. Polling something that does announce still works, and is flagged: it just waits longer than it needs to.
+- Which of the two you write is the relationship's to decide, and you are told when you save. Where the system announces what landed — a question's \`Response\`, a chat thread's \`Replies\`, a callback's \`Called\` — \`await first(…)\` is the form: the run sleeps and is woken the moment it arrives, so there is no cadence to name. Where nothing announces it, \`await first(…)\` is refused and \`until\` with an \`every:\` is the form, because someone has to say how often to look. Polling something that does announce still works, and is flagged: it just waits longer than it needs to.
 
 ### several-at-once
 
@@ -148,7 +148,7 @@ Put one decision in front of several places at once by minting **one** callback,
 \`\`\`
 approve = callback({ })
 
-chat-[ch:Channels WHERE \`Topic\` == "approvals"]-> {
+chat-[ch:Channels WHERE ch.Topic == "approvals"]-> {
   write ch-[:Messages]-> {
     Message: "Approve this?"
     Blocks: [ … ]              # one control carrying "\${approve.id}"
@@ -157,13 +157,13 @@ chat-[ch:Channels WHERE \`Topic\` == "approvals"]-> {
 
 r = race(
   () => {
-    tap = await FIRST(approve-[:Called]->)
-    return tap.\`At\`
+    tap = await first(approve-[:Called]->)
+    return tap.At
   },
   () => { await sleep(1d) },
 )
 
-if AT(r, 0) == null { … }      # nobody tapped inside the day
+if (r[0] == null) { … }      # nobody tapped inside the day
 \`\`\`
 
 One callback in several places settles on the first tap but says nothing about **where** it came from — every place carried the same control, so there is nothing to tell them apart. When that matters, give each place its own callback and its own arm. An arm is written where you already know the place, so it can hand that back along with the answer:
@@ -172,34 +172,34 @@ One callback in several places settles on the first tap but says nothing about *
 deals = callback({ })
 board = callback({ })
 
-\`Deals Channel\` = ONLY(chat-[ch:Channels WHERE \`Name\` == "deals"]->)
-if \`Deals Channel\` == null { ERROR("no #deals channel") }
-\`Board Channel\` = ONLY(chat-[b:Channels WHERE \`Name\` == "board"]->)
-if \`Board Channel\` == null { ERROR("no #board channel") }
+\`Deals Channel\` = only(chat-[ch:Channels WHERE ch.Name == "deals"]->)
+if (\`Deals Channel\` == null) { fail("no #deals channel") }
+\`Board Channel\` = only(chat-[b:Channels WHERE b.Name == "board"]->)
+if (\`Board Channel\` == null) { fail("no #board channel") }
 
 write \`Deals Channel\`-[:Messages]-> { Message: "Approve this?", Blocks: [ … ] }   # carries "\${deals.id}"
 write \`Board Channel\`-[:Messages]-> { Message: "Approve this?", Blocks: [ … ] }   # carries "\${board.id}"
 
 r = race(
   () => {
-    tap = await FIRST(deals-[:Called]->)
-    return { channel: "deals", at: tap.\`At\` }
+    tap = await first(deals-[:Called]->)
+    return { channel: "deals", at: tap.At }
   },
   () => {
-    tap = await FIRST(board-[:Called]->)
-    return { channel: "board", at: tap.\`At\` }
+    tap = await first(board-[:Called]->)
+    return { channel: "board", at: tap.At }
   },
 )
 
-first = AT(r, 0)
-if first != null {
-  general = ONLY(chat-[g:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
+first = r[0]
+if (first != null) {
+  general = only(chat-[g:Channels WHERE g.Name == "general"]->)
+  if (general == null) { fail("no #general channel") }
   write general-[:Messages]-> { Message: "approved in #\${first.channel} at \${first.at}" }
 }
 \`\`\`
 
-- The slot already says which arm settled — \`AT(r, 0)\` is the first one written. Handing the identity back is for when it has to travel further: into a message, a write field, a comparison later on.
+- The slot already says which arm settled — \`r[0]\` is the first one written. Handing the identity back is for when it has to travel further: into a message, a write field, a comparison later on.
 - Return a dict to hand back more than one thing at once; its entries read by name afterwards (\`first.channel\`).
 
 Wait on **different** things at once by giving each its own function, and take every answer rather than the first with \`all\`, which runs them at once:
@@ -207,16 +207,16 @@ Wait on **different** things at once by giving each its own function, and take e
 \`\`\`
 r = all(
   () => {
-    b = await FIRST(budget-[:Response]->)
+    b = await first(budget-[:Response]->)
     return b.Answer
   },
   () => {
-    l = await FIRST(legal-[:Response]->)
+    l = await first(legal-[:Response]->)
     return l.Answer
   },
 )
 
-if AT(r, 0) AND AT(r, 1) { … }
+if (r[0] && r[1]) { … }
 \`\`\`
 
 - Which field on a control carries the \`id\` is that system's own business, and its chapter says. Reach for a written question instead when you need what one gives you — a page, and an entry in somebody's queue (see \`when-a-question-and-when-a-callback\`).
@@ -228,8 +228,8 @@ if AT(r, 0) AND AT(r, 1) { … }
 
 \`\`\`
 q   = write asks-[:Check]-> { Prompt: "Pursue this company?" }
-yes = callback({ write q-[:Response]-> { Answer: TRUE } })
-no  = callback({ write q-[:Response]-> { Answer: FALSE } })
+yes = callback({ write q-[:Response]-> { Answer: true } })
+no  = callback({ write q-[:Response]-> { Answer: false } })
 \`\`\`
 
 The controls carry \`"\${yes.id}"\` and \`"\${no.id}"\` — which field on a control holds it is that system's own business, and its chapter says. Keep \`q.Url\` in the message text as well, so anyone who cannot tap can still respond.
@@ -245,11 +245,11 @@ Opening that url does **not** act. It shows a page saying what is about to happe
 A callback is used **once** by default: the first person to act settles it, and anyone arriving after is told it is closed. A second argument changes that:
 
 \`\`\`
-nudge = callback({ … }, { once: FALSE })
+nudge = callback({ … }, { once: false })
 today = callback({ … }, { ttl: 4h })
 \`\`\`
 
-\`once: FALSE\` makes it repeatable — every use runs the block again. \`ttl\` stops it working after that long. Both are bounded by the run that minted it, which is the shorter leash: a \`ttl\` longer than the run's own life changes nothing.
+\`once: false\` makes it repeatable — every use runs the block again. \`ttl\` stops it working after that long. Both are bounded by the run that minted it, which is the shorter leash: a \`ttl\` longer than the run's own life changes nothing.
 
 ### a-value-supplied-when-someone-acts
 
@@ -267,21 +267,21 @@ The same values come back on the \`Called\` landing, one field per parameter, al
 
 ### deferring-work-by-name
 
-A callback can defer a NAMED block of work instead of an inline one — the one place in the language where a declaration stands as a value:
+A callback's closure can call a NAMED function, fixing the arguments now:
 
 \`\`\`
 function \`Chase\`(c: <crm-[:Companies]->>) {
   write c-[:Notes]-> { Title: "Chased", Content: "Nudged again." }
 }
 
-again = callback(\`Chase\`(company), { once: FALSE })
+again = callback(() => \`Chase\`(company), { once: false })
 \`\`\`
 
-The arguments are fixed when the control goes out; a parameter left off the end is what the acting side fills in.
+Whatever the closure takes as a parameter is what the acting side fills in: \`callback((day: <date>) => \`Book\`(company, day))\`.
 
 ### when-a-question-and-when-a-callback
 
-A callback on its own is the lighter thing: \`go = callback()\` with \`await FIRST(go-[:Called]->)\` holds the run until somebody presses a button — no page, no queue entry, nothing to open. Write a question when you need what a question gives you: a page rendering the right control for whoever opens the link, wherever they are, and an entry in that person's queue of things to decide — a task directed at somebody. For a decision already in front of the right people in a channel, a callback is enough.
+A callback on its own is the lighter thing: \`go = callback({ })\` with \`await first(go-[:Called]->)\` holds the run until somebody presses a button — no page, no queue entry, nothing to open. Write a question when you need what a question gives you: a page rendering the right control for whoever opens the link, wherever they are, and an entry in that person's queue of things to decide — a task directed at somebody. For a decision already in front of the right people in a channel, a callback is enough.
 
 Either way, what a person can act on lives **only as long as the run waiting for it**. When the run ends the buttons stop working and the link stops accepting, and a late tap is told it is closed. Neither is a standing endpoint: something that must react at any time, forever, is an automation that LISTENS.`,
   engineClaims: [
@@ -289,41 +289,41 @@ Either way, what a person can act on lives **only as long as the run waiting for
       construct: 'write an ask along a Check family edge, deliver its Url, and await its Response inside a race arm; the timeout is a null test on the slot',
       status: 'runs',
       probe: `
-import { email, slack, attio, ask } from adapters
+import { \`@lf/email\` as email, \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/ask\` as ask } from adapters
 import { team_workspace, acme_main } from credentials
 
-inbox = email()
-team  = slack(credentials: team_workspace)
-crm   = attio(credentials: acme_main)
-asks  = ask()
+inbox = connect email
+team  = connect slack using team_workspace
+crm   = connect attio using acme_main
+asks  = connect ask
 
 function \`Triage Inbound\`(msg: <inbox-[:Email]->>) {
-  \`Company Name\` = AI("the company this message is about")
+  \`Company Name\` = ai("the company this message is about")
 
   q = write asks-[:Check]-> {
     Prompt: "Pursue \${\`Company Name\`}?"
-    Detail: "\${msg.\`Subject\`}"
+    Detail: "\${msg.Subject}"
   }
-  deals = ONLY(team-[ch:Channels WHERE \`Name\` == "deals"]->)
-  if deals == null { ERROR("no #deals channel") }
+  deals = only(team-[ch:Channels WHERE ch.Name == "deals"]->)
+  if (deals == null) { fail("no #deals channel") }
   write deals-[:Messages]-> { Message: "New: \${\`Company Name\`}. Pursue it? \${q.Url}" }
 
   r = race(
     () => {
-      a = await FIRST(q-[:Response]->)
+      a = await first(q-[:Response]->)
       return a.Answer
     },
     () => { await sleep(2d) },
   )
 
-  decision = AT(r, 0)
-  if decision == TRUE {
+  decision = r[0]
+  if (decision == true) {
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name: \`Company Name\`
     }
   }
-  if decision == null {
+  if (decision == null) {
     write deals-[:Messages]-> { Message: "Nobody decided in time." }
   }
 }
@@ -335,16 +335,16 @@ listen to inbox { key: "intake" } fire \`Triage Inbound\`
       construct: 'one callback delivered to every channel, its tap raced against a timeout, the tap time read off slot 0',
       status: 'runs',
       probe: `
-import { slack, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-runs = manual()
+team = connect slack using team_workspace
+runs = connect manual
 
 function \`First Approval Wins\`(go: <runs-[:Invocation]->>) {
   approve = callback({ })
 
-  team-[ch:Channels WHERE \`Topic\` == "approvals"]-> {
+  team-[ch:Channels WHERE ch.Topic == "approvals"]-> {
     write ch-[:Messages]-> {
       Message: "Approve this?"
       Blocks: [
@@ -358,19 +358,19 @@ function \`First Approval Wins\`(go: <runs-[:Invocation]->>) {
 
   r = race(
     () => {
-      tap = await FIRST(approve-[:Called]->)
-      return tap.\`At\`
+      tap = await first(approve-[:Called]->)
+      return tap.At
     },
     () => { await sleep(1d) },
   )
 
-  tapped = AT(r, 0)
-  general = ONLY(team-[g:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
-  if tapped != null {
+  tapped = r[0]
+  general = only(team-[g:Channels WHERE g.Name == "general"]->)
+  if (general == null) { fail("no #general channel") }
+  if (tapped != null) {
     write general-[:Messages]-> { Message: "Approved at \${tapped}." }
   }
-  if tapped == null {
+  if (tapped == null) {
     write general-[:Messages]-> { Message: "Nobody approved in time." }
   }
 }
@@ -382,20 +382,20 @@ listen to runs {} fire \`First Approval Wins\`
       construct: 'a race arm handing back WHICH place answered — a dict built in the arm that knows it',
       status: 'runs',
       probe: `
-import { slack, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-runs = manual()
+team = connect slack using team_workspace
+runs = connect manual
 
 function \`Which Place Answered\`(go: <runs-[:Invocation]->>) {
   dealflow = callback({ })
   portfolio = callback({ })
 
-  \`Dealflow Channel\` = ONLY(team-[ch:Channels WHERE \`Name\` == "dealflow"]->)
-  if \`Dealflow Channel\` == null { ERROR("no #dealflow channel") }
-  \`Portfolio Channel\` = ONLY(team-[p:Channels WHERE \`Name\` == "portfolio"]->)
-  if \`Portfolio Channel\` == null { ERROR("no #portfolio channel") }
+  \`Dealflow Channel\` = only(team-[ch:Channels WHERE ch.Name == "dealflow"]->)
+  if (\`Dealflow Channel\` == null) { fail("no #dealflow channel") }
+  \`Portfolio Channel\` = only(team-[p:Channels WHERE p.Name == "portfolio"]->)
+  if (\`Portfolio Channel\` == null) { fail("no #portfolio channel") }
 
   write \`Dealflow Channel\`-[:Messages]-> {
     Message: "Approve this?"
@@ -418,19 +418,19 @@ function \`Which Place Answered\`(go: <runs-[:Invocation]->>) {
 
   r = race(
     () => {
-      tap = await FIRST(dealflow-[:Called]->)
-      return { channel: "dealflow", at: tap.\`At\` }
+      tap = await first(dealflow-[:Called]->)
+      return { channel: "dealflow", at: tap.At }
     },
     () => {
-      tap = await FIRST(portfolio-[:Called]->)
-      return { channel: "portfolio", at: tap.\`At\` }
+      tap = await first(portfolio-[:Called]->)
+      return { channel: "portfolio", at: tap.At }
     },
   )
 
-  first = AT(r, 0)
-  if first != null {
-    general = ONLY(team-[g:Channels WHERE \`Name\` == "general"]->)
-    if general == null { ERROR("no #general channel") }
+  first = r[0]
+  if (first != null) {
+    general = only(team-[g:Channels WHERE g.Name == "general"]->)
+    if (general == null) { fail("no #general channel") }
     write general-[:Messages]-> {
       Message: "approved in #\${first.channel} at \${first.at}"
     }
@@ -444,38 +444,38 @@ listen to runs {} fire \`Which Place Answered\`
       construct: 'all over two awaiting closures, run at once — every slot filled, both answers combined',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Both Must Agree\`(go: <runs-[:Invocation]->>) {
   budget = write asks-[:Check]-> { Prompt: "Budget approved?" }
   legal  = write asks-[:Check]-> { Prompt: "Legal approved?" }
 
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> {
     Message: "Budget: \${budget.Url}\\nLegal: \${legal.Url}"
   }
 
   r = all(
     () => {
-      b = await FIRST(budget-[:Response]->)
+      b = await first(budget-[:Response]->)
       return b.Answer
     },
     () => {
-      l = await FIRST(legal-[:Response]->)
+      l = await first(legal-[:Response]->)
       return l.Answer
     },
   )
 
-  if AT(r, 0) AND AT(r, 1) {
-    general = ONLY(team-[g:Channels WHERE \`Name\` == "general"]->)
-    if general == null { ERROR("no #general channel") }
-    write general-[:Messages]-> { Message: "Both approved: \${go.\`Text\`}." }
+  if (r[0] && r[1]) {
+    general = only(team-[g:Channels WHERE g.Name == "general"]->)
+    if (general == null) { fail("no #general channel") }
+    write general-[:Messages]-> { Message: "Both approved: \${go.Text}." }
   }
 }
 
@@ -486,26 +486,26 @@ listen to runs {} fire \`Both Must Agree\`
       construct: 'await until — a closure condition refreshing a written handle, on a named cadence',
       status: 'runs',
       probe: `
-import { attio, slack, manual } from adapters
+import { \`@lf/attio\` as attio, \`@lf/slack\` as slack, \`@lf/manual\` as manual } from adapters
 import { acme_main, team_workspace } from credentials
 
-crm  = attio(credentials: acme_main)
-team = slack(credentials: team_workspace)
-runs = manual()
+crm  = connect attio using acme_main
+team = connect slack using team_workspace
+runs = connect manual
 
 function \`Wait For The Name\`(go: <runs-[:Invocation]->>) {
   co = write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
-    Name: go.\`Text\`
+    unique by (FUZZY Name)
+    Name: go.Text
   }
 
   await until(() => {
     refresh co
-    return co.\`Name\` == "Acme"
-  }, every: 1h)
+    return co.Name == "Acme"
+  }, { every: 1h })
 
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Renamed at last." }
 }
 
@@ -516,27 +516,27 @@ listen to runs {} fire \`Wait For The Name\`
       construct: 'a Provide question with a literal Answer Type, its typed answer filled into a record with ?:',
       status: 'runs',
       probe: `
-import { slack, attio, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace, acme_main } from credentials
 
-team = slack(credentials: team_workspace)
-crm  = attio(credentials: acme_main)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+crm  = connect attio using acme_main
+asks = connect ask
+runs = connect manual
 
 function \`Record Headcount\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Provide]-> {
     Prompt: "How many people work there?"
     \`Answer Type\`: "number"
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "How many people work there? \${q.Url}" }
 
-  a = await FIRST(q-[:Response]->)
+  a = await first(q-[:Response]->)
   write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
-    Name:           go.\`Text\`
+    unique by (FUZZY Name)
+    Name:           go.Text
     Description ?:  "Headcount: \${a.Answer}"
   }
 }
@@ -548,28 +548,28 @@ listen to runs {} fire \`Record Headcount\`
       construct: 'a Choose question over literal options, its answer compared against one of them',
       status: 'runs',
       probe: `
-import { slack, attio, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace, acme_main } from credentials
 
-team = slack(credentials: team_workspace)
-crm  = attio(credentials: acme_main)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+crm  = connect attio using acme_main
+asks = connect ask
+runs = connect manual
 
 function \`Decide Next Step\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Choose]-> {
     Prompt: "What next?"
     Options: ["pursue", "hold", "pass"]
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "What next? \${q.Url}" }
 
-  a = await FIRST(q-[:Response]->)
-  if a.Answer == "pursue" {
+  a = await first(q-[:Response]->)
+  if (a.Answer == "pursue") {
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
-      Name: go.\`Text\`
+      unique by (FUZZY Name)
+      Name: go.Text
     }
   }
 }
@@ -581,24 +581,24 @@ listen to runs {} fire \`Decide Next Step\`
       construct: 'a Select question over literal options, its chosen subset joined into a message',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Pick Channels\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Select]-> {
     Prompt: "Which teams should hear about this?"
     Options: ["sales", "support", "finance"]
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Who should hear about this? \${q.Url}" }
 
-  a = await FIRST(q-[:Response]->)
-  write ops-[:Messages]-> { Message ?: "Telling: \${JOIN(a.Answer, ", ")}" }
+  a = await first(q-[:Response]->)
+  write ops-[:Messages]-> { Message ?: "Telling: \${Text.join(a.Answer, ", ")}" }
 }
 
 listen to runs {} fire \`Pick Channels\`
@@ -608,27 +608,27 @@ listen to runs {} fire \`Pick Channels\`
       construct: 'a Review question — an acknowledgement awaited before the work carries on',
       status: 'runs',
       probe: `
-import { slack, attio, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace, acme_main } from credentials
 
-team = slack(credentials: team_workspace)
-crm  = attio(credentials: acme_main)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+crm  = connect attio using acme_main
+asks = connect ask
+runs = connect manual
 
 function \`Acknowledge First\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Review]-> {
     Prompt: "Read this before it goes out"
-    Detail: go.\`Text\`
+    Detail: go.Text
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Please read: \${q.Url}" }
 
-  await FIRST(q-[:Response]->)
+  await first(q-[:Response]->)
   write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
-    Name: go.\`Text\`
+    unique by (FUZZY Name)
+    Name: go.Text
   }
 }
 
@@ -639,23 +639,23 @@ listen to runs {} fire \`Acknowledge First\`
       construct: 'a Draft question — a structured artifact composed by a person, awaited',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Draft The Reply\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Draft]-> {
     Prompt: "Draft the reply"
-    Detail: go.\`Text\`
+    Detail: go.Text
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Draft it here: \${q.Url}" }
 
-  await FIRST(q-[:Response]->)
+  await first(q-[:Response]->)
   write ops-[:Messages]-> { Message: "The draft is in." }
 }
 
@@ -666,12 +666,12 @@ listen to runs {} fire \`Draft The Reply\`
       construct: 'a Correct question whose Rows are written as literal objects',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Fix The Rows\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Correct]-> {
@@ -681,11 +681,11 @@ function \`Fix The Rows\`(go: <runs-[:Invocation]->>) {
       { Name: "Initech", Stage: "Open", Owner: go.\`Run by (email)\` }
     ]
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Check these before they land: \${q.Url}" }
 
-  await FIRST(q-[:Response]->)
+  await first(q-[:Response]->)
   write ops-[:Messages]-> { Message: "Corrections in." }
 }
 
@@ -696,24 +696,24 @@ listen to runs {} fire \`Fix The Rows\`
       construct: 'a Form question collecting several named fields at once, one of them read back by name',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Collect The Details\`(go: <runs-[:Invocation]->>) {
   q = write asks-[:Form]-> {
     Prompt: "Fill in the missing details"
     Fields: ["Company", "Contact", "Budget"]
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "A few details needed: \${q.Url}" }
 
-  a = await FIRST(q-[:Response]->)
-  write ops-[:Messages]-> { Message: "Details in — budget \${a.\`Budget\`}." }
+  a = await first(q-[:Response]->)
+  write ops-[:Messages]-> { Message: "Details in — budget \${a.Budget}." }
 }
 
 listen to runs {} fire \`Collect The Details\`
@@ -723,33 +723,33 @@ listen to runs {} fire \`Collect The Details\`
       construct: 'the pick idiom — Choose over options gathered at run time, the answer filtering the graph back to the record',
       status: 'runs',
       probe: `
-import { manual, attio, slack, ask } from adapters
+import { \`@lf/manual\` as manual, \`@lf/attio\` as attio, \`@lf/slack\` as slack, \`@lf/ask\` as ask } from adapters
 import { acme_main, team_workspace } from credentials
 
-runs = manual()
-crm  = attio(credentials: acme_main)
-team = slack(credentials: team_workspace)
-asks = ask()
+runs = connect manual
+crm  = connect attio using acme_main
+team = connect slack using team_workspace
+asks = connect ask
 
 function \`Pick The Company\`(go: <runs-[:Invocation]->>) {
-  found = crm-[c:Companies WHERE \`Categories\` == "Lead"]-> {
-    return c.\`Name\`
+  found = crm-[c:Companies WHERE c.Categories == "Lead"]-> {
+    return c.Name
   }
 
   q = write asks-[:Choose]-> {
     Prompt: "Which company did they mean?"
     Options: found
   }
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Which one? \${q.Url}" }
 
-  a = await FIRST(q-[:Response]->)
-  pick = ONLY(crm-[co:Companies WHERE \`Name\` == a.Answer]->)
-  if pick == null { ERROR("no company named \${a.Answer}") }
+  a = await first(q-[:Response]->)
+  pick = only(crm-[co:Companies WHERE co.Name == a.Answer]->)
+  if (pick == null) { fail("no company named \${a.Answer}") }
   write pick-[:Notes]-> {
     Title:   "Chosen"
-    Content: go.\`Text\`
+    Content: go.Text
   }
 }
 
@@ -760,31 +760,31 @@ listen to runs {} fire \`Pick The Company\`
       construct: 'callbacks handed out as links (url) answering a question, one repeatable',
       status: 'runs',
       probe: `
-import { slack, ask, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-asks = ask()
-runs = manual()
+team = connect slack using team_workspace
+asks = connect ask
+runs = connect manual
 
 function \`Decide By Link\`(go: <runs-[:Invocation]->>) {
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
 
   q   = write asks-[:Check]-> { Prompt: "Pursue this company?" }
-  yes = callback({ write q-[:Response]-> { Answer: TRUE } })
-  no  = callback({ write q-[:Response]-> { Answer: FALSE } })
+  yes = callback({ write q-[:Response]-> { Answer: true } })
+  no  = callback({ write q-[:Response]-> { Answer: false } })
   nudge = callback(
     { write ops-[:Messages]-> { Message: "Still waiting: \${q.Url}" } },
-    { once: FALSE, ttl: 2d }
+    { once: false, ttl: 2d }
   )
 
   write ops-[:Messages]-> {
     Message: "Pursue it?\\nYes: \${yes.url}\\nNo: \${no.url}\\nNudge the channel: \${nudge.url}\\nOr decide on the page: \${q.Url}"
   }
 
-  answer = await FIRST(q-[:Response]->)
-  if answer.Answer {
+  answer = await first(q-[:Response]->)
+  if (answer.Answer) {
     write ops-[:Messages]-> { Message: "Pursuing." }
   }
 }
@@ -796,12 +796,12 @@ listen to runs {} fire \`Decide By Link\`
       construct: 'a parameterized callback awaited on Called, alongside one deferring a named function',
       status: 'runs',
       probe: `
-import { slack, attio, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/manual\` as manual } from adapters
 import { team_workspace, acme_main } from credentials
 
-team = slack(credentials: team_workspace)
-crm  = attio(credentials: acme_main)
-runs = manual()
+team = connect slack using team_workspace
+crm  = connect attio using acme_main
+runs = connect manual
 
 function \`Chase\`(c: <crm-[:Companies]->>) {
   write c-[:Notes]-> {
@@ -812,8 +812,8 @@ function \`Chase\`(c: <crm-[:Companies]->>) {
 
 function \`Book The Follow Up\`(go: <runs-[:Invocation]->>) {
   company = write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
-    Name: go.\`Text\`
+    unique by (FUZZY Name)
+    Name: go.Text
   }
 
   booked = callback((day: <date>) => {
@@ -822,41 +822,41 @@ function \`Book The Follow Up\`(go: <runs-[:Invocation]->>) {
       Content: "Booked for \${day}."
     }
   })
-  again = callback(\`Chase\`(company), { once: FALSE })
+  again = callback(() => \`Chase\`(company), { once: false })
 
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> {
     Message: "Pick a day: \${booked.url}\\nOr chase again: \${again.url}"
   }
 
-  call = await FIRST(booked-[:Called]->)
-  write ops-[:Messages]-> { Message: "Booked for \${call.\`day\`} (\${call.\`At\`})." }
+  call = await first(booked-[:Called]->)
+  write ops-[:Messages]-> { Message: "Booked for \${call.day} (\${call.At})." }
 }
 
 listen to runs {} fire \`Book The Follow Up\`
 `,
     },
     {
-      construct: 'a named function deferred positionally, its last parameter left for the acting side to fill',
+      construct: 'a named function deferred by a closure, its last parameter left for the acting side to fill',
       status: 'runs',
       probe: `
-import { slack, attio, manual } from adapters
+import { \`@lf/slack\` as slack, \`@lf/attio\` as attio, \`@lf/manual\` as manual } from adapters
 import { team_workspace, acme_main } from credentials
 
-team = slack(credentials: team_workspace)
-crm  = attio(credentials: acme_main)
-runs = manual()
+team = connect slack using team_workspace
+crm  = connect attio using acme_main
+runs = connect manual
 
 function \`Book\`(c: <crm-[:Companies]->>, day: <date>) {
   write c-[:Notes]-> { Title: "Booked", Content: "Booked for \${day}." }
 }
 
 function \`Offer\`(go: <runs-[:Invocation]->>) {
-  company = write crm-[:Companies]-> { unique by (FUZZY \`Name\`), Name: go.\`Text\` }
-  pick = callback(\`Book\`(company))
-  ops = ONLY(team-[ch:Channels WHERE \`Name\` == "ops"]->)
-  if ops == null { ERROR("no #ops channel") }
+  company = write crm-[:Companies]-> { unique by (FUZZY Name), Name: go.Text }
+  pick = callback((day: <date>) => \`Book\`(company, day))
+  ops = only(team-[ch:Channels WHERE ch.Name == "ops"]->)
+  if (ops == null) { fail("no #ops channel") }
   write ops-[:Messages]-> { Message: "Pick a day: \${pick.url}" }
 }
 `,

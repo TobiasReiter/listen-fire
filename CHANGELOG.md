@@ -15,9 +15,9 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in
 it is a refusal, so an automation that uses a retired form has an error under 5, stays on its
-version, shows Review and behaves exactly as before; rewrite the form and upgrade with
-`upgradeAutomation`. Versions 1 to 4 keep their behaviour (proved by a version 4 conformance
-corpus). Every rule, with rewrites, is in the [Dancing Wren migration
+version, shows Review and behaves exactly as before; rewrite the form and upgrade (`lf upgrade`,
+or `upgradeAutomation` through the API). Versions 1 to 4 keep their behaviour (proved by a version
+4 conformance corpus). Every rule, with rewrites, is in the [Dancing Wren migration
 guide](docs/language/dancing-wren-migration.md).
 
 **The old spellings rewrite themselves.** `upgradeAutomation` and the deploy check first rewrite an
@@ -32,18 +32,23 @@ for byte; on text already in the version 5 spelling it changes nothing.
 ### Language version 5, Dancing Wren: what breaks
 
 - **The everyday spelling outside walk brackets** (`MOV_V5_SPELLING`, with the exact rewrite as
-  the diagnostic's fix; the design is `plans/naming-rethink-2026-10-14/5_design.md`). Why: code
-  that runs step by step reads like TypeScript, and a walk's brackets read like a query. Core words
-  are lower case (`map filter reduce count first only exists coalesce sort members ai fail`);
-  the other built-ins live in namespaces (`UPPER(t)` is `Text.upper(t)`, `DATE.TODAY(z)` is
-  `Date.today(z)`, `SUM(xs)` is `List.sum(xs)`); `&& || ! c ? a : b true false null` replace
-  `AND OR NOT IF … END TRUE FALSE NULL`; `ISNULL(x)` is `x == null`, `EXISTS(value)` is
-  `value != null`, `AT(xs, i)` is `xs[i]`; settings go last (`map(xs, f, { concurrency: 2 })`,
-  `ai(p, { tier: "careful" })`, `await until(c, { every: 1h })`); `ERROR` is `fail`;
-  `movement` is `function`; an `if` condition is parenthesised; an adapter is set up with
-  `crm = connect attio using acme { dryRun: true }` and imported by its package tag
-  (`` import { `@lf/attio` as attio } from adapters ``). Inside walk brackets nothing changes.
-  Messages name built-ins in the program's own version's spelling.
+  the diagnostic's fix). Why: code that runs step by step reads like TypeScript, so a model or a
+  person writes it right first time, and a walk's brackets read like a query because the source
+  system may run them. Core words are lower case (`map filter reduce count first only exists
+  coalesce sort members ai fail`); the other built-ins live in namespaces (`UPPER(t)` is
+  `Text.upper(t)`, `DATE.TODAY(z)` is `Date.today(z)`, `SUM(xs)` is `List.sum(xs)`); `&& || !
+  c ? a : b true false null` replace `AND OR NOT IF … END TRUE FALSE NULL`; `ISNULL(x)` is
+  `x == null`, `EXISTS(value)` is `value != null`, `AT(xs, i)` is `xs[i]`; settings go last
+  (`map(xs, f, { concurrency: 2 })`, `ai(p, { tier: "careful" })`, `await until(c, { every: 1h
+  })`); `ERROR` is `fail`; `movement` is `function`; an `if` condition is parenthesised; an
+  adapter is set up with `crm = connect attio using acme { dryRun: true }` and imported by its
+  package tag (`` import { `@lf/attio` as attio } from adapters ``). Inside walk brackets the
+  words stay CAPS (`WHERE … AND … CONTAINS`), and a field is read through the hop's alias
+  (`-[c:Companies WHERE c.Name == n]->`). Messages name built-ins in the program's own version's
+  spelling. Upgrade with `lf upgrade` or the API's upgrade, which apply every fix, check the
+  result under 5, and move the pin only when it is clean. The handbook, the examples and the
+  [migration guide](docs/language/dancing-wren-migration.md#2-the-everyday-spelling) show only
+  the new spelling.
 - **`write … bind` is retired** (`MOV_WRITE_BIND_RETIRED`). Why: the engine kept the
   correspondence in a store no system holds. Store the link in the system that holds it: a field
   the next write finds the record by (`unique by`), or an edge there.

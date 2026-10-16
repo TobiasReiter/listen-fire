@@ -57,11 +57,11 @@ This is usually the reason to reach for \`Blocks\`. A control carries a callback
 
 \`\`\`
 a = write questions-[:Check]-> { Prompt: "Ship the release?" }
-ship = callback({ write a-[:Response]-> { Answer: TRUE } })
-hold = callback({ write a-[:Response]-> { Answer: FALSE } })
+ship = callback({ write a-[:Response]-> { Answer: true } })
+hold = callback({ write a-[:Response]-> { Answer: false } })
 
-releases = ONLY(team-[ch:Channels WHERE \`Name\` == "releases"]->)
-if releases == null { ERROR("no #releases channel") }
+releases = only(team-[ch:Channels WHERE ch.Name == "releases"]->)
+if (releases == null) { fail("no #releases channel") }
 write releases-[:Messages]-> {
   Message: "Ship the release? \${a.Url}"
   Blocks: [
@@ -74,7 +74,7 @@ write releases-[:Messages]-> {
   ]
 }
 
-answer = await FIRST(a-[:Response]->)
+answer = await first(a-[:Response]->)
 \`\`\`
 
 A select works the same way, one callback per option: \`value: "\${seed.id}"\` on one option, \`"\${growth.id}"\` on the next. And keep \`Url\` in the message text — anyone on a client that cannot tap a block still has a way to respond.
@@ -126,19 +126,19 @@ Slack delivers only the events its app is subscribed to, so an automation readin
       construct: 'a Slack interactive post whose buttons carry callback ids, one per answer',
       status: 'runs',
       probe: `
-import { slack, ask } from adapters
+import { \`@lf/slack\` as slack, \`@lf/ask\` as ask } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-questions = ask()
+team = connect slack using team_workspace
+questions = connect ask
 
 function sign_off(msg: <team-[:Message]->>) {
   a = write questions-[:Check]-> {
     Prompt: "Ship the release?"
-    Detail: "\${msg.\`Message\`}"
+    Detail: "\${msg.Message}"
   }
-  ship = callback({ write a-[:Response]-> { Answer: TRUE } })
-  hold = callback({ write a-[:Response]-> { Answer: FALSE } })
+  ship = callback({ write a-[:Response]-> { Answer: true } })
+  hold = callback({ write a-[:Response]-> { Answer: false } })
 
   write msg-[:Replies]-> {
     Message: "Ship the release? \${a.Url}"
@@ -153,10 +153,10 @@ function sign_off(msg: <team-[:Message]->>) {
     ]
   }
 
-  answer = await FIRST(a-[:Response]->)
-  if answer.Answer {
-    general = ONLY(team-[ch:Channels WHERE \`Name\` == "general"]->)
-    if general == null { ERROR("no #general channel") }
+  answer = await first(a-[:Response]->)
+  if (answer.Answer) {
+    general = only(team-[ch:Channels WHERE ch.Name == "general"]->)
+    if (general == null) { fail("no #general channel") }
     write general-[:Messages]-> { Message: "Shipping now." }
   }
 }
@@ -168,10 +168,10 @@ listen to team { events: ["app_mention"] } fire sign_off
       construct: 'a Slack datepicker carrying a parameterized callback id on action_id',
       status: 'runs',
       probe: `
-import { slack } from adapters
+import { \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
+team = connect slack using team_workspace
 
 function book_it(msg: <team-[:Message]->>) {
   booked = callback((day: <date>) => {
@@ -187,8 +187,8 @@ function book_it(msg: <team-[:Message]->>) {
     ]
   }
 
-  call = await FIRST(booked-[:Called]->)
-  write msg-[:Replies]-> { Message: "Picked \${call.\`day\`}." }
+  call = await first(booked-[:Called]->)
+  write msg-[:Replies]-> { Message: "Picked \${call.day}." }
 }
 
 listen to team { events: ["app_mention"] } fire book_it
@@ -198,10 +198,10 @@ listen to team { events: ["app_mention"] } fire book_it
       construct: 'a body-less callback awaited on Called — the minimal confirmation — plus a callback deferring a function by name',
       status: 'runs',
       probe: `
-import { slack } from adapters
+import { \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
+team = connect slack using team_workspace
 
 function announce(m: <team-[:Message]->>) {
   write m-[:Replies]-> { Message: "On it." }
@@ -209,7 +209,7 @@ function announce(m: <team-[:Message]->>) {
 
 function wait_for_go(msg: <team-[:Message]->>) {
   go = callback()
-  again = callback(announce(m: msg), { once: FALSE, ttl: 2d })
+  again = callback(() => announce(msg), { once: false, ttl: 2d })
 
   write msg-[:Replies]-> {
     Message: "Ready when you are."
@@ -223,8 +223,8 @@ function wait_for_go(msg: <team-[:Message]->>) {
     ]
   }
 
-  tap = await FIRST(go-[:Called]->)
-  write msg-[:Replies]-> { Message: "Off we go (\${tap.\`At\`})." }
+  tap = await first(go-[:Called]->)
+  write msg-[:Replies]-> { Message: "Off we go (\${tap.At})." }
 }
 
 listen to team { events: ["app_mention"] } fire wait_for_go

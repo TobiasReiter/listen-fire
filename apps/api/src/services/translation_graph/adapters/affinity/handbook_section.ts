@@ -27,10 +27,10 @@ entry = write company-[:\`List Entries\`]-> {
 
 \`listName\` is the list's own name, written as a fixed value rather than computed. Fields are spelled the way that list shows them, with no list name in front.
 
-Reading a company's entries narrows by list in the WHERE: testing \`listName\` there makes them that list's entries, so the list's own fields can be tested beside it, in a block or inside \`EXISTS(…)\`:
+Reading a company's entries narrows by list in the WHERE: testing \`listName\` there makes them that list's entries, so the list's own fields can be tested beside it, in a block or inside \`exists(…)\`:
 
 \`\`\`
-open = EXISTS(company-[e:\`List Entries\` WHERE \`listName\` == "Priority Accounts" AND Status == "Open"]->)
+open = exists(company-[e:\`List Entries\` WHERE e.listName == "Priority Accounts" AND e.Status == "Open"]->)
 \`\`\`
 
 A company sits on a list once, so the row is identified by the pair — the company, and the list. Running this again updates the row already there: \`?:\` fills only what is still empty, and a value that has not changed is not written at all.
@@ -42,13 +42,13 @@ A list field holding people is a relationship, so it is asserted rather than set
 \`\`\`
 d-[o:owners]-> {
   owner = match entry-[:Owners]-> { Name: o.name }
-  if owner != null { link entry -[:Owners]-> owner }
+  if (owner != null) { link entry-[:Owners]-> owner }
 }
 \`\`\`
 
 \`entry\` is the handle the write above handed back, and it stands on the list it named — so that list's own relationships (\`Owners\`, \`Scouted By\`) are reachable from it, and nothing else's are.
 
-Affinity decides who a person is itself, so the \`match\` body is only what it looks them up by: nobody is created, and nothing about the person found is changed. Somebody who cannot be found is absent, so guard the link (\`if owner != null\`); walking a list of names then attaches the ones that resolve. \`unlink\` takes one back off; severing what was never there does nothing.
+Affinity decides who a person is itself, so the \`match\` body is only what it looks them up by: nobody is created, and nothing about the person found is changed. Somebody who cannot be found is absent, so guard the link (\`if (owner != null)\`); walking a list of names then attaches the ones that resolve. \`unlink\` takes one back off; severing what was never there does nothing.
 
 ### Common mistakes
 

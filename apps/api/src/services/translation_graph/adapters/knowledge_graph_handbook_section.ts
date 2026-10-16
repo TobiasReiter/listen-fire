@@ -26,9 +26,9 @@ export const KNOWLEDGE_GRAPH_HANDBOOK_SECTION: HandbookSection = {
 Import the graph and name it, the same two lines every system takes:
 
 \`\`\`
-import { kg } from adapters
+import { \`@lf/kg\` as kg } from adapters
 
-graph = kg()
+graph = connect kg
 \`\`\`
 
 That is the whole setup — no credentials to paste and nothing to connect, because the graph is part of Listen-Fire rather than somewhere else. The name is yours: \`graph\` is what every walk, write and listener below spells, and another automation may pick a different one. It is the same store either way.
@@ -40,7 +40,7 @@ The types you write against are the team's own data model — the same records a
 A type whose name has a space wears backticks, like any other name:
 
 \`\`\`
-graph-[c:\`Support Ticket\` WHERE \`Status\` == "Open"]-> { … }
+graph-[c:\`Support Ticket\` WHERE c.Status == "Open"]-> { … }
 \`\`\`
 
 Everything else about the graph is what you already know: it is walked, filtered, written, and listened to with the ordinary spellings. What follows is only where it differs.
@@ -51,20 +51,20 @@ Write along the type, off the graph:
 
 \`\`\`
 co = write graph-[:Company]-> {
-  unique by (FUZZY \`Name\`)
+  unique by (FUZZY Name)
   Name:    company.name
   Domains: company.domain
 }
 
 write co-[:Team]-> {
-  unique by (co, \`Name\`)
+  unique by (co, Name)
   Name:  person.name
   Email: person.email
 }
 \`\`\`
 
 - The first write is rooted at the graph; the second hangs off the handle the first returned, so the person is created **and** attached to the company in one step. That is the cardinal rule, unchanged.
-- \`unique by (co, \`Name\`)\` names the parent handle as part of the identity: two people called the same thing at different companies stay two records, and re-running the automation updates rather than duplicates. A bare field (\`unique by (FUZZY \`Name\`)\`) identifies across the whole type.
+- \`unique by (co, Name)\` names the parent handle as part of the identity: two people called the same thing at different companies stay two records, and re-running the automation updates rather than duplicates. A bare field (\`unique by (FUZZY Name)\`) identifies across the whole type.
 - Leave \`unique by\` off and the type's own identity rules still apply — the model may already declare what makes a record unique. Where it declares nothing, every write creates a new record, so say what identity means whenever a later event can mention the same thing again.
 
 ### connecting-what-already-exists
@@ -72,8 +72,8 @@ write co-[:Team]-> {
 Where both records are already in the graph, assert the edge rather than writing through it:
 
 \`\`\`
-person = ONLY(graph-[p:Person WHERE \`Email\` == msg.\`From\`]->)
-if person == null { ERROR("no person with email \${msg.\`From\`}") }
+person = only(graph-[p:Person WHERE p.Email == msg.From]->)
+if (person == null) { fail("no person with email \${msg.From}") }
 link co-[:Team]-> person
 \`\`\`
 
@@ -84,11 +84,11 @@ Asserting an edge that is already there changes nothing, so this is safe to re-r
 Run an automation whenever a record in the graph changes, whoever changed it:
 
 \`\`\`
-function \`Announce The Ticket\`(change: <graph-[:\`Record Change\` WHERE \`type\` == "Support Ticket" AND \`action\` == "record.updated"]->>) {
-  general = ONLY(team-[ch:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
+function \`Announce The Ticket\`(change: <graph-[r:\`Record Change\` WHERE r.type == "Support Ticket" AND r.action == "record.updated"]->>) {
+  general = only(team-[ch:Channels WHERE ch.Name == "general"]->)
+  if (general == null) { fail("no #general channel") }
   change-[ticket:Record]-> {
-    write general-[:Messages]-> { Message: "Ticket now: \${ticket.\`Status\`}" }
+    write general-[:Messages]-> { Message: "Ticket now: \${ticket.Status}" }
   }
 }
 
@@ -100,7 +100,7 @@ What arrives is the CHANGE, not the record. A \`Record Change\` says which type 
 - \`type\` is required, and names the watched type in quotes. The parameter pins the same name, which is what lets the record one hop along carry that type's properties.
 - \`events\` narrows to \`"record.created"\`, \`"record.updated"\`, \`"record.deleted"\` — omit it for all three.
 - \`fields\` narrows updates to the properties you care about, named bare. They are properties of the RECORD, and an update that touched nothing on the list does not fire.
-- A deleted record has nothing left to read, so \`Record\` is not there on a delete. Pin \`action\` as above, or test with \`IS\` before walking it.
+- A deleted record has nothing left to read, so \`Record\` is not there on a delete. Pin \`action\` as above, or test with \`is\` before walking it.
 - A run that both listens to the graph and writes to it can wake itself. Narrow the listener to the types and fields you actually mean; where an automation should ignore its own writes and react only to everyone else's, add \`suppress_self: true\`.
 
 ### when-the-graph-and-when-the-other-system
@@ -111,10 +111,10 @@ Both are places records live, so the question is which one owns the answer. A co
       construct: 'a knowledge-graph root write with fuzzy identity, plus a linked write scoped to its parent',
       status: 'runs',
       probe: `
-import { kg, email } from adapters
+import { \`@lf/kg\` as kg, \`@lf/email\` as email } from adapters
 
-inbox = email()
-graph = kg()
+inbox = connect email
+graph = connect kg
 
 node Company: "the company this message is about" {
   name:   <text> "the company's name"
@@ -126,18 +126,18 @@ node Company: "the company this message is about" {
 }
 
 function \`Record The Company\`(msg: <inbox-[:Email]->>) {
-  c = extractOne([msg.\`Body\`], Company)
-  if c == null { ERROR("no company in this message") }
+  c = extractOne([msg.Body], Company)
+  if (c == null) { fail("no company in this message") }
 
   co = write graph-[:Company]-> {
-    unique by (FUZZY \`Name\`)
+    unique by (FUZZY Name)
     Name:    c.name
     Domains: c.domain
   }
 
   c-[p:person]-> {
     write co-[:Team]-> {
-      unique by (co, \`Name\`)
+      unique by (co, Name)
       Name:  p.name
       Email: p.email
     }
@@ -151,18 +151,18 @@ listen to inbox { key: "intake" } fire \`Record The Company\`
       construct: 'a knowledge-graph mutation listener — the event position, the hop to the changed record, and field narrowing',
       status: 'runs',
       probe: `
-import { kg, slack } from adapters
+import { \`@lf/kg\` as kg, \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-graph = kg()
+team = connect slack using team_workspace
+graph = connect kg
 
-function \`Announce The Ticket\`(change: <graph-[:\`Record Change\` WHERE \`type\` == "Support Ticket" AND \`action\` == "record.updated"]->>) {
-  general = ONLY(team-[ch:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
+function \`Announce The Ticket\`(change: <graph-[r:\`Record Change\` WHERE r.type == "Support Ticket" AND r.action == "record.updated"]->>) {
+  general = only(team-[ch:Channels WHERE ch.Name == "general"]->)
+  if (general == null) { fail("no #general channel") }
   change-[ticket:Record]-> {
     write general-[:Messages]-> {
-      Message: "Ticket now \${ticket.\`Status\`}."
+      Message: "Ticket now \${ticket.Status}."
     }
   }
 }
@@ -174,26 +174,26 @@ listen to graph { type: "Support Ticket", events: ["record.updated"], fields: [S
       construct: 'a knowledge-graph rooted read — query the graph, walk an edge off the landing, and link an existing record',
       status: 'runs',
       probe: `
-import { kg, slack, manual } from adapters
+import { \`@lf/kg\` as kg, \`@lf/slack\` as slack, \`@lf/manual\` as manual } from adapters
 import { team_workspace } from credentials
 
-team = slack(credentials: team_workspace)
-runs = manual()
-graph = kg()
+team = connect slack using team_workspace
+runs = connect manual
+graph = connect kg
 
 function \`Weekly Graph Digest\`(go: <runs-[:Invocation]->>) {
-  lines = graph-[c:Company WHERE \`Stage\` == "Active" ORDER BY \`Name\` ASC LIMIT 10]-> {
-    graph-[p:Person WHERE \`Email\` == go.\`Text\`]-> {
+  lines = graph-[c:Company WHERE c.Stage == "Active" ORDER BY c.Name ASC LIMIT 10]-> {
+    graph-[p:Person WHERE p.Email == go.Text]-> {
       link c-[:Team]-> p
     }
 
-    return "\${c.\`Name\`} — \${COUNT(c-[:Team]->)} on the team"
+    return "\${c.Name} — \${count(c-[:Team]->)} on the team"
   }
 
-  general = ONLY(team-[ch:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
+  general = only(team-[ch:Channels WHERE ch.Name == "general"]->)
+  if (general == null) { fail("no #general channel") }
   write general-[:Messages]-> {
-    Message: "Active companies:\\n\${JOIN(lines, "\\n")}"
+    Message: "Active companies:\\n\${Text.join(lines, "\\n")}"
   }
 }
 

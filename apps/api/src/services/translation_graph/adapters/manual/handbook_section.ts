@@ -8,11 +8,14 @@ export const MANUAL_HANDBOOK_SECTION: HandbookSection = {
   title: 'Run now — ad-hoc runs, text, and files (manual)',
   content: `## Run now — ad-hoc runs, text, and files (manual)
 
-Use \`manual()\` to let a person — or an agent — start a run by hand. "Run now", pasted text, and uploaded files all arrive as its \`Invocation\` event:
+Use \`connect manual\` to let a person — or an agent — start a run by hand. "Run now", pasted text, and uploaded files all arrive as its \`Invocation\` event:
 
 \`\`\`
-runs = manual()
-crm  = attio(credentials: acme_main)
+import { \`@lf/manual\` as manual, \`@lf/attio\` as attio } from adapters
+import { acme_main } from credentials
+
+runs = connect manual
+crm  = connect attio using acme_main
 
 node Company: "each company named in the supplied text or files" {
   name:   <text> "the company's name"
@@ -20,11 +23,11 @@ node Company: "each company named in the supplied text or files" {
 }
 
 function \`Import Companies\`(go: <runs-[:Invocation]->>) {
-  found = extract([go.\`Text\`, ...go-[:Files]->.\`File\`], Company)
+  found = extract([go.Text, ...go-[:Files]->.File], Company)
 
-  MAP(found, (c) => {
+  map(found, (c) => {
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:    c.name
       Domains: c.domain
     }
@@ -34,7 +37,7 @@ function \`Import Companies\`(go: <runs-[:Invocation]->>) {
 listen as "Import companies" to runs {} fire \`Import Companies\`
 \`\`\`
 
-- The example is the whole pattern: whatever the person supplied — \`go.\`Text\`\`, uploaded \`Files\` — goes into the extraction's content, and the writes fan out from what was found.
+- The example is the whole pattern: whatever the person supplied — \`go.Text\`, uploaded \`Files\` — goes into the extraction's content, and the writes fan out from what was found.
 - Only \`Fired at\` is always present; \`Text\`, \`Run by (email)\` / \`(name)\`, and the \`Files\` edge are optional — a bare run has empty text and zero files. A \`File\` position carries \`Name\`, \`Content Type\`, \`Size\`, and the file itself.
 - A backfill is this same channel with the source read in the body: \`crm-[c:Companies]-> { … }\` runs the block once per existing record. The parameter stays the \`Invocation\`.`,
   engineClaims: [
@@ -42,11 +45,11 @@ listen as "Import companies" to runs {} fire \`Import Companies\`
       construct: 'manual-channel backfills (instance-rooted traversal in the body)',
       status: 'runs',
       probe: `
-import { manual, attio } from adapters
+import { \`@lf/manual\` as manual, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 
-runs = manual()
-crm  = attio(credentials: acme)
+runs = connect manual
+crm  = connect attio using acme
 
 function \`Nightly Backfill\`(go: <runs-[:Invocation]->>) {
   crm-[c:Companies]-> {
@@ -61,11 +64,11 @@ listen to runs {} fire \`Nightly Backfill\`
       construct: 'manual runs carrying text + files (reading the invocation text and extracting from the supplied files)',
       status: 'runs',
       probe: `
-import { manual, attio } from adapters
+import { \`@lf/manual\` as manual, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 
-runs = manual()
-crm  = attio(credentials: acme)
+runs = connect manual
+crm  = connect attio using acme
 
 node Company: "each company named in the supplied text or files" {
   name:   <text> "the company's name"
@@ -73,11 +76,11 @@ node Company: "each company named in the supplied text or files" {
 }
 
 function \`Import Companies\`(go: <runs-[:Invocation]->>) {
-  found = extract([go.\`Text\`, ...go-[:Files]->.\`File\`], Company)
+  found = extract([go.Text, ...go-[:Files]->.File], Company)
 
-  MAP(found, (c) => {
+  map(found, (c) => {
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:    c.name
       Domains: c.domain
     }

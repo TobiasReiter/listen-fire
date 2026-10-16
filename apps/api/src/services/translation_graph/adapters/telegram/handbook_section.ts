@@ -21,8 +21,8 @@ A Telegram message is always written along an edge: \`-[:Messages]->\` off a lin
 ### what-a-send-carries
 
 \`\`\`
-person = ONLY(tg-[u:\`Linked Users\` WHERE \`Email\` == "ops@example.com"]->)
-if person == null { ERROR("ops@example.com hasn't linked Telegram") }
+person = only(tg-[u:\`Linked Users\` WHERE u.Email == "ops@example.com"]->)
+if (person == null) { fail("ops@example.com hasn't linked Telegram") }
 write person-[:Messages]-> { Text: "The nightly run finished clean." }
 \`\`\`
 
@@ -59,8 +59,8 @@ This is usually the reason to reach for a keyboard. A button either opens a link
 
 \`\`\`
 q = write questions-[:Check]-> { Prompt: "Send the update?" }
-send = callback({ write q-[:Response]-> { Answer: TRUE } })
-hold = callback({ write q-[:Response]-> { Answer: FALSE } })
+send = callback({ write q-[:Response]-> { Answer: true } })
+hold = callback({ write q-[:Response]-> { Answer: false } })
 
 write msg-[:Replies]-> {
   Text: "Send the update? \${q.Url}"
@@ -72,7 +72,7 @@ write msg-[:Replies]-> {
   }
 }
 
-answer = await FIRST(q-[:Response]->)
+answer = await first(q-[:Response]->)
 \`\`\`
 
 Put the bare \`Url\` in the message text as well, so the question is still answerable wherever the buttons are not.
@@ -92,19 +92,19 @@ Telegram captures nothing at tap time — a keyboard's buttons are fixed when th
       construct: 'a Telegram inline keyboard whose callback_data carries callback ids, one per answer',
       status: 'runs',
       probe: `
-import { telegram, ask } from adapters
+import { \`@lf/telegram\` as telegram, \`@lf/ask\` as ask } from adapters
 import { team_telegram } from credentials
 
-tg = telegram(credentials: team_telegram)
-questions = ask()
+tg = connect telegram using team_telegram
+questions = connect ask
 
-function confirm_send(msg: <tg-[:\`Message\`]->>) {
+function confirm_send(msg: <tg-[:Message]->>) {
   q = write questions-[:Check]-> {
     Prompt: "Send the update?"
-    Detail: "\${msg.\`Text\`}"
+    Detail: "\${msg.Text}"
   }
-  send = callback({ write q-[:Response]-> { Answer: TRUE } })
-  hold = callback({ write q-[:Response]-> { Answer: FALSE } })
+  send = callback({ write q-[:Response]-> { Answer: true } })
+  hold = callback({ write q-[:Response]-> { Answer: false } })
 
   write msg-[:Replies]-> {
     Text: "Send the update? \${q.Url}"
@@ -116,8 +116,8 @@ function confirm_send(msg: <tg-[:\`Message\`]->>) {
     }
   }
 
-  answer = await FIRST(q-[:Response]->)
-  if answer.Answer {
+  answer = await first(q-[:Response]->)
+  if (answer.Answer) {
     write msg-[:Replies]-> { Text: "Sending now." }
   }
 }
@@ -129,12 +129,12 @@ listen to tg {} fire confirm_send
       construct: 'a Telegram keyboard whose button waits on a body-less callback (the minimal confirmation)',
       status: 'runs',
       probe: `
-import { telegram } from adapters
+import { \`@lf/telegram\` as telegram } from adapters
 import { team_telegram } from credentials
 
-tg = telegram(credentials: team_telegram)
+tg = connect telegram using team_telegram
 
-function wait_for_go(msg: <tg-[:\`Message\`]->>) {
+function wait_for_go(msg: <tg-[:Message]->>) {
   go = callback()
 
   write msg-[:Replies]-> {
@@ -144,8 +144,8 @@ function wait_for_go(msg: <tg-[:\`Message\`]->>) {
     }
   }
 
-  tap = await FIRST(go-[:Called]->)
-  write msg-[:Replies]-> { Text: "Off we go (\${tap.\`At\`})." }
+  tap = await first(go-[:Called]->)
+  write msg-[:Replies]-> { Text: "Off we go (\${tap.At})." }
 }
 
 listen to tg {} fire wait_for_go

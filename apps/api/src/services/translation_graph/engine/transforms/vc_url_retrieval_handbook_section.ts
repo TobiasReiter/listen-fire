@@ -18,8 +18,8 @@ export const VC_URL_RETRIEVAL_HANDBOOK_SECTION: HandbookSection = {
 \`\`\`
 import { vc_url_retrieval } from plugins
 
-pages     = vc_url_retrieval(text: msg.\`Body\`)
-content   = [msg.\`Body\`, ...MAP(pages, (p) => COALESCE(p.text, ""))]
+pages     = vc_url_retrieval(text: msg.Body)
+content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
 companies = extract(content, Company)
 \`\`\`
 
@@ -30,8 +30,8 @@ The call returns a list with one record per link it loaded, in the order it foun
 ### the-downloaded-files
 
 \`\`\`
-docs = FILTER(pages, (p) => p.file != null)
-MAP(docs, (p) => { write record-[:Files]-> { File ?: p.file } })
+docs = filter(pages, (p) => p.file != null)
+map(docs, (p) => { write record-[:Files]-> { File ?: p.file } })
 \`\`\`
 
 A slide deck behind a link comes back as a \`file\`, so the same write that attaches an email's own files attaches it to a record. A link that was a page rather than a document has text and no file.
@@ -43,7 +43,7 @@ A slide deck behind a link comes back as a \`file\`, so the same write that atta
 ### gated-links
 
 \`\`\`
-pages = vc_url_retrieval(text: msg.\`Body\`, email: @user_email)
+pages = vc_url_retrieval(text: msg.Body, email: @user_email)
 \`\`\`
 
 \`email\` is typed into a link that demands one before it will show its content. A passcode written next to a link in the text is picked up from the text itself. Without an address, a gated link is skipped rather than guessed at.
@@ -58,12 +58,12 @@ pages = vc_url_retrieval(text: msg.\`Body\`, email: @user_email)
       construct: 'linked pages loaded once over the message into the content, and a downloaded document attached to the record',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { vc_url_retrieval } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Company: "each company named in this message" {
   name:    <text> "the company's name"
@@ -71,12 +71,12 @@ node Company: "each company named in this message" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  pages   = vc_url_retrieval(text: m.\`Body\`, email: @user_email)
-  content = [m.\`Body\`, ...MAP(pages, (p) => COALESCE(p.text, ""))]
-  MAP(extract(content, Company), (c) => {
-    record = write crm-[:Companies]-> { unique by (\`Name\`), Name: c.name, Description: c.summary }
-    docs = FILTER(pages, (p) => p.file != null)
-    MAP(docs, (p) => { write record-[:Files]-> { File ?: p.file } })
+  pages   = vc_url_retrieval(text: m.Body, email: @user_email)
+  content = [m.Body, ...map(pages, (p) => coalesce(p.text, ""))]
+  map(extract(content, Company), (c) => {
+    record = write crm-[:Companies]-> { unique by (Name), Name: c.name, Description: c.summary }
+    docs = filter(pages, (p) => p.file != null)
+    map(docs, (p) => { write record-[:Files]-> { File ?: p.file } })
   })
 }
 `,

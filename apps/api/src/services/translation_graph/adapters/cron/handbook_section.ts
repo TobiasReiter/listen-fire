@@ -8,10 +8,12 @@ export const CRON_HANDBOOK_SECTION: HandbookSection = {
   title: 'Schedules — time-triggered runs (cron)',
   content: `## Schedules — time-triggered runs (cron)
 
-Use \`cron()\` to run an automation on a schedule:
+Use \`connect cron\` to run an automation on a schedule:
 
 \`\`\`
-timer = cron()
+import { \`@lf/cron\` as cron } from adapters
+
+timer = connect cron
 
 function \`Weekly Digest\`(t: <timer-[:Tick]->>) { … }
 
@@ -26,15 +28,15 @@ listen as "Weekly digest" to timer { schedule: "0 9 * * 1" } fire \`Weekly Diges
       construct: 'cron-channel listeners (scheduled movements over the Tick position)',
       status: 'runs',
       probe: `
-import { cron, slack } from adapters
+import { \`@lf/cron\` as cron, \`@lf/slack\` as slack } from adapters
 import { team_workspace } from credentials
 
-timer = cron()
-team  = slack(credentials: team_workspace)
+timer = connect cron
+team  = connect slack using team_workspace
 
 function \`Weekly Digest\`(t: <timer-[:Tick]->>) {
-  updates = ONLY(team-[ch:Channels WHERE \`Name\` == "updates"]->)
-  if updates == null { ERROR("no #updates channel") }
+  updates = only(team-[ch:Channels WHERE ch.Name == "updates"]->)
+  if (updates == null) { fail("no #updates channel") }
   write updates-[:Messages]-> { Message: "Digest for \${t.\`Fired at\`}" }
 }
 

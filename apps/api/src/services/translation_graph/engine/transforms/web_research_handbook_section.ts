@@ -24,12 +24,12 @@ node Company: "each company named in this message" {
   linkedin:    <text> "the company's LinkedIn address, if the message gives one"
 }
 
-MAP(extract(content, Company), (c) => {
+map(extract(content, Company), (c) => {
   site = web_research(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
   write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
+    unique by (FUZZY Name)
     Name:       c.name
-    Domains ?:  COALESCE(site.website, c.website)
+    Domains ?:  coalesce(site.website, c.website)
   }
 })
 \`\`\`
@@ -56,12 +56,12 @@ Give it a real sentence and it resolves; give it a bare name and it declines. Bo
       construct: 'web_research called per record beside a targeted fetch, the resolved address written and the page read by a second extraction',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { fetch_url, web_research } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Company: "each company named in this message" {
   name:        <text> "the company's name"
@@ -75,15 +75,15 @@ node Profile: "the company" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  content = [m.\`Body\`]
-  MAP(extract(content, Company), (c) => {
+  content = [m.Body]
+  map(extract(content, Company), (c) => {
     page    = fetch_url(url: c.website, email: @user_email)
     site    = web_research(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
-    profile = extractOne([...content, TEXT.SERIALISE(c, 'JSON'), COALESCE(page, site.text, "")], Profile)
+    profile = extractOne([...content, Json.stringify(c), coalesce(page, site.text, "")], Profile)
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:          c.name
-      Domains ?:     COALESCE(site.website, c.website)
+      Domains ?:     coalesce(site.website, c.website)
       Description ?: profile.summary
     }
   })

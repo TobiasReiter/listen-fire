@@ -17,13 +17,13 @@ export const FETCH_URL_HANDBOOK_SECTION: HandbookSection = {
 \`\`\`
 import { fetch_url } from plugins
 
-detailed = MAP(companies, (c) => {
+detailed = map(companies, (c) => {
   page = fetch_url(url: c.website)
-  return extractOne([...content, TEXT.SERIALISE(c, 'JSON'), COALESCE(page, "")], CompanyDetail)
+  return extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
 })
 \`\`\`
 
-Called inside the \`MAP\`, each company loads its own page, and only that company's extraction reads it. Two companies in one message get two pages. \`COALESCE\` the result before it goes into content.
+Called inside the \`map\`, each company loads its own page, and only that company's extraction reads it. Two companies in one message get two pages. \`coalesce\` the result before it goes into content.
 
 ### when-the-field-is-empty
 
@@ -42,7 +42,7 @@ node Opportunity: "each opportunity this message is about" {
   deck_password: <text> "the passcode for that link, if the message gives one"
 }
 
-MAP(extract([m.\`Body\`], Opportunity), (o) => {
+map(extract([m.Body], Opportunity), (o) => {
   deck = fetch_url(url: o.deck_url, email: @user_email, password: o.deck_password)
   …
 })
@@ -59,19 +59,19 @@ Access that arrives INSIDE the content — a passcode someone wrote in a message
 ### Common mistakes
 
 - **Expecting two pages from one call.** It loads one. Several links in a record's own text is what scanning is for.
-- **Putting the page in content raw.** It may be absent; \`COALESCE(page, "")\` first.
+- **Putting the page in content raw.** It may be absent; \`coalesce(page, "")\` first.
 `,
   engineClaims: [
     {
-      construct: "fetch_url called per record inside MAP, its page read by that record's own extraction",
+      construct: "fetch_url called per record inside map, its page read by that record's own extraction",
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { fetch_url } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Company: "each company named in this message" {
   name:    <text> "the company's name"
@@ -83,12 +83,12 @@ node CompanyDetail: "the company" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  content = [m.\`Body\`]
-  MAP(extract(content, Company), (c) => {
+  content = [m.Body]
+  map(extract(content, Company), (c) => {
     page   = fetch_url(url: c.website)
-    detail = extractOne([...content, TEXT.SERIALISE(c, 'JSON'), COALESCE(page, "")], CompanyDetail)
+    detail = extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
     write crm-[:Companies]-> {
-      unique by (\`Name\`)
+      unique by (Name)
       Name:           c.name
       Description ?:  detail.summary
     }
@@ -100,12 +100,12 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
       construct: 'a gated link whose way in was extracted from the same message',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { fetch_url } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Opportunity: "each opportunity this message is about" {
   company:       <text> "the company's name"
@@ -118,11 +118,11 @@ node Raise: "the raise the deck describes" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  MAP(extract([m.\`Body\`], Opportunity), (o) => {
+  map(extract([m.Body], Opportunity), (o) => {
     deck  = fetch_url(url: o.deck_url, email: @user_email, password: o.deck_password)
-    terms = extractOne([m.\`Body\`, COALESCE(deck, "")], Raise)
+    terms = extractOne([m.Body, coalesce(deck, "")], Raise)
     write crm-[:Companies]-> {
-      unique by (\`Name\`)
+      unique by (Name)
       Name:           o.company
       Description ?:  terms.raise
     }
