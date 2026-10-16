@@ -12,7 +12,7 @@ import { tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { LlmCallInput, LlmCallResult } from 'movement-engine/services/translation_graph/engine/batched_extraction/llm_call';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { positionData } from 'movement-engine/services/translation_graph/types';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
@@ -64,23 +64,22 @@ function fakeInbox(notes: unknown[]): Adapter {
   };
 }
 
-const cited = (value: unknown) => ({ evidence: 'q', value });
+const cited = (value: unknown) => ({ value, evidence: { item: 0, quote: 'q' } });
 
-/** What the model extracts: three companies, Acme with two rounds. */
+/** What the model extracts: the one Deals record, three companies under it,
+ *  Acme with two rounds. */
 const EXTRACTED = {
-  'x:extract_result#1': [
-    {
-      company: [
-        { name: cited('Initech'), rank: cited(3), round: [] },
-        { name: cited('Acme'), rank: cited(1), round: [{ stage: cited('seed') }, { stage: cited('A') }] },
-        { name: cited('Globex'), rank: cited(2), round: [{ stage: cited('B') }] },
-      ],
-    },
-  ],
+  record: {
+    company: [
+      { name: cited('Initech'), rank: cited(3), round: [] },
+      { name: cited('Acme'), rank: cited(1), round: [{ stage: cited('seed') }, { stage: cited('A') }] },
+      { name: cited('Globex'), rank: cited(2), round: [{ stage: cited('B') }] },
+    ],
+  },
 };
 
-function extractingLlm(): { call(input: LlmCallInput): Promise<LlmCallResult> } {
-  return { call: async () => ({ parsedJson: EXTRACTED }) };
+function extractingLlm(): { call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> } {
+  return { call: async () => ({ parsedJson: EXTRACTED, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } }) };
 }
 
 const V5 = (...body: string[]) =>
@@ -101,15 +100,15 @@ const V5 = (...body: string[]) =>
   ].join('\n');
 
 const EXTRACT = [
-  '  deals = extract from [msg.`text`] {',
+  '  deals = extractOne([msg.`text`], node Deals: "the deals the message describes" {',
   '    node company: "each company mentioned" {',
-  '      name: "the company\'s name"',
-  '      rank: "its rank, a number"',
+  '      name: <text> "the company\'s name"',
+  '      rank: <number> "its rank, a number"',
   '      node round: "each funding round it raised" {',
-  '        stage: "the round\'s stage"',
+  '        stage: <text> "the round\'s stage"',
   '      }',
   '    }',
-  '  }',
+  '  })',
 ];
 
 async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: LanguageVersion = 5): Promise<unknown[]> {
@@ -124,7 +123,7 @@ async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: Lan
       teamId: TEAM_ID,
       catalog,
       credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
-      host: makeTestHost({ adapters: { resolve: () => fakeInbox(notes) }, llm: { client: extractingLlm() } }),
+      host: makeTestHost({ adapters: { resolve: () => fakeInbox(notes) }, llm: { extractCall: extractingLlm() } }),
       runId: `run-memory-where-${engine}`,
       firedAt: '2026-10-16T09:00:00.000Z',
     });
