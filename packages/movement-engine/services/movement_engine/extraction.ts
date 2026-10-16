@@ -1778,7 +1778,7 @@ class Materializer {
    *  a checker miss. */
   private boundStageArgs(plugin: PluginCall, spec: PluginSpec | undefined): NamedArg[] {
     if (spec === undefined || before(this.languageVersion, 5) || (plugin.positional ?? []).length === 0) return plugin.args;
-    const bound = bindStageArgs(spec, plugin);
+    const bound = bindStageArgs(spec, plugin, { languageVersion: this.languageVersion });
     const [misfit] = bound.misfits;
     if (misfit !== undefined) {
       throw new MovementEngineError(

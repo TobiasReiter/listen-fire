@@ -545,11 +545,16 @@ export function pluginArgMisfitMessage(misfit: PluginArgMisfit, callee: string, 
  *  after those, written as a record literal, is the settings, each entry a
  *  named argument whose value is its own slot; any further one is a misfit.
  *  A named argument stays as written. */
-export function bindPluginArgs(spec: PluginSpec, site: PluginCallSite, args: readonly CallArg[]): PluginArgBinding {
+export function bindPluginArgs(
+  spec: PluginSpec,
+  site: PluginCallSite,
+  args: readonly CallArg[],
+  options: { languageVersion: LanguageVersion },
+): PluginArgBinding {
   const params = pluginPositionalParams(spec, site);
   const positional = args.filter(a => a.name === undefined);
   const settingsArg = positional[params.length];
-  const settings = settingsArg !== undefined ? recordLiteral(settingsArg) : undefined;
+  const settings = settingsArg !== undefined ? recordLiteral(settingsArg, options.languageVersion) : undefined;
   const binding: PluginArgBinding = { args: [], misfits: [] };
   let at = 0;
   for (const arg of args) {
@@ -578,8 +583,8 @@ export interface StageArgBinding {
 
 /** A stage's positional arguments bound as a call's are, with the stage's
  *  positional parameters (never a fed one). */
-export function bindStageArgs(spec: PluginSpec, stage: PluginCall): StageArgBinding {
-  const bound = bindPluginArgs(spec, 'stage', (stage.positional ?? []).map((expr): CallArg => ({ kind: 'expr', expr })));
+export function bindStageArgs(spec: PluginSpec, stage: PluginCall, options: { languageVersion: LanguageVersion }): StageArgBinding {
+  const bound = bindPluginArgs(spec, 'stage', (stage.positional ?? []).map((expr): CallArg => ({ kind: 'expr', expr })), options);
   // Binding names an expression and makes nothing else.
   const named = bound.args.flatMap((arg): NamedArg[] => (arg.kind === 'expr' && arg.name !== undefined ? [{ name: arg.name, value: arg.expr }] : []));
   return { args: [...stage.args, ...named], misfits: bound.misfits };
@@ -590,13 +595,13 @@ interface RecordLiteral {
   entries: MapMember[];
 }
 
-function recordLiteral(arg: CallArg): RecordLiteral | undefined {
+function recordLiteral(arg: CallArg, languageVersion: LanguageVersion): RecordLiteral | undefined {
   if (arg.kind !== 'expr') return undefined;
   let tree: MExpr;
   try {
-    // The tree the program's own parse read, under its version (a text
-    // re-read here would read as versions 1–4 do).
-    tree = treeOfSlot(arg.expr);
+    // The tree the program's own parse read; a slot without one is read
+    // under the program's version.
+    tree = treeOfSlot(arg.expr, languageVersion);
   } catch {
     return undefined;
   }

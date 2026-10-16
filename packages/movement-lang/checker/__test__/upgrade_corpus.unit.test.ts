@@ -30,8 +30,11 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  2026-10-16, v5b-upgrade: 4,082 of 4,449 programs (91.8%).
  *  Lowered the same day by Henry's ruling retiring the extraction keyword
  *  (MOV_EXTRACT_KEYWORD_RETIRED, whose fix is never safe, so the loop leaves
- *  it for a person): 3,862 of 4,449, with 241 programs left holding it. */
-const FLOOR = 0.868;
+ *  it for a person): 3,862 of 4,449, with 241 programs left holding it.
+ *  Lowered again by the upgrade warning on ORDER BY / LIMIT over records the
+ *  run holds (MOV_IN_MEMORY_HOP_ORDER, which 4 ignored and 5 reads, so a
+ *  person decides): 4,903 of 5,667, with 104 programs left holding it. */
+const FLOOR = 0.865;
 
 interface Program {
   source: string;

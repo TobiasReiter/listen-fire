@@ -676,7 +676,7 @@ export function getMovementCompletions(
   // ── traversal edges: `…-[` / `…-[alias:` ──
   const traversal = /^(.*?)(<?-\[\s*(?:[A-Za-z_]\w*\s*:)?\s*:?\s*`?(#?[A-Za-z_]?\w*)?)$/.exec(lineBefore);
   if (traversal) {
-    const position = chainPositionAt(traversal[1], scope);
+    const position = chainPositionAt(traversal[1], { scope, languageVersion });
     const items = position ? edgeItems(position) : [];
     if (position?.kind === 'position' || position?.kind === 'handle') {
       items.push({
@@ -693,7 +693,7 @@ export function getMovementCompletions(
   // ── property read: `<chain>.` → backticked fields ──
   const propertyRead = /^(.*)\.(`?)([A-Za-z_]?\w*)?$/.exec(lineBefore);
   if (propertyRead && /(?:\]->|[A-Za-z0-9_]|`)$/.test(propertyRead[1])) {
-    const position = chainPositionAt(propertyRead[1], scope);
+    const position = chainPositionAt(propertyRead[1], { scope, languageVersion });
     if (position) {
       const tickTyped = propertyRead[2] === '`';
       const partialProp = propertyRead[3] ?? '';
@@ -710,8 +710,8 @@ export function getMovementCompletions(
   // under-described one) offers all — the engine filters those in-app.
   const whereField = hopWhereFieldContext(lineBefore);
   if (whereField) {
-    const target = chainPositionAt(`${whereField.root}-[__w:${whereField.edge}]->`, scope);
-    const source = chainPositionAt(whereField.root, scope);
+    const target = chainPositionAt(`${whereField.root}-[__w:${whereField.edge}]->`, { scope, languageVersion });
+    const source = chainPositionAt(whereField.root, { scope, languageVersion });
     if (target) {
       const items = filterableFieldItems({ target, source, edge: whereField.edge });
       const from = clamped - whereField.partial.length - (whereField.tickTyped ? 1 : 0);
@@ -979,7 +979,7 @@ function valueExpecting(text: string): boolean {
  */
 function chainPositionAt(
   text: string,
-  scope: Map<string, ScopeSymbol>,
+  { scope, languageVersion }: { scope: Map<string, ScopeSymbol>; languageVersion: LanguageVersion },
 ): PositionTypeRef | undefined {
   const chain = /([A-Za-z_]\w*)((?:<?-\[[^\]]*\]->)*)$/.exec(text.trimEnd());
   if (!chain) return undefined;
@@ -990,11 +990,10 @@ function chainPositionAt(
   if (!chain[2]) return rootType;
 
   try {
-    const parsed = parseMovementExpression(`${chain[1]}${chain[2]}.\`__probe__\``);
+    const parsed = parseMovementExpression(`${chain[1]}${chain[2]}.\`__probe__\``, languageVersion);
     if (parsed.type !== 'traverse') return undefined;
-    // A completion walks hops only; nothing a version changes is read here.
     const typing = new ExpressionTyping({
-      languageVersion: CURRENT_LANGUAGE_VERSION,
+      languageVersion,
       resolveRoot: name => {
         const s = scope.get(name);
         return s ? positionTypeOf(s) : undefined;
@@ -1306,7 +1305,8 @@ export function getHoverInfo(
   snapshot: CatalogSnapshot,
   options?: { languageVersion?: LanguageVersion },
 ): MovementHover | undefined {
-  const v5 = since(options?.languageVersion ?? CURRENT_LANGUAGE_VERSION, 5);
+  const languageVersion = options?.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+  const v5 = since(languageVersion, 5);
   // A backtick-quoted name (`\`Sender Name\``) is one token even with spaces —
   // prefer it so multi-word fields resolve.
   const word = backtickTokenAt(source, offset) ?? wordAt(source, offset);
@@ -1341,11 +1341,11 @@ export function getHoverInfo(
   // Not a symbol: a field read (`item.Text`), a write-body field key (`Name:`),
   // then a language keyword.
   if (!symbol) {
-    const fieldHover = fieldAccessHover(source, word, analysis.symbolsAt(loc));
+    const fieldHover = fieldAccessHover(source, word, analysis.symbolsAt(loc), { languageVersion });
     if (fieldHover) return withWriteTargetNativeRule(fieldHover, word, analysis.writeAt(loc));
     const keyHover = writeFieldKeyHover(source, word, analysis.writeAt(loc));
     if (keyHover) return keyHover;
-    const edgeHover = traversalEdgeHover(source, word, analysis, loc);
+    const edgeHover = traversalEdgeHover(source, word, analysis, loc, { languageVersion });
     if (edgeHover) return edgeHover;
     const cfgHover = configKeyHover(source, word, analysis.symbolsAt(loc), snapshot);
     if (cfgHover) return cfgHover;
@@ -1601,6 +1601,7 @@ function fieldAccessHover(
   source: string,
   word: { text: string; from: number; to: number },
   scope: Map<string, ScopeSymbol>,
+  options: { languageVersion: LanguageVersion },
 ): MovementHover | undefined {
   let dot = word.from;
   if (source[dot - 1] === '`') dot--; // an optional opening backtick around the field
@@ -1625,7 +1626,7 @@ function fieldAccessHover(
     }
   }
   // A position chain (param / binding / alias, + traversal steps) → its field.
-  const position = chainPositionAt(rawChain, scope);
+  const position = chainPositionAt(rawChain, { scope, languageVersion: options.languageVersion });
   if (position) return fieldTypeHover(word, describePosition(position), fieldTypeOnPosition(position, field));
   return undefined;
 }
@@ -1688,6 +1689,7 @@ function traversalEdgeHover(
   word: { text: string; from: number; to: number },
   analysis: Analysis,
   loc: Loc,
+  options: { languageVersion: LanguageVersion },
 ): MovementHover | undefined {
   const lineStart = source.lastIndexOf('\n', word.from - 1) + 1;
   const before = source.slice(lineStart, word.from);
@@ -1701,7 +1703,7 @@ function traversalEdgeHover(
   if (!/^`?\s*(?:\bWHERE\b|\]|$)/i.test(after) && !/^`?\s*\]/.test(after)) return undefined;
   const chainEnd = before.length - head[1].length;
   const chain = before.slice(0, chainEnd);
-  const position = chainPositionAt(chain, analysis.symbolsAt(loc));
+  const position = chainPositionAt(chain, { scope: analysis.symbolsAt(loc), languageVersion: options.languageVersion });
   if (!position) return undefined;
   const to = source[word.to] === '`' ? word.to + 1 : word.to;
   // Meta position: the edge names a collection (`crm-[c:Companie¦s]->`).

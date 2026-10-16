@@ -69,7 +69,7 @@ describe('the positional parameters', () => {
     const bound = bindPluginArgs(plugins.research!, 'plain', [
       { kind: 'expr', expr: slot('n', 10) },
       { kind: 'expr', expr: slot('{ context: s }', 13) },
-    ]);
+    ], { languageVersion: 5 });
     expect(bound.misfits).toEqual([]);
     expect(bound.args).toEqual([
       { kind: 'expr', name: 'name', expr: slot('n', 10) },

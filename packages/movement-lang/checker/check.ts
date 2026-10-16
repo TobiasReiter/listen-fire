@@ -2270,10 +2270,10 @@ function uniqueClauseRefs(clause: UniqueClause, languageVersion: number): string
   }
 }
 
-function staticStringValues(slot: ExprSlot): string[] | undefined {
+function staticStringValues(slot: ExprSlot, languageVersion: number): string[] | undefined {
   let parsed: Expression;
   try {
-    parsed = expressionOfSlot(slot);
+    parsed = expressionOfSlot(slot, languageVersion);
   } catch (e) {
     if (e instanceof BridgeError) return undefined;
     throw e;
@@ -2298,9 +2298,9 @@ function staticStringValues(slot: ExprSlot): string[] | undefined {
  * an array — a bare scalar (`events: "…"`) is rejected with a wrap-in-brackets
  * fix-it. Non-parsing slots are handled by the caller's value check.
  */
-function isListSlot(slot: ExprSlot): boolean {
+function isListSlot(slot: ExprSlot, languageVersion: number): boolean {
   try {
-    return expressionOfSlot(slot).type === 'list';
+    return expressionOfSlot(slot, languageVersion).type === 'list';
   } catch (e) {
     if (e instanceof BridgeError) return false;
     throw e;
@@ -2313,12 +2313,12 @@ function isListSlot(slot: ExprSlot): boolean {
  * `property` node, so a clean list of those yields the names. Undefined
  * for anything else.
  */
-function bareNameValues(slot: ExprSlot): string[] | undefined {
+function bareNameValues(slot: ExprSlot, languageVersion: number): string[] | undefined {
   const trimmed = slot.raw.trim();
   if (BARE_IDENT.test(trimmed)) return [trimmed];
   let parsed: Expression;
   try {
-    parsed = expressionOfSlot(slot);
+    parsed = expressionOfSlot(slot, languageVersion);
   } catch (e) {
     if (e instanceof BridgeError) return undefined;
     throw e;
@@ -2336,10 +2336,10 @@ function bareNameValues(slot: ExprSlot): string[] | undefined {
  * enum-literal membership check reads this: only a literal carries a value
  * known at author time.
  */
-function staticStringLiteralOf(slot: ExprSlot): string | undefined {
+function staticStringLiteralOf(slot: ExprSlot, languageVersion: number): string | undefined {
   let parsed: Expression;
   try {
-    parsed = expressionOfSlot(slot);
+    parsed = expressionOfSlot(slot, languageVersion);
   } catch (e) {
     if (e instanceof BridgeError) return undefined;
     throw e;
@@ -2555,10 +2555,10 @@ function isInstanceSymbol(token: object): token is ScopeSymbol {
 
 /** The value of a slot that is a bare LITERAL (`"X"`, `'X'`, `true`, `3`),
  *  undefined for anything else — so two spellings of one value are one value. */
-function staticLiteralOf(slot: ExprSlot): { value: unknown } | undefined {
+function staticLiteralOf(slot: ExprSlot, languageVersion: number): { value: unknown } | undefined {
   let parsed: Expression;
   try {
-    parsed = expressionOfSlot(slot);
+    parsed = expressionOfSlot(slot, languageVersion);
   } catch (e) {
     if (e instanceof BridgeError) return undefined;
     throw e;
@@ -3522,15 +3522,12 @@ const RESERVED_NAME_PREFIX = '#';
 
 /** The `#transform` hop's plugin as what it is since language version 5: a
  *  function, imported and called, its declared output the call's value. A
- *  call writes what a stage would have been fed (the required `fedArgs`), and
- *  a plugin no call can run — one fed only by an extraction, or one that has
- *  not declared what it does or hands back — is a `through [ … ]` stage. */
+ *  call writes what a stage would have been fed (the required `fedArgs`).
+ *  Every plugin is called so from 5, a stage-only one too: the extraction
+ *  stage (`through [ … ]`) went with the extraction keyword. */
 function transformHopAsFunction(plugin: string, spec: PluginSpec): string {
   const lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
   const name = spellName(plugin);
-  if (spec.effects === undefined || spec.fedByExtraction === true || spec.output === undefined) {
-    return `${lead}, but '${plugin}' runs only as a stage of an extraction: '${importLine(plugin, 'plugins')}', then 'extract from [ … ] through [${name}] { … }'`;
-  }
   // Its arguments by position, each written as the parameter it is.
   const args = pluginPositionalParams(spec, 'plain').join(', ');
   return `${lead}: import it and call it, and bind what it hands back like any function's result — '${importLine(plugin, 'plugins')}', then 'out = ${name}(${args.length > 0 ? args : '…'})'`;
@@ -3609,7 +3606,7 @@ function fileEdgesOf(schema: InstanceSchema, positions: readonly string[]): stri
 function metaHopRetiredMessage(label: string): string {
   const lead = `'-[:${label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares`;
   if (label === '#transform') {
-    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(…)')`;
   }
   if (label === '#linked' || label.startsWith('#linked ')) {
     return `${lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> { … }', then 'rec.<field>')`;
@@ -3617,7 +3614,7 @@ function metaHopRetiredMessage(label: string): string {
   if (label.split(/[:\s]/, 1)[0] === '#resources') {
     return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files`;
   }
-  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(…)')`;
 }
 
 /** The hops of a type's address, read by the expression grammar — none when
@@ -4116,7 +4113,7 @@ class Checker {
   ): object | undefined {
     const literals: Array<[string, unknown]> = [];
     for (const arg of args) {
-      const literal = staticLiteralOf(arg.value);
+      const literal = staticLiteralOf(arg.value, this.languageVersion);
       if (literal === undefined) return undefined;
       literals.push([arg.name, literal.value]);
     }
@@ -4395,7 +4392,7 @@ class Checker {
     if (BARE_IDENT.test(trimmed)) return this.bareNameValueType(scope, trimmed);
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(slot);
+      parsed = expressionOfSlot(slot, this.languageVersion);
     } catch {
       return undefined; // the syntax error is reported where the slot is read
     }
@@ -5957,7 +5954,7 @@ class Checker {
     if (slot === undefined) return;
     let expr: Expression;
     try {
-      expr = expressionOfSlot(slot);
+      expr = expressionOfSlot(slot, this.languageVersion);
     } catch {
       return; // the slot's own check reports why it does not read
     }
@@ -6540,7 +6537,7 @@ class Checker {
     if (before(this.languageVersion, 3)) return undefined;
     let tree: MExpr;
     try {
-      tree = treeOfSlot(slot);
+      tree = treeOfSlot(slot, this.languageVersion);
     } catch {
       return undefined; // the syntax error is reported where the slot is read
     }
@@ -6620,7 +6617,7 @@ class Checker {
     if (before(this.languageVersion, 3)) return;
     let tree: MExpr;
     try {
-      tree = treeOfSlot(slot);
+      tree = treeOfSlot(slot, this.languageVersion);
     } catch {
       return; // the syntax error is reported where the slot is read
     }
@@ -8083,7 +8080,7 @@ class Checker {
   private checkSortSettings(config: ExprSlot): void {
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(config);
+      parsed = expressionOfSlot(config, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       this.report(e.code ?? DiagnosticCodes.EXPR_PARSE, e.message, spanWithin(config, e.pos));
@@ -8101,7 +8098,7 @@ class Checker {
   private checkCollectionConfig(config: ExprSlot, spelling: string, keys?: typeof ALL_SETTING_KEYS): void {
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(config);
+      parsed = expressionOfSlot(config, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       this.report(e.code ?? DiagnosticCodes.EXPR_PARSE, e.message, spanWithin(config, e.pos));
@@ -8549,7 +8546,7 @@ class Checker {
     if (expr.settings === undefined) return false;
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(expr.settings);
+      parsed = expressionOfSlot(expr.settings, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       return false;
@@ -9172,7 +9169,7 @@ class Checker {
           ...(credentialName !== undefined ? { credentialName } : {}),
           arg: arg.name,
         });
-        const literal = staticStringLiteralOf(arg.value);
+        const literal = staticStringLiteralOf(arg.value, this.languageVersion);
         if (options && options.length > 0 && literal !== undefined && !options.includes(literal)) {
           this.reportWarning(
             DiagnosticCodes.CONSTRUCT_UNKNOWN_OPTION,
@@ -9439,7 +9436,7 @@ class Checker {
     }
     const discBody = body.fields.find((f) => f.name === discriminated.discriminant);
     if (discBody === undefined) return { root, description: rootDescription };
-    const literal = staticStringLiteralOf(discBody.value);
+    const literal = staticStringLiteralOf(discBody.value, this.languageVersion);
     if (literal === undefined) {
       this.report(
         DiagnosticCodes.WRITE_DISCRIMINANT_NOT_LITERAL,
@@ -9574,7 +9571,7 @@ class Checker {
       // An ABSENT parameter is the required-field check's business, not ours —
       // reporting it here too would blame the landing for a missing body field.
       if (slot === undefined) continue;
-      const values = literalStringValuesOf(slot.raw);
+      const values = literalStringValuesOf(slot.raw, { languageVersion: this.languageVersion });
       if (values === undefined) {
         if (generic.onNonLiteral === 'error') {
           this.report(
@@ -10256,7 +10253,7 @@ class Checker {
     if (!input.uniqueBy.some(clause => uniqueClauseRefs(clause, this.languageVersion)?.includes(field.name) === true)) return;
     let value: Expression;
     try {
-      value = expressionOfSlot(field.value);
+      value = expressionOfSlot(field.value, this.languageVersion);
     } catch (e) {
       if (e instanceof BridgeError) return;
       throw e;
@@ -10475,7 +10472,7 @@ class Checker {
   ): void {
     const { targetType, subject } = options;
     if (!isEnumType(targetType)) return;
-    const literal = staticStringLiteralOf(value);
+    const literal = staticStringLiteralOf(value, this.languageVersion);
     const diagnostic =
       checkEnumDomain(targetType, subject)
       ?? (literal !== undefined ? checkEnumLiteral(literal, targetType) : null);
@@ -13315,7 +13312,7 @@ class Checker {
   ): void {
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch {
       return; // the parse failure is reported by the arm's own check
     }
@@ -13380,7 +13377,7 @@ class Checker {
   private narrowConditionNegation(slot: ExprSlot, scope: Scope, options: { visibleFrom?: Loc } = {}): void {
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch {
       return; // the parse failure is reported by the arm's own check
     }
@@ -13396,7 +13393,7 @@ class Checker {
   private narrowConditionHolds(slot: ExprSlot, scope: Scope, guardEnd: Loc): void {
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch {
       return; // the parse failure is reported by the arm's own check
     }
@@ -13809,14 +13806,14 @@ class Checker {
         );
         continue;
       }
-      const literal = staticStringValues(arg.value);
-      if (literal?.length === 1 && !isListSlot(arg.value)) {
+      const literal = staticStringValues(arg.value, this.languageVersion);
+      if (literal?.length === 1 && !isListSlot(arg.value, this.languageVersion)) {
         listenConfigValues[arg.name] = literal[0];
       }
       const options = spec?.triggerConfigOptions?.[arg.name];
       if (options !== undefined) {
-        const values = staticStringValues(arg.value);
-        if (values === undefined || !isListSlot(arg.value)) {
+        const values = staticStringValues(arg.value, this.languageVersion);
+        if (values === undefined || !isListSlot(arg.value, this.languageVersion)) {
           // Event selections are always a list of quoted strings — even a
           // single event — so the authored shape is uniform and every reader
           // sees an array.
@@ -13846,7 +13843,7 @@ class Checker {
       const format = spec?.triggerConfigFormats?.[arg.name];
       if (format === 'cron') {
         // The cron adapter's `schedule`.
-        const values = staticStringValues(arg.value);
+        const values = staticStringValues(arg.value, this.languageVersion);
         if (values === undefined || values.length !== 1) {
           this.report(
             DiagnosticCodes.LISTEN_BAD_CONFIG,
@@ -13865,7 +13862,7 @@ class Checker {
         }
       } else if (format === 'timezone') {
         // The cron adapter's optional `timezone` — an IANA id.
-        const values = staticStringValues(arg.value);
+        const values = staticStringValues(arg.value, this.languageVersion);
         if (values === undefined || values.length !== 1) {
           this.report(
             DiagnosticCodes.LISTEN_BAD_CONFIG,
@@ -13885,10 +13882,10 @@ class Checker {
       } else if (format === 'strings') {
         // A list of the source system's own names (Gmail's `labels`). Only
         // the shape is ours to check; the names are the system's.
-        const values = staticStringValues(arg.value);
+        const values = staticStringValues(arg.value, this.languageVersion);
         if (
           values === undefined ||
-          !isListSlot(arg.value) ||
+          !isListSlot(arg.value, this.languageVersion) ||
           values.length === 0 ||
           values.some(value => value.trim() === '')
         ) {
@@ -13903,7 +13900,7 @@ class Checker {
         // The changed-attribute filter — bare property names of whatever the
         // listen's address lands on. The SHAPE is checkable here; the NAMES
         // need the landed position, so they are held for the check below.
-        const names = bareNameValues(arg.value);
+        const names = bareNameValues(arg.value, this.languageVersion);
         if (names === undefined) {
           this.report(
             DiagnosticCodes.LISTEN_BAD_CONFIG,
@@ -14813,7 +14810,7 @@ class Checker {
   private checkExtractCallConfig(config: ExprSlot): void {
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(config);
+      parsed = expressionOfSlot(config, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       this.report(e.code ?? DiagnosticCodes.EXPR_PARSE, e.message, spanWithin(config, e.pos));
@@ -15161,7 +15158,7 @@ class Checker {
       const at = first.value.span.start;
       this.namedOrders.set(`${at.line}:${at.col}`, pluginArgOrder(spec, 'stage'));
     }
-    const bound = bindStageArgs(spec, plugin);
+    const bound = bindStageArgs(spec, plugin, { languageVersion: this.languageVersion });
     const positional = pluginPositionalParams(spec, 'stage');
     for (const misfit of bound.misfits) {
       this.report(DiagnosticCodes.THROUGH_BAD_ARG, pluginArgMisfitMessage(misfit, plugin.plugin, positional), misfit.span);
@@ -15254,7 +15251,7 @@ class Checker {
       this.namedOrders.set(`${at.line}:${at.col}`, pluginArgOrder(spec, 'plain'));
       return undefined;
     }
-    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const bound = bindPluginArgs(spec, 'plain', statement.args, { languageVersion: this.languageVersion });
     const positional = pluginPositionalParams(spec, 'plain');
     for (const misfit of bound.misfits) {
       this.report(DiagnosticCodes.THROUGH_BAD_ARG, pluginArgMisfitMessage(misfit, statement.callee, positional), misfit.span);
@@ -15640,7 +15637,7 @@ class Checker {
     if (hoisted !== undefined) return this.checkExprSlot(hoisted, scope, options);
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(slot);
+      parsed = expressionOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       this.reportSlotError(e, slot);
@@ -15708,7 +15705,7 @@ class Checker {
     if (hoisted !== undefined) return this.checkConditionSlot(hoisted, scope, narrowInto);
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       this.reportSlotError(e, slot);

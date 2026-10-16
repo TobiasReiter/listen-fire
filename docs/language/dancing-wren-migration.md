@@ -127,6 +127,7 @@ crm-[c:Companies WHERE c.Categories == "Customer" ORDER BY c.`Created At` DESC L
 exists(m-[a:Attachments WHERE a.Name CONTAINS "pdf"]->)
 ```
 
+- One answer changes. `ORDER BY` and `LIMIT` on a hop over records the run already holds (an extraction's entities, a `node { … }` or `graph { … }` literal's entries, a run-built node's landings) are read from 5. Under 4 and earlier they were ignored there: every record came back, in the order held. A move up across 5 warns each such hop (`MOV_IN_MEMORY_HOP_ORDER`): if the program relied on the old answer, change it, then upgrade.
 - Writes keep their statement words and modifiers. `unique by (Domain)` and `FUZZY` follow walk rules. Field values are everyday expressions: `Name: Text.upper(m.Subject)`.
 
 ### Systems and imports
@@ -443,6 +444,7 @@ found = extractOne([m.Body], FoundShape, { tier: "careful" })
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) |
 | `MOV_PARALLEL_RETIRED` | [`parallel` is retired for `all`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (with the `all` rewrite for arms written down) |
 | `MOV_PRESENCE_OF_RETURNED` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a null test on a block's returned records) |
+| `MOV_IN_MEMORY_HOP_ORDER` | [Walk brackets](#walk-brackets) (warning, on a move up across 5: `ORDER BY` or `LIMIT` on a hop over records the run already holds, which 4 ignored) |
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#10-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#8-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#6-_resources-only-on-an-extractions-result) |

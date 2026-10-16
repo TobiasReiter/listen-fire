@@ -134,8 +134,10 @@ describe('the #transform hop shows the plugin as a function under Dancing Wren (
     expect(message).toContain("'out = vc_url_retrieval(text)'");
   });
 
-  it('a plugin only an extraction can feed: written as its stage', () => {
-    expect(said('linkedin_enrichment', 5)).toContain("'extract from [ … ] through [linkedin_enrichment] { … }'");
+  it('a plugin only an extraction fed is called too: the extraction stage is retired with the keyword', () => {
+    const message = said('linkedin_enrichment', 5);
+    expect(message).toContain("'out = linkedin_enrichment(…)'");
+    expect(message).not.toContain('through');
   });
 
   it('under 4 the message is unchanged', () => {

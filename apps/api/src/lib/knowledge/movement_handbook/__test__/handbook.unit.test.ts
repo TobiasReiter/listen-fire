@@ -10,6 +10,7 @@ import {
   type Catalog,
   type InstanceSchema,
   type PositionSchema,
+  CURRENT_LANGUAGE_VERSION,
 } from 'movement-lang';
 
 import type { InstanceChain } from 'movement-lang';
@@ -477,6 +478,7 @@ type AskHostModules = {
       entryPoints: Array<{ typeId: string; displayName: string; writable: boolean; readable: boolean }>;
     };
     chains: InstanceChain[];
+    languageVersion: number;
   }) => { schema: InstanceSchema };
 };
 
@@ -523,6 +525,7 @@ function catalogFor(probe: string): Catalog {
   const { schema } = graftGenericLandings({
     instance: { adapterType: 'ask', schema: askSchema, entryPoints: askEntryPoints },
     chains: scanInstanceChains(probe),
+    languageVersion: CURRENT_LANGUAGE_VERSION,
   });
   return mockCatalog({
     adapters: {

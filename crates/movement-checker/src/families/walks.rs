@@ -499,6 +499,48 @@ pub fn observe_hop(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep
     }
 }
 
+/// `reportInMemoryHopOrder`: `ORDER BY` / `LIMIT` on a hop over records the
+/// run already holds, on a move up across 5 — before 5 both engines kept every
+/// record, in the order held; from 5 they sort and cut as any hop does.
+pub fn report_in_memory_hop_order(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep) {
+    let Some(from) = from else { return };
+    let cardinality = step.cardinality.as_ref();
+    let mut clauses = Vec::new();
+    if cardinality.is_some_and(|c| c.order_by.is_some()) {
+        clauses.push("ORDER BY");
+    }
+    if cardinality.is_some_and(|c| c.limit.is_some()) {
+        clauses.push("LIMIT");
+    }
+    if clauses.is_empty() || !holds_in_memory(from, &step.edge_type_id) || !typing.upgrade_crosses(5) {
+        return;
+    }
+    let one = clauses.len() == 1;
+    typing.report_upgrade(
+        codes::IN_MEMORY_HOP_ORDER,
+        format!(
+            "since {} the {} on '-[:{}]->' {} read: the hop walks records the run already holds, and before, such a hop ignored {} and kept every record in the order held. Its result may change: if the program relied on that, change it, then upgrade.",
+            crate::version::describe(5),
+            clauses.join(" and "),
+            step.edge_type_id,
+            if one { "is" } else { "are" },
+            if one { "it" } else { "them" },
+        ),
+    );
+}
+
+/// `holdsInMemory`: whether the hop `edge` off `from` walks records the run
+/// already holds — an extraction's entities, or a local node's landed entries
+/// (a lazy entry walks its source again at every read, so it is not one).
+fn holds_in_memory(from: &Position, edge: &str) -> bool {
+    match from {
+        Position::Extract { .. } => true,
+        Position::Local(local) => local.edges.as_ref().and_then(|edges| edges.get(edge)).is_some_and(|e| !e.deferred),
+        Position::MaybeEmpty(inner) => holds_in_memory(inner, edge),
+        Position::Meta { .. } | Position::Position(_) | Position::Union(_) | Position::Handle(_) | Position::Closure(_) => false,
+    }
+}
+
 /// `edgeCapabilityFor`.
 fn edge_capability_for(from: &Position, edge: &str) -> Option<EdgeCapability> {
     match from {
@@ -1281,15 +1323,12 @@ impl crate::checker::Checker<'_> {
     }
 }
 
-/// `transformHopAsFunction` (language version 5): a plugin is a function, or
-/// a stage of an extraction when it has no output of its own.
+/// `transformHopAsFunction` (language version 5): a plugin is a function,
+/// a stage-only one too (the extraction stage went with the keyword).
 fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::types::PluginSpec) -> String {
     use crate::families::names::{import_line, spell_name};
     let lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
     let name = spell_name(plugin);
-    if spec.effects.is_none() || spec.fed_by_extraction == Some(true) || spec.output.is_none() {
-        return format!("{lead}, but '{plugin}' runs only as a stage of an extraction: '{}', then 'extract from [ … ] through [{name}] {{ … }}'", import_line(plugin, "plugins"));
-    }
     // Its arguments by position, each written as the parameter it is.
     let args = spec.positional_params(movement_parser::catalog::plugin_args::PluginCallSite::Plain).join(", ");
     format!(
@@ -1303,7 +1342,7 @@ fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::type
 fn meta_hop_retired_message(label: &str) -> String {
     let lead = format!("'-[:{label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares");
     if label == "#transform" {
-        return format!("{lead}. A plugin is a function: import it and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')");
+        return format!("{lead}. A plugin is a function: import it and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(…)')");
     }
     if label == "#linked" || label.starts_with("#linked ") {
         return format!("{lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> {{ … }}', then 'rec.<field>')");
@@ -1311,5 +1350,5 @@ fn meta_hop_retired_message(label: &str) -> String {
     if label.split(|c: char| c == ':' || c.is_whitespace()).next() == Some("#resources") {
         return format!("{lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files");
     }
-    format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')")
+    format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(…)')")
 }

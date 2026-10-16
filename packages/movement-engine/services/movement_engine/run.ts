@@ -6329,7 +6329,7 @@ class Interpreter {
       return statement.args;
     }
     const callable = pluginSpecUnder(spec, this.languageVersion);
-    const bound = bindPluginArgs(callable, 'plain', statement.args);
+    const bound = bindPluginArgs(callable, 'plain', statement.args, { languageVersion: this.languageVersion });
     const [misfit] = bound.misfits;
     if (misfit !== undefined) {
       const positional = pluginPositionalParams(callable, 'plain');

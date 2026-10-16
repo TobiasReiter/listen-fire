@@ -32,6 +32,7 @@ import { genericLandingKey, genericLandingName, literalStringValuesOf } from 'mo
 import type {
   InstanceChain,
   InstanceSchema,
+  LanguageVersion,
   PositionSchema,
   WritableRootSchema,
 } from 'movement-lang';
@@ -99,6 +100,9 @@ function projectLanding(input: {
 export function graftGenericLandings(input: {
   instance: GenericLandingInstance;
   chains: InstanceChain[];
+  /** The version the chains' programs are pinned to: a body is read as the
+   *  checker reads it, or the two derive different keys. */
+  languageVersion: LanguageVersion;
 }): { schema: InstanceSchema } {
   const { instance } = input;
   const synthesize = landingSynthesizerFor(instance.adapterType);
@@ -148,7 +152,7 @@ export function graftGenericLandings(input: {
       // Not a literal ⇒ computed at run time ⇒ nothing to synthesize. The
       // checker reports it or stays silent per the edge's own declaration; this
       // pass has no diagnostics of its own to add.
-      const values = literalStringValuesOf(raw);
+      const values = literalStringValuesOf(raw, { languageVersion: input.languageVersion });
       if (values === undefined) continue;
 
       const key = genericLandingKey({ target: edgeSchema.target, values });

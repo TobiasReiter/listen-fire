@@ -185,6 +185,12 @@ export const TypedDiagnosticCodes = {
    *  Before 5 those records always counted as present, so the test had one
    *  answer; from 5 it says whether the block returned any, as `EXISTS` did. */
   PRESENCE_OF_RETURNED: 'MOV_PRESENCE_OF_RETURNED',
+  /** Warning, upgrade only: `ORDER BY` or `LIMIT` on a hop over records the
+   *  run already holds (an extraction's entities, a node or graph literal's
+   *  entries, a run-built node's landings), in a program moving up across 5.
+   *  Before 5 both engines ignored them there; from 5 they are read, so the
+   *  hop's result may change. */
+  IN_MEMORY_HOP_ORDER: 'MOV_IN_MEMORY_HOP_ORDER',
   /** Warning, upgrade only: `COUNT` of a list that may hold an empty item,
    *  in a program moving up across 5. Before 5 it skipped empty items; from 5
    *  it counts every item, as TypeScript's `.length` does. */
@@ -4294,6 +4300,59 @@ export interface WriteTargetRef {
  *  {@link ExpressionTyping.checkCompareOperands}. */
 type CompareOperandRule = 'same-category' | 'element-wise' | 'duration' | 'none';
 
+/** Whether the hop `edge` off `from` walks records the run already holds —
+ *  an extraction's entities, or a local node's landed entries (a lazy entry
+ *  walks its source again at every read, so it is not one). */
+function holdsInMemory(from: PositionTypeRef, edge: string): boolean {
+  switch (from.kind) {
+    case 'extract':
+      return true;
+    case 'local':
+      return from.edges?.[edge] !== undefined && from.edges[edge].deferred !== true;
+    case 'maybeEmpty':
+      return holdsInMemory(from.of, edge);
+    case 'meta':
+    case 'position':
+    case 'union':
+    case 'handle':
+    case 'closure':
+      return false;
+    default:
+      return neverAsAny(from);
+  }
+}
+
+/** A value with no fields to read: text (an enum's value is text), a
+ *  number, or a true/false value. */
+type FieldlessScalar = 'text' | 'number' | 'boolean';
+
+interface ScalarFieldRead {
+  root: string;
+  field: string;
+  scalar: FieldlessScalar;
+}
+
+function fieldlessScalarOf(kind: ReturnType<typeof variantOf>['kind']): FieldlessScalar | undefined {
+  switch (kind) {
+    case 'text':
+    case 'enum':
+      return 'text';
+    case 'number':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    default:
+      return undefined;
+  }
+}
+
+/** How a message names each fieldless value. */
+const SCALAR_NOUNS: Record<FieldlessScalar, { is: string; subject: string; bare: string }> = {
+  text: { is: 'text', subject: 'a text', bare: 'text' },
+  number: { is: 'a number', subject: 'a number', bare: 'number' },
+  boolean: { is: 'a true/false value', subject: 'a true/false value', bare: 'value' },
+};
+
 const COMPARE_OPERAND_RULES: Record<FilterOperator, CompareOperandRule> = {
   eq: 'element-wise',
   neq: 'element-wise',
@@ -4712,16 +4771,17 @@ export class ExpressionTyping {
     return this.readDictMember(held, expr.expression);
   }
 
-  /** `t.Name` (and `t.Name.x`) where `t` holds text: the field read off a
-   *  value that has none. Undefined for any other read. */
-  private textFieldRead(expr: Extract<Expression, { type: 'traverse' }>): { root: string; field: string } | undefined {
+  /** `t.Name` (and `t.Name.x`) where `t` holds text, a number or a
+   *  true/false value: the field read off a value that has none. Undefined
+   *  for any other read. */
+  private scalarFieldRead(expr: Extract<Expression, { type: 'traverse' }>): ScalarFieldRead | undefined {
     if (before(this.options.languageVersion, 3)) return undefined;
     if (expr.aliasRoot === undefined || expr.steps.length > 0) return undefined;
     if (this.rootType(expr.aliasRoot) !== undefined) return undefined;
     const held = this.scalarType(expr.aliasRoot);
     if (held === undefined) return undefined;
-    const kind = variantOf(stripAbsent(held)).kind;
-    if (kind !== 'text' && kind !== 'enum') return undefined;
+    const scalar = fieldlessScalarOf(variantOf(stripAbsent(held)).kind);
+    if (scalar === undefined) return undefined;
     const member = expr.expression;
     const field =
       member.type === 'property'
@@ -4729,15 +4789,17 @@ export class ExpressionTyping {
         : member.type === 'traverse' && member.aliasRoot !== undefined
           ? member.aliasRoot
           : undefined;
-    return field === undefined ? undefined : { root: expr.aliasRoot, field };
+    return field === undefined ? undefined : { root: expr.aliasRoot, field, scalar };
   }
 
-  private reportTextFieldRead(read: { root: string; field: string }): void {
+  private reportScalarFieldRead(read: ScalarFieldRead): void {
+    const noun = SCALAR_NOUNS[read.scalar];
     // A nested call's staged value (`Text.upper(t).x`) has no name to show.
     const named = !read.root.startsWith('#');
     const message = named
-      ? `'${read.root}' is text, and a text has no fields — '${read.field}' is not something it holds. Use the text itself ('${read.root}'), or read '${read.field}' off the record the text came from`
-      : `this is text, and a text has no fields — '${read.field}' is not something it holds. Use the text itself, or read '${read.field}' off the record the text came from`;
+      ? `'${read.root}' is ${noun.is}, and ${noun.subject} has no fields — '${read.field}' is not something it holds. Use the ${noun.bare} itself ('${read.root}'), or read '${read.field}' off the record the ${noun.bare} came from`
+      : `this is ${noun.is}, and ${noun.subject} has no fields — '${read.field}' is not something it holds. Use the ${noun.bare} itself, or read '${read.field}' off the record the ${noun.bare} came from`;
+    // Before 5 both engines read such a field as null.
     if (since(this.options.languageVersion, 5)) this.report(TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS, message);
     else this.report(TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS, `${message}. Before ${describeLanguageVersion(5)} it reads null; from it, this is refused`, 'warning');
   }
@@ -4934,8 +4996,8 @@ export class ExpressionTyping {
         this.exactTypes.set(expr, keyRead.type);
         return keyRead.type;
       }
-      const textRead = this.textFieldRead(expr);
-      if (textRead !== undefined) this.reportTextFieldRead(textRead);
+      const scalarRead = this.scalarFieldRead(expr);
+      if (scalarRead !== undefined) this.reportScalarFieldRead(scalarRead);
       const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : undefined;
       const position = this.walkSteps(start, expr.steps);
       this.rememberOrdering(expr, position);
@@ -5219,8 +5281,8 @@ export class ExpressionTyping {
         const keyRead = this.dictMemberRead(expr);
         if (keyRead !== undefined) return keyRead.type;
         // Said, and then read as it always was (as nothing).
-        const textRead = this.textFieldRead(expr);
-        if (textRead !== undefined) this.reportTextFieldRead(textRead);
+        const scalarRead = this.scalarFieldRead(expr);
+        if (scalarRead !== undefined) this.reportScalarFieldRead(scalarRead);
         const exists = existsSubject(expr);
         if (exists !== undefined) {
           this.reportConstantPresenceTest(exists, this.code(`EXISTS(${exists})`), 'always true');
@@ -6257,6 +6319,23 @@ export class ExpressionTyping {
     }
   }
 
+  /** `ORDER BY` / `LIMIT` on a hop over records the run already holds, on a
+   *  move up across 5: before 5 both engines kept every record, in the order
+   *  held; from 5 they sort and cut as any hop does. */
+  private reportInMemoryHopOrder(from: PositionTypeRef, step: Extract<TraversalStep, { type: 'edge' }>): void {
+    const clauses = [
+      ...(step.cardinality?.orderBy !== undefined ? ['ORDER BY'] : []),
+      ...(step.cardinality?.limit !== undefined ? ['LIMIT'] : []),
+    ];
+    if (clauses.length === 0 || !holdsInMemory(from, step.edgeTypeId) || !this.upgradeCrosses(5)) return;
+    const written = clauses.join(' and ');
+    this.report(
+      TypedDiagnosticCodes.IN_MEMORY_HOP_ORDER,
+      `since ${describeLanguageVersion(5)} the ${written} on '-[:${step.edgeTypeId}]->' ${clauses.length === 1 ? 'is' : 'are'} read: the hop walks records the run already holds, and before, such a hop ignored ${clauses.length === 1 ? 'it' : 'them'} and kept every record in the order held. Its result may change: if the program relied on that, change it, then upgrade.`,
+      'upgrade',
+    );
+  }
+
   /** The block's returned records, tested against null on a move up across
    *  5: the answer was fixed before (present) and is the real one from 5. */
   private reportPresenceOfReturned(subject: Expression, op: 'eq' | 'neq'): void {
@@ -6426,6 +6505,7 @@ export class ExpressionTyping {
         // Gate the hop's WHERE / ORDER BY / LIMIT against the source's declared
         // filter/order/limit capability (chunk 6). Silent when undeclared.
         if (current !== undefined) this.gateHopCapability(current, step, next);
+        if (current !== undefined) this.reportInMemoryHopOrder(current, step);
         current = next;
       } else if (step.type === 'meta_edge') {
         if (step.alias) this.locals.set(step.alias, undefined);

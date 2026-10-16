@@ -631,7 +631,9 @@ impl Checker<'_> {
     /// `hoistNestedCalls`, the rewrite: each call an expression runs (in
     /// source order), where it is and the name it is hoisted to, and the slot
     /// with each call replaced by its name — padded to the call's length so
-    /// every later offset into the text is the original's.
+    /// every later offset into the text is the original's. The padding goes
+    /// before the name, so the name ends where the call did and what follows
+    /// the call still follows it (`sort(…)[0]` is the name's `[0]`).
     pub fn nested_call_rewrite(&self, slot: &ExprSlot, scope: ScopeId) -> Option<(Vec<HoistedCall>, ExprSlot)> {
         if !since(self.version, 3) {
             return None;
@@ -655,10 +657,11 @@ impl Checker<'_> {
             rewritten.extend_from_slice(&units[from..at.start]);
             let spelled: Vec<u16> = format!("`{name}`").encode_utf16().collect();
             let extent = &units[at.start..at.end];
-            rewritten.extend_from_slice(&spelled);
-            for unit in extent.iter().skip(spelled.len()) {
+            let padding = extent.len().saturating_sub(spelled.len());
+            for unit in &extent[..padding] {
                 rewritten.push(if *unit == u16::from(b'\n') { *unit } else { u16::from(b' ') });
             }
+            rewritten.extend_from_slice(&spelled);
             from = at.end;
             hoisted.push(HoistedCall { at, span, name });
         }
