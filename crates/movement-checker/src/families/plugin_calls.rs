@@ -242,7 +242,9 @@ impl Checker<'_> {
                         // argument — a value bound, as `boundCallShape` reads it.
                         let shape = self.check_call(call, scope);
                         self.note_bound_self_call(&call.callee, call.span, scope);
-                        if self.callee_returns(&call.callee, scope) == Some(false) {
+                        if self.plugin_without_output(&call.callee, scope) {
+                            self.report_plugin_hands_back_nothing(&call.callee, call.span);
+                        } else if self.callee_returns(&call.callee, scope) == Some(false) {
                             self.report_call_returns_nothing(&call.callee, call.span);
                         }
                         let record = shape.plane.pos.as_deref().cloned().or_else(|| crate::types::field::record_in(shape.plane.field.as_ref()).flatten());

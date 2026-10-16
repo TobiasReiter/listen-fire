@@ -85,12 +85,15 @@ impl Run<'_> {
     pub(crate) async fn invoke_plugin(&self, written: &str, args: &[CallArg], scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Binding, Stop> {
         let registered = self.registered_plugin(written, scope);
         let declared = self.plugin_spec(&registered).and_then(|spec| output_under(spec, self.version())).cloned();
-        let Some(declared) = declared else {
+        // From version 5 a plugin that declares no output runs as a statement,
+        // for its effects, and binds nothing; the checker refuses its value.
+        let for_effects = declared.is_none() && self.plugin_spec(&registered).is_some() && self.version() >= 5;
+        if declared.is_none() && !for_effects {
             return Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
-        };
+        }
         // From version 5 its arguments are by position, bound to its
         // parameters as the checker bound them.
         let bound = match self.plugin_spec(&registered) {
@@ -178,12 +181,13 @@ impl Run<'_> {
         let result = self.invoke(&registered, &config, &extracted_context).await.map_err(Stop::Thrown)?;
         let duration = self.clock_now().await.map_err(Stop::Thrown)? - started;
         let (binding, handed_back) = match declared {
-            PluginOutput::Value { .. } => {
+            None => (Binding::Value(ValueBinding { value: Js::Undefined, trail: None, many: false }), false),
+            Some(PluginOutput::Value { .. }) => {
                 let value = result.text().map_or(Js::Null, Js::str);
                 let handed_back = !matches!(value, Js::Null);
                 (Binding::Value(ValueBinding { value, trail: Some(trail), many: false }), handed_back)
             }
-            PluginOutput::Record { .. } => {
+            Some(PluginOutput::Record { .. }) => {
                 let mut fields = JsObject::new();
                 if let Some(text) = result.text() {
                     fields.set(FETCHED_TEXT_FIELD.into(), Js::str(text));
@@ -204,7 +208,7 @@ impl Run<'_> {
             // One record per thing the plugin found, in its order: the
             // landings a hop would give, so FIRST, MAP and a field read work
             // across them (`pluginCallBinding`). None found is the empty list.
-            PluginOutput::Records { .. } => {
+            Some(PluginOutput::Records { .. }) => {
                 if result.records_not_a_list {
                     return Err(Stop::Thrown(Failure::Engine {
                         class: crate::eval::ErrorClass::TypeError,

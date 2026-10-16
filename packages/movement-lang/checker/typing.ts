@@ -166,7 +166,7 @@ export const TypedDiagnosticCodes = {
   /** From version 5, a bare name in a hop's WHERE or ORDER BY that no
    *  variable in scope binds and the hop's type does not carry (the walk's
    *  own unknown name: one diagnostic, not the alias spelling as well). */
-  NAME_UNRESOLVED: 'MOV_NAME_UNRESOLVED',
+  WALK_NAME_UNRESOLVED: 'MOV_NAME_UNRESOLVED',
   /** Since language version 4: `.created` / `.committed` read off a write's
    *  handle, where the record declares no such field. They were facts about
    *  the write, not fields of the record, and `-[:@old]->` answers both: no
@@ -6146,7 +6146,7 @@ export class ExpressionTyping {
         ? ` — did you mean the field '${closest}', read through the hop's alias?`
         : ` — did you mean '${closest}'?`;
     this.report(
-      TypedDiagnosticCodes.NAME_UNRESOLVED,
+      TypedDiagnosticCodes.WALK_NAME_UNRESOLVED,
       `Unknown name '${name}' — no variable in scope is called that, and ${describePosition(position)} has no such field (a bare name inside a walk's brackets is a variable from outside the walk; a field is read through the hop's alias)${hint}`,
     );
   }

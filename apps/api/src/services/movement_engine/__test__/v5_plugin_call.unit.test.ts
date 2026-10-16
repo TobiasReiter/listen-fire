@@ -411,12 +411,12 @@ describe.each(ENGINES)('a plugin fed only by an extraction, called on %s', (_nam
   });
 });
 
-// A plugin that declares no output is an ordinary call to the checkers from
-// language version 5 (its value unknown). The Rust engine admits the run (a
-// plugin with no output is `PluginBinds::Nothing`, admitted). Both engines
-// then end the run at the call (the TypeScript before invoking it), saying the
-// checker should have refused it: what such a call hands back is not yet
-// decided, so the engines and the checkers disagree here.
+// From language version 5 a plugin that declares no output is called only as
+// a statement, run for its effects: the checkers refuse its value
+// (MOV_PLUGIN_OUTPUT_UNDECLARED, movement-lang's v5_plugin_no_output test), so
+// a checked-clean program reaches it only here. Both engines admit the run
+// (the Rust one's `PluginBinds::Nothing`), invoke the plugin and bind nothing;
+// neither reaches its "the checker should have caught this".
 const UNDECLARED = ['import { `@lf/email` as email } from adapters', 'import { hiddenRow, noOutput } from plugins', '', 'inbox = connect email', ''].join('\n');
 const undeclared: typeof catalog = {
   ...catalog,
@@ -427,13 +427,13 @@ const undeclared: typeof catalog = {
   },
 };
 
-describe.each(ENGINES)('a plugin with no declared output, called on %s', (_name, config, engine) => {
-  it.each(['hiddenRow', 'noOutput'])('%s: the run is admitted, and ends at the call', async (callee) => {
-    const ended = await run([`  said = ${callee}(m.\`subject\`)`], config, {}, { prelude: UNDECLARED, catalog: undeclared }).then(
-      (calls) => ({ calls }),
-      (error: unknown) => ({ error: String(error) }),
-    );
+describe.each(ENGINES)('a plugin with no declared output, called as a statement on %s', (_name, config, engine) => {
+  it.each([
+    ['hiddenRow', 'hidden_row'],
+    ['noOutput', 'no_output'],
+  ])('%s: the run is admitted, and the plugin runs for its effects', async (callee, plugin) => {
+    const calls = await run([`  ${callee}(m.\`subject\`)`], config, {}, { prelude: UNDECLARED, catalog: undeclared });
     expect(recorded.map((r) => [r.engine, r.reason])).toEqual([[engine, 'admitted']]);
-    expect(ended).toEqual({ error: expect.stringContaining(`MOVENG_RUNTIME: '${callee}' declares no output`) });
+    expect(calls).toEqual([{ plugin, config: { text: 'Acme' } }]);
   });
 });

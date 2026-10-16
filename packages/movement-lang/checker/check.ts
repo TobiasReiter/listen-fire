@@ -6452,6 +6452,10 @@ class Checker {
       uses.push({ callee: call.callee, span });
       this.boundSelfCalls.set(resolution.symbol, uses);
     }
+    if (this.pluginWithoutOutput(call, scope)) {
+      this.reportPluginHandsBackNothing(call.callee, span);
+      return {};
+    }
     if (!returned.returns) {
       // Silent when the callee is unknown (an unresolved name, a file import
       // the linker could not follow): nobody here knows what it returns, and
@@ -6513,6 +6517,25 @@ class Checker {
     this.report(
       DiagnosticCodes.CALL_RETURNS_NOTHING,
       `'${callee}' returns nothing, so there is no value to bind — a call's value is what it returns. Add a 'return' to '${callee}', or call it as a statement.`,
+      span,
+    );
+  }
+
+  /** From version 5 a plugin whose manifest declares no output runs only as
+   *  a statement, for its effects: its call hands nothing back. (One fed only
+   *  by an extraction is refused as a call already.) */
+  private pluginWithoutOutput(call: CallStatement, scope: Scope): boolean {
+    if (before(this.languageVersion, 5)) return false;
+    const resolution = this.calleeResolution(call.callee, scope);
+    if (resolution.kind !== 'found' || resolution.symbol.kind !== 'plugin') return false;
+    const spec = this.plainPluginSpec(resolution.symbol.importedName ?? call.callee);
+    return spec !== undefined && spec.fedByExtraction !== true && pluginOutputUnder(spec, this.languageVersion) === undefined;
+  }
+
+  private reportPluginHandsBackNothing(callee: string, span: Span): void {
+    this.report(
+      DiagnosticCodes.PLUGIN_OUTPUT_UNDECLARED,
+      `'${callee}' is a plugin whose manifest declares no output, so its call hands nothing back to use — call it as a statement, on a line of its own, to run it for its effects. To use what it finds, the plugin's author declares an output in its manifest.`,
       span,
     );
   }
@@ -12174,6 +12197,12 @@ class Checker {
         // by the same STRUCTURAL road — a node belongs to no graph, and there
         // is no third rule for one that came out of a call.
         const value = this.checkCall(arg.call, scope);
+        // (A plugin's own argument is refused where its type is checked,
+        // `reportPluginArgType`.)
+        if (plugin === undefined && this.pluginWithoutOutput(arg.call, scope)) {
+          this.reportPluginHandsBackNothing(arg.call.callee, arg.call.span);
+          return;
+        }
         if (param?.type.fieldType !== undefined) {
           this.checkValueArgFit(fit, param.type.fieldType, valueOfReturn(value), { span: arg.call.span });
           return;

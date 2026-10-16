@@ -275,6 +275,12 @@ impl Checker<'_> {
                 CallReading::Refused { code, message, span } => self.report(code, message, span),
                 _ => {
                     let value = self.check_call(call, scope);
+                    // (A plugin's own argument is refused where its type is
+                    // checked, `report_plugin_arg_type`.)
+                    if fit.plugin.is_none() && self.plugin_without_output(&call.callee, scope) {
+                        self.report_plugin_hands_back_nothing(&call.callee, call.span);
+                        return;
+                    }
                     if let Some(param) = fit.field_type() {
                         self.check_value_arg_fit(fit, param, value_of_return(&value).as_ref(), ValueArg::at(call.span));
                         return;

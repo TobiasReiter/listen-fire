@@ -962,7 +962,9 @@ impl Checker<'_> {
             CallReading::Function => {
                 let returned = self.check_call(call, scope);
                 self.note_bound_self_call(&call.callee, span, scope);
-                if self.callee_returns(&call.callee, scope) == Some(false) {
+                if self.plugin_without_output(&call.callee, scope) {
+                    self.report_plugin_hands_back_nothing(&call.callee, span);
+                } else if self.callee_returns(&call.callee, scope) == Some(false) {
                     self.report_call_returns_nothing(&call.callee, span);
                 }
                 return crate::checker::Bound { returned: Some(returned), ..Default::default() };
@@ -1733,6 +1735,31 @@ impl Checker<'_> {
             return None;
         }
         self.function_returns.get(&id).copied()
+    }
+
+    /// `pluginWithoutOutput`: from version 5 a plugin whose manifest declares
+    /// no output runs only as a statement, for its effects. (One fed only by
+    /// an extraction is refused as a call already.)
+    pub fn plugin_without_output(&self, written: &str, scope: ScopeId) -> bool {
+        if before(self.version, 5) {
+            return false;
+        }
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return false };
+        if self.scopes.symbol(id).kind != SymbolKind::Plugin {
+            return false;
+        }
+        self.plugin_spec_of(id, written)
+            .is_some_and(|spec| spec.fed_by_extraction != Some(true) && crate::families::plugin_calls::plugin_output_under(&spec, self.version).is_none())
+    }
+
+    /// `reportPluginHandsBackNothing`.
+    pub fn report_plugin_hands_back_nothing(&mut self, callee: &str, span: Span) {
+        self.report(
+            codes::PLUGIN_OUTPUT_UNDECLARED,
+            format!("'{callee}' is a plugin whose manifest declares no output, so its call hands nothing back to use — call it as a statement, on a line of its own, to run it for its effects. To use what it finds, the plugin's author declares an output in its manifest."),
+            span,
+        );
     }
 
     /// `reportCallReturnsNothing`.

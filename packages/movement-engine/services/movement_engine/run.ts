@@ -6252,10 +6252,13 @@ class Interpreter {
     // its older shape for movements pinned before the change.
     const spec = pluginSpecNamed(this.input.catalog.plugins, plugin);
     const declared = spec !== undefined ? pluginOutputUnder(spec, this.languageVersion) : undefined;
-    if (declared === undefined) {
-      // The checker refuses a plain call to a plugin that declared no output,
-      // so reaching here means the two disagree — which is worth saying, not
-      // guessing past.
+    // From version 5 a plugin that declares no output runs as a statement,
+    // for its effects, and binds nothing; the checker refuses its value.
+    const forEffects = declared === undefined && spec !== undefined && since(this.languageVersion, 5);
+    if (declared === undefined && !forEffects) {
+      // Before 5 the checker refuses a plain call to a plugin that declared no
+      // output, so reaching here means the two disagree — which is worth
+      // saying, not guessing past.
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
         `'${statement.callee}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this`,
@@ -6302,11 +6305,9 @@ class Interpreter {
     const durationMs = await elapsed();
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
-    const { binding, handedBack } = pluginCallBinding(
-      declared,
-      result,
-      transformed(unionProvenance(trails)),
-    );
+    const { binding, handedBack } = declared !== undefined
+      ? pluginCallBinding(declared, result, transformed(unionProvenance(trails)))
+      : { binding: undefined, handedBack: false };
     const fields = Object.keys(result.data ?? {});
     this.trace.push({
       kind: 'plugin',

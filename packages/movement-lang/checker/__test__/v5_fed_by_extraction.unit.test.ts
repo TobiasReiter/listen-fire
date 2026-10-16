@@ -84,11 +84,15 @@ describe('versions 1–4', () => {
 describe('a plugin that has not declared what it does or hands back', () => {
   const program = (version: number): string =>
     version >= 5
-      ? 'import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n'
+      ? 'import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  hiddenRow(n)\n  noOutput(n)\n}\n'
       : 'import { hidden_row, no_output } from plugins\n\nmovement go(n: <text>) {\n  a = hidden_row(text: n)\n  b = no_output(text: n)\n}\n';
 
+  // Called as a statement, run for its effects: it declares no output, so
+  // from 5 its value is refused (Henry 2026-10-16).
   it('is an ordinary call from 5: there is no stage to send it to', () => {
     expect(check(program(5), 5)).toEqual([]);
+    const bound = 'import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n';
+    expect(codes(bound, 5)).toEqual(['MOV_PLUGIN_OUTPUT_UNDECLARED', 'MOV_PLUGIN_OUTPUT_UNDECLARED']);
   });
 
   it('is still sent to a stage under 4', () => {

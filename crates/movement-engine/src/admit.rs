@@ -53,7 +53,8 @@ enum PluginBinds {
     Value,
     Record,
     Records,
-    /// The plugin declares no output: the call fails, as the TypeScript's does.
+    /// The plugin declares no output: before version 5 the call fails, as the
+    /// TypeScript's does; from 5 it runs as a statement and binds nothing.
     Nothing,
     /// The snapshot does not say (it did not read, or lacks the plugin).
     Unknown,

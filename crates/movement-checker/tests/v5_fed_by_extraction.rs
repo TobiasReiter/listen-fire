@@ -88,11 +88,15 @@ fn versions_1_to_4_keep_it_a_stage() {
 }
 
 /// Two plugins that never said what they do or hand back: a stage was their
-/// only way in before 5, and from 5, with no stage, they are ordinary calls.
+/// only way in before 5, and from 5, with no stage, they are ordinary calls,
+/// run as statements for their effects (they declare no output, so their
+/// value is refused).
 #[test]
 fn a_plugin_that_has_not_declared_its_row_or_output_is_an_ordinary_call_from_5() {
-    let v5 = "import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n";
+    let v5 = "import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  hiddenRow(n)\n  noOutput(n)\n}\n";
     assert_eq!(codes(v5, 5), Vec::<String>::new());
+    let bound = "import { hiddenRow, noOutput } from plugins\n\nfunction go(n: <text>) {\n  a = hiddenRow(n)\n  b = noOutput(n)\n}\n";
+    assert_eq!(codes(bound, 5), vec!["MOV_PLUGIN_OUTPUT_UNDECLARED", "MOV_PLUGIN_OUTPUT_UNDECLARED"]);
     let v4 = "import { hidden_row, no_output } from plugins\n\nmovement go(n: <text>) {\n  a = hidden_row(text: n)\n  b = no_output(text: n)\n}\n";
     assert_eq!(codes(v4, 4), vec!["MOV_PLUGIN_ROW_UNDECLARED", "MOV_PLUGIN_OUTPUT_UNDECLARED"]);
     assert!(errors(v4, 4).iter().all(|d| d.message.contains("through [")));
