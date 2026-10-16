@@ -191,7 +191,11 @@ fn refuse_maybe_record_for_builtin(typing: &mut Typing, builtin: &Builtin, param
         describe_field_type(&hidden),
         if file { "a file" } else { "a record" },
         describe_param_type(param.ty),
-        if file { "Pass its text ('READ(f)')" } else { "Narrow it to the record with IS and pass a field off it ('r.`Name`')" }
+        if file {
+            "Pass its text ('READ(f)')".to_string()
+        } else {
+            format!("Narrow it to the record with {} and pass a field off it ('r.`Name`')", movement_parser::surface::phrase::spell_word("IS", typing.version))
+        }
     );
     if typing.version >= 5 {
         typing.report(codes::CALL_ARG_MAYBE_RECORD, message);
@@ -1137,7 +1141,10 @@ impl Checker<'_> {
         if let MExpr::If { else_: None, at, .. } = expr {
             self.report(
                 codes::IF_WITHOUT_ELSE,
-                "this IF has no ELSE, so where its condition fails it is \"\" (empty text), whatever THEN gives — say what it is there: 'IF … THEN … ELSE … END'",
+                format!(
+                    "this IF has no ELSE, so where its condition fails it is \"\" (empty text), whatever THEN gives — say what it is there: '{}'",
+                    self.code("IF … THEN … ELSE … END")
+                ),
                 at_.span_of(*at),
             );
         }
@@ -1257,7 +1264,13 @@ impl Checker<'_> {
                     TreeAt::Head { .. } => None,
                 };
                 let fix = slot.and_then(|slot| self.closest_function_name(written, scope).map(|to| (slot, to))).map(|(slot, to)| {
-                    let spelled = if to.chars().any(char::is_whitespace) { format!("`{to}`") } else { to };
+                    // A built-in is named in the program's own spelling
+                    // (`Date.parse` from 5); a name with a space wears backticks.
+                    let spelled = if to.chars().any(char::is_whitespace) {
+                        format!("`{to}`")
+                    } else {
+                        movement_parser::surface::table::spell_message(&to, self.version)
+                    };
                     let units: Vec<u16> = slot.raw.encode_utf16().collect();
                     let c = callee.at();
                     let corrected = format!(
@@ -1684,7 +1697,10 @@ impl Checker<'_> {
     pub fn report_construction_returned(&mut self, construct: &movement_parser::ast::ConstructionCall, span: Span) {
         self.report(
             codes::RETURN_NOT_A_VALUE,
-            format!("'{}(…)' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.", construct.callee),
+            format!(
+                "'{}' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.",
+                if since(self.version, 5) { format!("connect {}", construct.callee) } else { format!("{}(…)", construct.callee) }
+            ),
             span,
         );
     }

@@ -619,7 +619,8 @@ impl Checker<'_> {
             return None;
         }
         let surface = crate::types::declared::schema_surface(&instance.schema, position)?;
-        Some(crate::types::declared::surface_misfit(Some(&surface), schema, &declared.instance.name, false).is_none())
+        let options = crate::types::declared::MisfitOptions { absent_may_be_missing: false, version: self.version };
+        Some(crate::types::declared::surface_misfit(Some(&surface), schema, &declared.instance.name, options).is_none())
     }
 
     /// `declaredRootPosition` of the declaration `symbol` names.
@@ -635,7 +636,7 @@ use movement_parser::ast::{NodeEntry, NodeLiteral, TypeRef};
 use movement_parser::lowering::expression::Expression;
 
 use crate::types::Position;
-use crate::types::declared::{describe_shape_node, run_built_landing, supplied_surface, surface_misfit};
+use crate::types::declared::{MisfitOptions, describe_shape_node, run_built_landing, supplied_surface, surface_misfit};
 use crate::types::field::{Ty, describe_field_type, field_type_equals};
 use crate::types::position::{LocalEdge, LocalNode, describe_position, position_ref_in, positions_match};
 
@@ -918,13 +919,13 @@ fn empty_local(label: &str) -> Position {
 
 /// `structuralMisfit`: what a supplied record lacks that the required
 /// position (or every variant of a required union) declares.
-pub fn structural_misfit(supplied: &Position, required: &Position) -> Option<String> {
+pub fn structural_misfit(supplied: &Position, required: &Position, version: u32) -> Option<String> {
     match required {
-        Position::Position(p) => node_misfit_against(supplied, &p.instance.schema, &p.position),
+        Position::Position(p) => node_misfit_against(supplied, &p.instance.schema, &p.position, version),
         Position::Union(u) => {
             let mut misfits = Vec::new();
             for variant in &u.variants {
-                let misfit = node_misfit_against(supplied, &u.instance.schema, variant)?;
+                let misfit = node_misfit_against(supplied, &u.instance.schema, variant, version)?;
                 misfits.push(format!("{variant} ({misfit})"));
             }
             (!misfits.is_empty()).then(|| format!("it fits none of {}", or_list(&misfits)))
@@ -934,8 +935,8 @@ pub fn structural_misfit(supplied: &Position, required: &Position) -> Option<Str
     }
 }
 
-fn node_misfit_against(supplied: &Position, schema: &InstanceSchema, position: &str) -> Option<String> {
-    surface_misfit(supplied_surface(supplied).as_ref(), schema, position, false)
+fn node_misfit_against(supplied: &Position, schema: &InstanceSchema, position: &str, version: u32) -> Option<String> {
+    surface_misfit(supplied_surface(supplied).as_ref(), schema, position, MisfitOptions { absent_may_be_missing: false, version })
 }
 
 /// `orList`: `a`, `a or b`, `a, b, or c`.
@@ -1208,7 +1209,7 @@ impl Checker<'_> {
                     "{shape} declares `{name}` as {}, and this is {}{}",
                     describe_field_type(&want),
                     describe_field_type(have),
-                    crate::types::declared::text_repair(have, &want)
+                    crate::types::declared::text_repair(have, &want, self.version)
                 ),
                 span,
             );
@@ -1354,7 +1355,7 @@ impl Checker<'_> {
     /// `checkGraphReferenceFits`: do the records a reference entry holds carry
     /// what the shape's child node needs?
     fn check_graph_reference_fits(&mut self, name: &str, records: &Position, required: &Required, span: Span) {
-        let Some(misfit) = surface_misfit(record_surface(records).as_ref(), &required.schema, &required.position, true) else { return };
+        let Some(misfit) = surface_misfit(record_surface(records).as_ref(), &required.schema, &required.position, MisfitOptions { absent_may_be_missing: true, version: self.version }) else { return };
         self.report(
             codes::GRAPH_REFERENCE_SHAPE,
             format!(
@@ -1426,7 +1427,7 @@ impl Checker<'_> {
         let (Some(to_type), Some(target)) = (to_type, edge.target.as_ref()) else { return };
         let local_to = matches!(to_type, Position::Local(_));
         if (edge.structural || local_to)
-            && let Some(misfit) = structural_misfit(&to_type, target)
+            && let Some(misfit) = structural_misfit(&to_type, target, self.version)
         {
             self.report(codes::NODE_LINK_SHAPE, format!("'{}' lands on {}, and {misfit}", link.edge, describe_position(target)), link.span);
             return;
@@ -1442,13 +1443,14 @@ impl Checker<'_> {
 }
 
 /// `declaredParamMisfit`: what a record lacks that a declared-node parameter needs.
-pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::position::RecordPosition) -> Option<String> {
+pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::position::RecordPosition, version: u32) -> Option<String> {
+    let options = MisfitOptions { absent_may_be_missing: false, version };
     let schema = &param.instance.schema;
     match arg {
         Position::Union(u) => {
             for variant in &u.variants {
                 let surface = crate::types::declared::schema_surface(&u.instance.schema, variant);
-                if let Some(misfit) = surface_misfit(surface.as_ref(), schema, &param.position, false) {
+                if let Some(misfit) = surface_misfit(surface.as_ref(), schema, &param.position, options) {
                     let shown = crate::types::position::display_name_of(&u.instance, variant);
                     return Some(format!("{shown}, one of what this argument may be, does not fit: {misfit}"));
                 }
@@ -1456,7 +1458,7 @@ pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::positi
             None
         }
         Position::Meta { .. } | Position::Closure(_) => Some(format!("this argument is {}, not a record", describe_position(arg))),
-        _ => surface_misfit(record_surface(arg).as_ref(), schema, &param.position, false),
+        _ => surface_misfit(record_surface(arg).as_ref(), schema, &param.position, options),
     }
 }
 
@@ -1692,7 +1694,7 @@ impl Checker<'_> {
         // The entry made the record alone holds it as a reference: the value
         // itself when it is the record, or a slot of it.
         let only = match held.steps.as_slice() {
-            [HeldStep::Slot(index)] if crate::slots::is_bare_ident(written) => Some(format!("AT({written}, {index})")),
+            [HeldStep::Slot(index)] if crate::slots::is_bare_ident(written) => Some(self.code(&format!("AT({written}, {index})"))),
             [] => Some("r".to_string()),
             _ => None,
         };
@@ -1762,7 +1764,7 @@ impl Checker<'_> {
             }
             let Some((_, landing)) = supplied.edges.iter().find(|(k, _)| k == name) else { continue };
             let landed = landing.as_ref().and_then(|thunk| thunk());
-            if let Some(misfit) = surface_misfit(landed.as_ref(), &required.schema, &edge.target, true) {
+            if let Some(misfit) = surface_misfit(landed.as_ref(), &required.schema, &edge.target, MisfitOptions { absent_may_be_missing: true, version: self.version }) {
                 self.report(
                     codes::GRAPH_COPY_SHAPE,
                     format!(

@@ -12,6 +12,7 @@
 //! one versions 1–4 read.
 
 pub mod canonical;
+pub mod phrase;
 pub mod table;
 
 #[cfg(test)]

@@ -40,6 +40,7 @@ use crate::types::field::{
     union_members, unwrap_list, ComparisonCategory,
 };
 use crate::types::infer::Typing;
+use movement_parser::surface::phrase::{spell_code, spell_word};
 use crate::types::narrowing::{POSITION_SENTINEL, bare_name, direct_field_read, is_null_literal};
 use crate::types::position::{Position, lookup_property_type};
 
@@ -93,14 +94,14 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
                 LogicalOp::And => "AND",
                 LogicalOp::Or => "OR",
             };
-            typing.refuse_closure_operands(&pairs, expr, &format!("joined by {spelled}"));
+            typing.refuse_closure_operands(&pairs, expr, &format!("joined by {}", spell_word(spelled, typing.version)));
         }
         Expression::Not { expression } => {
-            typing.refuse_closure_operands(&[(expression, operands[0].as_ref())], expr, "negated by NOT");
+            typing.refuse_closure_operands(&[(expression, operands[0].as_ref())], expr, &format!("negated by {}", spell_word("NOT", typing.version)));
         }
         Expression::Traverse { .. } => {
             if let Some(name) = crate::types::narrowing::exists_subject(expr) {
-                report_constant_presence_test(typing, name, &format!("EXISTS({name})"), "always true");
+                report_constant_presence_test(typing, name, &typing.code(&format!("EXISTS({name})")), "always true");
             }
         }
         Expression::At { expression, .. } => {
@@ -1287,9 +1288,9 @@ impl crate::checker::Checker<'_> {
             self.report(
                 codes::ABSENT_REQUIRED,
                 format!(
-                    "'{name}' is {} that may not be there, so this {verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if {name} != null {{ {verb} {from} -[:{edge}]-> {} }}'.",
+                    "'{name}' is {} that may not be there, so this {verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: '{}'.",
                     crate::types::position::describe_position(&of),
-                    to.unwrap_or("…")
+                    self.code(&format!("if {name} != null {{ {verb} {from} -[:{edge}]-> {} }}", to.unwrap_or("…")))
                 ),
                 span,
             );
@@ -1314,6 +1315,8 @@ pub struct WriteFieldAbsence<'a> {
     pub may_leave_unset: bool,
     /// The field is part of the write's `unique by` identity.
     pub identifies: bool,
+    /// The program's language version: the repair is spelled as it reads.
+    pub version: u32,
 }
 
 /// `checkWrite`'s require-present rule for one field: a value that may be
@@ -1343,7 +1346,10 @@ pub fn write_field_absence(input: WriteFieldAbsence) -> Option<crate::diagnostic
     if input.identifies {
         return Some(crate::diagnostic::Diagnostic::error(
             codes::ABSENT_REQUIRED,
-            format!("{lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if {raw} != null {{ … }}'"),
+            format!(
+                "{lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside '{}'",
+                spell_code(&format!("if {raw} != null {{ … }}"), input.version)
+            ),
             span,
         ));
     }
@@ -1359,7 +1365,7 @@ pub fn write_field_absence(input: WriteFieldAbsence) -> Option<crate::diagnostic
             span,
         ));
     };
-    let coalesced = format!("COALESCE({raw}, {fallback})");
+    let coalesced = spell_code(&format!("COALESCE({raw}, {fallback})"), input.version);
     let mut diagnostic = crate::diagnostic::Diagnostic::error(
         codes::ABSENT_REQUIRED,
         format!(

@@ -319,6 +319,7 @@ impl Checker<'_> {
                     root_description: &root_description,
                     may_leave_unset,
                     identifies,
+                    version: self.version,
                 }) {
                     self.push(diagnostic);
                 }
@@ -488,9 +489,11 @@ impl Checker<'_> {
             self.report(
                 codes::ABSENT_REQUIRED,
                 format!(
-                    "'{root_name}' is {} that may not be there, so a {} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('if {root_name} == null {{ ERROR(\"…\") }}', or 'if EXISTS({root_name})'), or gate on it with a traversal block ('{root_name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.",
+                    "'{root_name}' is {} that may not be there, so a {} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('{}', or '{}'), or gate on it with a traversal block ('{root_name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.",
                     describe_position(of),
-                    purpose.word()
+                    purpose.word(),
+                    self.code(&format!("if {root_name} == null {{ ERROR(\"…\") }}")),
+                    movement_parser::surface::phrase::spell_if(&format!("EXISTS({root_name})"), self.version)
                 ),
                 span,
             );
@@ -1307,7 +1310,7 @@ impl Checker<'_> {
             }
             self.report(
                 codes::WRITE_FIELD_TYPE,
-                format!("'{field_name}' on {subject} is {}, and this is {}{}", describe_field_type(target), describe_field_type(value), text_repair(value, target)),
+                format!("'{field_name}' on {subject} is {}, and this is {}{}", describe_field_type(target), describe_field_type(value), crate::types::declared::text_repair(value, target, self.version)),
                 span,
             );
             return;
@@ -1411,8 +1414,9 @@ impl Checker<'_> {
             self.report_upgrade_warning(
                 codes::MATCH_MISS_CONTINUES,
                 format!(
-                    "since {} a 'match' that finds nothing no longer ends the scope: '{binding}' is absent and the block carries on — guard what depends on it with `if {binding} != null {{ … }}`",
-                    version::describe(4)
+                    "since {} a 'match' that finds nothing no longer ends the scope: '{binding}' is absent and the block carries on — guard what depends on it with `{}`",
+                    version::describe(4),
+                    self.code(&format!("if {binding} != null {{ … }}"))
                 ),
                 matched.span,
             );
@@ -1426,8 +1430,9 @@ impl Checker<'_> {
             self.report(
                 codes::MATCH_UNNAMED,
                 format!(
-                    "'match … {{ }}' on its own gates nothing since {}: a miss is absent, not the end of the scope. Bind it and test the name — `existing = match … {{ … }}` then `if existing != null {{ … }}`",
-                    version::describe(4)
+                    "'match … {{ }}' on its own gates nothing since {}: a miss is absent, not the end of the scope. Bind it and test the name — `existing = match … {{ … }}` then `{}`",
+                    version::describe(4),
+                    self.code("if existing != null { … }")
                 ),
                 span,
             );
@@ -1778,17 +1783,6 @@ fn write_bind_retired_message(name: &str) -> String {
     )
 }
 
-/// `textRepair` (conformance.ts).
-fn text_repair(have: &Ty, want: &Ty) -> &'static str {
-    if !matches!(strip_absent(want), Ty::Text) {
-        return "";
-    }
-    match strip_absent(have) {
-        Ty::Number => " — write the text it should be: `TOSTRING(…)`",
-        Ty::Boolean => " — write the text it should be: `IF … THEN \"Yes\" ELSE \"No\" END`",
-        _ => "",
-    }
-}
 
 /// `handleInFieldSaid`.
 fn handle_in_field_said(field_name: &str, subject: &str, target: &Ty, value: Option<&Ty>, held: &HeldHandle) -> String {

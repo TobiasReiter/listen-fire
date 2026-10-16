@@ -234,11 +234,20 @@ fn local_surface<'a>(local: &'a LocalNode) -> Surface<'a> {
 /// `surfaceMisfit`: the first thing `supplied` lacks that the required
 /// position declares, phrased for the author; `None` when it fits or when
 /// either side has nothing to compare.
-pub fn surface_misfit(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str, absent_may_be_missing: bool) -> Option<String> {
-    misfit_at(supplied, schema, position, absent_may_be_missing, "", &mut vec![])
+pub fn surface_misfit(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str, options: MisfitOptions) -> Option<String> {
+    misfit_at(supplied, schema, position, options, "", &mut vec![])
 }
 
-fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str, absent_may_be_missing: bool, path: &str, seen: &mut Vec<String>) -> Option<String> {
+/// How `surface_misfit` reads and phrases a misfit.
+#[derive(Clone, Copy)]
+pub struct MisfitOptions {
+    /// A `T | absent` member may be missing outright (a graph literal's copy).
+    pub absent_may_be_missing: bool,
+    /// The program's language version: the repair is spelled as it reads.
+    pub version: u32,
+}
+
+fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str, options: MisfitOptions, path: &str, seen: &mut Vec<String>) -> Option<String> {
     let required = schema.positions.get(position);
     if surface_not_enumerated(required) {
         return None;
@@ -247,7 +256,7 @@ fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str
     let supplied = supplied?;
     for (name, want) in required.properties.iter() {
         let Some((_, have)) = supplied.properties.iter().find(|(k, _)| k == name) else {
-            if absent_may_be_missing && matches!(want, FieldType::Composite(Composite::MaybeAbsent { .. })) {
+            if options.absent_may_be_missing && matches!(want, FieldType::Composite(Composite::MaybeAbsent { .. })) {
                 continue;
             }
             return Some(format!("it has no {path}`{name}`"));
@@ -255,7 +264,7 @@ fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str
         let Some(have) = have else { continue };
         let want = Ty::from_schema(want);
         if !field_assignable(have, &want) {
-            return Some(format!("its {path}`{name}` is {}, not {}{}", describe_field_type(have), describe_field_type(&want), text_repair(have, &want)));
+            return Some(format!("its {path}`{name}` is {}, not {}{}", describe_field_type(have), describe_field_type(&want), text_repair(have, &want, options.version)));
         }
     }
     for (name, edge) in required.edges.iter() {
@@ -265,7 +274,7 @@ fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str
         }
         let landed = landing.as_ref().and_then(|thunk| thunk());
         seen.push(edge.target.clone());
-        let misfit = misfit_at(landed.as_ref(), schema, &edge.target, absent_may_be_missing, &format!("{name} → "), seen);
+        let misfit = misfit_at(landed.as_ref(), schema, &edge.target, options, &format!("{name} → "), seen);
         seen.pop();
         if misfit.is_some() {
             return misfit;
@@ -275,14 +284,17 @@ fn misfit_at(supplied: Option<&Surface>, schema: &InstanceSchema, position: &str
 }
 
 /// `textRepair`: how to write the text a number or a yes/no should be.
-pub fn text_repair(have: &Ty, want: &Ty) -> &'static str {
+pub fn text_repair(have: &Ty, want: &Ty, version: u32) -> String {
     if !matches!(strip_absent(want), Ty::Text) {
-        return "";
+        return String::new();
     }
     match strip_absent(have) {
-        Ty::Number => " — write the text it should be: `TOSTRING(…)`",
-        Ty::Boolean => " — write the text it should be: `IF … THEN \"Yes\" ELSE \"No\" END`",
-        _ => "",
+        Ty::Number => " — write the text it should be: `TOSTRING(…)`".to_string(),
+        Ty::Boolean => format!(
+            " — write the text it should be: `{}`",
+            movement_parser::surface::phrase::spell_code("IF … THEN \"Yes\" ELSE \"No\" END", version)
+        ),
+        _ => String::new(),
     }
 }
 

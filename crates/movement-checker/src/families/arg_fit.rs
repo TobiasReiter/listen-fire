@@ -7,6 +7,7 @@
 
 use movement_parser::ast::{CallArg, ExprSlot, Span};
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
+use movement_parser::surface::phrase::spell_word;
 use movement_parser::version::since;
 
 use crate::checker::Checker;
@@ -447,12 +448,13 @@ impl Checker<'_> {
         self.report(
             codes::CALL_ARG_MAYBE_RECORD,
             format!(
-                "'{}' expects {}{}, but '{written}' may be {} — a record or {}, and such a union is no record, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one",
+                "'{}' expects {}{}, but '{written}' may be {} — a record or {}, and such a union is no record, as in TypeScript. Narrow it to the record with {} before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one",
                 fit.callee,
                 describe_position(position),
                 describe_arg_place(fit),
                 describe_field_type(mixed),
-                others.join(" or ")
+                others.join(" or "),
+                spell_word("IS", self.version)
             ),
             span,
         );
@@ -477,7 +479,11 @@ impl Checker<'_> {
         let file = matches!(hidden.handle, Ty::File);
         let held = describe_field_type(&hidden.handle);
         let where_ = if steps.is_empty() { format!("may be {held}") } else { format!("may hold {held} at '{steps}'") };
-        let repair = if file { "Pass its text ('READ(f)')" } else { "Narrow it to the record with IS and pass a field off it ('r.`Name`')" };
+        let repair = if file {
+            "Pass its text ('READ(f)')".to_string()
+        } else {
+            format!("Narrow it to the record with {} and pass a field off it ('r.`Name`')", spell_word("IS", self.version))
+        };
         let argument = fit.caller.as_ref().map_or_else(|| format!("'{written}'"), |caller| caller.argument.clone());
         let param_words = describe_field_type(param);
         let message = format!(
@@ -638,7 +644,7 @@ impl Checker<'_> {
         let (Some(arg), Some(param)) = (arg, param) else { return };
         let place = describe_arg_place(fit);
         if matches!(arg, Position::Local(_)) {
-            if let Some(misfit) = crate::families::nodes::structural_misfit(arg, param) {
+            if let Some(misfit) = crate::families::nodes::structural_misfit(arg, param, self.version) {
                 self.report(codes::NODE_ARG_SHAPE, format!("'{}' expects {}{place}, and {misfit}", fit.callee, describe_position(param)), span);
             }
             return;
@@ -648,7 +654,7 @@ impl Checker<'_> {
         if let Position::Position(p) = param
             && p.instance.declared.is_some()
         {
-            if let Some(misfit) = crate::families::nodes::declared_param_misfit(arg, p) {
+            if let Some(misfit) = crate::families::nodes::declared_param_misfit(arg, p, self.version) {
                 self.report(codes::CALL_ARG_TYPE, format!("'{}' expects a <{}> record{place}, and {misfit}", fit.callee, p.position), span);
             }
             return;

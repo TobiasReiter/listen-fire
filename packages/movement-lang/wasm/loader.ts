@@ -53,6 +53,7 @@ type ParserFunction =
   | 'parse_nested_call'
   | 'spell_message'
   | 'plugin_name'
+  | 'spell_code'
   | 'surface_table';
 
 /** The lowering's exports take two inputs: the tree's JSON, and its source. */
@@ -463,6 +464,7 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     parse_nested_call: exported('parse_nested_call'),
     spell_message: exported('spell_message'),
     plugin_name: exported('plugin_name'),
+    spell_code: exported('spell_code'),
     surface_table: exported('surface_table'),
     lower_expression: exported('lower_expression'),
     lower_condition: exported('lower_condition'),

@@ -163,7 +163,10 @@ impl Checker<'_> {
             };
             self.report(
                 codes::AWAIT_NEEDS_CADENCE,
-                format!("{named} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: `await until(() => {{ return EXISTS({path}) }}, every: 15m)`."),
+                format!(
+                    "{named} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: `{}`.",
+                    self.code(&format!("await until(() => {{ return EXISTS({path}) }}, every: 15m)"))
+                ),
                 head.span,
             );
         }
@@ -214,7 +217,11 @@ impl Checker<'_> {
         if let Some(param) = closure.params.first() {
             self.report(
                 codes::AWAIT_IMPURE_CONDITION,
-                format!("an 'until' condition is called by the clock, so nothing can supply '{}' — write it with no parameters: 'until(() => {{ … }}, every: …)'", param.name),
+                format!(
+                    "an 'until' condition is called by the clock, so nothing can supply '{}' — write it with no parameters: 'until(() => {{ … }}, {})'",
+                    param.name,
+                    if self.version >= 5 { "{ every: … }" } else { "every: …" }
+                ),
                 param.span,
             );
         }

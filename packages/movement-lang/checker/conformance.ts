@@ -23,6 +23,8 @@ import {
   type SchemaFieldType,
 } from './catalog';
 import { fieldAssignable, maybeAbsent, stripAbsent } from './typing';
+import type { LanguageVersion } from '../language_version';
+import { spellCode } from '../parser/surface';
 
 /**
  * Derives the same schema shape adapters publish for an in-file node declaration.
@@ -183,6 +185,9 @@ export function schemaSurface(
 
 /** How `surfaceMisfit` reads the comparison. */
 export interface SurfaceMisfitOptions {
+  /** The program's language version: the repair a misfit suggests is spelled
+   *  as it reads. */
+  languageVersion: LanguageVersion;
   /** The edge path walked so far, for the message. */
   path?: string;
   /** Required positions already on the path — a cycle stops at the repeat. */
@@ -213,7 +218,7 @@ export interface RequiredPosition {
 export function surfaceMisfit(
   supplied: SuppliedSurface | undefined,
   required: RequiredPosition,
-  options: SurfaceMisfitOptions = {},
+  options: SurfaceMisfitOptions,
 ): string | undefined {
   const { path = '', seen = new Set<string>() } = options;
   const schema = required.schema.positions[required.position];
@@ -227,7 +232,7 @@ export function surfaceMisfit(
     const have = supplied.properties[name];
     if (have === undefined) continue;
     if (!fieldAssignable(have, want)) {
-      return `its ${path}\`${name}\` is ${describeFieldType(have)}, not ${describeFieldType(want)}${textRepair(have, want)}`;
+      return `its ${path}\`${name}\` is ${describeFieldType(have)}, not ${describeFieldType(want)}${textRepair(have, want, options.languageVersion)}`;
     }
   }
   for (const [name, edge] of Object.entries(schema.edges)) {
@@ -254,13 +259,13 @@ export function surfaceMisfit(
  * call, not a rendering rule's — so say how to write the one they meant.
  * Empty for every other mismatch.
  */
-export function textRepair(have: FieldType, want: FieldType): string {
+export function textRepair(have: FieldType, want: FieldType, languageVersion: LanguageVersion): string {
   if (stripAbsent(want) !== 'text') return '';
   switch (stripAbsent(have)) {
     case 'number':
       return ' — write the text it should be: `TOSTRING(…)`';
     case 'boolean':
-      return ' — write the text it should be: `IF … THEN "Yes" ELSE "No" END`';
+      return ` — write the text it should be: \`${spellCode('IF … THEN "Yes" ELSE "No" END', languageVersion)}\``;
     default:
       return '';
   }

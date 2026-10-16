@@ -36,6 +36,8 @@ use movement_parser::ast::{PathHead, PathRoot};
 use movement_parser::catalog::types::{EdgeCapability, EdgeSchema, PositionSchema, PushMode};
 use movement_parser::lowering::expression::{EdgeStep, Expression, FilterOperator, ListElement, OrderDirection, TraversalStep};
 
+use movement_parser::surface::phrase::spell_word;
+
 use crate::codes;
 use crate::diagnostic::Severity;
 use crate::scope::{Resolution, ScopeId};
@@ -141,10 +143,14 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
             }
             if !carrying.is_empty() {
                 let shown: Vec<String> = carrying.iter().map(|v| format!("{}'s {}", u.instance.name, display_name_of(&u.instance, v))).collect();
-                let example = narrowing_example(u, &carrying);
+                let example = typing.code(&narrowing_example(u, &carrying));
                 typing.report(
                     codes::NARROWING,
-                    format!("'{edge}' is an edge of {} only — narrow with an IS test (e.g. `{example}`) before traversing it", shown.join(" / ")),
+                    format!(
+                        "'{edge}' is an edge of {} only — narrow with an {} test (e.g. `{example}`) before traversing it",
+                        shown.join(" / "),
+                        spell_word("IS", typing.version)
+                    ),
                 );
                 return;
             }
@@ -409,10 +415,10 @@ fn report_read(typing: &mut Typing, position: &Position, property: &str) {
                 typing.report(
                     codes::NARROWING,
                     format!(
-                        "'{property}' is a field of {} only — narrow with an IS test (e.g. `x IS <{}-[:`{}`]->>`) before reading it",
+                        "'{property}' is a field of {} only — narrow with an {} test (e.g. `{}`) before reading it",
                         shown.join(" / "),
-                        u.instance.name,
-                        carrying[0]
+                        spell_word("IS", typing.version),
+                        typing.code(&format!("x IS <{}-[:`{}`]->>", u.instance.name, carrying[0]))
                     ),
                 );
             }
@@ -1037,8 +1043,9 @@ impl crate::checker::Checker<'_> {
                 self.report(
                     codes::SHAPE_HOP_RETIRED,
                     format!(
-                        "'{}' is a declared node — it IS the record it describes, so there is nothing to hop through: write '{subject} IS <{graph}>'. Its nested nodes are edges you traverse off the value instead ('{subject}-[x:{name}]->')",
-                        type_.graph
+                        "'{}' is a declared node — it IS the record it describes, so there is nothing to hop through: write '{}'. Its nested nodes are edges you traverse off the value instead ('{subject}-[x:{name}]->')",
+                        type_.graph,
+                        self.code(&format!("{subject} IS <{graph}>"))
                     ),
                     span,
                 );
