@@ -163,7 +163,10 @@ impl Checker<'_> {
             };
             self.report(
                 codes::AWAIT_NEEDS_CADENCE,
-                format!("{named} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: `await until(() => {{ return EXISTS({path}) }}, every: 15m)`."),
+                format!(
+                    "{named} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: `{}`.",
+                    self.code(&format!("await until(() => {{ return EXISTS({path}) }}, every: 15m)"))
+                ),
                 head.span,
             );
         }

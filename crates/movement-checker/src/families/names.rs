@@ -12,7 +12,8 @@
 
 use movement_parser::ast::{ImportSource, ImportStatement, Span};
 use movement_parser::catalog::helpers::credential_arg_of;
-use movement_parser::version::before;
+use movement_parser::surface::phrase::{Connection, connection};
+use movement_parser::version::{before, since};
 use serde_json::json;
 
 use crate::checker::Checker;
@@ -98,7 +99,13 @@ impl Checker<'_> {
         self.report(
             codes::CREDENTIAL_NOT_A_VALUE,
             format!(
-                "'{name}' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there"
+                "'{name}' is a credential, which is never a value in a program — it is only named {}, and the host resolves it there",
+                if since(self.version, 5) {
+                    let connect = connection(&Connection { adapter: "…", args: &[("credentials", &name)], credential: Some("credentials") }, self.version);
+                    format!("after 'using' where an adapter is connected ('{connect}')")
+                } else {
+                    "as the 'credentials:' argument where an integration is set up".to_string()
+                }
             ),
             span,
         );
@@ -169,14 +176,16 @@ impl Checker<'_> {
         }
     }
 
-    /// `constructionCall`: `attio(credentials: …)` with the required arguments.
+    /// `constructionCall`: `attio(credentials: …)` with the required
+    /// arguments, as the program's version writes it (`connect attio using …`
+    /// from 5).
     pub fn construction_call(&self, adapter: &str) -> String {
-        let required: Vec<String> = self
-            .catalog
-            .adapter(adapter)
-            .map(|spec| spec.construction_args.iter().filter(|a| a.required).map(|a| format!("{}: …", a.name)).collect())
+        let spec = self.catalog.adapter(adapter);
+        let required: Vec<(&str, &str)> = spec
+            .map(|spec| spec.construction_args.iter().filter(|a| a.required).map(|a| (a.name.as_str(), "…")).collect())
             .unwrap_or_default();
-        format!("{adapter}({})", required.join(", "))
+        let credential = spec.and_then(credential_arg_of).map(|a| a.name.as_str());
+        connection(&Connection { adapter, args: &required, credential }, self.version)
     }
 
     /// `importAndConstructLines`.
@@ -195,16 +204,17 @@ impl Checker<'_> {
             .filter(|name| self.catalog.credential(name).is_some_and(|c| c.adapters.iter().any(|a| a == adapter)))
             .collect();
         let [credential] = serving.as_slice() else { return general };
-        let call: Vec<String> = spec
+        let credential_name = spell_name(credential);
+        let call: Vec<(&str, &str)> = spec
             .construction_args
             .iter()
             .filter(|a| a.required)
-            .map(|a| format!("{}: {}", a.name, if a.name == credential_arg.name { spell_name(credential) } else { "…".into() }))
+            .map(|a| (a.name.as_str(), if a.name == credential_arg.name { credential_name.as_str() } else { "…" }))
             .collect();
         format!(
-            "{general} — with the one {adapter} connection here: '{}' and '<name> = {adapter}({})'",
+            "{general} — with the one {adapter} connection here: '{}' and '<name> = {}'",
             import_line(credential, "credentials"),
-            call.join(", ")
+            connection(&Connection { adapter, args: &call, credential: Some(&credential_arg.name) }, self.version)
         )
     }
 
@@ -370,7 +380,8 @@ impl Checker<'_> {
         let line = import_line(&name, "credentials");
         let mut steps = Vec::new();
         if quoted.is_some() {
-            steps.push(format!("write the credential as a name, not a string: 'credentials: {}'", spell_name(&name)));
+            let keyword = if since(self.version, 5) { "using" } else { "credentials:" };
+            steps.push(format!("write the credential as a name, not a string: '{keyword} {}'", spell_name(&name)));
         }
         if !imported {
             steps.push(format!("add '{line}' at the top of the file"));

@@ -50,10 +50,9 @@ impl Checker<'_> {
         self.report(
             codes::LINK_MATCH_BODY_RETIRED,
             format!(
-                "a 'link' no longer finds its record in its own body since {}: find it first and test it — `to = match … {{ … }}` then `if to != null {{ link {} -[:{}]-> to }}`",
+                "a 'link' no longer finds its record in its own body since {}: find it first and test it — `to = match … {{ … }}` then `{}`",
                 version::describe(4),
-                link.from,
-                link.edge
+                self.code(&format!("if to != null {{ link {} -[:{}]-> to }}", link.from, link.edge))
             ),
             span,
         );

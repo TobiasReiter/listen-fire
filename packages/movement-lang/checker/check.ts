@@ -179,7 +179,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
-import { spellMessage } from '../parser/surface';
+import { spellCode, spellIf, spellMessage, spellWord } from '../parser/surface';
 import {
   borrowableFieldsOf,
   borrowedTypeSegments,
@@ -1628,12 +1628,14 @@ function renamedCallFix(input: {
   slot: ExprSlot;
   call: Extract<MExpr, { kind: 'call' }>;
   to: string | undefined;
+  languageVersion: LanguageVersion;
 }): { corrected: string; edit: SourceEdit } | undefined {
-  const { slot, call, to } = input;
+  const { slot, call, to, languageVersion } = input;
   if (to === undefined) return undefined;
-  // A built-in's dotted name (`DATE.PARSE`) is written bare; a movement's
-  // name with a space in it wears backticks.
-  const spelled = /\s/.test(to) ? `\`${to}\`` : to;
+  // A built-in's dotted name (`DATE.PARSE`) is written bare, in the program's
+  // own spelling (`Date.parse` from 5); a movement's name with a space in it
+  // wears backticks.
+  const spelled = /\s/.test(to) ? `\`${to}\`` : spellMessage(to, languageVersion);
   const raw = slot.raw;
   const callee = call.callee.at;
   return {
@@ -2547,15 +2549,14 @@ function declaredNodeRequirement(symbol: ScopeSymbol): RequiredPosition | undefi
  */
 function conformsToDeclaredNode(
   instance: InstanceRef,
-  position: string,
-  declaration: ScopeSymbol,
+  { position, declaration, languageVersion }: { position: string; declaration: ScopeSymbol; languageVersion: LanguageVersion },
 ): boolean | undefined {
   const required = declaredNodeRequirement(declaration);
   if (required === undefined) return undefined;
   if (surfaceNotEnumerated(required.schema.positions[required.position])) return undefined;
   const surface = schemaSurface(instance.schema, position);
   if (surface === undefined) return undefined;
-  return surfaceMisfit(surface, required) === undefined;
+  return surfaceMisfit(surface, required, { languageVersion }) === undefined;
 }
 
 /** Resolves one extract field's explicit annotation to the SURFACE type it
@@ -2811,19 +2812,18 @@ function callArgSpan(arg: CallArg): Span {
  */
 function structuralMisfit(
   supplied: PositionTypeRef,
-  required: PositionTypeRef,
-  path = '',
+  { required, languageVersion, path = '' }: { required: PositionTypeRef; languageVersion: LanguageVersion; path?: string },
 ): string | undefined {
   switch (required.kind) {
     case 'position':
-      return nodeMisfitAgainst(supplied, required.instance, required.position, path);
+      return nodeMisfitAgainst(supplied, { instance: required.instance, position: required.position, path, languageVersion });
     case 'union': {
       // A union parameter accepts anything one of its variants accepts —
       // exactly what an `IS` test would then narrow. Fitting NO variant is the
       // misfit, and the message names the one that came closest to nothing.
       const misfits: string[] = [];
       for (const variant of required.variants) {
-        const misfit = nodeMisfitAgainst(supplied, required.instance, variant, path);
+        const misfit = nodeMisfitAgainst(supplied, { instance: required.instance, position: variant, path, languageVersion });
         if (misfit === undefined) return undefined;
         misfits.push(`${variant} (${misfit})`);
       }
@@ -3107,13 +3107,13 @@ function isDeclaredNode(instance: InstanceRef): boolean {
  */
 function declaredParamMisfit(
   arg: PositionTypeRef,
-  param: Extract<PositionTypeRef, { kind: 'position' }>,
+  { param, languageVersion }: { param: Extract<PositionTypeRef, { kind: 'position' }>; languageVersion: LanguageVersion },
 ): string | undefined {
   const required: RequiredPosition = { schema: param.instance.schema, position: param.position };
   switch (arg.kind) {
     case 'union': {
       for (const variant of arg.variants) {
-        const misfit = surfaceMisfit(schemaSurface(arg.instance.schema, variant), required);
+        const misfit = surfaceMisfit(schemaSurface(arg.instance.schema, variant), required, { languageVersion });
         if (misfit !== undefined) {
           return `${displayNameOf(arg.instance, variant)}, one of what this argument may be, does not fit: ${misfit}`;
         }
@@ -3128,7 +3128,7 @@ function declaredParamMisfit(
     case 'extract':
     case 'local':
     case 'maybeEmpty':
-      return surfaceMisfit(recordSurface(arg), required);
+      return surfaceMisfit(recordSurface(arg), required, { languageVersion });
     default:
       return neverAsAny(arg);
   }
@@ -3261,14 +3261,12 @@ function extractSurface(node: ExtractNodeType): SuppliedSurface {
  */
 function nodeMisfitAgainst(
   supplied: PositionTypeRef | undefined,
-  instance: InstanceRef,
-  position: string,
-  path: string,
+  { instance, position, path, languageVersion }: { instance: InstanceRef; position: string; path: string; languageVersion: LanguageVersion },
 ): string | undefined {
   // An entry we couldn't type is UNKNOWN, and unknown fits anything — the same
   // benefit of the doubt every other unchecked read gets.
   if (supplied === undefined) return undefined;
-  return surfaceMisfit(suppliedSurface(supplied), { schema: instance.schema, position }, { path });
+  return surfaceMisfit(suppliedSurface(supplied), { schema: instance.schema, position }, { path, languageVersion });
 }
 
 /**
@@ -3936,6 +3934,11 @@ class Checker {
 
   private get languageVersion(): LanguageVersion {
     return this.options.languageVersion;
+  }
+
+  /** Program text a message suggests, in this program's spelling. */
+  private code(text: string): string {
+    return spellCode(text, this.languageVersion);
   }
 
   /** A constructed system's identity token: its address — adapter, credential
@@ -5396,7 +5399,7 @@ class Checker {
         if (since(this.languageVersion, 4)) {
           this.report(
             DiagnosticCodes.MATCH_UNNAMED,
-            `'match … { }' on its own gates nothing since ${describeLanguageVersion(4)}: a miss is absent, not the end of the scope. Bind it and test the name — \`existing = match … { … }\` then \`if existing != null { … }\``,
+            `'match … { }' on its own gates nothing since ${describeLanguageVersion(4)}: a miss is absent, not the end of the scope. Bind it and test the name — \`existing = match … { … }\` then \`${this.code('if existing != null { … }')}\``,
             statement.span,
           );
         }
@@ -5747,7 +5750,7 @@ class Checker {
           // cannot travel between movements.
           this.report(
             DiagnosticCodes.RETURN_NOT_A_VALUE,
-            `'${value.construct.callee}(…)' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.`,
+            `'${since(this.languageVersion, 5) ? `connect ${value.construct.callee}` : `${value.construct.callee}(…)`}' constructs an instance, and an instance is not a value to hand back — its schema belongs to the credential it was built with. Construct it in the movement that uses it.`,
             span,
           );
           break;
@@ -6369,7 +6372,7 @@ class Checker {
       if (expr.kind === 'if' && expr.else === undefined) {
         this.report(
           DiagnosticCodes.IF_WITHOUT_ELSE,
-          "this IF has no ELSE, so where its condition fails it is \"\" (empty text), whatever THEN gives — say what it is there: 'IF … THEN … ELSE … END'",
+          `this IF has no ELSE, so where its condition fails it is "" (empty text), whatever THEN gives — say what it is there: '${this.code('IF … THEN … ELSE … END')}'`,
           at.spanOf(expr.at),
         );
       }
@@ -6630,7 +6633,7 @@ class Checker {
       }
       case 'unknown': {
         if (at.writeField) return;
-        const fix = at.slot !== undefined ? renamedCallFix({ slot: at.slot, call, to: closestFunctionName(written, at.scope) }) : undefined;
+        const fix = at.slot !== undefined ? renamedCallFix({ slot: at.slot, call, to: closestFunctionName(written, at.scope), languageVersion: this.languageVersion }) : undefined;
         this.reportWithFix({
           code: DiagnosticCodes.FUNCTION_UNKNOWN,
           message: unknownFunctionMessage(written, at.scope, fix?.corrected),
@@ -7131,7 +7134,7 @@ class Checker {
       const edgeName = lastStep?.type === 'edge' ? lastStep.edgeTypeId : undefined;
       this.report(
         DiagnosticCodes.AWAIT_NEEDS_CADENCE,
-        `${edgeName !== undefined ? `'-[:${edgeName}]->'` : 'This edge'} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: \`await until(() => { return EXISTS(${rawPath(source.head)}) }, every: 15m)\`.`,
+        `${edgeName !== undefined ? `'-[:${edgeName}]->'` : 'This edge'} resolves, but nothing tells the run when — this source sends no event, so a bare 'await' would wait forever. Say how often to look: \`${this.code(`await until(() => { return EXISTS(${rawPath(source.head)}) }, every: 15m)`)}\`.`,
         source.head.span,
       );
     }
@@ -7937,7 +7940,7 @@ class Checker {
       if (fieldAssignable(valueType, targetType)) return;
       this.report(
         DiagnosticCodes.WRITE_FIELD_TYPE,
-        `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and this is ${describeFieldType(valueType)}${textRepair(valueType, targetType)}`,
+        `'${fieldName}' on ${subject} is ${describeFieldType(targetType)}, and this is ${describeFieldType(valueType)}${textRepair(valueType, targetType, this.languageVersion)}`,
         span,
       );
       return;
@@ -8561,7 +8564,7 @@ class Checker {
           if (literal !== undefined && literal !== 'boolean') {
             this.report(
               DiagnosticCodes.CALLBACK_BAD_CONFIG,
-              `'once' says whether the callback may fire more than once — write TRUE or FALSE, not ${entry.value.raw.trim()}`,
+              `'once' says whether the callback may fire more than once — write ${this.code('TRUE')} or ${this.code('FALSE')}, not ${entry.value.raw.trim()}`,
               entry.value.span,
             );
             break;
@@ -9744,7 +9747,7 @@ class Checker {
     if (input.identifies) {
       this.report(
         DiagnosticCodes.ABSENT_REQUIRED,
-        `${lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if ${raw} != null { … }'`,
+        `${lead}, and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside '${this.code(`if ${raw} != null { … }`)}'`,
         field.value.span,
       );
       return;
@@ -9758,7 +9761,7 @@ class Checker {
       );
       return;
     }
-    const coalesced = `COALESCE(${raw}, ${fallback})`;
+    const coalesced = this.code(`COALESCE(${raw}, ${fallback})`);
     this.reportWithFix({
       code: DiagnosticCodes.ABSENT_REQUIRED,
       message: `${lead} — write '${label}: ${coalesced}' to fall back to a value that is always there${unset !== undefined ? `, or ${unset}` : ''}`,
@@ -9978,7 +9981,7 @@ class Checker {
     if (options?.binding !== undefined && this.upgradeCrosses(4)) {
       this.reportUpgradeWarning(
         DiagnosticCodes.MATCH_MISS_CONTINUES,
-        `since ${describeLanguageVersion(4)} a 'match' that finds nothing no longer ends the scope: '${options.binding}' is absent and the block carries on — guard what depends on it with \`if ${options.binding} != null { … }\``,
+        `since ${describeLanguageVersion(4)} a 'match' that finds nothing no longer ends the scope: '${options.binding}' is absent and the block carries on — guard what depends on it with \`${this.code(`if ${options.binding} != null { … }`)}\``,
         match.span,
       );
     }
@@ -10256,7 +10259,7 @@ class Checker {
     if (head.rootType.kind === 'maybeEmpty' && rootName !== undefined) {
       this.report(
         DiagnosticCodes.ABSENT_REQUIRED,
-        `'${rootName}' is ${describePosition(head.rootType.of)} that may not be there, so a ${input.purpose} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('if ${rootName} == null { ERROR("…") }', or 'if EXISTS(${rootName})'), or gate on it with a traversal block ('${rootName}-[x:…]-> { … }'), which runs zero times when it's empty.`,
+        `'${rootName}' is ${describePosition(head.rootType.of)} that may not be there, so a ${input.purpose} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('${this.code(`if ${rootName} == null { ERROR("…") }`)}', or '${spellIf(`EXISTS(${rootName})`, this.languageVersion)}'), or gate on it with a traversal block ('${rootName}-[x:…]-> { … }'), which runs zero times when it's empty.`,
         input.span,
       );
       return {};
@@ -10799,7 +10802,7 @@ class Checker {
   private reportLinkBodyRetired(link: LinkExpression, span: Span): void {
     this.report(
       DiagnosticCodes.LINK_MATCH_BODY_RETIRED,
-      `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`if to != null { link ${link.from} -[:${link.edge}]-> to }\``,
+      `a 'link' no longer finds its record in its own body since ${describeLanguageVersion(4)}: find it first and test it — \`to = match … { … }\` then \`${this.code(`if to != null { link ${link.from} -[:${link.edge}]-> to }`)}\``,
       span,
     );
   }
@@ -10825,7 +10828,7 @@ class Checker {
       if (type?.kind !== 'maybeEmpty') continue;
       this.report(
         DiagnosticCodes.ABSENT_REQUIRED,
-        `'${name}' is ${describePosition(type.of)} that may not be there, so this ${input.verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: 'if ${name} != null { ${input.verb} ${input.from} -[:${input.edge}]-> ${input.to ?? '…'} }'.`,
+        `'${name}' is ${describePosition(type.of)} that may not be there, so this ${input.verb} can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first: '${this.code(`if ${name} != null { ${input.verb} ${input.from} -[:${input.edge}]-> ${input.to ?? '…'} }`)}'.`,
         input.span,
       );
       return;
@@ -10889,7 +10892,7 @@ class Checker {
     // nominal test could only ever say no.
     const misfit =
       edge.structural === true || toType.kind === 'local'
-        ? structuralMisfit(toType, target)
+        ? structuralMisfit(toType, { required: target, languageVersion: this.languageVersion })
         : undefined;
     if (misfit !== undefined) {
       this.report(
@@ -11537,7 +11540,7 @@ class Checker {
     if (mixed === undefined) return;
     this.report(
       DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
-      `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or ${[...new Set(valuesBesideRecord(mixed).map(describeFieldType))].join(' or ')}, and such a union is no record, as in TypeScript. Narrow it to the record with IS before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
+      `'${fit.callee}' expects ${describePosition(posType)}${describeArgPlace(fit)}, but '${written}' may be ${describeFieldType(mixed)} — a record or ${[...new Set(valuesBesideRecord(mixed).map(describeFieldType))].join(' or ')}, and such a union is no record, as in TypeScript. Narrow it to the record with ${spellWord('IS', this.languageVersion)} before passing it, handle the case where it is not one, or fill the other arm with a record so the argument is always one`,
       span,
     );
   }
@@ -11565,7 +11568,7 @@ class Checker {
     const steps = spellHeldSteps(hidden.steps);
     const file = variantOf(hidden.handle).kind === 'file';
     const where = steps === '' ? `may be ${describeFieldType(hidden.handle)}` : `may hold ${describeFieldType(hidden.handle)} at '${steps}'`;
-    const repair = file ? "pass its text ('READ(f)')" : "narrow it to the record with IS and pass a field off it ('r.`Name`')";
+    const repair = file ? "pass its text ('READ(f)')" : `narrow it to the record with ${spellWord('IS', this.languageVersion)} and pass a field off it ('r.\`Name\`')`;
     const message = `${calleeWords(fit)} expects ${describeFieldType(paramType)}${describeArgPlace(fit)}, but ${fit.caller?.argument ?? `'${arg.written}'`} ${where} — ${file ? 'a file' : 'a record'}, not a value, and such a union is no ${describeFieldType(paramType)}, as in TypeScript. ${repair[0]!.toUpperCase()}${repair.slice(1)}, or fill every arm with a value`;
     if (since(this.languageVersion, 5)) {
       this.report(DiagnosticCodes.CALL_ARG_MAYBE_RECORD, message, arg.span);
@@ -12093,7 +12096,7 @@ class Checker {
     if (have !== undefined && !fieldAssignable(have, want)) {
       this.report(
         DiagnosticCodes.GRAPH_FIELD_TYPE,
-        `${describeShapeNode(required.position)} declares \`${name}\` as ${describeFieldType(want)}, and this is ${describeFieldType(have)}${textRepair(have, want)}`,
+        `${describeShapeNode(required.position)} declares \`${name}\` as ${describeFieldType(want)}, and this is ${describeFieldType(have)}${textRepair(have, want, this.languageVersion)}`,
         span,
       );
       return;
@@ -12266,6 +12269,7 @@ class Checker {
   ): void {
     const misfit = surfaceMisfit(records !== undefined ? recordSurface(records) : undefined, required, {
       absentMayBeMissing: true,
+      languageVersion: this.languageVersion,
     });
     if (misfit === undefined) return;
     this.report(
@@ -12385,7 +12389,7 @@ class Checker {
     // The entry made the record alone holds it as a reference: the value
     // itself when it is the record, or a slot of it — never the form already
     // written.
-    const only = held.steps.length === 1 && held.steps[0]!.kind === 'slot' && BARE_IDENT.test(written) ? `AT(${written}, ${held.steps[0]!.index})` : held.steps.length === 0 ? 'r' : undefined;
+    const only = held.steps.length === 1 && held.steps[0]!.kind === 'slot' && BARE_IDENT.test(written) ? this.code(`AT(${written}, ${held.steps[0]!.index})`) : held.steps.length === 0 ? 'r' : undefined;
     const alone = only !== undefined && only !== written ? `, or make the entry the record alone ('${entry.name}: ${only}'), which holds it as a reference` : '';
     if (position?.kind === 'meta') {
       // A connection (`a: crm`) stands for a whole system: no field holds one,
@@ -12473,7 +12477,7 @@ class Checker {
     for (const [name, edge] of Object.entries(declared?.edges ?? {})) {
       if (!followsEdges || !Object.hasOwn(supplied.edges, name) || written.has(name)) continue;
       const child: RequiredPosition = { schema: required.schema, position: edge.target };
-      const misfit = surfaceMisfit(supplied.edges[name]?.(), child, { absentMayBeMissing: true });
+      const misfit = surfaceMisfit(supplied.edges[name]?.(), child, { absentMayBeMissing: true, languageVersion: this.languageVersion });
       if (misfit !== undefined) {
         this.report(
           DiagnosticCodes.GRAPH_COPY_SHAPE,
@@ -12687,7 +12691,7 @@ class Checker {
     const { callee } = fit;
     const place = describeArgPlace(fit);
     if (argType.kind === 'local') {
-      const misfit = structuralMisfit(argType, paramType);
+      const misfit = structuralMisfit(argType, { required: paramType, languageVersion: this.languageVersion });
       if (misfit !== undefined) {
         this.report(
           DiagnosticCodes.NODE_ARG_SHAPE,
@@ -12701,7 +12705,7 @@ class Checker {
       // A declared node belongs to no system, so there is no identity to
       // match: the argument fits when it CARRIES the structure — whatever
       // made it — judged by the comparison `x IS <Doc>` makes.
-      const misfit = declaredParamMisfit(argType, paramType);
+      const misfit = declaredParamMisfit(argType, { param: paramType, languageVersion: this.languageVersion });
       if (misfit !== undefined) {
         this.report(
           DiagnosticCodes.CALL_ARG_TYPE,
@@ -12849,7 +12853,7 @@ class Checker {
       if (condition.type.position !== undefined || condition.type.hopsRaw !== undefined) return;
       for (const variant of union.variants) {
         // Only a member we PROVED conforms is ruled out by the failure.
-        if (conformsToDeclaredNode(union.instance, variant, graph.symbol) === true) {
+        if (conformsToDeclaredNode(union.instance, { position: variant, declaration: graph.symbol, languageVersion: this.languageVersion }) === true) {
           eliminated.add(variant);
         }
       }
@@ -13130,9 +13134,9 @@ class Checker {
     // to a parameter.
     const structural =
       source.kind === 'local'
-        ? structuralMisfit(source, target)
+        ? structuralMisfit(source, { required: target, languageVersion: this.languageVersion })
         : target.kind === 'position' && isDeclaredNode(target.instance)
-        ? declaredParamMisfit(source, target)
+        ? declaredParamMisfit(source, { param: target, languageVersion: this.languageVersion })
         : undefined;
     if (structural !== undefined) {
       this.report(DiagnosticCodes.RETURN_TYPE, `${expected}, and ${structural}`, span);
@@ -13226,7 +13230,7 @@ class Checker {
     } else if (instanceSymbol && instanceSymbol.kind !== 'instance') {
       this.report(
         DiagnosticCodes.LISTEN_NOT_INSTANCE,
-        `'${statement.instance}' is ${describeKind[instanceSymbol.kind]} — 'listen to' names a constructed adapter instance (e.g. inbox = email(credentials: …))`,
+        `'${statement.instance}' is ${describeKind[instanceSymbol.kind]} — 'listen to' names a constructed adapter instance (e.g. inbox = ${this.connectionPhrase('email', [{ name: 'credentials', value: '…' }], 'credentials')})`,
         statement.span,
       );
     }
@@ -13696,8 +13700,19 @@ class Checker {
    */
   private constructionCall(adapterName: string): string {
     const args = this.catalog.adapter(adapterName)?.constructionArgs ?? [];
-    const required = args.filter((a) => a.required).map((a) => `${a.name}: …`);
-    return `${adapterName}(${required.join(', ')})`;
+    const required = args.filter((a) => a.required).map((a) => ({ name: a.name, value: '…' }));
+    return this.connectionPhrase(adapterName, required, credentialArgOf({ constructionArgs: args })?.name);
+  }
+
+  /** An adapter set up with `args`, as this program's version writes it:
+   *  `attio(credentials: …)` up to 4, `connect attio using …` from 5 (the
+   *  credential after `using`, every other argument a setting). The parser's
+   *  rewrite of an old construction writes the same text. */
+  private connectionPhrase(adapter: string, args: { name: string; value: string }[], credential: string | undefined): string {
+    if (before(this.languageVersion, 5)) return `${adapter}(${args.map(a => `${a.name}: ${a.value}`).join(', ')})`;
+    const using = args.find(a => a.name === credential);
+    const settings = args.filter(a => a.name !== credential).map(a => `${a.name.replace(/_(.)/g, (_, c: string) => c.toUpperCase())}: ${a.value}`);
+    return `connect ${adapter}${using !== undefined ? ` using ${using.value}` : ''}${settings.length > 0 ? ` { ${settings.join(', ')} }` : ''}`;
   }
 
   /**
@@ -13724,9 +13739,8 @@ class Checker {
     if (credentialArg === undefined || credential === undefined) return general;
     const call = args
       .filter((a) => a.required)
-      .map((a) => `${a.name}: ${a.name === credentialArg.name ? spellName(credential) : '…'}`)
-      .join(', ');
-    return `${general} — with the one ${adapter} connection here: '${importLine(credential, 'credentials')}' and '<name> = ${adapter}(${call})'`;
+      .map((a) => ({ name: a.name, value: a.name === credentialArg.name ? spellName(credential) : '…' }));
+    return `${general} — with the one ${adapter} connection here: '${importLine(credential, 'credentials')}' and '<name> = ${this.connectionPhrase(adapter, call, credentialArg.name)}'`;
   }
 
   /**
@@ -13765,7 +13779,7 @@ class Checker {
     if (quoted === null && imported) return undefined;
     const line = importLine(name, 'credentials');
     const steps = [
-      ...(quoted !== null ? [`write the credential as a name, not a string: 'credentials: ${spellName(name)}'`] : []),
+      ...(quoted !== null ? [`write the credential as a name, not a string: '${since(this.languageVersion, 5) ? 'using' : 'credentials:'} ${spellName(name)}'`] : []),
       ...(imported ? [] : [`add '${line}' at the top of the file`]),
     ];
     return {
@@ -13866,7 +13880,7 @@ class Checker {
       const field = Object.keys(schema.positions[target]?.properties ?? {})[0];
       const read = field === undefined ? '…' : `… r.\`${field}\``;
       return (
-        `if ${paramName} IS <${instanceName}-[:\`${eventName}\` WHERE \`${EVENT_ACTION_FIELD}\` == "${action}"]->> `
+        `${spellIf(`${paramName} IS <${instanceName}-[:\`${eventName}\` WHERE \`${EVENT_ACTION_FIELD}\` == "${action}"]->>`, this.languageVersion)} `
         + `{ ${paramName}-[r:${edge}]-> { ${read} } }`
       );
     }
@@ -15053,7 +15067,7 @@ class Checker {
    *  holds records and values both. The walker's `widen`, for a bare name the
    *  statement layer typed without walking. */
   private readHeldValue(type: FieldType | undefined, span: Span): FieldType | undefined {
-    const mixed = mixedTupleMessage(type);
+    const mixed = mixedTupleMessage(type, this.languageVersion);
     if (mixed !== undefined) this.report(TypedDiagnosticCodes.LIST_MIXED, mixed, span);
     return widenTuples(type, this.languageVersion);
   }
@@ -15298,7 +15312,7 @@ class Checker {
       const subject = condition.subjectRaw.trim();
       this.report(
         DiagnosticCodes.SHAPE_HOP_RETIRED,
-        `'${condition.type.graph}' is a declared node — it IS the record it describes, so there is nothing to hop through: write '${subject} IS <${quoteName(condition.type.graph)}>'. Its nested nodes are edges you traverse off the value instead ('${subject}-[x:${quoteName(condition.type.position ?? 'name')}]->')`,
+        `'${condition.type.graph}' is a declared node — it IS the record it describes, so there is nothing to hop through: write '${this.code(`${subject} IS <${quoteName(condition.type.graph)}>`)}'. Its nested nodes are edges you traverse off the value instead ('${subject}-[x:${quoteName(condition.type.position ?? 'name')}]->')`,
         span,
       );
       return;
@@ -15307,7 +15321,7 @@ class Checker {
     const subject = this.symbolPositionType(subjectSymbol);
     if (subject?.kind !== 'union') return;
     const conforming = subject.variants.filter(
-      variant => conformsToDeclaredNode(subject.instance, variant, declaration) !== false,
+      variant => conformsToDeclaredNode(subject.instance, { position: variant, declaration, languageVersion: this.languageVersion }) !== false,
     );
     if (conforming.length === subject.variants.length) return; // proves nothing new
     narrowInto.declare({ ...subjectSymbol, posType: residualUnion(subject, conforming) });
@@ -15429,7 +15443,7 @@ class Checker {
     if (symbol?.kind !== 'credential') return symbol;
     this.report(
       DiagnosticCodes.CREDENTIAL_NOT_A_VALUE,
-      `'${name}' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there`,
+      `'${name}' is a credential, which is never a value in a program — it is only named ${since(this.languageVersion, 5) ? `after 'using' where an adapter is connected ('${this.connectionPhrase('…', [{ name: 'credentials', value: name }], 'credentials')}')` : `as the 'credentials:' argument where an integration is set up`}, and the host resolves it there`,
       span,
     );
     return undefined;

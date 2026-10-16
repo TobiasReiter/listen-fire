@@ -295,8 +295,8 @@ impl Checker<'_> {
             _ => None,
         };
         let structural = match (source, declared_node) {
-            (Position::Local(_), _) => crate::families::nodes::structural_misfit(source, target),
-            (_, Some(param)) => crate::families::nodes::declared_param_misfit(source, param),
+            (Position::Local(_), _) => crate::families::nodes::structural_misfit(source, target, self.version),
+            (_, Some(param)) => crate::families::nodes::declared_param_misfit(source, param, self.version),
             _ => None,
         };
         if let Some(structural) = structural {

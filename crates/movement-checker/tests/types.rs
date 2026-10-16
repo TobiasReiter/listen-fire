@@ -69,7 +69,7 @@ fn fit() {
 
 #[test]
 fn a_mixed_tuple_is_named() {
-    let message = mixed_tuple_message(Some(&tuple(vec![Ty::Record(None), Ty::Text]))).unwrap();
+    let message = mixed_tuple_message(Some(&tuple(vec![Ty::Record(None), Ty::Text])), 4).unwrap();
     assert!(message.starts_with("a list holds one kind of thing, and this one holds both: a record is a record, and another member is text."));
 }
 

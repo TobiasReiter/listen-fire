@@ -52,6 +52,7 @@ import { extractCallNestedMessage } from './calls';
 import { neverAsAny } from '../never';
 import { before, changedBetween, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
 import { Span } from '../parser/ast';
+import { spellCode, spellWord } from '../parser/surface';
 import {
   describeFieldType,
   EdgeSchema,
@@ -1730,7 +1731,7 @@ function isUnionType(type: FieldType): type is Extract<FieldType, { kind: 'union
  * undefined when the tuple (at any depth) holds one kind. A member nobody
  * could type says nothing, as everywhere.
  */
-export function mixedTupleMessage(type: FieldType | undefined): string | undefined {
+export function mixedTupleMessage(type: FieldType | undefined, languageVersion: LanguageVersion): string | undefined {
   if (type === undefined) return undefined;
   const present = stripAbsent(type);
   if (!isTupleType(present)) return undefined;
@@ -1738,9 +1739,9 @@ export function mixedTupleMessage(type: FieldType | undefined): string | undefin
   const record = members.find(member => isRecordType(member));
   const value = members.find(member => !isRecordType(member) && stripAbsent(member) !== 'absent');
   if (record !== undefined && value !== undefined) {
-    return `a list holds one kind of thing, and this one holds both: ${describeFieldType(stripAbsent(record))} is a record, and another member is ${describeFieldType(widenTuplesBy(value, 'shared') ?? value)}. A tuple may hold both — read one slot with 'AT(t, 0)' — but read as a list it may not. Build a list of records and walk it ('both = [one, two]' … 'both-[c:company]-> { … }'), or read the records' fields first and build a list of the values.`;
+    return `a list holds one kind of thing, and this one holds both: ${describeFieldType(stripAbsent(record))} is a record, and another member is ${describeFieldType(widenTuplesBy(value, 'shared') ?? value)}. A tuple may hold both — read one slot with '${spellCode('AT(t, 0)', languageVersion)}' — but read as a list it may not. Build a list of records and walk it ('both = [one, two]' … 'both-[c:company]-> { … }'), or read the records' fields first and build a list of the values.`;
   }
-  return members.map(mixedTupleMessage).find(message => message !== undefined);
+  return members.map(member => mixedTupleMessage(member, languageVersion)).find(message => message !== undefined);
 }
 
 // ── The order discipline (set vs list) ──────────────────────────────────────
@@ -4473,7 +4474,7 @@ export class ExpressionTyping {
     if (this.options.firstRecordReceiptReport?.(name) === false) return;
     this.report(
       TypedDiagnosticCodes.RECEIPT_RECORD_SLOT,
-      `since ${describeLanguageVersion(5)} a record an arm hands back reads as that record through '${name}' (\`AT(${name}, i)\`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.`,
+      `since ${describeLanguageVersion(5)} a record an arm hands back reads as that record through '${name}' (\`${this.code(`AT(${name}, i)`)}\`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.`,
       'upgrade',
     );
   }
@@ -4814,8 +4815,13 @@ export class ExpressionTyping {
    * collection sees one. Reading a tuple of records and values as one list is
    * the mixture a list cannot hold, refused here, where it is read.
    */
+  /** Program text this walk's messages suggest, in the program's spelling. */
+  private code(text: string): string {
+    return spellCode(text, this.options.languageVersion);
+  }
+
   private widen(type: FieldType | undefined): FieldType | undefined {
-    const mixed = mixedTupleMessage(type);
+    const mixed = mixedTupleMessage(type, this.options.languageVersion);
     if (mixed !== undefined) this.report(TypedDiagnosticCodes.LIST_MIXED, mixed);
     return widenTuples(type, this.options.languageVersion);
   }
@@ -5076,7 +5082,7 @@ export class ExpressionTyping {
         if (keyRead !== undefined) return keyRead.type;
         const exists = existsSubject(expr);
         if (exists !== undefined) {
-          this.reportConstantPresenceTest(exists, `EXISTS(${exists})`, 'always true');
+          this.reportConstantPresenceTest(exists, this.code(`EXISTS(${exists})`), 'always true');
           return 'boolean';
         }
         const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : position;
@@ -5145,11 +5151,11 @@ export class ExpressionTyping {
       }
       case 'logical':
         this.inferLogical(expr, position);
-        this.refuseClosureOperands(expr.operands.map(o => [o, this.readTypes.get(o)] as const), expr, `joined by ${expr.op.toUpperCase()}`);
+        this.refuseClosureOperands(expr.operands.map(o => [o, this.readTypes.get(o)] as const), expr, `joined by ${spellWord(expr.op.toUpperCase(), this.options.languageVersion)}`);
         return 'boolean';
       case 'not': {
         const operand = this.inferAt(expr.expression, position);
-        this.refuseClosureOperands([[expr.expression, operand]], expr, 'negated by NOT');
+        this.refuseClosureOperands([[expr.expression, operand]], expr, `negated by ${spellWord('NOT', this.options.languageVersion)}`);
         return 'boolean';
       }
       case 'negate': {
@@ -5169,7 +5175,7 @@ export class ExpressionTyping {
         // A closure is not data (language version 5): IF chooses between
         // values, and a closure is kept in a variable or passed as an
         // argument, never chosen by a value expression.
-        if (this.refuseClosureOperands([[expr.then, thenType], [expr.else, elseType]], expr, 'chosen by IF … THEN … ELSE … END')) {
+        if (this.refuseClosureOperands([[expr.then, thenType], [expr.else, elseType]], expr, `chosen by ${spellWord('IF … THEN … ELSE … END', this.options.languageVersion)}`)) {
           return undefined;
         }
         if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
@@ -5495,7 +5501,7 @@ export class ExpressionTyping {
     });
     if (hidden === undefined) return false;
     const file = hidden === 'file';
-    const message = `${builtin.name}'s '${param.name}' takes ${describeParamType(param.type)}, but this may be ${describeFieldType(hidden)} — ${file ? 'a file' : 'a record'}, not a value, and such a union is not ${describeParamType(param.type)}, as in TypeScript. ${file ? "Pass its text ('READ(f)')" : "Narrow it to the record with IS and pass a field off it ('r.`Name`')"}, or fill every arm with a value`;
+    const message = `${builtin.name}'s '${param.name}' takes ${describeParamType(param.type)}, but this may be ${describeFieldType(hidden)} — ${file ? 'a file' : 'a record'}, not a value, and such a union is not ${describeParamType(param.type)}, as in TypeScript. ${file ? "Pass its text ('READ(f)')" : `Narrow it to the record with ${spellWord('IS', this.options.languageVersion)} and pass a field off it ('r.\`Name\`')`}, or fill every arm with a value`;
     if (since(this.options.languageVersion, 5)) {
       this.report(TypedDiagnosticCodes.CALL_ARG_MAYBE_RECORD, message);
     } else {
@@ -7078,7 +7084,7 @@ export class ExpressionTyping {
           }
           this.report(
             TypedDiagnosticCodes.NARROWING,
-            `'${edge}' is an edge of ${shown} only — narrow with an IS test (e.g. \`${example}\`) before traversing it`,
+            `'${edge}' is an edge of ${shown} only — narrow with an ${spellWord('IS', this.options.languageVersion)} test (e.g. \`${this.code(example)}\`) before traversing it`,
           );
           return undefined;
         }
@@ -7318,7 +7324,7 @@ export class ExpressionTyping {
         ) {
           this.report(
             TypedDiagnosticCodes.HANDLE_FIELD_RETIRED,
-            `'${propertyId}' is no longer a field of a write's handle since ${describeLanguageVersion(4)} — ask the record before the write instead: \`EXISTS(h-[:${OLD_EDGE}]->)\` is FALSE when this write created the record; \`FIRST(h-[:${OLD_EDGE}]->) == h\` when it was only rehearsed; compare fields against \`FIRST(h-[:${OLD_EDGE}]->)\` for what changed`,
+            `'${propertyId}' is no longer a field of a write's handle since ${describeLanguageVersion(4)} — ask the record before the write instead: \`EXISTS(h-[:${OLD_EDGE}]->)\` is ${this.code('FALSE')} when this write created the record; \`FIRST(h-[:${OLD_EDGE}]->) == h\` when it was only rehearsed; compare fields against \`FIRST(h-[:${OLD_EDGE}]->)\` for what changed`,
           );
           return undefined;
         }
@@ -7403,7 +7409,7 @@ export class ExpressionTyping {
             .join(' / ');
           this.report(
             TypedDiagnosticCodes.NARROWING,
-            `'${propertyId}' is a field of ${shown} only — narrow with an IS test (e.g. \`x IS <${position.instance.name}-[:\`${carrying[0]}\`]->>\`) before reading it`,
+            `'${propertyId}' is a field of ${shown} only — narrow with an ${spellWord('IS', this.options.languageVersion)} test (e.g. \`${this.code(`x IS <${position.instance.name}-[:\`${carrying[0]}\`]->>`)}\`) before reading it`,
           );
           return undefined;
         }

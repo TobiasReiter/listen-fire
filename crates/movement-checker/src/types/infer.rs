@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use movement_parser::ast::Span;
+use movement_parser::surface::phrase::spell_word;
 use movement_parser::catalog::types::EdgeSchema;
 use movement_parser::lowering::expression::{
     AggregationFunction, Expression, ListElement, LogicalOp, ObjectMember, StaticValue, TraversalStep,
@@ -273,8 +274,9 @@ impl<'a> Typing<'a> {
             self.report_upgrade(
                 crate::codes::RECEIPT_RECORD_SLOT,
                 format!(
-                    "since {} a record an arm hands back reads as that record through '{name}' (`AT({name}, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.",
-                    crate::version::describe(5)
+                    "since {} a record an arm hands back reads as that record through '{name}' (`{}`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade.",
+                    crate::version::describe(5),
+                    self.code(&format!("AT({name}, i)"))
                 ),
             );
             self.receipt_reads.push(name.to_string());
@@ -320,8 +322,13 @@ impl<'a> Typing<'a> {
         self.infer_exact_at(expr, None)
     }
 
+    /// Program text this walk's messages suggest, in the program's spelling.
+    pub fn code(&self, text: &str) -> String {
+        movement_parser::surface::phrase::spell_code(text, self.version)
+    }
+
     fn widen(&mut self, ty: Option<Ty>) -> Option<Ty> {
-        if let Some(mixed) = mixed_tuple_message(ty.as_ref()) {
+        if let Some(mixed) = mixed_tuple_message(ty.as_ref(), self.version) {
             self.report(codes::LIST_MIXED, mixed);
         }
         widen_tuples(ty, self.version)
@@ -723,7 +730,7 @@ impl<'a> Typing<'a> {
                 let else_ty = self.infer_at(else_, position);
                 // A closure is not data (language version 5): IF chooses
                 // between values, never between closures.
-                if self.refuse_closure_operands(&[(then, then_ty.as_ref()), (else_, else_ty.as_ref())], expr, "chosen by IF … THEN … ELSE … END") {
+                if self.refuse_closure_operands(&[(then, then_ty.as_ref()), (else_, else_ty.as_ref())], expr, &format!("chosen by {}", spell_word("IF … THEN … ELSE … END", self.version))) {
                     return (None, vec![condition_ty, then_ty, else_ty]);
                 }
                 let ty = match (&then_ty, &else_ty) {

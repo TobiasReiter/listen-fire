@@ -46,3 +46,10 @@ fn a_message_names_a_built_in_in_the_program_s_spelling() {
     }
     println!("{v4:?}\n{v5:?}");
 }
+
+#[test]
+fn a_message_suggests_the_surface_of_its_program_s_version() {
+    let v5: Vec<String> = check("function go() {\n  f = () => 1\n  x = !f\n  y = f && f\n}", 5).into_iter().map(|d| d.message).collect();
+    assert!(v5[0].starts_with("a value negated by '!' is a closure"), "{v5:?}");
+    assert!(v5[1].starts_with("a value joined by '&&' is a closure"), "{v5:?}");
+}

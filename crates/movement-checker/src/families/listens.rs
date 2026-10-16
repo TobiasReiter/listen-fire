@@ -26,6 +26,8 @@ use serde_json::json;
 use indexmap::IndexMap;
 use movement_parser::catalog::types::EdgeSchema;
 
+use movement_parser::surface::phrase::{Connection, connection};
+
 use crate::checker::Checker;
 use crate::codes;
 use crate::types::Ty;
@@ -260,9 +262,10 @@ impl Checker<'_> {
                 self.report(codes::ADAPTER_NOT_CONSTRUCTED, message, statement.span);
             } else if symbol.kind != SymbolKind::Instance {
                 let message = format!(
-                    "'{}' is {} — 'listen to' names a constructed adapter instance (e.g. inbox = email(credentials: …))",
+                    "'{}' is {} — 'listen to' names a constructed adapter instance (e.g. inbox = {})",
                     statement.instance,
-                    symbol.kind.describe()
+                    symbol.kind.describe(),
+                    connection(&Connection { adapter: "email", args: &[("credentials", "…")], credential: Some("credentials") }, self.version)
                 );
                 self.report(codes::LISTEN_NOT_INSTANCE, message, statement.span);
             }
@@ -469,7 +472,7 @@ impl Checker<'_> {
             );
             return;
         }
-        let example = event_types::event_traversal_example(schema, &param.name, instance);
+        let example = event_types::event_traversal_example(schema, &param.name, instance, self.version);
         let tail = match example {
             None => ".".to_string(),
             Some(example) => format!(" — e.g. `{example}` (a delete event has no record to read)."),
@@ -901,7 +904,7 @@ impl Checker<'_> {
                 "once" => match scalar_literal_kind(raw) {
                     Some(kind) if kind != "boolean" => self.report(
                         codes::CALLBACK_BAD_CONFIG,
-                        format!("'once' says whether the callback may fire more than once — write TRUE or FALSE, not {raw}"),
+                        format!("'once' says whether the callback may fire more than once — write {} or {}, not {raw}", self.code("TRUE"), self.code("FALSE")),
                         entry.value.span,
                     ),
                     Some(_) => {}
