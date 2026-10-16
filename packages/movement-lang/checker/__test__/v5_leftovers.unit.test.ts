@@ -2,7 +2,8 @@
 // through the wasm build, on the same catalog): a three-argument `map`'s
 // settings go last; the `#transform` retirement suggests a positional call;
 // `Text.lower` inside walk brackets is one finding, not two; and a field read
-// off text is refused from 5 and warned before (both engines read null).
+// off text, a number or a true/false value is refused from 5 and warned
+// before (both engines read null).
 
 import { mockCatalog } from '../catalog';
 import { checkProgram, diagnosticSeverity, type Diagnostic } from '../check';
@@ -111,6 +112,21 @@ describe('version 5 checker leftovers, in both checkers', () => {
     }
     // A field read off a record is untouched.
     expect(check(V5('  d = c.name'), 5)).toEqual([]);
+  });
+
+  it('a field read off a number or a true/false value is refused from 5, and warned under 3 and 4', () => {
+    // Both engines read either as null under 3 and 4, as they read text's.
+    for (const [value, noun] of [['3', 'a number'], ['true', 'a true/false value']] as const) {
+      const [five, ...rest] = check(V5(`  n = ${value}\n  d = n.size`), 5);
+      expect(rest).toEqual([]);
+      expect([five?.code, five?.severity]).toEqual(['MOV_TEXT_HAS_NO_FIELDS', 'error']);
+      expect(five?.message).toContain(`'n' is ${noun}, and ${noun} has no fields — 'size' is not something it holds`);
+      for (const version of [3, 4] as const) {
+        const older = check(V4(`  n = ${value}\n  d = n.\`size\``), version);
+        expect(older.map((d) => [d.code, d.severity])).toEqual([['MOV_TEXT_HAS_NO_FIELDS', 'warning']]);
+        expect(older[0]?.message).toContain(`'n' is ${noun}`);
+      }
+    }
   });
 });
 

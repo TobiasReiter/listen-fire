@@ -579,33 +579,39 @@ impl<'a> Typing<'a> {
         self.read_dict_member(&held, member, false)
     }
 
-    /// `textFieldRead`: `t.Name` (and `t.Name.x`) where `t` holds text — the
-    /// field read off a value that has none (from version 3).
-    fn text_field_read(&self, alias_root: Option<&str>, steps: &[TraversalStep], member: &Expression) -> Option<(String, String)> {
+    /// `scalarFieldRead`: `t.Name` (and `t.Name.x`) where `t` holds text, a
+    /// number or a true/false value — the field read off a value that has
+    /// none (from version 3).
+    fn scalar_field_read(&self, alias_root: Option<&str>, steps: &[TraversalStep], member: &Expression) -> Option<ScalarFieldRead> {
         let root = alias_root?;
         if self.version < 3 || !steps.is_empty() || self.root_type(root).is_some() {
             return None;
         }
         let held = self.scalar_type(root)?;
-        if !matches!(strip_absent(&held), Ty::Text | Ty::Enum { .. }) {
-            return None;
-        }
+        let scalar = match strip_absent(&held) {
+            Ty::Text | Ty::Enum { .. } => FieldlessScalar::Text,
+            Ty::Number => FieldlessScalar::Number,
+            Ty::Boolean => FieldlessScalar::Boolean,
+            _ => return None,
+        };
         let field = match member {
             Expression::Property { property_type_id, .. } => property_type_id.clone(),
             Expression::Traverse { alias_root: Some(key), .. } => key.clone(),
             _ => return None,
         };
-        Some((root.to_string(), field))
+        Some(ScalarFieldRead { root: root.to_string(), field, scalar })
     }
 
-    /// `reportTextFieldRead`: refused from version 5; before it both engines
-    /// read null, so a warning.
-    fn report_text_field_read(&mut self, root: &str, field: &str) {
+    /// `reportScalarFieldRead`: refused from version 5; before it both
+    /// engines read null, so a warning.
+    fn report_scalar_field_read(&mut self, read: &ScalarFieldRead) {
+        let ScalarFieldRead { root, field, scalar } = read;
+        let (is, subject, bare) = scalar.nouns();
         // A nested call's staged value (`Text.upper(t).x`) has no name to show.
         let message = if root.starts_with('#') {
-            format!("this is text, and a text has no fields — '{field}' is not something it holds. Use the text itself, or read '{field}' off the record the text came from")
+            format!("this is {is}, and {subject} has no fields — '{field}' is not something it holds. Use the {bare} itself, or read '{field}' off the record the {bare} came from")
         } else {
-            format!("'{root}' is text, and a text has no fields — '{field}' is not something it holds. Use the text itself ('{root}'), or read '{field}' off the record the text came from")
+            format!("'{root}' is {is}, and {subject} has no fields — '{field}' is not something it holds. Use the {bare} itself ('{root}'), or read '{field}' off the record the {bare} came from")
         };
         if since(self.version, 5) {
             self.report(codes::TEXT_HAS_NO_FIELDS, message);
@@ -700,8 +706,8 @@ impl<'a> Typing<'a> {
                     return (read, Vec::new());
                 }
                 // Said, and then read as it always was (as nothing).
-                if let Some((root, field)) = self.text_field_read(alias_root.as_deref(), steps, expression) {
-                    self.report_text_field_read(&root, &field);
+                if let Some(read) = self.scalar_field_read(alias_root.as_deref(), steps, expression) {
+                    self.report_scalar_field_read(&read);
                 }
                 if exists_subject(expr).is_some() {
                     return (Some(Ty::Boolean), Vec::new());
@@ -1334,4 +1340,30 @@ fn may_hold_empty_item(ty: &Ty) -> bool {
         Ty::Tuple { of, rest } => of.iter().any(|slot| empty(slot.as_ref())) || rest.as_ref().is_some_and(|r| empty(r.of.as_deref())),
         _ => false,
     }
+}
+
+/// A value with no fields to read: text (an enum's value is text), a number,
+/// or a true/false value (`FieldlessScalar`).
+#[derive(Clone, Copy)]
+enum FieldlessScalar {
+    Text,
+    Number,
+    Boolean,
+}
+
+impl FieldlessScalar {
+    /// `SCALAR_NOUNS`: what it is, what has no fields, and the bare word.
+    fn nouns(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            FieldlessScalar::Text => ("text", "a text", "text"),
+            FieldlessScalar::Number => ("a number", "a number", "number"),
+            FieldlessScalar::Boolean => ("a true/false value", "a true/false value", "value"),
+        }
+    }
+}
+
+struct ScalarFieldRead {
+    root: String,
+    field: String,
+    scalar: FieldlessScalar,
 }
