@@ -618,7 +618,6 @@ model TriggerRun {
   leaseUntil                  DateTime?          @map("lease_until") @db.Timestamptz(6)
   leaseToken                  String?            @map("lease_token") @db.Uuid
   engine                      String?
-  engineReason                String?            @map("engine_reason")
   adapterAwaits               AdapterAwait[]
   callbacks                   Callback[]
   joinBranchExports           JoinBranchExport[]

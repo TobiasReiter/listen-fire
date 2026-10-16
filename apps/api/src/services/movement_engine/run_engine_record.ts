@@ -25,7 +25,7 @@ async function writeRunEngine({ runId, engine }: RunEngineRecord): Promise<void>
   try {
     await getAutomationsQb(['trigger_run'])
       .updateTable('trigger_run')
-      .set({ engine, engine_reason: null })
+      .set({ engine })
       .where('id', '=', runId)
       .execute();
   } catch (error) {
