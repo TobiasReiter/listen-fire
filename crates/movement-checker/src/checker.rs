@@ -1191,6 +1191,7 @@ impl<'c> Checker<'c> {
     /// What the block's body hands back, and the order its head walks in.
     fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> (crate::types::position::ReturnShape, crate::types::field::CollectionOrder) {
         let aliases = self.check_path_head(&block.head, scope);
+        self.report_head_off_maybe_absent(&block.head, scope);
         let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
         self.type_hop_aliases(body, &aliases, walk.as_ref());

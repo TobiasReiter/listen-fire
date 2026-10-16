@@ -912,6 +912,55 @@ impl crate::checker::Checker<'_> {
         symbol_pos.or_else(|| record_head_position(self.head_root_value_type(head, scope).as_ref()))
     }
 
+    /// `reportHeadOffMaybeAbsent`: from version 5, a block whose head walks
+    /// off a root that may hold no record (an `extractOne` answer, a `match`
+    /// that found nothing, an unguarded pick, `rows[0]`) is refused. The run
+    /// fails at the head when the record is absent, on every version, and
+    /// runs when it is there, so versions 1–4 keep the form and a move up
+    /// across 5 is warned of.
+    pub fn report_head_off_maybe_absent(&mut self, head: &PathHead, scope: ScopeId) {
+        if self.version < 5 || Self::head_steps(head).is_none_or(|steps| steps.is_empty()) || self.head_root_type(head, scope).is_none() {
+            return;
+        }
+        let held_maybe_absent = |ty: Option<Ty>| matches!(ty, Some(Ty::MaybeAbsent(of)) if matches!(&*of, Ty::Record(Some(_))));
+        let (spelled, guard) = match &head.root {
+            Some(PathRoot::Name { name }) => {
+                let Some(types) = self.symbol_types(name, scope) else { return };
+                let may_be_absent = match &types.pos {
+                    Some(position) => matches!(position, Position::MaybeEmpty(_)),
+                    None => held_maybe_absent(types.field.clone()),
+                };
+                if !may_be_absent {
+                    return;
+                }
+                (name.clone(), format!("if ({name} != null) {{ … }}"))
+            }
+            Some(PathRoot::Expression { expr }) => {
+                if !held_maybe_absent(self.head_root_value_type(head, scope)) {
+                    return;
+                }
+                (expr.raw.trim().to_string(), format!("x = {}', then 'if (x != null) {{ … }}", expr.raw.trim()))
+            }
+            None => return,
+        };
+        if self.upgrade_crosses(5) {
+            self.report_upgrade_warning(
+                codes::ABSENT_REQUIRED,
+                format!(
+                    "since {} a block's walk off '{spelled}', which may be absent, is refused: the run fails at the walk when '{spelled}' is absent. Guard the walk ('{guard}'), then upgrade.",
+                    crate::version::describe(5)
+                ),
+                head.span,
+            );
+            return;
+        }
+        self.report(
+            codes::ABSENT_REQUIRED,
+            format!("'{spelled}' may be absent, and a block's walk off a record that is not there fails the run rather than running zero times. Guard the walk: '{guard}'."),
+            head.span,
+        );
+    }
+
     /// `checkPathHead`'s MOV_HEAD_NOT_A_POSITION: a hop off a root whose value
     /// type is known and holds no record.
     pub fn report_head_not_a_position(&mut self, head: &PathHead, scope: ScopeId) {

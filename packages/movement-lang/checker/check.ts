@@ -10975,15 +10975,20 @@ class Checker {
       if (resolution.kind === 'found') this.recordOfName(resolution.symbol, rootName, input.span);
     }
     if (!head.steps || head.steps.length === 0 || head.rootType === undefined) return {};
-    // A write/link needs a record that IS there. Traversing INTO a maybe-empty
-    // node is gate-discharged (the block runs zero times), but a write is not a
-    // block: nothing about the statement says it might not happen, and the
+    // A write/link needs a record that IS there. A block traversing INTO a
+    // maybe-empty node was read as gate-discharged (running zero times), but
+    // the engine fails it when the node is absent, which version 5 refuses
+    // (reportHeadOffMaybeAbsent). A write is not a block either: nothing
+    // about the statement says it might not happen, and the
     // engine has no record to parent it to. This is the require-present site for
     // the node plane, mirroring a plain write FIELD on the scalar plane.
     if (head.rootType.kind === 'maybeEmpty' && rootName !== undefined) {
       this.report(
         DiagnosticCodes.ABSENT_REQUIRED,
-        `'${rootName}' is ${describePosition(head.rootType.of)} that may not be there, so a ${input.purpose} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('${this.code(`if ${rootName} == null { ERROR("…") }`)}', or '${spellIf(`EXISTS(${rootName})`, this.languageVersion)}'), or gate on it with a traversal block ('${rootName}-[x:…]-> { … }'), which runs zero times when it's empty.`,
+        `'${rootName}' is ${describePosition(head.rootType.of)} that may not be there, so a ${input.purpose} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('${this.code(`if ${rootName} == null { ERROR("…") }`)}', or '${spellIf(`EXISTS(${rootName})`, this.languageVersion)}')${
+          // From 5 a block's walk off it is refused too: it fails the run when the record is absent.
+          since(this.languageVersion, 5) ? '.' : `, or gate on it with a traversal block ('${rootName}-[x:…]-> { … }'), which runs zero times when it's empty.`
+        }`,
         input.span,
       );
       return {};
@@ -11857,6 +11862,7 @@ class Checker {
     assignedName: string | undefined,
   ): ReturnShape & { headOrdering: CollectionOrder } {
     const head = this.checkPathHead(block.head, scope);
+    this.reportHeadOffMaybeAbsent(block.head, head, scope);
     // Type the hop chain (check 4) and harvest per-alias position types.
     // Rootless heads are relative to the enclosing position, which M2b does
     // not track — they walk untyped.
@@ -11900,6 +11906,55 @@ class Checker {
       if (!scope.escaped.has(name)) scope.escaped.set(name, blockName);
     }
     return { ...returned, headOrdering };
+  }
+
+  /**
+   * From version 5, a block whose head walks off a name that may hold no
+   * record — an `extractOne` answer, a `match` that found nothing (from 4), an
+   * unguarded pick — is refused (MOV_ABSENT_REQUIRED). The run does not skip
+   * such a block: it fails at the head when the record is absent, on every
+   * version, and runs when it is there, so versions 1–4 keep the form (a saved
+   * movement runs whenever the record is found) and a move up across 5 is
+   * warned of.
+   */
+  private reportHeadOffMaybeAbsent(path: PathHead, head: HeadInfo, scope: Scope): void {
+    if (!head.steps?.length || head.rootType === undefined || before(this.languageVersion, 5)) return;
+    const heldMaybeAbsent = (type: FieldType | undefined): boolean => {
+      const held = type !== undefined ? stripAbsent(type) : undefined;
+      return isMaybeAbsent(type) && typeof held === 'object' && held.kind === 'record' && held.position !== undefined;
+    };
+    let spelled: string;
+    let guard: string;
+    if (path.root?.kind === 'expression') {
+      if (!heldMaybeAbsent(this.slotValueTypeSilently(path.root.expr, scope))) return;
+      spelled = path.root.expr.raw.trim();
+      guard = `x = ${spelled}', then 'if (x != null) { … }`;
+    } else {
+      const rootName = pathRootName(path);
+      if (rootName === undefined) return;
+      const resolution = scope.resolve(rootName);
+      if (resolution.kind !== 'found') return;
+      const mayBeAbsent =
+        resolution.symbol.posType !== undefined
+          ? resolution.symbol.posType.kind === 'maybeEmpty'
+          : heldMaybeAbsent(resolution.symbol.fieldType);
+      if (!mayBeAbsent) return;
+      spelled = rootName;
+      guard = `if (${rootName} != null) { … }`;
+    }
+    if (this.upgradeCrosses(5)) {
+      this.reportUpgradeWarning(
+        DiagnosticCodes.ABSENT_REQUIRED,
+        `since ${describeLanguageVersion(5)} a block's walk off '${spelled}', which may be absent, is refused: the run fails at the walk when '${spelled}' is absent. Guard the walk ('${guard}'), then upgrade.`,
+        path.span,
+      );
+      return;
+    }
+    this.report(
+      DiagnosticCodes.ABSENT_REQUIRED,
+      `'${spelled}' may be absent, and a block's walk off a record that is not there fails the run rather than running zero times. Guard the walk: '${guard}'.`,
+      path.span,
+    );
   }
 
   // ── Calls ──

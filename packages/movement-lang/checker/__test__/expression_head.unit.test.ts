@@ -66,44 +66,46 @@ function check(body: string): Diagnostic[] {
 const codes = (body: string): string[] => check(body).map((d) => d.code);
 const messages = (body: string): string => check(body).map((d) => d.message).join('\n');
 
-/** `rows` is a list literal of records — ordered, so `AT` can index it. */
+/** `rows` is a list literal of records — ordered, so `AT` can index it —
+ *  inside the guard that proves its one member there (from 5 a block's walk
+ *  off a record that may be absent is refused); each body closes it. */
 const ROWS =
-  '  rows = [only(crm-[c:Companies WHERE c.`Name` == "Acme"]->)]\n';
+  '  one = only(crm-[c:Companies WHERE c.`Name` == "Acme"]->)\n  if (one != null) {\n  rows = [one]\n';
 
 describe('an expression head types as the record it holds', () => {
   it('a call picking one record out of a list', () => {
-    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`)).toEqual([]);
+    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }\n  }`)).toEqual([]);
   });
 
   it('exactly as binding it first does — the two forms are one walk', () => {
-    const bound = codes(`${ROWS}  head = rows[0]\n  head-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
-    const inline = codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
+    const bound = codes(`${ROWS}  head = rows[0]\n  head-[f:Founders]-> {\n    x = f.\`Name\`\n  }\n  }`);
+    const inline = codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }\n  }`);
     expect(inline).toEqual(bound);
     expect(inline).toEqual([]);
   });
 
-  it('a singleton fold over a narrowed walk', () => {
+  it('a singleton fold over a narrowed walk may be absent, so from 5 the walk off it is refused', () => {
     expect(
       codes(
         '  only(crm-[c:Companies WHERE c.`Name` == "Acme"]->)-[f:Founders]-> {\n    x = f.`Name`\n  }',
       ),
-    ).toEqual([]);
+    ).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('a record held in a map, read by its key', () => {
     expect(
-      codes(`${ROWS}  held = { a: rows[0] }\n  held.a-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
+      codes(`${ROWS}  held = { a: rows[0] }\n  held.a-[f:Founders]-> {\n    x = f.\`Name\`\n  }\n  }`),
     ).toEqual([]);
   });
 
   it('the hop is typed off the expression, so an edge the record has not got is named', () => {
-    expect(codes(`${ROWS}  rows[0]-[f:Investors]-> {\n    x = f.\`Name\`\n  }`)).toEqual([
+    expect(codes(`${ROWS}  rows[0]-[f:Investors]-> {\n    x = f.\`Name\`\n  }\n  }`)).toEqual([
       'MOV_TRAVERSE_UNKNOWN_EDGE',
     ]);
   });
 
   it('the landing is typed, so a property the landing has not got is named', () => {
-    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Nope\`\n  }`)).toEqual([
+    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Nope\`\n  }\n  }`)).toEqual([
       'MOV_UNKNOWN_PROPERTY',
     ]);
   });
@@ -134,7 +136,7 @@ describe('an expression that is not a record', () => {
 
 describe("await parks on a record it can name again", () => {
   it('refuses an expression root, with the binding to make', () => {
-    const body = `${ROWS}  answer = await first(rows[0]-[r:Founders]->)`;
+    const body = `${ROWS}  answer = await first(rows[0]-[r:Founders]->)\n  }`;
     expect(codes(body)).toContain('MOV_HEAD_NEEDS_A_NAME');
     expect(messages(body)).toMatch(
       /'await' parks on the record it waits at, and a parked run finds that record again by NAME — so this one is bound first: 'waiting = rows\[0\]', then 'await first\(waiting-\[r:Founders\]->\)'/,
@@ -151,7 +153,7 @@ describe("await parks on a record it can name again", () => {
 describe('the story shows the expression the author wrote', () => {
   it('carries the head as source, and the root as its own chip', () => {
     const result = storyOf({
-      source: source(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
+      source: source(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }\n  }`),
       catalog,
     });
     if (!result.ok) throw new Error(`expected a story, got ${result.reason}`);

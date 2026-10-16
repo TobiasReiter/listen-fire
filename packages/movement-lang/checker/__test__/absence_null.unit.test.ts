@@ -273,7 +273,8 @@ describe('FIRST over a bare traversal binds a maybe-empty position', () => {
     const message = errorsFor(`${SELECT}\n  write channel-[:Messages]-> { Message: "hi" }`)[0].message;
     expect(message).toContain("if (channel == null)");
     expect(message).toContain('if (channel != null)');
-    expect(message).toContain('channel-[x:…]->');
+    // From 5 a block's walk off it is refused too, so it is no way out.
+    expect(message).not.toContain('channel-[x:…]->');
   });
 
   it('the other shape gets its OWN names in the same message', () => {
@@ -282,9 +283,18 @@ describe('FIRST over a bare traversal binds a maybe-empty position', () => {
     expect(message).not.toContain('channel');
   });
 
-  it('a traversal BLOCK off it is fine — the block runs zero times when empty', () => {
+  it('a traversal BLOCK off it is refused from 5 — the run fails at the walk when it is empty', () => {
     expect(
       codesFor(`${SELECT}\n  channel-[m:Messages]-> { write board-[:Lanes]-> { Title: m.\`Message\` } }`),
+    ).toEqual(["MOV_ABSENT_REQUIRED"]);
+    expect(
+      codesFor(`${SELECT}\n  if (channel != null) {\n    channel-[m:Messages]-> { write board-[:Lanes]-> { Title: m.\`Message\` } }\n  }`),
+    ).toEqual([]);
+  });
+
+  it('versions 1–4 keep the traversal BLOCK off it', () => {
+    expect(
+      codesFor('  channel = ONLY(chat-[c:Channels WHERE c.`Name` == "alerts"]->)\n  channel-[m:Messages]-> { write board-[:Lanes]-> { Title: m.`Message` } }', 4),
     ).toEqual([]);
   });
 

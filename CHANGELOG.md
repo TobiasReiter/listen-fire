@@ -165,6 +165,15 @@ for byte; on text already in the version 5 spelling it changes nothing.
   admission; its code is deleted). A version 1–4 automation holding one still runs on the
   TypeScript engine, by its version, exactly as before; `lf` runs and `MOVEMENT_ENGINE=rust`
   with `MOVEMENT_ENGINE_FALLBACK=none` fail such a run with that reason.
+- **A block's walk off a record that may be absent is refused** (`MOV_ABSENT_REQUIRED`, from
+  version 5): `found-[c:company]-> { … }` where `found` is an `extractOne(…)` answer, a `match`
+  that may find nothing, an unguarded pick (`only(…)`, `first(…)`, `rows[0]`). Why: the run does
+  not skip such a block when the record is absent, it fails at the walk ("'found' is nothing, and
+  a hop walks from a POSITION"), on every version and both engines; the checker had read it as a
+  block that runs zero times. Guard the walk: `if (found != null) { found-[c:company]-> { … } }`.
+  Under 1–4 nothing changes (a saved automation runs whenever the record is found); a move up
+  across 5 is an upgrade warning, which holds the pin. The write-site refusal of the same records
+  no longer offers the block as a way out from 5.
 - **A null test on an extracted `<text>` field is refused for the call's records too**
   (`MOV_PRESENCE_TEST_ON_TEXT`, from version 5): `if (r.title != null)` where `r` is a record
   `extract(…)` or `extractOne(…)` handed back and `title` is `<text>`. Why: a text the model did

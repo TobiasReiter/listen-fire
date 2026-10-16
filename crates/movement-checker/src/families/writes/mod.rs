@@ -516,11 +516,13 @@ impl Checker<'_> {
             self.report(
                 codes::ABSENT_REQUIRED,
                 format!(
-                    "'{root_name}' is {} that may not be there, so a {} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('{}', or '{}'), or gate on it with a traversal block ('{root_name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.",
+                    "'{root_name}' is {} that may not be there, so a {} off it can't be guaranteed to happen — and nothing in this statement says it might be skipped. Test it first ('{}', or '{}'){}",
                     describe_position(of),
                     purpose.word(),
                     self.code(&format!("if {root_name} == null {{ ERROR(\"…\") }}")),
-                    movement_parser::surface::phrase::spell_if(&format!("EXISTS({root_name})"), self.version)
+                    movement_parser::surface::phrase::spell_if(&format!("EXISTS({root_name})"), self.version),
+                    // From 5 a block's walk off it is refused too: it fails the run when the record is absent.
+                    if self.version >= 5 { ".".to_string() } else { format!(", or gate on it with a traversal block ('{root_name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.") }
                 ),
                 span,
             );

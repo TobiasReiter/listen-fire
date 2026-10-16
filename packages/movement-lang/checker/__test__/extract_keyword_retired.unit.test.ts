@@ -81,7 +81,8 @@ function go(m: <chat-[:message]->>) {
   }
 }
 `);
-    expect(check(upgraded(TREE), 5)).toEqual([]);
+    // The record may be absent, so the walk off it now asks for its guard.
+    expect(check(upgraded(TREE), 5).map((d) => d.code)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('names each shape after its binding, numbered past a name the file already holds', () => {

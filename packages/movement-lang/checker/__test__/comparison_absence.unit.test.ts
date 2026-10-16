@@ -229,12 +229,16 @@ describe('equality narrows — the comparison IS the guard', () => {
     ).toContain('MOV_ABSENT_REQUIRED');
   });
 
-  it('a traversal-as-gate is untouched by any of this', () => {
-    // The landing may be empty, and a walk INTO a block off it runs zero times
-    // when it is — so nothing inside the block has an absence left to discharge.
+  it('a guarded traversal is untouched by any of this', () => {
+    // The landing may be empty, and a block's walk off it fails the run when it
+    // is, so from 5 the walk is guarded; nothing inside the block has an
+    // absence left to discharge.
+    expect(
+      codesFor(`${AWAITED}\n  if (r != null) {\n    r-[n:Notes]-> { write log-[:Entry]-> { label: n.Body } }\n  }`),
+    ).toEqual([]);
     expect(
       codesFor(`${AWAITED}\n  r-[n:Notes]-> { write log-[:Entry]-> { label: n.Body } }`),
-    ).toEqual([]);
+    ).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('a `?:` fill is untouched by any of this', () => {

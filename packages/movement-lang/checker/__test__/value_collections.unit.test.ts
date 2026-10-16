@@ -462,8 +462,10 @@ describe('a block head rooted at a value', () => {
     const body = [
       CHUNKED,
       '  one = found[0]',
-      '  one-[x:company]-> {',
-      '    write chat-[:note]-> { Body ?: x.name }',
+      '  if (one != null) {',
+      '    one-[x:company]-> {',
+      '      write chat-[:note]-> { Body ?: x.name }',
+      '    }',
       '  }',
     ].join('\n');
     expect(codes(body)).toEqual([]);

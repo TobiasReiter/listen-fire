@@ -36,7 +36,7 @@ const BOUND = '  `The Check` = only(e-[k:Checks]->)\n';
 
 describe('a backticked binding walks like a bare one', () => {
   it('as a block-statement head', () => {
-    expect(codes(BOUND + '  `The Check`-[a:Answer]-> {\n    t = a.`Text`\n  }')).toEqual([]);
+    expect(codes(BOUND + '  if (`The Check` != null) {\n    `The Check`-[a:Answer]-> {\n      t = a.`Text`\n    }\n  }')).toEqual([]);
   });
 
   it('under await FIRST', () => {
