@@ -1116,6 +1116,15 @@ fn surface_not_enumerated(position: &movement_parser::catalog::types::PositionSc
     position.open_properties == Some(true) || position.undescribed == Some(true) || position.pending == Some(true)
 }
 
+/// A callback's call written in place under version 5 that leaves its
+/// function a parameter open, or passes one too many.
+fn callback_call_arity_message(movement: &str, arity: usize, given: usize) -> String {
+    format!(
+        "'{movement}' takes {arity} argument{}, got {given} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => {movement}(…, d))",
+        if arity == 1 { "" } else { "s" }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1162,13 +1171,4 @@ pub fn callback_type(params: Vec<(String, Option<Ty>)>) -> Position {
     edges.insert("Called".to_string(), LocalEdge { schema, target: Some(call), structural: false, deferred: false, references: false });
     let reads = IndexMap::from([("id".to_string(), Some(Ty::Text)), ("url".to_string(), Some(Ty::Text))]);
     Position::Local(LocalNode { label: "a callback".to_string(), reads, edges: Some(edges), run_built: None, extracted: None })
-}
-
-/// A callback's call written in place under version 5 that leaves its
-/// function a parameter open, or passes one too many.
-fn callback_call_arity_message(movement: &str, arity: usize, given: usize) -> String {
-    format!(
-        "'{movement}' takes {arity} argument{}, got {given} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => {movement}(…, d))",
-        if arity == 1 { "" } else { "s" }
-    )
 }

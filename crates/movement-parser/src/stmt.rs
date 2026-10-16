@@ -4926,6 +4926,32 @@ fn snake_case(name: &str) -> String {
     out
 }
 
+/// A name a program writes bare: a letter or `_`, then letters, digits, `_`.
+fn is_plain_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The local name an unnamed package import's fix suggests: the tag's last
+/// word in camelCase (`@lf/web-tools` → `webTools`), or `pkg`.
+fn local_name_for_tag(tag: &str) -> String {
+    let last = tag.rsplit(['/', '@', '.', ':']).find(|w| !w.is_empty()).unwrap_or("");
+    let mut out = String::new();
+    let mut upper = false;
+    for c in last.chars() {
+        if c.is_ascii_alphanumeric() {
+            if out.is_empty() && c.is_ascii_digit() {
+                continue;
+            }
+            out.push(if upper && !out.is_empty() { c.to_ascii_uppercase() } else { c });
+            upper = false;
+        } else {
+            upper = true;
+        }
+    }
+    if out.is_empty() { "pkg".to_string() } else { out }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5092,30 +5118,4 @@ fn sort_by_function(args: &[CallArg]) -> bool {
         [_, key, last] => !identity(key) || !settings(last),
         _ => true,
     }
-}
-
-/// A name a program writes bare: a letter or `_`, then letters, digits, `_`.
-fn is_plain_ident(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// The local name an unnamed package import's fix suggests: the tag's last
-/// word in camelCase (`@lf/web-tools` → `webTools`), or `pkg`.
-fn local_name_for_tag(tag: &str) -> String {
-    let last = tag.rsplit(['/', '@', '.', ':']).find(|w| !w.is_empty()).unwrap_or("");
-    let mut out = String::new();
-    let mut upper = false;
-    for c in last.chars() {
-        if c.is_ascii_alphanumeric() {
-            if out.is_empty() && c.is_ascii_digit() {
-                continue;
-            }
-            out.push(if upper && !out.is_empty() { c.to_ascii_uppercase() } else { c });
-            upper = false;
-        } else {
-            upper = true;
-        }
-    }
-    if out.is_empty() { "pkg".to_string() } else { out }
 }
