@@ -227,7 +227,7 @@ pub fn union_returns(shapes: &[ReturnShape]) -> ReturnShape {
     let union = match arms.len() {
         0 => None,
         1 => arms.pop(),
-        _ => Some(Ty::Union(arms)),
+        _ => Some(Ty::Union(Rc::new(arms))),
     };
     let typed = match &union {
         Some(union) if !unknown => {

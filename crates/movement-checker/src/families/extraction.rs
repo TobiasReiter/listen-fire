@@ -404,7 +404,7 @@ impl Checker<'_> {
             }
             ExtractCallShape::Computed { .. } => return None,
         };
-        let record = Ty::Record(Some(Box::new(extracted_record_type(&node))));
+        let record = Ty::record(Some(extracted_record_type(&node)));
         Some(match call.finds {
             ExtractCallFinds::Each => Ty::list(record),
             ExtractCallFinds::One => maybe_absent(record),
@@ -982,7 +982,7 @@ impl Checker<'_> {
             // when every arm provably is one.
             if let Some(may_hold) = may_hold {
                 let arms = match may_hold {
-                    Ty::Union(members) => members.clone(),
+                    Ty::Union(members) => members.to_vec(),
                     other => vec![other.clone()],
                 };
                 let extracted = arms.iter().all(|arm| match strip_absent(arm) {

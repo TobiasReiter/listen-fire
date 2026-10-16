@@ -7,6 +7,7 @@
 //! - MOV_RETURN_PLANE_MISMATCH
 //! - MOV_RETURN_TYPE
 
+use std::rc::Rc;
 use movement_parser::ast::{ClosureExpression, ParamTypeRef, RValue, ReturnStatement, Span, Statement};
 use movement_parser::version::since;
 
@@ -188,7 +189,7 @@ impl Checker<'_> {
         let may_hold = match arms.len() {
             0 => None,
             1 => arms.pop(),
-            _ => Some(Ty::Union(arms)),
+            _ => Some(Ty::Union(Rc::new(arms))),
         };
         let revealed = may_hold.filter(|held| shows_more_handles(held, first.shape.plane.field.as_ref()));
         ReturnShape { returns: true, plane: first.shape.plane.clone(), may_hold: revealed }

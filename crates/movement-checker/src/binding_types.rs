@@ -121,6 +121,19 @@ impl Checker<'_> {
         Some(SymbolTypes { field: ty, may_hold, many_valued, ..SymbolTypes::default() })
     }
 
+    /// `withinTypeLimit`: a value type over the size limit is reported, at
+    /// `span` when there is one, and dropped, so it grows no further.
+    pub(crate) fn within_type_limit(&mut self, name: &str, field: &mut Option<Ty>, may_hold: &mut Option<Ty>, span: Option<movement_parser::ast::Span>) {
+        if !crate::types::field::types_too_large(&[field.as_ref(), may_hold.as_ref()]) {
+            return;
+        }
+        if let Some(span) = span {
+            self.report(crate::codes::TYPE_TOO_LARGE, crate::types::field::type_too_large_message(name), span);
+        }
+        *field = None;
+        *may_hold = None;
+    }
+
     /// Gives `name`, bound in `scope` itself, its types.
     pub fn set_types(&mut self, scope: ScopeId, name: &str, types: SymbolTypes) {
         if let Some(id) = self.scopes.scope(scope).symbols.get(name).copied() {
@@ -383,7 +396,7 @@ impl Checker<'_> {
                     shape.push((key.name.clone(), if key.optional == Some(true) { maybe_absent(ty) } else { ty }));
                 }
                 let of = unify_value_types(&shape.iter().map(|(_, t)| Some(strip_absent(t).clone())).collect::<Vec<_>>()).unwrap_or(Ty::Json);
-                Some(Ty::Dict { of: Box::new(of), shape: Some(shape.into_iter().map(|(k, t)| (k, Some(t))).collect()) })
+                Some(Ty::Dict { of: Rc::new(of), shape: Some(Rc::new(shape.into_iter().map(|(k, t)| (k, Some(t))).collect())) })
             }
             ValueType::Closure { params, returns, .. } => {
                 let mut planes = Vec::new();

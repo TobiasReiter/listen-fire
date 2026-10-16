@@ -210,6 +210,7 @@ The family is also the Rust module (`src/families/<family>.rs`).
 | MOV_RETURN_TYPE | check.ts:checkDeclaredReturn, check.ts:checkReturnFit ×6 | 6 |
 | MOV_STDLIB_ARG_INVALID | typing.ts:checkStdlibLiteralArgs | 16 |
 | MOV_STDLIB_ARG_NOT_LITERAL | typing.ts:checkStdlibLiteralArgs | 12 |
+| MOV_TYPE_TOO_LARGE | check.ts:withinTypeLimit (checkAssign, checkClosure, checkMovement) | 0 |
 
 ### closures
 
