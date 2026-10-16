@@ -148,6 +148,19 @@ function expectClean(source: string): void {
   expect(diagnostics.map(d => `${d.code}: ${d.message}`)).toEqual([]);
 }
 
+// The extraction keyword (`extract from […] { … }`) and its `through` stage
+// are versions 1–4 only (MOV_EXTRACT_KEYWORD_RETIRED from 5), so their tests
+// are pinned to 4 and spelled as 4 reads them.
+const checkBefore5 = (source: string): Diagnostic[] =>
+  checkProgram(parseProgram(source, { languageVersion: 4 }), catalog, { languageVersion: 4 }).filter(
+    d => (d.severity ?? 'error') === 'error',
+  );
+const codesBefore5 = (source: string): string[] => checkBefore5(source).map(d => d.code);
+
+function expectCleanBefore5(source: string): void {
+  expect(checkBefore5(source).map(d => `${d.code}: ${d.message}`)).toEqual([]);
+}
+
 const PRELUDE = [
   'import { email, attio, slack, kg } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace, native_knowledge } from credentials',
@@ -223,23 +236,23 @@ describe('worked examples (zero diagnostics)', () => {
     );
   });
 
-  it('§I log_dealflow (extract tree + nested linked writes)', () => {
-    expectClean(
+  it('§I log_dealflow (extract tree + nested linked writes; version 4)', () => {
+    expectCleanBefore5(
       [
         'import { email, kg } from adapters',
         'import { dealflow_inbox, native_knowledge } from credentials',
-        'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
+        'import { vc_url_retrieval } from plugins',
         '',
-        'inbox = connect email using dealflow_inbox',
-        'graph = connect kg using native_knowledge',
+        'inbox = email(credentials: dealflow_inbox)',
+        'graph = kg(credentials: native_knowledge)',
         '',
-        'function log_dealflow(msg: <inbox-[:message]->>) {',
+        'movement log_dealflow(msg: <inbox-[:message]->>) {',
         '',
         '  deals = extract from [msg.`text`, msg-[:files]->.`data`] {',
         '    node company: "each company seeking investment in this message" {',
         '      name: "the company\'s name"',
         '      urls: "URLs in the message associated with this company"',
-        '    } through [vc_url_retrieval({ urls: urls })] {',
+        '    } through [vc_url_retrieval(urls: urls)] {',
         '      name: "the company\'s name"',
         '',
         '      node round: "the funding round this company is raising" {',
@@ -260,13 +273,13 @@ describe('worked examples (zero diagnostics)', () => {
         '',
         '    c-[r:round]-> {',
         '      fr = write co-[:rounds]-> {',
-        '        unique by (co && `stage`)',
+        '        unique by (co AND `stage`)',
         '        stage: r.`stage`',
         '      }',
         '',
         '      r-[i:investor]-> {',
         '        write fr-[:participants]-> {',
-        '          unique by (fr && `investor_name`)',
+        '          unique by (fr AND `investor_name`)',
         '          investor_name: i.`name`',
         '          lead:          i.`lead`',
         '        }',
@@ -939,9 +952,9 @@ describe('movements, shapes, calls', () => {
 // those eleven literal characters and the model answered null — the language
 // promised interpolation and the extractor silently got source text.
 
-describe('an extract description is a string expression', () => {
+describe('an extract description is a string expression (version 4)', () => {
   const withDescriptions = (field: string, node = '"each company"') =>
-    inMovement(
+    inMovementBefore5(
       [
         '  `Themes` = "AI Agents, Future of Work"',
         '  deals = extract from [msg.`text`] {',
@@ -953,25 +966,25 @@ describe('an extract description is a string expression', () => {
     );
 
   it('a description that interpolates a constant in scope is clean', () => {
-    expectClean(withDescriptions('"the theme, one of: ${`Themes`}"'));
+    expectCleanBefore5(withDescriptions('"the theme, one of: ${`Themes`}"'));
   });
 
   it('MOV_NAME_UNRESOLVED when a field description names nothing in scope', () => {
-    const diagnostics = check(withDescriptions('"the theme, one of: ${`Dive Themes`}"'));
+    const diagnostics = checkBefore5(withDescriptions('"the theme, one of: ${`Dive Themes`}"'));
     expect(diagnostics.map(d => d.code)).toEqual([C.NAME_UNRESOLVED]);
     expect(diagnostics[0].message).toContain('Dive Themes');
   });
 
   it("MOV_NAME_UNRESOLVED when a NODE's description names nothing in scope", () => {
-    expect(codes(withDescriptions('"the theme"', '"each ${vanisher} mentioned"'))).toEqual([
+    expect(codesBefore5(withDescriptions('"the theme"', '"each ${vanisher} mentioned"'))).toEqual([
       C.NAME_UNRESOLVED,
     ]);
   });
 
   it("an extracted field is NOT in scope for a description — the tree's descriptions are evaluated before anything is extracted", () => {
     expect(
-      codes(
-        inMovement(
+      codesBefore5(
+        inMovementBefore5(
           [
             '  deals = extract from [msg.`text`] {',
             '    name: "the name"',
@@ -984,14 +997,14 @@ describe('an extract description is a string expression', () => {
   });
 
   it('a description with no interpolation raises nothing', () => {
-    expectClean(withDescriptions('"the theme, verbatim from the list"'));
+    expectCleanBefore5(withDescriptions('"the theme, verbatim from the list"'));
   });
 });
 
 // ── Through args (extract) ──
 
 const extractWith = (through: string, stage2Fields: string) =>
-  inMovement(
+  inMovementBefore5(
     [
       '  deals = extract from [msg.`text`] {',
       '    node company: "each company" {',
@@ -1004,36 +1017,36 @@ const extractWith = (through: string, stage2Fields: string) =>
     ].join('\n'),
   );
 
-describe('through args', () => {
+describe('through args (version 4)', () => {
   it('MOV_THROUGH_NOT_PLUGIN when the pipeline names a non-plugin', () => {
-    expect(codes(extractWith('inbox', 'website: "the website"'))).toEqual([C.THROUGH_NOT_PLUGIN]);
+    expect(codesBefore5(extractWith('inbox', 'website: "the website"'))).toEqual([C.THROUGH_NOT_PLUGIN]);
   });
 
   it('MOV_NAME_UNRESOLVED when the pipeline names nothing in scope', () => {
-    expect(codes(extractWith('vanisher', 'website: "the website"'))).toEqual([C.NAME_UNRESOLVED]);
+    expect(codesBefore5(extractWith('vanisher', 'website: "the website"'))).toEqual([C.NAME_UNRESOLVED]);
   });
 
   it('MOV_THROUGH_BAD_ARG for an argument the plugin does not declare', () => {
-    expect(codes(extractWith('vc_url_retrieval({ bogus: urls })', 'website: "the website"'))).toEqual([
+    expect(codesBefore5(extractWith('vc_url_retrieval(bogus: urls)', 'website: "the website"'))).toEqual([
       C.THROUGH_BAD_ARG,
     ]);
   });
 
   it("MOV_THROUGH_FORWARD_REF when a through reads its own stage's field", () => {
-    const diagnostics = check(
-      extractWith('vc_url_retrieval({ urls: website })', 'website: "the website"'),
+    const diagnostics = checkBefore5(
+      extractWith('vc_url_retrieval(urls: website)', 'website: "the website"'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.THROUGH_FORWARD_REF]);
     expect(diagnostics[0].message).toContain("'website'");
   });
 
   it('prior-stage fields and inherited scope resolve in through args', () => {
-    expectClean(extractWith('vc_url_retrieval({ urls: urls })', 'website: "the website"'));
-    expectClean(extractWith('vc_url_retrieval({ urls: msg.`text` })', 'website: "the website"'));
+    expectCleanBefore5(extractWith('vc_url_retrieval(urls: urls)', 'website: "the website"'));
+    expectCleanBefore5(extractWith('vc_url_retrieval(urls: msg.`text`)', 'website: "the website"'));
   });
 
   it('MOV_THROUGH_ARG_MISSING for a required argument the call omits, naming the param and the plugin', () => {
-    const diagnostics = check(extractWith('fetch_url', 'website: "the website"'));
+    const diagnostics = checkBefore5(extractWith('fetch_url', 'website: "the website"'));
     expect(diagnostics.map(d => d.code)).toEqual([C.THROUGH_ARG_MISSING]);
     expect(diagnostics[0].message).toContain("'fetch_url'");
     expect(diagnostics[0].message).toContain("'url'");
@@ -1058,23 +1071,23 @@ describe('through args', () => {
   });
 
   it('supplying the required argument clears MOV_THROUGH_ARG_MISSING', () => {
-    expectClean(extractWith('fetch_url(urls)', 'website: "the website"'));
+    expectCleanBefore5(extractWith('fetch_url(url: urls)', 'website: "the website"'));
   });
 
   it('an optional argument left out stays clean — only requiredArgs are demanded', () => {
-    expectClean(extractWith('fetch_url(urls, { email: msg.`subject` })', 'website: "the website"'));
+    expectCleanBefore5(extractWith('fetch_url(url: urls, email: msg.`subject`)', 'website: "the website"'));
   });
 
   it("a child node's through may read the parent's earlier fields", () => {
-    expectClean(
-      inMovement(
+    expectCleanBefore5(
+      inMovementBefore5(
         [
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
           '      urls: "associated URLs"',
           '      node round: "the round" {',
           '        stage: "the stage"',
-          '      } through [vc_url_retrieval({ urls: urls })] {',
+          '      } through [vc_url_retrieval(urls: urls)] {',
           '        amount: "the amount"',
           '      }',
           '    }',
@@ -1089,8 +1102,8 @@ describe('through args', () => {
 
 describe('extract field duplicates', () => {
   it('MOV_EXTRACT_FIELD_DUPLICATE for two description fields in one node', () => {
-    const diagnostics = check(
-      inMovement(
+    const diagnostics = checkBefore5(
+      inMovementBefore5(
         [
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
@@ -1106,8 +1119,8 @@ describe('extract field duplicates', () => {
   });
 
   it('MOV_EXTRACT_FIELD_DUPLICATE for a child node named like a field of its parent', () => {
-    const diagnostics = check(
-      inMovement(
+    const diagnostics = checkBefore5(
+      inMovementBefore5(
         [
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
@@ -1138,9 +1151,9 @@ describe('extract field duplicates', () => {
   // JavaScript reads `__proto__` as an object's prototype: an extracted
   // record would never hold the field, so naming one so is refused where it
   // is written, inline or in a declaration, a field or a node.
-  it('MOV_SHAPE_FIELD_PROTO for a field or a node named __proto__, inline or declared', () => {
-    const inline = check(
-      inMovement(
+  it('MOV_SHAPE_FIELD_PROTO for a field or a node named __proto__, inline (version 4) or declared', () => {
+    const inline = checkBefore5(
+      inMovementBefore5(
         [
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
@@ -1154,7 +1167,7 @@ describe('extract field duplicates', () => {
     );
     expect(inline.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO]);
     expect(inline[0].message).toContain("'__proto__'");
-    const root = check(inMovement(['  deals = extract from [msg.`text`] {', '    __proto__: "the pitch"', '  }'].join('\n')));
+    const root = checkBefore5(inMovementBefore5(['  deals = extract from [msg.`text`] {', '    __proto__: "the pitch"', '  }'].join('\n')));
     expect(root.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO]);
     const declared = check(
       [PRELUDE, 'node Company: "each company" {', '  name: <text> "the name"', '  node __proto__: "each round" { __proto__: <text> "the stage" }', '}'].join('\n'),
@@ -1202,14 +1215,14 @@ describe('extract field duplicates', () => {
     }
   });
 
-  it('a later stage may redeclare an earlier stage\'s field (transformation wins)', () => {
-    expectClean(
-      inMovement(
+  it('a later stage may redeclare an earlier stage\'s field (transformation wins; version 4)', () => {
+    expectCleanBefore5(
+      inMovementBefore5(
         [
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
           '      name: "the raw name"',
-          '    } through [vc_url_retrieval({ urls: name })] {',
+          '    } through [vc_url_retrieval(urls: name)] {',
           '      name: "the cleaned name"',
           '    }',
           '  }',
