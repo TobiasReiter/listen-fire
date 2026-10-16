@@ -130,6 +130,20 @@ describe('version 5 checker leftovers, in both checkers', () => {
   });
 });
 
+// Indexing a call's result is TypeScript's indexing (5_design: `xs[0]` for
+// `AT`), read on the value the call hands back, hoisted call or not.
+describe("an index on a call's result", () => {
+  it('reads the result in both checkers, a hoisted call too', () => {
+    for (const line of [
+      '  y = sort(tags, (k) => Text.upper(k))[0]',
+      '  y = sort(tags, (k) => Text.upper(k), { order: "desc" })[0]',
+      '  y = sort(tags, (k) => k)[0]',
+    ]) {
+      expect(check(V5(`  tags = [t, "a"]\n${line}`), 5)).toEqual([]);
+    }
+  });
+});
+
 // A slot can arrive without the tree its program's parse cached (a program
 // rebuilt from stored JSON, a slot the checker builds itself); the checker
 // then reads its text again, and must read it under the program's version.
