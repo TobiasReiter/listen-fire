@@ -2889,6 +2889,11 @@ export interface HeldWalk {
    *  object of an accepted kind the walk meets, at any depth and in any arm,
    *  instead of passing over it. What it answers is what the walk found. */
   inspect?: (held: HeldHandle) => HeldHandle | undefined;
+  /** The parts this walk has already found nothing in. A part is shared, not
+   *  copied, as a value travels, so a walk that met it once per path to it
+   *  would be exponential in the depth. Only a walk without an inspection
+   *  keeps them: an inspection may answer by where the object sits. */
+  emptyParts?: WeakSet<object>;
 }
 
 const NOTHING_ACCEPTED: ReadonlySet<HandleKind> = new Set();
@@ -2898,7 +2903,7 @@ export function heldWalk(
   accepts: ReadonlySet<HandleKind> = NOTHING_ACCEPTED,
   inspect?: (held: HeldHandle) => HeldHandle | undefined,
 ): HeldWalk {
-  return { steps: [], accepts, ...(inspect !== undefined ? { inspect } : {}) };
+  return { steps: [], accepts, ...(inspect !== undefined ? { inspect } : { emptyParts: new WeakSet() }) };
 }
 
 /** An accepted object, handed to the walk's inspection if it has one. */
@@ -3013,6 +3018,16 @@ export function spellHeldSteps(steps: readonly HeldStep[]): string {
  * serialises, and a handle does not, however deep it sits.
  */
 export function handleWithin(type: FieldType | undefined, walk: HeldWalk = heldWalk()): HeldHandle | undefined {
+  if (type === undefined || typeof type === 'string') return handleWithinPart(type, walk);
+  if (walk.emptyParts?.has(type)) return undefined;
+  const kinds = kindsHeldBy(type);
+  if (!kinds.record && !kinds.file) return undefined;
+  const held = handleWithinPart(type, walk);
+  if (held === undefined) walk.emptyParts?.add(type);
+  return held;
+}
+
+function handleWithinPart(type: FieldType | undefined, walk: HeldWalk): HeldHandle | undefined {
   if (type === undefined) return undefined;
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
@@ -3181,18 +3196,43 @@ function withoutShape(type: FieldType): FieldType {
 }
 
 /** Two runs of tuple slots, slot by slot. */
-function slotsAgree(left: Array<FieldType | null>, right: Array<FieldType | null>): boolean {
+function slotsAgree(left: Array<FieldType | null>, right: Array<FieldType | null>, compared: ComparedPairs): boolean {
   return left.length === right.length && left.every((slot, i) => {
     const other = right[i];
     if (slot === null || other === null) return slot === other;
-    return fieldTypeEquals(slot, other);
+    return typesAgree(slot, other, compared);
   });
 }
+
+/** The answers one comparison has reached, pair by pair. A type is shared, not
+ *  copied, as it travels (a closure's return nests the last one's twice), so a
+ *  comparison that re-walked each part once per path to it would be
+ *  exponential in the depth; remembered, it is linear in the distinct parts. */
+type ComparedPairs = Map<object, Map<object, boolean>>;
 
 /** Strict sameness (number vs text IS different; enum options compared).
  *  Absence is transparent to sameness — `T | absent` equals `T` here (the
  *  require-present sites police absence, not the shape checks). */
 export function fieldTypeEquals(a: FieldType, b: FieldType): boolean {
+  return typesAgree(a, b, new Map());
+}
+
+function typesAgree(a: FieldType, b: FieldType, compared: ComparedPairs): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object') return typesCompared(a, b, compared);
+  let row = compared.get(a);
+  const known = row?.get(b);
+  if (known !== undefined) return known;
+  const agrees = typesCompared(a, b, compared);
+  if (row === undefined) {
+    row = new Map();
+    compared.set(a, row);
+  }
+  row.set(b, agrees);
+  return agrees;
+}
+
+function typesCompared(a: FieldType, b: FieldType, compared: ComparedPairs): boolean {
   const left = variantOf(stripAbsent(a));
   const right = variantOf(stripAbsent(b));
   switch (left.kind) {
@@ -3208,23 +3248,23 @@ export function fieldTypeEquals(a: FieldType, b: FieldType): boolean {
     case 'absent':
       return right.kind === left.kind;
     case 'list':
-      return right.kind === 'list' && fieldTypeEquals(left.of, right.of);
+      return right.kind === 'list' && typesAgree(left.of, right.of, compared);
     // Two tuples are the same type iff they are the same LENGTH and agree slot
     // by slot — an untyped slot matches only another untyped one, because "we
     // could not see" is not a type two tuples can agree on.
     // A variadic run agrees the same way, and only with a run in the same
     // place.
     case 'tuple': {
-      if (right.kind !== 'tuple' || !slotsAgree(left.of, right.of)) return false;
+      if (right.kind !== 'tuple' || !slotsAgree(left.of, right.of, compared)) return false;
       if (left.rest === undefined || right.rest === undefined) return left.rest === right.rest;
-      return left.rest.at === right.rest.at && slotsAgree([left.rest.of], [right.rest.of]);
+      return left.rest.at === right.rest.at && slotsAgree([left.rest.of], [right.rest.of], compared);
     }
     // Two dicts agree when what they hold agrees. Where the keys were written
     // down they ARE type, so two shaped dicts also agree key by key — an
     // untyped key matching only another untyped one, as a tuple's slot does —
     // and a shaped dict is not the same type as one whose keys are data.
     case 'dict': {
-      if (right.kind !== 'dict' || !fieldTypeEquals(left.of, right.of)) return false;
+      if (right.kind !== 'dict' || !typesAgree(left.of, right.of, compared)) return false;
       if (left.shape === undefined || right.shape === undefined) {
         return left.shape === undefined && right.shape === undefined;
       }
@@ -3238,7 +3278,7 @@ export function fieldTypeEquals(a: FieldType, b: FieldType): boolean {
           const slot = leftShape[key] ?? null;
           const other = rightShape[key] ?? null;
           if (slot === null || other === null) return slot === other;
-          return fieldTypeEquals(slot, other);
+          return typesAgree(slot, other, compared);
         })
       );
     }
@@ -3261,15 +3301,107 @@ export function fieldTypeEquals(a: FieldType, b: FieldType): boolean {
     // `stripAbsent` peeled this and `maybeAbsent` never nests, so it cannot
     // arrive; absence is transparent to sameness either way.
     case 'maybeAbsent':
-      return right.kind === 'maybeAbsent' && fieldTypeEquals(left.of, right.of);
+      return right.kind === 'maybeAbsent' && typesAgree(left.of, right.of, compared);
     // A union IS its member set — the same members in any order.
     case 'union': {
       if (right.kind !== 'union' || left.of.length !== right.of.length) return false;
       const others = right.of;
-      return left.of.every(member => others.some(other => fieldTypeEquals(member, other)));
+      return left.of.every(member => others.some(other => typesAgree(member, other, compared)));
     }
     default:
       return neverAsAny(left);
+  }
+}
+
+/** How many structurally distinct parts an inferred type may have before the
+ *  checker stops growing it (`MOV_TYPE_TOO_LARGE`). A safety limit, not
+ *  language semantics: every walk over a type is linear in its distinct parts,
+ *  so this is what bounds the time one program can take to check. */
+export const TYPE_PARTS_LIMIT = 10_000;
+
+/**
+ * Do these types, together, have more than `TYPE_PARTS_LIMIT` structurally
+ * distinct parts? A part is a type anywhere inside them, a bare name included;
+ * two parts with the same structure are one part however many times, and
+ * through however many paths, they occur — so the answer does not depend on
+ * how much of the type happens to be shared in memory.
+ */
+export function typesTooLarge(types: ReadonlyArray<FieldType | undefined>): boolean {
+  const idOfObject = new Map<object, number>();
+  const idOfStructure = new Map<string, number>();
+  const idOfPosition = new Map<object, number>();
+  const partOf = (type: FieldType | null | undefined): number => {
+    if (type === null || type === undefined) return -1;
+    if (typeof type === 'object') {
+      const known = idOfObject.get(type);
+      if (known !== undefined) return known;
+    }
+    const structure = structureOf(type, partOf, idOfPosition);
+    let id = idOfStructure.get(structure);
+    if (id === undefined) {
+      id = idOfStructure.size;
+      idOfStructure.set(structure, id);
+      if (idOfStructure.size > TYPE_PARTS_LIMIT) throw TOO_LARGE;
+    }
+    if (typeof type === 'object') idOfObject.set(type, id);
+    return id;
+  };
+  try {
+    for (const type of types) partOf(type);
+    return false;
+  } catch (thrown) {
+    if (thrown === TOO_LARGE) return true;
+    throw thrown;
+  }
+}
+
+const TOO_LARGE = Symbol('too large');
+
+/** One part's structure, its own parts named by the ids `partOf` gives them. */
+function structureOf(
+  type: FieldType,
+  partOf: (type: FieldType | null | undefined) => number,
+  positions: Map<object, number>,
+): string {
+  const variant = variantOf(type);
+  switch (variant.kind) {
+    case 'text':
+    case 'number':
+    case 'boolean':
+    case 'date':
+    case 'datetime':
+    case 'file':
+    case 'json':
+    case 'absent':
+      return variant.kind;
+    case 'list':
+      return `list${variant.unordered === true ? '~' : ''}(${partOf(variant.of)})`;
+    case 'tuple':
+      return `tuple(${variant.of.map(partOf).join(',')}${variant.rest !== undefined ? `;${variant.rest.at}:${partOf(variant.rest.of)}` : ''})`;
+    case 'dict': {
+      const shape = variant.shape;
+      const keys = shape === undefined
+        ? ''
+        : Object.keys(shape).sort().map(key => `${JSON.stringify(key)}:${partOf(shape[key])}`).join(',');
+      return `dict(${partOf(variant.of)}${shape !== undefined ? `{${keys}}` : ''})`;
+    }
+    case 'union':
+      return `union(${[...new Set(variant.of.map(partOf))].sort((a, b) => a - b).join(',')})`;
+    case 'maybeAbsent':
+      return `maybe(${partOf(variant.of)})`;
+    case 'enum':
+      return `enum(${JSON.stringify(variant.options)}${variant.open !== undefined ? `~${JSON.stringify(variant.open)}` : ''})`;
+    case 'record': {
+      if (variant.position === undefined) return 'record';
+      let id = positions.get(variant.position);
+      if (id === undefined) {
+        id = positions.size;
+        positions.set(variant.position, id);
+      }
+      return `record@${id}`;
+    }
+    default:
+      return neverAsAny(variant);
   }
 }
 

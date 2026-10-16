@@ -295,6 +295,8 @@ import {
   type HeldHandle,
   type HeldWalk,
   fieldTypeEquals,
+  typesTooLarge,
+  TYPE_PARTS_LIMIT,
   LocalEdge,
   InstanceRef,
   isMaybeAbsent,
@@ -969,6 +971,11 @@ export const DiagnosticCodes = {
    *  An instance stands for a live system and its schema is per-credential, so
    *  it cannot travel; the movement that needs one constructs it. */
   RETURN_NOT_A_VALUE: 'MOV_RETURN_NOT_A_VALUE',
+  /** A binding, function or closure whose inferred type has more than
+   *  `TYPE_PARTS_LIMIT` distinct parts. A safety limit on every version, not a
+   *  language rule: such a program never checked in reasonable time. The type
+   *  stops there — it is left untyped. */
+  TYPE_TOO_LARGE: 'MOV_TYPE_TOO_LARGE',
   /** RETIRED: reading a block's inner binding off the block's value —
    *  `orgs.name` / `orgs-[o:co]->`. A block's bindings never leave it; the ONE
    *  way a value comes out is `return`. */
@@ -3570,6 +3577,59 @@ function recordReturnMisfit(keys: Record<string, FieldType | null>, source: Fiel
   return undefined;
 }
 
+/** The value-plane facts a binding or a return carries. */
+interface ValueTypeFacts {
+  fieldType?: FieldType;
+  mayHold?: FieldType;
+}
+
+function typeTooLarge(shape: ValueTypeFacts): boolean {
+  return typesTooLarge([shape.fieldType, shape.mayHold]);
+}
+
+function withoutValueType<T extends ValueTypeFacts>(shape: T): T {
+  const rest = { ...shape };
+  delete rest.fieldType;
+  delete rest.mayHold;
+  return rest;
+}
+
+/**
+ * The record a value that may be one of several things is, for a rule that
+ * needs one record (`recordOfName`): a name bound to an `IF` or a `COALESCE`
+ * whose arms have no one type. Records alone are one record, as `A | B` of two
+ * `Org`s is an `Org` — its type the members' when they agree, and unnamed (so
+ * nothing is refused) when they do not; one that may be absent may be empty.
+ * A member that is not a record makes it a value.
+ */
+function recordOfMayHold(
+  mayHold: FieldType,
+): { kind: 'record'; type: PositionTypeRef } | { kind: 'value'; what: string } | { kind: 'undescribed' } {
+  const positions: Array<PositionTypeRef | undefined> = [];
+  let mayBeAbsent = false;
+  const visit = (member: FieldType): boolean => {
+    if (member === 'absent' || isMaybeAbsent(member)) mayBeAbsent = true;
+    if (member === 'absent') return true;
+    const variant = variantOf(stripAbsent(member));
+    if (variant.kind === 'union') return variant.of.every(visit);
+    if (variant.kind !== 'record') return false;
+    positions.push(variant.position);
+    return true;
+  };
+  if (!visit(mayHold) || positions.length === 0) {
+    return { kind: 'value', what: 'a value that may hold something other than one record' };
+  }
+  const first = positions[0];
+  if (first === undefined || !positions.every(position => position !== undefined && sameStartingPoint(position, first))) {
+    return { kind: 'undescribed' };
+  }
+  return { kind: 'record', type: mayBeAbsent ? { kind: 'maybeEmpty', of: first } : first };
+}
+
+function typeTooLargeMessage(name: string): string {
+  return `'${name}' builds a type too large to check (over ${TYPE_PARTS_LIMIT} parts) — split the value into named parts or declare its shape (node <Name> { … })`;
+}
+
 /**
  * The closure a VALUE is (language version 5): a record of closure type, or a
  * union of them — TypeScript's `(() => A) | (() => B)`, which a list of
@@ -4079,7 +4139,10 @@ class Checker {
    *   - `value` — it holds a value, not a record (the rule refuses it, by its
    *     own code);
    *   - `undescribed` — a record whose system describes nothing (a schema-less
-   *     graph): unknown, never an error;
+   *     graph), or one of several records of different types: unknown, never
+   *     an error;
+   * A name bound to an `IF` or a `COALESCE` whose arms have no one type is
+   * read by what it may hold (`recordOfMayHold`).
    *   - undefined — the binding carries no type at all, reported here as the
    *     internal error it is.
    */
@@ -4113,6 +4176,7 @@ class Checker {
         ? { kind: 'undescribed' }
         : { kind: 'value', what: describeKind[symbol.kind] };
     }
+    if (symbol.mayHold !== undefined) return recordOfMayHold(symbol.mayHold);
     this.report(
       DiagnosticCodes.UNTYPED_BINDING,
       `internal: '${name}' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program`,
@@ -4984,8 +5048,9 @@ class Checker {
       returned.posType?.kind === 'local'
         ? { ...returned, posType: { ...returned.posType, label: `the value of '${info.decl.name}'` } }
         : returned;
-    info.returnType = { done: true, shape: labelled };
-    return labelled;
+    const bounded = typeTooLarge(labelled) ? withoutValueType(labelled) : labelled;
+    info.returnType = { done: true, shape: bounded };
+    return bounded;
   }
 
   /** The movement's parameters, in declaration order, with their types — what
@@ -5566,6 +5631,14 @@ class Checker {
 
   // ── Assignment ──
 
+  /** `shape` as `name` may carry it: a value type over the size limit is
+   *  reported and dropped, so it grows no further. */
+  private withinTypeLimit<T extends ValueTypeFacts>(name: string, shape: T, span: Span): T {
+    if (!typeTooLarge(shape)) return shape;
+    this.report(DiagnosticCodes.TYPE_TOO_LARGE, typeTooLargeMessage(name), span);
+    return withoutValueType(shape);
+  }
+
   private checkAssign(statement: AssignStatement, scope: Scope): void {
     // `#` marks the engine's own names (`#resources` is the other one), and the
     // engine binds a body's `return` under such a name so it survives a park.
@@ -5578,7 +5651,7 @@ class Checker {
         statement.span,
       );
     }
-    const shape = this.checkRValue(statement.value, scope, statement.name, statement.span);
+    const shape = this.withinTypeLimit(statement.name, this.checkRValue(statement.value, scope, statement.name, statement.span), statement.span);
     const symbol: ScopeSymbol = {
       name: statement.name,
       kind: 'binding',
@@ -6670,11 +6743,13 @@ class Checker {
       && showsMoreHandles(inferred.mayHold, declared.fieldType)
       ? inferred.mayHold
       : undefined;
-    const returns = declared !== undefined
+    const returned = declared !== undefined
       ? { returns: true, ...declared, ...(undeclaredHold !== undefined ? { mayHold: undeclaredHold } : {}) }
       : inferred.posType !== undefined
       ? { ...inferred, posType: withoutParameter(inferred.posType) }
       : inferred;
+    // An unbound closure's value is caught where it is bound.
+    const returns = options.self !== undefined ? this.withinTypeLimit(options.self, returned, closure.span) : returned;
     return { params, returns, effects };
   }
 
@@ -12927,7 +13002,8 @@ class Checker {
     }
     const symbol = scope.symbols.get(statement.name);
     const collector: ReturnCollector = { what: `'${statement.name}'`, returns: [] };
-    this.recordMovementRow(symbol, () => this.checkBody(statement.body, movementScope, collector));
+    const returned = this.recordMovementRow(symbol, () => this.checkBody(statement.body, movementScope, collector));
+    this.withinTypeLimit(statement.name, returned, statement.span);
     this.checkDeclaredReturn(statement.returnType, collector, scope, statement.span);
     // Every member of a cycle is known by now: this body's own calls were
     // inferred while it was walked, and a cycle through it comes back here. A

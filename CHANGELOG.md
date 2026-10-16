@@ -547,6 +547,12 @@ guide](docs/language/dancing-wren-migration.md).
   each enqueue POST a drain tick to every URL, so a door's work starts without waiting for the
   scheduled tick. `node build/scripts/drain_once.js` (new) drains until idle and exits, for a
   scheduled job with no HTTP. Nothing changes for a deployment that sets none of them.
+- On every language version, a binding, function or closure whose inferred type has more than
+  10,000 distinct parts is refused (`MOV_TYPE_TOO_LARGE`); split the value into named parts or
+  declare its shape. Why: a chain of closures, each returning a map of the last one's value, made
+  saving an automation take minutes. The checker is now linear in a type's distinct parts, and this
+  limit bounds what one program can cost to check. It is a safety limit, not a language rule: no
+  program that reaches it ever checked in reasonable time.
 - From language version 5, a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is
   `MOV_FUNCTION_UNKNOWN`. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
   there was never such a function: the run always failed where it reached the call. Versions 1–4
@@ -700,6 +706,10 @@ guide](docs/language/dancing-wren-migration.md).
 - For embedders: `trace.append` now requires `wire: true`, with its entries on the eval wire. The
   Rust engine now also asks `ids.mint`, `llm.client.call`, `llm.transforms.invoke`,
   `files.resolveFileText` and `log.write`.
+- `write v { … }`, where `v` is an `IF` or a `COALESCE` of two records with no one type, no longer
+  reports the checker's own internal error (`MOV_INTERNAL_UNTYPED_BINDING`) on any language version.
+  `v` is read as what it may hold, as `delete` and a graph entry read it: records alone are one
+  record; one that may be absent, or a value among them, is `MOV_WRITE_POSITION_NOT_RECORD`.
 - A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
   the credential the adapter was installed with, saying the remote install serves only its own. It
   used to be ignored: two accounts on one remote adapter silently reached the install's account, so
