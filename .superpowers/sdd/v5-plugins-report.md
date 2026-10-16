@@ -149,3 +149,7 @@ Commits 31c1cc38..f2b7ea50. Every change is gated on version 5; versions 1–4 a
   - Case 2: a block closure inside a nested call that is parsed later, which has no import list. There a *bare* `web.f(u)` statement does not parse. A bound one (`p = web.f(u)`) works through hoisting.
 - **A package import without an alias** binds `` `@lf/web`.fetchUrl ``, which cannot be written. It is not refused yet.
 - **The Rust engine's expanded program** is used for the run only. Its stored tree JSON keeps the import as written.
+
+## Parity after Item 2 (slice lead)
+
+- Rerun with node 22: 244/244 codes, 0 extra in Rust, 28,328/28,328 records exact (v1–4 included). PARITY.md committed.
