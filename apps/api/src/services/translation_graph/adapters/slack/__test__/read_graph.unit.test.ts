@@ -619,7 +619,7 @@ describe('write msg-[:Reactions]-> reaches the checker', () => {
   const PRELUDE = `import { slack } from adapters
 import { team_workspace } from credentials
 
-chat = slack(credentials: team_workspace)
+chat = connect slack using team_workspace
 `;
 
   async function errorsFor(source: string): Promise<Array<{ code: string; message: string }>> {
@@ -628,7 +628,7 @@ chat = slack(credentials: team_workspace)
       .map((d) => ({ code: d.code, message: d.message }));
   }
 
-  const LISTENED = (body: string) => `movement react(e: <chat-[:Message]->>) {
+  const LISTENED = (body: string) => `function react(e: <chat-[:Message]->>) {
 ${body}
 }
 
@@ -640,8 +640,8 @@ listen to chat { events: ["app_mention"] } fire react`;
 
   it('reacts to a message read out of a channel`s history', async () => {
     expect(
-      await errorsFor(`movement sweep() {
-  chat-[ch:\`Channels\` WHERE \`Name\` == "dealflow"]-> {
+      await errorsFor(`function sweep() {
+  chat-[ch:\`Channels\` WHERE ch.\`Name\` == "dealflow"]-> {
     ch-[m:\`Messages\`]-> {
       write m-[:\`Reactions\`]-> { Emoji: "thumbsup" }
     }

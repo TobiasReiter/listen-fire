@@ -151,7 +151,7 @@ const PRELUDE = [
   'import { email } from adapters',
   'import { dealflow_inbox } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
+  'inbox = connect email using dealflow_inbox',
   'type Thesis = <"Consumer" | "Infra">',
   'rules = "route infra to Infra"',
   'node Entry: "each company pitched in this message" {',
@@ -221,7 +221,7 @@ async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
     },
   };
   await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n'),
+    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,

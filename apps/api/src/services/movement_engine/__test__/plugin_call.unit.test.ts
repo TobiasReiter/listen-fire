@@ -153,10 +153,10 @@ const CREDENTIAL_IDS: Record<string, string> = { acme_main: 'cred-attio-1' };
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url, research, vc_url_retrieval, linkedin_enrichment } from plugins',
+  'import { fetchUrl as fetch_url, research, vcUrlRetrieval as vc_url_retrieval, linkedinEnrichment as linkedin_enrichment } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -213,9 +213,9 @@ const pluginEntries = (trace: MovementTraceEntry[]) =>
 // ── A value output ───────────────────────────────────────────────────────────
 
 const FETCH_MOVEMENT = [
-  'movement intake(m: <inbox-[:message]->>) {',
-  '  page = fetch_url(url: m.`text`)',
-  '  co = write crm-[:companies]-> { name: m.`subject`, summary: COALESCE(page, "nothing") }',
+  'function intake(m: <inbox-[:message]->>) {',
+  '  page = fetch_url(m.`text`)',
+  '  co = write crm-[:companies]-> { name: m.`subject`, summary: coalesce(page, "nothing") }',
   '}',
 ].join('\n');
 
@@ -286,11 +286,11 @@ describe('a plugin called plainly hands back its declared VALUE', () => {
 // ── A record output ──────────────────────────────────────────────────────────
 
 const RESEARCH_MOVEMENT = [
-  'movement intake(m: <inbox-[:message]->>) {',
-  '  more = research(name: m.`subject`, questions: "what it does")',
+  'function intake(m: <inbox-[:message]->>) {',
+  '  more = research(m.`subject`, { questions: "what it does" })',
   '  co = write crm-[:companies]-> {',
-  '    name: COALESCE(more.website, "no-site")',
-  '    summary: COALESCE(more.summary, "nothing")',
+  '    name: coalesce(more.website, "no-site")',
+  '    summary: coalesce(more.summary, "nothing")',
   '  }',
   '}',
 ].join('\n');
@@ -356,12 +356,12 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
   // The first record read field by field: its link, its text, and whether it
   // carries a file — each through the same dot read any record gets.
   const SCAN = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  pages = vc_url_retrieval(text: m.`text`)',
-    '  deck = FIRST(pages)',
-    '  if deck != null {',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  pages = vc_url_retrieval(m.`text`)',
+    '  deck = first(pages)',
+    '  if (deck != null) {',
     '    write crm-[:companies]-> { name: deck.url, summary ?: deck.text }',
-    '    if deck.file != null {',
+    '    if (deck.file != null) {',
     '      write crm-[:companies]-> { name: deck.name, summary: "carries a file" }',
     '    }',
     '  }',
@@ -424,9 +424,9 @@ describe('a plugin called plainly hands back its declared list of RECORDS', () =
       },
     });
     const source = [
-      'movement intake(m: <inbox-[:message]->>) {',
-      '  pages = vc_url_retrieval(text: m.`text`)',
-      '  write crm-[:companies]-> { name: JOIN(pages.url, ", "), summary: CONCAT("", COUNT(pages)) }',
+      'function intake(m: <inbox-[:message]->>) {',
+      '  pages = vc_url_retrieval(m.`text`)',
+      '  write crm-[:companies]-> { name: Text.join(pages.url, ", "), summary: Text.concat("", count(pages)) }',
       '}',
     ].join('\n');
 
@@ -461,7 +461,7 @@ describe('a call the checker refuses fails the run before anything is invoked', 
     const attio = makeFakeAdapter('attio');
     const { invoker, calls } = stubInvoker({});
     const source = [
-      'movement intake(m: <inbox-[:message]->>) {',
+      'function intake(m: <inbox-[:message]->>) {',
       '  page = fetch_url()',
       '  co = write crm-[:companies]-> { name: m.`subject`, summary: COALESCE(page, "x") }',
       '}',
@@ -478,7 +478,7 @@ describe('a call the checker refuses fails the run before anything is invoked', 
     const attio = makeFakeAdapter('attio');
     const { invoker, calls } = stubInvoker({});
     const source = [
-      'movement intake(m: <inbox-[:message]->>) {',
+      'function intake(m: <inbox-[:message]->>) {',
       '  found = linkedin_enrichment()',
       '  co = write crm-[:companies]-> { name: m.`subject` }',
       '}',
@@ -501,9 +501,9 @@ describe("a call written in place as a plugin's argument is the value it compute
 
     await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  page = fetch_url(url: LOWER(m.`text`))',
-        '  shouted = fetch_url(url: UPPER(m.`text`))',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  page = fetch_url(Text.lower(m.`text`))',
+        '  shouted = fetch_url(Text.upper(m.`text`))',
         '}',
       ].join('\n'),
       invoker,
@@ -529,9 +529,9 @@ describe("a call written in place as a plugin's argument is the value it compute
 
     await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  page = fetch_url(url: fetch_url(url: m.`text`))',
-        '  co = write crm-[:companies]-> { name: m.`subject`, summary: COALESCE(page, "nothing") }',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  page = fetch_url(fetch_url(m.`text`))',
+        '  co = write crm-[:companies]-> { name: m.`subject`, summary: coalesce(page, "nothing") }',
         '}',
       ].join('\n'),
       invoker,

@@ -20,12 +20,12 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { email } from adapters
 import { dealflow_inbox } from credentials
-inbox = email(credentials: dealflow_inbox)
+inbox = connect email using dealflow_inbox
 `;
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(d: <inbox-[:message]->>) {
+function m(d: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -41,7 +41,7 @@ describe('ERROR statement — the surviving half of the old fallback terminal', 
   });
 
   it('a literal ERROR reason checks clean', () => {
-    expect(codes(`  ERROR("a clear literal reason")`)).toEqual([]);
+    expect(codes(`  fail("a clear literal reason")`)).toEqual([]);
   });
 });
 

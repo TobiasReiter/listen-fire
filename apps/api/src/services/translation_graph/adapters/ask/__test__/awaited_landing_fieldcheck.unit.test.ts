@@ -54,19 +54,19 @@ async function askSnapshot(): Promise<{ schema: InstanceSchema; snapshot: Catalo
   return { schema, snapshot };
 }
 
-const PRELUDE = `import { questions } from adapters\nqa = questions()\n`;
+const PRELUDE = `import { questions } from adapters\nqa = connect questions\n`;
 
 async function errorsFor(body: string): Promise<string[]> {
   const { snapshot } = await askSnapshot();
   return checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   )
     .filter((d) => (d.severity ?? 'error') === 'error')
     .map((d) => d.code);
 }
 
-const AWAIT = `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await FIRST(a-[:Response]->)`;
+const AWAIT = `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await first(a-[:Response]->)`;
 
 describe('the awaited ask landing is checked like any position', () => {
   it("projects the Check ask's own Response node CLOSED, Answer typed boolean (not the old shared string)", async () => {
@@ -92,7 +92,7 @@ describe('the awaited ask landing is checked like any position', () => {
   });
 
   it('reading the DECLARED name is clean', async () => {
-    expect(await errorsFor(`${AWAIT}\n  if r.Answer { }`)).toEqual([]);
+    expect(await errorsFor(`${AWAIT}\n  if (r.Answer) { }`)).toEqual([]);
   });
 
   it('the lowercase/undeclared name is a CHECKER error (not a silent null)', async () => {
@@ -109,7 +109,7 @@ describe('the awaited ask landing is checked like any position', () => {
 
   it('a Select ask lands Answer as list<text>; reading it is clean', async () => {
     const codes = await errorsFor(
-      `  s = write qa-[:Select]-> { Prompt: "Pick", Options: ["a", "b"] }\n  r = await FIRST(s-[:Response]->)\n  x = r.Answer`,
+      `  s = write qa-[:Select]-> { Prompt: "Pick", Options: ["a", "b"] }\n  r = await first(s-[:Response]->)\n  x = r.Answer`,
     );
     expect(codes).toEqual([]);
   });
@@ -144,13 +144,13 @@ describe('awaitable is a read MODE, not an edge kind', () => {
   });
 
   it('the bare read lands the SAME per-family type `await` does', async () => {
-    expect(await errorsFor(`${ASK}\n  a-[r:Response]-> { if r.Answer { } }`)).toEqual([]);
+    expect(await errorsFor(`${ASK}\n  a-[r:Response]-> { if (r.Answer) { } }`)).toEqual([]);
     expect(await errorsFor(`${ASK}\n  a-[r:Response]-> { if r.TotallyBogusFieldXYZ { } }`)).toContain(
       'MOV_UNKNOWN_PROPERTY',
     );
   });
 
   it('`await` over the very same edge is still clean — one edge, two read modes', async () => {
-    expect(await errorsFor(`${AWAIT}\n  if r.Answer { }`)).toEqual([]);
+    expect(await errorsFor(`${AWAIT}\n  if (r.Answer) { }`)).toEqual([]);
   });
 });

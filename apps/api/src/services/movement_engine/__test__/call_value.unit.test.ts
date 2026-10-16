@@ -234,7 +234,7 @@ const PRELUDE = [
   'import { email, dropbox, attio } from adapters',
   'import { team_drive, acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
 ].join('\n');
 
@@ -325,7 +325,7 @@ describe('the utility idiom — one movement shapes, another writes', () => {
   // — multi-export is an ordinary node literal, handed back. Its parameter `m`
   // is the caller's data and is not part of what it returns.
   const SHAPER = [
-    'movement email_to_doc(m: <inbox-[:message]->>) {',
+    'function email_to_doc(m: <inbox-[:message]->>) {',
     '  return node {',
     '    title: m.`subject`',
     '    files: lazy m-[a:files]-> node { name: a.`filename`, blob: a.`data` }',
@@ -343,8 +343,8 @@ describe('the utility idiom — one movement shapes, another writes', () => {
     '  }',
     '}',
     '',
-    'movement log_doc(d: <Doc>) {',
-    '  drive = dropbox(credentials: team_drive)',
+    'function log_doc(d: <Doc>) {',
+    '  drive = connect dropbox using team_drive',
     '  d-[f:files]-> {',
     '    write drive-[:file]-> {',
     '      filename: f.`name`',
@@ -367,9 +367,9 @@ describe('the utility idiom — one movement shapes, another writes', () => {
   }
 
   const INTAKE = [
-    'movement intake(msg: <inbox-[:message]->>) {',
-    '  doc = email_to_doc(m: msg)',
-    '  log_doc(d: doc)',
+    'function intake(msg: <inbox-[:message]->>) {',
+    '  doc = email_to_doc(msg)',
+    '  log_doc(doc)',
     '}',
   ].join('\n');
 
@@ -409,8 +409,8 @@ describe('the utility idiom — one movement shapes, another writes', () => {
 
     await run(
       SHAPER + WRITER + [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  log_doc(d: email_to_doc(m: msg))',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  log_doc(email_to_doc(msg))',
         '}',
       ].join('\n'),
       { subject: 'Series A' },
@@ -426,9 +426,9 @@ describe('the utility idiom — one movement shapes, another writes', () => {
 
     await run(
       SHAPER + [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  doc = email_to_doc(m: msg)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  doc = email_to_doc(msg)',
         '  write crm-[:companies]-> { name: doc.title }',
         '}',
       ].join('\n'),
@@ -450,17 +450,17 @@ describe('the utility idiom — one movement shapes, another writes', () => {
 
     await run(
       [
-        'movement shape_it(m: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function shape_it(m: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  return node {',
         '    title: m.`subject`',
         '    files: lazy m-[a:files]-> node { name: a.`filename` }',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  doc = shape_it(m: msg)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  doc = shape_it(msg)',
         '  cb = callback({ write crm-[:companies]-> { name: doc.title } })',
         '}',
       ].join('\n'),
@@ -483,16 +483,16 @@ describe('the utility idiom — one movement shapes, another writes', () => {
 
 describe('a write-handle binding is an edge off the value', () => {
   const SOURCE = [
-    'movement make_company(m: <inbox-[:message]->>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function make_company(m: <inbox-[:message]->>) {',
+    '  crm = connect attio using acme_main',
     '  return write crm-[:companies]-> {',
     '    name: m.`subject`',
     '  }',
     '}',
     '',
-    'movement intake(msg: <inbox-[:message]->>) {',
-    '  drive = dropbox(credentials: team_drive)',
-    '  c = make_company(m: msg)',
+    'function intake(msg: <inbox-[:message]->>) {',
+    '  drive = connect dropbox using team_drive',
+    '  c = make_company(msg)',
     '  write drive-[:file]-> {',
     '    filename: c.`name`',
     '    data: c.`externalId`',
@@ -526,7 +526,7 @@ describe('a write-handle binding is an edge off the value', () => {
 
 describe("a park carries a call value's deferred walk, not what it walked to", () => {
   const SHAPER = [
-    'movement email_to_doc(m: <inbox-[:message]->>) {',
+    'function email_to_doc(m: <inbox-[:message]->>) {',
     '  return node {',
     '    title: m.`subject`',
     '    files: lazy m-[a:files]-> node { name: a.`filename` }',
@@ -542,9 +542,9 @@ describe("a park carries a call value's deferred walk, not what it walked to", (
 
     await run(
       SHAPER + [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  doc = email_to_doc(m: msg)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  doc = email_to_doc(msg)',
         '  cb = callback({ write crm-[:companies]-> { name: doc.title } })',
         '}',
       ].join('\n'),
@@ -579,19 +579,19 @@ describe("a park carries a call value's deferred walk, not what it walked to", (
       '  }',
       '}',
       '',
-      'movement record_names(d: <Bag>) {',
-      '  crm = attio(credentials: acme_main)',
+      'function record_names(d: <Bag>) {',
+      '  crm = connect attio using acme_main',
       '  d-[f:files]-> {',
       '    write crm-[:companies]-> { name: f.`name` }',
       '  }',
       '}',
       '',
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
-      '  doc = email_to_doc(m: msg)',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
+      '  doc = email_to_doc(msg)',
       '  write crm-[:companies]-> { name: doc.title }',
       '  await sleep(30d)',
-      '  record_names(d: doc)',
+      '  record_names(doc)',
       '}',
     ].join('\n');
 
@@ -635,14 +635,14 @@ describe("a park carries a call value's deferred walk, not what it walked to", (
 
 describe('a closure survives park → resume and is still callable', () => {
   const SOURCE = [
-    'movement intake(msg: <inbox-[:message]->>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function intake(msg: <inbox-[:message]->>) {',
+    '  crm = connect attio using acme_main',
     '  subject = msg.`subject`',
     '  ready = () => {',
     '    return subject == "go"',
     '  }',
     '  await sleep(30d)',
-    '  await until(ready, every: 1h)',
+    '  await until(ready, { every: 1h })',
     '  write crm-[:companies]-> { name: subject }',
     '}',
   ].join('\n');

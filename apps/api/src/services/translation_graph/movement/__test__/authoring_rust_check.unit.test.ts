@@ -28,6 +28,7 @@ jest.mock('movement-lang', () => {
 jest.mock('../catalog', () => ({ movementCatalogForTeam: jest.fn() }));
 
 import { fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { diagnoseMovementSource, validateMovementForTeam } from '../authoring';
 import { movementCatalogForTeam } from '../catalog';
@@ -54,6 +55,8 @@ inbox = email(credentials: inbox_cred)
 crm   = attio(credentials: crm_cred)
 `;
 
+// Written in the spelling versions 1–4 read; a version-5 check reads each as
+// the upgrade tool rewrites it.
 const programs: Record<string, string> = {
   clean: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> { name: msg.\`subject\`, stage: "Lead" }
@@ -87,8 +90,8 @@ function diagnose(source: string, languageVersion: LanguageVersion, withSnapshot
 describe('validation by the checker the run is held to', () => {
   for (const [name, source] of Object.entries(programs)) {
     it(`reports the TypeScript checker's diagnostics from the Rust checker on version 5: ${name}`, () => {
-      const rust = diagnose(source, 5, true);
-      const ts = diagnose(source, 5, false);
+      const rust = diagnose(spelledFor(5, source, catalog), 5, true);
+      const ts = diagnose(spelledFor(5, source, catalog), 5, false);
       expect(rust.checkers).toEqual({ rust: 1, typescript: 0 });
       expect(ts.checkers).toEqual({ rust: 0, typescript: 1 });
       expect(rust.validation).toEqual(ts.validation);

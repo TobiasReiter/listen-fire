@@ -32,7 +32,7 @@ const catalog = mockCatalog({
 const PRELUDE = [
   'import { attio } from adapters',
   'import { crm_cred } from credentials',
-  'crm = attio(credentials: crm_cred)',
+  'crm = connect attio using crm_cred',
   'function made() {',
   '  o = write crm-[:companies]-> { name: "Acme Inc." }',
   '  return o',
@@ -43,7 +43,7 @@ const PRELUDE = [
 ].join('\n');
 
 const errorsUnder = (version: LanguageVersion, functions: string[], body: string[]): Diagnostic[] => {
-  const source = `${PRELUDE}\n${functions.join('\n')}\nmovement m() {\n${body.join('\n')}\n}`;
+  const source = `${PRELUDE}\n${functions.join('\n')}\nfunction m() {\n${body.join('\n')}\n}`;
   return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );

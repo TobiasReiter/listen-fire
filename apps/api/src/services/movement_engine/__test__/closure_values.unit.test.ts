@@ -90,9 +90,9 @@ function manualEvent(): TriggerEvent {
 function program(body: string[]): string {
   return `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement recap(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function recap(go: <runs-[:Invocation]->>) {
 ${body.join('\n')}
 }
 listen to runs {} fire recap
@@ -232,7 +232,7 @@ describe('all — the join that replaces parallel', () => {
       await finalPayload([
         '  k = 7',
         '  r = all(() => { return k }, () => { return k * 2 }, () => 3)',
-        '  write graph-[:note]-> { payload: { r: r, second: AT(r, 1) } }',
+        '  write graph-[:note]-> { payload: { r: r, second: r[1] } }',
       ]),
     ).toEqual({ r: [7, 14, 3], second: 14 });
   });
@@ -275,7 +275,7 @@ describe('all — the join that replaces parallel', () => {
       '  a = () => { return "a" }',
       '  r = all(a, twice)',
       '  write graph-[:note]-> { payload: { r: r } }',
-    ]).replace('movement recap', 'function twice() {\n  return 2\n}\nmovement recap');
+    ]).replace('function recap', 'function twice() {\n  return 2\n}\nfunction recap');
     const parks = makeParkSink();
     const { kg } = await start(source, parks);
     expect(payloadOf(kg.creates)).toEqual({ r: ['a', 2] });
@@ -317,7 +317,7 @@ describe('all — the join that replaces parallel', () => {
     const parks = makeParkSink();
     const kg = makeKgFake();
     await expect(
-      runMovement(runInput(program(['  r = all(() => { ERROR("boom") }, () => { return 2 })']), parks, kg)),
+      runMovement(runInput(program(['  r = all(() => { fail("boom") }, () => { return 2 })']), parks, kg)),
     ).rejects.toThrow('boom');
   });
 
@@ -325,7 +325,7 @@ describe('all — the join that replaces parallel', () => {
     const parks = makeParkSink();
     const kg = makeKgFake();
     const result = await runMovement(runInput(program([
-      '  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })',
+      '  r = all(() => { fail("boom") }, () => { return 2 }, { onError: "warn" })',
       '  write graph-[:note]-> { payload: { r: r } }',
     ]), parks, kg));
     expect(payloadOf(kg.creates)).toEqual({ r: [null, 2] });
@@ -337,7 +337,7 @@ describe('all — the join that replaces parallel', () => {
       await finalPayload([
         '  r = all(() => {',
         '    await sleep(1h)',
-        '    ERROR("late")',
+        '    fail("late")',
         '  }, () => { return 2 }, { onError: "ignore" })',
         '  write graph-[:note]-> { payload: { r: r } }',
       ]),
@@ -374,7 +374,7 @@ describe('a value that is a closure is called', () => {
 
   it('a function declared with a name, bound to a name', async () => {
     const source = program(['  g = twice', '  x = g(4)', '  write graph-[:note]-> { payload: { x: x } }'])
-      .replace('movement recap', 'function twice(n: <number>) {\n  return n * 2\n}\nmovement recap');
+      .replace('function recap', 'function twice(n: <number>) {\n  return n * 2\n}\nfunction recap');
     const parks = makeParkSink();
     const { kg } = await start(source, parks);
     expect(payloadOf(kg.creates)).toEqual({ x: 8 });
@@ -418,7 +418,7 @@ describe('a closure made by a closure that parked, called after the resume', () 
 describe('a closure\'s value flows through every value position, and a call through it runs', () => {
   const FNS = ['function one() {', '  return "one"', '}', 'function pickOne() {', '  return one', '}'].join('\n');
   async function payloadWith(body: string[]): Promise<unknown> {
-    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('movement recap', `${FNS}\nmovement recap`);
+    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('function recap', `${FNS}\nfunction recap`);
     const parks = makeParkSink();
     const { kg } = await start(source, parks);
     return payloadOf(kg.creates);
@@ -440,7 +440,7 @@ describe('a parameter of closure type (<(params) => <return>>)', () => {
     '}',
   ].join('\n');
   async function payloadWith(body: string[]): Promise<unknown> {
-    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('movement recap', `${FNS}\nmovement recap`);
+    const source = program([...body, '  write graph-[:note]-> { payload: { x: x } }']).replace('function recap', `${FNS}\nfunction recap`);
     const parks = makeParkSink();
     const { kg } = await start(source, parks);
     return payloadOf(kg.creates);
@@ -545,10 +545,10 @@ describe('both engines: closures as values (version 5)', () => {
     '  return h(20)',
     '}',
   ].join('\n');
-  const withTop = (body: string[]): string => program(body).replace('movement recap', `${TOP}\nmovement recap`);
+  const withTop = (body: string[]): string => program(body).replace('function recap', `${TOP}\nfunction recap`);
   const write = (fields: string): string => `  write graph-[:note]-> { payload: { ${fields} } }`;
   const CASES: Record<string, { body: string[]; payload: unknown }> = {
-    allJoin: { body: ['  k = 7', '  r = all(() => { return k }, () => { return k * 2 }, () => 3)', write('r: r, second: AT(r, 1)')], payload: { r: [7, 14, 3], second: 14 } },
+    allJoin: { body: ['  k = 7', '  r = all(() => { return k }, () => { return k * 2 }, () => 3)', write('r: r, second: r[1]')], payload: { r: [7, 14, 3], second: 14 } },
     allArmParks: {
       body: ['  k = 3', '  r = all(() => {', '    await sleep(1h)', '    return k + 1', '  }, () => { return 10 })', write('r: r')],
       payload: { r: [4, 10] },
@@ -571,13 +571,13 @@ describe('both engines: closures as values (version 5)', () => {
       ],
       payload: { r: ['slept', 'ran'] },
     },
-    onErrorWarn: { body: ['  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')], payload: { r: [null, 2] } },
+    onErrorWarn: { body: ['  r = all(() => { fail("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')], payload: { r: [null, 2] } },
     onErrorIgnoreAfterResume: {
-      body: ['  r = all(() => {', '    await sleep(1h)', '    ERROR("late")', '  }, () => { return 2 }, { onError: "ignore" })', write('r: r')],
+      body: ['  r = all(() => {', '    await sleep(1h)', '    fail("late")', '  }, () => { return 2 }, { onError: "ignore" })', write('r: r')],
       payload: { r: [null, 2] },
     },
     onErrorWarnAfterResume: {
-      body: ['  r = all(() => {', '    await sleep(1h)', '    ERROR("late")', '  }, () => { return 2 }, { onError: "warn" })', write('r: r')],
+      body: ['  r = all(() => {', '    await sleep(1h)', '    fail("late")', '  }, () => { return 2 }, { onError: "warn" })', write('r: r')],
       payload: { r: [null, 2] },
     },
     raceArguments: {
@@ -607,7 +607,7 @@ describe('both engines: closures as values (version 5)', () => {
   }
 
   it('an arm onError: "warn" forgives leaves the same trace on both engines', async () => {
-    const source = withTop(['  r = all(() => { ERROR("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')]);
+    const source = withTop(['  r = all(() => { fail("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')]);
     const traces: unknown[] = [];
     for (const engine of ENGINES) traces.push(await onEngine(engine, async () => (await start(source, makeParkSink())).result.trace));
     expect(JSON.stringify(traces[1])).toEqual(JSON.stringify(traces[0]));
@@ -615,7 +615,7 @@ describe('both engines: closures as values (version 5)', () => {
   });
 
   it('an arm that fails fails the run on both engines, with the same error', async () => {
-    const source = withTop(['  r = all(() => { ERROR("boom") }, () => { return 2 })', write('r: r')]);
+    const source = withTop(['  r = all(() => { fail("boom") }, () => { return 2 })', write('r: r')]);
     const errors: string[] = [];
     for (const engine of ENGINES) errors.push(await onEngine(engine, () => start(source, makeParkSink()).then(() => 'no error', (e: unknown) => String(e))));
     expect(errors[1]).toEqual(errors[0]);

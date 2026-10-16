@@ -74,17 +74,17 @@ const snapshot: CatalogSnapshot = {
 const PRELUDE = `import { questions } from adapters
 import { probe } from credentials
 
-qa = questions(credentials: probe)
+qa = connect questions using probe
 `;
 
 const codesFor = (body: string): string[] =>
-  checkProgram(parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`), fromCatalogSnapshot(snapshot))
+  checkProgram(parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`), fromCatalogSnapshot(snapshot))
     .filter((d) => (d.severity ?? 'error') === 'error')
     .map((d) => d.code);
 
 const errorsFor = (body: string) =>
   checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   ).filter((d) => (d.severity ?? 'error') === 'error');
 
@@ -103,7 +103,7 @@ describe('await + the awaitable edge capability (checker)', () => {
 
   it('awaiting an awaitable edge is clean, and the landed node reads its declared field', () => {
     const codes = codesFor(
-      `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await FIRST(a-[:Response]->)\n  if r.Answer { }`,
+      `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await first(a-[:Response]->)\n  if (r.Answer) { }`,
     );
     expect(codes).toEqual([]);
   });
@@ -124,13 +124,13 @@ describe('await + the awaitable edge capability (checker)', () => {
 
   it('a PURE WHERE on an awaited edge is accepted', () => {
     const codes = codesFor(
-      `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await FIRST(a-[:Response WHERE \`Answer\` == "yes"]->)`,
+      `  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  r = await first(a-[r2:Response WHERE r2.\`Answer\` == "yes"]->)`,
     );
     expect(codes).toEqual([]);
   });
 
   it('the unbound statement form also type-checks', () => {
-    const codes = codesFor(`  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  await FIRST(a-[:Response]->)`);
+    const codes = codesFor(`  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  await first(a-[:Response]->)`);
     expect(codes).toEqual([]);
   });
 
@@ -141,7 +141,7 @@ describe('await + the awaitable edge capability (checker)', () => {
   });
 
   it('the retired `sleep <duration>` STATEMENT no longer parses — only `await sleep(…)` does', () => {
-    expect(() => parseProgram(`${PRELUDE}\nmovement m() {\n  sleep 2d\n}`)).toThrow(
+    expect(() => parseProgram(`${PRELUDE}\nfunction m() {\n  sleep 2d\n}`)).toThrow(
       /sleep.*replaced.*await it as an expression/s,
     );
   });

@@ -105,13 +105,13 @@ const PRELUDE = [
   'import { email, chat, dispatch } from adapters',
   'import { dealflow_inbox, acme_chat, acme_post } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'room  = chat(credentials: acme_chat)',
-  'post  = dispatch(credentials: acme_post)',
+  'inbox = connect email using dealflow_inbox',
+  'room  = connect chat using acme_chat',
+  'post  = connect dispatch using acme_post',
 ].join('\n');
 
 const inMovement = (body: string): string =>
-  `${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
 const check = (body: string): Diagnostic[] =>
   checkProgram(parseProgram(inMovement(body)), catalog).filter(

@@ -144,9 +144,9 @@ async function run(source: string, kg: ReturnType<typeof makeKgFake>) {
 describe('a write handle is a block-head traversal head', () => {
   const SOURCE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement m(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function m(go: <runs-[:Invocation]->>) {
   co = write graph-[:company]-> { name: "Acme" }
   co-[c:contacts]-> {
     write graph-[:log]-> { text: c.name }
@@ -166,9 +166,9 @@ listen to runs {} fire m
   it("the write's resultData reaches getRelated off the handle's own start position", async () => {
     const RESULT_DATA_SOURCE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement m(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function m(go: <runs-[:Invocation]->>) {
   co = write graph-[:company]-> { name: "Acme" }
   co-[e:ids]-> {
     write graph-[:log]-> { text: e.value }
@@ -187,9 +187,9 @@ listen to runs {} fire m
 describe('a write handle is an expression traversal head', () => {
   const SOURCE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement m(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function m(go: <runs-[:Invocation]->>) {
   co = write graph-[:company]-> { name: "Acme" }
   write graph-[:log]-> { text: "contact: \${co-[:contacts]->.name}" }
 }
@@ -207,9 +207,9 @@ listen to runs {} fire m
   it('a zero-step handle read still reads the handle field directly', async () => {
     const SRC = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement m(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function m(go: <runs-[:Invocation]->>) {
   co = write graph-[:company]-> { name: "Acme" }
   write graph-[:log]-> { text: "id: \${co.externalId}" }
 }

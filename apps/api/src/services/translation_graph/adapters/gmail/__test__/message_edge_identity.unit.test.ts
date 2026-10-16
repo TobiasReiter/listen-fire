@@ -68,7 +68,7 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { gmail } from adapters
 import { gmail_cred } from credentials
-mail = gmail(credentials: gmail_cred)
+mail = connect gmail using gmail_cred
 `;
 
 function errors(source: string): Diagnostic[] {
@@ -110,12 +110,12 @@ movement Triage(m: <mail-[:Messages]->>) {
 describe('a record from either edge satisfies a parameter typed against the other — because they are the same position', () => {
   it('a record walked off the Messages collection passes into a function typed <mail-[:Message]->>', () => {
     const source = `${PRELUDE}
-movement Triage(m: <mail-[:Message]->>) {
+function Triage(m: <mail-[:Message]->>) {
   x = m.\`Subject\`
 }
-movement lister(go: <mail-[:Message]->>) {
+function lister(go: <mail-[:Message]->>) {
   found = mail-[m:Messages]-> { return m }
-  Triage(m: AT(found, 0))
+  Triage(found[0])
 }
 `;
     expect(errors(source)).toEqual([]);
@@ -123,11 +123,11 @@ movement lister(go: <mail-[:Message]->>) {
 
   it("the listener's own event record passes straight through to the same parameter", () => {
     const source = `${PRELUDE}
-movement Triage(m: <mail-[:Message]->>) {
+function Triage(m: <mail-[:Message]->>) {
   x = m.\`Subject\`
 }
-movement main(msg: <mail-[:Message]->>) {
-  Triage(m: msg)
+function main(msg: <mail-[:Message]->>) {
+  Triage(msg)
 }
 listen to mail {} fire main
 `;

@@ -394,9 +394,9 @@ function runOnce(input: { body: string; kg: Adapter; locks: WriteLocks; closes: 
     source: [
       'import { manual, kg } from adapters',
       'import { kg_cred } from credentials',
-      'runs = manual()',
-      'graph = kg(credentials: kg_cred)',
-      'movement m(go: <runs-[:Invocation]->>) {',
+      'runs = connect manual',
+      'graph = connect kg using kg_cred',
+      'function m(go: <runs-[:Invocation]->>) {',
       '  write graph-[:note]-> { unique by (`body`) body: "one" }',
       input.body,
       '}',

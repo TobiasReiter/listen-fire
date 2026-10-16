@@ -48,8 +48,8 @@ const catalog = mockCatalog({
 // `Entry` is a small TREE: fields, and a nested node that is an edge of it.
 // `Deep` nests twice, so recursion has something to recurse through.
 const PRELUDE = `import { email, chat } from adapters
-inbox = email()
-sl = chat()
+inbox = connect email
+sl = connect chat
 
 node Entry {
   name: <text>
@@ -84,7 +84,7 @@ const FOUNDER = '  f = node { first: "Jane", last: "Doe" }';
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
   ${SHAPED}
 ${body}
 }`;
@@ -209,7 +209,7 @@ describe('a nested declared node can say its order', () => {
 
   function checkOrdered(body: string): Diagnostic[] {
     const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
   ${ORDERED_SHAPED}
 ${body}
 }`;
@@ -222,7 +222,7 @@ ${body}
   it('without the clause, FIRST over a written landing’s nested edge is refused', () => {
     const body = `${WRITTEN}
   f1 = write h-[:founder]-> { first: "Jane", last: "Doe" }
-  x = FIRST(h-[g:founder]->)`;
+  x = first(h-[g:founder]->)`;
     expect(codes(body)).toContain('MOV_FOLD_NEEDS_ORDER');
   });
 
@@ -230,14 +230,14 @@ ${body}
     const body = `${ORDERED_WRITTEN}
   f1 = write h-[:founder]-> { first: "Jane", last: "Doe" }
   f2 = write h-[:founder]-> { first: "Jo", last: "Bloggs" }
-  x = FIRST(h-[g:founder]->)`;
+  x = first(h-[g:founder]->)`;
     expect(orderedCodes(body)).toEqual([]);
   });
 
   it('the declaration is the same fact off a bare PARAMETER typed by it, with no write in sight', () => {
     const source = `${PRELUDE}
 function f(e: <Entry>) {
-  x = FIRST(e-[g:founder]->)
+  x = first(e-[g:founder]->)
 }`;
     const unordered = checkProgram(parseProgram(source), catalog).filter(
       (d) => (d.severity ?? 'error') === 'error',
@@ -246,7 +246,7 @@ function f(e: <Entry>) {
 
     const orderedSource = `${PRELUDE}
 function g(e: <Ordered>) {
-  x = FIRST(e-[f:founder]->)
+  x = first(e-[f:founder]->)
 }`;
     const ordered = checkProgram(parseProgram(orderedSource), catalog).filter(
       (d) => (d.severity ?? 'error') === 'error',

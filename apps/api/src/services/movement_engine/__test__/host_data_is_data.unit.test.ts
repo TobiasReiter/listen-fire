@@ -191,8 +191,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -209,7 +209,7 @@ async function run(body: string[], meta: unknown) {
   const email = spyAdapter('email');
   const attio = spyAdapter('attio');
   const outcome = runMovement({
-    source: PRELUDE + ['movement intake(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: PRELUDE + ['function intake(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     movementName: 'intake',
     event: webhookEvent({ subject: 'hello', meta }),
     teamId: TEAM_ID,
@@ -245,7 +245,7 @@ function walkShaped(raw: string) {
   };
 }
 
-const COUNT_HOPS_OFF_META = ['  v = msg.`meta`', '  n = COUNT(v-[:subs]->)', '  ERROR("${n}")'];
+const COUNT_HOPS_OFF_META = ['  v = msg.`meta`', '  n = count(v-[:subs]->)', '  fail("${n}")'];
 
 beforeEach(() => {
   jest.mocked(parseMovementExpression).mockClear();
@@ -288,7 +288,7 @@ describe('a webhook body carrying engine-object keys at any depth reads as a pla
 
   it.each(cases)('%s: TEXT.SERIALISE prints it, `kind` included', async (_label, meta) => {
     const { outcome, attio } = await run(
-      ['  write crm-[:companies]-> { name: "x", note: TEXT.SERIALISE(msg.`meta`, "JSON") }'],
+      ['  write crm-[:companies]-> { name: "x", note: Json.stringify(msg.`meta`) }'],
       meta,
     );
     await outcome;

@@ -1144,9 +1144,9 @@ describe('Replies — readable AND awaitable, against the real projected schema'
         [
           'import { slack } from adapters',
           '',
-          'sl = slack()',
+          'sl = connect slack',
           '',
-          'movement handle_message(m: <sl-[:`Message`]->>) {',
+          'function handle_message(m: <sl-[:`Message`]->>) {',
           body,
           '}',
           '',
@@ -1157,10 +1157,10 @@ describe('Replies — readable AND awaitable, against the real projected schema'
     ).filter((d) => (d.severity ?? 'error') === 'error');
 
   it('a BARE `m-[:Replies]->` traversal type-checks clean — reads the thread so far', () => {
-    expect(compile('  m-[r:Replies]-> {\n    if r.`Message` { }\n  }')).toEqual([]);
+    expect(compile('  m-[r:Replies]-> {\n    if (r.`Message`) { }\n  }')).toEqual([]);
   });
 
   it('`await FIRST(m-[:Replies]->)` still type-checks clean — the same edge, waited on', () => {
-    expect(compile('  r = await FIRST(m-[:Replies]->)\n  if r.`Message` { }')).toEqual([]);
+    expect(compile('  r = await first(m-[:Replies]->)\n  if (r.`Message`) { }')).toEqual([]);
   });
 });

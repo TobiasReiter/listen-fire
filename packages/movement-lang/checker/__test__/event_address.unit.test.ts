@@ -151,9 +151,9 @@ const file = (param: string, listens: string[], body: string) => `
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: ${param}) {
+function intake(e: ${param}) {
 ${body}
 }
 ${listens.map((l) => `listen to at { ${l}, events: ["record.created"] } fire intake`).join('\n')}
@@ -161,14 +161,14 @@ ${listens.map((l) => `listen to at { ${l}, events: ["record.created"] } fire int
 
 /** Reads the ROW, through the event's record edge. */
 const program = (param: string, listens: string[]) =>
-  file(param, listens, '  e-[r:record]-> { ERROR("\${r.\`Name\`}") }');
+  file(param, listens, '  e-[r:record]-> { fail("\${r.\`Name\`}") }');
 
 /** Reads the EVENT's own property and never touches the record edge — for the
  *  tests about which listens a signature accepts. An unnarrowed event's record
  *  edge lands on an undescribed type, and reading through it is now its own
  *  error (rightly); it must not be what a listen-matching test is measuring. */
 const programNoRow = (param: string, listens: string[]) =>
-  file(param, listens, '  ERROR("\${e.\`table\`}")');
+  file(param, listens, '  fail("\${e.\`table\`}")');
 
 const DEALS_ADDRESS =
   '<at-[:`Record Change` WHERE `action` == "record.created" AND `base` == "appDevLoop" AND `table` == "tblDeals"]->>';
@@ -226,10 +226,10 @@ describe('a listen must satisfy the movement signature', () => {
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: <at-[:\`Record Change\` WHERE \`action\` == "record.deleted" AND \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
-  ERROR("\${e.\`table\`}")
+function intake(e: <at-[:\`Record Change\` WHERE \`action\` == "record.deleted" AND \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
+  fail("\${e.\`table\`}")
 }
 listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created"] } fire intake
 `);
@@ -244,10 +244,10 @@ listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created"]
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: ${DEALS_ADDRESS}) {
-  ERROR("\${e.\`table\`}")
+function intake(e: ${DEALS_ADDRESS}) {
+  fail("\${e.\`table\`}")
 }
 listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created", "record.deleted"] } fire intake
 `);
@@ -262,10 +262,10 @@ listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created",
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: ${DEALS_ADDRESS}) {
-  e-[r:record]-> { ERROR("\${r.\`Full Name\`}") }
+function intake(e: ${DEALS_ADDRESS}) {
+  e-[r:record]-> { fail("\${r.\`Full Name\`}") }
 }
 listen to at { base: "appDevLoop", table: "tblDeals", events: ["record.created"] } fire intake
 `);
@@ -284,11 +284,11 @@ describe('IS narrows by EXTENDING the subject address — an intersection', () =
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: <at-[:\`Record Change\` WHERE \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
-  if e IS <at-[:\`Record Change\` WHERE \`action\` == "record.created"]->> {
-    e-[r:record]-> { ERROR("\${r.\`Name\`}") }
+function intake(e: <at-[:\`Record Change\` WHERE \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
+  if (e is <at-[:\`Record Change\` WHERE \`action\` == "record.created"]->>) {
+    e-[r:record]-> { fail("\${r.\`Name\`}") }
   }
 }
 listen to at { base: "appDevLoop", table: "tblDeals" } fire intake
@@ -301,11 +301,11 @@ listen to at { base: "appDevLoop", table: "tblDeals" } fire intake
 import { airtable } from adapters
 import { at_cred } from credentials
 
-at = airtable(credentials: at_cred)
+at = connect airtable using at_cred
 
-movement intake(e: <at-[:\`Record Change\` WHERE \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
-  if e IS <at-[:\`Record Change\` WHERE \`action\` == "record.craeted"]->> {
-    ERROR("\${e.\`table\`}")
+function intake(e: <at-[:\`Record Change\` WHERE \`base\` == "appDevLoop" AND \`table\` == "tblDeals"]->>) {
+  if (e is <at-[:\`Record Change\` WHERE \`action\` == "record.craeted"]->>) {
+    fail("\${e.\`table\`}")
   }
 }
 listen to at { base: "appDevLoop", table: "tblDeals" } fire intake
@@ -414,7 +414,7 @@ describe('an address pin is an ENUM comparison', () => {
     // no `Name` — so read ITS field, not Deals'. A pin check that passes must
     // leave the body's own checks exactly as they were.
     expect(
-      check(file(CONTACTS_ADDRESS, [], '  e-[r:record]-> { ERROR("\${r.\`Full Name\`}") }')),
+      check(file(CONTACTS_ADDRESS, [], '  e-[r:record]-> { fail("\${r.\`Full Name\`}") }')),
     ).toEqual([]);
   });
 
@@ -442,7 +442,7 @@ describe('an address pin is an ENUM comparison', () => {
 describe('touching an UNDESCRIBED handle is an error', () => {
   it('reads through an unnarrowed event\'s record edge — the measured silence', () => {
     // ```
-    // movement intake(e: <at-[:`Record Change`]->>) {
+    // function intake(e: <at-[:`Record Change`]->>) {
     //   e-[r:record]-> { … r.`Name` … }     # used to be NO diagnostics
     // }
     // ```

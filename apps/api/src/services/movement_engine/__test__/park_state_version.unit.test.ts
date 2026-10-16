@@ -17,8 +17,8 @@ const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000078');
 const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 const SOURCE = `import { manual } from adapters
-runs = manual()
-movement nap(go: <runs-[:Invocation]->>) {
+runs = connect manual
+function nap(go: <runs-[:Invocation]->>) {
   await sleep(1h)
   x = 1
 }

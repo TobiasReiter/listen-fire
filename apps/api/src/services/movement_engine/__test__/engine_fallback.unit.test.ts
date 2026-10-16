@@ -35,14 +35,14 @@ const program = (...body: string[]) =>
   [
     'import { email } from adapters',
     'import { dealflow_inbox } from credentials',
-    'inbox = email(credentials: dealflow_inbox)',
-    'movement m(msg: <inbox-[:message]->>) {',
+    'inbox = connect email using dealflow_inbox',
+    'function m(msg: <inbox-[:message]->>) {',
     ...body,
     '}',
   ].join('\n');
 
 /** Admitted by the Rust engine. */
-const ADMITTED = program('  subject = msg.`subject`', '  return UPPER(subject)');
+const ADMITTED = program('  subject = msg.`subject`', '  return Text.upper(subject)');
 
 const event: TriggerEvent = { pipelineInputId: 'pi-dry-run', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'hi' } };
 /** Declined at the wire whatever the program says (a `Map` does not cross as

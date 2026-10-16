@@ -165,8 +165,8 @@ function makeFakeParkSink() {
 
 const PRELUDE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
+runs = connect manual
+graph = connect kg using kg_cred
 `;
 
 function movementRun(args: {
@@ -193,7 +193,7 @@ function movementRun(args: {
 
 describe('mint', () => {
   const SOURCE = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   greeting = "hello"
   cb = callback({ write graph-[:log]-> { text: greeting } })
   write graph-[:log]-> { text: cb.id }
@@ -235,9 +235,9 @@ listen to runs {} fire m
     const kg = makeKgFake();
     const callbacks = makeFakeCallbackSink();
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   a = callback({ write graph-[:log]-> { text: "a" } })
-  b = callback({ write graph-[:log]-> { text: "b" } }, { once: FALSE, ttl: 2d })
+  b = callback({ write graph-[:log]-> { text: "b" } }, { once: false, ttl: 2d })
 }
 listen to runs {} fire m
 `;
@@ -255,7 +255,7 @@ listen to runs {} fire m
     const kg = makeKgFake();
     const callbacks = makeFakeCallbackSink();
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback((when: <date>, note: <text>) => { write graph-[:log]-> { text: note } })
 }
 listen to runs {} fire m
@@ -273,7 +273,7 @@ listen to runs {} fire m
     const kg = makeKgFake();
     const callbacks = makeFakeCallbackSink();
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback()
   write graph-[:log]-> { text: cb.url }
 }
@@ -306,7 +306,7 @@ listen to runs {} fire m
 
 describe('the Called edge — read synchronously', () => {
   const SOURCE = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback((note: <text>) => { write graph-[:log]-> { text: note } })
   cb-[c:Called]-> {
     write graph-[:log]-> { text: c.note }
@@ -344,7 +344,7 @@ listen to runs {} fire m
       cb_fake1: [{ at: '2026-07-31T10:00:00.000Z', values: { note: 'x' } }],
     });
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback((note: <text>) => { write graph-[:log]-> { text: note } })
   cb-[c:Called]-> {
     write graph-[:log]-> { text: c.At }
@@ -361,9 +361,9 @@ listen to runs {} fire m
 
 describe('the Called edge — awaited', () => {
   const SOURCE = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback({ write graph-[:log]-> { text: "body ran" } })
-  c = await FIRST(cb-[:Called]->)
+  c = await first(cb-[:Called]->)
   write graph-[:log]-> { text: "continued" }
 }
 listen to runs {} fire m
@@ -401,10 +401,10 @@ listen to runs {} fire m
 
 describe('fire — resume the run at the callback body', () => {
   const SOURCE = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   greeting = "hello"
   cb = callback((note: <text>) => { write graph-[:log]-> { text: "${'$'}{greeting}: ${'$'}{note}" } })
-  c = await FIRST(cb-[:Called]->)
+  c = await first(cb-[:Called]->)
   write graph-[:log]-> { text: "continued" }
 }
 listen to runs {} fire m
@@ -456,9 +456,9 @@ listen to runs {} fire m
 
   it('a body-less fire runs nothing and completes quietly (the recorded call IS the effect)', async () => {
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   cb = callback()
-  c = await FIRST(cb-[:Called]->)
+  c = await first(cb-[:Called]->)
   write graph-[:log]-> { text: "continued" }
 }
 listen to runs {} fire m
@@ -489,9 +489,9 @@ listen to runs {} fire m
 
   it('a THROWING body fails the fire, and the failure carries what it did write', async () => {
     const source = `${PRELUDE}
-movement m(go: <runs-[:Invocation]->>) {
-  cb = callback({ ERROR("no") })
-  c = await FIRST(cb-[:Called]->)
+function m(go: <runs-[:Invocation]->>) {
+  cb = callback({ fail("no") })
+  c = await first(cb-[:Called]->)
 }
 listen to runs {} fire m
 `;
@@ -620,13 +620,13 @@ describe('a callback body that ANSWERS a request', () => {
 
   const SOURCE = `import { manual, ask, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-qa = ask()
+runs = connect manual
+graph = connect kg using kg_cred
+qa = connect ask
 
-movement m(go: <runs-[:Invocation]->>) {
+function m(go: <runs-[:Invocation]->>) {
   a = write qa-[:Check]-> { Prompt: "Ship it?" }
-  cb = callback({ write a-[:Response]-> { Answer: TRUE } })
+  cb = callback({ write a-[:Response]-> { Answer: true } })
   write graph-[:log]-> { text: cb.id }
 }
 listen to runs {} fire m

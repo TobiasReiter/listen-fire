@@ -10,7 +10,7 @@ import type { LanguageVersion } from '../../language_version';
 const catalog = mockCatalog({ adapters: {} });
 
 const errorCodes = (body: string, languageVersion: LanguageVersion): string[] =>
-  checkProgram(parseProgram(`movement m() {\n${body}\n}`), catalog, { languageVersion })
+  checkProgram(parseProgram(`movement m() {\n${body}\n}`, { languageVersion }), catalog, { languageVersion })
     .filter((d: Diagnostic) => (d.severity ?? 'error') === 'error')
     .map((d) => d.code);
 

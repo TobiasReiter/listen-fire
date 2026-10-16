@@ -32,9 +32,9 @@ import { instanceSchemaFromDescriptors } from 'movement-engine/services/translat
 import { graftGenericLandings } from '../generic_landings';
 import { closeDemandOverChains, demandSeed } from '../demand';
 
-const PRELUDE = 'import { questions } from adapters\nqa = questions()\n';
+const PRELUDE = 'import { questions } from adapters\nqa = connect questions\n';
 
-const programFor = (body: string): string => `${PRELUDE}\nmovement m() {\n${body}\n}`;
+const programFor = (body: string): string => `${PRELUDE}\nfunction m() {\n${body}\n}`;
 
 /**
  * The catalog's inner loop, verbatim in shape: seed the demand set from the
@@ -100,8 +100,8 @@ async function codesFor(body: string): Promise<string[]> {
 
 describe('an awaited landing is demanded because the program AWAITS it', () => {
   it("a bare Check's answer is a boolean the checker can read and test", async () => {
-    const CHECK = '  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  cr = await FIRST(a-[:Response]->)';
-    expect(await codesFor(`${CHECK}\n  if cr.Answer { }`)).toEqual([]);
+    const CHECK = '  a = write qa-[:Check]-> { Prompt: "Ship it?" }\n  cr = await first(a-[:Response]->)';
+    expect(await codesFor(`${CHECK}\n  if (cr.Answer) { }`)).toEqual([]);
     // The proof it is TYPED, not merely tolerated: the base landing is a
     // boolean, so arithmetic on it is the category error — never the "nobody
     // described this" error that the regression produced.
@@ -122,7 +122,7 @@ describe('an awaited landing is demanded because the program AWAITS it', () => {
     };
     for (const [family, body] of Object.entries(bodies)) {
       const codes = await codesFor(
-        `  a = write qa-[:${family}]-> ${body}\n  r = await FIRST(a-[:Response]->)\n  x = r.Answer`,
+        `  a = write qa-[:${family}]-> ${body}\n  r = await first(a-[:Response]->)\n  x = r.Answer`,
       );
       expect({ family, codes }).toEqual({ family, codes: [] });
     }
@@ -131,8 +131,8 @@ describe('an awaited landing is demanded because the program AWAITS it', () => {
   it('a dynamic-options Choose lands the BASE text answer — undecidable, not undescribed', async () => {
     const codes = await codesFor(
       '  o = "Seed"\n  c = write qa-[:Choose]-> { Prompt: "Which?", Options: [o] }\n' +
-        '  r = await FIRST(c-[:Response]->)\n  answer = COALESCE(r.Answer, "")\n' +
-        '  if answer == "anything at all" { }',
+        '  r = await first(c-[:Response]->)\n  answer = coalesce(r.Answer, "")\n' +
+        '  if (answer == "anything at all") { }',
     );
     expect(codes).toEqual([]);
   });
@@ -140,8 +140,8 @@ describe('an awaited landing is demanded because the program AWAITS it', () => {
   it('the construction-site graft still wins where the write fixes the type', async () => {
     const CHOOSE =
       '  c = write qa-[:Choose]-> { Prompt: "Which?", Options: ["Seed", "Series A"] }\n' +
-      '  r = await FIRST(c-[:Response]->)';
-    expect(await codesFor(`${CHOOSE}\n  if r.Answer { }`)).toEqual([]);
+      '  r = await first(c-[:Response]->)';
+    expect(await codesFor(`${CHOOSE}\n  if (r.Answer) { }`)).toEqual([]);
     expect(await codesFor(`${CHOOSE}\n  if r.Answer == "Seed" { }`)).not.toContain(
       'MOV_ENUM_UNKNOWN_VALUE',
     );
@@ -153,7 +153,7 @@ describe('an awaited landing is demanded because the program AWAITS it', () => {
   it("a race arm's await is demanded too — an arm is program the run executes", async () => {
     const codes = await codesFor(
       '  r = race(\n' +
-        '    () => {\n      a = write qa-[:Check]-> { Prompt: "Ship it?" }\n      return await FIRST(a-[:Response]->)\n    },\n' +
+        '    () => {\n      a = write qa-[:Check]-> { Prompt: "Ship it?" }\n      return await first(a-[:Response]->)\n    },\n' +
         '    () => { await sleep(2d) },\n' +
         '  )',
     );

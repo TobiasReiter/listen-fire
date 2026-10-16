@@ -26,13 +26,13 @@ const schema: InstanceSchema = {
 const catalog = mockCatalog({ adapters: { email: { constructionArgs: [], schema } } });
 
 function codes(body: string): string[] {
-  const src = `import { email } from adapters\ninbox = email()\n\nmovement m(e: <inbox-[:message]->>) {\n${body}\n}`;
+  const src = `import { email } from adapters\ninbox = connect email\n\nfunction m(e: <inbox-[:message]->>) {\n${body}\n}`;
   return checkProgram(parseProgram(src), catalog)
     .filter((d: Diagnostic) => (d.severity ?? 'error') === 'error')
     .map((d) => d.code);
 }
 
-const BOUND = '  `The Check` = ONLY(e-[k:Checks]->)\n';
+const BOUND = '  `The Check` = only(e-[k:Checks]->)\n';
 
 describe('a backticked binding walks like a bare one', () => {
   it('as a block-statement head', () => {
@@ -40,7 +40,7 @@ describe('a backticked binding walks like a bare one', () => {
   });
 
   it('under await FIRST', () => {
-    expect(codes(BOUND + '  w = await FIRST(`The Check`-[a:Answer]->)\n  t = w.`Text`')).toEqual(
+    expect(codes(BOUND + '  w = await first(`The Check`-[a:Answer]->)\n  t = w.`Text`')).toEqual(
       [],
     );
   });

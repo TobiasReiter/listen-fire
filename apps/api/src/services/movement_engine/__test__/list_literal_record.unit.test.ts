@@ -79,8 +79,9 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
@@ -185,7 +186,13 @@ function event(): TriggerEvent {
 async function run(body: string[]) {
   const writes: CapturedWrite[] = [];
   const result = await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    // Written in the spelling versions 1–4 read; the run (under the current
+    // version) reads it as the upgrade tool rewrites it.
+    source: spelledFor(
+      CURRENT_LANGUAGE_VERSION,
+      [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+      fromCatalogSnapshot(catalog),
+    ),
     event: event(),
     teamId: TEAM_ID,
     catalog,

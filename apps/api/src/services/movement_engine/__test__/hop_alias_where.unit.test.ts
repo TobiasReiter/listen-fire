@@ -107,9 +107,9 @@ function manualEvent(): TriggerEvent {
 async function namesWritten(body: string): Promise<unknown[]> {
   const source = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement sweep(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function sweep(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire sweep
@@ -150,7 +150,7 @@ describe("a hop's WHERE reads the landed record through the hop's own alias", ()
 
   it('the bare form agrees', async () => {
     expect(
-      await namesWritten(`  graph-[e:entity WHERE \`Flag\` == true]-> {
+      await namesWritten(`  graph-[e:entity WHERE e.\`Flag\` == true]-> {
     write graph-[:note]-> { text: e.\`Name\` }
   }`),
     ).toEqual(['Alder Holdings', 'Cedar Group']);
@@ -159,7 +159,7 @@ describe("a hop's WHERE reads the landed record through the hop's own alias", ()
   it('an EXPRESSION hop keeps exactly the flagged records', async () => {
     expect(
       await namesWritten(
-        '  write graph-[:note]-> { text: "${JOIN(graph-[e:entity WHERE e.`Flag` == true ORDER BY `Name`]->.`Name`, ", ")}" }',
+        '  write graph-[:note]-> { text: "${Text.join(graph-[e:entity WHERE e.`Flag` == true ORDER BY e.`Name`]->.`Name`, ", ")}" }',
       ),
     ).toEqual(['Alder Holdings, Cedar Group']);
   });
@@ -167,7 +167,7 @@ describe("a hop's WHERE reads the landed record through the hop's own alias", ()
   it('an EXISTS hop sees the alias too', async () => {
     expect(
       await namesWritten(`  graph-[e:entity]-> {
-    if EXISTS(e-[b:Branches WHERE b.\`City\` == "Oslo"]->) {
+    if (exists(e-[b:Branches WHERE b.\`City\` == "Oslo"]->)) {
       write graph-[:note]-> { text: e.\`Name\` }
     }
   }`),
@@ -177,7 +177,7 @@ describe("a hop's WHERE reads the landed record through the hop's own alias", ()
   it('an EXISTS hop whose alias-qualified WHERE matches nothing finds nothing', async () => {
     expect(
       await namesWritten(`  graph-[e:entity]-> {
-    if EXISTS(e-[b:Branches WHERE b.\`City\` == "Nowhere"]->) {
+    if (exists(e-[b:Branches WHERE b.\`City\` == "Nowhere"]->)) {
       write graph-[:note]-> { text: e.\`Name\` }
     }
   }`),

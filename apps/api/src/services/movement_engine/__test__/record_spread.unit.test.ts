@@ -1,7 +1,7 @@
 // Spreading a record, TypeScript-style, through the REAL interpreter — the
 // plan's modern shape end to end:
 //
-//   detailed = MAP(companies, (c) => {
+//   detailed = map(companies, (c) => {
 //     details = ONLY(extract([...content, TEXT.SERIALISE(c, 'JSON')], Detail))
 //     return { ...c, ...details }        // or graph<Shape> { ...c, ...details }
 //   })
@@ -170,8 +170,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
   'node Company: "each company named in this message" {',
   '  name: <text> "the company\'s name"',
   '  employees: <number> "its headcount"',
@@ -229,7 +229,7 @@ async function run(body: string[], replies: Reply[]) {
   const llm = fakeLlm(replies);
   const writes: CapturedWrite[] = [];
   const result = await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,
@@ -268,8 +268,8 @@ const MERGED = [
 const PER_COMPANY = (ret: string) => [
   '  content = [msg.`text`]',
   "  companies = extract(content, Company, { tier: 'careful' })",
-  '  detailed = MAP(companies, (c) => {',
-  "    details = ONLY(extract([...content, TEXT.SERIALISE(c, 'JSON')], Detail, { tier: 'careful' }))",
+  '  detailed = map(companies, (c) => {',
+  "    details = only(extract([...content, Json.stringify(c)], Detail, { tier: 'careful' }))",
   `    return ${ret}`,
   '  })',
 ];
@@ -279,8 +279,8 @@ describe('{ ...c, ...details } — a map of the record and its detail', () => {
     const { writes } = await run(
       [
         ...PER_COMPANY('{ ...c, ...details }'),
-        '  MAP(detailed, (d) => {',
-        '    write crm-[:companies]-> { name: d.name, stage: COALESCE(d.summary, "none") }',
+        '  map(detailed, (d) => {',
+        '    write crm-[:companies]-> { name: d.name, stage: coalesce(d.summary, "none") }',
         '  })',
       ],
       [COMPANIES, detail('A does infra'), { records: [] }],
@@ -294,8 +294,8 @@ describe('{ ...c, ...details } — a map of the record and its detail', () => {
   it('a later key wins over an earlier one, in the order written', async () => {
     const { writes } = await run(
       [
-        ...PER_COMPANY('{ summary: "unknown", ...details, name: UPPER(c.name) }'),
-        '  MAP(detailed, (d) => {',
+        ...PER_COMPANY('{ summary: "unknown", ...details, name: Text.upper(c.name) }'),
+        '  map(detailed, (d) => {',
         '    write crm-[:companies]-> { name: d.name, stage: d.summary }',
         '  })',
       ],
@@ -314,8 +314,8 @@ describe('graph<Shape> { ...c, ...details } — a snapshot of the record and its
       [
         ...MERGED,
         ...PER_COMPANY('graph<Merged> { ...c, ...details }'),
-        '  MAP(detailed, (d) => {',
-        '    write crm-[:companies]-> { name: d.name, stage: COALESCE(d.summary, "none") }',
+        '  map(detailed, (d) => {',
+        '    write crm-[:companies]-> { name: d.name, stage: coalesce(d.summary, "none") }',
         '    d-[r:round]-> {',
         '      write crm-[:companies]-> { name: r.stage }',
         '    }',

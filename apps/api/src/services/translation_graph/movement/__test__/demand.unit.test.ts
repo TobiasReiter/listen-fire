@@ -52,7 +52,7 @@ const descriptors = new Map<string, SchemaTypeDescriptor>([
 
 const source = `import { crm } from adapters
 import { crm_cred } from credentials
-c = crm(credentials: crm_cred)
+c = connect crm using crm_cred
 movement m(x: <c-[:Companies]->>) {
   c-[co:Companies]->-[l:leads]-> { }
 }`;
@@ -124,7 +124,7 @@ describe('closeDemandOverChains', () => {
     });
     const unionSource = `import { crm } from adapters
 import { crm_cred } from credentials
-c = crm(credentials: crm_cred)
+c = connect crm using crm_cred
 movement m(x: <c-[:\`Record Event\`]->>) {
   x-[r:record]-> { }
 }`;
@@ -166,7 +166,7 @@ movement m(x: <c-[:\`Record Event\`]->>) {
     });
     const multiSource = `import { crm } from adapters
 import { crm_cred } from credentials
-c = crm(credentials: crm_cred)
+c = connect crm using crm_cred
 movement m(x: <c-[:Companies]->>) {
   c-[co:Companies]->-[a:advisors]-> { }
 }`;
@@ -190,7 +190,7 @@ describe('demand reaches write-only landings', () => {
     // a write handle was scanned at all.
     const writeSource = `import { crm } from adapters
 import { crm_cred } from credentials
-c = crm(credentials: crm_cred)
+c = connect crm using crm_cred
 movement m(x: <c-[:Companies]->>) {
   co = write c-[:Companies]-> { Name: "Acme" }
   write co-[:leads]-> { listName: "Pipeline" }
@@ -323,14 +323,14 @@ describe('demand reads the body of a function handed to MAP', () => {
 
   const PRELUDE = `import { crm } from adapters
 import { crm_cred } from credentials
-c = crm(credentials: crm_cred)
+c = connect crm using crm_cred
 `;
   const writes = (listBody: string) =>
     `    record = write c-[:Companies]-> { Name: n }\n    write record-[:Lists]-> { ${listBody} }`;
   const insideMap = (listBody: string) =>
-    `${PRELUDE}movement m() {\n  names = ["Acme", "Globex"]\n  MAP(names, (n) => {\n${writes(listBody)}\n  })\n}`;
+    `${PRELUDE}function m() {\n  names = ["Acme", "Globex"]\n  map(names, (n) => {\n${writes(listBody)}\n  })\n}`;
   const outsideMap = (listBody: string) =>
-    `${PRELUDE}movement m() {\n  n = "Acme"\n${writes(listBody)}\n}`;
+    `${PRELUDE}function m() {\n  n = "Acme"\n${writes(listBody)}\n}`;
 
   const walkedPaths = (source: string, languageVersion?: number): string[] =>
     scanInstanceChains(source, languageVersion !== undefined ? { languageVersion } : undefined)
@@ -399,12 +399,12 @@ c = crm(credentials: crm_cred)
   });
 
   it("a hop rooted at the function's parameter grounds nothing — its type is not the scan's to invent", () => {
-    const source = `${PRELUDE}movement m() {\n  names = ["Acme"]\n  MAP(names, (n) => {\n    n-[:Lists]-> { }\n  })\n}`;
+    const source = `${PRELUDE}function m() {\n  names = ["Acme"]\n  map(names, (n) => {\n    n-[:Lists]-> { }\n  })\n}`;
     expect(walkedPaths(source)).toEqual([]);
   });
 
   it('a parameter shadows a handle of the same name bound outside the function', () => {
-    const source = `${PRELUDE}movement m() {\n  record = write c-[:Companies]-> { Name: "Acme" }\n  MAP(["x"], (record) => {\n    record-[:Lists]-> { }\n  })\n}`;
+    const source = `${PRELUDE}function m() {\n  record = write c-[:Companies]-> { Name: "Acme" }\n  MAP(["x"], (record) => {\n    record-[:Lists]-> { }\n  })\n}`;
     expect(walkedPaths(source)).toEqual(['Companies']);
   });
 

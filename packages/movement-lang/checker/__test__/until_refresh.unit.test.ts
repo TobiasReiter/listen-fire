@@ -43,12 +43,12 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { asksys } from adapters
 import { ask_creds } from credentials
-questions = asksys(credentials: ask_creds)
+questions = connect asksys using ask_creds
 `;
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(d: <questions-[:check]->>) {
+function m(d: <questions-[:check]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error');
@@ -60,7 +60,7 @@ describe('await until — checker', () => {
     expect(
       codes(
         '  a = write questions-[:Check]-> { prompt: "ok?" }\n' +
-          '  r = await until(() => { refresh a; return a.state == "answered" }, every: 5m)',
+          '  r = await until(() => { refresh a; return a.state == "answered" }, { every: 5m })',
       ),
     ).toEqual([]);
   });
@@ -122,7 +122,7 @@ describe('await until — checker', () => {
   it('the quorum narrowing form (COUNT / EXISTS over sets) type-checks', () => {
     expect(
       codes(
-        '  await until(COUNT(d-[x:responses WHERE EXISTS(x-[:detail]->)]->) >= COUNT(d-[:responses]->) * 2/3, every: 10m)',
+        '  await until(count(d-[x:responses WHERE EXISTS(x-[:detail]->)]->) >= count(d-[:responses]->) * 2/3, { every: 10m })',
       ),
     ).toEqual([]);
   });
@@ -150,7 +150,7 @@ describe('refresh — checker', () => {
 
 describe('empty-write warning', () => {
   const warnings = (body: string): string[] => {
-    const source = `${PRELUDE}\nmovement m(d: <questions-[:check]->>) {\n${body}\n}`;
+    const source = `${PRELUDE}\nfunction m(d: <questions-[:check]->>) {\n${body}\n}`;
     return checkProgram(parseProgram(source), catalog)
       .filter((x) => x.severity === 'warning')
       .map((x) => x.code);

@@ -78,6 +78,8 @@ jest.mock('../../../lib/anthropic', () => ({
 }));
 
 import { runMovement, resumeMovement } from 'movement-engine/services/movement_engine/run';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import type { ParkSink } from 'movement-engine/services/movement_engine/run';
 import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
@@ -289,10 +291,15 @@ interface RunAdapters {
   parkSink?: ParkSink;
 }
 
+// The programs here are written in the spelling versions 1–4 read; the run
+// (under the current version) reads them as the upgrade tool rewrites them.
+const inCurrentSpelling = (source: string): string =>
+  spelledFor(CURRENT_LANGUAGE_VERSION, source, fromCatalogSnapshot(catalog));
+
 function run(source: string, payload: Record<string, unknown>, adapters: RunAdapters):
   Promise<Awaited<ReturnType<typeof runMovement>>> {
   return runMovement({
-    source: PRELUDE + source,
+    source: inCurrentSpelling(PRELUDE + source),
     movementName: 'intake',
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
@@ -322,7 +329,7 @@ function resume(
   state: ParkedScopeState,
 ): Promise<Awaited<ReturnType<typeof resumeMovement>>> {
   return resumeMovement({
-    source: PRELUDE + source,
+    source: inCurrentSpelling(PRELUDE + source),
     movementName: 'intake',
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
@@ -780,9 +787,9 @@ describe('a field body and a record spread copy — snapshots', () => {
         '',
         'movement intake(msg: <inbox-[:message]->>) {',
         '  crm = attio(credentials: acme_main)',
-        '  first = ONLY(msg-[:files]->)',
+        '  file = ONLY(msg-[:files]->)',
         '  bodied = graph { files: msg-[a:files]-> { filename: a.filename } }',
-        '  spread = graph<Snap> { ...first }',
+        '  spread = graph<Snap> { ...file }',
         '  write crm-[:companies]-> { name: "between" }',
         '  bodied-[f:files]-> {',
         '    write crm-[:companies]-> { name: f.filename }',

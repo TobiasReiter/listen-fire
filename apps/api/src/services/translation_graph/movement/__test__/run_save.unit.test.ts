@@ -198,16 +198,16 @@ const TEAM = 'team-1';
 
 const PRELUDE = `import { email } from adapters
 
-inbox = email()
+inbox = connect email
 `;
 
 const DRY_PRELUDE = `import { email } from adapters
 
-inbox = email(dry_run: true)
+inbox = connect email { dryRun: true }
 `;
 
 const LISTEN_ONLY = `${PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   write inbox-[:messages]-> { subject: "ack" }
 }
 
@@ -215,7 +215,7 @@ listen to inbox { key: "deals" } fire intake
 `;
 
 const DRY_LISTEN_ONLY = `${DRY_PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   write inbox-[:messages]-> { subject: "ack" }
 }
 
@@ -224,14 +224,14 @@ listen to inbox { key: "deals" } fire intake
 
 const WITH_MANUAL = `import { email, manual } from adapters
 
-inbox = email()
+inbox = connect email
 
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   write inbox-[:messages]-> { subject: "ack" }
 }
 
-runs = manual()
-movement backfill(go: <runs-[:Invocation]->>) {
+runs = connect manual
+function backfill(go: <runs-[:Invocation]->>) {
   write inbox-[:messages]-> { subject: "backfill" }
 }
 
@@ -241,10 +241,10 @@ listen to runs {} fire backfill
 
 const MANUAL_ONLY = `import { manual, email } from adapters
 
-inbox = email()
+inbox = connect email
 
-runs = manual()
-movement backfill(go: <runs-[:Invocation]->>) {
+runs = connect manual
+function backfill(go: <runs-[:Invocation]->>) {
   write inbox-[:messages]-> { subject: "backfill" }
 }
 

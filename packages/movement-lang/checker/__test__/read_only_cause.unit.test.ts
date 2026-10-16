@@ -14,9 +14,9 @@ const program = (edge: string) => `
 import { sheets } from adapters
 import { probe } from credentials
 
-s = sheets(credentials: probe)
+s = connect sheets using probe
 
-movement m() {
+function m() {
   write s-[:\`${edge}\`]-> {
     A: "x"
   }

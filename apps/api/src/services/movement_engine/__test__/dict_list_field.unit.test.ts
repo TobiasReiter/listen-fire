@@ -164,8 +164,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
   'node Company: "each company named in this message" {',
   '  name: <text> "the company\'s name"',
   '  employees: <number> "its headcount"',
@@ -223,7 +223,7 @@ async function run(body: string[], replies: Reply[]) {
   const llm = fakeLlm(replies);
   const writes: CapturedWrite[] = [];
   const result = await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,
@@ -254,7 +254,7 @@ const TEXT = 'Acme (40 people) raised a Seed. Beta raised a Series A.';
 // piece in a map, and read back out of the map later.
 const PIECES_MAP = [
   '  pieces = [msg.`subject`, msg.`text`]',
-  '  results = MAP(pieces, (p) => {',
+  '  results = map(pieces, (p) => {',
   "    return { piece: p, entries: extract([p], Company, { tier: 'careful' }) }",
   '  })',
 ];
@@ -270,8 +270,8 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('MAP over x.entries', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
-        '    write crm-[:companies]-> { name: "${x.piece}:${JOIN(MAP(x.entries, (e) => e.name), ",")}" }',
+        '  map(results, (x) => {',
+        '    write crm-[:companies]-> { name: "${x.piece}:${Text.join(map(x.entries, (e) => e.name), ",")}" }',
         '  })',
       ]),
     ).toEqual(['Deals:Acme', `${TEXT}:Beta`]);
@@ -280,12 +280,12 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('FILTER, REDUCE, GROUPBY and KEYBY over x.entries', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
-        '    kept = FILTER(x.entries, (e) => e.name == "Beta")',
-        '    total = REDUCE(x.entries, "", (acc, e) => "${acc}${e.name}")',
-        '    grouped = GROUPBY(x.entries, (e) => e.name)',
-        '    keyed = KEYBY(x.entries, (e) => e.name)',
-        '    write crm-[:companies]-> { name: "${COUNT(kept)}|${total}|${COUNT(AT(grouped, FIRST(x.entries).name))}|${AT(keyed, FIRST(x.entries).name).name}" }',
+        '  map(results, (x) => {',
+        '    kept = filter(x.entries, (e) => e.name == "Beta")',
+        '    total = reduce(x.entries, (acc, e) => "${acc}${e.name}", "")',
+        '    grouped = List.groupBy(x.entries, (e) => e.name)',
+        '    keyed = List.keyBy(x.entries, (e) => e.name)',
+        '    write crm-[:companies]-> { name: "${count(kept)}|${total}|${count(grouped[first(x.entries).name])}|${keyed[first(x.entries).name].name}" }',
         '  })',
       ]),
     ).toEqual(['0|Acme|1|Acme', '1|Beta|1|Beta']);
@@ -294,8 +294,8 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('COUNT, FIRST and AT over x.entries', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
-        '    write crm-[:companies]-> { name: "${COUNT(x.entries)}|${FIRST(x.entries).name}|${AT(x.entries, 0).name}" }',
+        '  map(results, (x) => {',
+        '    write crm-[:companies]-> { name: "${count(x.entries)}|${first(x.entries).name}|${x.entries[0].name}" }',
         '  })',
       ]),
     ).toEqual(['1|Acme|Acme', '1|Beta|Beta']);
@@ -304,7 +304,7 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('a block head walks x.entries', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
+        '  map(results, (x) => {',
         '    x.entries-[r:round]-> {',
         '      write crm-[:companies]-> { name: r.stage }',
         '    }',
@@ -316,7 +316,7 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('a block head walks a name bound to x.entries', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
+        '  map(results, (x) => {',
         '    es = x.entries',
         '    es-[r:round]-> {',
         '      write crm-[:companies]-> { name: r.stage }',
@@ -329,8 +329,8 @@ describe('a map field holding an extract(…) answer reads back as its list of r
   it('TEXT.PAIRS skips the list field, as it skips every non-scalar', async () => {
     expect(
       await names([
-        '  MAP(results, (x) => {',
-        '    write crm-[:companies]-> { name: TEXT.PAIRS(x) }',
+        '  map(results, (x) => {',
+        '    write crm-[:companies]-> { name: Text.pairs(x) }',
         '  })',
       ]),
     ).toEqual(['piece=Deals', `piece=${TEXT}`]);
@@ -340,11 +340,11 @@ describe('a map field holding an extract(…) answer reads back as its list of r
 describe('a map field holding records reached another way', () => {
   const ROWS = (field: string[]) => [
     '  companies = extract([msg.`text`], Company)',
-    '  rows = MAP(companies, (c) => {',
+    '  rows = map(companies, (c) => {',
     ...field,
     '  })',
-    '  MAP(rows, (x) => {',
-    '    write crm-[:companies]-> { name: "${x.name}:${COUNT(x.rounds)}:${JOIN(MAP(x.rounds, (r) => r.stage), ",")}" }',
+    '  map(rows, (x) => {',
+    '    write crm-[:companies]-> { name: "${x.name}:${count(x.rounds)}:${Text.join(map(x.rounds, (r) => r.stage), ",")}" }',
     '  })',
   ];
   const EXPECTED = ['Acme:1:Seed', 'Beta:1:Series A'];
@@ -375,7 +375,7 @@ describe('a map field holding records reached another way', () => {
       [
         '  companies = extract([msg.`text`], Company)',
         '  nested = [companies]',
-        '  write crm-[:companies]-> { name: "${COUNT(nested)}:${COUNT(AT(nested, 0))}" }',
+        '  write crm-[:companies]-> { name: "${count(nested)}:${count(nested[0])}" }',
       ],
       [COMPANIES],
     );
@@ -390,7 +390,7 @@ describe('the records a block returned, kept in a map at the top level', () => {
         '  companies = extract([msg.`text`], Company)',
         '  kept = companies-[r:round]-> { return r }',
         '  held = { rounds: kept }',
-        '  write crm-[:companies]-> { name: "${COUNT(held.rounds)}:${JOIN(MAP(held.rounds, (r) => r.stage), ",")}" }',
+        '  write crm-[:companies]-> { name: "${count(held.rounds)}:${Text.join(map(held.rounds, (r) => r.stage), ",")}" }',
       ],
       [COMPANIES],
     );

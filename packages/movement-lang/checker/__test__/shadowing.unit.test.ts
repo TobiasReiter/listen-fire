@@ -36,7 +36,7 @@ const catalog = mockCatalog({
   credentials: { probe: { adapter: 'attio' } },
 });
 
-const PRELUDE = ['import { attio } from adapters', 'import { probe } from credentials', 'crm = attio(credentials: probe)'].join('\n');
+const PRELUDE = ['import { attio } from adapters', 'import { probe } from credentials', 'crm = connect attio using probe'].join('\n');
 
 const diagnostics = (source: string): Diagnostic[] =>
   checkProgram(parseProgram(`${PRELUDE}\n${source}`), catalog).filter(
@@ -47,7 +47,7 @@ const codes = (source: string): string[] => diagnostics(source).map((d) => d.cod
 const messages = (source: string): string => diagnostics(source).map((d) => d.message).join('\n');
 
 const inMovement = (body: string): string =>
-  `movement main(c: <crm-[:company]->>) {\n${body}\n}`;
+  `function main(c: <crm-[:company]->>) {\n${body}\n}`;
 
 describe('an inner scope may not reuse an enclosing name', () => {
   it('a binding inside a traversal block shadowing an outer binding is MOV_SHADOWED_NAME', () => {
@@ -124,7 +124,7 @@ describe('a guard-clause narrowing re-declares its subject on purpose', () => {
     expect(
       codes(
         inMovement(
-          ['  note = c.`Note`', '  if note == null { ERROR("no note") }', '  kept = note'].join('\n'),
+          ['  note = c.`Note`', '  if (note == null) { fail("no note") }', '  kept = note'].join('\n'),
         ),
       ),
     ).not.toContain(C.SHADOWED_NAME);
@@ -144,7 +144,7 @@ describe('a guard-clause narrowing re-declares its subject on purpose', () => {
     expect(
       codes(
         inMovement(
-          ['  note = c.`Note`', '  if note == null { ERROR("no note") }', '  kept = note'].join('\n'),
+          ['  note = c.`Note`', '  if (note == null) { fail("no note") }', '  kept = note'].join('\n'),
         ),
       ),
     ).toEqual([]);

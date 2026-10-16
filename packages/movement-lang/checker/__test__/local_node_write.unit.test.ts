@@ -54,8 +54,8 @@ const catalog = mockCatalog({
 // EDGE, which a landing the write minted carries too — empty, and appendable
 // (`nested_declared_edge.unit.test.ts` is where that is pinned).
 const PRELUDE = `import { email, chat } from adapters
-inbox = email()
-sl = chat()
+inbox = connect email
+sl = connect chat
 
 node Company {
   Name: <text>
@@ -79,7 +79,7 @@ const ADDRESSED = 'sent = node { messages: <sl-[:Channels]->-[:Messages]->> }';
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -92,7 +92,7 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 
 function rowOf(body: string): EffectRow {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   const { recording } = checkProgramWithLink(parseProgram(source), catalog, {

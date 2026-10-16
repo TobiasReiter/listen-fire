@@ -32,9 +32,9 @@ const catalog = mockCatalog({
 
 function source(body: string): string {
   return `import { email } from adapters
-inbox = email()
+inbox = connect email
 
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
 }
@@ -72,12 +72,12 @@ describe("a bound block's value is what its iterations returned", () => {
     const body = '  names = e-[a:Parts]-> {\n    return a.`Name`\n  }';
     expect(codes(body)).toEqual([]);
     expect(bindingType(body, 'names')?.fieldType).toEqual({ kind: 'list', of: 'text' });
-    expect(codes(body + '\n  t = JOIN(names, ", ")')).toEqual([]);
+    expect(codes(body + '\n  t = Text.join(names, ", ")')).toEqual([]);
   });
 
   it('JOIN over an unordered block collection is refused, naming the fix', () => {
     const body =
-      '  names = e-[a:Attachments]-> {\n    return a.`Name`\n  }\n  t = JOIN(names, ", ")';
+      '  names = e-[a:Attachments]-> {\n    return a.`Name`\n  }\n  t = Text.join(names, ", ")';
     expect(codes(body)).toContain('MOV_FOLD_NEEDS_ORDER');
     expect(messages(body)).toContain('no particular order');
   });
@@ -102,7 +102,7 @@ describe("a bound block's value is what its iterations returned", () => {
   it('a `return` inside an `if` arm is the block\'s return', () => {
     const body =
       '  names = e-[a:Attachments]-> {\n'
-      + '    if a.`Pages` > 1 {\n      return a.`Name`\n    }\n'
+      + '    if (a.`Pages` > 1) {\n      return a.`Name`\n    }\n'
       + '    return "none"\n  }';
     expect(codes(body)).toEqual([]);
     expect(bindingType(body, 'names')?.fieldType).toEqual({
@@ -115,7 +115,7 @@ describe("a bound block's value is what its iterations returned", () => {
   it('two returns that disagree about the plane are refused', () => {
     const body =
       '  x = e-[a:Attachments]-> {\n'
-      + '    if a.`Pages` > 1 {\n      return a.`Name`\n    }\n'
+      + '    if (a.`Pages` > 1) {\n      return a.`Name`\n    }\n'
       + '    return node { label: "none" }\n  }';
     expect(codes(body)).toContain(C.RETURN_PLANE_MISMATCH);
   });
@@ -169,36 +169,36 @@ describe("a return the checker cannot type leaves the block's value untyped", ()
   // derived from its arguments, and nothing derives it yet). `TRIM` was the
   // example until the standard-library scope gave it its return, text.
   it('an untyped call over an extracted field is not a record', () => {
-    const body = overExtraction('MULTI(md.`items`)');
+    const body = overExtraction('List.compact(md.`items`)');
     expect(codes(body)).toEqual([]);
     expect(bindingType(body, 'items')?.bindingPlane).toBeUndefined();
-    expect(codes(overExtraction('MULTI(md.`items`)', '  t = JOIN(items, "\\n")'))).toEqual(
+    expect(codes(overExtraction('List.compact(md.`items`)', '  t = Text.join(items, "\\n")'))).toEqual(
       [],
     );
   });
 
   it('an untyped call that touches nothing extracted is not a record either', () => {
-    const body = overExtraction('MULTI("x")', '  t = JOIN(items, "\\n")');
+    const body = overExtraction('List.compact("x")', '  t = Text.join(items, "\\n")');
     expect(codes(body)).toEqual([]);
   });
 
   it('a bare read of an unannotated extracted field is not a record', () => {
-    const body = overExtraction('md.`items`', '  t = JOIN(items, "\\n")');
+    const body = overExtraction('md.`items`', '  t = Text.join(items, "\\n")');
     expect(codes(body)).toEqual([]);
   });
 
   it('the same over a TRAVERSED position', () => {
     const body =
-      '  names = e-[a:Parts]-> { return MULTI(a.`Name`) }\n'
-      + '  t = JOIN(names, ", ")';
+      '  names = e-[a:Parts]-> { return List.compact(a.`Name`) }\n'
+      + '  t = Text.join(names, ", ")';
     expect(codes(body)).toEqual([]);
   });
 
   it("the same over a local node's entries", () => {
     const body =
       '  bundle = node { files: lazy e-[a:Parts]-> }\n'
-      + '  names = bundle-[f:files]-> { return MULTI(f.`Name`) }\n'
-      + '  t = JOIN(names, ", ")';
+      + '  names = bundle-[f:files]-> { return List.compact(f.`Name`) }\n'
+      + '  t = Text.join(names, ", ")';
     expect(codes(body)).toEqual([]);
   });
 
@@ -208,7 +208,7 @@ describe("a return the checker cannot type leaves the block's value untyped", ()
     expect(bindingType(body, 'items')?.bindingPlane).toBe('node');
     expect(bindingType(body, 'items')?.posType).toMatchObject({ kind: 'extract' });
     // …and it is still refused where a VALUE is wanted.
-    expect(codes(overExtraction('md', '  t = JOIN(items, "\\n")'))).toContain(
+    expect(codes(overExtraction('md', '  t = Text.join(items, "\\n")'))).toContain(
       'MOV_RECORD_NOT_A_VALUE',
     );
   });

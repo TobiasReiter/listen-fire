@@ -686,7 +686,7 @@ describe('choosing the engine', () => {
         resetRustRunStats();
         const { clock: _clock, ids: _ids, ...host } = makeTestHost();
         const run = runMovement({
-          source: 'movement m() {\n  x = 1\n}',
+          source: 'function m() {\n  x = 1\n}',
           event: { pipelineInputId: 'p', adapterType: 'manual', triggerType: 'webhook', payload: {} },
           teamId: TEAM,
           catalog: EMPTY_CATALOG_SNAPSHOT,

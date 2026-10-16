@@ -191,8 +191,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -210,8 +210,8 @@ async function run(fields: string) {
     source:
       PRELUDE +
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  f = FILE("the minutes", "text")',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  f = File.from("the minutes", "text")',
         `  write crm-[:notes]-> { title: "hello", ${fields} }`,
         '}',
       ].join('\n'),

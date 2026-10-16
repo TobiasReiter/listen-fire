@@ -188,9 +188,9 @@ function run(body: string[], attio: Adapter) {
   const source = [
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
-    'inbox = email()',
-    'movement intake(msg: <inbox-[:message]->>) {',
-    '  crm = attio(credentials: acme_main)',
+    'inbox = connect email',
+    'function intake(msg: <inbox-[:message]->>) {',
+    '  crm = connect attio using acme_main',
     ...body,
     '}',
   ].join('\n');
@@ -267,7 +267,7 @@ describe('two or more unique by clauses — each clause keeps its own non-equali
         '    name: "Nova Labs"',
         '    domain: "nova.example"',
         '  }',
-        '  if co != null {',
+        '  if (co != null) {',
         '    write crm-[:companies]-> { unique by (`name`), name: co.`name` }',
         '  }',
       ],

@@ -252,8 +252,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
   'type Thesis = <"Consumer" | "Infra">',
   'rules = "route infra to Infra"',
 ].join('\n');
@@ -281,7 +281,7 @@ function movement(declarations: string, tree: string[], after: string[] = []): s
   return [
     PRELUDE,
     declarations,
-    'movement m(msg: <inbox-[:message]->>) {',
+    'function m(msg: <inbox-[:message]->>) {',
     '  found = extract from [msg.`text`] {',
     ...tree,
     '  }',
@@ -369,7 +369,7 @@ describe('an extraction node that takes a declaration as its shape', () => {
       movement(ENTRY, ['    node entry: <Entry>'], [
         '  found-[e:entry]-> {',
         '    e-[f:founder]-> {',
-        '      write crm-[:companies]-> { name: COALESCE(f.first, "?"), stage ?: e.stage }',
+        '      write crm-[:companies]-> { name: coalesce(f.first, "?"), stage ?: e.stage }',
         '    }',
         '  }',
       ]),
@@ -407,7 +407,7 @@ describe('presence on a declared shape — exactly as on the inline block', () =
   it('keeps a typed field nobody found absent — a guard on it skips its arm', async () => {
     const writes = await both([
       '  found-[e:entry]-> {',
-      '    if EXISTS(e.thesis) { write crm-[:companies]-> { name: e.name, thesis: e.thesis } }',
+      '    if (e.thesis != null) { write crm-[:companies]-> { name: e.name, thesis: e.thesis } }',
       '    write crm-[:companies]-> { name: "after", thesis ?: e.thesis }',
       '  }',
     ]);
@@ -423,7 +423,7 @@ describe('a guard on a typed field of a declared shape', () => {
     const { writes } = await run(
       movement(ENTRY, ['    node entry: <Entry>'], [
         '  found-[e:entry]-> {',
-        '    if EXISTS(e.thesis) { write crm-[:companies]-> { name: e.name, thesis: e.thesis } }',
+        '    if (e.thesis != null) { write crm-[:companies]-> { name: e.name, thesis: e.thesis } }',
         '  }',
       ]),
     );
@@ -484,7 +484,7 @@ describe('an IMPORTED declaration', () => {
       'import { Entry } from "lib/entries"',
       // The importer binds the same name — the library's must still win.
       'lens = "the importer\'s lens"',
-      'movement m(msg: <inbox-[:message]->>) {',
+      'function m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    node entry: <Entry>',
       '  }',
@@ -518,7 +518,7 @@ describe('an IMPORTED declaration', () => {
       PRELUDE,
       'import { Entry } from "lib/entries"',
       ...importerLines,
-      'movement m(msg: <inbox-[:message]->>) {',
+      'function m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    node entry: <Entry>',
       '  }',
@@ -586,8 +586,8 @@ describe('an IMPORTED declaration', () => {
     const source = [
       PRELUDE,
       'import { triage } from "lib/triage"',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  triage(n: node { body: msg.`text` })',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  triage(node { body: msg.`text` })',
       '}',
     ].join('\n');
     const llm = queuedMovementLlm([{ 'x:extract_result#1': [{ entry: [] }] }]);
@@ -620,8 +620,8 @@ describe('a spread of a declared structure, or of a record built in memory', () 
     // The record handed over also carries `thesis`; `Deal` does not declare it.
     const source = movement([ENTRY, DEAL, ...RECORD_DEAL].join('\n'), ['    node entry: <Entry>'], [
       '  found-[e:entry]-> {',
-      '    n = node { name: COALESCE(e.name, "?"), stage: COALESCE(e.stage, "?"), thesis: COALESCE(e.thesis, "?") }',
-      '    record_deal(d: n)',
+      '    n = node { name: coalesce(e.name, "?"), stage: coalesce(e.stage, "?"), thesis: coalesce(e.thesis, "?") }',
+      '    record_deal(n)',
       '  }',
     ]);
     const { writes } = await run(source, { movementName: 'm' });
@@ -633,7 +633,7 @@ describe('a spread of a declared structure, or of a record built in memory', () 
   it('writes every field of a `node { … }` literal, and none of its edges', async () => {
     const source = movement(ENTRY, ['    node entry: <Entry>'], [
       '  found-[e:entry]-> {',
-      '    n = node { name: COALESCE(e.name, "?"), stage: "Seed", founder: node { name: "Ada" } }',
+      '    n = node { name: coalesce(e.name, "?"), stage: "Seed", founder: node { name: "Ada" } }',
       '    write crm-[:companies]-> { ...n }',
       '  }',
     ]);
@@ -657,8 +657,8 @@ describe('a spread of a declared structure, or of a record built in memory', () 
     const source = [
       PRELUDE,
       'import { record_deal } from "lib/deals"',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  record_deal(d: node { name: msg.`subject`, stage: "Seed" })',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  record_deal(node { name: msg.`subject`, stage: "Seed" })',
       '}',
     ].join('\n');
     const writes: CapturedWrite[] = [];
@@ -698,7 +698,7 @@ describe('`<text | null>` — a text nobody found arrives null', () => {
   const AFTER = [
     '  found-[e:entry]-> {',
     '    write crm-[:companies]-> { name: e.name, thesis ?: e.thesis, stage ?: e.stage }',
-    '    if e.stage == null { write crm-[:companies]-> { name: "no stage", thesis: e.name } }',
+    '    if (e.stage == null) { write crm-[:companies]-> { name: "no stage", thesis: e.name } }',
     '  }',
   ];
 
@@ -729,7 +729,7 @@ describe('`<text | null>` — a text nobody found arrives null', () => {
       '  deduped = node { entries: <Entry> order by arrival }',
       '  found-[e:entry]-> { write deduped-[:entries]-> { unique by (name), ?...e } }',
       '  deduped-[x:entries]-> {',
-      '    if x.stage != null {',
+      '    if (x.stage != null) {',
       '      write crm-[:companies]-> { name: x.name, stage: x.stage }',
       '    } else {',
       '      write crm-[:companies]-> { name: x.name, thesis: "no stage" }',
@@ -799,7 +799,7 @@ describe('`node X extends Y` as an extraction shape', () => {
       movement(RECAP, ['    node entry: <`Recap Entry`>'], [
         '  found-[e:entry]-> {',
         '    e-[f:founder]-> {',
-        '      write crm-[:companies]-> { name: COALESCE(f.first, "?"), stage ?: e.stage }',
+        '      write crm-[:companies]-> { name: coalesce(f.first, "?"), stage ?: e.stage }',
         '    }',
         '  }',
       ]),
@@ -815,7 +815,7 @@ describe('`node X extends Y` as an extraction shape', () => {
     const source = [
       PRELUDE,
       ...importerLines,
-      'movement m(msg: <inbox-[:message]->>) {',
+      'function m(msg: <inbox-[:message]->>) {',
       '  found = extract from [msg.`text`] {',
       '    node entry: <Recap>',
       '  }',
@@ -871,11 +871,11 @@ describe('`node X extends Y` as an extraction shape', () => {
         'function record_entry(d: <Entry>) {',
         '  write crm-[:companies]-> { name: d.name, stage: d.stage }',
         '}',
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  found = extract from [msg.`text`] {',
         '    node entry: <`Recap Entry`>',
         '  }',
-        '  found-[e:entry]-> { record_entry(d: e) }',
+        '  found-[e:entry]-> { record_entry(e) }',
         '}',
       ].join('\n'),
       { movementName: 'm' },

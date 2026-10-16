@@ -190,14 +190,14 @@ const PRELUDE = [
   'import { email, attio, helpdesk, affinity } from adapters',
   'import { dealflow_inbox, acme_main, acme_desk, acme_crm } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
-  'hd    = helpdesk(credentials: acme_desk)',
-  'aff   = affinity(credentials: acme_crm)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
+  'hd    = connect helpdesk using acme_desk',
+  'aff   = connect affinity using acme_crm',
 ].join('\n');
 
 const inMovement = (body: string): string =>
-  `${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
 const check = (body: string): Diagnostic[] =>
   checkProgram(parseProgram(inMovement(body)), catalog).filter(
@@ -305,7 +305,7 @@ describe('the handle a discriminated write hands back', () => {
       withOrg(
         'entry = write o-[:`List Entries`]-> { listName: "Deals" }\n' +
           '    owner = match entry-[:Owners]-> { unique by (`Name`), Name: "Ada" }\n' +
-          '    if owner != null { link entry -[:Owners]-> owner }',
+          '    if (owner != null) { link entry -[:Owners]-> owner }',
       ),
     );
   });

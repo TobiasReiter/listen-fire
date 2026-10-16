@@ -37,8 +37,8 @@ const inMovement = (...body: string[]) =>
   [
     'import { registry } from adapters',
     'import { public_registry } from credentials',
-    'reg = registry(credentials: public_registry)',
-    'movement main() {',
+    'reg = connect registry using public_registry',
+    'function main() {',
     ...body,
     '}',
   ].join('\n');
@@ -55,7 +55,7 @@ describe("a read hop's WHERE binds the hop's own alias", () => {
   });
 
   it('the bare form still types', () => {
-    expectClean(inMovement('  rows = reg-[e:entities WHERE `Ghost` == true]->'));
+    expectClean(inMovement('  rows = reg-[e:entities WHERE e.`Ghost` == true]->'));
   });
 
   it('an unknown alias-qualified field is MOV_UNKNOWN_PROPERTY — on a root collection', () => {

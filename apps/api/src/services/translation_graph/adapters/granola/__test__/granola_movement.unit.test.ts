@@ -65,11 +65,11 @@ const PRELUDE = [
   'import { granola, kg } from adapters',
   'import { granola_cred } from credentials',
   '',
-  'past = granola(credentials: granola_cred)',
+  'past = connect granola using granola_cred',
   // The graph is an ordinary adapter: constructed and named like any other, so
   // the writes below are really typed against its `Meeting` root rather than
   // skipped as an unresolvable head.
-  'graph = kg()',
+  'graph = connect kg',
 ].join('\n');
 
 describe('a movement pulling PAST Granola meetings via the `Meetings` collection', () => {
@@ -77,7 +77,7 @@ describe('a movement pulling PAST Granola meetings via the `Meetings` collection
     const source = [
       PRELUDE,
       '',
-      'movement file_past_meetings(root: <past-[:`Meeting Note`]->>) {',
+      'function file_past_meetings(root: <past-[:`Meeting Note`]->>) {',
       '  past-[m:Meetings]-> {',
       '    write graph-[:Meeting]-> {',
       '      unique by (`Title`)',
@@ -98,8 +98,8 @@ describe('a movement pulling PAST Granola meetings via the `Meetings` collection
     const source = [
       PRELUDE,
       '',
-      'movement recent_meetings(root: <past-[:`Meeting Note`]->>) {',
-      '  past-[m:Meetings WHERE `Meeting Start` > @current_date ORDER BY `Meeting Start` LIMIT 25]-> {',
+      'function recent_meetings(root: <past-[:`Meeting Note`]->>) {',
+      '  past-[m:Meetings WHERE m.`Meeting Start` > @current_date ORDER BY m.`Meeting Start` LIMIT 25]-> {',
       '    write graph-[:Meeting]-> {',
       '      unique by (`Title`)',
       '      Title: m.`Title`',

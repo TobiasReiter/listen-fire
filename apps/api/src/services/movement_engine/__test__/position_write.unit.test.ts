@@ -152,9 +152,9 @@ async function run(source: string, kg: ReturnType<typeof makeKgFake>) {
 describe('position writes update the traversed record in place', () => {
   const SOURCE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement reopen(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function reopen(go: <runs-[:Invocation]->>) {
   graph-[c:company]-> {
     write c { status: "Open" }
   }
@@ -188,9 +188,9 @@ listen to runs {} fire reopen
 describe('delete removes the traversed record in place', () => {
   const SOURCE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement cleanup(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function cleanup(go: <runs-[:Invocation]->>) {
   graph-[c:company]-> {
     delete c
   }

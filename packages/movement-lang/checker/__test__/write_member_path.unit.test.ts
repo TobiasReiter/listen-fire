@@ -31,10 +31,10 @@ const catalog = mockCatalog({
   },
 });
 
-const PRELUDE = ['import { attio, log } from adapters', 'crm = attio()', 'book = log()'];
+const PRELUDE = ['import { attio, log } from adapters', 'crm = connect attio', 'book = connect log'];
 
 function source(body: string[]): string {
-  return [...PRELUDE, 'movement run() {', ...body.map((l) => `  ${l}`), '}'].join('\n');
+  return [...PRELUDE, 'function run() {', ...body.map((l) => `  ${l}`), '}'].join('\n');
 }
 
 function codes(body: string[]): string[] {

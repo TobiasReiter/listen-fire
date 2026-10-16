@@ -74,10 +74,10 @@ const catalog = mockCatalog({
 const SOURCE = `import { desk_sys, ledger_sys } from adapters
 import { desk_creds, ledger_creds } from credentials
 
-desk = desk_sys(credentials: desk_creds)
-books = ledger_sys(credentials: ledger_creds)
+desk = connect desk_sys using desk_creds
+books = connect ledger_sys using ledger_creds
 
-movement intake(n: <desk-[:note]->>) {
+function intake(n: <desk-[:note]->>) {
   facts = extract from [n.\`text\`] {
     who: <text> "who filed it"
     node vendor: "the supplier it mentions" {
@@ -89,15 +89,15 @@ movement intake(n: <desk-[:note]->>) {
   }
   org = write books-[:Orgs]-> { unique by (\`Title\`) Title: n.\`text\` }
   entry = write org-[:Entries]-> { Amount: 12 }
-  books-[shop:Orgs WHERE \`Title\` == "acme"]-> {
+  books-[shop:Orgs WHERE shop.\`Title\` == "acme"]-> {
     seen = shop.\`Title\`
   }
   org-[line:Entries]-> {
     seen_line = line.\`Amount\`
   }
   q = write desk-[:Query]-> { prompt: "approve this?" }
-  ok = await FIRST(q-[:Reply]->)
-  if ok {
+  ok = await first(q-[:Reply]->)
+  if (ok) {
     write entry { Stage: "settled" }
   }
   await sleep(2d)
@@ -385,8 +385,8 @@ describe('declared nodes', () => {
   const DECLARED_SOURCE = `import { desk_sys, ledger_sys } from adapters
 import { desk_creds, ledger_creds } from credentials
 
-desk = desk_sys(credentials: desk_creds)
-books = ledger_sys(credentials: ledger_creds)
+desk = connect desk_sys using desk_creds
+books = connect ledger_sys using ledger_creds
 
 node Packet {
   text: <text>
@@ -395,14 +395,14 @@ node Packet {
   }
 }
 
-movement file_it(src: <Packet>) {
+function file_it(src: <Packet>) {
   src-[a:attachment]-> {
     write books-[:Orgs]-> { unique by (\`Title\`) Title: a.blob }
   }
 }
 
-movement intake(n: <desk-[:note]->>) {
-  file_it(src: node { text: n.\`text\` })
+function intake(n: <desk-[:note]->>) {
+  file_it(node { text: n.\`text\` })
 }
 
 listen to desk { box: "inbound", events: ["note.filed"] } fire intake

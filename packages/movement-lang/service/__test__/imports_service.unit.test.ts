@@ -19,8 +19,8 @@ const LIB = [
   '  data: <file>',
   '}',
   '',
-  'export movement files_to_dropbox(f: <Files>) {',
-  '  drive = dropbox(credentials: team_drive)',
+  'export function files_to_dropbox(f: <Files>) {',
+  '  drive = connect dropbox using team_drive',
   '  write drive-[:files]-> {',
   '    name: f.`name`',
   '    data: f.`data`',
@@ -123,9 +123,9 @@ describe('diagnostics with resolved files', () => {
       'import { dealflow_inbox } from credentials',
       importLine,
       '',
-      'inbox = email(credentials: dealflow_inbox)',
+      'inbox = connect email using dealflow_inbox',
       '',
-      'movement intake(msg: <inbox-[:message]->>) {',
+      'function intake(msg: <inbox-[:message]->>) {',
       body,
       '}',
       '',
@@ -136,7 +136,7 @@ describe('diagnostics with resolved files', () => {
     const diagnostics = getMovementDiagnostics(
       consumer(
         'import { files_to_dropbox, Files } from "lib/file-routines"',
-        '  files_to_dropbox(f: node { name: msg.`subject`, data: msg.`attachment` })',
+        '  files_to_dropbox(node { name: msg.`subject`, data: msg.`attachment` })',
       ),
       snapshot,
     );
@@ -164,9 +164,9 @@ describe('analysis typing for imported names', () => {
     'import { dealflow_inbox } from credentials',
     'import { Files } from "lib/file-routines"',
     '',
-    'inbox = email(credentials: dealflow_inbox)',
+    'inbox = connect email using dealflow_inbox',
     '',
-    'movement intake(msg: <inbox-[:message]->>) {',
+    'function intake(msg: <inbox-[:message]->>) {',
     '  write ',
     '}',
   ].join('\n');

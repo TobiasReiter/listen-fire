@@ -35,7 +35,7 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { email } from adapters
-inbox = email()
+inbox = connect email
 
 node Message: "a message in a common format" {
   text: <text>
@@ -71,10 +71,10 @@ node Note {
   }
 }
 
-movement takes_message(msg: <Message>) {
+function takes_message(msg: <Message>) {
 }
 
-movement from_email(m: <inbox-[:message]->>) {
+function from_email(m: <inbox-[:message]->>) {
   return graph<Message> {
     text: m.Body,
     attachment: m-[a:Attachments]-> { name: a.Name, type: a.Type, file: a.\`File\` },
@@ -84,7 +84,7 @@ movement from_email(m: <inbox-[:message]->>) {
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement under_test(e: <inbox-[:message]->>) {
+function under_test(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -99,7 +99,7 @@ describe('graph<Shape> — the worked example', () => {
     expect(
       codes(
         [
-          '  msg = from_email(m: e)',
+          '  msg = from_email(e)',
           '  text = msg.text',
           '  pdfs = msg-[a:attachment WHERE a.type = "application/pdf"]->.file',
           '  msg-[a:attachment WHERE a.type = "application/pdf"]-> {',
@@ -124,7 +124,7 @@ describe('graph<Shape> — the worked example', () => {
   });
 
   it('the value fits a parameter of the shape', () => {
-    expect(codes('  takes_message(msg: graph<Message> { text: e.Body })')).toEqual([]);
+    expect(codes('  takes_message(graph<Message> { text: e.Body })')).toEqual([]);
   });
 
   it('the value is of the shape, so a name the shape lacks is an unknown read', () => {

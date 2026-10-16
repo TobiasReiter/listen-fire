@@ -37,13 +37,13 @@ const catalog = mockCatalog({
 const PRELUDE = [
   'import { crm } from adapters',
   'import { probe } from credentials',
-  'graph = crm(credentials: probe)',
+  'graph = connect crm using probe',
   'type Thesis = <"Consumer" | "Infra" | "Health">',
 ].join('\n');
 
 const diagnostics = (body: string): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${PRELUDE}\nmovement main(msg: <graph-[:message]->>) {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction main(msg: <graph-[:message]->>) {\n${body}\n}`),
     catalog,
   ).filter((d) => (d.severity ?? 'error') === 'error');
 
@@ -80,7 +80,7 @@ describe('a declared type constrains an extract field', () => {
 
   it('the value is TEXT at run time — it interpolates and concatenates', () => {
     expect(
-      codes(withExtract(['    line = "fits ${c.`thesis`}"', '    also = CONCAT(c.`name`, c.`thesis`)'])),
+      codes(withExtract(['    line = "fits ${c.`thesis`}"', '    also = Text.concat(c.`name`, c.`thesis`)'])),
     ).toEqual([]);
   });
 
@@ -125,7 +125,7 @@ describe('an annotation that names no type says so', () => {
 
 describe('a declared type is an ordinary name', () => {
   it('a second declaration of the same name is MOV_DUPLICATE_DECL', () => {
-    const source = `${PRELUDE}\ntype Thesis = <"X">\nmovement main(msg: <graph-[:message]->>) {\n}`;
+    const source = `${PRELUDE}\ntype Thesis = <"X">\nfunction main(msg: <graph-[:message]->>) {\n}`;
     expect(
       checkProgram(parseProgram(source), catalog)
         .filter((d) => (d.severity ?? 'error') === 'error')
@@ -149,7 +149,7 @@ describe('a declared type annotates a declared node’s field', () => {
       'node Deal {',
       '  thesis: <Thesis>',
       '}',
-      'movement main(msg: <graph-[:message]->>) {',
+      'function main(msg: <graph-[:message]->>) {',
       '  d = node { thesis: "Infra" }',
       '  takes(deal: d)',
       '}',

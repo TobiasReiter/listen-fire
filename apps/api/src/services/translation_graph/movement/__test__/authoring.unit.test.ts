@@ -106,11 +106,11 @@ const catalog: Catalog = {
 const CLEAN_SOURCE = `import { email, attio, slack } from adapters
 import { main_crm, team_chat } from credentials
 
-inbox = email()
-crm   = attio(credentials: main_crm)
-chat  = slack(credentials: team_chat)
+inbox = connect email
+crm   = connect attio using main_crm
+chat  = connect slack using team_chat
 
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   co = write crm-[:companies]-> {
     unique by (\`name\`)
     name:        m.\`subject\`

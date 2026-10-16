@@ -18,6 +18,8 @@
 // still resumes.
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { tenantIdOf } from 'engine-contracts';
@@ -215,7 +217,7 @@ interface Harness {
 
 function runInput(h: Harness, kg: ReturnType<typeof makeKgFake>, suspendAt?: string[]) {
   return {
-    source: h.source,
+    source: spelledFor(h.languageVersion ?? CURRENT_LANGUAGE_VERSION, h.source, fromCatalogSnapshot(catalog)),
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,

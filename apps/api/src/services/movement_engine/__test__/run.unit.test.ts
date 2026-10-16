@@ -124,15 +124,17 @@ jest.mock('../../../lib/anthropic', () => ({
 }));
 
 import type { InstanceSchema, LanguageVersion } from 'movement-lang';
-import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, mockCatalogSnapshot, parseMovementExpression } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import type { Expression } from '#shared/expression/types';
 import {
   MovementRunFailed,
   runFailureCause,
-  runMovement,
-  resumeMovement,
+  runMovement as runAsWritten,
+  resumeMovement as resumeAsWritten,
 } from 'movement-engine/services/movement_engine/run';
-import type { ParkSink } from 'movement-engine/services/movement_engine/run';
+import type { ParkSink, ResumeMovementInput, RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import type { RunInput } from 'engine-contracts';
 import {
   rehydrateBinding,
   serializeBinding,
@@ -298,6 +300,15 @@ const kgSchema: InstanceSchema = {
     },
   },
 };
+
+// Each program here is written once, in the spelling versions 1–4 read; a
+// version-5 run reads it as the upgrade tool rewrites it.
+function respelled<I extends RunInput>(input: I): I {
+  const version = input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+  return { ...input, source: spelledFor(version, input.source, fromCatalogSnapshot(input.catalog)) };
+}
+const runMovement = (input: RunMovementInput) => runAsWritten(respelled(input));
+const resumeMovement = (input: ResumeMovementInput) => resumeAsWritten(respelled(input));
 
 const catalog = staticCatalogSnapshot({
   credentials: {

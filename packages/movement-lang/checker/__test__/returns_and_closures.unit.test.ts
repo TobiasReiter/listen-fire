@@ -29,7 +29,7 @@ const catalog = mockCatalog({
 });
 
 const HEADER = `import { email } from adapters
-inbox = email()
+inbox = connect email
 `;
 
 function check(source: string): Diagnostic[] {
@@ -42,7 +42,7 @@ const messages = (source: string): string => check(source).map((d) => d.message)
 
 const inMovement = (body: string): string =>
   `${HEADER}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
 
@@ -119,7 +119,7 @@ describe('a binding never changes', () => {
 
   it('a guard narrowing re-declares the SAME name and is not a rebinding', () => {
     const source = `${HEADER}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
   c = FIRST(inbox-[x:messages]->)
   if c != null {
     t = c.\`Subject\`
