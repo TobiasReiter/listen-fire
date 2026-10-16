@@ -1,12 +1,11 @@
 // Parked code — a closure, a kept walk's head and mapping, a body-local
 // declaration — rides in the parked state as its syntax tree
 // (docs/contracts/park-state.md, "Code is carried as a name, or as its syntax
-// tree"), and a resume rebuilds it from that tree on either engine, never by
-// looking for its span in the program. Each case parks inside a library
-// function on both engines, then resumes each engine's state on both: where
-// the root writes other code at the same span, or the library is edited while
-// the run sleeps, both engines still run the code that was parked (PLAN-08A
-// batch review, R1 and R2).
+// tree"), and a resume rebuilds it from that tree, never by looking for its
+// span in the program. Each case parks inside a library function on the Rust
+// engine, then resumes that state: where the root writes other code at the
+// same span, or the library is edited while the run sleeps, the engine still
+// runs the code that was parked (PLAN-08A batch review, R1 and R2).
 
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
@@ -14,10 +13,22 @@ import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
-import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
+import {
+  credentialIdsFor,
+  makeFakeParkSink,
+  makeTestHost,
+} from 'movement-engine/services/movement_engine/test_host';
+import {
+  resumeMovement,
+  runFailureCause,
+  runMovement,
+  type RunMovementInput,
+} from 'movement-engine/services/movement_engine/run';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import {
+  resetRustRunStats,
+  rustRunStats,
+} from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
 
@@ -41,8 +52,14 @@ const attioSchema: InstanceSchema = {
 };
 const catalog: CatalogSnapshot = mockCatalogSnapshot({
   adapters: {
-    email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
-    attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: emailSchema,
+    },
+    attio: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: attioSchema,
+    },
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
 });
@@ -64,14 +81,14 @@ interface Case {
   resume?: ParkedScopeState;
 }
 
-type Engine = 'ts' | 'rust';
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isParkedScopeState(value: unknown): value is ParkedScopeState {
-  return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
+  return (
+    isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string'
+  );
 }
 
 function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
@@ -79,7 +96,10 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
   return {
     adapterType,
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     describe: async () => null,
     async resolveEntity(input) {
@@ -92,9 +112,14 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
     },
     async getRelated(read) {
       calls.push([adapterType, 'getRelated', read.fieldId]);
-      const rows = adapterType === 'attio' ? (c.related?.[read.fieldId] ?? []) : [];
+      const rows = adapterType === 'attio' ? c.related?.[read.fieldId] ?? [] : [];
       return rows.map((data, i) => ({
-        position: makeStablePosition({ adapterType, recordType: 'company', recordId: `${adapterType}-${i}`, data }),
+        position: makeStablePosition({
+          adapterType,
+          recordType: 'company',
+          recordId: `${adapterType}-${i}`,
+          data,
+        }),
       }));
     },
     async createRecord(input) {
@@ -104,7 +129,12 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
     },
     async updateRecord(input) {
       calls.push([adapterType, 'updateRecord', input]);
-      return { adapterType, externalId: input.externalId, data: {}, association: containerAssociation(input) };
+      return {
+        adapterType,
+        externalId: input.externalId,
+        data: {},
+        association: containerAssociation(input),
+      };
     },
     async deleteRecord(input) {
       calls.push([adapterType, 'deleteRecord', input]);
@@ -113,9 +143,7 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
   };
 }
 
-async function runOn(engine: Engine, c: Case) {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+async function runOn(c: Case) {
   const calls: unknown[] = [];
   const asked: unknown[] = [];
   const replies = [...(c.replies ?? [])];
@@ -125,7 +153,12 @@ async function runOn(engine: Engine, c: Case) {
   const attio = fakeAdapter('attio', calls, c);
   const input: RunMovementInput = {
     source: PRELUDE + c.source,
-    event: { pipelineInputId: 'pi-parked-code', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'Acme raised.' } },
+    event: {
+      pipelineInputId: 'pi-parked-code',
+      adapterType: 'email',
+      triggerType: 'webhook',
+      payload: { subject: 'Acme', text: 'Acme raised.' },
+    },
     teamId: TEAM_ID,
     catalog: snapshot,
     credentialIds: credentialIdsFor(snapshot, (name: string) => `cred-${name}`),
@@ -136,14 +169,26 @@ async function runOn(engine: Engine, c: Case) {
       llm: {
         client: {
           call: async (request) => {
-            asked.push({ label: request.label, userMessage: request.userMessage, system: request.system });
+            asked.push({
+              label: request.label,
+              userMessage: request.userMessage,
+              system: request.system,
+            });
             return { parsedJson: replies.shift() ?? {} };
           },
         },
         extractCall: {
           call: async (request) => {
             asked.push({ label: request.label, blocks: request.blocks, system: request.system });
-            return { parsedJson: replies.shift() ?? {}, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } };
+            return {
+              parsedJson: replies.shift() ?? {},
+              usage: {
+                inputTokens: 1,
+                outputTokens: 1,
+                cacheReadTokens: 0,
+                cacheCreationTokens: 0,
+              },
+            };
           },
         },
       },
@@ -151,25 +196,34 @@ async function runOn(engine: Engine, c: Case) {
     }),
   };
   resetRustRunStats();
-  resetRustEvalStats();
   let outcome: Record<string, unknown>;
   try {
-    const result = c.resume !== undefined ? await resumeMovement({ ...input, state: c.resume }) : await runMovement(input);
+    const result =
+      c.resume !== undefined
+        ? await resumeMovement({ ...input, state: c.resume })
+        : await runMovement(input);
     outcome = { result };
   } catch (error) {
     outcome = { error: String(error), cause: String(runFailureCause(error)) };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
-  const stats = { routed: rustRunStats.routed, ranWhole: rustRunStats.ranWhole, unreproduced: rustRunStats.unreproduced, declined: { ...rustRunStats.declined } };
-  return { observed: normalised({ ...outcome, calls, asked, parks: park.timerParks }), parks: park.timerParks, stats };
+  const stats = {
+    segments: rustRunStats.segments,
+    unsupported: { ...rustRunStats.unsupported },
+    shimFaults: rustRunStats.shimFaults,
+  };
+  return {
+    observed: normalised({ ...outcome, calls, asked, parks: park.timerParks }),
+    parks: park.timerParks,
+    stats,
+  };
 }
 
 /** What a caller sees, ids named by first appearance. */
 function normalised(value: unknown): string {
   const ids = new Map<string, string>();
-  const text = JSON.stringify(value, (_key, x: unknown) => (x instanceof Map ? Object.fromEntries(x) : x)) ?? 'undefined';
+  const text =
+    JSON.stringify(value, (_key, x: unknown) => (x instanceof Map ? Object.fromEntries(x) : x)) ??
+    'undefined';
   return text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
     const known = ids.get(id);
     if (known !== undefined) return known;
@@ -179,40 +233,31 @@ function normalised(value: unknown): string {
   });
 }
 
-/** One segment on both engines: identical, and run whole on Rust. */
-async function both(c: Case) {
-  const ts = await runOn('ts', c);
-  const rust = await runOn('rust', c);
-  expect(rust.observed).toBe(ts.observed);
-  expect(rust.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, declined: {} });
-  return { ts, rust };
+/** One segment on the Rust engine, run whole. */
+async function onRust(c: Case) {
+  const rust = await runOn(c);
+  expect(rust.stats).toEqual({ segments: 1, unsupported: {}, shimFaults: 0 });
+  return rust;
 }
 
 /**
- * Park on both engines, then resume each engine's state on both against
- * `resumeFiles` (the library as it stands at the resume): every resume
- * identical across the engines and across the two park writers. Returns the
- * resumed outcome.
+ * Park on the Rust engine, then resume its state against `resumeFiles` (the
+ * library as it stands at the resume). Returns the resumed outcome.
  */
-async function parkAndResume(c: Case, resumeFiles: Record<string, { source: string }> = c.files): Promise<string> {
-  const parked = await both(c);
-  const resumed: string[] = [];
-  for (const writer of [parked.ts, parked.rust]) {
-    expect(writer.parks).toHaveLength(1);
-    const state = writer.parks[0]?.state;
-    if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
-    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: state });
-    resumed.push(ts.observed, rust.observed);
-  }
-  expect(new Set(resumed).size).toBe(1);
-  const [outcome] = resumed;
-  if (outcome === undefined) throw new Error('nothing resumed');
-  return outcome;
+async function parkAndResume(
+  c: Case,
+  resumeFiles: Record<string, { source: string }> = c.files,
+): Promise<string> {
+  const parked = await onRust(c);
+  expect(parked.parks).toHaveLength(1);
+  const state = parked.parks[0]?.state;
+  if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+  return (await onRust({ ...c, files: resumeFiles, resume: state })).observed;
 }
 
 const library = (body: string[]) => ({ 'lib/keep': { source: PRELUDE + body.join('\n') } });
 
-describe('parked code is rebuilt from its tree on both engines', () => {
+describe('parked code is rebuilt from its tree on the Rust engine', () => {
   const closureLibrary = (suffix: string) =>
     library([
       'export function keep(n: <text>) {',
@@ -247,7 +292,10 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '  write crm-[:notes]-> { body: coalesce(r, "none") }',
       '}',
     ].join('\n');
-    const resumed = await parkAndResume({ source, files: closureLibrary('L') }, closureLibrary('X'));
+    const resumed = await parkAndResume(
+      { source, files: closureLibrary('L') },
+      closureLibrary('X'),
+    );
     expect(resumed).toContain('"body":"Acme-L"');
     expect(resumed).not.toContain('Acme-X');
   });
@@ -264,7 +312,12 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '  return first(map([n], f))',
       '}',
     ]);
-    const source = ['import { keep } from "lib/keep"', 'function m(msg: <inbox-[:message]->>) {', '  keep(msg.subject)', '}'].join('\n');
+    const source = [
+      'import { keep } from "lib/keep"',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  keep(msg.subject)',
+      '}',
+    ].join('\n');
     const resumed = await parkAndResume({ source, files });
     expect(resumed).toContain('"body":"Acme-L"');
   });
@@ -294,7 +347,9 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '  keep(msg.subject)',
       '}',
     ].join('\n');
-    const replies = [{ records: [{ label: { value: 'Infra', evidence: { item: 0, quote: 'q' } } }] }];
+    const replies = [
+      { records: [{ label: { value: 'Infra', evidence: { item: 0, quote: 'q' } } }] },
+    ];
     const resumed = await parkAndResume({ source, files, replies });
     expect(resumed).toContain('a tag by LIB');
     expect(resumed).not.toContain('a tag by ROO');
@@ -342,29 +397,29 @@ describe('parked code is rebuilt from its tree on both engines', () => {
 // tree rides inside the call's), code rebuilt from a parked tree on resume —
 // is read under the run's pinned version, as the program's own slots were. Read
 // under none, `Text.upper(v)` is a TEXT namespace with no UPPER, `xs[0]` an
-// index the lowering refuses and `a && b` a character the v1–4 grammar has no
-// reading for.
-describe('a slot read again is read under the run’s version, on both engines', () => {
-  const body = (sleep: boolean) => [
-    'function m(msg: <inbox-[:message]->>) {',
-    '  tags = ["b", "a"]',
-    '  out = map(["x", "y"], (v) => {',
-    ...(sleep ? ['    await sleep(1h)'] : []),
-    '    up = Text.upper(v)',
-    '    sorted = sort(tags, (t) => Text.upper(t), { order: "desc" })',
-    '    if (up == "X" && sorted[0] == "b") {',
-    '      write crm-[:notes]-> { body: Text.concat(up, "-", sorted[0], "-", tags[1]) }',
-    '    }',
-    '    return Text.upper(v)',
-    '  })',
-    '  write crm-[:notes]-> { body: Text.join(out, ",") }',
-    '}',
-  ].join('\n');
+// index the lowering refuses and `a && b` a character with no reading.
+describe('a slot read again is read under the run’s version, on the Rust engine', () => {
+  const body = (sleep: boolean) =>
+    [
+      'function m(msg: <inbox-[:message]->>) {',
+      '  tags = ["b", "a"]',
+      '  out = map(["x", "y"], (v) => {',
+      ...(sleep ? ['    await sleep(1h)'] : []),
+      '    up = Text.upper(v)',
+      '    sorted = sort(tags, (t) => Text.upper(t), { order: "desc" })',
+      '    if (up == "X" && sorted[0] == "b") {',
+      '      write crm-[:notes]-> { body: Text.concat(up, "-", sorted[0], "-", tags[1]) }',
+      '    }',
+      '    return Text.upper(v)',
+      '  })',
+      '  write crm-[:notes]-> { body: Text.join(out, ",") }',
+      '}',
+    ].join('\n');
 
   it('runs a closure’s statements under it', async () => {
-    const { ts } = await both({ source: body(false), files: {} });
-    expect(ts.observed).toContain('"body":"X-b-a"');
-    expect(ts.observed).toContain('"body":"X,Y"');
+    const rust = await onRust({ source: body(false), files: {} });
+    expect(rust.observed).toContain('"body":"X-b-a"');
+    expect(rust.observed).toContain('"body":"X,Y"');
   });
 
   it('resumes a collection member parked in its closure under it', async () => {
@@ -385,7 +440,7 @@ describe('a slot read again is read under the run’s version, on both engines',
       '  })',
       '}',
     ].join('\n');
-    const { ts } = await both({ source, files: {} });
-    expect(ts.observed).toContain('"body":"N1"');
+    const rust = await onRust({ source, files: {} });
+    expect(rust.observed).toContain('"body":"N1"');
   });
 });

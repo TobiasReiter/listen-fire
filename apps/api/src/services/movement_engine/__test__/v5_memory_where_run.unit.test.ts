@@ -2,9 +2,8 @@
 // brackets) reads the landed record's field over an IN-MEMORY edge too: an
 // extracted node's children (nested ones included), a run-built `node { … }`,
 // a graph literal's entries and the landings a write leaves on a local node.
-// Each program runs on both engines (the TypeScript reference, forced, and
-// Rust) and writes the same notes; WHERE, ORDER BY and an alias read beside a
-// variable of the same name are all covered. Versions 1–4 spelled these WHERE
+// Each program runs on the Rust engine; WHERE, ORDER BY and an alias read
+// beside a variable of the same name are all covered. Versions 1–4 spelled these WHERE
 // clauses with bare fields; version 5 has only the alias form.
 
 import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
@@ -12,11 +11,17 @@ import { tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
+import type {
+  ExtractCallLlmInput,
+  ExtractCallLlmResult,
+} from 'movement-engine/services/movement_engine/extraction_call';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { positionData } from 'movement-engine/services/translation_graph/types';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import {
+  resetRustRunStats,
+  rustRunStats,
+} from 'movement-engine/services/movement_engine/rust_stats';
 import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000f6');
@@ -31,7 +36,12 @@ const schema: InstanceSchema = {
 };
 
 const catalog = mockCatalogSnapshot({
-  adapters: { email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema } },
+  adapters: {
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema,
+    },
+  },
   credentials: { dealflow_inbox: { adapters: ['email'] } },
 });
 
@@ -39,27 +49,40 @@ const event: TriggerEvent = {
   pipelineInputId: 'pi-memory-where',
   adapterType: 'email',
   triggerType: 'webhook',
-  payload: { subject: 'Globex', text: 'Acme raised a seed and a series A; Globex and Initech did not' },
+  payload: {
+    subject: 'Globex',
+    text: 'Acme raised a seed and a series A; Globex and Initech did not',
+  },
 };
 
 function fakeInbox(notes: unknown[]): Adapter {
   return {
     adapterType: 'email',
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     describe: async () => null,
     resolveEntity: async () => ({ candidates: [] }),
     getFieldValue: async (input) => {
       const data = positionData(input.position);
-      return typeof data === 'object' && data !== null ? Reflect.get(data, input.fieldId) : undefined;
+      return typeof data === 'object' && data !== null
+        ? Reflect.get(data, input.fieldId)
+        : undefined;
     },
     getRelated: async () => [],
     createRecord: async (input) => {
       notes.push(input.fields.body);
       return { adapterType: 'email', externalId: `n-${notes.length}`, data: { ...input.fields } };
     },
-    updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
+    updateRecord: async (input) => ({
+      adapterType: 'email',
+      externalId: input.externalId,
+      data: {},
+      association: containerAssociation(input),
+    }),
     deleteRecord: async () => ({}),
   };
 }
@@ -72,14 +95,23 @@ const EXTRACTED = {
   record: {
     company: [
       { name: cited('Initech'), rank: cited(3), round: [] },
-      { name: cited('Acme'), rank: cited(1), round: [{ stage: cited('seed') }, { stage: cited('A') }] },
+      {
+        name: cited('Acme'),
+        rank: cited(1),
+        round: [{ stage: cited('seed') }, { stage: cited('A') }],
+      },
       { name: cited('Globex'), rank: cited(2), round: [{ stage: cited('B') }] },
     ],
   },
 };
 
 function extractingLlm(): { call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> } {
-  return { call: async () => ({ parsedJson: EXTRACTED, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } }) };
+  return {
+    call: async () => ({
+      parsedJson: EXTRACTED,
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    }),
+  };
 }
 
 const V5 = (...body: string[]) =>
@@ -111,44 +143,39 @@ const EXTRACT = [
   '  })',
 ];
 
-async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: LanguageVersion = 5): Promise<unknown[]> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+/** The notes the program writes, on the engine its pin chooses (5 and later
+ *  the Rust engine, the version-5 reference; 1–4 the TypeScript engine). */
+async function runOn(source: string, languageVersion: LanguageVersion = 5): Promise<unknown[]> {
   const notes: unknown[] = [];
-  try {
-    await runMovement({
-      source,
-      languageVersion,
-      event,
-      teamId: TEAM_ID,
-      catalog,
-      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
-      host: makeTestHost({ adapters: { resolve: () => fakeInbox(notes) }, llm: { extractCall: extractingLlm() } }),
-      runId: `run-memory-where-${engine}`,
-      firedAt: '2026-10-16T09:00:00.000Z',
-    });
-    return notes;
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
+  await runMovement({
+    source,
+    languageVersion,
+    event,
+    teamId: TEAM_ID,
+    catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+    host: makeTestHost({
+      adapters: { resolve: () => fakeInbox(notes) },
+      llm: { extractCall: extractingLlm() },
+    }),
+    runId: `run-memory-where-${languageVersion}`,
+    firedAt: '2026-10-16T09:00:00.000Z',
+  });
+  return notes;
 }
 
-/** The notes the program writes, the same on both engines, the Rust run whole. */
-async function notesOnBoth(...body: string[]): Promise<unknown[]> {
-  const source = V5(...body);
-  const ts = await runOn('ts', source);
+/** The notes a version-5 body writes, the Rust run whole. */
+async function notesOnRust(...body: string[]): Promise<unknown[]> {
   resetRustRunStats();
-  const rust = await runOn('rust', source);
-  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-  expect(rust).toEqual(ts);
-  return ts;
+  const notes = await runOn(V5(...body));
+  expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+  return notes;
 }
 
 describe("an extracted node's children: a hop's alias read is the child's field", () => {
   it('exists() over the extracted edge, true and false', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...EXTRACT,
         '  if (exists(deals-[c:company WHERE c.name == "Acme"]->)) {',
         '    write inbox-[:note]-> { body: "acme" }',
@@ -162,7 +189,7 @@ describe("an extracted node's children: a hop's alias read is the child's field"
 
   it('a block head with WHERE and ORDER BY on alias reads', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...EXTRACT,
         '  if (deals != null) {',
         '    deals-[c:company WHERE c.name != "Initech" ORDER BY c.rank]-> {',
@@ -175,7 +202,7 @@ describe("an extracted node's children: a hop's alias read is the child's field"
 
   it('the alias read is the field even beside a variable of the same name', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...EXTRACT,
         '  name = msg.`subject`',
         '  write inbox-[:note]-> { body: Text.join(deals-[c:company WHERE c.name != name ORDER BY c.name DESC]->.name, ",") }',
@@ -185,7 +212,7 @@ describe("an extracted node's children: a hop's alias read is the child's field"
 
   it('a nested extracted edge: a round under its company', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...EXTRACT,
         '  if (deals != null) {',
         '    deals-[c:company ORDER BY c.rank]-> {',
@@ -209,13 +236,18 @@ describe("a run-built node's children: a hop's alias read is the child's field",
 
   it('a block head with WHERE and ORDER BY', async () => {
     expect(
-      await notesOnBoth(...BUILT, '  d-[p:people WHERE p.name != subject ORDER BY p.rank]-> {', '    write inbox-[:note]-> { body: p.name }', '  }'),
+      await notesOnRust(
+        ...BUILT,
+        '  d-[p:people WHERE p.name != subject ORDER BY p.rank]-> {',
+        '    write inbox-[:note]-> { body: p.name }',
+        '  }',
+      ),
     ).toEqual(['Ann', 'Cy']);
   });
 
   it('exists() and an expression hop', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...BUILT,
         '  if (exists(d-[p:people WHERE p.rank > 2]->)) {',
         '    write inbox-[:note]-> { body: coalesce(only(d-[p:people WHERE p.rank > 2]->.name), "none") }',
@@ -226,17 +258,24 @@ describe("a run-built node's children: a hop's alias read is the child's field",
 });
 
 describe("a graph literal's entries: a hop's alias read is the entry's field", () => {
-  const LITERAL = ['  g = graph { title: "t", parts: [{ label: "two", n: 2 }, { label: "one", n: 1 }, { label: "three", n: 3 }] }'];
+  const LITERAL = [
+    '  g = graph { title: "t", parts: [{ label: "two", n: 2 }, { label: "one", n: 1 }, { label: "three", n: 3 }] }',
+  ];
 
   it('a block head with WHERE and ORDER BY', async () => {
     expect(
-      await notesOnBoth(...LITERAL, '  g-[p:parts WHERE p.label != "three" ORDER BY p.n]-> {', '    write inbox-[:note]-> { body: p.label }', '  }'),
+      await notesOnRust(
+        ...LITERAL,
+        '  g-[p:parts WHERE p.label != "three" ORDER BY p.n]-> {',
+        '    write inbox-[:note]-> { body: p.label }',
+        '  }',
+      ),
     ).toEqual(['one', 'two']);
   });
 
   it('an expression hop and exists()', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         ...LITERAL,
         '  if (exists(g-[p:parts WHERE p.n == 3]->)) {',
         '    write inbox-[:note]-> { body: Text.join(g-[p:parts WHERE p.n >= 2 ORDER BY p.n DESC]->.label, ",") }',
@@ -247,7 +286,12 @@ describe("a graph literal's entries: a hop's alias read is the entry's field", (
 
   it('ORDER BY with a LIMIT keeps the first records by the key', async () => {
     expect(
-      await notesOnBoth(...LITERAL, '  g-[p:parts ORDER BY p.n DESC LIMIT 2]-> {', '    write inbox-[:note]-> { body: p.label }', '  }'),
+      await notesOnRust(
+        ...LITERAL,
+        '  g-[p:parts ORDER BY p.n DESC LIMIT 2]-> {',
+        '    write inbox-[:note]-> { body: p.label }',
+        '  }',
+      ),
     ).toEqual(['three', 'two']);
   });
 
@@ -265,14 +309,14 @@ describe("a graph literal's entries: a hop's alias read is the entry's field", (
       '  }',
       '}',
     ].join('\n');
-    expect(await runOn('ts', source, 4)).toEqual(['two', 'three']);
+    expect(await runOn(source, 4)).toEqual(['two', 'three']);
   });
 });
 
 describe("a local node's landings: a hop's alias read is the landed record's field", () => {
   it('records written onto a local node, read back through WHERE and ORDER BY', async () => {
     expect(
-      await notesOnBoth(
+      await notesOnRust(
         '  deduped = graph<Batch> {}',
         '  write deduped-[:companies]-> { name: "Initech", rank: 3 }',
         '  write deduped-[:companies]-> { name: "Globex", rank: 2 }',

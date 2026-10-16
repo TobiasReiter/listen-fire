@@ -6,14 +6,23 @@
 // writes, the park sink's rows. A park written by either engine resumes on
 // the other.
 
-import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import {
+  CURRENT_LANGUAGE_VERSION,
+  fromCatalogSnapshot,
+  mockCatalogSnapshot,
+  type InstanceSchema,
+  type LanguageVersion,
+} from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { tenantIdOf } from 'engine-contracts';
 import { hostRecordingSchema, type HostRecording } from 'engine-contracts/conformance';
 
 import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
-import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import type {
+  Adapter,
+  ExternalRecordRef,
+} from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
@@ -21,7 +30,14 @@ import { staticCatalogFromManifests } from '../../translation_graph/movement/cat
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks, endedInRust, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
+import {
+  credentialIdsFor,
+  makeFakeParkSink,
+  makeTestHost,
+  recordingWriteLocks,
+  endedInRust,
+  type TestHostOverrides,
+} from 'movement-engine/services/movement_engine/test_host';
 import {
   MovementRunFailed,
   resumeMovement,
@@ -33,15 +49,26 @@ import {
   type RunLimitPause,
   type RunMovementInput,
 } from 'movement-engine/services/movement_engine/run';
-import { MovementEngineError, isCheckFailure } from 'movement-engine/services/movement_engine/errors';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import {
+  MovementEngineError,
+  isCheckFailure,
+} from 'movement-engine/services/movement_engine/errors';
+import {
+  resetRustRunStats,
+  rustRunStats,
+} from 'movement-engine/services/movement_engine/rust_stats';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { recordEntry } from '../conformance/recorder';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000b2');
 
 const emailSchema: InstanceSchema = {
-  positions: { message: { properties: { subject: 'text', text: 'text', missing: 'text', when: 'date', meta: 'json' }, edges: {} } },
+  positions: {
+    message: {
+      properties: { subject: 'text', text: 'text', missing: 'text', when: 'date', meta: 'json' },
+      edges: {},
+    },
+  },
   collections: {},
   writableRoots: {},
 };
@@ -62,7 +89,11 @@ const attioSchema: InstanceSchema = {
   },
   collections: { companies: { target: 'company' }, notes: { target: 'note' } },
   writableRoots: {
-    company: { fields: companyFields, resultShape: { externalId: 'text', url: 'text', minted: 'number', ...companyFields }, fuzzyResolution: true },
+    company: {
+      fields: companyFields,
+      resultShape: { externalId: 'text', url: 'text', minted: 'number', ...companyFields },
+      fuzzyResolution: true,
+    },
     note: { fields: { body: 'text' }, resultShape: { externalId: 'text', body: 'text' } },
   },
   supportsInPlaceUpdate: true,
@@ -71,8 +102,14 @@ const attioSchema: InstanceSchema = {
 const fetchUrl = staticCatalogFromManifests({ credentials: {} }).plugin('fetch_url');
 const catalog = mockCatalogSnapshot({
   adapters: {
-    email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
-    attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: attioSchema },
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: emailSchema,
+    },
+    attio: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: attioSchema,
+    },
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, acme_main: { adapters: ['attio'] } },
   plugins: fetchUrl !== undefined ? { fetch_url: fetchUrl } : {},
@@ -110,7 +147,10 @@ function fake(adapterType: string, store: Store = {}) {
   const adapter: Adapter = {
     adapterType,
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     async describe(recordType) {
       calls.push(['describe', recordType]);
@@ -156,7 +196,12 @@ function fake(adapterType: string, store: Store = {}) {
         answer.data.minted = minted;
         return answer;
       }
-      return { adapterType, externalId: `${adapterType}-${minted}`, url: `https://x/${minted}`, data: { minted } };
+      return {
+        adapterType,
+        externalId: `${adapterType}-${minted}`,
+        url: `https://x/${minted}`,
+        data: { minted },
+      };
     },
     async updateRecord(input) {
       calls.push(['updateRecord', input]);
@@ -168,8 +213,17 @@ function fake(adapterType: string, store: Store = {}) {
   return { adapter, calls };
 }
 
-function webhook(payload: Record<string, unknown>, extra: Partial<TriggerEvent> = {}): TriggerEvent {
-  return { pipelineInputId: 'pi-rust-write', adapterType: 'email', triggerType: 'webhook', payload, ...extra };
+function webhook(
+  payload: Record<string, unknown>,
+  extra: Partial<TriggerEvent> = {},
+): TriggerEvent {
+  return {
+    pipelineInputId: 'pi-rust-write',
+    adapterType: 'email',
+    triggerType: 'webhook',
+    payload,
+    ...extra,
+  };
 }
 
 interface Case {
@@ -225,9 +279,7 @@ interface Outcome {
   limitPauses: RunLimitPause[];
 }
 
-async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+async function runOn(c: Case): Promise<Outcome> {
   const locks: string[][] = [];
   const email = fake('email');
   const attio = fake('attio', c.attio);
@@ -258,7 +310,11 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       : {}),
   };
   const input: RunMovementInput = {
-    source: spelledFor(c.languageVersion ?? CURRENT_LANGUAGE_VERSION, PRELUDE + c.source, fromCatalogSnapshot(catalog)),
+    source: spelledFor(
+      c.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      PRELUDE + c.source,
+      fromCatalogSnapshot(catalog),
+    ),
     event: c.event,
     teamId: TEAM_ID,
     catalog,
@@ -266,14 +322,18 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     firedAt: '2026-05-01T09:00:00.000Z',
     ...(c.dryRun === true ? { dryRun: true } : {}),
     ...(c.costCapMicrodollars !== undefined ? { costCapMicrodollars: c.costCapMicrodollars } : {}),
-    ...(c.priorSpentMicrodollars !== undefined ? { priorSpentMicrodollars: c.priorSpentMicrodollars } : {}),
-    ...(c.capBaselineMicrodollars !== undefined ? { capBaselineMicrodollars: c.capBaselineMicrodollars } : {}),
+    ...(c.priorSpentMicrodollars !== undefined
+      ? { priorSpentMicrodollars: c.priorSpentMicrodollars }
+      : {}),
+    ...(c.capBaselineMicrodollars !== undefined
+      ? { capBaselineMicrodollars: c.capBaselineMicrodollars }
+      : {}),
     ...(c.limitPaused === true ? { limitPaused: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     ...(c.movementName !== undefined ? { movementName: c.movementName } : {}),
     host: makeTestHost({
-        locks: recordingWriteLocks(locks),
+      locks: recordingWriteLocks(locks),
       ...(c.dryRun === true ? { writeSink: (w: CapturedWrite) => captured.push(w) } : {}),
       adapters: {
         resolve: (request) => {
@@ -305,16 +365,17 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   try {
     const result =
       c.resume !== undefined
-        ? await resumeMovement({ ...input, state: c.resume, ...(c.reenter === true ? { reenter: true } : {}) } satisfies ResumeMovementInput)
+        ? await resumeMovement({
+            ...input,
+            state: c.resume,
+            ...(c.reenter === true ? { reenter: true } : {}),
+          } satisfies ResumeMovementInput)
         : c.keep !== undefined
           ? await recordEntry({ entry: 'run', input, run: runMovement, keep: c.keep })
           : await runMovement(input);
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
 }
 
@@ -325,51 +386,46 @@ function sameIds<T>(value: T): T {
   // Every wake is the host clock's answer plus the sleep on both engines,
   // so it is compared too.
   const text = JSON.stringify(value);
-  const normal = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
-    if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
-    return ids.get(id)!;
-  });
+  const normal = text.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    (id) => {
+      if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
+      return ids.get(id)!;
+    },
+  );
   return JSON.parse(normal) as T;
 }
 
-/** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone — routed whole, the expression switch never consulted.
- *  Unpinned, under version 3 and then under the current version, whose run
- *  is handed back: version 4 changed what a match's miss, a write handle's
- *  reads and `write h { … }` mean, and both engines run both. */
+/** The case on the Rust engine, the version-5 reference. A case pinned below
+ *  5 runs on the TypeScript engine and is not this suite's. */
 async function agree(c: Case) {
-  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
-  return agreeUnder(c);
+  if (c.languageVersion !== undefined && c.languageVersion < 5)
+    throw new Error(`test: a case pinned to ${c.languageVersion} runs on the TypeScript engine`);
+  return onRust(c);
 }
 
-async function agreeUnder(c: Case) {
-  const ts = await runOn('ts', c);
-  resetRustEvalStats();
+/** One run on the Rust engine: run whole, or ended at its check, and what
+ *  the hosts saw and what the run handed back (or how it failed) held to the
+ *  recorded snapshot, read for correctness when it was recorded. */
+async function onRust(c: Case) {
   resetRustRunStats();
-  const rust = await runOn('rust', c);
-  const atCheck = c.endsAtCheckFrom !== undefined && (c.languageVersion ?? CURRENT_LANGUAGE_VERSION) >= c.endsAtCheckFrom;
-  expect([c.languageVersion ?? CURRENT_LANGUAGE_VERSION, isCheckFailure(rust.error) ? String(rust.error) : 'reached the engine']).toEqual([
-    c.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+  const rust = await runOn(c);
+  const atCheck =
+    c.endsAtCheckFrom !== undefined &&
+    (c.languageVersion ?? CURRENT_LANGUAGE_VERSION) >= c.endsAtCheckFrom;
+  expect(isCheckFailure(rust.error) ? String(rust.error) : 'reached the engine').toEqual(
     atCheck ? expect.stringContaining('MOVENG_CHECK') : 'reached the engine',
-  ]);
-  expect(rustRunStats).toMatchObject({ ...endedInRust(rust.error), notAdmitted: {}, declined: {} });
-  expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
+  );
+  expect(rustRunStats).toMatchObject(endedInRust(rust.error));
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
-  expect(sameIds(world(rust))).toEqual(sameIds(world(ts)));
-  if (ts.failed) {
-    expect(rust.failed).toBe(true);
-    const [tsError, rustError] = [ts.error, rust.error];
-    expect(rustError?.constructor).toBe((tsError as object).constructor);
-    expect(String(rustError)).toBe(String(tsError));
-    expect(runFailureCause(rustError)?.constructor).toBe((runFailureCause(tsError) as object).constructor);
-    if (tsError instanceof MovementRunFailed && rustError instanceof MovementRunFailed) {
-      expect(sameIds(rustError.partial)).toEqual(sameIds(tsError.partial));
-    }
-  } else {
-    expect(rust.failed).toBe(false);
-    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
-  }
-  return { ts, rust };
+  expect(
+    sameIds({
+      world: world(rust),
+      failed: rust.failed ? String(rust.error) : false,
+      result: rust.result,
+    }),
+  ).toMatchSnapshot();
+  return { rust };
 }
 
 const DEALFLOW = [
@@ -396,16 +452,27 @@ describe('the answers a segment sends the Rust engine', () => {
       '  write a-[:notes]-> { body: "${a.`minted`} ${a.externalId} / ${b.`minted`} ${b.externalId}" }',
       '}',
     ].join('\n');
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { sameAnswer: true } });
-    const bodies = rust.attio.filter(([method]) => method === 'createRecord').map(([, input]) => JSON.stringify(input));
+    const { rust } = await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { sameAnswer: true },
+    });
+    const bodies = rust.attio
+      .filter(([method]) => method === 'createRecord')
+      .map(([, input]) => JSON.stringify(input));
     expect(bodies.some((body) => body.includes('1 attio-1 / 2 attio-2'))).toBe(true);
   });
 });
 
 describe('writes in the Rust engine', () => {
   it('creates, pipes the handle into a linked write and a second create, as the TypeScript engine does', async () => {
-    const { rust } = await agree({ source: DEALFLOW, event: webhook({ subject: 'Acme', text: 'acme.dev' }) });
-    expect(rust.result?.writes.map((w) => [w.recordType, w.outcome, w.parents?.length ?? 0])).toEqual([
+    const { rust } = await agree({
+      source: DEALFLOW,
+      event: webhook({ subject: 'Acme', text: 'acme.dev' }),
+    });
+    expect(
+      rust.result?.writes.map((w) => [w.recordType, w.outcome, w.parents?.length ?? 0]),
+    ).toEqual([
       ['company', 'create', 0],
       ['note', 'create', 1],
       ['company', 'create', 0],
@@ -413,7 +480,11 @@ describe('writes in the Rust engine', () => {
   });
 
   it('rehearses: the host captures the writes, in program order, and nothing commits', async () => {
-    const { rust } = await agree({ source: DEALFLOW, event: webhook({ subject: 'Acme', text: 'acme.dev' }), dryRun: true });
+    const { rust } = await agree({
+      source: DEALFLOW,
+      event: webhook({ subject: 'Acme', text: 'acme.dev' }),
+      dryRun: true,
+    });
     expect(rust.captured.map((w) => w.kind)).toEqual(['create', 'create', 'create']);
     expect(rust.result?.writes.every((w) => !w.committed)).toBe(true);
   });
@@ -435,7 +506,11 @@ describe('writes in the Rust engine', () => {
     const { rust } = await agree({
       source,
       event: webhook({ subject: 'Nova' }),
-      attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-1', data: { domain: 'nova.example', updated } }] },
+      attio: {
+        candidates: () => [
+          { adapterType: 'attio', externalId: 'co-1', data: { domain: 'nova.example', updated } },
+        ],
+      },
     });
     expect(rustRunStats.hostCalls['builtins.compare']).toBeUndefined();
     expect(rustRunStats.hostCalls['clock.now']).toBe(1);
@@ -466,13 +541,16 @@ describe('writes in the Rust engine', () => {
       const { rust } = await agree({
         source,
         event: webhook({ subject: 'Acme' }),
-        attio: { candidates: (r) => found(String(r.name)), current: { 'co-7': { name: 'Acme', ...current } } },
+        attio: {
+          candidates: (r) => found(String(r.name)),
+          current: { 'co-7': { name: 'Acme', ...current } },
+        },
       });
       expect(rust.result?.writes.map((w) => w.outcome)).toEqual([outcome, 'update']);
     }
   });
 
-  it('hands back the contract\'s write record: a handle\'s old never leaves the run, and the kit records the run', async () => {
+  it("hands back the contract's write record: a handle's old never leaves the run, and the kit records the run", async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  co = write crm-[:companies]-> { unique by (`name`), name: msg.`subject`, stage: "lead" }',
@@ -480,18 +558,28 @@ describe('writes in the Rust engine', () => {
       '}',
     ].join('\n');
     const kept: HostRecording[] = [];
-    const { ts, rust } = await agree({
+    const { rust } = await agree({
       source,
       languageVersion: 4,
       event: webhook({ subject: 'Acme' }),
-      attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-7', data: { name: 'Acme' } }], current: { 'co-7': { name: 'Acme', stage: null } } },
+      attio: {
+        candidates: () => [{ adapterType: 'attio', externalId: 'co-7', data: { name: 'Acme' } }],
+        current: { 'co-7': { name: 'Acme', stage: null } },
+      },
       keep: (recording) => kept.push(recording),
     });
-    for (const run of [ts, rust]) {
-      expect(run.result?.writes.map((w) => [w.outcome, Object.hasOwn(w, 'old')])).toEqual([['update', false], ['update', false]]);
+    for (const run of [rust, rust]) {
+      expect(run.result?.writes.map((w) => [w.outcome, Object.hasOwn(w, 'old')])).toEqual([
+        ['update', false],
+        ['update', false],
+      ]);
     }
     expect(rust.result?.writes[1]?.writtenValues).toEqual({ stage: 'matched' });
-    expect(kept.map((recording) => hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success)).toEqual([true, true]);
+    expect(
+      kept.map(
+        (recording) => hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success,
+      ),
+    ).toEqual([true, true]);
   });
 
   it('sends nothing for a record already as written (noop), and only the parent for an attach', async () => {
@@ -505,7 +593,9 @@ describe('writes in the Rust engine', () => {
       source,
       event: webhook({ subject: 'Acme' }),
       attio: {
-        candidates: (r) => [{ adapterType: 'attio', externalId: r.name !== undefined ? 'co-1' : 'n-1', data: r }],
+        candidates: (r) => [
+          { adapterType: 'attio', externalId: r.name !== undefined ? 'co-1' : 'n-1', data: r },
+        ],
         current: { 'co-1': { name: 'Acme' }, 'n-1': { body: 'same' } },
       },
     });
@@ -515,7 +605,9 @@ describe('writes in the Rust engine', () => {
       source,
       event: webhook({ subject: 'Acme' }),
       attio: {
-        candidates: (r) => [{ adapterType: 'attio', externalId: r.name !== undefined ? 'co-1' : 'n-1', data: r }],
+        candidates: (r) => [
+          { adapterType: 'attio', externalId: r.name !== undefined ? 'co-1' : 'n-1', data: r },
+        ],
         current: { 'co-1': { name: 'Acme' }, 'n-1': { body: 'same' } },
         association: 'unsupported',
       },
@@ -532,8 +624,14 @@ describe('writes in the Rust engine', () => {
       { adapterType: 'attio', externalId: 'co-1', data: { name: 'Acme Inc' } },
       { adapterType: 'attio', externalId: 'co-2', data: { name: 'Acme Labs' } },
     ];
-    const picks = (index: number | null, unavailable?: string) => (asked: unknown[]) =>
-      async (input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0]) => {
+    const picks =
+      (index: number | null, unavailable?: string) =>
+      (asked: unknown[]) =>
+      async (
+        input: Parameters<
+          NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>
+        >[0],
+      ) => {
         asked.push({
           asserted: input.asserted,
           candidates: input.candidates,
@@ -543,12 +641,26 @@ describe('writes in the Rust engine', () => {
           budget: input.budget,
         });
         // What the judge's model call spent, charged to the run by either engine.
-        return { index, ...(unavailable !== undefined ? { judgeUnavailable: unavailable } : {}), cost: [{ source: 'model:judge', microdollars: 7 }] };
+        return {
+          index,
+          ...(unavailable !== undefined ? { judgeUnavailable: unavailable } : {}),
+          cost: [{ source: 'model:judge', microdollars: 7 }],
+        };
       };
-    const merged = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { candidates: two }, judge: picks(1) });
+    const merged = await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { candidates: two },
+      judge: picks(1),
+    });
     expect(merged.rust.result?.writes[0]).toMatchObject({ externalId: 'co-2', outcome: 'update' });
-    expect(merged.rust.result).toMatchObject({ spentMicrodollars: 7, spentBySource: { 'model:judge': 7 } });
-    expect(merged.rust.asked).toEqual([expect.objectContaining({ budget: { remainingMicrodollars: null } })]);
+    expect(merged.rust.result).toMatchObject({
+      spentMicrodollars: 7,
+      spentBySource: { 'model:judge': 7 },
+    });
+    expect(merged.rust.asked).toEqual([
+      expect.objectContaining({ budget: { remainingMicrodollars: null } }),
+    ]);
     const created = await agree({
       source,
       event: webhook({ subject: 'Acme' }),
@@ -578,7 +690,16 @@ describe('writes in the Rust engine', () => {
         source,
         event: webhook({}),
         attio: {
-          candidates: (r) => (r.domain !== undefined ? [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Old', domain: 'nova.dev' } }] : []),
+          candidates: (r) =>
+            r.domain !== undefined
+              ? [
+                  {
+                    adapterType: 'attio',
+                    externalId: 'co-9',
+                    data: { name: 'Old', domain: 'nova.dev' },
+                  },
+                ]
+              : [],
           current: { 'co-9': { name: 'Old', domain: 'nova.dev', updated } },
         },
       });
@@ -588,11 +709,20 @@ describe('writes in the Rust engine', () => {
   it('fails the create a required field leaves empty, with the ledger so far', async () => {
     const describe = (recordType: string): SchemaTypeDescriptor | null =>
       recordType === 'note'
-        ? {
+        ? ({
             typeId: 'note',
             displayName: 'Note',
-            fields: [{ fieldId: 'f-body', displayName: 'body', type: 'text', cardinality: 'one', required: true, writable: true }],
-          } as unknown as SchemaTypeDescriptor
+            fields: [
+              {
+                fieldId: 'f-body',
+                displayName: 'body',
+                type: 'text',
+                cardinality: 'one',
+                required: true,
+                writable: true,
+              },
+            ],
+          } as unknown as SchemaTypeDescriptor)
         : null;
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
@@ -600,10 +730,20 @@ describe('writes in the Rust engine', () => {
       '  write co-[:notes]-> { body: msg.`missing` }',
       '}',
     ].join('\n');
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { describe } });
-    expect(String(rust.error)).toContain('cannot create a Note record: required field(s) "body" have no value');
+    const { rust } = await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { describe },
+    });
+    expect(String(rust.error)).toContain(
+      'cannot create a Note record: required field(s) "body" have no value',
+    );
     // And an adapter's own failure is the run's, its ledger with it.
-    await agree({ source, event: webhook({ subject: 'Acme' }), attio: { failCreate: 'attio: 422' } });
+    await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { failCreate: 'attio: 422' },
+    });
   });
 
   it('expands a write spread by the fields the checker stamped on it', async () => {
@@ -635,7 +775,10 @@ describe('writes in the Rust engine', () => {
     // refers to the number `co` holds.
     const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
     const g = state.scopeChain[1]?.bindings.g;
-    expect(g).toMatchObject({ kind: 'nodePosition', edges: { owner: { kind: 'landed', landings: [{ kind: 'handleRef', id: 0 }] } } });
+    expect(g).toMatchObject({
+      kind: 'nodePosition',
+      edges: { owner: { kind: 'landed', landings: [{ kind: 'handleRef', id: 0 }] } },
+    });
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
@@ -644,7 +787,12 @@ describe('writes in the Rust engine', () => {
     // (MOV_DELETE_NOT_DECLARED, MOV_DELETE_NOT_RECORD); 4 reaches the engine.
     for (const body of ['  delete msg', '  x = "a"\n  delete x']) {
       for (const languageVersion of [4, 5] as const) {
-        const { rust } = await agree({ source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, event: webhook({ subject: 'Acme' }), languageVersion, endsAtCheckFrom: 5 });
+        const { rust } = await agree({
+          source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+          event: webhook({ subject: 'Acme' }),
+          languageVersion,
+          endsAtCheckFrom: 5,
+        });
         if (languageVersion === 4) expect(String(rust.error)).toContain('needs a record position');
       }
     }
@@ -666,20 +814,25 @@ describe('writes in the Rust engine', () => {
       '  await sleep(1h)',
       '}',
     ].join('\n');
-    const { ts, rust } = await agree({ source, event: webhook({ when: at }), attio: { landings: { 'co-1': { name: 'Acme', updated: at } } } });
-    for (const run of [ts, rust]) {
+    const { rust } = await agree({
+      source,
+      event: webhook({ when: at }),
+      attio: { landings: { 'co-1': { name: 'Acme', updated: at } } },
+    });
+    for (const run of [rust, rust]) {
       const written = JSON.stringify(run.attio.filter(([method]) => method === 'createRecord'));
       expect(written).toContain('Acme updated 2026-01-01T09:00:00.000Z');
       expect(written).toContain('at 2026-01-01T09:00:00.000Z');
       expect(holdsDate(run.parks)).toBe(false);
     }
-    expect(JSON.stringify(rust.parks.map((p) => p.state))).toBe(JSON.stringify(ts.parks.map((p) => p.state)));
+    expect(JSON.stringify(rust.parks.map((p) => p.state))).toMatchSnapshot();
   });
 });
 
 describe('calls of the movements a program declares, in the Rust engine', () => {
   const NOTE = ['node Note {', '  title: <text>', '  body: <text>', '}'].join('\n');
-  const intake = (...lines: string[]) => ['movement intake(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+  const intake = (...lines: string[]) =>
+    ['movement intake(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
   const event = webhook({ subject: 'Acme', text: 'hello' });
 
   it('runs a callee in its own scope: a node argument, a relay, named and positional arguments in either order', async () => {
@@ -701,7 +854,12 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       ),
     ].join('\n');
     const { rust } = await agree({ source, event, movementName: 'intake' });
-    expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create', 'create', 'create', 'create']);
+    expect(rust.result?.writes.map((w) => w.outcome)).toEqual([
+      'create',
+      'create',
+      'create',
+      'create',
+    ]);
   });
 
   // A call written in another letter case reaches the file's function only before version 5.
@@ -756,7 +914,12 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
         '  }',
       ),
     ].join('\n');
-    await agree({ source, event, movementName: 'intake', attio: { landings: { 'co-1': { name: 'Acme' } } } });
+    await agree({
+      source,
+      event,
+      movementName: 'intake',
+      attio: { landings: { 'co-1': { name: 'Acme' } } },
+    });
   });
 
   it('ends a callee’s scope quietly on a match that finds nothing, and the caller goes on', async () => {
@@ -771,14 +934,35 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
     // miss (MOV_ABSENT_REQUIRED): the run ends at its check there, and the
     // guarded form below is what version 4 runs.
     await agree({ source, event, movementName: 'intake', endsAtCheckFrom: 4 });
-    await agree({ source, event, movementName: 'intake', endsAtCheckFrom: 4, attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
-    const guarded = source.replace('  write co-[:notes]-> { body: "found" }', '  if co != null {\n    write co-[:notes]-> { body: "found" }\n  }');
+    await agree({
+      source,
+      event,
+      movementName: 'intake',
+      endsAtCheckFrom: 4,
+      attio: {
+        candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }],
+      },
+    });
+    const guarded = source.replace(
+      '  write co-[:notes]-> { body: "found" }',
+      '  if co != null {\n    write co-[:notes]-> { body: "found" }\n  }',
+    );
     await agree({ source: guarded, event, movementName: 'intake' });
-    await agree({ source: guarded, event, movementName: 'intake', attio: { candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }] } });
+    await agree({
+      source: guarded,
+      event,
+      movementName: 'intake',
+      attio: {
+        candidates: () => [{ adapterType: 'attio', externalId: 'co-9', data: { name: 'Acme' } }],
+      },
+    });
   });
 
   it('fails as the TypeScript engine fails: recursion before version 3, the depth limit from it, a value passed to a position', async () => {
-    const recursive = intake('  write crm-[:companies]-> { name: msg.`subject` }', '  intake(msg: msg)');
+    const recursive = intake(
+      '  write crm-[:companies]-> { name: msg.`subject` }',
+      '  intake(msg: msg)',
+    );
     await agree({ source: recursive, event, languageVersion: 2 });
     const previous = process.env.MOVEMENT_MAX_CALL_DEPTH;
     process.env.MOVEMENT_MAX_CALL_DEPTH = '3';
@@ -791,14 +975,28 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
     }
     // A value passed to a position parameter: the checker refuses it
     // (MOV_CALL_ARG_TYPE), so the run ends at its check on either engine.
-    const position = ['movement persist(c: <crm-[:company]->>) {', '  write c-[:notes]-> { body: "x" }', '}', intake('  v = msg.`subject`', '  persist(c: v)')].join('\n');
+    const position = [
+      'movement persist(c: <crm-[:company]->>) {',
+      '  write c-[:notes]-> { body: "x" }',
+      '}',
+      intake('  v = msg.`subject`', '  persist(c: v)'),
+    ].join('\n');
     await agree({ source: position, event, movementName: 'intake', endsAtCheckFrom: 1 });
   });
 });
 
 describe('the graphs a run builds, in the Rust engine', () => {
-  const COMPANY = ['node Company {', '  name: <text>', '  stage: <text>', '  node founder {', '    first: <text>', '  }', '}'].join('\n');
-  const program = (lines: string[]) => [COMPANY, 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+  const COMPANY = [
+    'node Company {',
+    '  name: <text>',
+    '  stage: <text>',
+    '  node founder {',
+    '    first: <text>',
+    '  }',
+    '}',
+  ].join('\n');
+  const program = (lines: string[]) =>
+    [COMPANY, 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
 
   it('dedupes writes into a declared edge, fills with ?:, and walks the landings into a system', async () => {
     const source = program([
@@ -812,14 +1010,21 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
     ]);
     const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
-    expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null])).toEqual([
+    expect(
+      rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null]),
+    ).toEqual([
       ['local', 'create', 'companies'],
       ['local', 'create', 'companies'],
       ['local', 'update', 'companies'],
       ['local', 'update', 'companies'],
       ['attio', 'create', null],
     ]);
-    expect(rust.locks).toEqual([['identity "local" "companies"'], ['identity "local" "companies"'], ['identity "local" "companies"'], ['identity "local" "companies"']]);
+    expect(rust.locks).toEqual([
+      ['identity "local" "companies"'],
+      ['identity "local" "companies"'],
+      ['identity "local" "companies"'],
+      ['identity "local" "companies"'],
+    ]);
   });
 
   it('blocks a FUZZY component on its distinctive word, and asks the judge among the blocked landings', async () => {
@@ -843,7 +1048,11 @@ describe('the graphs a run builds, in the Rust engine', () => {
         },
       });
       expect(rust.asked).toHaveLength(1);
-      expect(rust.result?.writes.map((w) => w.outcome)).toEqual(index === 0 ? ['create', 'create', 'update', 'create', 'create'] : ['create', 'create', 'create', 'create', 'create', 'create']);
+      expect(rust.result?.writes.map((w) => w.outcome)).toEqual(
+        index === 0
+          ? ['create', 'create', 'update', 'create', 'create']
+          : ['create', 'create', 'create', 'create', 'create', 'create'],
+      );
     }
   });
 
@@ -864,7 +1073,9 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
     ]);
     const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
-    expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null])).toEqual([
+    expect(
+      rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null]),
+    ).toEqual([
       ['local', 'create', 'companies'],
       ['local', 'create', 'founder'],
       ['local', 'update', 'founder'],
@@ -905,7 +1116,11 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:notes]-> { body: "${c.`name`}" }',
       '  }',
     ]);
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }), attio: { current: {} } });
+    const { rust } = await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { current: {} },
+    });
     expect(rust.result?.writes.map((w) => [w.adapterType, w.outcome])).toEqual([
       ['attio', 'create'],
       ['attio', 'update'],
@@ -925,7 +1140,11 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:notes]-> { body: n.`label` }',
       '  }',
     ]);
-    await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
+    await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } },
+    });
   });
 
   it('reads a node\u2019s edge in an expression: COUNT, a field across its landings, EXISTS with a WHERE, a linked handle among them', async () => {
@@ -959,7 +1178,11 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
       '  write crm-[:companies]-> { name: "${COUNT(g-[:founder]->)} ${COUNT(nested-[:founder]->)}" }',
     ]);
-    await agree({ source, event: webhook({ subject: 'Acme', text: 'hello' }), attio: { landings: { 'co-1': { name: 'Acme' } } } });
+    await agree({
+      source,
+      event: webhook({ subject: 'Acme', text: 'hello' }),
+      attio: { landings: { 'co-1': { name: 'Acme' } } },
+    });
   });
 
   it('keeps a lazy walk and runs it at every read: an entry walked by a block, a binding read for a field and for EXISTS', async () => {
@@ -976,30 +1199,64 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }',
       '  }',
     ]);
-    await agree({ source, event: webhook({ subject: 'Acme' }), attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } } });
+    await agree({
+      source,
+      event: webhook({ subject: 'Acme' }),
+      attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } },
+    });
   });
 
   it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks (the checker, before either engine), a bare name in a hop WHERE over landings before 5 (in the engine)', async () => {
     // The checker refuses the first four (MOV_TARGET_WHERE_LOCAL,
     // MOV_NODE_EDGE_UNDECLARED): each ends at its check on either engine.
     for (const [lines, endsAtCheckFrom] of [
-      [['  d = node { companies: <Company> }', '  write d-[c:companies WHERE c.`name` == "x"]-> { name: "a" }'], 1],
+      [
+        [
+          '  d = node { companies: <Company> }',
+          '  write d-[c:companies WHERE c.`name` == "x"]-> { name: "a" }',
+        ],
+        1,
+      ],
       [['  d = node { companies: <Company> }', '  write d-[:nope]-> { name: "a" }'], 1],
-      [['  d = node { companies: <Company> }', '  x = match d-[:nope]-> { unique by (`name`), name: "a" }'], 1],
+      [
+        [
+          '  d = node { companies: <Company> }',
+          '  x = match d-[:nope]-> { unique by (`name`), name: "a" }',
+        ],
+        1,
+      ],
       [['  n = node { a: 1 }', '  link n -[:kids]-> n'], 1],
     ] as const) {
-      const { rust } = await agree({ source: program([...lines]), event: webhook({ subject: 'Acme' }), ...(endsAtCheckFrom !== undefined ? { endsAtCheckFrom } : {}) });
+      const { rust } = await agree({
+        source: program([...lines]),
+        event: webhook({ subject: 'Acme' }),
+        ...(endsAtCheckFrom !== undefined ? { endsAtCheckFrom } : {}),
+      });
       expect([lines, rust.failed]).toEqual([lines, true]);
     }
     // A bare name in a hop WHERE over a node's landings: before 5 the engines
     // read it as an edge property, which a landing has none of; from 5 the
     // upgrade spells it as the hop's alias read, the landing's own field.
-    const overLandings = program(['  d = node { companies: <Company> }', '  write d-[:companies]-> { name: "a" }', '  d-[c:companies WHERE `name` == "a"]-> {', '    write crm-[:notes]-> { body: c.`name` }', '  }']);
+    const overLandings = program([
+      '  d = node { companies: <Company> }',
+      '  write d-[:companies]-> { name: "a" }',
+      '  d-[c:companies WHERE `name` == "a"]-> {',
+      '    write crm-[:notes]-> { body: c.`name` }',
+      '  }',
+    ]);
     for (const languageVersion of [3, 4] as const) {
-      const { rust } = await agree({ source: overLandings, event: webhook({ subject: 'Acme' }), languageVersion });
+      const { rust } = await agree({
+        source: overLandings,
+        event: webhook({ subject: 'Acme' }),
+        languageVersion,
+      });
       expect([languageVersion, rust.failed]).toEqual([languageVersion, true]);
     }
-    const { rust } = await agree({ source: overLandings, event: webhook({ subject: 'Acme' }), languageVersion: 5 });
+    const { rust } = await agree({
+      source: overLandings,
+      event: webhook({ subject: 'Acme' }),
+      languageVersion: 5,
+    });
     expect(rust.failed).toBe(false);
   });
 
@@ -1017,11 +1274,13 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
     ]);
     const event = webhook({ subject: 'Acme' });
-    const { ts, rust } = await agree({ source, event });
+    const { rust } = await agree({ source, event });
     const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
-    expect(text(rust)).toBe(text(ts));
-    expect(text(rust)).toContain('"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}');
-    for (const parked of [ts, rust]) {
+    expect(text(rust)).toMatchSnapshot();
+    expect(text(rust)).toContain(
+      '"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}',
+    );
+    for (const parked of [rust, rust]) {
       await agree({ source, event, resume: JSON.parse(text(parked)) as ParkedScopeState });
     }
   });
@@ -1051,11 +1310,13 @@ describe('parks in the Rust engine', () => {
       '  write crm-[:companies]-> { name: "after" }',
       '}',
     ].join('\n');
-    const { ts, rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
-    for (const run of [ts, rust]) {
+    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    for (const run of [rust, rust]) {
       expect(run.parks).toHaveLength(1);
       const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
-      const held = JSON.stringify(state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined));
+      const held = JSON.stringify(
+        state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined),
+      );
       expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
       // `co` and the dict's entry are one handle under two names (B7): the
       // entry refers to the number `co` holds.
@@ -1064,11 +1325,11 @@ describe('parks in the Rust engine', () => {
   });
 
   it('parks at a sleep with the state the TypeScript engine writes', async () => {
-    const { ts, rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(rust.parks[0]?.address).toBe('s2.b0.s0');
     // Key for key, in order: the string, not `toEqual`, which ignores order.
-    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
   });
 
   it('parks a program with file-level declarations as the TypeScript engine does, and resumes it on either engine', async () => {
@@ -1094,48 +1355,41 @@ describe('parks in the Rust engine', () => {
     // proves nothing about one.
     expect(fetchUrl).toBeDefined();
     const event = webhook({ subject: 'Acme' });
-    const { ts, rust } = await agree({ source, event });
+    const { rust } = await agree({ source, event });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
     // Key for key, in order: the file scope's plugin, shape and values included.
-    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
+    expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
     const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
     expect(state.scopeChain[0]?.bindings).toMatchObject({
       fetch: { kind: 'opaque', what: 'a plugin', name: 'fetch' },
       Lead: { kind: 'shape', name: 'Lead' },
       tag: { kind: 'value', value: 'ROUTE INFRA!' },
     });
-    for (const parked of [ts, rust]) {
+    for (const parked of [rust, rust]) {
       const resume = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
       const resumed = await agree({ source, event, resume });
-      expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([{ name: 'Acme ROUTE INFRA!', stage: 'route infra' }]);
+      expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([
+        { name: 'Acme ROUTE INFRA!', stage: 'route infra' },
+      ]);
     }
   });
 
   it('a rehearsal fast-forwards past a sleep', async () => {
-    const { rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }), dryRun: true });
+    const { rust } = await agree({
+      source: PARKS,
+      event: webhook({ subject: 'Acme' }),
+      dryRun: true,
+    });
     expect(rust.parks).toEqual([]);
   });
 
-  it('resumes on either engine what either engine parked', async () => {
+  it('resumes what it parked', async () => {
     const event = webhook({ subject: 'Acme' });
-    const parkedBy = async (engine: 'ts' | 'rust') => {
-      const run = await runOn(engine, { source: PARKS, event });
-      return JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
-    };
-    const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
-    expect(fromRust).toEqual(fromTs);
-    // A state parked by the TypeScript engine, resumed by the Rust one, and
-    // the reverse: each resume agrees with the TypeScript engine's own.
-    for (const state of [fromTs, fromRust]) {
-      const { rust } = await agree({ source: PARKS, event, resume: state });
-      expect(rust.result?.parked).toBeUndefined();
-      expect(rust.result?.writes.map((w) => w.recordType)).toEqual(['note', 'company']);
-    }
-    // The TypeScript engine resumes the Rust engine's park as its own.
-    const onTs = await runOn('ts', { source: PARKS, event, resume: fromRust });
-    const ownTs = await runOn('ts', { source: PARKS, event, resume: fromTs });
-    expect(onTs.result).toEqual(ownTs.result);
-    expect(onTs.attio).toEqual(ownTs.attio);
+    const run = await runOn({ source: PARKS, event });
+    const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
+    const { rust } = await agree({ source: PARKS, event, resume: state });
+    expect(rust.result?.parked).toBeUndefined();
+    expect(rust.result?.writes.map((w) => w.recordType)).toEqual(['note', 'company']);
   });
 
   it('parks and resumes a bound block that returned nothing (no returned records), on either engine', async () => {
@@ -1149,10 +1403,12 @@ describe('parks in the Rust engine', () => {
       '}',
     ].join('\n');
     const event = webhook({ subject: 'Acme' });
-    const { ts, rust } = await agree({ source, event });
-    expect(JSON.stringify(rust.parks[0]?.state)).toBe(JSON.stringify(ts.parks[0]?.state));
-    expect(JSON.stringify(rust.parks[0]?.state)).toContain('"rows":{"kind":"positions","landings":[]}');
-    for (const parked of [ts, rust]) {
+    const { rust } = await agree({ source, event });
+    expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
+    expect(JSON.stringify(rust.parks[0]?.state)).toContain(
+      '"rows":{"kind":"positions","landings":[]}',
+    );
+    for (const parked of [rust, rust]) {
       const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
       const resumed = await agree({ source, event, resume: state });
       // An empty list, written to a field the adapter does not describe as
@@ -1163,7 +1419,12 @@ describe('parks in the Rust engine', () => {
 
   describe('the park state of every binding a record verb or a bound block makes', () => {
     const FOUND: ExternalRecordRef[] = [
-      { adapterType: 'attio', externalId: 'co-1', url: 'https://x/co-1', data: { name: 'Acme', stage: 'Seed' } },
+      {
+        adapterType: 'attio',
+        externalId: 'co-1',
+        url: 'https://x/co-1',
+        data: { name: 'Acme', stage: 'Seed' },
+      },
     ];
     const cases: Array<[string, string[], Store, LanguageVersion?]> = [
       [
@@ -1187,7 +1448,13 @@ describe('parks in the Rust engine', () => {
           '  await sleep(30s)',
           '  write crm-[:companies]-> { name: "${found.externalId} ${found.`body`}" }',
         ],
-        { candidates: (record) => (record.body === 'hello' ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }] : []), links: true },
+        {
+          candidates: (record) =>
+            record.body === 'hello'
+              ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }]
+              : [],
+          links: true,
+        },
         3,
       ],
       [
@@ -1208,23 +1475,40 @@ describe('parks in the Rust engine', () => {
           '  await sleep(30s)',
           '  write crm-[:companies]-> { name: "${AT(names, 0)}", tags: names }',
         ],
-        { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' }, 'co-3': { name: 'Initech' } } },
+        {
+          landings: {
+            'co-1': { name: 'Acme' },
+            'co-2': { name: 'Globex' },
+            'co-3': { name: 'Initech' },
+          },
+        },
       ],
     ];
     for (const [what, lines, attio, languageVersion] of cases) {
       it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
         const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
         const event = webhook({ subject: 'Acme' });
-        const { ts, rust } = await agree({ source, event, attio, ...(languageVersion !== undefined ? { languageVersion } : {}) });
+        const { rust } = await agree({
+          source,
+          event,
+          attio,
+          ...(languageVersion !== undefined ? { languageVersion } : {}),
+        });
         expect(rust.result).toMatchObject({ parked: true });
         const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
-        expect(text(rust)).toBe(text(ts));
-        const fromTs = JSON.parse(text(ts)) as ParkedScopeState;
+        expect(text(rust)).toMatchSnapshot();
+        const fromTs = JSON.parse(text(rust)) as ParkedScopeState;
         const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
         for (const state of [fromTs, fromRust]) {
-          const resumed = await agree({ source, event, attio, resume: state, ...(languageVersion !== undefined ? { languageVersion } : {}) });
+          const resumed = await agree({
+            source,
+            event,
+            attio,
+            resume: state,
+            ...(languageVersion !== undefined ? { languageVersion } : {}),
+          });
           expect(resumed.rust.result?.parked).toBeUndefined();
-          expect(JSON.stringify(resumed.rust.result)).toBe(JSON.stringify(resumed.ts.result));
+          expect(JSON.stringify(resumed.rust.result)).toMatchSnapshot();
         }
       });
     }
@@ -1241,17 +1525,17 @@ describe('parks in the Rust engine', () => {
       '}',
     ].join('\n');
     const event = webhook({ meta: { name: 'Acme', amount: 1, zeta: true, alpha: { b: 1, a: 2 } } });
-    const parked = await runOn('ts', { source, event });
+    const parked = await runOn({ source, event });
     // As stored: a JSON round trip keeps insertion order, as jsonb keeps its own.
     const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-    const { ts, rust } = await agree({ source, event, resume: state });
+    const { rust } = await agree({ source, event, resume: state });
     // `toEqual` ignores key order: the strings are the point.
-    expect(JSON.stringify(rust.attio)).toBe(JSON.stringify(ts.attio));
-    expect(JSON.stringify(rust.result)).toBe(JSON.stringify(ts.result));
-    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}');
+    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe(
+      '{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}',
+    );
   });
 
-  it('revives a parked value whose data carries a binding\'s kind as the dict it is', async () => {
+  it("revives a parked value whose data carries a binding's kind as the dict it is", async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  d = msg.`meta`',
@@ -1260,14 +1544,18 @@ describe('parks in the Rust engine', () => {
       '}',
     ].join('\n');
     const event = webhook({ meta: { name: 'Acme' } });
-    const parked = await runOn('ts', { source, event });
-    const state = JSON.parse(JSON.stringify(parked.parks[0]?.state).replace('{"name":"Acme"}', '{"kind":"event"}')) as ParkedScopeState;
+    const parked = await runOn({ source, event });
+    const state = JSON.parse(
+      JSON.stringify(parked.parks[0]?.state).replace('{"name":"Acme"}', '{"kind":"event"}'),
+    ) as ParkedScopeState;
     expect(JSON.stringify(state)).toContain('"d":{"kind":"value","value":{"kind":"event"}');
     const { rust } = await agree({ source, event, resume: state });
-    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe('{"name":"after","blob":{"kind":"event"}}');
+    expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe(
+      '{"name":"after","blob":{"kind":"event"}}',
+    );
   });
 
-  it('leaves to the TypeScript engine a state it does not resume, refused before it asks its host anything', async () => {
+  it('refuses a state it does not resume before it asks its host anything', async () => {
     const event = webhook({ subject: 'Acme' });
     // A block's meta edges bound as a name: the one kind besides a body's
     // own shape (the crate's tests) this engine does not rebuild.
@@ -1279,8 +1567,8 @@ describe('parks in the Rust engine', () => {
     };
     for (const [resume, reason] of [[state, 'resume_state_kind:blockMeta']] as const) {
       resetRustRunStats();
-      await runOn('rust', { source: PARKS, event, resume });
-      expect(rustRunStats.notAdmitted).toEqual({ [reason]: 1 });
+      await runOn({ source: PARKS, event, resume });
+      expect(rustRunStats.unsupported).toEqual({ [reason]: 1 });
       expect(rustRunStats.hostCalls).toEqual({});
     }
   });
@@ -1306,13 +1594,20 @@ describe('the cost cap in the Rust engine', () => {
     { adapterType: 'attio', externalId: 'co-2', data: { name: 'Acme Labs' } },
   ];
   /** A judge that spends `microdollars` a call, refused as the host's meter
-   *  refuses (lib/run_spend.ts): once the budget is spent, before it starts. */
-  const judge = (microdollars: number) => (asked: unknown[]) =>
-    async (input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0]) => {
+   *  refuses (lib/run_spend.rust): once the budget is spent, before it starts. */
+  const judge =
+    (microdollars: number) =>
+    (asked: unknown[]) =>
+    async (
+      input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0],
+    ) => {
       asked.push({ budget: input.budget });
       const remaining = input.budget.remainingMicrodollars;
       if (remaining !== null && remaining <= 0) {
-        return { error: { kind: 'budget' as const, message: "this run's cost budget is spent" }, cost: [] };
+        return {
+          error: { kind: 'budget' as const, message: "this run's cost budget is spent" },
+          cost: [],
+        };
       }
       return { index: 0, cost: [{ source: 'model:judge', microdollars }] };
     };
@@ -1327,16 +1622,28 @@ describe('the cost cap in the Rust engine', () => {
   });
 
   it('pauses where the TypeScript engine pauses: the same pause, suspension, trace and partial effects', async () => {
-    const { ts, rust } = await agree(capped());
+    const { rust } = await agree(capped());
     // The first judge took the run past its cap and its write stands; the
     // second was refused, and the run suspended just before its statement.
-    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0', spentMicrodollars: 1_500 });
+    expect(rust.result).toMatchObject({
+      parked: true,
+      parkedAddress: 's2.b0.s0',
+      spentMicrodollars: 1_500,
+    });
     expect(rust.result?.writes.map((w) => w.externalId)).toEqual(['co-1']);
-    expect(rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(rust.limitPauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 },
+    ]);
     expect(rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
     // Key for key, in order.
-    expect(JSON.stringify(rust.suspensions[0]?.state)).toBe(JSON.stringify(ts.suspensions[0]?.state));
-    expect(rust.suspensions[0]?.state).toMatchObject({ version: 1, address: 's2.b0.s0', bindingName: null, suspended: true, journal: [] });
+    expect(JSON.stringify(rust.suspensions[0]?.state)).toMatchSnapshot();
+    expect(rust.suspensions[0]?.state).toMatchObject({
+      version: 1,
+      address: 's2.b0.s0',
+      bindingName: null,
+      suspended: true,
+      journal: [],
+    });
     expect(rust.trace).toEqual([
       { kind: 'gate', outcome: true },
       {
@@ -1348,14 +1655,33 @@ describe('the cost cap in the Rust engine', () => {
       },
       { kind: 'gate', outcome: false },
     ]);
-    expect(rustRunStats.hostCalls).toMatchObject({ 'park.sink.commitLimitPause': 1, 'park.sink.commitSuspension': 1 });
+    expect(rustRunStats.hostCalls).toMatchObject({
+      'park.sink.commitLimitPause': 1,
+      'park.sink.commitSuspension': 1,
+    });
   });
 
   it('runs a capped run that could suspend inside a call or holding a kept walk as the TypeScript engine runs it', async () => {
-    const callee = ['movement save(t: <text>) {', '  write crm-[:companies]-> { unique by (`name`) name: t }', '}'].join('\n');
+    const callee = [
+      'movement save(t: <text>) {',
+      '  write crm-[:companies]-> { unique by (`name`) name: t }',
+      '}',
+    ].join('\n');
     for (const c of [
-      { source: `${callee}\n${['movement m(msg: <inbox-[:message]->>) {', '  save(t: msg.`subject`)', '}'].join('\n')}`, movementName: 'm', costCapMicrodollars: 1_000 },
-      { source: ['movement m(msg: <inbox-[:message]->>) {', '  cos = lazy crm-[c:companies]->', '  write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }', '}'].join('\n'), costCapMicrodollars: 1_000 },
+      {
+        source: `${callee}\n${['movement m(msg: <inbox-[:message]->>) {', '  save(t: msg.`subject`)', '}'].join('\n')}`,
+        movementName: 'm',
+        costCapMicrodollars: 1_000,
+      },
+      {
+        source: [
+          'movement m(msg: <inbox-[:message]->>) {',
+          '  cos = lazy crm-[c:companies]->',
+          '  write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }',
+          '}',
+        ].join('\n'),
+        costCapMicrodollars: 1_000,
+      },
     ]) {
       await agree({ ...c, event: webhook({ subject: 'Acme' }) });
     }
@@ -1364,7 +1690,9 @@ describe('the cost cap in the Rust engine', () => {
   it('meets a cap the run has spent exactly, and not one it has not', async () => {
     const exactly = await agree(capped({ judge: judge(1_000) }));
     expect(exactly.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
-    expect(exactly.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_000 }]);
+    expect(exactly.rust.limitPauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_000 },
+    ]);
     // One microdollar left: the second judge may spend, and nothing after it is priced.
     const under = await agree(capped({ judge: judge(999) }));
     expect(under.rust.result?.parked).toBeUndefined();
@@ -1373,47 +1701,61 @@ describe('the cost cap in the Rust engine', () => {
     // Spent before this segment, past the cap: the first judge is refused.
     const before = await agree(capped({ priorSpentMicrodollars: 1_200 }));
     expect(before.rust.result).toMatchObject({ parked: true, parkedAddress: 's0', writes: [] });
-    expect(before.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_200 }]);
+    expect(before.rust.limitPauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_200 },
+    ]);
   });
 
-  it('resumes from its operator on either engine what either engine suspended', async () => {
-    const suspendedBy = async (engine: 'ts' | 'rust') => {
-      const run = await runOn(engine, capped());
-      return JSON.parse(JSON.stringify(run.suspensions[0]?.state)) as ParkedScopeState;
-    };
-    const [fromTs, fromRust] = [await suspendedBy('ts'), await suspendedBy('rust')];
-    expect(fromRust).toEqual(fromTs);
+  it('resumes from its operator what it suspended', async () => {
+    const suspended = await runOn(capped());
+    const fromRust = JSON.parse(
+      JSON.stringify(suspended.suspensions[0]?.state),
+    ) as ParkedScopeState;
     // limit_pause.ts: the statement re-entered, the run's spend carried, the
     // cap counted afresh from it.
     const resume = (state: ParkedScopeState): Case =>
-      capped({ resume: state, reenter: true, priorSpentMicrodollars: 1_500, capBaselineMicrodollars: 1_500 });
-    for (const state of [fromTs, fromRust]) {
-      const { rust } = await agree(resume(state));
-      expect(rust.result?.parked).toBeUndefined();
-      // The pause was the operator's to clear: the resumed run marks none.
-      expect(rust.limitPauses).toEqual([]);
-      expect(rust.result?.writes.map((w) => w.writtenValues.name ?? w.writtenValues.body)).toEqual(['Acme two', 'Acme three']);
-      expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
-    }
-    const onTs = await runOn('ts', resume(fromRust));
-    const ownTs = await runOn('ts', resume(fromTs));
-    expect(onTs.result).toEqual(ownTs.result);
-    expect(onTs.attio).toEqual(ownTs.attio);
+      capped({
+        resume: state,
+        reenter: true,
+        priorSpentMicrodollars: 1_500,
+        capBaselineMicrodollars: 1_500,
+      });
+    const { rust } = await agree(resume(fromRust));
+    expect(rust.result?.parked).toBeUndefined();
+    // The pause was the operator's to clear: the resumed run marks none.
+    expect(rust.limitPauses).toEqual([]);
+    expect(rust.result?.writes.map((w) => w.writtenValues.name ?? w.writtenValues.body)).toEqual([
+      'Acme two',
+      'Acme three',
+    ]);
+    expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
     // Resumed still over the cap (no reset), it suspends again at the same
     // statement, and marks the run paused again.
-    const again = await agree(capped({ resume: fromRust, reenter: true, priorSpentMicrodollars: 1_500 }));
+    const again = await agree(
+      capped({ resume: fromRust, reenter: true, priorSpentMicrodollars: 1_500 }),
+    );
     expect(again.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(again.rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
-    expect(again.rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(again.rust.limitPauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 },
+    ]);
   });
 
   it('pauses at a capped PLAIN write whose search finds several candidates, as the TypeScript engine does', async () => {
     // No `unique by`: the descriptor's fuzzy resolution searches by name, two
     // candidates come back, and the judge decides — a priced call all the same.
-    const { rust } = await agree(capped({ source: PRICED.replaceAll('unique by (FUZZY `name`) ', '') }));
-    expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0', spentMicrodollars: 1_500 });
+    const { rust } = await agree(
+      capped({ source: PRICED.replaceAll('unique by (FUZZY `name`) ', '') }),
+    );
+    expect(rust.result).toMatchObject({
+      parked: true,
+      parkedAddress: 's2.b0.s0',
+      spentMicrodollars: 1_500,
+    });
     expect(rust.asked).toHaveLength(2);
-    expect(rust.limitPauses).toEqual([{ limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 }]);
+    expect(rust.limitPauses).toEqual([
+      { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 },
+    ]);
     expect(rust.suspensions.map((s) => s.address)).toEqual(['s2.b0.s0']);
   });
 
@@ -1425,7 +1767,9 @@ describe('the cost cap in the Rust engine', () => {
     expect(rust.limitPauses).toEqual([]);
     const unmarked = await agree(capped({ suspends: 'suspension_only' }));
     expect(unmarked.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
-    expect(unmarked.rust.trace).toContainEqual(expect.objectContaining({ code: 'RUN_PAUSED_COST_CAP' }));
+    expect(unmarked.rust.trace).toContainEqual(
+      expect.objectContaining({ code: 'RUN_PAUSED_COST_CAP' }),
+    );
   });
 
   it('joins a pause that holds: a woken flow steps past its sleep and suspends before its next statement', async () => {
@@ -1436,7 +1780,7 @@ describe('the cost cap in the Rust engine', () => {
       '  write crm-[:companies]-> { name: "${co.`name`} later" }',
       '}',
     ].join('\n');
-    const parked = await runOn('ts', { source: SLEEPS, event });
+    const parked = await runOn({ source: SLEEPS, event });
     const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
     const { rust } = await agree({ source: SLEEPS, event, resume: state, limitPaused: true });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2', writes: [] });
@@ -1444,7 +1788,13 @@ describe('the cost cap in the Rust engine', () => {
     // The pause is already marked: no flow marks it again.
     expect(rust.limitPauses).toEqual([]);
     // A paused run whose sink cannot suspend runs on.
-    const runsOn = await agree({ source: SLEEPS, event, resume: state, limitPaused: true, suspends: 'neither' });
+    const runsOn = await agree({
+      source: SLEEPS,
+      event,
+      resume: state,
+      limitPaused: true,
+      suspends: 'neither',
+    });
     expect(runsOn.rust.result?.writes).toHaveLength(1);
   });
 
@@ -1454,7 +1804,9 @@ describe('the cost cap in the Rust engine', () => {
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
     expect(rust.result?.writes).toHaveLength(1);
     const nowhere = await agree({ source, event, suspendAt: ['s1'], suspends: 'neither' });
-    expect(String(runFailureCause(nowhere.rust.error))).toContain("the run was asked to suspend at 's1' and has nowhere durable to park");
+    expect(String(runFailureCause(nowhere.rust.error))).toContain(
+      "the run was asked to suspend at 's1' and has nowhere durable to park",
+    );
   });
 });
 
@@ -1464,4 +1816,3 @@ function holdsDate(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
   return Object.values(value).some(holdsDate);
 }
-

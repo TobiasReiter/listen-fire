@@ -6,30 +6,64 @@
 // (compared as JSON text, so the order of an argument object's keys is held
 // too: a hop's `getRelated` is the very request the TypeScript makes).
 
-import { fromCatalogSnapshot, mockCatalogSnapshot, parseTraversalPath, refinementKey, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import {
+  fromCatalogSnapshot,
+  mockCatalogSnapshot,
+  parseTraversalPath,
+  refinementKey,
+  type InstanceSchema,
+  type LanguageVersion,
+} from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { evaluatePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
-import type { Adapter, GetRelatedInput, RelatedResult } from 'movement-engine/services/translation_graph/adapter';
+import type {
+  Adapter,
+  GetRelatedInput,
+  RelatedResult,
+} from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
+import {
+  META_RECORD_TYPE,
+  makeStablePosition,
+  makeUnstablePosition,
+  positionData,
+  positionRecordId,
+} from 'movement-engine/services/translation_graph/types';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
-import { MovementRunFailed, resumeMovement, runFailureCause, runMovement, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
-import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, recordingWriteLocks } from 'movement-engine/services/movement_engine/test_host';
+import {
+  MovementRunFailed,
+  resumeMovement,
+  runFailureCause,
+  runMovement,
+  type MovementRunResult,
+} from 'movement-engine/services/movement_engine/run';
+import {
+  resetRustRunStats,
+  rustRunStats,
+} from 'movement-engine/services/movement_engine/rust_stats';
+import {
+  credentialIdsFor,
+  makeFakeParkSink,
+  makeTestHost,
+  recordingWriteLocks,
+} from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c4');
 
 const emailSchema: InstanceSchema = {
   positions: {
-    message: { properties: { subject: 'text', text: 'text' }, edges: { attachments: { target: 'attachment' } } },
+    message: {
+      properties: { subject: 'text', text: 'text' },
+      edges: { attachments: { target: 'attachment' } },
+    },
     attachment: { properties: { name: 'text' }, edges: {} },
   },
   collections: {},
@@ -45,7 +79,10 @@ const NARROWED = '`listName` == "Portfolio"';
 /** The same WHERE as version 5 spells it: a field is read through the hop's alias. */
 const NARROWED_V5 = 'le.`listName` == "Portfolio"';
 function selectionKey(where: string, version?: 5): string {
-  const steps = version === 5 ? parseTraversalPath(`-[le:list_entries WHERE ${where}]->`, 5) : parseTraversalPath(`-[:list_entries WHERE ${where}]->`);
+  const steps =
+    version === 5
+      ? parseTraversalPath(`-[le:list_entries WHERE ${where}]->`, 5)
+      : parseTraversalPath(`-[:list_entries WHERE ${where}]->`);
   const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
   if (!filter) throw new Error(`test setup: no filter parsed out of \`${where}\``);
   return refinementKey({ type: 'list_entry', filter });
@@ -55,7 +92,10 @@ const graphSchema: InstanceSchema = {
   positions: {
     company: {
       properties: { name: 'text', stage: 'text', revenue: 'number', note: 'text' },
-      edges: { deals: { target: 'deal' }, list_entries: { target: 'list_entry', polymorphic: true } },
+      edges: {
+        deals: { target: 'deal' },
+        list_entries: { target: 'list_entry', polymorphic: true },
+      },
     },
     list_entry: { properties: { listName: 'text' }, edges: {} },
     [MASTER]: { properties: { listName: 'text' }, edges: {} },
@@ -65,29 +105,52 @@ const graphSchema: InstanceSchema = {
     lead: { properties: { name: 'text', score: 'number' }, edges: {} },
     note: { properties: { text: 'text' }, edges: {} },
   },
-  collections: { company: { target: 'company' }, lead: { target: 'lead' }, note: { target: 'note' }, deal: { target: 'deal' } },
+  collections: {
+    company: { target: 'company' },
+    lead: { target: 'lead' },
+    note: { target: 'note' },
+    deal: { target: 'deal' },
+  },
   writableRoots: {
     note: { fields: { text: 'text' }, resultShape: { externalId: 'text', text: 'text' } },
     company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } },
     deal: { fields: { title: 'text' }, resultShape: { externalId: 'text', title: 'text' } },
   },
-  refinements: { [selectionKey(NARROWED)]: 'list_entry "Portfolio"', [selectionKey(NARROWED_V5, 5)]: 'list_entry "Portfolio"' },
+  refinements: {
+    [selectionKey(NARROWED)]: 'list_entry "Portfolio"',
+    [selectionKey(NARROWED_V5, 5)]: 'list_entry "Portfolio"',
+  },
   selectedMembers: { [selectionKey(NARROWED)]: MASTER, [selectionKey(NARROWED_V5, 5)]: MASTER },
 };
 
 const catalog = mockCatalogSnapshot({
   adapters: {
-    email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: emailSchema },
-    graph: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: graphSchema },
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: emailSchema,
+    },
+    graph: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      schema: graphSchema,
+    },
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, graph_main: { adapters: ['graph'] } },
 });
 
 /** The program as `version` spells it: one text, written in the spelling
  *  versions 1–4 read, respelled by the upgrade tool for a version-5 run. */
-const programFor = (version: LanguageVersion, body: string, v5Edits: ReadonlyArray<readonly [string, string]> = []): string => {
-  const edited = version >= 5 ? v5Edits.reduce((text, [from, to]) => text.replace(from, to), body) : body;
-  return spelledFor(version, `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${edited}\n}`, fromCatalogSnapshot(catalog));
+const programFor = (
+  version: LanguageVersion,
+  body: string,
+  v5Edits: ReadonlyArray<readonly [string, string]> = [],
+): string => {
+  const edited =
+    version >= 5 ? v5Edits.reduce((text, [from, to]) => text.replace(from, to), body) : body;
+  return spelledFor(
+    version,
+    `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${edited}\n}`,
+    fromCatalogSnapshot(catalog),
+  );
 };
 
 const PRELUDE = [
@@ -143,7 +206,8 @@ function fakeGraph(options: GraphOptions = {}) {
   const calls: Array<[string, unknown]> = [];
   const collections = options.collections ?? { company: COMPANIES };
   const byId = new Map<string, Row & { type: string }>();
-  for (const [type, rows] of Object.entries(collections)) for (const row of rows) byId.set(row.id, { ...row, type });
+  for (const [type, rows] of Object.entries(collections))
+    for (const row of rows) byId.set(row.id, { ...row, type });
   const position = (row: Row & { type: string }) =>
     options.unstable === true
       ? makeUnstablePosition({ adapterType: 'graph', recordType: row.type, data: row.fields })
@@ -152,14 +216,18 @@ function fakeGraph(options: GraphOptions = {}) {
     const rows =
       read.position.recordType === META_RECORD_TYPE
         ? (collections[read.fieldId] ?? []).map((row) => byId.get(row.id)!)
-        : (options.links?.[`${positionRecordId(read.position) ?? ''}/${read.fieldId}`] ?? options.edges?.[read.fieldId] ?? []).map(
-            (id) => byId.get(id)!,
-          );
+        : (
+            options.links?.[`${positionRecordId(read.position) ?? ''}/${read.fieldId}`] ??
+            options.edges?.[read.fieldId] ??
+            []
+          ).map((id) => byId.get(id)!);
     let kept = rows;
     if (options.honours === true) {
       if (read.where !== undefined) {
         const where: Expression = read.where;
-        kept = kept.filter((row) => Boolean(evaluatePredicate(where, { read: (name) => row.fields[name] })));
+        kept = kept.filter((row) =>
+          Boolean(evaluatePredicate(where, { read: (name) => row.fields[name] })),
+        );
       }
       if (read.orderBy !== undefined) {
         const { fieldId, direction } = read.orderBy;
@@ -175,7 +243,10 @@ function fakeGraph(options: GraphOptions = {}) {
     }
     return kept.map((row) => {
       const edgeProperties = options.edgeProperties?.[row.id];
-      return { position: position(row), ...(edgeProperties !== undefined ? { edgeProperties } : {}) };
+      return {
+        position: position(row),
+        ...(edgeProperties !== undefined ? { edgeProperties } : {}),
+      };
     });
   };
   const streaming = options.pageSize !== undefined;
@@ -184,7 +255,10 @@ function fakeGraph(options: GraphOptions = {}) {
     adapterType: 'graph',
     supportedTriggers: [],
     runtimeCapabilities: () => ({
-      traversal: { incoming: options.traversal?.incoming ?? false, edgeProperties: options.traversal?.edgeProperties ?? false },
+      traversal: {
+        incoming: options.traversal?.incoming ?? false,
+        edgeProperties: options.traversal?.edgeProperties ?? false,
+      },
       resources: false,
     }),
     listEntryPoints: async () => [],
@@ -200,10 +274,14 @@ function fakeGraph(options: GraphOptions = {}) {
       calls.push(['getFieldValue', input]);
       const id = positionRecordId(input.position);
       await options.gate?.(`${id ?? ''}/${input.fieldId}`);
-      const failing = typeof options.failOn === 'string' ? [options.failOn] : (options.failOn ?? []);
-      if (id !== undefined && (failing.includes(id) || failing.includes(`${id}/${input.fieldId}`))) throw new Error(`graph: ${id} is unreadable`);
+      const failing = typeof options.failOn === 'string' ? [options.failOn] : options.failOn ?? [];
+      if (id !== undefined && (failing.includes(id) || failing.includes(`${id}/${input.fieldId}`)))
+        throw new Error(`graph: ${id} is unreadable`);
       if (id !== undefined) return byId.get(id)?.fields[input.fieldId] ?? null;
-      return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ?? null;
+      return (
+        (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ??
+        null
+      );
     },
     async getRelated(read) {
       calls.push(['getRelated', read]);
@@ -220,8 +298,12 @@ function fakeGraph(options: GraphOptions = {}) {
             const all = related(read);
             const from = typeof cursor === 'number' ? cursor : 0;
             const next = from + pageSize;
-            if (options.stuckCursor === true && cursor !== undefined) return { items: all.slice(from, next), nextCursor: cursor };
-            return { items: all.slice(from, next), ...(next < all.length ? { nextCursor: next } : {}) };
+            if (options.stuckCursor === true && cursor !== undefined)
+              return { items: all.slice(from, next), nextCursor: cursor };
+            return {
+              items: all.slice(from, next),
+              ...(next < all.length ? { nextCursor: next } : {}),
+            };
           },
         }
       : {}),
@@ -231,7 +313,12 @@ function fakeGraph(options: GraphOptions = {}) {
     },
     async updateRecord(input) {
       calls.push(['updateRecord', input]);
-      return { adapterType: 'graph', externalId: input.externalId, data: {}, association: containerAssociation(input) };
+      return {
+        adapterType: 'graph',
+        externalId: input.externalId,
+        data: {},
+        association: containerAssociation(input),
+      };
     },
     deleteRecord: async () => ({}),
   };
@@ -243,27 +330,49 @@ function fakeEmail() {
   const adapter: Adapter = {
     adapterType: 'email',
     supportedTriggers: [],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
+    runtimeCapabilities: () => ({
+      traversal: { incoming: false, edgeProperties: false },
+      resources: false,
+    }),
     listEntryPoints: async () => [],
     describe: async () => null,
     resolveEntity: async () => ({ candidates: [] }),
     async getFieldValue(input) {
       calls.push(['getFieldValue', input]);
-      return (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ?? null;
+      return (
+        (positionData(input.position) as Record<string, unknown> | undefined)?.[input.fieldId] ??
+        null
+      );
     },
     async getRelated(read) {
       calls.push(['getRelated', read]);
-      return ['a-1', 'a-2'].map((id) => ({ position: makeStablePosition({ adapterType: 'email', recordType: 'attachment', recordId: id }) }));
+      return ['a-1', 'a-2'].map((id) => ({
+        position: makeStablePosition({
+          adapterType: 'email',
+          recordType: 'attachment',
+          recordId: id,
+        }),
+      }));
     },
     createRecord: async () => ({ adapterType: 'email', externalId: 'x', data: {} }),
-    updateRecord: async (input) => ({ adapterType: 'email', externalId: input.externalId, data: {}, association: containerAssociation(input) }),
+    updateRecord: async (input) => ({
+      adapterType: 'email',
+      externalId: input.externalId,
+      data: {},
+      association: containerAssociation(input),
+    }),
     deleteRecord: async () => ({}),
   };
   return { adapter, calls };
 }
 
 function webhook(payload: Record<string, unknown>): TriggerEvent {
-  return { pipelineInputId: 'pi-rust-traverse', adapterType: 'email', triggerType: 'webhook', payload };
+  return {
+    pipelineInputId: 'pi-rust-traverse',
+    adapterType: 'email',
+    triggerType: 'webhook',
+    payload,
+  };
 }
 
 interface Case {
@@ -334,9 +443,7 @@ interface Outcome {
 
 const noop = () => {};
 
-async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+async function runOn(c: Case): Promise<Outcome> {
   const locks: string[][] = [];
   const hold = c.hold?.();
   const graph = fakeGraph({ ...c.graph, ...(hold !== undefined ? { gate: hold.gate } : {}) });
@@ -365,7 +472,9 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
       firedAt: '2026-05-01T09:00:00.000Z',
       dryRun: true,
-      ...(c.costCapMicrodollars !== undefined ? { costCapMicrodollars: c.costCapMicrodollars } : {}),
+      ...(c.costCapMicrodollars !== undefined
+        ? { costCapMicrodollars: c.costCapMicrodollars }
+        : {}),
       ...(c.suspendAt !== undefined ? { suspendAt: [...c.suspendAt] } : {}),
       host: makeTestHost({
         locks: recordingWriteLocks(locks),
@@ -387,9 +496,6 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     return { failed: false, result, ...world() };
   } catch (error) {
     return { failed: true, error, ...world() };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
 }
 
@@ -398,57 +504,54 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
 function sameIds<T>(value: T): T {
   const ids = new Map<string, string>();
   const text = JSON.stringify(value);
-  const normal = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
-    if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
-    return ids.get(id)!;
-  });
+  const normal = text.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    (id) => {
+      if (!ids.has(id)) ids.set(id, `uuid-${ids.size + 1}`);
+      return ids.get(id)!;
+    },
+  );
   return JSON.parse(normal) as T;
 }
 
-/** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone. Unpinned, under version 3 and then under the current
- *  version, whose run is handed back: version 4 changed what a match's
- *  miss, a write handle's reads and `write h { … }` mean, and both engines
- *  run both. */
+/** The case on the Rust engine, the version-5 reference. A case pinned below
+ *  5 runs on the TypeScript engine and is not this suite's. */
 async function agree(c: Case) {
-  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
-  return agreeUnder(c);
+  if (c.languageVersion !== undefined && c.languageVersion < 5)
+    throw new Error(`test: a case pinned to ${c.languageVersion} runs on the TypeScript engine`);
+  return onRust(c);
 }
 
-async function agreeUnder(c: Case) {
-  const ts = await runOn('ts', c);
-  resetRustEvalStats();
+/** One run on the Rust engine: run whole, and what
+ *  the hosts saw and what the run handed back (or how it failed) held to the
+ *  recorded snapshot, read for correctness when it was recorded. */
+async function onRust(c: Case) {
   resetRustRunStats();
-  const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-  expect(rustEvalStats).toEqual({ notAdmitted: 0, admitted: 0, answered: 0, fallback: {} });
+  const rust = await runOn(c);
+  expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
   const world = ({ failed: _failed, result: _result, error: _error, ...rest }: Outcome) => rest;
-  expect(sameIds(world(rust))).toEqual(sameIds(world(ts)));
-  if (ts.failed) {
-    expect(rust.failed).toBe(true);
-    expect(String(rust.error)).toBe(String(ts.error));
-    expect(runFailureCause(rust.error)?.constructor).toBe((runFailureCause(ts.error) as object).constructor);
-    expect(codeOf(runFailureCause(rust.error))).toBe(codeOf(runFailureCause(ts.error)));
-    if (ts.error instanceof MovementRunFailed && rust.error instanceof MovementRunFailed) {
-      expect(sameIds(rust.error.partial)).toEqual(sameIds(ts.error.partial));
-    }
-  } else {
-    expect(rust.failed).toBe(false);
-    expect(sameIds(rust.result)).toEqual(sameIds(ts.result));
-  }
-  return { ts, rust };
+  expect(
+    sameIds({
+      world: world(rust),
+      failed: rust.failed ? String(rust.error) : false,
+      result: rust.result,
+    }),
+  ).toMatchSnapshot();
+  return { rust };
 }
 
 /** A failure's MOVENG code, when it carries one. */
 const codeOf = (error: unknown) => (error instanceof MovementEngineError ? error.code : undefined);
 
 const written = (o: Outcome) => o.captured.map((w) => w.fields?.text);
-const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') => JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;
+const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') =>
+  JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;
 
 const BRACKET = 'company WHERE `stage` == "Seed" ORDER BY `revenue` DESC LIMIT 2';
 /** The same bracket, as the run's version-5 text quotes it in its trace. */
 const BRACKET_V5 = 'company WHERE c.`stage` == "Seed" ORDER BY c.`revenue` DESC LIMIT 2';
-const NOTE_PER_COMPANY = (bracket: string) => `  kg-[c:${bracket}]-> {\n    write kg-[:note]-> { text: c.\`name\` }\n  }`;
+const NOTE_PER_COMPANY = (bracket: string) =>
+  `  kg-[c:${bracket}]-> {\n    write kg-[:note]-> { text: c.\`name\` }\n  }`;
 
 describe('traversal blocks in the Rust engine', () => {
   it('pushes the WHERE, ORDER BY and LIMIT and filters, sorts and slices what comes back, as the TypeScript engine does', async () => {
@@ -456,9 +559,25 @@ describe('traversal blocks in the Rust engine', () => {
     expect(written(rust)).toEqual(['Globex', 'Umbrella']);
     const [method, fetch] = calls(rust).find(([m]) => m === 'getRelated')!;
     expect(method).toBe('getRelated');
-    expect(Object.keys(fetch)).toEqual(['position', 'fieldId', 'direction', 'where', 'orderBy', 'limit']);
-    expect(fetch).toMatchObject({ fieldId: 'company', direction: 'outgoing', orderBy: { fieldId: 'revenue', direction: 'desc' }, limit: 2 });
-    expect(rust.trace).toContainEqual({ kind: 'block', root: `kg-[c:${BRACKET_V5}]->`, positions: 2 });
+    expect(Object.keys(fetch)).toEqual([
+      'position',
+      'fieldId',
+      'direction',
+      'where',
+      'orderBy',
+      'limit',
+    ]);
+    expect(fetch).toMatchObject({
+      fieldId: 'company',
+      direction: 'outgoing',
+      orderBy: { fieldId: 'revenue', direction: 'desc' },
+      limit: 2,
+    });
+    expect(rust.trace).toContainEqual({
+      kind: 'block',
+      root: `kg-[c:${BRACKET_V5}]->`,
+      positions: 2,
+    });
   });
 
   it('answers the same records in the same order whether the adapter honours the pushdown or filters nothing', async () => {
@@ -474,7 +593,9 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('orders by a key that is not a bare field locally, asking the adapter for neither the sort nor the limit', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY LOWER(c.`name`) DESC LIMIT 3') });
+    const { rust } = await agree({
+      body: NOTE_PER_COMPANY('company ORDER BY LOWER(c.`name`) DESC LIMIT 3'),
+    });
     expect(written(rust)).toEqual(['Umbrella', 'Initech', 'Hooli']);
     const fetch = calls(rust).find(([m]) => m === 'getRelated')?.[1];
     expect(fetch).not.toHaveProperty('orderBy');
@@ -483,7 +604,11 @@ describe('traversal blocks in the Rust engine', () => {
 
   it('closes the pushed WHERE over the values the scope holds, an event field read before the fetch', async () => {
     const { rust } = await agree({
-      body: '  wanted = msg.`subject`\n' + NOTE_PER_COMPANY('company WHERE `stage` == wanted AND c.`name` != msg.`text` AND `revenue` >= 10'),
+      body:
+        '  wanted = msg.`subject`\n' +
+        NOTE_PER_COMPANY(
+          'company WHERE `stage` == wanted AND c.`name` != msg.`text` AND `revenue` >= 10',
+        ),
     });
     expect(written(rust)).toEqual(['Acme', 'Globex', 'Umbrella']);
     const fetch = calls(rust).find(([m]) => m === 'getRelated')?.[1];
@@ -506,14 +631,22 @@ describe('traversal blocks in the Rust engine', () => {
   it('runs no body for an empty traversal', async () => {
     const { rust } = await agree({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Nowhere"') });
     expect(written(rust)).toEqual([]);
-    expect(rust.trace).toEqual([{ kind: 'block', root: 'kg-[c:company WHERE c.`stage` == "Nowhere"]->', positions: 0 }]);
-    const none = await agree({ body: NOTE_PER_COMPANY('lead'), graph: { collections: { company: COMPANIES } } });
+    expect(rust.trace).toEqual([
+      { kind: 'block', root: 'kg-[c:company WHERE c.`stage` == "Nowhere"]->', positions: 0 },
+    ]);
+    const none = await agree({
+      body: NOTE_PER_COMPANY('lead'),
+      graph: { collections: { company: COMPANIES } },
+    });
     expect(written(none.rust)).toEqual([]);
   });
 
   it('traces the field a raw-payload landing does not carry, once, as the TypeScript engine does', async () => {
     // `note` is the schema's, and no record's payload carries it.
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company WHERE `note` == null'), graph: { unstable: true } });
+    const { rust } = await agree({
+      body: NOTE_PER_COMPANY('company WHERE `note` == null'),
+      graph: { unstable: true },
+    });
     expect(written(rust)).toHaveLength(5);
     expect(rust.trace.filter((e) => (e as { kind: string }).kind === 'field_miss')).toEqual([
       { kind: 'field_miss', binding: 'kg', field: 'note', available: ['name', 'stage', 'revenue'] },
@@ -526,25 +659,43 @@ describe('traversal blocks in the Rust engine', () => {
     const pages = calls(rust).filter(([m]) => m === 'iterateRelatedPage');
     expect(pages.map(([, p]) => p.cursor ?? null)).toEqual([null, 2, 4]);
     // The first page's records are read before the second page is asked for.
-    expect(calls(rust).map(([m]) => m).slice(0, 4)).toEqual(['iterateRelatedPage', 'getFieldValue', 'getFieldValue', 'iterateRelatedPage']);
+    expect(
+      calls(rust)
+        .map(([m]) => m)
+        .slice(0, 4),
+    ).toEqual(['iterateRelatedPage', 'getFieldValue', 'getFieldValue', 'iterateRelatedPage']);
   });
 
   it('fails a paged traversal whose server hands its cursor back, with the TypeScript engine’s error', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company'), graph: { pageSize: 2, stuckCursor: true } });
-    expect(String(runFailureCause(rust.error))).toContain('paged traversal: the page for cursor 2 answered the same cursor again');
+    const { rust } = await agree({
+      body: NOTE_PER_COMPANY('company'),
+      graph: { pageSize: 2, stuckCursor: true },
+    });
+    expect(String(runFailureCause(rust.error))).toContain(
+      'paged traversal: the page for cursor 2 answered the same cursor again',
+    );
   });
 
   it('walks off the event and off a write handle, each from its own position', async () => {
-    const offEvent = await agree({ body: '  msg-[a:attachments]-> {\n    write kg-[:note]-> { text: a.`name` }\n  }' });
+    const offEvent = await agree({
+      body: '  msg-[a:attachments]-> {\n    write kg-[:note]-> { text: a.`name` }\n  }',
+    });
     expect(offEvent.rust.captured).toHaveLength(2);
     const offHandle = await agree({
       body: '  co = write kg-[:company]-> { name: "Acme" }\n  co-[d:deals]-> {\n    write kg-[:note]-> { text: d.`title` }\n  }',
-      graph: { collections: { company: COMPANIES, deal: [{ id: 'd-1', fields: { title: 'Seed round' } }] }, edges: { deals: ['d-1'] } },
+      graph: {
+        collections: { company: COMPANIES, deal: [{ id: 'd-1', fields: { title: 'Seed round' } }] },
+        edges: { deals: ['d-1'] },
+      },
     });
     expect(written(offHandle.rust)).toEqual([undefined, 'Seed round']);
     // From the handle's own record, stamped with its type.
     const fetch = calls(offHandle.rust).find(([m]) => m === 'getRelated')?.[1];
-    expect(fetch?.position).toMatchObject({ adapterType: 'graph', recordType: 'company', identity: { kind: 'stable' } });
+    expect(fetch?.position).toMatchObject({
+      adapterType: 'graph',
+      recordType: 'company',
+      identity: { kind: 'stable' },
+    });
   });
 
   it('runs each body at its own address with its own scope, in order', async () => {
@@ -594,12 +745,19 @@ describe('traversal blocks in the Rust engine', () => {
     });
     expect(written(rust)).toEqual([undefined, 'Portfolio']);
     // The other member's record was never read.
-    expect(calls(rust).filter(([m, input]) => m === 'getFieldValue' && JSON.stringify(input).includes('le-2'))).toEqual([]);
+    expect(
+      calls(rust).filter(
+        ([m, input]) => m === 'getFieldValue' && JSON.stringify(input).includes('le-2'),
+      ),
+    ).toEqual([]);
   });
 
   it('runs two blocks that reuse a hop alias and a body name, each in its own scope', async () => {
-    const block = (where: string) => `  kg-[c:company WHERE ${where}]-> {\n    n = c.\`name\`\n    write kg-[:note]-> { text: n }\n  }`;
-    const { rust } = await agree({ body: `${block('`stage` == "Late"')}\n${block('`revenue` == 10')}` });
+    const block = (where: string) =>
+      `  kg-[c:company WHERE ${where}]-> {\n    n = c.\`name\`\n    write kg-[:note]-> { text: n }\n  }`;
+    const { rust } = await agree({
+      body: `${block('`stage` == "Late"')}\n${block('`revenue` == 10')}`,
+    });
     expect(written(rust)).toEqual(['Initech', 'Acme']);
   });
 
@@ -633,32 +791,54 @@ describe('traversal blocks in the Rust engine', () => {
     it('walks a hop off each landing, its body writing at both levels, in order', async () => {
       const { rust } = await agree({ body: NESTED, graph: graph() });
       expect(written(rust)).toEqual([
-        'co Acme', 'Acme: Series A!', 'Acme: Seed round', 'end Acme',
-        'co Globex', 'end Globex',
-        'co Initech', 'Initech: Series A!', 'end Initech',
-        'co Umbrella', 'end Umbrella',
+        'co Acme',
+        'Acme: Series A!',
+        'Acme: Seed round',
+        'end Acme',
+        'co Globex',
+        'end Globex',
+        'co Initech',
+        'Initech: Series A!',
+        'end Initech',
+        'co Umbrella',
+        'end Umbrella',
         'done',
       ]);
       // Each nested walk starts at its own landing's position.
-      const origins = calls(rust).filter(([m, input]) => m === 'getRelated' && input.fieldId === 'deals').map(([, input]) => positionRecordId(input.position as never));
+      const origins = calls(rust)
+        .filter(([m, input]) => m === 'getRelated' && input.fieldId === 'deals')
+        .map(([, input]) => positionRecordId(input.position as never));
       expect(origins).toEqual(['n-1', 'n-2', 'n-3', 'n-5']);
-      expect(rust.trace).toContainEqual({ kind: 'block', root: 'c-[d:deals WHERE d.`title` != "Bridge" ORDER BY d.`title` DESC]->', positions: 2 });
+      expect(rust.trace).toContainEqual({
+        kind: 'block',
+        root: 'c-[d:deals WHERE d.`title` != "Bridge" ORDER BY d.`title` DESC]->',
+        positions: 2,
+      });
     });
 
     it('fails mid-fan-out where the TypeScript engine does, keeping the writes before it', async () => {
       const { rust } = await agree({ body: NESTED, graph: graph({ failOn: 'd-3' }) });
       expect(rust.failed).toBe(true);
       expect(String(runFailureCause(rust.error))).toContain('graph: d-3 is unreadable');
-      expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.length : -1).toBe(5);
+      expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.length : -1).toBe(
+        5,
+      );
     });
 
     it('fails in an inner iteration’s body after the one before it wrote, as the TypeScript engine does', async () => {
       // The inner WHERE reads `title`; only the body reads `stage`, so the
       // failure is d-1's body, after d-2's iteration wrote.
-      const body = NESTED.replace('      t = d.`title`', '      t = d.`title`\n      s = d.`stage`');
+      const body = NESTED.replace(
+        '      t = d.`title`',
+        '      t = d.`title`\n      s = d.`stage`',
+      );
       const { rust } = await agree({ body, graph: graph({ failOn: 'd-1/stage' }) });
       expect(String(runFailureCause(rust.error))).toContain('graph: d-1 is unreadable');
-      expect(rust.error instanceof MovementRunFailed ? rust.error.partial.writes.map((w) => w.writtenValues.text) : []).toEqual(['co Acme', 'Acme: Series A!']);
+      expect(
+        rust.error instanceof MovementRunFailed
+          ? rust.error.partial.writes.map((w) => w.writtenValues.text)
+          : [],
+      ).toEqual(['co Acme', 'Acme: Series A!']);
     });
   });
 
@@ -700,11 +880,17 @@ describe('traversal blocks in the Rust engine', () => {
     // Numbers at even places, their texts at odd: a comparator no total
     // order agrees with, so V8's TimSort alone decides the order, here as in
     // the TypeScript engine (crates/movement-engine/tests/oracle/mixed_sort.json).
-    const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({ id: `m-${i}`, fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` } }));
+    const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({
+      id: `m-${i}`,
+      fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` },
+    }));
     const graph = { collections: { company: rows } };
     const { rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY `revenue`'), graph });
     expect(written(rust)).toHaveLength(65);
-    await agree({ body: `  write kg-[:note]-> { text: "first" }\n${NOTE_PER_COMPANY('company ORDER BY `revenue`')}`, graph });
+    await agree({
+      body: `  write kg-[:note]-> { text: "first" }\n${NOTE_PER_COMPANY('company ORDER BY `revenue`')}`,
+      graph,
+    });
   });
 
   describe('edge properties', () => {
@@ -735,9 +921,12 @@ describe('traversal blocks in the Rust engine', () => {
     });
 
     it('leaves a bare name alone in the pushed WHERE when the edge can carry it, and closes over the binding when it cannot', async () => {
-      const where = (o: Outcome) => JSON.stringify(calls(o).find(([m]) => m === 'getRelated')?.[1].where);
+      const where = (o: Outcome) =>
+        JSON.stringify(calls(o).find(([m]) => m === 'getRelated')?.[1].where);
       const carried = await agree({ body: body('`role` == "lead"'), graph: graph(true) });
-      expect(where(carried.rust)).not.toContain('{"type":"static","value":"lead"},{"type":"static"');
+      expect(where(carried.rust)).not.toContain(
+        '{"type":"static","value":"lead"},{"type":"static"',
+      );
       expect(where(carried.rust)).toContain('role');
       const closed = await agree({ body: body('`role` == "lead"'), graph: graph(false) });
       expect(where(closed.rust)).not.toContain('role');
@@ -761,7 +950,10 @@ describe('the expression tail, on both engines', () => {
     edges: { deals: ['d-1'] },
     ...over,
   });
-  const fetches = (o: Outcome) => calls(o).filter(([m]) => m === 'getRelated').map(([, input]) => input);
+  const fetches = (o: Outcome) =>
+    calls(o)
+      .filter(([m]) => m === 'getRelated')
+      .map(([, input]) => input);
 
   // Review Focus 4: a hop's WHERE the adapter honours, and one it cannot be
   // handed, answer the same records, and ask with the same arguments.
@@ -783,7 +975,11 @@ describe('the expression tail, on both engines', () => {
       expect(written(pushed.rust)).toEqual(written(local.rust));
       expect(fetches(pushed.rust)).toEqual(fetches(local.rust));
       expect(fetches(local.rust)).toHaveLength(3);
-      expect(fetches(local.rust)[0]).toMatchObject({ fieldId: 'company', orderBy: { fieldId: 'revenue', direction: 'desc' }, limit: 2 });
+      expect(fetches(local.rust)[0]).toMatchObject({
+        fieldId: 'company',
+        orderBy: { fieldId: 'revenue', direction: 'desc' },
+        limit: 2,
+      });
     });
 
     it('filters, orders and bounds locally a WHERE no adapter can be handed, with the same answer', async () => {
@@ -804,13 +1000,24 @@ describe('the expression tail, on both engines', () => {
     });
 
     it('picks the last and the only record, binds null when there is none, and fails ONLY over two', async () => {
-      const last = await agree({ body: '  top = LAST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)\n  write kg-[:note]-> { text: COALESCE(top.`name`, "none") }' });
+      const last = await agree({
+        body: '  top = LAST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)\n  write kg-[:note]-> { text: COALESCE(top.`name`, "none") }',
+      });
       expect(written(last.rust)).toEqual(['Umbrella']);
-      const none = await agree({ body: '  top = FIRST(kg-[c:company WHERE `stage` == "Gone" ORDER BY `name`]->)\n  if top == null { ERROR("no company matched") }' });
+      const none = await agree({
+        body: '  top = FIRST(kg-[c:company WHERE `stage` == "Gone" ORDER BY `name`]->)\n  if top == null { ERROR("no company matched") }',
+      });
       expect(String(runFailureCause(none.rust.error))).toContain('no company matched');
-      const two = await agree({ body: '  co = ONLY(kg-[c:company WHERE `stage` == "Late" OR `revenue` == 30]->)' });
-      expect(String(runFailureCause(two.rust.error))).toContain('says there is exactly one, and there are 2');
-      const one = await agree({ body: '  co = ONLY(kg-[c:company WHERE `name` == "Initech"]->)\n  if EXISTS(co) {\n    write kg-[:note]-> { text: COALESCE(co.`name`, "?") }\n  }', graph: withDeals() });
+      const two = await agree({
+        body: '  co = ONLY(kg-[c:company WHERE `stage` == "Late" OR `revenue` == 30]->)',
+      });
+      expect(String(runFailureCause(two.rust.error))).toContain(
+        'says there is exactly one, and there are 2',
+      );
+      const one = await agree({
+        body: '  co = ONLY(kg-[c:company WHERE `name` == "Initech"]->)\n  if EXISTS(co) {\n    write kg-[:note]-> { text: COALESCE(co.`name`, "?") }\n  }',
+        graph: withDeals(),
+      });
       expect(one.rust.captured).toHaveLength(1);
     });
 
@@ -819,13 +1026,16 @@ describe('the expression tail, on both engines', () => {
         body: '  kg-[c:company]-> {\n    write kg-[:note]-> { text: "${COUNT(c-[d:deals WHERE d.`stage` != "lost"]->)}" }\n  }',
         graph: withDeals(),
       });
-      await agree({ body: '  write kg-[:note]-> { text: JOIN(kg-[c:company ORDER BY c-[:deals]->.`title` DESC LIMIT 2]->.`name`, ",") }', graph: withDeals() });
+      await agree({
+        body: '  write kg-[:note]-> { text: JOIN(kg-[c:company ORDER BY c-[:deals]->.`title` DESC LIMIT 2]->.`name`, ",") }',
+        graph: withDeals(),
+      });
     });
   });
 
   describe('EXISTS', () => {
     it('asks one getRelated per subject and hop, and reads the WHERE until a record holds it', async () => {
-      const { ts, rust } = await agree({
+      const { rust } = await agree({
         body: [
           '  co = write kg-[:company]-> { name: "Newco" }',
           '  if EXISTS(co-[:deals]->) { write kg-[:note]-> { text: "any" } }',
@@ -836,11 +1046,16 @@ describe('the expression tail, on both engines', () => {
           '  if EXISTS(msg-[:attachments]->) { write kg-[:note]-> { text: "files" } }',
         ].join('\n'),
         // Version 5 writes a walk's filter inside its last hop, whole.
-        v5Edits: [['kg-[c:company WHERE `stage` == "Late"]-> WHERE `revenue` > 40', 'kg-[c:company WHERE `stage` == "Late" AND `revenue` > 40]->']],
+        v5Edits: [
+          [
+            'kg-[c:company WHERE `stage` == "Late"]-> WHERE `revenue` > 40',
+            'kg-[c:company WHERE `stage` == "Late" AND `revenue` > 40]->',
+          ],
+        ],
         graph: withDeals(),
       });
       expect(written(rust)).toEqual([undefined, 'any', 'seed', 'none', 'late', 'won', 'files']);
-      expect(fetches(rust)).toHaveLength(fetches(ts).length);
+      expect(fetches(rust)).toHaveLength(fetches(rust).length);
     });
 
     it('asks whether a value holds one, and tests a candidate of a target WHERE', async () => {
@@ -866,7 +1081,10 @@ describe('the expression tail, on both engines', () => {
         '  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }]',
         '  write kg-[:note]-> { text: "${COUNT(xs)} ${SUM(xs)} ${AVG(xs)} ${MIN([2, 0, 5])} ${MAX(xs)} ${FIRST(xs)} ${LAST(xs)} ${JOIN(xs, "/")} ${COUNT(COLLECT(7))}" }',
         '  write kg-[:note]-> { text: JOIN(SORT(["b", "a", "c"], DESC), "") }',
-        '  write kg-[:note]-> { text: JOIN(MAP_NAMES, "") }'.replace('MAP_NAMES', 'SORT([2, 10, 1])'),
+        '  write kg-[:note]-> { text: JOIN(MAP_NAMES, "") }'.replace(
+          'MAP_NAMES',
+          'SORT([2, 10, 1])',
+        ),
         '  ranked = SORT(rows, `s`, DESC)',
         '  r0 = AT(ranked, 0)',
         '  r1 = AT(ranked, 1)',
@@ -878,7 +1096,9 @@ describe('the expression tail, on both engines', () => {
     // `count` counts the empty item too under 5 (the one in `xs`); COUNT skipped it before.
     expect(written(rust)).toEqual(['4 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
     const only = await agree({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
-    expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
+    expect(String(runFailureCause(only.rust.error))).toContain(
+      'ONLY(xs) says there is exactly one, and there are 2.',
+    );
   });
 
   it("measures a WITHIN from the host's clock, a value's, a condition's and a hop's WHERE's alike", async () => {
@@ -899,7 +1119,9 @@ describe('the expression tail, on both engines', () => {
     expect(written(rust)).toEqual(['recent', 'false', 'Acme', 'Globex', 'Initech', 'Umbrella']);
     // The hop's WHERE is pure, so it is handed to the adapter as the
     // TypeScript hands it; the engine decides it itself all the same.
-    expect(calls(rust).filter(([m, input]) => m === 'getRelated' && input.where !== undefined)).toHaveLength(1);
+    expect(
+      calls(rust).filter(([m, input]) => m === 'getRelated' && input.where !== undefined),
+    ).toHaveLength(1);
   });
 
   it("ranks by a SORT key of any form, read in each member's scope, records and maps alike", async () => {
@@ -916,12 +1138,19 @@ describe('the expression tail, on both engines', () => {
       ].join('\n'),
       // Version 5 gives SORT its key as a function.
       v5Edits: [
-        ['SORT(cs, LOWER(`name`), DESC)', 'sort(cs, (c) => Text.lower(c.`name`), { order: "desc" })'],
+        [
+          'SORT(cs, LOWER(`name`), DESC)',
+          'sort(cs, (c) => Text.lower(c.`name`), { order: "desc" })',
+        ],
         ['SORT(cs, COALESCE(`revenue`, 0) * -1)', 'sort(cs, (c) => coalesce(c.`revenue`, 0) * -1)'],
         ['SORT(rows, COALESCE(`s`, 0) * -1)', 'sort(rows, (r) => coalesce(r.s, 0) * -1)'],
       ],
     });
-    expect(written(rust)).toEqual(['Umbrella,Initech,Hooli,Globex,Acme', 'Initech,Globex,Umbrella,Acme,Hooli', 'a,b,c']);
+    expect(written(rust)).toEqual([
+      'Umbrella,Initech,Hooli,Globex,Acme',
+      'Initech,Globex,Umbrella,Acme,Hooli',
+      'a,b,c',
+    ]);
   });
 
   it('reads a second name for the event, a landing and a handle as the record it names', async () => {
@@ -943,61 +1172,54 @@ describe('the expression tail, on both engines', () => {
     });
   });
 
-  it('parks a picked record, and the event named twice, as the TypeScript engine writes them', async () => {
+  it('parks a picked record, and the event named twice', async () => {
     const body = [
       '  top = FIRST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)',
       '  m2 = msg',
       '  await sleep(1h)',
       '  write kg-[:note]-> { text: COALESCE(top.`name`, m2.`subject`) }',
     ].join('\n');
-    async function parkOn(engine: 'ts' | 'rust', languageVersion: LanguageVersion) {
-      const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = engine;
-      try {
-        const park = makeFakeParkSink();
-        const graph = fakeGraph();
-        await runMovement({
-          source: programFor(languageVersion, body),
-          languageVersion,
-          event: webhook({ subject: 'Seed', text: 'Late' }),
-          teamId: TEAM_ID,
-          catalog,
-          credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
-          firedAt: '2026-05-01T09:00:00.000Z',
-          host: makeTestHost({
-            adapters: { resolve: (request) => (request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter) },
-            park: { sink: park.sink },
-          }),
-        });
-        expect(park.timerParks).toHaveLength(1);
-        return { state: JSON.stringify(park.timerParks[0]?.state), calls: graph.calls };
-      } finally {
-        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-        else process.env.MOVEMENT_ENGINE = previous;
-      }
-    }
-    for (const languageVersion of [3, 4] as const) {
-      const ts = await parkOn('ts', languageVersion);
-      resetRustRunStats();
-      const rust = await parkOn('rust', languageVersion);
-      expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      expect(rust.state).toBe(ts.state);
-      expect(JSON.stringify(rust.calls)).toBe(JSON.stringify(ts.calls));
-      expect(ts.state).toContain('"top":{"kind":"sourcePosition"');
-      expect(ts.state).toContain('"read":{"instanceName":"kg"}');
-    }
+    resetRustRunStats();
+    const park = makeFakeParkSink();
+    const graph = fakeGraph();
+    await runMovement({
+      source: programFor(5, body),
+      languageVersion: 5,
+      event: webhook({ subject: 'Seed', text: 'Late' }),
+      teamId: TEAM_ID,
+      catalog,
+      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+      firedAt: '2026-05-01T09:00:00.000Z',
+      host: makeTestHost({
+        adapters: {
+          resolve: (request) =>
+            request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter,
+        },
+        park: { sink: park.sink },
+      }),
+    });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(park.timerParks).toHaveLength(1);
+    const state = JSON.stringify(park.timerParks[0]?.state);
+    expect(state).toContain('"top":{"kind":"sourcePosition"');
+    expect(state).toContain('"read":{"instanceName":"kg"}');
+    expect(graph.calls).toMatchSnapshot();
   });
 
   // Henry's ruling (2026-10-15): the event in a graph literal is held as the
   // record it is, by reference, as any other record there is.
-  it('holds the event in a graph as its record, read, parked and resumed as the TypeScript engine does', async () => {
+  it('holds the event in a graph as its record, read, parked and resumed', async () => {
     const before = [
       '  g = graph { title: "t", owner: msg, inner: { from: msg } }',
       '  g-[o:owner]-> {',
       '    write kg-[:note]-> { text: "${g.`title`} ${o.`subject`}" }',
       '  }',
     ];
-    const after = ['  g-[i:inner]->-[f:from]-> {', '    write kg-[:note]-> { text: f.`text` }', '  }'];
+    const after = [
+      '  g-[i:inner]->-[f:from]-> {',
+      '    write kg-[:note]-> { text: f.`text` }',
+      '  }',
+    ];
     const whole = await agree({ body: [...before, ...after].join('\n'), languageVersion: 5 });
     expect(written(whole.rust)).toEqual(['t Seed', 'Late']);
 
@@ -1014,42 +1236,25 @@ describe('the expression tail, on both engines', () => {
     const hostFor = (park: ReturnType<typeof makeFakeParkSink>) => {
       const graph = fakeGraph();
       return makeTestHost({
-        adapters: { resolve: (request) => (request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter) },
+        adapters: {
+          resolve: (request) =>
+            request.adapterType === 'graph' ? graph.adapter : fakeEmail().adapter,
+        },
         park: { sink: park.sink },
       });
     };
-    async function onEngine<T>(engine: 'ts' | 'rust', act: () => Promise<T>): Promise<T> {
-      const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = engine;
-      try {
-        return await act();
-      } finally {
-        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-        else process.env.MOVEMENT_ENGINE = previous;
-      }
-    }
-    const parkOn = (engine: 'ts' | 'rust') =>
-      onEngine(engine, async () => {
-        const park = makeFakeParkSink();
-        await runMovement({ ...base, host: hostFor(park) });
-        expect(park.timerParks).toHaveLength(1);
-        return JSON.stringify(park.timerParks[0]?.state);
-      });
-    const ts = await parkOn('ts');
     resetRustRunStats();
-    const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0 });
-    expect(rust).toBe(ts);
-    // Either engine resumes either park to the same writes.
-    const resumed: string[] = [];
-    for (const engine of ['ts', 'rust'] as const) {
-      for (const state of [ts, rust]) {
-        const result = await onEngine(engine, () => resumeMovement({ ...base, state: JSON.parse(state) as ParkedScopeState, host: hostFor(makeFakeParkSink()) }));
-        resumed.push(JSON.stringify({ writes: result.writes, trace: result.trace }));
-      }
-    }
-    expect(new Set(resumed).size).toBe(1);
-    expect(JSON.parse(resumed[0] ?? '{}').writes).toHaveLength(1);
+    const park = makeFakeParkSink();
+    await runMovement({ ...base, host: hostFor(park) });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(park.timerParks).toHaveLength(1);
+    const result = await resumeMovement({
+      ...base,
+      state: JSON.parse(JSON.stringify(park.timerParks[0]?.state)) as ParkedScopeState,
+      host: hostFor(makeFakeParkSink()),
+    });
+    expect(result.writes).toHaveLength(1);
+    expect(result.writes[0]?.writtenValues).toEqual({ text: 'Late' });
   });
 
   it('tests a record IS of a kind, from the run alone', async () => {
@@ -1085,8 +1290,13 @@ describe("5A's engine fixes, on both engines", () => {
       ].join('\n'),
     });
     const writes = rust.result?.writes ?? [];
-    expect(writes.map((w) => `${w.recordType} ${String(w.writtenValues.name ?? w.writtenValues.text)}`)).toEqual(
-      COMPANIES.flatMap(({ fields }) => [`company copy of ${String(fields.name)}`, `note copy of ${String(fields.name)}`]),
+    expect(
+      writes.map((w) => `${w.recordType} ${String(w.writtenValues.name ?? w.writtenValues.text)}`),
+    ).toEqual(
+      COMPANIES.flatMap(({ fields }) => [
+        `company copy of ${String(fields.name)}`,
+        `note copy of ${String(fields.name)}`,
+      ]),
     );
     writes.forEach((write, index) => expect(write.origin?.writeIndex).toBe(index));
   });
@@ -1094,7 +1304,9 @@ describe("5A's engine fixes, on both engines", () => {
   it('resolves the instance every iteration writes once for the segment', async () => {
     const { rust } = await agree({ body: NOTE_PER_COMPANY('company') });
     expect(written(rust)).toHaveLength(COMPANIES.length);
-    const targets = rust.resolved.filter((r) => typeof r === 'object' && r !== null && Reflect.get(r, 'role') === 'target');
+    const targets = rust.resolved.filter(
+      (r) => typeof r === 'object' && r !== null && Reflect.get(r, 'role') === 'target',
+    );
     expect(targets).toHaveLength(1);
   });
 
@@ -1106,18 +1318,23 @@ describe("5A's engine fixes, on both engines", () => {
   // block), so neither engine can show it.
   describe('ORDER BY key reads settle before the run fails', () => {
     const ORDERED = NOTE_PER_COMPANY('company ORDER BY c.`name`');
-    const keyReads = (o: Outcome) => calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
+    const keyReads = (o: Outcome) =>
+      calls(o).filter(([m, input]) => m === 'getFieldValue' && input.fieldId === 'name');
 
     it('issues every key read when one fails, and fails with the TypeScript engine’s error', async () => {
-      const { ts, rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' } });
+      const { rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' } });
       expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
       expect(keyReads(rust)).toHaveLength(COMPANIES.length);
-      expect(keyReads(ts)).toHaveLength(COMPANIES.length);
+      expect(keyReads(rust)).toHaveLength(COMPANIES.length);
     });
 
     it('does not fail while a sibling of the failed read is still held at the host', async () => {
       const held = holdingRead('n-5/name');
-      const { rust } = await agree({ body: ORDERED, graph: { failOn: 'n-2/name' }, hold: held.hold });
+      const { rust } = await agree({
+        body: ORDERED,
+        graph: { failOn: 'n-2/name' },
+        hold: held.hold,
+      });
       // A run each: both engines, under versions 3 and 4.
       expect(held.settledWhileHeld).toEqual([false, false, false, false]);
       expect(String(runFailureCause(rust.error))).toContain('graph: n-2 is unreadable');
@@ -1126,10 +1343,15 @@ describe("5A's engine fixes, on both engines", () => {
     it('fails with the lower index’s error when two reads fail, the higher first', async () => {
       // n-2's read is held and fails on release; n-4's fails at once.
       const held = holdingRead('n-2/name');
-      const { ts, rust } = await agree({ body: ORDERED, graph: { failOn: ['n-2/name', 'n-4/name'] }, hold: held.hold });
+      const { rust } = await agree({
+        body: ORDERED,
+        graph: { failOn: ['n-2/name', 'n-4/name'] },
+        hold: held.hold,
+      });
       // A run each: both engines, under versions 3 and 4.
       expect(held.settledWhileHeld).toEqual([false, false, false, false]);
-      for (const o of [ts, rust]) expect(String(runFailureCause(o.error))).toContain('graph: n-2 is unreadable');
+      for (const o of [rust, rust])
+        expect(String(runFailureCause(o.error))).toContain('graph: n-2 is unreadable');
     });
   });
 });
