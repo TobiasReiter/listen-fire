@@ -148,9 +148,9 @@ async function answers(
 ): Promise<unknown[]> {
   const source = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement probe(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function probe(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire probe
@@ -182,16 +182,16 @@ listen to runs {} fire probe
 /** The two gates every case asks: one walk, bare and narrowed. */
 function gates(root: string): string {
   return [
-    `  if EXISTS(${root}-[:notes]->) { write graph-[:note]-> { text: "any" } }`,
-    `  if EXISTS(${root}-[n:notes WHERE \`text\` == "Brief"]->) { write graph-[:note]-> { text: "brief" } }`,
-    `  if EXISTS(${root}-[n:notes WHERE \`text\` == "Nope"]->) { write graph-[:note]-> { text: "nope" } }`,
-    `  if NOT EXISTS(${root}-[:notes]->) { write graph-[:note]-> { text: "none" } }`,
+    `  if (exists(${root}-[:notes]->)) { write graph-[:note]-> { text: "any" } }`,
+    `  if (exists(${root}-[n:notes WHERE n.\`text\` == "Brief"]->)) { write graph-[:note]-> { text: "brief" } }`,
+    `  if (exists(${root}-[n:notes WHERE n.\`text\` == "Nope"]->)) { write graph-[:note]-> { text: "nope" } }`,
+    `  if (!exists(${root}-[:notes]->)) { write graph-[:note]-> { text: "none" } }`,
   ].join('\n');
 }
 
 describe('EXISTS() from a record FIRST put on the value plane', () => {
   const pick = (name: string) =>
-    `  rows = graph-[c:company WHERE \`name\` == "${name}" ORDER BY \`name\`]->\n  top = FIRST(rows)\n`;
+    `  rows = graph-[c:company WHERE c.\`name\` == "${name}" ORDER BY c.\`name\`]->\n  top = first(rows)\n`;
 
   it('answers true, with and without a WHERE, where the record has notes', async () => {
     expect(await answers(pick('Acme') + gates('top'))).toEqual(['any', 'brief']);
@@ -204,9 +204,9 @@ describe('EXISTS() from a record FIRST put on the value plane', () => {
   it('COUNT, ONLY and IF read the same walk', async () => {
     const body =
       pick('Acme') +
-      '  if COUNT(top-[:notes]->) == 2 { write graph-[:note]-> { text: "two" } }\n' +
-      '  write graph-[:note]-> { text: COALESCE(ONLY(top-[n:notes WHERE `text` == "Memo"]->.`text`), "none") }\n' +
-      '  shown = IF EXISTS(top-[:notes]->) THEN "has" ELSE "empty" END\n' +
+      '  if (count(top-[:notes]->) == 2) { write graph-[:note]-> { text: "two" } }\n' +
+      '  write graph-[:note]-> { text: coalesce(only(top-[n:notes WHERE n.`text` == "Memo"]->.`text`), "none") }\n' +
+      '  shown = exists(top-[:notes]->) ? "has" : "empty"\n' +
       '  write graph-[:note]-> { text: shown }';
     expect(await answers(body)).toEqual(['two', 'Memo', 'has']);
   });
@@ -214,7 +214,7 @@ describe('EXISTS() from a record FIRST put on the value plane', () => {
 
 describe('EXISTS() from a record FIRST binds directly', () => {
   const pick = (name: string) =>
-    `  top = FIRST(graph-[c:company WHERE \`name\` == "${name}" ORDER BY \`name\`]->)\n`;
+    `  top = first(graph-[c:company WHERE c.\`name\` == "${name}" ORDER BY c.\`name\`]->)\n`;
 
   it('true and false, with and without a WHERE', async () => {
     expect(await answers(pick('Acme') + gates('top'))).toEqual(['any', 'brief']);
@@ -252,7 +252,7 @@ describe('EXISTS() from a write handle', () => {
 
   it('false where it has none', async () => {
     const body =
-      '  first = write graph-[:company]-> { name: "Newco" }\n' +
+      '  earlier = write graph-[:company]-> { name: "Newco" }\n' +
       '  co = write graph-[:company]-> { name: "Otherco" }\n' +
       gates('co');
     expect(await answers(body, makeGraph(), { live: true })).toEqual(['none']);
@@ -264,13 +264,13 @@ describe('EXISTS() from a write handle', () => {
 describe('a walk from a name holding many records', () => {
   const reads = (root: string) =>
     [
-      `  if COUNT(${root}-[:notes]->) == 2 { write graph-[:note]-> { text: "two" } }`,
-      `  if EXISTS(${root}-[n:notes WHERE \`text\` == "Brief"]->) { write graph-[:note]-> { text: "brief" } }`,
-      `  write graph-[:note]-> { text: JOIN(${root}-[n:notes WHERE \`text\` == "Memo" ORDER BY \`text\`]->.\`text\`, ",") }`,
+      `  if (count(${root}-[:notes]->) == 2) { write graph-[:note]-> { text: "two" } }`,
+      `  if (exists(${root}-[n:notes WHERE n.\`text\` == "Brief"]->)) { write graph-[:note]-> { text: "brief" } }`,
+      `  write graph-[:note]-> { text: Text.join(${root}-[n:notes WHERE n.\`text\` == "Memo" ORDER BY n.\`text\`]->.\`text\`, ",") }`,
     ].join('\n');
 
   it('a walk written as a value (a list of records)', async () => {
-    const body = '  rows = graph-[c:company ORDER BY `name`]->\n' + reads('rows');
+    const body = '  rows = graph-[c:company ORDER BY c.`name`]->\n' + reads('rows');
     expect(await answers(body)).toEqual(['two', 'brief', 'Memo']);
   });
 
@@ -284,12 +284,12 @@ describe('a walk from a name holding many records', () => {
 // `if EXISTS(…)` — the arm fired exactly when it should not have.
 describe('!EXISTS() runs inverted relative to EXISTS()', () => {
   const pick = (name: string) =>
-    `  top = FIRST(graph-[c:company WHERE \`name\` == "${name}" ORDER BY \`name\`]->)\n`;
+    `  top = first(graph-[c:company WHERE c.\`name\` == "${name}" ORDER BY c.\`name\`]->)\n`;
   const both = [
-    '  if EXISTS(top-[:notes]->) { write graph-[:note]-> { text: "has" } }',
-    '  if !EXISTS(top-[:notes]->) { write graph-[:note]-> { text: "none" } }',
-    '  if !EXISTS(top-[n:notes WHERE `text` == "Nope"]->) { write graph-[:note]-> { text: "no nope" } }',
-    '  if !!EXISTS(top-[:notes]->) { write graph-[:note]-> { text: "twice" } }',
+    '  if (exists(top-[:notes]->)) { write graph-[:note]-> { text: "has" } }',
+    '  if (!exists(top-[:notes]->)) { write graph-[:note]-> { text: "none" } }',
+    '  if (!exists(top-[n:notes WHERE n.`text` == "Nope"]->)) { write graph-[:note]-> { text: "no nope" } }',
+    '  if (!!exists(top-[:notes]->)) { write graph-[:note]-> { text: "twice" } }',
   ].join('\n');
 
   it('a record with notes: EXISTS fires, !EXISTS does not', async () => {
@@ -301,7 +301,7 @@ describe('!EXISTS() runs inverted relative to EXISTS()', () => {
   });
 
   it('as a value, IF !EXISTS(…) takes the other branch', async () => {
-    const body = pick('Acme') + '  shown = IF !EXISTS(top-[:notes]->) THEN "empty" ELSE "has" END\n  write graph-[:note]-> { text: shown }';
+    const body = pick('Acme') + '  shown = !exists(top-[:notes]->) ? "empty" : "has"\n  write graph-[:note]-> { text: shown }';
     expect(await answers(body)).toEqual(['has']);
   });
 });

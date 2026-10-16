@@ -5,8 +5,9 @@
 // TypeScript engine, and a parked run resumes on the engine that parked it
 // whatever the switch says by then.
 
-import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { tenantIdOf } from 'engine-contracts';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
@@ -97,7 +98,7 @@ function timerSink() {
 
 function inputOf(source: string, languageVersion: LanguageVersion, runId: string, sink?: ParkSink): RunMovementInput {
   return {
-    source,
+    source: spelledFor(languageVersion, source, fromCatalogSnapshot(catalog)),
     languageVersion,
     event,
     teamId: TEAM_ID,

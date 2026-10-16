@@ -12,7 +12,8 @@
 //   `surfaceReadAdapter`), its landing's `Name` / `URL` / `Type` read through
 //   `getFieldValue` — on every version.
 
-import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from 'engine-contracts';
 
 import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -204,7 +205,7 @@ async function runOn(engine: 'ts' | 'rust', source: string, languageVersion: Lan
   const calls: Call[] = [];
   try {
     const result = await runMovement({
-      source,
+      source: spelledFor(languageVersion, source, fromCatalogSnapshot(catalog)),
       event: webhook(),
       teamId: TEAM_ID,
       catalog,

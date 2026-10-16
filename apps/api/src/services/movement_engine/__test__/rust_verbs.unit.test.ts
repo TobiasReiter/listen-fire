@@ -6,7 +6,8 @@
 // judge's questions, a rehearsal's captured writes, and every call the
 // adapters received, in order and key for key (compared as JSON text).
 
-import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { tenantIdOf } from 'engine-contracts';
 
@@ -222,7 +223,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     locks, crm: JSON.stringify(crm.calls), resolved, trace, captured, asked });
   try {
     const result = await runMovement({
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
+      source: spelledFor(c.languageVersion ?? CURRENT_LANGUAGE_VERSION, `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`, fromCatalogSnapshot(catalog)),
       event: { pipelineInputId: 'pi-rust-verbs', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Example Labs', text: 'EU' } } satisfies TriggerEvent,
       teamId: TEAM_ID,
       catalog,
@@ -339,11 +340,17 @@ describe('match in the Rust engine', () => {
   });
 
   it('narrows the shortlist by the target’s WHERE before the judge — an aliased field and a bare one', async () => {
-    for (const where of ['c:companies WHERE c.`region` == msg.`text`', ':companies WHERE `region` == "EU"']) {
+    // The bare field is the version 1 to 4 spelling; version 5 reads a bare name in the brackets as a variable from outside.
+    const forms: Array<{ where: string; languageVersion?: LanguageVersion }> = [
+      { where: 'c:companies WHERE c.`region` == msg.`text`' },
+      { where: ':companies WHERE `region` == "EU"', languageVersion: 4 },
+    ];
+    for (const { where, languageVersion } of forms) {
       const { rust } = await agree({
         body: [`  co = match crm-[${where}]-> { unique by (FUZZY \`name\`), name: msg.\`subject\` }`, NOTE_OF('co')].join('\n'),
         crm: TWO,
         judge: picks(0),
+        ...(languageVersion !== undefined ? { languageVersion } : {}),
       });
       expect(rust.result?.writes[0]).toMatchObject({ kind: 'match', externalId: 'co-active' });
       // Each candidate was read whole, then through the graph as a source.

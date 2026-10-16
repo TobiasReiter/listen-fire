@@ -21,6 +21,7 @@ import { containerAssociation } from 'movement-engine/services/translation_graph
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 import { tenantIdOf } from 'engine-contracts';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { resumeMovement, runMovement, type MovementRunResult, type ParkSink } from 'movement-engine/services/movement_engine/run';
 import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
@@ -89,13 +90,14 @@ function manualEvent(): TriggerEvent {
   };
 }
 
-function root(imports: string, body: string): string {
+function root(imports: string, body: string, version: 4 | 5 = 5): string {
+  const v5 = version === 5;
   return `import { manual, kg } from adapters
 import { kg_cred } from credentials
 ${imports}
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement recap(go: <runs-[:Invocation]->>) {
+runs = ${v5 ? 'connect manual' : 'manual()'}
+graph = ${v5 ? 'connect kg using kg_cred' : 'kg(credentials: kg_cred)'}
+${v5 ? 'function' : 'movement'} recap(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire recap
@@ -183,7 +185,7 @@ describe("a closure bound at a library's top level (B13)", () => {
         '  return double(n) + 1',
         '}',
       ].join('\n'),
-      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      source: root('import { twice } from "lib/leads"', '  x = twice(4)\n  write graph-[:note]-> { payload: { x: x } }'),
       parks: makeParkSink(),
     };
     const { result, kg } = await start(h);
@@ -196,7 +198,7 @@ describe("a closure bound at a library's top level (B13)", () => {
       library: '',
       source: root(
         'triple = (n: <number>) => n * 3\nfunction plus_one(n: <number>): <number> {\n  return triple(n) + 1\n}',
-        '  x = plus_one(n: 2)\n  write graph-[:note]-> { payload: { x: x } }',
+        '  x = plus_one(2)\n  write graph-[:note]-> { payload: { x: x } }',
       ),
       parks: makeParkSink(),
     };
@@ -217,7 +219,7 @@ describe("a closure bound at a library's top level (B13)", () => {
         '  return y + 1',
         '}',
       ].join('\n'),
-      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      source: root('import { twice } from "lib/leads"', '  x = twice(4)\n  write graph-[:note]-> { payload: { x: x } }'),
       parks: makeParkSink(),
     };
     const first = await start(h);
@@ -297,7 +299,7 @@ describe('a file-level closure holds its file scope by reference', () => {
         '  return k(n) + 1',
         '}',
       ].join('\n'),
-      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      source: root('import { twice } from "lib/leads"', '  x = twice(4)\n  write graph-[:note]-> { payload: { x: x } }'),
       parks: makeParkSink(),
     };
     const first = await start(h);
@@ -341,7 +343,7 @@ describe("a library closure parked before `IS` against the library's own declara
     '  check = (who: <text>) => {',
     '    n = node { name: who }',
     '    await sleep(1h)',
-    '    if n IS <Lead> {',
+    '    if (n is <Lead>) {',
     '      return true',
     '    }',
     '    return false',
@@ -353,7 +355,7 @@ describe("a library closure parked before `IS` against the library's own declara
   it('resumes, finding the declaration in the library', async () => {
     const h: Harness = {
       library,
-      source: root('import { is_lead } from "lib/leads"', '  x = is_lead(name: "Ada")\n  write graph-[:note]-> { payload: { x: x } }'),
+      source: root('import { is_lead } from "lib/leads"', '  x = is_lead("Ada")\n  write graph-[:note]-> { payload: { x: x } }'),
       parks: makeParkSink(),
     };
     const first = await start(h);
@@ -371,7 +373,7 @@ describe("a library closure parked before `IS` against the library's own declara
       library,
       source: root(
         'import { is_lead } from "lib/leads"\nnode Lead {\n  name: <text>\n  stage: <text>\n}',
-        '  x = is_lead(name: "Ada")\n  write graph-[:note]-> { payload: { x: x } }',
+        '  x = is_lead("Ada")\n  write graph-[:note]-> { payload: { x: x } }',
       ),
       parks: makeParkSink(),
     };
@@ -385,10 +387,10 @@ describe("a library closure parked before `IS` against the library's own declara
 // A park names the library its declarations belong to. Resumed against a
 // program that no longer links that library, it refuses rather than resuming
 // silently on the library's file scope (which is chain[0], never rehydrated).
-describe.each([4, 5])('a resume against a program that no longer links the parked library (v%i)', (version) => {
+describe.each([4, 5] as const)('a resume against a program that no longer links the parked library (v%i)', (version) => {
   const unlinked = (h: Harness): Harness => ({
     ...h,
-    source: root('', '  write graph-[:note]-> { payload: { x: 1 } }'),
+    source: root('', '  write graph-[:note]-> { payload: { x: 1 } }', version),
   });
   const libraries: Record<string, string> = {
     'a body closure capturing a library file closure': [
@@ -410,7 +412,7 @@ describe.each([4, 5])('a resume against a program that no longer links the parke
       '  }',
       '  m = node { name: "a" }',
       '  if m IS <Lead> {',
-      '    check(who: "a")',
+      `    check(${version === 5 ? '"a"' : 'who: "a"'})`,
       '  }',
       '  return n',
       '}',
@@ -418,8 +420,8 @@ describe.each([4, 5])('a resume against a program that no longer links the parke
   };
   it.each(Object.keys(libraries))('refuses: %s', async (name) => {
     const h: Harness = {
-      library: libraries[name]!,
-      source: root('import { twice } from "lib/leads"', '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }'),
+      library: spelledFor(version, libraries[name]!),
+      source: root('import { twice } from "lib/leads"', version === 5 ? '  x = twice(4)\n  write graph-[:note]-> { payload: { x: x } }' : '  x = twice(n: 4)\n  write graph-[:note]-> { payload: { x: x } }', version),
       parks: makeParkSink(),
     };
     const kg0 = makeKgFake();

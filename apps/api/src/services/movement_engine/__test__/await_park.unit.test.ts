@@ -11,8 +11,12 @@ import { RunLeaseLost } from '../run_lease';
 import type { QueuedWake } from 'movement-engine/services/movement_engine/host_kit';
 import { makeFakeParkSink } from 'movement-engine/services/movement_engine/test_host';
 import { logger } from 'movement-engine/services/logger';
-import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { awaitingSource as awaitingSourceV4, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
+
+// The shared fixture writes the version 4 spelling (other suites read it too); these runs are version 5.
+const awaitingSource = (where?: string) => spelledFor(5, awaitingSourceV4(where));
 
 const TEAM_ID = '00000000-0000-0000-0000-000000000042' as TeamId;
 

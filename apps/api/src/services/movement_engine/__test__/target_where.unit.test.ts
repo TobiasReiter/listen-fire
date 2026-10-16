@@ -220,7 +220,7 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
 ].join('\n');
 
@@ -233,11 +233,12 @@ function run(
   adapters: { email: Adapter; attio: Adapter },
   options: { languageVersion?: LanguageVersion } = {},
 ) {
+  const v5 = (options.languageVersion ?? 5) >= 5;
   const source =
-    PRELUDE +
+    (v5 ? PRELUDE : PRELUDE.replace('connect email', 'email()')) +
     [
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
+      v5 ? 'function intake(msg: <inbox-[:message]->>) {' : 'movement intake(msg: <inbox-[:message]->>) {',
+      v5 ? '  crm = connect attio using acme_main' : '  crm = attio(credentials: acme_main)',
       ...body,
       '}',
     ].join('\n');
@@ -291,7 +292,7 @@ describe('a match whose target carries a WHERE', () => {
   ];
   const MATCH_WITH_DEALS = [
     ...MATCH_WITH_DEALS_HEAD,
-    '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
+    '  if (co != null) { write crm-[:notes]-> { title: co.`summary` } }',
   ];
   // Version 3: a miss ends the scope, so the write needs no guard.
   const MATCH_WITH_DEALS_V3 = [...MATCH_WITH_DEALS_HEAD, '  write crm-[:notes]-> { title: co.`summary` }'];
@@ -302,7 +303,7 @@ describe('a match whose target carries a WHERE', () => {
     const result = await run(
       [
         '  co = match crm-[:companies]-> { unique by (FUZZY `name`), name: "Example Labs" }',
-        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
+        '  if (co != null) { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
     );
@@ -334,7 +335,7 @@ describe('a match whose target carries a WHERE', () => {
     const result = await run(
       [
         '  co = match crm-[c:companies WHERE c.`region` == "EU"]-> { unique by (FUZZY `name`), name: "Example Labs" }',
-        '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
+        '  if (co != null) { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
     );
@@ -352,6 +353,8 @@ describe('a match whose target carries a WHERE', () => {
         '  if co != null { write crm-[:notes]-> { title: co.`summary` } }',
       ],
       { email: email(), attio: attio.adapter },
+      // Version 5 refuses a bare name here (a variable from outside the walk); the bare reading is version 4's.
+      { languageVersion: 4 },
     );
     expect(result.writes[0]).toMatchObject({ kind: 'match', externalId: 'co-active' });
   });

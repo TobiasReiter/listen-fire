@@ -57,9 +57,9 @@ const catalog = mockCatalogSnapshot({
   plugins: { probe, finds },
 });
 
-const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'import { probe, finds } from plugins', 'inbox = email(credentials: dealflow_inbox)', ''].join('\n');
+const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'import { probe, finds } from plugins', 'inbox = connect email using dealflow_inbox', ''].join('\n');
 
-const program = (...lines: string[]) => [PRELUDE + 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
+const program = (...lines: string[]) => [PRELUDE + 'function m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
 
 /** What a host's JSON text makes: every `__proto__` key an own key. */
 const META = JSON.parse(
@@ -172,13 +172,13 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
       source: program(
         '  v = msg.`meta`',
         '  s = { ...v, b: 2 }',
-        '  g = GROUPBY(v.`items`, (e) => {',
+        '  g = List.groupBy(v.`items`, (e) => {',
         '    return e.`__proto__`',
         '  })',
-        '  k = KEYBY(v.`items`, (e) => {',
+        '  k = List.keyBy(v.`items`, (e) => {',
         '    return e.`__proto__`',
         '  })',
-        '  ERROR("${TEXT.SERIALISE(v, "JSON")} | ${TEXT.SERIALISE(v.`__proto__`.`x`, "JSON")} | ${TEXT.SERIALISE(v.`x`, "JSON")} | ${TEXT.SERIALISE(s, "JSON")} | ${TEXT.SERIALISE(s.`x`, "JSON")} | ${TEXT.SERIALISE(g, "JSON")} | ${TEXT.SERIALISE(g.`a`, "JSON")} | ${TEXT.SERIALISE(k, "JSON")}")',
+        '  fail("${Json.stringify(v)} | ${Json.stringify(v.`__proto__`.`x`)} | ${Json.stringify(v.`x`)} | ${Json.stringify(s)} | ${Json.stringify(s.`x`)} | ${Json.stringify(g)} | ${Json.stringify(g.`a`)} | ${Json.stringify(k)}")',
       ),
     });
     // The own key printed and read; the spread made it the prototype, which
@@ -193,9 +193,9 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     const answer = JSON.parse('{"text":"a page","data":{"name":"Acme","__proto__":{"x":"via"}},"records":[{"u":"1","__proto__":{"x":1}}]}');
     const { ended } = await agree({
       source: program(
-        '  page = probe(q: msg.`subject`)',
-        '  found = finds(q: msg.`subject`)',
-        '  ERROR("${page.name} ${page.x} ${TEXT.SERIALISE(page, "JSON")} ${TEXT.SERIALISE(found, "JSON")}")',
+        '  page = probe({ q: msg.`subject` })',
+        '  found = finds({ q: msg.`subject` })',
+        '  fail("${page.name} ${page.x} ${Json.stringify(page)} ${Json.stringify(found)}")',
       ),
       invoked: answer,
     });
@@ -211,12 +211,12 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
 
   it('reads a model reply holding one: an AI() answer, and an extraction read in one call', async () => {
     const ai = await agree({
-      source: program('  x = AI("why?")', '  ERROR("${TEXT.SERIALISE(x, "JSON")}")'),
+      source: program('  x = ai("why?")', '  fail("${Json.stringify(x)}")'),
       replies: [JSON.parse('{"value":{"__proto__":{"x":1},"a":2}}')],
     });
     expect(ai.asked).toHaveLength(1);
     const extraction = await agree({
-      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  ERROR("${found.name}")'),
+      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  fail("${found.name}")'),
       replies: [JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"Acme"},"__proto__":{"x":1}}]}')],
     });
     expect(extraction.asked).toEqual(['movement_extraction']);
@@ -228,7 +228,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
         '  v = msg.`meta`',
         '  s = { ...v }',
         '  t = { ...s }',
-        '  ERROR("${TEXT.SERIALISE(AT(s, "a"), "JSON")} ${TEXT.SERIALISE(AT(t, "a"), "JSON")} ${TEXT.SERIALISE(t, "JSON")} ${TEXT.SERIALISE(s.`toString`, "JSON")}")',
+        '  fail("${Json.stringify(s.a)} ${Json.stringify(t.a)} ${Json.stringify(t)} ${Json.stringify(s.`toString`)}")',
       ),
       meta: JSON.parse('{"a":1,"__proto__":null}'),
     });
@@ -236,7 +236,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
   });
 
   it('ends at the check, on both engines, a program naming a binding or a parameter `__proto__`', async () => {
-    for (const body of [['  __proto__ = 1', '  ERROR("${__proto__}")'], ['  xs = MAP([1, 2], (__proto__) => {', '    return __proto__', '  })', '  ERROR("${COUNT(xs)}")']]) {
+    for (const body of [['  __proto__ = 1', '  fail("${__proto__}")'], ['  xs = map([1, 2], (__proto__) => {', '    return __proto__', '  })', '  fail("${count(xs)}")']]) {
       const ts = await runOn('ts', { source: program(...body) });
       resetRustRunStats();
       const rust = await runOn('rust', { source: program(...body) });
@@ -247,7 +247,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
   });
 
   it('parks a value holding one as JavaScript writes it, and either park resumes to the same ending', async () => {
-    const source = program('  v = msg.`meta`', '  s = { ...v }', '  await sleep(1h)', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(s, "JSON")} ${TEXT.SERIALISE(s.`x`, "JSON")}")');
+    const source = program('  v = msg.`meta`', '  s = { ...v }', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(s)} ${Json.stringify(s.`x`)}")');
     const ts = await runOn('ts', { source });
       resetRustRunStats();
     const rust = await runOn('rust', { source });
@@ -266,7 +266,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
   });
 
   it('crosses a host that is itself a wire (the HTTP host double) as it crosses in process', async () => {
-    const source = program('  v = msg.`meta`', '  s = { ...v }', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(s.`x`, "JSON")}")');
+    const source = program('  v = msg.`meta`', '  s = { ...v }', '  fail("${Json.stringify(v)} ${Json.stringify(s.`x`)}")');
     const kept: HostRecording[] = [];
     const park = makeFakeParkSink();
     const recorded = { entry: 'run', input: inputOf({ source }, park, { invoked: [], asked: [] }), run: runMovement, keep: (r: HostRecording) => kept.push(r) } as const;
@@ -307,9 +307,9 @@ describe('lone surrogates on the wire, on both engines', () => {
         '  v = msg.`meta`',
         '  hi = v.`hi`',
         '  joined = "${hi}${v.`lo`}"',
-        '  halves = SPLIT(v.`pair`, "")',
-        '  half = TEXT.REGEX_EXTRACT(v.`pair`, ".(.)")',
-        '  ERROR("${LENGTH(hi)} ${LENGTH(joined)} ${joined == "a😀b"} ${COUNT(halves)} ${TEXT.SERIALISE(halves, "JSON")} ${TEXT.SERIALISE(half, "JSON")} ${LENGTH(half)} ${UPPER(hi)} ${TEXT.SERIALISE(v, "JSON")} ${v.`pair` CONTAINS half} ${hi < v.`lo`}")',
+        '  halves = Text.split(v.`pair`, "")',
+        '  half = Text.regexExtract(v.`pair`, ".(.)")',
+        '  fail("${Text.length(hi)} ${Text.length(joined)} ${joined == "a😀b"} ${count(halves)} ${Json.stringify(halves)} ${Json.stringify(half)} ${Text.length(half)} ${Text.upper(hi)} ${Json.stringify(v)} ${Text.includes(v.`pair`, half)} ${hi < v.`lo`}")',
       ),
       meta: LONE,
     });
@@ -324,9 +324,9 @@ describe('lone surrogates on the wire, on both engines', () => {
     const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":["a😀"]}');
     const { ended } = await agree({
       source: program(
-        '  page = probe(q: msg.`subject`)',
-        '  found = finds(q: msg.`subject`)',
-        '  ERROR("${page.name} ${LENGTH(page.name)} ${TEXT.SERIALISE(page, "JSON")} ${TEXT.SERIALISE(found, "JSON")}")',
+        '  page = probe({ q: msg.`subject` })',
+        '  found = finds({ q: msg.`subject` })',
+        '  fail("${page.name} ${Text.length(page.name)} ${Json.stringify(page)} ${Json.stringify(found)}")',
       ),
       invoked: answer,
     });
@@ -337,7 +337,7 @@ describe('lone surrogates on the wire, on both engines', () => {
 
   it('reads a model reply holding them, and traces an AI() prompt cut through a pair as JavaScript cuts it', async () => {
     const ai = await agree({
-      source: program('  x = AI("${msg.`subject`}")', '  ERROR("${TEXT.SERIALISE(x, "JSON")} ${LENGTH(x.`a`)}")'),
+      source: program('  x = ai("${msg.`subject`}")', '  fail("${Json.stringify(x)} ${Text.length(x.`a`)}")'),
       meta: LONE,
       replies: [JSON.parse('{"value":{"a":"\\ud800","\\udbffk":2}}')],
     });
@@ -347,7 +347,7 @@ describe('lone surrogates on the wire, on both engines', () => {
     const long = { ...event(LONE), payload: { subject: `${'p'.repeat(299)}😀 tail`, meta: LONE } };
     for (const engine of ['ts', 'rust'] as const) {
       const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
-      const input = { ...inputOf({ source: program('  x = AI("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
+      const input = { ...inputOf({ source: program('  x = ai("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
       resetRustRunStats();
       const result = await underEngine(engine, () => runMovement(input));
       if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
@@ -355,7 +355,7 @@ describe('lone surrogates on the wire, on both engines', () => {
       expect([engine, JSON.stringify(traced)]).toEqual([engine, expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`)]);
     }
     const extraction = await agree({
-      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  ERROR("${found.name} ${LENGTH(found.name)}")'),
+      source: program('  found = extract from [msg.`subject`] {', '    name: "the company"', '  }', '  fail("${found.name} ${Text.length(found.name)}")'),
       replies: [JSON.parse(`{"x:extract_result#1":[{"name":{"evidence":"q","value":"${'n'.repeat(199)}😀\\udc00"}}]}`)],
     });
     // Read in one call (before: the Rust engine retried).
@@ -364,7 +364,7 @@ describe('lone surrogates on the wire, on both engines', () => {
   });
 
   it('parks a value holding them as JavaScript writes it, and either park resumes to the same ending', async () => {
-    const source = program('  v = msg.`meta`', '  h = SPLIT(v.`pair`, "")', '  await sleep(1h)', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(h, "JSON")}")');
+    const source = program('  v = msg.`meta`', '  h = Text.split(v.`pair`, "")', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(h)}")');
     const ts = await runOn('ts', { source, meta: LONE });
     resetRustRunStats();
     const rust = await runOn('rust', { source, meta: LONE });
@@ -388,7 +388,7 @@ describe('lone surrogates on the wire, on both engines', () => {
   ])('parses a source holding %s with the TypeScript spans: either park resumes on either engine', async (_what, odd) => {
     // The character sits before a closure on its line, so every span after
     // it on that line is one the two parsers must count alike.
-    const source = program(`  ready = () => { return msg.\`subject\` != "${odd}" }`, '  await sleep(1h)', '  ERROR("done ${ready()} ${LENGTH("' + odd + '")}")');
+    const source = program(`  ready = () => { return msg.\`subject\` != "${odd}" }`, '  await sleep(1h)', '  fail("done ${ready()} ${Text.length("' + odd + '")}")');
     const ts = await runOn('ts', { source });
     resetRustRunStats();
     const rust = await runOn('rust', { source });
@@ -408,7 +408,7 @@ describe('lone surrogates on the wire, on both engines', () => {
   });
 
   it('crosses a host that is itself a wire (the HTTP host double), its JSON text holding the escapes', async () => {
-    const source = program('  v = msg.`meta`', '  x = AI("${v.`hi`}")', '  ERROR("${TEXT.SERIALISE(v, "JSON")} ${TEXT.SERIALISE(x, "JSON")}")');
+    const source = program('  v = msg.`meta`', '  x = ai("${v.`hi`}")', '  fail("${Json.stringify(v)} ${Json.stringify(x)}")');
     const kept: HostRecording[] = [];
     const park = makeFakeParkSink();
     const recorded = {

@@ -11,7 +11,8 @@ import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { tenantIdOf } from 'engine-contracts';
-import { mockCatalogSnapshot, parseMovementExpression, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
+import { fromCatalogSnapshot, mockCatalogSnapshot, parseMovementExpression, type LanguageVersion } from 'movement-lang';
 
 const VERSIONS: LanguageVersion[] = [1, 2, 3, 4, 5];
 
@@ -76,7 +77,7 @@ movement m(msg: <inbox-[:message]->>) {
 }
 `;
     const run = runMovement({
-      source,
+      source: spelledFor(version, source, fromCatalogSnapshot(catalog)),
       event: {
         pipelineInputId: 'trigger:email-cred',
         adapterType: 'email',

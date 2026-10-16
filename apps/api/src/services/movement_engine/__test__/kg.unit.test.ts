@@ -482,8 +482,8 @@ const PRELUDE = [
   'import { email, kg } from adapters',
   'import { dealflow_inbox } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'graph = kg()',
+  'inbox = connect email using dealflow_inbox',
+  'graph = connect kg',
 ].join('\n');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -493,7 +493,7 @@ const PRELUDE = [
 const GOLDEN_PATH = [
   PRELUDE,
   '',
-  'movement intake(msg: <inbox-[:message]->>) {',
+  'function intake(msg: <inbox-[:message]->>) {',
   '',
   '  deals = extract from [msg.`text`] {',
   '    node round: "each funding round announced in this message" {',
@@ -513,7 +513,7 @@ const GOLDEN_PATH = [
   '    }',
   '    r-[i:investor]-> {',
   '      write fr-[:participants]-> {',
-  '        unique by (fr AND `name`)',
+  '        unique by (fr && `name`)',
   '        name: i.`name`',
   '      }',
   '    }',
@@ -812,7 +812,7 @@ describe('plain write — no implicit correspondence (bind-only model, 3b)', () 
   const PLAIN_WRITE = [
     PRELUDE,
     '',
-    'movement m(msg: <inbox-[:message]->>) {',
+    'function m(msg: <inbox-[:message]->>) {',
     '  fr = write graph-[:funding_round]-> {',
     '    unique by (`company`)',
     '    company: msg.`subject`',
@@ -882,13 +882,13 @@ describe('linked-write type inference', () => {
     [
       PRELUDE,
       '',
-      'movement m(msg: <inbox-[:message]->>) {',
+      'function m(msg: <inbox-[:message]->>) {',
       '  fr = write graph-[:funding_round]-> {',
       '    unique by (`company`)',
       '    company: msg.`subject`',
       '  }',
       `  write fr-[:${edge}]->${explicitType ?? ''} {`,
-      '    unique by (fr AND `name`)',
+      '    unique by (fr && `name`)',
       '    name: msg.`subject`',
       '  }',
       '}',
@@ -957,7 +957,7 @@ describe('standalone edge statements — kg linkRecords', () => {
   const EDGE_ASSERT = [
     PRELUDE,
     '',
-    'movement m(msg: <inbox-[:message]->>) {',
+    'function m(msg: <inbox-[:message]->>) {',
     '  fr = write graph-[:funding_round]-> {',
     '    unique by (`company`)',
     '    company: msg.`subject`',
@@ -1052,7 +1052,7 @@ describe('tuple-path multi-parent writes — kg', () => {
   const TUPLE = [
     PRELUDE,
     '',
-    'movement m(msg: <inbox-[:message]->>) {',
+    'function m(msg: <inbox-[:message]->>) {',
     '  fr = write graph-[:funding_round]-> {',
     '    unique by (`company`)',
     '    company: msg.`subject`',
@@ -1062,7 +1062,7 @@ describe('tuple-path multi-parent writes — kg', () => {
     '    name: msg.`text`',
     '  }',
     '  write (fr-[:participants]->, inv-[:participations]->) {',
-    '    unique by (fr AND inv)',
+    '    unique by (fr && inv)',
     '    name: msg.`text`',
     '  }',
     '}',

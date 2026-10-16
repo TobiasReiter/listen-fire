@@ -163,7 +163,7 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
   'node Company {',
   '  name: <text>',
@@ -211,8 +211,8 @@ function runWith(
   const source =
     PRELUDE +
     [
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
       declaration,
       ...body,
       '}',
@@ -356,7 +356,7 @@ describe('an entry that says `order by arrival` reads back in landing order', ()
         '  write deduped-[:companies]-> { unique by (`name`)',
         '    name: "Gamma"',
         '  }',
-        '  joined = JOIN(deduped-[c:companies]->.`name`, ", ")',
+        '  joined = Text.join(deduped-[c:companies]->.`name`, ", ")',
         '  write crm-[:companies]-> { name: joined }',
       ],
       { email: email.adapter, attio: attio.adapter },
@@ -565,11 +565,11 @@ describe('the nested edges a written landing carries', () => {
     const result = await runWith(
       NESTED,
       [
-        '  first = write deduped-[:entries]-> { unique by (`name`)',
+        '  earlier = write deduped-[:entries]-> { unique by (`name`)',
         '    name: "Acme"',
         '  }',
         '  jane = node { first: "Jane", last: "Doe" }',
-        '  link first -[:founder]-> jane',
+        '  link earlier -[:founder]-> jane',
         '  again = write deduped-[:entries]-> { unique by (`name`)',
         '    name: "Acme"',
         '  }',
@@ -629,11 +629,11 @@ describe('a nested entry that says `order by arrival` reads back founders in lan
   const READ_BACK = [
     '  deduped-[x:entries]-> {',
     '    names = x-[f:founder]-> { return f.`first` }',
-    '    lead = FIRST(names)',
+    '    lead = first(names)',
     // FIRST answers `T | absent` (an empty list has no first) — discharge it
     // the way the checker offers, same as any other maybe-absent read.
-    '    write crm-[:companies]-> { name: "lead", summary: COALESCE(lead, "none") }',
-    '    write crm-[:companies]-> { name: JOIN(names, ", "), summary: "all" }',
+    '    write crm-[:companies]-> { name: "lead", summary: coalesce(lead, "none") }',
+    '    write crm-[:companies]-> { name: Text.join(names, ", "), summary: "all" }',
     '  }',
   ];
 

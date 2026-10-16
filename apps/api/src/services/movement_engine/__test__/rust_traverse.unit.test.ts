@@ -6,9 +6,10 @@
 // (compared as JSON text, so the order of an argument object's keys is held
 // too: a hop's `getRelated` is the very request the TypeScript makes).
 
-import { mockCatalogSnapshot, parseTraversalPath, refinementKey, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, parseTraversalPath, refinementKey, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 
 import { tenantIdOf } from 'engine-contracts';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { evaluatePredicate } from '#shared/expression/filter';
 import type { Expression } from '#shared/expression/types';
@@ -41,8 +42,10 @@ const emailSchema: InstanceSchema = {
 const MASTER = 'List Entry — Portfolio';
 const HANDOVER = 'List Entry — Watchlist';
 const NARROWED = '`listName` == "Portfolio"';
-function selectionKey(where: string): string {
-  const steps = parseTraversalPath(`-[:list_entries WHERE ${where}]->`);
+/** The same WHERE as version 5 spells it: a field is read through the hop's alias. */
+const NARROWED_V5 = 'le.`listName` == "Portfolio"';
+function selectionKey(where: string, version?: 5): string {
+  const steps = version === 5 ? parseTraversalPath(`-[le:list_entries WHERE ${where}]->`, 5) : parseTraversalPath(`-[:list_entries WHERE ${where}]->`);
   const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
   if (!filter) throw new Error(`test setup: no filter parsed out of \`${where}\``);
   return refinementKey({ type: 'list_entry', filter });
@@ -68,8 +71,8 @@ const graphSchema: InstanceSchema = {
     company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } },
     deal: { fields: { title: 'text' }, resultShape: { externalId: 'text', title: 'text' } },
   },
-  refinements: { [selectionKey(NARROWED)]: 'list_entry "Portfolio"' },
-  selectedMembers: { [selectionKey(NARROWED)]: MASTER },
+  refinements: { [selectionKey(NARROWED)]: 'list_entry "Portfolio"', [selectionKey(NARROWED_V5, 5)]: 'list_entry "Portfolio"' },
+  selectedMembers: { [selectionKey(NARROWED)]: MASTER, [selectionKey(NARROWED_V5, 5)]: MASTER },
 };
 
 const catalog = mockCatalogSnapshot({
@@ -79,6 +82,13 @@ const catalog = mockCatalogSnapshot({
   },
   credentials: { dealflow_inbox: { adapters: ['email'] }, graph_main: { adapters: ['graph'] } },
 });
+
+/** The program as `version` spells it: one text, written in the spelling
+ *  versions 1–4 read, respelled by the upgrade tool for a version-5 run. */
+const programFor = (version: LanguageVersion, body: string, v5Edits: ReadonlyArray<readonly [string, string]> = []): string => {
+  const edited = version >= 5 ? v5Edits.reduce((text, [from, to]) => text.replace(from, to), body) : body;
+  return spelledFor(version, `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${edited}\n}`, fromCatalogSnapshot(catalog));
+};
 
 const PRELUDE = [
   'import { email, graph } from adapters',
@@ -267,6 +277,9 @@ interface Case {
   /** The pin the run is under. Unpinned, a case compares under version 3
    *  and under the current version (`agree`). */
   languageVersion?: LanguageVersion;
+  /** Text the upgrade tool cannot respell, written for version 5 instead:
+   *  each pair replaces the first occurrence in the body before a version-5 run. */
+  v5Edits?: ReadonlyArray<readonly [string, string]>;
 }
 
 interface HeldRead {
@@ -344,7 +357,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   });
   try {
     const run = runMovement({
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
+      source: programFor(c.languageVersion ?? 5, c.body, c.v5Edits),
       ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
       event: c.event ?? webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,
@@ -433,6 +446,8 @@ const written = (o: Outcome) => o.captured.map((w) => w.fields?.text);
 const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') => JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;
 
 const BRACKET = 'company WHERE `stage` == "Seed" ORDER BY `revenue` DESC LIMIT 2';
+/** The same bracket, as the run's version-5 text quotes it in its trace. */
+const BRACKET_V5 = 'company WHERE c.`stage` == "Seed" ORDER BY c.`revenue` DESC LIMIT 2';
 const NOTE_PER_COMPANY = (bracket: string) => `  kg-[c:${bracket}]-> {\n    write kg-[:note]-> { text: c.\`name\` }\n  }`;
 
 describe('traversal blocks in the Rust engine', () => {
@@ -443,7 +458,7 @@ describe('traversal blocks in the Rust engine', () => {
     expect(method).toBe('getRelated');
     expect(Object.keys(fetch)).toEqual(['position', 'fieldId', 'direction', 'where', 'orderBy', 'limit']);
     expect(fetch).toMatchObject({ fieldId: 'company', direction: 'outgoing', orderBy: { fieldId: 'revenue', direction: 'desc' }, limit: 2 });
-    expect(rust.trace).toContainEqual({ kind: 'block', root: `kg-[c:${BRACKET}]->`, positions: 2 });
+    expect(rust.trace).toContainEqual({ kind: 'block', root: `kg-[c:${BRACKET_V5}]->`, positions: 2 });
   });
 
   it('answers the same records in the same order whether the adapter honours the pushdown or filters nothing', async () => {
@@ -459,7 +474,7 @@ describe('traversal blocks in the Rust engine', () => {
   });
 
   it('orders by a key that is not a bare field locally, asking the adapter for neither the sort nor the limit', async () => {
-    const { rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY c.`name` DESC LIMIT 3') });
+    const { rust } = await agree({ body: NOTE_PER_COMPANY('company ORDER BY LOWER(c.`name`) DESC LIMIT 3') });
     expect(written(rust)).toEqual(['Umbrella', 'Initech', 'Hooli']);
     const fetch = calls(rust).find(([m]) => m === 'getRelated')?.[1];
     expect(fetch).not.toHaveProperty('orderBy');
@@ -491,7 +506,7 @@ describe('traversal blocks in the Rust engine', () => {
   it('runs no body for an empty traversal', async () => {
     const { rust } = await agree({ body: NOTE_PER_COMPANY('company WHERE `stage` == "Nowhere"') });
     expect(written(rust)).toEqual([]);
-    expect(rust.trace).toEqual([{ kind: 'block', root: 'kg-[c:company WHERE `stage` == "Nowhere"]->', positions: 0 }]);
+    expect(rust.trace).toEqual([{ kind: 'block', root: 'kg-[c:company WHERE c.`stage` == "Nowhere"]->', positions: 0 }]);
     const none = await agree({ body: NOTE_PER_COMPANY('lead'), graph: { collections: { company: COMPANIES } } });
     expect(written(none.rust)).toEqual([]);
   });
@@ -627,7 +642,7 @@ describe('traversal blocks in the Rust engine', () => {
       // Each nested walk starts at its own landing's position.
       const origins = calls(rust).filter(([m, input]) => m === 'getRelated' && input.fieldId === 'deals').map(([, input]) => positionRecordId(input.position as never));
       expect(origins).toEqual(['n-1', 'n-2', 'n-3', 'n-5']);
-      expect(rust.trace).toContainEqual({ kind: 'block', root: 'c-[d:deals WHERE `title` != "Bridge" ORDER BY `title` DESC]->', positions: 2 });
+      expect(rust.trace).toContainEqual({ kind: 'block', root: 'c-[d:deals WHERE d.`title` != "Bridge" ORDER BY d.`title` DESC]->', positions: 2 });
     });
 
     it('fails mid-fan-out where the TypeScript engine does, keeping the writes before it', async () => {
@@ -752,7 +767,7 @@ describe('the expression tail, on both engines', () => {
   // handed, answer the same records, and ask with the same arguments.
   describe('COUNT and FIRST over a traversal', () => {
     const PUSHED = 'company WHERE `stage` == "Seed" ORDER BY `revenue` DESC LIMIT 2';
-    const LOCAL = 'company WHERE UPPER(`stage`) == "SEED" ORDER BY c.`revenue` DESC LIMIT 2';
+    const LOCAL = 'company WHERE UPPER(`stage`) == "SEED" ORDER BY c.`revenue` + 0 DESC LIMIT 2';
     const body = (bracket: string) =>
       [
         `  n = COUNT(kg-[c:${bracket}]->)`,
@@ -820,6 +835,8 @@ describe('the expression tail, on both engines', () => {
           '  if EXISTS(kg-[c:company]->-[d:deals WHERE `stage` == "won"]->) { write kg-[:note]-> { text: "won" } }',
           '  if EXISTS(msg-[:attachments]->) { write kg-[:note]-> { text: "files" } }',
         ].join('\n'),
+        // Version 5 writes a walk's filter inside its last hop, whole.
+        v5Edits: [['kg-[c:company WHERE `stage` == "Late"]-> WHERE `revenue` > 40', 'kg-[c:company WHERE `stage` == "Late" AND `revenue` > 40]->']],
         graph: withDeals(),
       });
       expect(written(rust)).toEqual([undefined, 'any', 'seed', 'none', 'late', 'won', 'files']);
@@ -858,7 +875,8 @@ describe('the expression tail, on both engines', () => {
         '  write kg-[:note]-> { text: "${r0.n}${r1.n}${r2.n} ${ONLY(pair)}" }',
       ].join('\n'),
     });
-    expect(written(rust)).toEqual(['3 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
+    // `count` counts the empty item too under 5 (the one in `xs`); COUNT skipped it before.
+    expect(written(rust)).toEqual(['4 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
     const only = await agree({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
     expect(String(runFailureCause(only.rust.error))).toContain('ONLY(xs) says there is exactly one, and there are 2.');
   });
@@ -896,6 +914,12 @@ describe('the expression tail, on both engines', () => {
         '  write kg-[:note]-> { text: JOIN(MAP(byRevenue, (c) => c.`name`), ",") }',
         '  write kg-[:note]-> { text: JOIN(MAP(ranked, (r) => r.n), ",") }',
       ].join('\n'),
+      // Version 5 gives SORT its key as a function.
+      v5Edits: [
+        ['SORT(cs, LOWER(`name`), DESC)', 'sort(cs, (c) => Text.lower(c.`name`), { order: "desc" })'],
+        ['SORT(cs, COALESCE(`revenue`, 0) * -1)', 'sort(cs, (c) => coalesce(c.`revenue`, 0) * -1)'],
+        ['SORT(rows, COALESCE(`s`, 0) * -1)', 'sort(rows, (r) => coalesce(r.s, 0) * -1)'],
+      ],
     });
     expect(written(rust)).toEqual(['Umbrella,Initech,Hooli,Globex,Acme', 'Initech,Globex,Umbrella,Acme,Hooli', 'a,b,c']);
   });
@@ -933,7 +957,7 @@ describe('the expression tail, on both engines', () => {
         const park = makeFakeParkSink();
         const graph = fakeGraph();
         await runMovement({
-          source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+          source: programFor(languageVersion, body),
           languageVersion,
           event: webhook({ subject: 'Seed', text: 'Late' }),
           teamId: TEAM_ID,
@@ -979,7 +1003,7 @@ describe('the expression tail, on both engines', () => {
 
     const body = [...before, '  await sleep(1h)', ...after].join('\n');
     const base = {
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+      source: programFor(5, body),
       languageVersion: 5 as const,
       event: webhook({ subject: 'Seed', text: 'Late' }),
       teamId: TEAM_ID,

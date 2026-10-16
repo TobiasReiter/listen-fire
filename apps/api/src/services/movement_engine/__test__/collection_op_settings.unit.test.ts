@@ -162,10 +162,10 @@ const catalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -239,14 +239,14 @@ async function run(source: string, invoker: MovementTransformInvoker, latencyMs 
 /** A movement that MAPs the five members through `fetch_url` with the given
  *  settings and writes what came back, joined, as one company's summary. */
 function mapMovement(settings: string): string {
-  const config = settings === '' ? '' : `${settings}, `;
+  const config = settings === '' ? '' : `, ${settings}`;
   return [
-    'movement intake(m: <inbox-[:message]->>) {',
-    `  pages = MAP(${MEMBERS}, ${config}(u) => {`,
-    '    page = fetch_url(url: u)',
-    '    return COALESCE(page, "none")',
-    '  })',
-    '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(pages, ",") }',
+    'function intake(m: <inbox-[:message]->>) {',
+    `  pages = map(${MEMBERS}, (u) => {`,
+    '    page = fetch_url(u)',
+    '    return coalesce(page, "none")',
+    `  }${config})`,
+    '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(pages, ",") }',
     '}',
   ].join('\n');
 }
@@ -301,12 +301,12 @@ describe('concurrency: members run together, and the answer is in member order',
     const plugin = delayedInvoker();
     const { attio } = await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  kept = FILTER(${MEMBERS}, { concurrency: 5 }, (u) => {`,
-        '    page = fetch_url(url: u)',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  kept = filter(${MEMBERS}, (u) => {`,
+        '    page = fetch_url(u)',
         '    return u != "c"',
-        '  })',
-        '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(kept, ",") }',
+        '  }, { concurrency: 5 })',
+        '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(kept, ",") }',
         '}',
       ].join('\n'),
       plugin.invoker,
@@ -367,14 +367,14 @@ describe('onError: what a member whose function failed does', () => {
     const plugin = delayedInvoker();
     const { attio } = await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  pages = MAP(${MEMBERS}, { onError: "ignore" }, (u) => {`,
-        '    if u == "d" {',
-        '      ERROR("not this one")',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  pages = map(${MEMBERS}, (u) => {`,
+        '    if (u == "d") {',
+        '      fail("not this one")',
         '    }',
         '    return u',
-        '  })',
-        '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(pages, ",") }',
+        '  }, { onError: "ignore" })',
+        '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(pages, ",") }',
         '}',
       ].join('\n'),
       plugin.invoker,
@@ -400,12 +400,12 @@ describe('onError: what a member whose function failed does', () => {
     const plugin = delayedInvoker(FAIL_C);
     const { attio } = await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  kept = FILTER(${MEMBERS}, { onError: "ignore", concurrency: 2 }, (u) => {`,
-        '    page = fetch_url(url: u)',
-        '    return TRUE',
-        '  })',
-        '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(kept, ",") }',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  kept = filter(${MEMBERS}, (u) => {`,
+        '    page = fetch_url(u)',
+        '    return true',
+        '  }, { onError: "ignore", concurrency: 2 })',
+        '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(kept, ",") }',
         '}',
       ].join('\n'),
       plugin.invoker,
@@ -419,15 +419,15 @@ describe('members writing the same record take turns', () => {
     const plugin = delayedInvoker();
     const { result, attio } = await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  MAP(${MEMBERS}, { concurrency: 5 }, (u) => {`,
-        '    page = fetch_url(url: u)',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  map(${MEMBERS}, (u) => {`,
+        '    page = fetch_url(u)',
         '    write crm-[:companies]-> {',
         '      unique by (`name`)',
         '      name: "Acme"',
-        '      summary: COALESCE(page, "none")',
+        '      summary: coalesce(page, "none")',
         '    }',
-        '  })',
+        '  }, { concurrency: 5 })',
         '}',
       ].join('\n'),
       plugin.invoker,
@@ -449,17 +449,17 @@ describe('members writing the same record take turns', () => {
         '  url: <text>',
         '}',
         '',
-        'movement fetch_one(l: <Link>) {',
-        '  page = fetch_url(url: l.url)',
-        '  return COALESCE(page, "none")',
+        'function fetch_one(l: <Link>) {',
+        '  page = fetch_url(l.url)',
+        '  return coalesce(page, "none")',
         '}',
         '',
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  pages = MAP(${MEMBERS}, { concurrency: 3 }, (u) => {`,
-        '    got = fetch_one(l: node { url: u })',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  pages = map(${MEMBERS}, (u) => {`,
+        '    got = fetch_one(node { url: u })',
         '    return got',
-        '  })',
-        '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(pages, ",") }',
+        '  }, { concurrency: 3 })',
+        '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(pages, ",") }',
         '}',
       ].join('\n'),
       plugin.invoker,
@@ -471,12 +471,12 @@ describe('members writing the same record take turns', () => {
 
 describe('what concurrent members leave behind does not depend on which finished first', () => {
   const WRITING = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    `  MAP(${MEMBERS}, { concurrency: 5 }, (u) => {`,
-    '    page = fetch_url(url: u)',
-    '    co = write crm-[:companies]-> { name: u, summary: COALESCE(page, "none") }',
+    'function intake(m: <inbox-[:message]->>) {',
+    `  map(${MEMBERS}, (u) => {`,
+    '    page = fetch_url(u)',
+    '    co = write crm-[:companies]-> { name: u, summary: coalesce(page, "none") }',
     '    write crm-[:people]-> { name: co.`name` }',
-    '  })',
+    '  }, { concurrency: 5 })',
     '}',
   ].join('\n');
 
@@ -542,10 +542,10 @@ describe('what concurrent members leave behind does not depend on which finished
       source:
         PRELUDE +
         [
-          'movement intake(m: <inbox-[:message]->>) {',
-          `  MAP(${MEMBERS}, { onError: "ignore" }, (u) => {`,
+          'function intake(m: <inbox-[:message]->>) {',
+          `  map(${MEMBERS}, (u) => {`,
           '    write crm-[:companies]-> { name: u }',
-          '  })',
+          '  }, { onError: "ignore" })',
           '}',
         ].join('\n'),
       movementName: 'intake',

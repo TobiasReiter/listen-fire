@@ -141,7 +141,7 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
   'node Entry {',
   '  name: <text>',
@@ -180,8 +180,8 @@ async function run(body: string[]): Promise<unknown[]> {
   const source =
     PRELUDE +
     [
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
       ...body,
       '}',
     ].join('\n');
@@ -229,7 +229,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     await expect(
       run([
         '  d = node { b: 2, a: "x", flag: true, sub: node { z: 1, y: "w" } }',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE(d, "JSON") }',
+        '  write crm-[:companies]-> { name: Json.stringify(d) }',
       ]),
     ).resolves.toEqual([json({ a: 'x', b: 2, flag: true, sub: [{ y: 'w', z: 1 }] })]);
   });
@@ -239,7 +239,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
       run([
         ...COLLECTED,
         '  deduped-[e:entries]-> {',
-        '    write crm-[:companies]-> { name: TEXT.SERIALISE(e, "JSON") }',
+        '    write crm-[:companies]-> { name: Json.stringify(e) }',
         '  }',
       ]),
     ).resolves.toEqual([
@@ -257,7 +257,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
         '    }',
         '  }',
         '  x-[c:company]-> {',
-        '    write crm-[:companies]-> { name: TEXT.SERIALISE(c, "JSON") }',
+        '    write crm-[:companies]-> { name: Json.stringify(c) }',
         '  }',
       ]),
     ).resolves.toEqual([json({ name: 'Acme', stage: 'Seed' })]);
@@ -267,7 +267,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     await expect(
       run([
         '  d = node { name: "Acme", n: 1 }',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE({ who: d, tags: ["b", "a"] }, "JSON") }',
+        '  write crm-[:companies]-> { name: Json.stringify({ who: d, tags: ["b", "a"] }) }',
       ]),
     ).resolves.toEqual([json({ tags: ['b', 'a'], who: { n: 1, name: 'Acme' } })]);
   });
@@ -276,9 +276,9 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     await expect(
       run([
         ...COLLECTED,
-        '  all = deduped-[e:entries]-> { return e }',
-        '  top = FIRST(all)',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE(top, "JSON") }',
+        '  collected = deduped-[e:entries]-> { return e }',
+        '  top = first(collected)',
+        '  write crm-[:companies]-> { name: Json.stringify(top) }',
       ]),
     ).resolves.toEqual([
       json({ founder: [{ first: 'Jane' }], hot: false, name: 'Acme', raised: 5, stage: null }),
@@ -289,7 +289,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     await expect(
       run([
         '  c = write crm-[:companies]-> { name: "Acme" }',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE(c, "JSON") }',
+        '  write crm-[:companies]-> { name: Json.stringify(c) }',
       ]),
     ).resolves.toEqual(['Acme', json({ name: 'Acme' })]);
   });
@@ -299,7 +299,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
       run([
         '  deduped = node { entries: <Entry> }',
         '  h = write deduped-[:entries]-> { name: "Acme" }',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE(h, "JSON") }',
+        '  write crm-[:companies]-> { name: Json.stringify(h) }',
       ]),
     ).resolves.toEqual([json({ founder: [], hot: null, name: 'Acme', raised: null, stage: null })]);
   });
@@ -312,7 +312,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
         '    e-[f:founder]-> {',
         '      write crm-[:companies]-> { name: f.first }',
         '    }',
-        '    write crm-[:companies]-> { name: TEXT.SERIALISE(e, "JSON") }',
+        '    write crm-[:companies]-> { name: Json.stringify(e) }',
         '  }',
       ]),
     ).resolves.toEqual([
@@ -324,16 +324,16 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
   it('scalars', async () => {
     await expect(
       run([
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE("a\\"b", "JSON") }',
-        '  write crm-[:companies]-> { name: TEXT.SERIALISE(3, "JSON") }',
+        '  write crm-[:companies]-> { name: Json.stringify("a\\"b") }',
+        '  write crm-[:companies]-> { name: Json.stringify(3) }',
       ]),
     ).resolves.toEqual(['"a\\"b"', '3']);
   });
 
   it('key order in the source never changes the bytes', async () => {
     const [one, other] = await run([
-      '  write crm-[:companies]-> { name: TEXT.SERIALISE({ b: 1, a: { d: 1, c: 2 } }, "JSON") }',
-      '  write crm-[:companies]-> { name: TEXT.SERIALISE({ a: { c: 2, d: 1 }, b: 1 }, "JSON") }',
+      '  write crm-[:companies]-> { name: Json.stringify({ b: 1, a: { d: 1, c: 2 } }) }',
+      '  write crm-[:companies]-> { name: Json.stringify({ a: { c: 2, d: 1 }, b: 1 }) }',
     ]);
     expect(one).toBe(other);
   });
@@ -342,7 +342,7 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
     await expect(
       run([
         '  d = node { a: 1 }',
-        '  write crm-[:companies]-> { name: "rec: ${TEXT.SERIALISE(d, "JSON")}" }',
+        '  write crm-[:companies]-> { name: "rec: ${Json.stringify(d)}" }',
       ]),
     ).resolves.toEqual([`rec: ${json({ a: 1 })}`]);
   });

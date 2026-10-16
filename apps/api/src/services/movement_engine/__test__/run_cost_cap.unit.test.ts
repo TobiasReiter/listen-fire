@@ -152,10 +152,10 @@ const catalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -230,14 +230,14 @@ async function run(
 }
 
 function mapMovement(settings: string): string {
-  const config = settings === '' ? '' : `${settings}, `;
+  const config = settings === '' ? '' : `, ${settings}`;
   return [
-    'movement intake(m: <inbox-[:message]->>) {',
-    `  pages = MAP(${MEMBERS}, ${config}(u) => {`,
-    '    page = fetch_url(url: u)',
-    '    return COALESCE(page, "none")',
-    '  })',
-    '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(pages, ",") }',
+    'function intake(m: <inbox-[:message]->>) {',
+    `  pages = map(${MEMBERS}, (u) => {`,
+    '    page = fetch_url(u)',
+    '    return coalesce(page, "none")',
+    `  }${config})`,
+    '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(pages, ",") }',
     '}',
   ].join('\n');
 }
@@ -266,7 +266,7 @@ describe('with no cap set', () => {
   it('a run that made no priced call carries no spend', async () => {
     const { result } = await run(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  write crm-[:companies]-> { name: m.`subject` }',
         '}',
       ].join('\n'),
@@ -307,13 +307,13 @@ describe('with a cap set', () => {
     const failure = await failureOf(
       run(
         [
-          'movement intake(m: <inbox-[:message]->>) {',
-          `  pages = MAP(${MEMBERS}, { onError: "ignore", concurrency: 5 }, (u) => {`,
-          '    page = fetch_url(url: u)',
-          '    return COALESCE(page, "none")',
-          '  })',
-          '  after = fetch_url(url: "f")',
-          '  write crm-[:companies]-> { name: m.`subject`, summary: JOIN(pages, ",") }',
+          'function intake(m: <inbox-[:message]->>) {',
+          `  pages = map(${MEMBERS}, (u) => {`,
+          '    page = fetch_url(u)',
+          '    return coalesce(page, "none")',
+          '  }, { onError: "ignore", concurrency: 5 })',
+          '  after = fetch_url("f")',
+          '  write crm-[:companies]-> { name: m.`subject`, summary: Text.join(pages, ",") }',
           '}',
         ].join('\n'),
         plugin.invoker,
@@ -339,9 +339,9 @@ describe('with a cap set', () => {
 // ── The account belongs to the run ─────────────────────────────────────────
 
 const ONE_FETCH = [
-  'movement intake(m: <inbox-[:message]->>) {',
-  '  page = fetch_url(url: "a")',
-  '  write crm-[:companies]-> { name: m.`subject`, summary: COALESCE(page, "none") }',
+  'function intake(m: <inbox-[:message]->>) {',
+  '  page = fetch_url("a")',
+  '  write crm-[:companies]-> { name: m.`subject`, summary: coalesce(page, "none") }',
   '}',
 ].join('\n');
 

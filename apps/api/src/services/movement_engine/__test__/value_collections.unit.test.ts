@@ -125,13 +125,13 @@ function manualEvent(): TriggerEvent {
 const PRELUDE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
 type Thesis = <"Consumer" | "Infra" | "Health">
-runs = manual()
-graph = kg(credentials: kg_cred)
+runs = connect manual
+graph = connect kg using kg_cred
 `;
 
 async function runBody(body: string, rows: NodeRow[]) {
   const kg = makeKgFake(rows);
-  const source = `${PRELUDE}movement recap(go: <runs-[:Invocation]->>) {
+  const source = `${PRELUDE}function recap(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire recap
@@ -174,8 +174,8 @@ describe('a dict is a JSON object, and AT looks up a key', () => {
     const creates = await runBody(
       [
         '  d = { one: "hit" }',
-        '  k = LOWER("NOPE")',
-        '  write graph-[:note]-> { body ?: AT(d, "one"), payload: { missing: COALESCE(AT(d, k), "none") } }',
+        '  k = Text.lower("NOPE")',
+        '  write graph-[:note]-> { body ?: d.one, payload: { missing: coalesce(d[k], "none") } }',
       ].join('\n'),
       ROWS,
     );
@@ -189,7 +189,7 @@ describe('MAP / FILTER / REDUCE run the function once per member, in order', () 
     const creates = await runBody(
       [
         '  lines = graph-[f:finding]-> { return f.`headline` }',
-        '  loud = MAP(lines, (t) => { return "• ${t}" })',
+        '  loud = map(lines, (t) => { return "• ${t}" })',
         '  write graph-[:note]-> { payload: { items: loud } }',
       ].join('\n'),
       ROWS,
@@ -206,8 +206,8 @@ describe('MAP / FILTER / REDUCE run the function once per member, in order', () 
     const creates = await runBody(
       [
         '  body = "aaaa bbbb cccc dddd eeee ffff gggg hhhh"',
-        '  pieces = CHUNKS(body, { size: 12 })',
-        '  lengths = MAP(pieces, (p) => { return LENGTH(p) })',
+        '  pieces = Text.chunks(body, { size: 12 })',
+        '  lengths = map(pieces, (p) => { return Text.length(p) })',
         '  write graph-[:note]-> { payload: { pieces: pieces, lengths: lengths } }',
       ].join('\n'),
       ROWS,
@@ -222,7 +222,7 @@ describe('MAP / FILTER / REDUCE run the function once per member, in order', () 
     const creates = await runBody(
       [
         '  scores = graph-[f:finding]-> { return f.`score` }',
-        '  big = FILTER(scores, (n) => { return n > 2 })',
+        '  big = filter(scores, (n) => { return n > 2 })',
         '  write graph-[:note]-> { payload: { items: big } }',
       ].join('\n'),
       ROWS,
@@ -233,8 +233,8 @@ describe('MAP / FILTER / REDUCE run the function once per member, in order', () 
   it('REDUCE carries the value forward, one member at a time', async () => {
     const creates = await runBody(
       [
-        '  scores = graph-[f:finding ORDER BY `headline`]-> { return f.`score` }',
-        '  total = REDUCE(scores, 0, (carried, n) => { return carried + n })',
+        '  scores = graph-[f:finding ORDER BY f.`headline`]-> { return f.`score` }',
+        '  total = reduce(scores, (carried, n) => { return carried + n }, 0)',
         '  write graph-[:note]-> { body: "${total}" }',
       ].join('\n'),
       ROWS,
@@ -250,7 +250,7 @@ describe('MAP / FILTER / REDUCE run the function once per member, in order', () 
 describe('a bare MAP(...) statement, with no return, still runs its writes', () => {
   it('one write per member lands, in order — the answer (absent per slot) is never read', async () => {
     const creates = await runBody(
-      '  MAP(graph-[f:finding]->, (t) => { write graph-[:note]-> { body: t.`headline` } })',
+      '  map(graph-[f:finding]->, (t) => { write graph-[:note]-> { body: t.`headline` } })',
       ROWS,
     );
     expect(creates.map((c) => c.fields.body)).toEqual([
@@ -263,8 +263,8 @@ describe('a bare MAP(...) statement, with no return, still runs its writes', () 
   it('a bound MAP with no return also runs every write — the binding is absent per slot', async () => {
     const creates = await runBody(
       [
-        '  results = MAP(graph-[f:finding]->, (t) => { write graph-[:note]-> { body: t.`headline` } })',
-        '  write graph-[:note]-> { body: "count", payload: { n: LENGTH(results) } }',
+        '  results = map(graph-[f:finding]->, (t) => { write graph-[:note]-> { body: t.`headline` } })',
+        '  write graph-[:note]-> { body: "count", payload: { n: count(results) } }',
       ].join('\n'),
       ROWS,
     );
@@ -280,7 +280,7 @@ describe('GROUPBY and KEYBY file the members under a key', () => {
     const creates = await runBody(
       [
         '  rows = graph-[f:finding]-> { return { thesis: f.`thesis`, headline: f.`headline` } }',
-        '  by = GROUPBY(rows, (r) => { return COALESCE(AT(r, "thesis"), "?") })',
+        '  by = List.groupBy(rows, (r) => { return coalesce(r.thesis, "?") })',
         '  write graph-[:note]-> { payload: by }',
       ].join('\n'),
       ROWS,
@@ -299,7 +299,7 @@ describe('GROUPBY and KEYBY file the members under a key', () => {
       runBody(
         [
           '  theses = graph-[f:finding]-> { return f.`thesis` }',
-          '  by = KEYBY(theses, (t) => { return t })',
+          '  by = List.keyBy(theses, (t) => { return t })',
           '  write graph-[:note]-> { payload: by }',
         ].join('\n'),
         ROWS,
@@ -311,7 +311,7 @@ describe('GROUPBY and KEYBY file the members under a key', () => {
     const creates = await runBody(
       [
         '  heads = graph-[f:finding]-> { return f.`headline` }',
-        '  by = KEYBY(heads, (t) => { return t })',
+        '  by = List.keyBy(heads, (t) => { return t })',
         '  write graph-[:note]-> { payload: by }',
       ].join('\n'),
       ROWS,
@@ -327,7 +327,7 @@ describe('GROUPBY and KEYBY file the members under a key', () => {
 describe('MEMBERS lists a declared type in declaration order', () => {
   it('the order is the declaration’s, not the data’s', async () => {
     const creates = await runBody(
-      '  all = MEMBERS(<Thesis>)\n  write graph-[:note]-> { payload: { items: all } }',
+      '  declared = members(<Thesis>)\n  write graph-[:note]-> { payload: { items: declared } }',
       ROWS,
     );
     expect(creates[0].fields.payload).toEqual({ items: ['Consumer', 'Infra', 'Health'] });
@@ -341,9 +341,9 @@ describe('MEMBERS lists a declared type in declaration order', () => {
     const creates = await runBody(
       [
         '  rows = graph-[f:finding]-> { return { thesis: f.`thesis`, headline: f.`headline` } }',
-        '  by = GROUPBY(rows, (r) => { return COALESCE(AT(r, "thesis"), "?") })',
-        '  theses = MEMBERS(<Thesis>)',
-        '  sections = MAP(theses, (th) => { return "${th}: ${COUNT(COALESCE(AT(by, th), []))}" })',
+        '  by = List.groupBy(rows, (r) => { return coalesce(r.thesis, "?") })',
+        '  theses = members(<Thesis>)',
+        '  sections = map(theses, (th) => { return "${th}: ${count(coalesce(by[th], []))}" })',
         '  write graph-[:note]-> { payload: { items: sections } }',
       ].join('\n'),
       ROWS,
@@ -360,8 +360,8 @@ describe('SORT orders a collection already in hand', () => {
     const creates = await runBody(
       [
         '  scores = graph-[f:finding]-> { return f.`score` }',
-        '  up = SORT(scores)',
-        '  down = SORT(scores, DESC)',
+        '  up = sort(scores)',
+        '  down = sort(scores, { order: "desc" })',
         '  write graph-[:note]-> { payload: { up: up, down: down } }',
       ].join('\n'),
       ROWS,
@@ -373,7 +373,7 @@ describe('SORT orders a collection already in hand', () => {
     const creates = await runBody(
       [
         '  names = graph-[f:finding]-> { return f.`headline` }',
-        '  write graph-[:note]-> { body: JOIN(SORT(names), ", ") }',
+        '  write graph-[:note]-> { body: Text.join(sort(names), ", ") }',
       ].join('\n'),
       ROWS,
     );
@@ -384,8 +384,8 @@ describe('SORT orders a collection already in hand', () => {
     const creates = await runBody(
       [
         '  scores = graph-[f:finding]-> { return f.`score` }',
-        '  ranked = SORT(scores, DESC)',
-        '  write graph-[:note]-> { body: "${FIRST(ranked)}/${LAST(ranked)}/${AT(ranked, 1)}" }',
+        '  ranked = sort(scores, { order: "desc" })',
+        '  write graph-[:note]-> { body: "${first(ranked)}/${List.last(ranked)}/${ranked[1]}" }',
       ].join('\n'),
       ROWS,
     );
@@ -396,7 +396,7 @@ describe('SORT orders a collection already in hand', () => {
     const creates = await runBody(
       [
         '  rows = graph-[f:finding]-> { return { headline: f.`headline`, score: f.`score` } }',
-        '  ranked = SORT(rows, `score`, DESC)',
+        '  ranked = sort(rows, (r) => r.score, { order: "desc" })',
         '  write graph-[:note]-> { payload: { items: ranked } }',
       ].join('\n'),
       ROWS,
@@ -420,7 +420,7 @@ describe('a record is a value, so a collection can hold one', () => {
   it('MAP returning the member hands back the records themselves', async () => {
     const creates = await runBody(
       [
-        '  rows = MAP(graph-[f:finding]->, (t) => { return t })',
+        '  rows = map(graph-[f:finding]->, (t) => { return t })',
         '  rows-[s:similar]-> {',
         '    write graph-[:note]-> { body: s.`headline` }',
         '  }',
@@ -437,7 +437,7 @@ describe('a record is a value, so a collection can hold one', () => {
   it('MAP returning a map literal hands back maps, and the key keeps its value', async () => {
     const creates = await runBody(
       [
-        '  rows = MAP(graph-[f:finding]->, (t) => { return { headline: t.`headline` } })',
+        '  rows = map(graph-[f:finding]->, (t) => { return { headline: t.`headline` } })',
         '  write graph-[:note]-> { payload: { rows: rows } }',
       ].join('\n'),
       ROWS,
@@ -454,9 +454,9 @@ describe('a record is a value, so a collection can hold one', () => {
   it('MAP returning a map whose key holds a record keeps the record walkable', async () => {
     const creates = await runBody(
       [
-        '  rows = MAP(graph-[f:finding ORDER BY `headline`]->, (t) => { return { it: t } })',
-        '  first = AT(rows, 0)',
-        '  one = AT(first, "it")',
+        '  rows = map(graph-[f:finding ORDER BY f.`headline`]->, (t) => { return { it: t } })',
+        '  head = rows[0]',
+        '  one = head.it',
         '  one-[s:similar]-> {',
         '    write graph-[:note]-> { body: s.`headline` }',
         '  }',
@@ -469,7 +469,7 @@ describe('a record is a value, so a collection can hold one', () => {
   it('FILTER keeps the records that answered, and a block walks them', async () => {
     const creates = await runBody(
       [
-        '  loud = FILTER(graph-[f:finding]->, (t) => { return t.`score` > 2 })',
+        '  loud = filter(graph-[f:finding]->, (t) => { return t.`score` > 2 })',
         '  loud-[s:similar]-> {',
         '    write graph-[:note]-> { body: s.`headline` }',
         '  }',
@@ -482,8 +482,8 @@ describe('a record is a value, so a collection can hold one', () => {
   it('GROUPBY files records under each key, and a block walks one group', async () => {
     const creates = await runBody(
       [
-        '  byThesis = GROUPBY(graph-[f:finding]->, (t) => { return t.`thesis` })',
-        '  infra = AT(byThesis, "Infra")',
+        '  byThesis = List.groupBy(graph-[f:finding]->, (t) => { return t.`thesis` })',
+        '  infra = byThesis.Infra',
         '  infra-[s:similar]-> {',
         '    write graph-[:note]-> { body: s.`headline` }',
         '  }',
@@ -496,8 +496,8 @@ describe('a record is a value, so a collection can hold one', () => {
   it('KEYBY files one record under each key', async () => {
     const creates = await runBody(
       [
-        '  byHeadline = KEYBY(graph-[f:finding]->, (t) => { return t.`headline` })',
-        '  one = AT(byHeadline, "Globex hiring")',
+        '  byHeadline = List.keyBy(graph-[f:finding]->, (t) => { return t.`headline` })',
+        '  one = byHeadline["Globex hiring"]',
         '  one-[s:similar]-> {',
         '    write graph-[:note]-> { body: s.`headline` }',
         '  }',
@@ -510,11 +510,11 @@ describe('a record is a value, so a collection can hold one', () => {
   it('the same record reached two ways is one record; a different one is not', async () => {
     const creates = await runBody(
       [
-        '  rows = MAP(graph-[f:finding ORDER BY `headline`]->, (t) => { return t })',
-        '  again = FILTER(rows, (t) => { return t.`score` > 0 })',
-        '  a = AT(rows, 0)',
-        '  b = AT(again, 0)',
-        '  other = AT(rows, 1)',
+        '  rows = map(graph-[f:finding ORDER BY f.`headline`]->, (t) => { return t })',
+        '  again = filter(rows, (t) => { return t.`score` > 0 })',
+        '  a = rows[0]',
+        '  b = again[0]',
+        '  other = rows[1]',
         '  write graph-[:note]-> { payload: { same: a == b, different: a == other } }',
       ].join('\n'),
       ROWS,
@@ -531,10 +531,10 @@ describe("a block's untyped return is a value, not the record it walked", () => 
   it('an untyped call per iteration collects values the run can join', async () => {
     const creates = await runBody(
       [
-        '  lines = graph-[f:finding ORDER BY `headline`]-> {',
-        '    return COALESCE(f.`headline`, "")',
+        '  lines = graph-[f:finding ORDER BY f.`headline`]-> {',
+        '    return coalesce(f.`headline`, "")',
         '  }',
-        '  write graph-[:note]-> { body: JOIN(lines, " | ") }',
+        '  write graph-[:note]-> { body: Text.join(lines, " | ") }',
       ].join('\n'),
       ROWS,
     );

@@ -82,7 +82,8 @@ jest.mock('../../../lib/prompts/execute', () => ({
 
 import { runMovement } from 'movement-engine/services/movement_engine/run';
 
-import type { InstanceSchema, LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
@@ -234,7 +235,7 @@ function run(
       '}',
     ].join('\n');
   return runMovement({
-    source,
+    source: spelledFor(options.languageVersion ?? CURRENT_LANGUAGE_VERSION, source, fromCatalogSnapshot(catalog)),
     movementName: 'intake',
     ...options,
     event: webhookEvent({}),

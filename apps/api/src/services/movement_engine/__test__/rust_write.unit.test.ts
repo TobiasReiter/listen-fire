@@ -6,7 +6,8 @@
 // writes, the park sink's rows. A park written by either engine resumes on
 // the other.
 
-import { CURRENT_LANGUAGE_VERSION, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { tenantIdOf } from 'engine-contracts';
 import { hostRecordingSchema, type HostRecording } from 'engine-contracts/conformance';
@@ -257,7 +258,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
       : {}),
   };
   const input: RunMovementInput = {
-    source: PRELUDE + c.source,
+    source: spelledFor(c.languageVersion ?? CURRENT_LANGUAGE_VERSION, PRELUDE + c.source, fromCatalogSnapshot(catalog)),
     event: c.event,
     teamId: TEAM_ID,
     catalog,
@@ -697,11 +698,25 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
         '  relay(n: d)',
         '  persist(tag: "named", n: d)',
         '  persist(d, "positional")',
-        '  PERSIST(d, "any case")',
       ),
     ].join('\n');
     const { rust } = await agree({ source, event, movementName: 'intake' });
-    expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create', 'create', 'create', 'create', 'create']);
+    expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create', 'create', 'create', 'create']);
+  });
+
+  // A call written in another letter case reaches the file's function only before version 5.
+  it('reaches the callee by a call written in another letter case (versions 3 and 4)', async () => {
+    const source = [
+      NOTE,
+      'movement persist(n: <Note>) {',
+      '  write crm-[:companies]-> { unique by (`name`) name: n.`title` }',
+      '}',
+      intake('  d = node { title: "Beta", body: msg.`text` }', '  PERSIST(d)'),
+    ].join('\n');
+    for (const languageVersion of [3, 4] as const) {
+      const { rust } = await agree({ source, event, movementName: 'intake', languageVersion });
+      expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create']);
+    }
   });
 
   it('binds a call’s value: a value, a node, a record named again, and a value parameter typed by a field type', async () => {
@@ -1268,8 +1283,8 @@ describe('the cost cap in the Rust engine', () => {
   // note, for which the search finds no candidate).
   const PRICED = [
     'movement m(msg: <inbox-[:message]->>) {',
-    '  first = write crm-[:companies]-> { unique by (FUZZY `name`) name: msg.`subject` }',
-    '  label = "${first.`name`}"',
+    '  earlier = write crm-[:companies]-> { unique by (FUZZY `name`) name: msg.`subject` }',
+    '  label = "${earlier.`name`}"',
     '  if label != "" {',
     '    write crm-[:companies]-> { unique by (FUZZY `name`) name: "${label} two" }',
     '    write crm-[:notes]-> { body: "${label} three" }',

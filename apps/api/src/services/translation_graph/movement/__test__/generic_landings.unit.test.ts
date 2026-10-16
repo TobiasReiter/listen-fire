@@ -29,7 +29,7 @@ import { AskAdapter } from '../../adapters/ask';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { graftGenericLandings } from '../generic_landings';
 
-const PRELUDE = `import { questions } from adapters\nqa = questions()\n`;
+const PRELUDE = `import { questions } from adapters\nqa = connect questions\n`;
 
 async function baseSchema(): Promise<{
   schema: InstanceSchema;
@@ -55,7 +55,7 @@ async function baseSchema(): Promise<{
  *  literals fix, and hand the checker the grafted schema. */
 async function grafted(body: string): Promise<InstanceSchema> {
   const { schema, entryPoints } = await baseSchema();
-  const source = `${PRELUDE}\nmovement m() {\n${body}\n}`;
+  const source = `${PRELUDE}\nfunction m() {\n${body}\n}`;
   return graftGenericLandings({
     instance: { adapterType: 'ask', schema, entryPoints },
     chains: scanInstanceChains(source),
@@ -72,7 +72,7 @@ async function codesFor(body: string): Promise<string[]> {
     plugins: {},
   };
   return checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   )
     .filter((d) => (d.severity ?? 'error') === 'error')
@@ -89,7 +89,7 @@ async function allCodesFor(body: string): Promise<Array<{ code: string; severity
     plugins: {},
   };
   return checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   ).map((d) => ({ code: d.code, severity: d.severity ?? 'error' }));
 }
@@ -212,21 +212,21 @@ describe('the host grafts the Response type an ask\'s own literals fix', () => {
 
 describe('the checker reads the graft back off the awaited Response', () => {
   it("a Choose ask's answer is its own options — a member is clean, a typo is the enum error", async () => {
-    const AWAIT = `${CHOOSE}\n  r = await FIRST(c-[:Response]->)`;
-    expect(await codesFor(`${AWAIT}\n  if r.Answer { }`)).toEqual([]);
-    expect(await codesFor(`${AWAIT}\n  if r.Answer == "Seed" { }`)).not.toContain(
+    const AWAIT = `${CHOOSE}\n  r = await first(c-[:Response]->)`;
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer) { }`)).toEqual([]);
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer == "Seed") { }`)).not.toContain(
       'MOV_ENUM_UNKNOWN_VALUE',
     );
-    expect(await codesFor(`${AWAIT}\n  if r.Answer == "Sead" { }`)).toContain(
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer == "Sead") { }`)).toContain(
       'MOV_ENUM_UNKNOWN_VALUE',
     );
   });
 
   it('a Provide<number> answer really is a number (comparing it to text is the category error)', async () => {
     const AWAIT =
-      '  p = write qa-[:Provide]-> { Prompt: "How much?", `Answer Type`: "number" }\n  r = await FIRST(p-[:Response]->)';
-    expect(await codesFor(`${AWAIT}\n  if r.Answer { }`)).toEqual([]);
-    expect(await codesFor(`${AWAIT}\n  if r.Answer == "a lot" { }`)).toContain(
+      '  p = write qa-[:Provide]-> { Prompt: "How much?", `Answer Type`: "number" }\n  r = await first(p-[:Response]->)';
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer) { }`)).toEqual([]);
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer == "a lot") { }`)).toContain(
       'MOV_COMPARE_TYPE_MISMATCH',
     );
   });
@@ -239,22 +239,22 @@ describe('the checker reads the graft back off the awaited Response', () => {
   });
 
   it("a Form's declared fields are read like any record's fields — backticked when spaced", async () => {
-    const AWAIT = `${FORM}\n  r = await FIRST(q-[:Response]->)`;
-    expect(await codesFor(`${AWAIT}\n  if r.Budget { }`)).toEqual([]);
-    expect(await codesFor(`${AWAIT}\n  if r.Budget == "50k" { }`)).toEqual([]);
+    const AWAIT = `${FORM}\n  r = await first(q-[:Response]->)`;
+    expect(await codesFor(`${AWAIT}\n  if (r.Budget) { }`)).toEqual([]);
+    expect(await codesFor(`${AWAIT}\n  if (r.Budget == "50k") { }`)).toEqual([]);
     // The opaque object stays readable for compat — one landing, both surfaces.
     // (Still json, so it is still opaque to a scalar test; what matters here is
     // that the name did not disappear when the typed fields arrived.)
-    expect(await codesFor(`${AWAIT}\n  if r.Answer { }`)).not.toContain('MOV_UNKNOWN_PROPERTY');
-    expect(await codesFor(`${AWAIT}\n  if r.Deadline { }`)).toContain('MOV_UNKNOWN_PROPERTY');
+    expect(await codesFor(`${AWAIT}\n  if (r.Answer) { }`)).not.toContain('MOV_UNKNOWN_PROPERTY');
+    expect(await codesFor(`${AWAIT}\n  if (r.Deadline) { }`)).toContain('MOV_UNKNOWN_PROPERTY');
     const SPACED =
-      '  q = write qa-[:Form]-> { Prompt: "Details?", Fields: ["Deal Size"] }\n  r = await FIRST(q-[:Response]->)';
-    expect(await codesFor(`${SPACED}\n  if r.\`Deal Size\` { }`)).toEqual([]);
+      '  q = write qa-[:Form]-> { Prompt: "Details?", Fields: ["Deal Size"] }\n  r = await first(q-[:Response]->)';
+    expect(await codesFor(`${SPACED}\n  if (r.\`Deal Size\`) { }`)).toEqual([]);
   });
 
   it('NON-literal Fields leave the answer opaque json — the field names are still unknown here', async () => {
     const codes = await codesFor(
-      `  f = "Budget"\n  q = write qa-[:Form]-> { Prompt: "Details?", Fields: [f] }\n  r = await FIRST(q-[:Response]->)\n  if r.Budget { }`,
+      `  f = "Budget"\n  q = write qa-[:Form]-> { Prompt: "Details?", Fields: [f] }\n  r = await first(q-[:Response]->)\n  if (r.Budget) { }`,
     );
     expect(codes).toContain('MOV_UNKNOWN_PROPERTY');
   });
@@ -279,7 +279,7 @@ describe('the checker reads the graft back off the awaited Response', () => {
 
   it('NON-LITERAL Options stay the base text answer, and say nothing about it', async () => {
     const codes = await codesFor(
-      `  o = "Seed"\n  c = write qa-[:Choose]-> { Prompt: "Which?", Options: [o] }\n  r = await FIRST(c-[:Response]->)\n  if r.Answer == "anything" { }`,
+      `  o = "Seed"\n  c = write qa-[:Choose]-> { Prompt: "Which?", Options: [o] }\n  r = await first(c-[:Response]->)\n  if (r.Answer == "anything") { }`,
     );
     expect(codes).not.toContain('MOV_ENUM_UNKNOWN_VALUE');
     expect(codes).not.toContain('MOV_WRITE_GENERIC_NOT_LITERAL');
@@ -296,7 +296,7 @@ describe('the checker reads the graft back off the awaited Response', () => {
 describe('the checker holds a Response WRITE to the same landing', () => {
   it('the base per-family type checks a write body: a Check answers boolean, and text is the type error', async () => {
     const CHECK = '  k = write qa-[:Check]-> { Prompt: "Ship it?" }';
-    expect(await codesFor(`${CHECK}\n  write k-[:Response]-> { Answer: TRUE }`)).toEqual([]);
+    expect(await codesFor(`${CHECK}\n  write k-[:Response]-> { Answer: true }`)).toEqual([]);
     expect(await codesFor(`${CHECK}\n  write k-[:Response]-> { Answer: "yes" }`)).toContain(
       'MOV_WRITE_FIELD_TYPE',
     );

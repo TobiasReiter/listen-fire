@@ -96,6 +96,17 @@ const catalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
+  'import { fetchUrl as fetch_url } from plugins',
+  '',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
+  '',
+].join('\n');
+
+/** The version 4 spelling of the same prelude, for the program that joins with `parallel`. */
+const PRELUDE_V4 = [
+  'import { email, attio } from adapters',
+  'import { acme_main } from credentials',
   'import { fetch_url } from plugins',
   '',
   'inbox = email()',
@@ -195,7 +206,7 @@ function harness(source: string) {
   const parks = makeParkSink();
   let spent = 0;
   const input = () => ({
-    source: PRELUDE + source,
+    source: (source.includes('await parallel') ? PRELUDE_V4 : PRELUDE) + source,
     movementName: 'intake',
     event: webhookEvent(),
     teamId: TEAM_ID,
@@ -265,7 +276,7 @@ const summaries = (creates: Array<Record<string, unknown>>): Record<string, unkn
 
 const COUNTDOWN = [
   'function countdown(n: <number>): <number> {',
-  '  if n <= 0 {',
+  '  if (n <= 0) {',
   '    return 0',
   '  }',
   '  return 1 + countdown(n - 1)',
@@ -277,12 +288,12 @@ describe('a function calling itself', () => {
     const h = harness(
       [
         'function fact(n: <number>): <number> {',
-        '  if n <= 1 {',
+        '  if (n <= 1) {',
         '    return 1',
         '  }',
         '  return n * fact(n - 1)',
         '}',
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  x = fact(5)',
         '  write crm-[:companies]-> { name: "fact", summary: "${x}" }',
         '}',
@@ -296,18 +307,18 @@ describe('a function calling itself', () => {
     const h = harness(
       [
         'function is_even(n: <number>): <boolean> {',
-        '  if n == 0 {',
+        '  if (n == 0) {',
         '    return true',
         '  }',
         '  return is_odd(n - 1)',
         '}',
         'function is_odd(n: <number>): <boolean> {',
-        '  if n == 0 {',
+        '  if (n == 0) {',
         '    return false',
         '  }',
         '  return is_even(n - 1)',
         '}',
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  a = is_even(10)',
         '  b = is_even(7)',
         '  write crm-[:companies]-> { name: "parity", summary: "${a} ${b}" }',
@@ -321,11 +332,11 @@ describe('a function calling itself', () => {
   it('a tree walk over a local graph, recursing from inside a MAP', async () => {
     const h = harness(
       [
-        'function size(id: <text>, all: <{ id: text, parent: text }[]>): <number> {',
-        '  kids = FILTER(all, (n) => n.parent == id)',
-        '  return 1 + SUM(MAP(kids, (k) => size(k.id, all)))',
+        'function size(id: <text>, nodes: <{ id: text, parent: text }[]>): <number> {',
+        '  kids = filter(nodes, (n) => n.parent == id)',
+        '  return 1 + List.sum(map(kids, (k) => size(k.id, nodes)))',
         '}',
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  tree = [',
         '    { id: "root", parent: "" },',
         '    { id: "a", parent: "root" },',
@@ -345,8 +356,8 @@ describe('a function calling itself', () => {
   it('a closure bound to a name calls itself by it', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  sum_to = (n: <number>): <number> => IF n <= 0 THEN 0 ELSE n + sum_to(n - 1) END',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  sum_to = (n: <number>): <number> => n <= 0 ? 0 : n + sum_to(n - 1)',
         '  x = sum_to(4)',
         '  write crm-[:companies]-> { name: "closure", summary: "${x}" }',
         '}',
@@ -368,7 +379,7 @@ describe('the call depth limit', () => {
     const h = harness(
       [
         LOOP,
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  x = loop(0)',
         '  write crm-[:companies]-> { name: "never" }',
         '}',
@@ -392,7 +403,7 @@ describe('the call depth limit', () => {
     const source = (n: number) =>
       [
         COUNTDOWN,
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         `  x = countdown(${n})`,
         '  write crm-[:companies]-> { name: "count", summary: "${x}" }',
         '}',
@@ -423,9 +434,9 @@ describe('the call depth limit', () => {
     const h = harness(
       [
         COUNTDOWN,
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  xs = MAP([3, 4, 5], { concurrency: 3 }, countdown)',
-        '  write crm-[:companies]-> { name: "each", summary: JOIN(MAP(xs, (x) => "${x}"), ",") }',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  xs = map([3, 4, 5], countdown, { concurrency: 3 })',
+        '  write crm-[:companies]-> { name: "each", summary: Text.join(map(xs, (x) => "${x}"), ",") }',
         '}',
       ].join('\n'),
     );
@@ -439,9 +450,9 @@ describe('the call depth limit', () => {
     const h = harness(
       [
         COUNTDOWN,
-        'movement intake(m: <inbox-[:message]->>) {',
-        `  xs = MAP([1, 9], { onError: "${onError}" }, (n) => countdown(n))`,
-        '  write crm-[:companies]-> { name: "kept", summary: JOIN(MAP(xs, (x) => "${x}"), ",") }',
+        'function intake(m: <inbox-[:message]->>) {',
+        `  xs = map([1, 9], (n) => countdown(n), { onError: "${onError}" })`,
+        '  write crm-[:companies]-> { name: "kept", summary: Text.join(map(xs, (x) => "${x}"), ",") }',
         '}',
       ].join('\n'),
     );
@@ -454,14 +465,14 @@ describe('the call depth limit', () => {
 describe('the cost cap met deep inside a recursion', () => {
   const source = [
     'function crawl(n: <number>): <text> {',
-    '  if n <= 0 {',
+    '  if (n <= 0) {',
     '    return "end"',
     '  }',
-    '  page = fetch_url(url: "p${n}")',
+    '  page = fetch_url("p${n}")',
     '  rest = crawl(n - 1)',
-    '  return CONCAT(COALESCE(page, "none"), ",", rest)',
+    '  return Text.concat(coalesce(page, "none"), ",", rest)',
     '}',
-    'movement intake(m: <inbox-[:message]->>) {',
+    'function intake(m: <inbox-[:message]->>) {',
     '  x = crawl(4)',
     '  write crm-[:companies]-> { name: "done", summary: x }',
     '}',
@@ -496,6 +507,18 @@ describe('the call depth after a resume', () => {
   // counted from where they really are, the frames above them put back.
   const CRAWL = [
     'function crawl(n: <number>): <text> {',
+    '  if (n <= 0) {',
+    '    return "end"',
+    '  }',
+    '  page = fetch_url("p${n}")',
+    '  rest = crawl(n - 1)',
+    '  return Text.concat(coalesce(page, "none"), ",", rest)',
+    '}',
+  ].join('\n');
+
+  // Version 4 spelling: the `parallel` program below runs under 4.
+  const CRAWL_V4 = [
+    'function crawl(n: <number>): <text> {',
     '  if n <= 0 {',
     '    return "end"',
     '  }',
@@ -524,9 +547,9 @@ describe('the call depth after a resume', () => {
     // The member is crawl(3), one call deep; crawl(0) is four deep.
     const source = [
       CRAWL,
-      'movement intake(m: <inbox-[:message]->>) {',
-      '  xs = MAP([3], crawl)',
-      '  write crm-[:companies]-> { name: "done", summary: JOIN(xs, ";") }',
+      'function intake(m: <inbox-[:message]->>) {',
+      '  xs = map([3], crawl)',
+      '  write crm-[:companies]-> { name: "done", summary: Text.join(xs, ";") }',
       '}',
     ].join('\n');
 
@@ -547,7 +570,7 @@ describe('the call depth after a resume', () => {
   describe('inside a parallel arm that names a function (version 4)', () => {
     // The arm is `deep`, one call deep; crawl(3) is two, crawl(0) five.
     const source = [
-      CRAWL,
+      CRAWL_V4,
       'function deep(): <text> {',
       '  return crawl(3)',
       '}',

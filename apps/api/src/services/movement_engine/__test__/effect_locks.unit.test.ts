@@ -266,10 +266,10 @@ const catalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -297,7 +297,7 @@ async function run(
 ) {
   const email = inertAdapter('email');
   const result = await runMovement({
-    source: PRELUDE + [...movements, 'movement intake(m: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: PRELUDE + [...movements, 'function intake(m: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     movementName: 'intake',
     event: webhookEvent(),
     teamId: TEAM_ID,
@@ -320,9 +320,9 @@ const pluginUrls = (trace: MovementTraceEntry[]) =>
 describe('members writing different keys write at once; the same key, one at a time', () => {
   it('different keys: the writes overlap, and each makes its own record', async () => {
     const { crm } = await run([
-      '  MAP(["a", "b", "c", "d", "e"], { concurrency: 5 }, (n) => {',
+      '  map(["a", "b", "c", "d", "e"], (n) => {',
       '    write crm-[:companies]-> { unique by (`name`), name: n }',
-      '  })',
+      '  }, { concurrency: 5 })',
     ]);
     expect(crm.maxInFlight()).toBeGreaterThan(1);
     expect(crm.creates.map((c) => c.name).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
@@ -331,9 +331,9 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it('one key, five members at once: one create, four updates', async () => {
     const { crm, result } = await run([
-      '  MAP(["a", "b", "c", "d", "e"], { concurrency: 5 }, (n) => {',
+      '  map(["a", "b", "c", "d", "e"], (n) => {',
       '    write crm-[:companies]-> { unique by (`name`), name: "Acme", summary: n }',
-      '  })',
+      '  }, { concurrency: 5 })',
     ]);
     expect(crm.creates).toHaveLength(1);
     expect(crm.updates).toHaveLength(4);
@@ -343,9 +343,9 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it('a key is compared as the system would compare it: letter case does not split it', async () => {
     const { crm } = await run([
-      '  MAP(["Acme", "ACME", "acme"], { concurrency: 3 }, (n) => {',
+      '  map(["Acme", "ACME", "acme"], (n) => {',
       '    write crm-[:companies]-> { unique by (`name`), name: n }',
-      '  })',
+      '  }, { concurrency: 3 })',
     ]);
     expect(crm.creates).toHaveLength(1);
     expect(crm.updates).toHaveLength(2);
@@ -354,9 +354,9 @@ describe('members writing different keys write at once; the same key, one at a t
   it("the target's own uniqueness rule is honoured, with no `unique by` written", async () => {
     const { crm } = await run(
       [
-        '  MAP(["a", "b", "c", "d"], { concurrency: 4 }, (n) => {',
+        '  map(["a", "b", "c", "d"], (n) => {',
         '    write crm-[:companies]-> { name: n, domain: "acme.com" }',
-        '  })',
+        '  }, { concurrency: 4 })',
       ],
       makeCrm({ native: { any: [{ all: [{ field: 'domain' }] }] } }),
     );
@@ -366,8 +366,8 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it('several `unique by` lines, written in either order, take their keys in one order — no deadlock, one record', async () => {
     const { crm } = await run([
-      '  MAP([0, 1, 2, 3], { concurrency: 4 }, (i) => {',
-      '    if i == 0 OR i == 2 {',
+      '  map([0, 1, 2, 3], (i) => {',
+      '    if (i == 0 || i == 2) {',
       '      write crm-[:companies]-> {',
       '        unique by (`name`)',
       '        unique by (`domain`)',
@@ -382,7 +382,7 @@ describe('members writing different keys write at once; the same key, one at a t
       '        domain: "acme.com"',
       '      }',
       '    }',
-      '  })',
+      '  }, { concurrency: 4 })',
     ]);
     expect(crm.creates).toHaveLength(1);
     expect(crm.updates).toHaveLength(3);
@@ -390,9 +390,9 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it('a FUZZY key has no exact value to wait on, so fuzzy writes to a type take turns — and never duplicate', async () => {
     const { crm } = await run([
-      '  MAP(["Acme", "Acme", "Acme", "Beta"], { concurrency: 4 }, (n) => {',
+      '  map(["Acme", "Acme", "Acme", "Beta"], (n) => {',
       '    write crm-[:companies]-> { unique by (FUZZY `name`), name: n }',
-      '  })',
+      '  }, { concurrency: 4 })',
     ]);
     expect(crm.maxInFlight()).toBe(1);
     expect(crm.creates.map((c) => c.name).sort()).toEqual(['Acme', 'Beta']);
@@ -401,9 +401,9 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it('a write with no identity at all creates, alongside the others', async () => {
     const { crm } = await run([
-      '  MAP(["a", "b", "c"], { concurrency: 3 }, (n) => {',
+      '  map(["a", "b", "c"], (n) => {',
       '    write crm-[:notes]-> { text: n }',
-      '  })',
+      '  }, { concurrency: 3 })',
     ]);
     expect(crm.creates).toHaveLength(3);
     expect(crm.maxInFlight()).toBeGreaterThan(1);
@@ -411,10 +411,10 @@ describe('members writing different keys write at once; the same key, one at a t
 
   it("a member's later writes off the record it wrote do not wait on that record's own key", async () => {
     const { crm } = await run([
-      '  MAP(["a", "b", "a"], { concurrency: 3 }, (n) => {',
+      '  map(["a", "b", "a"], (n) => {',
       '    co = write crm-[:companies]-> { unique by (`name`), name: n }',
       '    write co { summary: "seen" }',
-      '  })',
+      '  }, { concurrency: 3 })',
     ]);
     expect(crm.creates.map((c) => c.name).sort()).toEqual(['a', 'b']);
     // One identity update, three updates by handle.
@@ -430,9 +430,9 @@ describe('the arms all runs at once, and race arms, are isolated as members are'
     '  url: <text>',
     '}',
     '',
-    'movement fetch_one(l: <Link>) {',
-    '  page = fetch_url(url: l.url)',
-    '  return COALESCE(page, "none")',
+    'function fetch_one(l: <Link>) {',
+    '  page = fetch_url(l.url)',
+    '  return coalesce(page, "none")',
     '}',
     '',
   ];
@@ -442,15 +442,15 @@ describe('the arms all runs at once, and race arms, are isolated as members are'
       [
         '  r = all(',
         '    () => {',
-        '      got = fetch_one(l: node { url: "40" })',
+        '      got = fetch_one(node { url: "40" })',
         '      return got',
         '    },',
         '    () => {',
-        '      got = fetch_one(l: node { url: "5" })',
+        '      got = fetch_one(node { url: "5" })',
         '      return got',
         '    },',
         '  )',
-        '  write crm-[:companies]-> { name: "${AT(r, 0)}/${AT(r, 1)}" }',
+        '  write crm-[:companies]-> { name: "${r[0]}/${r[1]}" }',
       ],
       makeCrm(),
       FETCH_ONE,
@@ -480,12 +480,12 @@ describe('the arms all runs at once, and race arms, are isolated as members are'
       '      return "fast"',
       '    },',
       '    () => {',
-      '      page = fetch_url(url: "30")',
+      '      page = fetch_url("30")',
       '      co = write crm-[:companies]-> { unique by (`name`), name: "Slow" }',
       '      return "slow"',
       '    },',
       '  )',
-      '  write crm-[:notes]-> { text: "${AT(r, 0)}/${AT(r, 1)}" }',
+      '  write crm-[:notes]-> { text: "${r[0]}/${r[1]}" }',
     ]);
     expect(crm.creates.map((c) => c.name ?? c.text)).toEqual(['Fast', 'Slow', 'fast/slow']);
     expect(result.writes).toHaveLength(3);

@@ -170,8 +170,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
   'node Company: "each company named in this message" {',
   '  name: <text> "the company\'s name"',
   '  employees: <number> "its headcount"',
@@ -229,7 +229,7 @@ async function run(body: string[], replies: Reply[]) {
   const llm = fakeLlm(replies);
   const writes: CapturedWrite[] = [];
   const result = await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,
@@ -260,9 +260,9 @@ const detail = (summary: string) => ({ records: [{ summary: cite(summary, 2) }] 
 const FAN_OUT = [
   '  content = [msg.`text`, msg.`deck`]',
   "  companies = extract(content, Company, { tier: 'careful' })",
-  '  details = MAP(companies, (c) => {',
-  "    found = extract([...content, TEXT.SERIALISE(c, 'JSON')], Detail, { tier: 'careful' })",
-  '    return ONLY(found)',
+  '  details = map(companies, (c) => {',
+  "    found = extract([...content, Json.stringify(c)], Detail, { tier: 'careful' })",
+  '    return only(found)',
   '  })',
 ];
 
@@ -340,9 +340,9 @@ describe('the call nests inside an expression (language version 3)', () => {
   it('ONLY(extract(…)) is the one record it found', async () => {
     const { calls, writes } = await run(
       [
-        '  first = ONLY(extract([msg.`text`], Detail))',
+        '  earlier = only(extract([msg.`text`], Detail))',
         // ONLY may find nothing, so a field read off it may be absent.
-        '  write crm-[:companies]-> { name: COALESCE(first.summary, "") }',
+        '  write crm-[:companies]-> { name: coalesce(earlier.summary, "") }',
       ],
       [detail('Acme builds infra')],
     );
@@ -352,7 +352,7 @@ describe('the call nests inside an expression (language version 3)', () => {
 
   it('a field reads off any call: ONLY(extract(…)).summary', async () => {
     const { calls, writes } = await run(
-      ['  write crm-[:companies]-> { name: COALESCE(ONLY(extract([msg.`text`], Detail)).summary, "none") }'],
+      ['  write crm-[:companies]-> { name: coalesce(only(extract([msg.`text`], Detail)).summary, "none") }'],
       [detail('read off the call')],
     );
     expect(calls).toHaveLength(1);
@@ -361,7 +361,7 @@ describe('the call nests inside an expression (language version 3)', () => {
 
   it('a field reads off a call that runs nothing: FIRST(found).name', async () => {
     const { writes } = await run(
-      ['  found = extract([msg.`text`], Company)', '  write crm-[:companies]-> { name: COALESCE(FIRST(found).name, "none") }'],
+      ['  found = extract([msg.`text`], Company)', '  write crm-[:companies]-> { name: coalesce(first(found).name, "none") }'],
       [COMPANIES],
     );
     expect(writes.map((w) => w.fields)).toEqual([{ name: 'Acme' }]);
@@ -369,7 +369,7 @@ describe('the call nests inside an expression (language version 3)', () => {
 
   it('EXTRACT(…) in any letter case is the extraction call', async () => {
     const { calls, writes } = await run(
-      ['  found = EXTRACT([msg.`text`], Company)', '  write crm-[:companies]-> { name: JOIN(MAP(found, (c) => c.name), ", ") }'],
+      ['  found = EXTRACT([msg.`text`], Company)', '  write crm-[:companies]-> { name: Text.join(map(found, (c) => c.name), ", ") }'],
       [COMPANIES],
     );
     expect(calls).toHaveLength(1);
@@ -378,7 +378,7 @@ describe('the call nests inside an expression (language version 3)', () => {
 
   it('as a collection op reads it, inside a write field', async () => {
     const { writes } = await run(
-      ['  write crm-[:companies]-> { name: JOIN(MAP(extract([msg.`text`], Company), (c) => c.name), ", ") }'],
+      ['  write crm-[:companies]-> { name: Text.join(map(extract([msg.`text`], Company), (c) => c.name), ", ") }'],
       [COMPANIES],
     );
     expect(writes.map((w) => w.fields)).toEqual([{ name: 'Acme, Beta' }]);
@@ -389,14 +389,14 @@ describe('the call nests inside an expression (language version 3)', () => {
       [
         '  D = Detail',
         '  found = extract([msg.`text`], D)',
-        '  MAP(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
+        '  map(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
       ],
       [detail('hello')],
     );
     const direct = await run(
       [
         '  found = extract([msg.`text`], Detail)',
-        '  MAP(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
+        '  map(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
       ],
       [detail('hello')],
     );
@@ -411,7 +411,7 @@ describe('the records', () => {
       [
         '  content = [msg.`text`, msg.`deck`]',
         '  companies = extract(content, Company)',
-        '  MAP(companies, (c) => {',
+        '  map(companies, (c) => {',
         '    c-[r:round WHERE r.stage = "Seed"]-> {',
         '      write crm-[:companies]-> { name: c.name, stage: r.stage }',
         '    }',
@@ -428,8 +428,8 @@ describe('the records', () => {
     const { writes } = await run(
       [
         '  companies = extract([msg.`text`], Company)',
-        '  MAP(companies, (c) => {',
-        '    write crm-[:companies]-> { name: "${c.name}|${COALESCE(c.employees, -1)}|${COALESCE(c.site, \'none\')}" }',
+        '  map(companies, (c) => {',
+        '    write crm-[:companies]-> { name: "${c.name}|${coalesce(c.employees, -1)}|${coalesce(c.site, \'none\')}" }',
         '  })',
       ],
       [{ records: [{ name: cite(null, 0), employees: cite(null, 0), site: cite(null, 0), round: [{ stage: cite('Seed', 0) }] }] }],
@@ -468,7 +468,7 @@ describe('the records', () => {
     const { result } = await run(
       [
         '  found = extract([msg.`text`], Detail)',
-        '  MAP(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
+        '  map(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
       ],
       [{ records: [{ summary: cite('x', 7) }] }],
     );
@@ -481,7 +481,7 @@ describe('the records', () => {
         '  found = extract([msg.`text`], node Note: "each note" {',
         '    summary: <text> "the note"',
         '  })',
-        '  MAP(found, (n) => { write crm-[:companies]-> { name: n.summary } })',
+        '  map(found, (n) => { write crm-[:companies]-> { name: n.summary } })',
       ],
       [{ records: [{ summary: cite('hello', 0) }] }],
     );
@@ -491,7 +491,7 @@ describe('the records', () => {
         '    summary: <text> "the note"',
         '  }',
         '  found = extract([msg.`text`], Note)',
-        '  MAP(found, (n) => { write crm-[:companies]-> { name: n.summary } })',
+        '  map(found, (n) => { write crm-[:companies]-> { name: n.summary } })',
       ],
       [{ records: [{ summary: cite('hello', 0) }] }],
     );
@@ -506,7 +506,7 @@ describe('a reply the shape does not describe', () => {
     const { calls, writes, result } = await run(
       [
         '  found = extract([msg.`text`], Detail)',
-        '  MAP(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
+        '  map(found, (d) => { write crm-[:companies]-> { name: d.summary } })',
       ],
       [{ answer: [] }, detail('fixed')],
     );
@@ -528,10 +528,10 @@ describe('a reply the shape does not describe', () => {
       [
         '  content = [msg.`text`]',
         '  companies = extract(content, Company)',
-        "  details = MAP(companies, { onError: 'warn' }, (c) => {",
-        "    found = extract([...content, TEXT.SERIALISE(c, 'JSON')], Detail)",
-        '    return ONLY(found)',
-        '  })',
+        "  details = map(companies, (c) => {",
+        "    found = extract([...content, Json.stringify(c)], Detail)",
+        '    return only(found)',
+        "  }, { onError: 'warn' })",
       ],
       [COMPANIES, { answer: [] }, { answer: [] }, { answer: [] }, { answer: [] }],
     );
@@ -545,11 +545,11 @@ describe('a reply the shape does not describe', () => {
       [
         '  content = [msg.`text`]',
         '  companies = extract(content, Company)',
-        "  details = MAP(companies, { onError: 'warn' }, (c) => {",
-        "    found = extract([...content, TEXT.SERIALISE(c, 'JSON')], Detail)",
-        '    return ONLY(found)',
-        '  })',
-        '  MAP(details, (d) => { write crm-[:companies]-> { name: COALESCE(d.summary, "") } })',
+        "  details = map(companies, (c) => {",
+        "    found = extract([...content, Json.stringify(c)], Detail)",
+        '    return only(found)',
+        "  }, { onError: 'warn' })",
+        '  map(details, (d) => { write crm-[:companies]-> { name: coalesce(d.summary, "") } })',
       ],
       [COMPANIES, { answer: [] }, { answer: [] }, detail('Beta does fintech')],
     );
@@ -561,7 +561,7 @@ describe('a reply the shape does not describe', () => {
 
 describe('extractOne(content, Shape) — the single record, or absent', () => {
   const one = (summary: string) => ({ record: { summary: cite(summary, 0) } });
-  const WRITE_SUMMARY = '  write crm-[:companies]-> { name: COALESCE(d.summary, "none") }';
+  const WRITE_SUMMARY = '  write crm-[:companies]-> { name: coalesce(d.summary, "none") }';
   const single = (replies: Reply[]) =>
     run(['  d = extractOne([msg.`text`], Detail)', WRITE_SUMMARY], replies);
 
@@ -649,9 +649,9 @@ describe('extractOne(content, Shape) — the single record, or absent', () => {
       [
         '  content = [msg.`text`]',
         '  companies = extract(content, Company)',
-        "  details = MAP(companies, { onError: 'warn' }, (c) => {",
-        "    return extractOne([...content, TEXT.SERIALISE(c, 'JSON')], Detail)",
-        '  })',
+        "  details = map(companies, (c) => {",
+        "    return extractOne([...content, Json.stringify(c)], Detail)",
+        "  }, { onError: 'warn' })",
       ],
       [COMPANIES, two, two, one('Beta does fintech')],
     );
@@ -669,8 +669,8 @@ describe('extractOne(content, Shape) — the single record, or absent', () => {
     const FAN_OUT_ONE = [
       '  content = [msg.`text`, msg.`deck`]',
       "  companies = extract(content, Company, { tier: 'careful' })",
-      '  detailed = MAP(companies, (c) => {',
-      "    details = extractOne([...content, TEXT.SERIALISE(c, 'JSON')], Detail, { tier: 'careful' })",
+      '  detailed = map(companies, (c) => {',
+      "    details = extractOne([...content, Json.stringify(c)], Detail, { tier: 'careful' })",
       '    return { ...c, ...details }',
       '  })',
     ];
@@ -690,11 +690,11 @@ describe('extractOne(content, Shape) — the single record, or absent', () => {
     const { writes } = await run(
       [
         '  companies = extract([msg.`text`], Company)',
-        '  detailed = MAP(companies, (c) => {',
-        "    details = extractOne([msg.`text`, TEXT.SERIALISE(c, 'JSON')], Detail)",
+        '  detailed = map(companies, (c) => {',
+        "    details = extractOne([msg.`text`, Json.stringify(c)], Detail)",
         '    return { ...c, ...details }',
         '  })',
-        '  MAP(detailed, (d) => { write crm-[:companies]-> { name: "${d.name}: ${COALESCE(d.summary, \'?\')}" } })',
+        '  map(detailed, (d) => { write crm-[:companies]-> { name: "${d.name}: ${coalesce(d.summary, \'?\')}" } })',
       ],
       [COMPANIES, one('infra'), { record: null }],
     );
@@ -703,7 +703,7 @@ describe('extractOne(content, Shape) — the single record, or absent', () => {
 
   it('nests inside an expression, and reads a field off the call', async () => {
     const { writes } = await run(
-      ['  write crm-[:companies]-> { name: COALESCE(extractOne([msg.`text`], Detail).summary, "none") }'],
+      ['  write crm-[:companies]-> { name: coalesce(extractOne([msg.`text`], Detail).summary, "none") }'],
       [one('nested')],
     );
     expect(writes.map((w) => w.fields)).toEqual([{ name: 'nested' }]);

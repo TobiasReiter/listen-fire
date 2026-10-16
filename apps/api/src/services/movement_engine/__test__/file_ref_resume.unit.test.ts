@@ -221,10 +221,10 @@ const attioFilesCatalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -372,11 +372,11 @@ const warnings = (trace: MovementTraceEntry[]) =>
 
 describe('a file bound before an ordinary timer park', () => {
   const source = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  files = COLLECT(m-[:files]->.data)',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  files = List.from(m-[:files]->.data)',
     '  content = [m.`subject`, ...files]',
     '  await sleep(1h)',
-    '  write crm-[:companies]-> { name: COALESCE(READ(AT(content, 1)), "unread"), summary: COALESCE(READ(ONLY(files)), "unread") }',
+    '  write crm-[:companies]-> { name: coalesce(File.read(content[1]), "unread"), summary: coalesce(File.read(only(files)), "unread") }',
     '}',
   ].join('\n');
 
@@ -457,14 +457,14 @@ describe('a file bound before an ordinary timer park', () => {
 
 describe('a file bound before a cost-cap pause inside a MAP member', () => {
   const source = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  files = COLLECT(m-[:files]->.data)',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  files = List.from(m-[:files]->.data)',
     '  content = [m.`subject`, ...files]',
-    '  out = MAP(["a"], (u) => {',
-    '    page = fetch_url(url: u)',
-    '    return COALESCE(READ(AT(content, 1)), "unread")',
+    '  out = map(["a"], (u) => {',
+    '    page = fetch_url(u)',
+    '    return coalesce(File.read(content[1]), "unread")',
     '  })',
-    '  write crm-[:companies]-> { name: JOIN(out, ",") }',
+    '  write crm-[:companies]-> { name: Text.join(out, ",") }',
     '}',
   ].join('\n');
 
@@ -482,10 +482,10 @@ describe('a file bound before a cost-cap pause inside a MAP member', () => {
 
 describe('a credentialed Attio file bound before a park', () => {
   const source = [
-    'movement intake(r: <crm-[:company]->>) {',
-    '  files = COLLECT(r-[:files]->.data)',
+    'function intake(r: <crm-[:company]->>) {',
+    '  files = List.from(r-[:files]->.data)',
     '  await sleep(1h)',
-    '  write crm-[:companies]-> { name: COALESCE(READ(ONLY(files)), "unread") }',
+    '  write crm-[:companies]-> { name: coalesce(File.read(only(files)), "unread") }',
     '}',
   ].join('\n');
 

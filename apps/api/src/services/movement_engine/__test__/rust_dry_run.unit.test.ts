@@ -3,7 +3,8 @@
 // artifact's start entry, and what it would have refused the run for is
 // counted — with no host call, and no change to the run.
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { mockCatalogSnapshot, type InstanceSchema, CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -275,7 +276,7 @@ describe('a run the TypeScript engine runs', () => {
   });
 
   it('is never asked about under MOVEMENT_ENGINE=rust: an admitted run moves no dry run counter', async () => {
-    await underEngine('rust', () => runMovement(inputOf(ADMITTED, makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
+    await underEngine('rust', () => runMovement(inputOf(spelledFor(CURRENT_LANGUAGE_VERSION, ADMITTED, fromCatalogSnapshot(catalog)), makeTestHost({ adapters: { resolve: () => fakeEmail() } }))));
     expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1 });
     expect(rustRunStats.dryRun).toEqual({ firings: 0, sampled: 0, admitted: 0, faults: 0, first: {}, all: {}, byVersion: {}, byRoute: { run: { sampled: 0, admitted: 0, first: {}, all: {} }, resume: { sampled: 0, admitted: 0, first: {}, all: {} }, settle: { sampled: 0, admitted: 0, first: {}, all: {} }, fire: { sampled: 0, admitted: 0, first: {}, all: {} } } });
     expect(admissionVerdicts).toEqual([]);
