@@ -183,8 +183,16 @@ fn namespaces() {
     ] {
         same(new, old);
     }
-    // `d.k` already reads a map's field under 5 (a member read, not `AT`).
-    assert_eq!(upgraded("AT(d, \"k\")"), "d.k");
+    // A text key stays an index: `d.k` is a field read, which on a record
+    // answers where `AT(d, "k")` refused. A non-primary object is grouped,
+    // and a grouped object is indexed (`(a).k` does not lower).
+    assert_eq!(upgraded("AT(d, \"k\")"), "d[\"k\"]");
+    same("d[\"k\"]", "AT(d, \"k\")");
+    assert_eq!(upgraded("AT(a + b, 0)"), "(a + b)[0]");
+    same("(a + b)[0]", "AT(a + b, 0)");
+    assert_eq!(upgraded("AT(IF c THEN d ELSE e END, \"k\")"), "(c ? d : e)[\"k\"]");
+    same("(c ? d : e)[\"k\"]", "AT(IF c THEN d ELSE e END, \"k\")");
+    assert_eq!(upgraded("AT(COALESCE(d, e), \"k\")"), "coalesce(d, e)[\"k\"]");
 }
 
 #[test]
