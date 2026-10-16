@@ -817,9 +817,10 @@ describe('File duality — movement compile against the real projected schema', 
   it('an extract source reading the message-level File errors the same way', () => {
     const diagnostics = compile(
       [
-        '  intent = extract from [m.`Body`, m.`File`] {',
+        '  intent = extractOne([m.`Body`, m.`File`], node Intent: "the message\'s intent" {',
         '    is_question: <boolean> "is this a question"',
-        '  }',
+        '  })',
+        '  if (intent == null) { fail("nothing extracted") }',
         '  write m-[:Replies]-> { Body: "${intent.`is_question`}" }',
       ].join('\n'),
     );
