@@ -157,3 +157,18 @@ fn a_key_the_dict_was_not_written_with_is_refused_once_in_a_write_field() {
         ]
     );
 }
+
+/// A hoisted nested call keeps every later place where it is written, and a
+/// fix quotes it as written (the TypeScript's fix on the same program).
+#[test]
+fn a_fix_over_a_nested_call_quotes_the_call_as_written() {
+    let source = "function m() {\n  inc = (v: <number>) => v + 1\n  e = AT([inc(1), 2], 0)\n  return e\n}\n";
+    let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{}}"#).unwrap();
+    let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let found = check_source(source, &catalog, options).unwrap();
+    let at = found.iter().find(|d| d.code == "MOV_V5_SPELLING").expect("the AT respelling");
+    assert_eq!(
+        at.fix,
+        Some(serde_json::json!({ "edits": [{ "span": { "start": { "line": 3, "col": 7 }, "end": { "line": 3, "col": 25 } }, "text": "[inc(1), 2][0]" }], "safe": true }))
+    );
+}

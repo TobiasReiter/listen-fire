@@ -3106,6 +3106,85 @@
     "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
     "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
    ]
+  },
+  {
+   "name": "a write off a binding nothing typed is the internal error; a name bound to a write the checker could not type is a record",
+   "snapshot": "delete",
+   "version": 4,
+   "source": "import { crm } from adapters\nbroken = connect crm using nothing at all\nmovement m() {\n  w = write broken-[:company]-> { name: \"a\" }\n  write w-[:people]-> { name: \"b\" }\n  write broken { name: \"c\" }\n}\n",
+   "expected": [
+    "MOV_EXPR_PARSE 2:18-2:42 Unexpected 'crm'",
+    "MOV_INTERNAL_UNTYPED_BINDING 4:13-4:33 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program",
+    "MOV_INTERNAL_UNTYPED_BINDING 6:9-6:15 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program"
+   ]
+  },
+  {
+   "name": "a walk or a match off a node declaration's own name starts at the declaration, a graph whose one collection is itself",
+   "snapshot": "none",
+   "version": 5,
+   "source": "node Note {\n  title: <text>\n}\nfunction m() {\n  found = match Note-[:item]-> { title: \"x\" }\n  w = Note-[:item]->\n  Note-[n:item]-> {\n    x = 1\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_LINKED_UNKNOWN_EDGE 5:17-5:32 'Note' (the instance itself) has no edge 'item' — a match looks along an edge the parent's type declares; it declares: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:7-6:21 'Note' has no collection 'item' — it has: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:3-7:18 'Note' has no collection 'item' — it has: Note"
+   ]
+  },
+  {
+   "name": "a walk or a match off a node declaration's own name starts at the declaration, a graph whose one collection is itself",
+   "snapshot": "none",
+   "version": 4,
+   "source": "node Note {\n  title: <text>\n}\nmovement m() {\n  found = match Note-[:item]-> { title: \"x\" }\n  w = Note-[:item]->\n  Note-[n:item]-> {\n    x = 1\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_LINKED_UNKNOWN_EDGE 5:17-5:32 'Note' (the instance itself) has no edge 'item' — a match looks along an edge the parent's type declares; it declares: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 6:7-6:21 'Note' has no collection 'item' — it has: Note",
+    "MOV_TRAVERSE_UNKNOWN_EDGE 7:3-7:18 'Note' has no collection 'item' — it has: Note"
+   ]
+  },
+  {
+   "name": "a unique by part the lowering refuses is MOV_EXPR_PARSE at the part",
+   "snapshot": "delete",
+   "version": 5,
+   "source": "import { crm } from adapters\nc = connect crm\nfunction m() {\n  write c-[:company]-> { unique by (`name` == map([1], (v) => v)[0]) name: \"a\" }\n  found = match c-[:company]-> { unique by (`name` && `name` == map([1], (v) => v)[0]) name: \"a\" }\n  return 1\n}\n",
+   "expected": [
+    "MOV_EXPR_PARSE 4:37-4:68 a closure cannot be written here — bind it to a name first and pass the name",
+    "MOV_EXPR_PARSE 5:45-5:86 a closure cannot be written here — bind it to a name first and pass the name"
+   ]
+  },
+  {
+   "name": "before version 3 a call statement naming a built-in is a call of a name nothing binds",
+   "snapshot": "none",
+   "version": 2,
+   "source": "movement m() {\n  UPPER(text: \"a\")\n  LOWER(text: \"b\")\n}\n",
+   "expected": [
+    "MOV_NAME_UNRESOLVED 2:3-2:19 Unknown name 'UPPER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
+    "MOV_NAME_UNRESOLVED 3:3-3:19 Unknown name 'LOWER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope"
+   ]
+  },
+  {
+   "name": "a message or a fix quotes an expression's nested calls as written, and every place after one is where it is written",
+   "snapshot": "none",
+   "version": 5,
+   "source": "function m(t: <text>) {\n  inc = (v: <number>) => v + 1\n  c = INC(inc(1)) * 10\n  d = LEN([inc(1), 2])\n  e = AT([inc(1), 2], 0)\n  f = UPPER(t) + \"${inc(2)}\"\n  g = CONTAINS([inc(1)], 2)\n  return [c, d, e, f, g]\n}\n",
+   "expected": [
+    "MOV_V5_SPELLING 5:7-5:25 `AT(x, i)` is written `x[i]` from language version 5",
+    "MOV_V5_SPELLING 6:7-6:15 `UPPER` is written `Text.upper` from language version 5",
+    "MOV_FUNCTION_UNKNOWN 3:7-3:23 Unknown function 'INC' — did you mean 'inc'? Write 'inc(inc(1))' — a call names a function declared or imported here, or a built-in (see handbook: front#functions-not-methods)",
+    "MOV_FUNCTION_UNKNOWN 4:7-4:23 Unknown function 'LEN' — did you mean 'List.min'? — a call names a function declared or imported here, or a built-in (see handbook: front#functions-not-methods)",
+    "MOV_ARITH_NON_NUMERIC 6:7-6:29 An arithmetic operation requires numeric operands — both sides of '+' are text. Build the string with \"${…}\" interpolation instead.",
+    "MOV_EXPR_PARSE 7:7-7:28 CONTAINS is written between its operands — 'a CONTAINS b', not 'CONTAINS(a, b)'"
+   ]
+  },
+  {
+   "name": "a version 5 block head whose WHERE joins with && is read under version 5: its bare fields are refused",
+   "snapshot": "delete",
+   "version": 5,
+   "source": "import { crm } from adapters\nc = connect crm\nfunction m() {\n  wanted = \"a\"\n  c-[co:company WHERE co.name == wanted && co.name != wante]-> {\n    c-[p:company WHERE p.name == \"x\" && nam == \"y\"]-> {\n    }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_V5_SPELLING 5:3-5:63 from language version 5 a walk's field is read through the hop's alias: `co.wante` (a bare name inside the brackets is a variable from outside the walk)",
+    "MOV_UNKNOWN_PROPERTY 5:3-5:63 c.company has no field 'wante' — it has: name",
+    "MOV_V5_SPELLING 6:5-6:54 from language version 5 a walk's field is read through the hop's alias: `p.nam` (a bare name inside the brackets is a variable from outside the walk)",
+    "MOV_UNKNOWN_PROPERTY 6:5-6:54 c.company has no field 'nam' — it has: name — did you mean 'name'?"
+   ]
   }
  ]
 }

@@ -135,11 +135,25 @@ impl Checker<'_> {
         self.push(diagnostic);
     }
 
-    /// `recordOfName`, for the symbol `name` resolves to in `scope`.
-    pub fn record_of_name(&self, name: &str, scope: ScopeId) -> Option<RecordOf> {
+    /// `recordOfName`, for the symbol `name` resolves to in `scope`: a
+    /// binding that says nothing at all about what it holds is reported, at
+    /// `span`, as the internal error it is.
+    pub fn record_of_name(&mut self, name: &str, scope: ScopeId, span: Span) -> Option<RecordOf> {
         let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
         let symbol = self.scopes.symbol(id);
-        Some(record_of(&symbol.types, symbol.kind))
+        let record = record_of(&symbol.types, symbol.kind);
+        if is_untyped_binding(&symbol.types, symbol.kind) {
+            self.report_untyped_binding(name, span);
+        }
+        Some(record)
+    }
+
+    fn report_untyped_binding(&mut self, name: &str, span: Span) {
+        self.report(
+            codes::UNTYPED_BINDING,
+            format!("internal: '{name}' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program"),
+            span,
+        );
     }
 
     // ── write ──
@@ -450,6 +464,11 @@ impl Checker<'_> {
                 };
                 format!("{}{system}", describe_position(position))
             }
+            // A binding that says nothing at all is the internal error, not this rule.
+            None if spread.path.is_none() && is_untyped_binding(&types, kind) => {
+                self.report_untyped_binding(&spread.source, spread.span);
+                return None;
+            }
             None if types.field.is_some() || kind != SymbolKind::Binding && kind != SymbolKind::Param && kind != SymbolKind::Alias => {
                 kind.describe().to_string()
             }
@@ -481,7 +500,13 @@ impl Checker<'_> {
         scope: ScopeId,
     ) -> Landing {
         let root_name = path_root_name(path);
-        let Some((Some(root_type), steps)) = self.head_walk(path, scope) else { return Landing::default() };
+        let walked = self.head_walk(path, scope);
+        if let (Some((None, _)) | None, Some(root_name)) = (&walked, root_name) {
+            // A value root is the head's own refusal; a binding that says
+            // nothing at all is the internal error `record_of_name` reports.
+            self.record_of_name(root_name, scope, span);
+        }
+        let Some((Some(root_type), steps)) = walked else { return Landing::default() };
         if steps.is_empty() {
             return Landing::default();
         }
@@ -833,7 +858,7 @@ impl Checker<'_> {
     fn position_target(&mut self, root: &PathRoot, span: Span, scope: ScopeId) -> Landing {
         let (alias, record) = match root {
             PathRoot::Name { name } => {
-                let Some(record) = self.record_of_name(name, scope) else {
+                let Some(record) = self.record_of_name(name, scope, span) else {
                     return Landing { description: Some(format!("'{name}'")), ..Landing::default() };
                 };
                 (name.clone(), record)
@@ -1106,7 +1131,7 @@ impl Checker<'_> {
                 bind.name
             )
         };
-        match self.record_of_name(&bind.name, scope) {
+        match self.record_of_name(&bind.name, scope, bind.span) {
             Some(RecordOf::Value(what)) => self.report(codes::WRITE_BIND_NOT_RECORD, not_record(what), bind.span),
             Some(RecordOf::Record(position))
                 if !matches!(position, Position::Position(_) | Position::Handle(_) | Position::Union(_) | Position::Local(_) | Position::Extract { .. }) =>
@@ -1452,7 +1477,7 @@ impl Checker<'_> {
             );
             return;
         }
-        let position = match self.record_of_name(name, scope) {
+        let position = match self.record_of_name(name, scope, span) {
             Some(RecordOf::Value(what)) => {
                 self.report(
                     codes::REFRESH_UNSTABLE,
@@ -1491,6 +1516,18 @@ struct FieldFit<'h> {
 }
 
 /// `recordOfName` over what a symbol is typed as.
+/// A name bound on the value plane to something nothing typed: no record,
+/// no value type, nothing it may hold (`recordOfName`'s undefined — a value
+/// that did not parse, say).
+fn is_untyped_binding(types: &SymbolTypes, kind: SymbolKind) -> bool {
+    kind == SymbolKind::Binding
+        && types.pos.is_none()
+        && types.field.is_none()
+        && !types.is_record
+        && types.plural.is_none()
+        && types.may_hold.is_none()
+}
+
 pub fn record_of(types: &SymbolTypes, kind: SymbolKind) -> RecordOf {
     if let Some(position) = &types.pos {
         return RecordOf::Record(position.clone());

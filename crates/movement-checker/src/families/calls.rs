@@ -506,9 +506,25 @@ pub fn span_of_extent(slot: &ExprSlot, at: At) -> Span {
     Span { start: span_within(slot, Some(at.start)).start, end: span_within(slot, Some(at.end)).start }
 }
 
-/// `nestedCallName`.
-pub fn nested_call_name(span: Span) -> String {
-    format!("#call@{}:{}", span.start.line, span.start.col)
+/// `nestedCallName`: the name a call hoisted out of an expression is bound
+/// to. The TypeScript spells it `#call@<line>:<col>` and rewrites only the
+/// slot's tree; Rust rewrites the slot's text and reparses it, so the name is
+/// short enough to stand in the call's own place (at least `f()`, three
+/// units) and every offset into the rewritten text stays the original's: a
+/// backquoted run of private-use characters numbering the call in the file.
+/// A name never surfaces in a message (the TypeScript's never does either).
+fn nested_call_name(id: usize) -> String {
+    const DIGITS: usize = 0xF8FF - 0xE000 + 1;
+    let mut digits = Vec::new();
+    let mut rest = id;
+    loop {
+        digits.push(char::from_u32(0xE000 + (rest % DIGITS) as u32).expect("a private-use character"));
+        rest /= DIGITS;
+        if rest == 0 {
+            break;
+        }
+    }
+    digits.into_iter().rev().collect()
 }
 
 impl Checker<'_> {
@@ -587,6 +603,8 @@ impl Checker<'_> {
     /// places. None when the slot holds no such call.
     pub fn hoist_nested_calls(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<ExprSlot> {
         let (calls, rewritten) = self.nested_call_rewrite(slot, scope)?;
+        let written = self.written_text(slot).to_string();
+        self.note_hoisted(&rewritten, written);
         let units: Vec<u16> = slot.raw.encode_utf16().collect();
         for HoistedCall { at, span, name } in calls {
             let head = String::from_utf16_lossy(&units[..at.end]);
@@ -653,7 +671,11 @@ impl Checker<'_> {
         for call in calls {
             let at = call.at();
             let span = span_of_extent(slot, at);
-            let name = nested_call_name(span);
+            let name = {
+                let mut names = self.nested_call_names.borrow_mut();
+                let id = names.len();
+                names.entry((span.start.line, span.start.col)).or_insert_with(|| nested_call_name(id)).clone()
+            };
             rewritten.extend_from_slice(&units[from..at.start]);
             let spelled: Vec<u16> = format!("`{name}`").encode_utf16().collect();
             let extent = &units[at.start..at.end];
@@ -1152,7 +1174,8 @@ impl Checker<'_> {
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
         if since(self.version, 5) {
             self.check_typed_spelling(&tree, slot, scope);
-            self.check_walk_fields(&tree, &slot.raw, TreeAt::Slot(slot), scope);
+            let written = self.written_text(slot).to_string();
+            self.check_walk_fields(&tree, &written, TreeAt::Slot(slot), scope);
         }
         self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
@@ -1321,7 +1344,7 @@ impl Checker<'_> {
                     } else {
                         movement_parser::surface::table::spell_message(&to, self.version)
                     };
-                    let units: Vec<u16> = slot.raw.encode_utf16().collect();
+                    let units: Vec<u16> = self.written_text(slot).encode_utf16().collect();
                     let c = callee.at();
                     let corrected = format!(
                         "{}{spelled}{}",
@@ -1396,8 +1419,7 @@ impl Checker<'_> {
         let unknown_member = matches!(resolution, Resolution::Unknown).then(|| self.unknown_package_member(&call.callee)).flatten();
         if let Some(message) = unknown_member {
             self.report(codes::V5_UNKNOWN_MEMBER, message, call.span);
-        // Before version 3 a built-in is not a callee (no standard library).
-        } else if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
+        } else {
             match resolution {
                 Resolution::Found(id) => (params, value) = self.check_callee(call, id, scope),
                 Resolution::Unknown

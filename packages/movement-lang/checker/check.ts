@@ -11441,7 +11441,9 @@ class Checker {
       if (since(this.languageVersion, 3)) {
         let tree: MExpr | undefined;
         try {
-          tree = parseExpression(probeText);
+          // Read under the program's version: read as versions 1–4 read it, a
+          // version 5 head's `&&` refused, and its hops went unchecked.
+          tree = parseExpression(probeText, this.languageVersion);
         } catch (e) {
           if (!(e instanceof ExpressionSyntaxError)) throw e;
         }

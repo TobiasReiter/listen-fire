@@ -43,9 +43,14 @@ impl Checker<'_> {
             // `None` once a part fails to parse (MOV_EXPR_PARSE's to report).
             let mut has_key: Option<bool> = Some(false);
             for part in split_conjuncts(&clause.predicate.raw) {
-                let Ok(parsed) = expression_of_text(&part.raw) else {
-                    has_key = None;
-                    continue;
+                let parsed = match expression_of_text(&part.raw) {
+                    Ok(parsed) => parsed,
+                    Err(refused) => {
+                        let span = span_within(&clause.predicate, part.offset + refused.pos.unwrap_or(0));
+                        self.report(codes::EXPR_PARSE, refused.message, span);
+                        has_key = None;
+                        continue;
+                    }
                 };
                 if has_key == Some(false) && and_conjuncts(&parsed).into_iter().any(|c| identity_key_of(c).is_some()) {
                     has_key = Some(true);
