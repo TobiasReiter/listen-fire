@@ -140,12 +140,15 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
                 }
             }
         }
-        Expression::Function { fn_, args } => {
-            if fn_ == "isnull" && args.len() == 1 {
-                refuse_text_presence_test(typing, &args[0], PresenceAsk::Absent);
-            }
-        }
         _ => {}
+    }
+}
+
+/// A call's value rules, before any other rule reads it: `ISNULL(x)` of a
+/// text asks the wrong question.
+pub fn observe_call(typing: &mut Typing, function: &str, args: &[Expression]) {
+    if function == "isnull" && args.len() == 1 {
+        refuse_text_presence_test(typing, &args[0], PresenceAsk::Absent);
     }
 }
 

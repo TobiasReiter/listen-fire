@@ -6,7 +6,8 @@
 //! side (matched); a leftover pair with the same code and span differs only in
 //! its message (message mismatch); what is still left is missing in Rust or
 //! extra in Rust. Order is not compared here: the corpus pins it, and the
-//! "exact" count says how many records also agree on it.
+//! "exact" count says how many records also agree on it; the others are
+//! listed with both orders in `<work-dir>/reordered.txt`.
 //!
 //! Refused records (the Rust parser or catalog would not take them) are
 //! listed by reason in `<work-dir>/refused.txt`.
@@ -65,6 +66,8 @@ fn main() {
     let mut codes: BTreeMap<String, Tally> = BTreeMap::new();
     let mut corpora: BTreeMap<String, Corpus> = BTreeMap::new();
     let mut samples: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Records with the TypeScript's diagnostics in another order: each order, and the source.
+    let mut reordered: Vec<String> = Vec::new();
     let (mut refused, mut panicked) = (0, 0);
     // Why each refused record was refused (its TypeScript diagnostics are not
     // counted anywhere else), by reason, with the count and the first version and source seen.
@@ -168,11 +171,16 @@ fn main() {
         }
         if same_set {
             corpus.same_set += 1;
+            if ts != rust {
+                let spell = |ds: &[Value]| ds.iter().map(|d| format!("{} {}", code(d), d["span"])).collect::<Vec<_>>().join("\n    ");
+                reordered.push(format!("## record {index}, v{version}\n  ts:\n    {}\n  rust:\n    {}\n{source}\n", spell(&ts), spell(&rust)));
+            }
         }
     }
     let elapsed = started.elapsed().as_secs_f64();
     std::fs::write(format!("{work}/samples.txt"), samples.iter().map(|(c, s)| format!("## {c}\n{}\n", s.join("\n"))).collect::<String>())
         .expect("samples.txt");
+    std::fs::write(format!("{work}/reordered.txt"), reordered.concat()).expect("reordered.txt");
     let mut by_count: Vec<_> = refusals.iter().collect();
     by_count.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(a.0.cmp(b.0)));
     std::fs::write(

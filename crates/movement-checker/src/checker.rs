@@ -842,9 +842,8 @@ impl<'c> Checker<'c> {
         {
             self.report_resolution_failure(&bind.name, bind.span, failure);
         }
-        for field in &write.fields {
-            self.check_expr_slot_in(&field.value, scope, true);
-        }
+        // Each field's value is checked where the rules reach its line
+        // (`check_write_rules`), as `checkWrite` does.
         for spread in write.spreads.iter().flatten() {
             let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
             self.resolve_name(root, spread.span, scope);

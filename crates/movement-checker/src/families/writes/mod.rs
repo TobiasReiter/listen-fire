@@ -292,6 +292,9 @@ impl Checker<'_> {
                     Severity::Info,
                 );
             }
+            if field.spread.is_none() {
+                self.check_expr_slot_in(&field.value, scope, true);
+            }
             let path = root_description.contains('.').then(|| format!("{root_description}.{}", field.name));
             let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref(), path);
             // Against a target the walk typed, or a linked one it refused

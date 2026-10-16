@@ -758,7 +758,14 @@ impl<'a> Typing<'a> {
                         _ => self.infer_at(a, position),
                     })
                     .collect();
-                (self.function_type(fn_, &types), types)
+                crate::families::values::observe_call(self, fn_, args);
+                crate::families::extraction::observe_function(self, fn_);
+                if crate::families::calls::check_call_operands(self, expr, fn_, args, &types) {
+                    return (None, types);
+                }
+                let ty = self.function_type(fn_, &types);
+                crate::families::calls::check_stdlib_args(self, fn_, args, &types);
+                (ty, types)
             }
             Expression::KgExists { params, .. } | Expression::KgValue { params, .. } => {
                 let types: Vec<Option<Ty>> = params.iter().map(|p| self.infer_at(p, position)).collect();
@@ -840,8 +847,8 @@ impl<'a> Typing<'a> {
         collection_order_of(ty)
     }
 
+    /// A call's result type; its rules ran as it was typed.
     fn function_type(&mut self, function: &str, args: &[Option<Ty>]) -> Option<Ty> {
-        crate::families::extraction::observe_function(self, function);
         match function {
             "file" => return Some(Ty::File),
             "read" => return crate::families::extraction::type_read_call(self, args),

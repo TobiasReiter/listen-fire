@@ -80,32 +80,40 @@ use crate::types::field::Ty;
 use crate::types::infer::Typing;
 use crate::types::position::{ClosureParam, ClosureType, PlaneType, Position, ReturnShape, describe_position};
 
+/// A call's argument rules, before its result is typed, in the order
+/// `typeFunctionCall` reads them: a closure handed where a value is read
+/// (version 5), then each argument against the built-in's signature
+/// (`checkBuiltinArgs`). True when a closure was refused: the call then has
+/// no type, and no later rule reads it.
+pub fn check_call_operands(typing: &mut Typing, call: &Expression, function: &str, args: &[Expression], operands: &[Option<Ty>]) -> bool {
+    // `extractOne` was a name like any other before version 3.
+    let builtin = if function == "extractone" && typing.version < 3 { None } else { lookup_builtin(function) };
+    let Some(builtin) = builtin else { return false };
+    if refuse_closure_operands(typing, builtin, call, args, operands) {
+        return true;
+    }
+    check_builtin_args(typing, builtin, operands, args);
+    false
+}
+
+/// A standard-library call's own argument rules, after its result is typed
+/// (`checkStdlibLiteralArgs`, `checkStdlibRecordArg`, `checkStdlibWholeValueArg`).
+pub fn check_stdlib_args(typing: &mut Typing, function: &str, args: &[Expression], operands: &[Option<Ty>]) {
+    check_stdlib_literal_args(typing, function, args);
+    if let Some(spec) = stdlib_function_by_id(function) {
+        crate::families::records::check_stdlib_record_arg(typing, spec, args, operands);
+        crate::families::records::check_stdlib_whole_value_arg(typing, spec, operands);
+    }
+}
+
 /// Called by the type core after the values family's `observe`, for every
-/// node: a built-in call's argument rules (`checkBuiltinArgs`,
-/// `checkStdlibLiteralArgs`) live here. `crate::types::stdlib` has the signatures.
+/// node: `AI`'s prompt against its signature. A function call's rules run
+/// while it is typed (`check_call_operands`, `check_stdlib_args`).
 pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Position>, operands: &[Option<Ty>], _ty: Option<&Ty>) {
-    match expr {
-        Expression::Function { fn_, args } => {
-            // `extractOne` was a name like any other before version 3.
-            let builtin = if fn_ == "extractone" && typing.version < 3 { None } else { lookup_builtin(fn_) };
-            if let Some(builtin) = builtin {
-                if refuse_closure_operands(typing, builtin, expr, args, operands) {
-                    return;
-                }
-                check_builtin_args(typing, builtin, operands, args);
-            }
-            check_stdlib_literal_args(typing, fn_, args);
-            if let Some(function) = stdlib_function_by_id(fn_) {
-                crate::families::records::check_stdlib_record_arg(typing, function, args, operands);
-                crate::families::records::check_stdlib_whole_value_arg(typing, function, operands);
-            }
-        }
-        Expression::Llm { prompt_expression, .. } => {
-            if let Some(ai) = lookup_builtin("AI") {
-                check_builtin_args(typing, ai, operands, prompt_expression.as_deref().map_or(&[], std::slice::from_ref));
-            }
-        }
-        _ => {}
+    if let Expression::Llm { prompt_expression, .. } = expr
+        && let Some(ai) = lookup_builtin("AI")
+    {
+        check_builtin_args(typing, ai, operands, prompt_expression.as_deref().map_or(&[], std::slice::from_ref));
     }
 }
 
