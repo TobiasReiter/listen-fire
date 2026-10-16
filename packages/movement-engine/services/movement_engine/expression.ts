@@ -175,6 +175,12 @@ export type { LocalLandingShape };
 export { MovementEngineError, type MovementEngineErrorCode };
 
 /** A clean "this construct is E2/E3 scope" error, naming the construct. */
+/** `fail(message)`'s words, as the run fails with them: a text as written,
+ *  nothing as nothing, anything else as JavaScript writes it. */
+export function failureMessage(value: unknown): string {
+  return typeof value === 'string' ? value : String(value ?? '');
+}
+
 export function unsupported(construct: string, detail?: string): MovementEngineError {
   return new MovementEngineError(
     'MOVENG_UNSUPPORTED',
@@ -1702,6 +1708,12 @@ export async function evalMovementExpr(
       // FILE(content, "pdf" | "text") — render an artifact through the
       // seam; the FileRef carries the content's trail (a render is a
       // transformation: union survives, `direct` drops).
+      // `fail("…")` inside an expression (version 5): the run fails with the
+      // author's words, as the statement `fail("…")` does (`interpretError`).
+      if (expr.fn === 'error' && since(ctx.languageVersion, 5)) {
+        const { value } = expr.args[0] !== undefined ? await evalMovementExpr(expr.args[0], ctx) : { value: null };
+        throw new MovementEngineError('MOVENG_ERROR', failureMessage(value));
+      }
       if (expr.fn === FILE_FUNCTION_ID) return evaluateFileFunction(expr, ctx);
       if (expr.fn === READ_FUNCTION_ID) return evaluateReadFunction(expr, ctx);
       if (expr.fn === CHUNKS_FUNCTION_ID) return evaluateChunksFunction(expr, ctx);

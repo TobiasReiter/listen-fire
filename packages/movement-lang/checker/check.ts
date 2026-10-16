@@ -257,7 +257,7 @@ import {
 } from '../language_version';
 import { bodyExits, terminates } from './flow';
 import { closestByEditDistance, didYouMean } from './meta';
-import { ALL_SETTING_KEYS, readCollectionConfig } from './collection_config';
+import { ALL_SETTING_KEYS, readCollectionConfig, readSortSettings } from './collection_config';
 import { readExtractCallConfig } from './extract_config';
 import { genericLandingKey, literalStringValuesOf } from './generics';
 import { parseTraversalPath } from '../service/selectors';
@@ -320,6 +320,7 @@ import {
   type ReturnShape,
   PresenceProof,
   presenceProofs,
+  proofsAfter,
   holdsRecords,
   isDictType,
   isEnumType,
@@ -331,6 +332,7 @@ import {
   mixesRecordWithValue,
   valuesBesideRecord,
   recordsAlone,
+  isKeyedValue,
   sameStartingPoint,
   positionSchemaOfRef,
   recordHeadPosition,
@@ -1361,7 +1363,8 @@ function spellingDiagnostics(program: Program, checker: Checker): Diagnostic[] {
     if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
     const typed = f.code === 'MOV_V5_SPELLING' ? checker.respelled.get(spanKey(f.span)) : undefined;
     if (typed !== undefined) return [{ code: f.code, message: typed.message, span: f.span, fix: typed.fix }];
-    return [{ code: f.code, message: f.message, span: f.span, ...(f.fix ? { fix: f.fix } : {}) }];
+    const fix = checker.settledFix(f);
+    return [{ code: f.code, message: f.message, span: f.span, ...(fix ? { fix } : {}) }];
   });
 }
 
@@ -1694,6 +1697,8 @@ const COLLECTION_OP_SPELLING: Record<CollectionOp, string> = {
   reduce: 'REDUCE',
   groupby: 'GROUPBY',
   keyby: 'KEYBY',
+  // No spelling of the tree's `SORTBY`: it exists only as `sort`.
+  sort: 'sort',
 };
 
 const describeKind: Record<SymbolKind, string> = {
@@ -3251,6 +3256,7 @@ function extractContentItemProblem(type: FieldType, which: string): string | und
     case 'text':
     case 'enum':
     case 'file':
+    case 'never':
     case 'absent':
       return undefined;
     case 'union': {
@@ -3515,6 +3521,7 @@ function holdsFile(type: SchemaFieldType): boolean {
     case 'date':
     case 'datetime':
     case 'json':
+    case 'never':
     case 'absent':
     case 'enum':
       return false;
@@ -3952,6 +3959,29 @@ class Checker {
    *  name does not where the program binds that name. */
   spellingStands(finding: SpellingFinding): boolean {
     return finding.unlessBound === undefined || !this.boundCallees.has(`${finding.span.start.line}:${finding.span.start.col}`);
+  }
+
+  /** Where an old `SORT(xs, name)` is written with a variable in scope that
+   *  its rewrite would read differently (`SpellingFinding.unsafeIfBound`), as
+   *  `line:col`: its fix is not marked safe there. */
+  private readonly boundSortKeys = new Set<string>();
+
+  /** Notes an old `SORT(xs, name)` at `at` (language version 5) where a name
+   *  its rewrite would read differently is in scope: the key, and the
+   *  rewrite's parameter `r`. */
+  private noteSortKey(key: string, at: Loc, scope: Scope): void {
+    if (since(this.languageVersion, 5) && [key, 'r'].some(name => scope.resolve(name).kind !== 'unknown')) {
+      this.boundSortKeys.add(`${at.line}:${at.col}`);
+    }
+  }
+
+  /** A spelling finding's fix as it stands: not marked safe where a name it
+   *  must not meet is in scope (`noteSortKey`). */
+  settledFix(finding: SpellingFinding): SpellingFinding['fix'] {
+    if (finding.fix === undefined || finding.unsafeIfBound === undefined || finding.unsafeIfBound.length === 0) return finding.fix;
+    if (!this.boundSortKeys.has(`${finding.span.start.line}:${finding.span.start.col}`)) return finding.fix;
+    const { safe: _safe, ...unmarked } = finding.fix;
+    return unmarked;
   }
 
   /** Node declarations made in the files being checked, by the symbol that
@@ -5794,6 +5824,24 @@ class Checker {
         statement.span,
       );
     }
+    this.narrowAfterValue(statement, scope);
+  }
+
+  /** From version 5, what a bound value proves present below it, its arms
+   *  that only fail never arriving (`proofsAfter`). */
+  private narrowAfterValue(statement: AssignStatement, scope: Scope): void {
+    if (!since(this.languageVersion, 5)) return;
+    const value = statement.value;
+    const slot = value.kind === 'expr' ? value.expr : value.kind === 'call' ? value.call.expression : undefined;
+    if (slot === undefined) return;
+    let expr: Expression;
+    try {
+      expr = expressionOfSlot(slot);
+    } catch {
+      return; // the slot's own check reports why it does not read
+    }
+    const typing = this.silentTyping(scope, slot.span);
+    this.declarePresence(proofsAfter(expr, operand => typing.infer(operand)), scope, scope, { visibleFrom: statement.span.end });
   }
 
   /**
@@ -6552,6 +6600,7 @@ class Checker {
         this.checkDottedCall(expr.callee.object.name.text, expr.callee.property.text, at.spanOf(expr.at), at);
       }
       const key = expr.kind === 'call' ? sortKeyOf(expr) : undefined;
+      if (key?.kind === 'name') this.noteSortKey(key.name.text, at.spanOf(expr.at).start, at.scope);
       // A resource hop's WHERE reads the resource's own fields by bare name.
       const resourceWheres: ReadonlySet<MExpr> = new Set(
         expr.kind === 'path'
@@ -7765,7 +7814,10 @@ class Checker {
     const spelling = COLLECTION_OP_SPELLING[expr.op];
     const source = this.checkExprSlot(expr.source, scope);
     const init = expr.init !== undefined ? this.checkExprSlot(expr.init, scope) : undefined;
-    if (expr.config !== undefined) this.checkCollectionConfig(expr.config, spelling);
+    if (expr.config !== undefined) {
+      if (expr.op === 'sort') this.checkSortSettings(expr.config);
+      else this.checkCollectionConfig(expr.config, spelling);
+    }
     // A name bound on the NODE plane to ONE record is not a collection — the
     // one mistake worth naming. A block's returned records are many, and a
     // collection everywhere (`COUNT`, `FIRST`, a block head, and here).
@@ -7816,6 +7868,7 @@ class Checker {
     if (shape.mayHold !== undefined && (expr.op === 'map' || expr.op === 'reduce')) {
       this.collectionMayHold.set(expr, expr.op === 'map' ? listOf(shape.mayHold, ordering) : shape.mayHold);
     }
+    if (expr.op === 'sort') this.checkSortKey(returned, expr.fn.span);
 
     switch (expr.op) {
       case 'map':
@@ -7835,6 +7888,50 @@ class Checker {
       case 'keyby':
         this.requireDictKeyIn(scope, expr.fn, returned, `filed under by '${spelling}'`);
         return element !== undefined ? { kind: 'dict', of: element } : undefined;
+      case 'sort':
+        // The members themselves, now in an order.
+        return element !== undefined ? listOf(element, 'ordered') : undefined;
+      default:
+        return neverAsAny(expr.op);
+    }
+  }
+
+  /** What `sort`'s function answers for each member is what the members are
+   *  ranked by, so it is one value with an order. */
+  private checkSortKey(key: FieldType | undefined, span: Span): void {
+    if (key === undefined) return;
+    if (isKeyedValue(key)) {
+      const what = recordsAlone(key) !== undefined ? 'a record' : 'a value with named parts';
+      this.report(
+        TypedDiagnosticCodes.SORT_NEEDS_KEY,
+        `sort ranks the members by what its function answers, and it answers ${what}, which has no order of its own — answer one of its fields: \`sort(xs, (x) => x.\`Added At\`)\`.`,
+        span,
+      );
+      return;
+    }
+    if (collectionElementOf(key) !== undefined) {
+      this.report(
+        TypedDiagnosticCodes.ORDER_KEY_MULTI,
+        'sort needs one value per member to rank it by, and this function answers with several. Fold them to one (List.min(…), List.max(…), first(…)), or answer a single-valued field.',
+        span,
+      );
+    }
+  }
+
+  /** `sort`'s settings record, read as the engines read it (`readSortSettings`). */
+  private checkSortSettings(config: ExprSlot): void {
+    let parsed: Expression;
+    try {
+      parsed = expressionOfSlot(config);
+    } catch (e) {
+      if (!(e instanceof BridgeError)) throw e;
+      this.report(e.code ?? DiagnosticCodes.EXPR_PARSE, e.message, spanWithin(config, e.pos));
+      return;
+    }
+    const reading = readSortSettings(parsed);
+    if (reading.ok) return;
+    for (const problem of reading.problems) {
+      this.report(DiagnosticCodes.COLLECTION_OP_CONFIG, problem, config.span);
     }
   }
 

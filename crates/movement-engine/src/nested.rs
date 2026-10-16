@@ -43,7 +43,9 @@ const CALL_FORMS: [&str; 8] = ["MAP", "FILTER", "REDUCE", "GROUPBY", "KEYBY", "M
 /// Whether a built-in's name (in any letter case) is one that runs as a
 /// call.
 pub(crate) fn is_call_form(name: &str) -> bool {
-    CALL_FORMS.contains(&crate::js::to_upper_case(name).as_str())
+    // `sort` by a function key (version 5, the tree's `SORTBY`) is a
+    // collection op too; the run's version is ambient (movement_parser::surface).
+    CALL_FORMS.contains(&crate::js::to_upper_case(name).as_str()) || (movement_parser::surface::is_v5() && name == movement_parser::surface::table::SORT_BY)
 }
 
 /// `sortKeyOf`: `SORT(xs, key)`'s key, read once per member.

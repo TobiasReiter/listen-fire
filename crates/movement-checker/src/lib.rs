@@ -70,7 +70,7 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
                 Some((message, fix)) if f.code == movement_parser::surface::SPELLING_CODE => {
                     diagnostic::Diagnostic { fix: Some(fix.clone()), ..diagnostic::Diagnostic::error(&f.code, message.clone(), f.span) }
                 }
-                _ => diagnostic::of_spelling(f),
+                _ => diagnostic::of_spelling(&checker.settled_spelling(f, None)),
             })
         })
         .collect();

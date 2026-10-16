@@ -114,6 +114,23 @@ fn bang_on_left(e: &MExpr) -> Option<At> {
     }
 }
 
+/// How `sort(…)` reads (`Canon::sort_key`).
+enum SortReading {
+    /// `SORT(xs)` or `SORT(xs, DESC)`: plain values by themselves.
+    Plain,
+    /// `SORTBY(xs, settings, f)`: by a function key.
+    ByFunction,
+    /// A keyless sort whose order is not written in place.
+    NotYet,
+}
+
+/// `(x) => x`: the member itself.
+fn is_identity(e: &MExpr) -> bool {
+    let MExpr::Closure { params, body, .. } = e else { return false };
+    let [param] = params.as_slice() else { return false };
+    matches!(body.as_ref(), ClosureBody::Expr { expr } if matches!(expr, MExpr::Name { name, .. } if name.text == param.name.text && !name.quoted))
+}
+
 fn is_walk(e: &MExpr) -> bool {
     matches!(e, MExpr::Path { .. } | MExpr::Where { .. })
 }
@@ -165,11 +182,11 @@ impl<'s> Canon<'s> {
     /// An old spelling, `safe` saying whether its rewrite provably keeps the
     /// meaning (`Fix::safe`).
     fn old_kept(&mut self, at: At, message: String, edit: Option<Edit>, safe: bool) {
-        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None, safe });
+        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None, safe, unsafe_if_bound: Vec::new() });
     }
 
     fn not_yet(&mut self, at: At, message: String) {
-        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None, unless_bound: None, safe: false });
+        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None, unless_bound: None, safe: false, unsafe_if_bound: Vec::new() });
     }
 
     pub fn visit(&mut self, e: &mut MExpr, in_walk: bool) {
@@ -229,7 +246,7 @@ impl<'s> Canon<'s> {
             self.text(At { start: bang.start + 1, end: bang.end }).trim_start(),
             rest.trim_start()
         );
-        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]), unless_bound: None, safe: true };
+        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]), unless_bound: None, safe: true, unsafe_if_bound: Vec::new() };
         let same_bang = |f: &Finding| f.code == SPELLING_CODE && f.at.start == bang.start && f.message.starts_with("from language version 5 `!`");
         match self.findings.iter_mut().find(|f| same_bang(f)) {
             Some(inner) => *inner = finding,
@@ -382,7 +399,7 @@ impl<'s> Canon<'s> {
             };
             let edits = near.map(|s| vec![Edit { at: callee_at, text: s.v5.to_string() }]);
             // A did-you-mean is a guess at what was meant, never safe.
-            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits, unless_bound: None, safe: false });
+            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits, unless_bound: None, safe: false, unsafe_if_bound: Vec::new() });
             return;
         }
         // An old spelling: refused with its rewrite.
@@ -495,16 +512,23 @@ impl<'s> Canon<'s> {
         };
         // Proved only where the rewrite reads into the old tree. Not proved:
         // `== null` / `!= null` (a comparison where the old text was a call,
-        // which the engines answer alike only for what sem1 pinned), and a
-        // sort key read off a bare name (the old key read an outer variable
-        // of that name first).
+        // which the engines answer alike only for what sem1 pinned).
         let safe = match row.shape {
             Shape::NullTest => false,
             Shape::ExistsWalk => args.first().is_some_and(|arg| is_walk(&arg.value)),
-            Shape::SortKey => !matches!(args.get(1).map(|a| &a.value), Some(MExpr::Name { name, .. }) if !name.text.eq_ignore_ascii_case("ASC") && !name.text.eq_ignore_ascii_case("DESC")),
             _ => true,
         };
-        self.old_kept(at, message, edit, safe);
+        // A sort key read off a bare name read an outer variable of that name
+        // first, and the rewrite reads the member's field: the same only
+        // where no such variable is in scope (nor one the parameter `r`
+        // would hide), which the checker decides.
+        let unsafe_if_bound = match (row.shape, args.get(1).map(|a| &a.value)) {
+            (Shape::SortKey, Some(MExpr::Name { name, .. })) if !name.text.eq_ignore_ascii_case("ASC") && !name.text.eq_ignore_ascii_case("DESC") => {
+                vec![name.text.clone(), "r".to_string()]
+            }
+            _ => Vec::new(),
+        };
+        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None, safe, unsafe_if_bound });
     }
 
     /// Reads a v5 call into the canonical one.
@@ -512,12 +536,6 @@ impl<'s> Canon<'s> {
         let MExpr::Call { callee, args, at } = e else { return };
         let at = *at;
         let callee_at = callee.at();
-        // `fail(…)` is a statement (`ERROR(…)`); no version has a value that
-        // never returns, which the design's `coalesce(x, fail("…"))` needs.
-        if row.canonical == "ERROR" {
-            self.not_yet(at, "for now `fail(…)` is a statement of its own: `if (x == null) { fail(\"…\") }`".into());
-            return;
-        }
         match row.shape {
             Shape::Contains => {
                 if args.len() != 2 {
@@ -538,12 +556,22 @@ impl<'s> Canon<'s> {
                 return;
             }
             Shape::SettingsLast | Shape::ReduceOrder if args.len() == 3 => args.swap(1, 2),
-            Shape::SortKey => {
-                if !self.sort_key(args) {
-                    self.not_yet(at, "for now `sort`'s key is absent, the member itself `(r) => r`, or one field `(r) => r.field`, and its settings `{ order: \"asc\" | \"desc\" }`".into());
+            Shape::SortKey => match self.sort_key(args) {
+                SortReading::Plain => {}
+                // `sort(xs, f, settings)` is `SORTBY(xs, settings, f)`: a
+                // collection op, its function run once per member.
+                SortReading::ByFunction => {
+                    if args.len() == 3 {
+                        args.swap(1, 2);
+                    }
+                    **callee = canonical_callee(table::SORT_BY, callee_at);
                     return;
                 }
-            }
+                SortReading::NotYet => {
+                    self.not_yet(at, "for now `sort` with no key takes its order written in place: `sort(xs, { order: \"asc\" | \"desc\" })`".into());
+                    return;
+                }
+            },
             Shape::AiTier if args.len() == 2 => {
                 let tier = match &mut args[1].value {
                     MExpr::Map { entries, .. } if entries.len() == 1 => match &mut entries[0] {
@@ -585,40 +613,36 @@ impl<'s> Canon<'s> {
         **callee = canonical_callee(row.canonical, callee_at);
     }
 
-    /// `sort(xs, (r) => r.field, { order: "desc" })` → ``SORT(xs, `field`, DESC)``;
     /// `sort(xs)` and `sort(xs, { order: "desc" })` sort plain values by
-    /// themselves, as `SORT(xs)` and `SORT(xs, DESC)` do, and so does the
-    /// key `(r) => r`.
-    fn sort_key(&mut self, args: &mut Vec<CallArg>) -> bool {
-        let settings_last = args.len() > 1 && matches!(args.last().map(|a| &a.value), Some(MExpr::Map { .. }));
+    /// themselves, as `SORT(xs)` and `SORT(xs, DESC)` do, and so does the key
+    /// `(x) => x`; any other key is a function (`SORTBY`), run per member
+    /// with the member bound to its parameter — never a name read in the
+    /// member's scope, where an outer variable would hide its field.
+    fn sort_key(&mut self, args: &mut Vec<CallArg>) -> SortReading {
+        let is_settings = |e: &MExpr| matches!(e, MExpr::Map { .. });
+        let keyed = match args.len() {
+            0 | 1 => false,
+            2 => !is_settings(&args[1].value),
+            _ => true,
+        };
+        if keyed && !is_identity(&args[1].value) {
+            return SortReading::ByFunction;
+        }
+        if args.len() > 3 {
+            return SortReading::ByFunction;
+        }
+        let settings_last = args.len() > 1 && is_settings(&args[args.len() - 1].value);
+        if keyed && args.len() == 3 && !settings_last {
+            return SortReading::ByFunction;
+        }
         let order = if settings_last {
-            let Some(MExpr::Map { entries, .. }) = args.last().map(|a| &a.value) else { return false };
+            let Some(MExpr::Map { entries, .. }) = args.last().map(|a| &a.value) else { return SortReading::NotYet };
             match entries.as_slice() {
                 [MapMember::Entry { key: MapKey::Name(k), value: MExpr::String { parts, at, .. } }] if k.text == "order" => match parts.as_slice() {
                     [StringPart::Text(t)] if t == "asc" || t == "desc" => Some((t.to_ascii_uppercase(), *at)),
-                    _ => return false,
+                    _ => return SortReading::NotYet,
                 },
-                _ => return false,
-            }
-        } else {
-            None
-        };
-        let keyed = args.len() == if settings_last { 3 } else { 2 };
-        if args.len() > 3 || (settings_last && args.len() == 3 && !keyed) {
-            return false;
-        }
-        // The key: `None` sorts each member by itself.
-        let key = if keyed {
-            let Some(MExpr::Closure { params, body, .. }) = args.get(1).map(|a| &a.value) else { return false };
-            let [param] = params.as_slice() else { return false };
-            let ClosureBody::Expr { expr } = body.as_ref() else { return false };
-            match expr {
-                MExpr::Name { name, .. } if name.text == param.name.text && !name.quoted => None,
-                MExpr::Member { object, property, .. } => match object.as_ref() {
-                    MExpr::Name { name, .. } if name.text == param.name.text => Some(property.clone()),
-                    _ => return false,
-                },
-                _ => return false,
+                _ => return SortReading::NotYet,
             }
         } else {
             None
@@ -627,16 +651,9 @@ impl<'s> Canon<'s> {
             let last = args.len() - 1;
             args[last].value = name_expr(&direction, at);
         }
-        match key {
-            Some(key) => {
-                let key_at = args[1].value.at();
-                args[1].value = MExpr::Name { name: Name { text: key.text, quoted: true, at: key_at }, at: key_at, field: false };
-            }
-            None if keyed => {
-                args.remove(1);
-            }
-            None => {}
+        if keyed {
+            args.remove(1);
         }
-        true
+        SortReading::Plain
     }
 }

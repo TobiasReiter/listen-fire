@@ -37,7 +37,7 @@ import type { MExpr } from '../parser/expression/tree';
 import { scanName } from '../parser/scan';
 import type { CallNode } from './nested_calls';
 import { since, type LanguageVersion } from '../language_version';
-import { describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
+import { builtinUnder, describeBuiltin, type Builtin } from './standard_library';
 
 /** What a call site can see, asked by whoever has the scope (the checker's
  *  `Scope`, the engine's environment). */
@@ -76,7 +76,7 @@ export function resolveCallee(
   if (spelled !== undefined) return { kind: 'declared', name: spelled };
   // A dotted member (`DATE.TODAY`) is never a bare callee: the expression
   // grammar reads it as a member of its family.
-  const builtin = lookupBuiltin(written);
+  const builtin = builtinUnder(written, languageVersion);
   return builtin !== undefined && !builtin.name.includes('.') ? { kind: 'builtin', builtin } : { kind: 'unknown' };
 }
 
@@ -286,11 +286,15 @@ function describeArgForm(arg: CallArg): string {
  * (`Parser.parseCollectionOp`), said in the same words.
  */
 function collectionReading(call: CallStatement, op: CollectionOp): CallReading {
-  const spelling = call.callee;
-  const configurable = op === 'map' || op === 'filter';
+  // `sort` by a function key is spelled `sort` wherever it is named: the
+  // tree's `SORTBY` is no spelling (`SORT_BY`).
+  const spelling = op === 'sort' ? 'sort' : call.callee;
+  const configurable = op === 'map' || op === 'filter' || op === 'sort';
   const shape = op === 'reduce'
     ? `${spelling}(<collection>, <starting value>, <function>)`
-    : configurable
+    : op === 'sort'
+      ? 'sort(<collection>, <function>) or sort(<collection>, <function>, { order: "desc" })'
+      : configurable
       ? `${spelling}(<collection>, <function>) or ${spelling}(<collection>, { <settings> }, <function>)`
       : `${spelling}(<collection>, <function>)`;
   const refused = (message: string): CallReading => ({
@@ -316,6 +320,9 @@ function collectionReading(call: CallStatement, op: CollectionOp): CallReading {
     init = slot;
   } else if (args.length === 3) {
     const slot = valueSlot(args[1]);
+    if ((typeof slot === 'string' || !slot.raw.trimStart().startsWith('{')) && op === 'sort') {
+      return refused(`'sort' takes its settings as a record written in place, after the function — \`sort(xs, (x) => x.key, { order: "desc" })\``);
+    }
     if (typeof slot === 'string' || !slot.raw.trimStart().startsWith('{')) {
       return refused(
         `'${spelling}' takes its settings as a record written in place, between the collection and the function — \`${spelling}(xs, { onError: "warn", concurrency: 4 }, f)\``,

@@ -322,7 +322,7 @@ impl Checker<'_> {
             .spelling
             .iter()
             .filter(|f| self.spelling_stands(f, Some(&file.path)))
-            .map(crate::diagnostic::of_spelling)
+            .map(|f| crate::diagnostic::of_spelling(&self.settled_spelling(f, Some(&file.path))))
             .collect();
         let surfaced_spelling = own_spelling.into_iter().chain(nested_spelling);
         let symbols = self.scopes.scope(scope).symbols.clone();

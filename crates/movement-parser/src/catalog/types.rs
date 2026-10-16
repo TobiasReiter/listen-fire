@@ -101,6 +101,9 @@ pub enum Scalar {
     File,
     Json,
     Absent,
+    /// What a value that never arrives has (`fail("…")` inside an
+    /// expression, from language version 5): TypeScript's `never`.
+    Never,
 }
 
 impl Scalar {
@@ -114,6 +117,7 @@ impl Scalar {
             Scalar::File => "file",
             Scalar::Json => "json",
             Scalar::Absent => "absent",
+            Scalar::Never => "never",
         }
     }
 }

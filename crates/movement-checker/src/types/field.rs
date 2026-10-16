@@ -24,6 +24,10 @@ pub enum Ty {
     Json,
     /// The type of the `null` literal, and of nothing else.
     Absent,
+    /// What a value that never arrives has (`fail("…")`, from language
+    /// version 5): TypeScript's `never`. It fits every type, and a union with
+    /// it is the union's other members.
+    Never,
     List { of: Rc<Ty>, unordered: bool },
     /// A slot is `None` where its value could not be typed.
     Tuple { of: Rc<Vec<Option<Ty>>>, rest: Option<TupleRest> },
@@ -74,6 +78,7 @@ impl Ty {
                 Scalar::File => Ty::File,
                 Scalar::Json => Ty::Json,
                 Scalar::Absent => Ty::Absent,
+                Scalar::Never => Ty::Never,
             },
             SchemaFieldType::Composite(composite) => match composite {
                 Composite::List { of, unordered } => Ty::List { of: Rc::new(Ty::from_schema(of)), unordered: *unordered == Some(true) },
@@ -109,6 +114,7 @@ impl Ty {
             Ty::File => return SchemaFieldType::Scalar(Scalar::File),
             Ty::Json => return SchemaFieldType::Scalar(Scalar::Json),
             Ty::Absent => return SchemaFieldType::Scalar(Scalar::Absent),
+            Ty::Never => return SchemaFieldType::Scalar(Scalar::Never),
             Ty::List { of, unordered } => Composite::List { of: Box::new(of.to_schema()), unordered: unordered.then_some(true) },
             Ty::Tuple { of, rest } => Composite::Tuple {
                 of: of.iter().map(|slot| slot.as_ref().map(Ty::to_schema)).collect(),
@@ -256,6 +262,7 @@ impl Parts {
             Ty::File => "file".to_string(),
             Ty::Json => "json".to_string(),
             Ty::Absent => "absent".to_string(),
+            Ty::Never => "never".to_string(),
             Ty::List { of, unordered } => format!("list{}({})", if *unordered { "~" } else { "" }, self.part_of(of)?),
             Ty::Tuple { of, rest } => {
                 let slots = of.iter().map(|slot| self.slot(slot.as_ref())).collect::<Result<Vec<_>, _>>()?.join(",");
@@ -315,6 +322,8 @@ pub fn type_too_large_message(name: &str) -> String {
 pub fn maybe_absent(ty: Ty) -> Ty {
     match ty {
         Ty::MaybeAbsent(_) => ty,
+        // `never | null` is `null`.
+        Ty::Never => Ty::Absent,
         other => Ty::MaybeAbsent(Rc::new(other)),
     }
 }
@@ -498,6 +507,8 @@ pub fn value_union(types: &[Ty]) -> Option<Ty> {
         }
         match strip_absent(ty) {
             Ty::Absent => *absent = true,
+            // A member that never arrives adds nothing (TypeScript's `never`).
+            Ty::Never => {}
             Ty::Union(members) => members.iter().for_each(|m| add(m, absent, flat)),
             present => flat.push(present.clone()),
         }
@@ -505,7 +516,7 @@ pub fn value_union(types: &[Ty]) -> Option<Ty> {
     types.iter().for_each(|t| add(t, &mut absent, &mut flat));
     let with_absence = |one: Ty| if absent { maybe_absent(one) } else { one };
     if flat.is_empty() {
-        return Some(Ty::Absent);
+        return Some(if !absent && types.iter().all(|t| matches!(t, Ty::Never)) { Ty::Never } else { Ty::Absent });
     }
     let records = flat.iter().filter(|m| is_record(Some(m))).count();
     if records > 0 {
@@ -679,6 +690,19 @@ pub fn tuple_slot_type(of: &[Option<Ty>], rest: Option<&TupleRest>, index: Optio
 
 /// `coalesceType`: `COALESCE(a, b, …)` typed as TypeScript types `a ?? b`.
 pub fn coalesce_type(args: &[Option<Ty>]) -> Option<Ty> {
+    // An argument that never arrives ends the search: `coalesce(x,
+    // fail("…"))` is `x` present, or the run has failed there, and nothing
+    // after it is reached.
+    if let Some(cut) = args.iter().position(|t| matches!(t, Some(Ty::Never))) {
+        if cut == 0 {
+            return Some(Ty::Never);
+        }
+        return match coalesce_type(&args[..cut])? {
+            Ty::MaybeAbsent(of) => Some(Rc::unwrap_or_clone(of)),
+            Ty::Absent => Some(Ty::Never),
+            other => Some(other),
+        };
+    }
     let typed: Vec<&Ty> = args.iter().map(Option::as_ref).collect::<Option<_>>()?;
     let valued: Vec<&Ty> = typed.into_iter().filter(|t| !matches!(t, Ty::Absent)).collect();
     if valued.is_empty() {
@@ -754,7 +778,8 @@ fn member_base_kind(ty: &Ty) -> BaseKind {
         Ty::Datetime => BaseKind::Datetime,
         Ty::File => BaseKind::File,
         Ty::Json => BaseKind::Json,
-        Ty::Absent => BaseKind::Absent,
+        // Never written: it fits wherever absence does.
+        Ty::Absent | Ty::Never => BaseKind::Absent,
     }
 }
 
@@ -763,7 +788,7 @@ pub fn holds_one_value(ty: &Ty) -> bool {
     match strip_absent(ty) {
         Ty::List { .. } | Ty::Tuple { .. } | Ty::Json => false,
         Ty::Union(members) => members.iter().all(holds_one_value),
-        Ty::Text | Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::File | Ty::Absent | Ty::Dict { .. } | Ty::Enum { .. } | Ty::Record(_) | Ty::MaybeAbsent(_) => true,
+        Ty::Text | Ty::Number | Ty::Boolean | Ty::Date | Ty::Datetime | Ty::File | Ty::Absent | Ty::Never | Ty::Dict { .. } | Ty::Enum { .. } | Ty::Record(_) | Ty::MaybeAbsent(_) => true,
     }
 }
 
@@ -794,7 +819,7 @@ pub fn comparison_category(ty: &Ty) -> ComparisonCategory {
         Ty::Number => ComparisonCategory::Numeric,
         Ty::Boolean => ComparisonCategory::Boolean,
         Ty::Json => ComparisonCategory::Opaque,
-        Ty::Absent => ComparisonCategory::Absent,
+        Ty::Absent | Ty::Never => ComparisonCategory::Absent,
         Ty::Union(members) => {
             let categories: Vec<ComparisonCategory> = members.iter().map(comparison_category).collect();
             if categories.iter().all(|c| *c == categories[0]) { categories[0] } else { ComparisonCategory::Structural }
@@ -1257,7 +1282,8 @@ pub fn closure_not_data_message(where_: &str) -> String {
 pub fn field_assignable(source: &Ty, target: &Ty) -> bool {
     let source = strip_absent(source);
     let target = strip_absent(target);
-    if field_type_equals(source, target) {
+    // A value that never arrives fits wherever it is written (TypeScript's `never`).
+    if matches!(source, Ty::Never) || field_type_equals(source, target) {
         return true;
     }
     if let (Some(s), Some(t)) = (closure_of_record(source), closure_of_record(target)) {
@@ -1349,6 +1375,7 @@ pub fn closure_assignable(source: &ClosureType, target: &ClosureType) -> bool {
 pub fn describe_field_type(ty: &Ty) -> String {
     match ty {
         Ty::Absent => "null".to_string(),
+        Ty::Never => "never".to_string(),
         Ty::Text => "text".to_string(),
         Ty::Number => "number".to_string(),
         Ty::Boolean => "boolean".to_string(),

@@ -217,8 +217,13 @@ pub(crate) enum Reading {
     Members(MembersExpression),
 }
 
-/// `lookupBuiltin(written)` for the forms this module runs.
-fn builtin_form(written: &str) -> Option<Option<CollectionOp>> {
+/// `lookupBuiltin(written)` for the forms this module runs; from version 5
+/// also `sort` by a function key, which the tree calls `SORTBY`
+/// (movement_parser::surface::table::SORT_BY).
+fn builtin_form(written: &str, language_version: u32) -> Option<Option<CollectionOp>> {
+    if language_version >= 5 && written == movement_parser::surface::table::SORT_BY {
+        return Some(Some(CollectionOp::Sort));
+    }
     match crate::js::to_lower_case(written).as_str() {
         "map" => Some(Some(CollectionOp::Map)),
         "filter" => Some(Some(CollectionOp::Filter)),
@@ -238,6 +243,7 @@ pub(crate) fn spelling(op: CollectionOp) -> &'static str {
         CollectionOp::Reduce => "REDUCE",
         CollectionOp::Groupby => "GROUPBY",
         CollectionOp::Keyby => "KEYBY",
+        CollectionOp::Sort => "sort",
     }
 }
 
@@ -248,7 +254,7 @@ pub(crate) fn reading(call: &CallStatement, binds: bool, language_version: u32) 
     if binds || language_version < 3 {
         return Ok(None);
     }
-    let Some(form) = builtin_form(&call.callee) else { return Ok(None) };
+    let Some(form) = builtin_form(&call.callee, language_version) else { return Ok(None) };
     if call.args.iter().any(|arg| arg.name().is_some()) {
         return Err(format!("'{}' is a built-in, and a built-in takes its arguments in order", call.callee));
     }
@@ -258,7 +264,7 @@ pub(crate) fn reading(call: &CallStatement, binds: bool, language_version: u32) 
         };
         return Ok(Some(Reading::Members(MembersExpression { type_: type_.clone(), span: call.span, type_span: *span })));
     };
-    let configurable = matches!(op, CollectionOp::Map | CollectionOp::Filter);
+    let configurable = matches!(op, CollectionOp::Map | CollectionOp::Filter | CollectionOp::Sort);
     let counts: &[usize] = if op == CollectionOp::Reduce {
         &[3]
     } else if configurable {
@@ -342,6 +348,28 @@ fn written_settings(config: &ast::ExprSlot) -> Result<(OnError, Option<f64>, Opt
     Ok((on_error, concurrency, initial))
 }
 
+/// `readSortSettings`: whether `sort`'s settings record (version 5) asks for
+/// descending order; none written is ascending.
+pub(crate) fn sort_descending(config: Option<&ast::ExprSlot>) -> Result<bool, String> {
+    let Some(config) = config else { return Ok(false) };
+    let lowered = movement_parser::expr::parse_expression(&config.raw)
+        .ok()
+        .and_then(|tree| movement_parser::lowering::lower_expression(&tree, &config.raw).ok())
+        .ok_or("settings that do not lower")?;
+    let Expression::Object { entries } = lowered else { return Err("settings that are not a record".into()) };
+    let mut descending = false;
+    for entry in entries {
+        match entry {
+            ObjectMember::Entry { key, value: Expression::Static { value: StaticValue::String(order) } } if key == "order" && (order == "asc" || order == "desc") => {
+                descending = order == "desc";
+            }
+            ObjectMember::Entry { key, .. } => return Err(format!("the setting '{key}'")),
+            ObjectMember::Spread(_) => return Err("a spread in the settings".into()),
+        }
+    }
+    Ok(descending)
+}
+
 /// `readCollectionConfig` for `all`'s settings record (`ALL_SETTING_KEYS`):
 /// `onError` and `concurrency` only, every arm at once (`arms`) unless it
 /// says otherwise.
@@ -395,7 +423,8 @@ impl Run<'_> {
             (Some(init), CollectionOp::Reduce) => self.evaluate_slot(init, scope).await?.value,
             _ => Js::Null,
         };
-        let (on_error, concurrency, initial) = settings(expr.config.as_ref()).map_err(|problem| {
+        let read = if expr.op == CollectionOp::Sort { sort_descending(expr.config.as_ref()).map(|_| (OnError::Error, 1.0, 1.0)) } else { settings(expr.config.as_ref()) };
+        let (on_error, concurrency, initial) = read.map_err(|problem| {
             Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}")))
         })?;
         let function = self.collection_function(&expr.r#fn, spelling, scope, &origin.fn_path(expr))?;
@@ -530,7 +559,7 @@ impl Run<'_> {
             return Err(self.park_collection_op(run, &answers, parked.len()).await);
         }
         let flat: Vec<Option<Js>> = answers.into_iter().map(Option::flatten).collect();
-        self.collection_answer(run.op.op.op, spelling, &run.members, &flat, &run.init, run.source_trail.clone())
+        self.collection_answer(&run.op.op, spelling, &run.members, &flat, &run.init, run.source_trail.clone())
     }
 
     /// One member: its function's body in a scope of its own off what the
@@ -634,6 +663,7 @@ impl Run<'_> {
                     CollectionOp::Reduce => "reduce",
                     CollectionOp::Groupby => "groupby",
                     CollectionOp::Keyby => "keyby",
+                    CollectionOp::Sort => "sort",
                 };
                 let mut members = vec![("op", Js::str(op)), ("source", value_at(0)?)];
                 if expr.init.is_some() {
@@ -721,10 +751,23 @@ impl Run<'_> {
 
     /// `collectionAnswer`: the op's value from every member's answer, in
     /// member order.
-    fn collection_answer(&self, op: CollectionOp, spelling: &str, members: &[Js], answers: &[Option<Js>], init: &Js, source: Trail) -> Result<Binding, Stop> {
+    fn collection_answer(&self, expr: &CollectionOpExpression, spelling: &str, members: &[Js], answers: &[Option<Js>], init: &Js, source: Trail) -> Result<Binding, Stop> {
+        let op = expr.op;
         let transformed = Trail { origins: source.origins.clone(), direct: None };
         let value = |value: Js, trail: Trail| Ok(Binding::Value(ValueBinding { value, trail: Some(trail), many: false }));
         match op {
+            // The members in the order of what the function answered for
+            // each (`sortByOrderKey`, as `SORT` orders): stable, a missing key
+            // last whichever the order. The members keep their own trail.
+            CollectionOp::Sort => {
+                let descending = sort_descending(expr.config.as_ref()).map_err(|problem| {
+                    Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("'{spelling}' was given settings it cannot run with — the checker should have caught this: {problem}")))
+                })?;
+                let keys: Vec<Js> = answers.iter().map(|a| a.clone().unwrap_or(Js::Null)).collect();
+                let direction = if descending { movement_parser::lowering::expression::OrderDirection::Desc } else { movement_parser::lowering::expression::OrderDirection::Asc };
+                let order = crate::order_limit::sort_by_order_key(&keys, Some(direction));
+                value(Js::array(order.into_iter().map(|i| members[i].clone()).collect()), source)
+            }
             CollectionOp::Reduce => value(carried(answers, init), transformed),
             CollectionOp::Map => value(Js::array(answers.iter().flatten().cloned().collect()), transformed),
             // The language's own truthiness: the function returns a boolean.

@@ -54,7 +54,7 @@ pub fn guide_type(type_: Option<&FieldType>) -> String {
     let Some(type_) = type_ else { return "text".into() };
     match type_ {
         FieldType::Scalar(scalar) => match scalar {
-            Scalar::Text | Scalar::Number | Scalar::Boolean | Scalar::Date | Scalar::Datetime | Scalar::File | Scalar::Json | Scalar::Absent => {
+            Scalar::Text | Scalar::Number | Scalar::Boolean | Scalar::Date | Scalar::Datetime | Scalar::File | Scalar::Json | Scalar::Absent | Scalar::Never => {
                 scalar.name().into()
             }
         },

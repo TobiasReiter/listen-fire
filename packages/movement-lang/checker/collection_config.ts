@@ -186,3 +186,48 @@ function readWidth(
   }
   return value.value;
 }
+
+/** What `sort`'s `order` setting may be. */
+export const SORT_ORDERS = ['asc', 'desc'] as const;
+
+export type SortSettingsReading = { ok: true; descending: boolean } | { ok: false; problems: string[] };
+
+/**
+ * `sort`'s settings record (`sort(xs, f, { order: "desc" })`, language version
+ * 5) — its one setting, written down. The checker and both engines read it
+ * through this (the Rust twins: `read_sort_settings`, `sort_descending`).
+ */
+export function readSortSettings(record: Expression): SortSettingsReading {
+  const one = 'Its one setting is order — "asc" (the default) or "desc"';
+  if (record.type !== 'object') {
+    return { ok: false, problems: [`'sort' takes its settings as a record written in place — \`sort(xs, (x) => x.key, { order: "desc" })\`. ${one}`] };
+  }
+  const problems: string[] = [];
+  let order: Expression | undefined;
+  for (const entry of record.entries) {
+    if (isObjectSpread(entry)) {
+      problems.push(`'sort' takes its settings written out one by one — a spread ('...') is not accepted here. ${one}`);
+      continue;
+    }
+    if (entry.key !== 'order') {
+      problems.push(`'sort' has no setting '${entry.key}'${didYouMean(entry.key, ['order'])}. ${one}`);
+      continue;
+    }
+    if (order !== undefined) {
+      problems.push(`'sort' is given 'order' twice — write it once`);
+      continue;
+    }
+    order = entry.value;
+  }
+  let descending = false;
+  if (order !== undefined) {
+    if (order.type !== 'static' || typeof order.value !== 'string') {
+      problems.push(`'sort': 'order' is written down, not worked out — write order: "asc" or "desc"`);
+    } else if (order.value !== 'asc' && order.value !== 'desc') {
+      problems.push(`'sort': 'order' has no value "${order.value}"${didYouMean(order.value, SORT_ORDERS)} — write "asc" or "desc"`);
+    } else {
+      descending = order.value === 'desc';
+    }
+  }
+  return problems.length > 0 ? { ok: false, problems } : { ok: true, descending };
+}

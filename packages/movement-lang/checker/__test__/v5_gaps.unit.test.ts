@@ -67,7 +67,7 @@ describe('language version 5: the spine gaps', () => {
     same('  if (t == null) {\n    fail("no text")\n  }\n  y = Text.upper(t)', '  if t == NULL {\n    ERROR("no text")\n  }\n  y = UPPER(t)');
     same('  fail("always")', '  ERROR("always")');
     expect(codes(v4('  fail("x")'), 4)).toContain('MOV_FUNCTION_UNKNOWN');
-    expect(codes(v5('  x = coalesce(t, fail("no"))'), 5)).toContain('MOV_V5_NOT_YET');
+    expect(codes(v5('  x = coalesce(t, fail("no"))'), 5)).not.toContain('MOV_V5_NOT_YET');
   });
 
   it('is inside the if parentheses narrows', () => {

@@ -648,6 +648,11 @@ impl Parse {
             FieldType::Scalar(Scalar::Number) => self.nullable(value, "number", |v| matches!(v, Js::Number(n) if n.is_finite())),
             FieldType::Scalar(Scalar::Boolean) => self.nullable(value, "boolean", |v| matches!(v, Js::Bool(_))),
             FieldType::Scalar(Scalar::Json) => value.clone(),
+            // No value is one that never arrives.
+            FieldType::Scalar(Scalar::Never) => {
+                self.expected("nothing", value);
+                Js::Undefined
+            }
             FieldType::Scalar(Scalar::Absent) => {
                 if !matches!(value, Js::Null) {
                     self.expected("null", value);

@@ -18,6 +18,11 @@ export interface SpellingFinding {
    *  name itself, which the checker, holding the scopes, decides. The span
    *  starts where the call does. */
   unlessBound?: string;
+  /** The fix keeps the meaning only where the program binds none of these
+   *  names at the finding (an old `SORT` key read an outer variable of its
+   *  name first): the checker, holding the scopes, unmarks it there. The span
+   *  starts where the call does. */
+  unsafeIfBound?: string[];
   /** A call with named arguments (from version 5 they are positional): its
    *  arguments as written, for the checker to order by the callee's
    *  parameters. The finding stands only where the checker can. */

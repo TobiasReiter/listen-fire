@@ -18,7 +18,8 @@ pub enum Shape {
     SettingsLast,
     /// `reduce(xs, f, init)` is `REDUCE(xs, init, f)`.
     ReduceOrder,
-    /// `sort(xs, (r) => r.k, { order })` is ``SORT(xs, `k`, DESC)``.
+    /// `sort(xs, { order })` is `SORT(xs, DESC)`; with a key function,
+    /// `sort(xs, f, { order })` is `SORTBY(xs, { order }, f)` (`SORT_BY`).
     SortKey,
     /// `ai(p, { tier: t })` is `AI(p, t)`.
     AiTier,
@@ -71,6 +72,11 @@ const fn new(canonical: &'static str, v5: &'static str, shape: Shape) -> Spellin
 
 use Shape::*;
 
+/// The tree's name for `sort` by a function key (language version 5): a
+/// collection op like `GROUPBY`. No version reads it as written — under 5 it
+/// is an old spelling of `sort`, and before 5 no built-in has the name.
+pub const SORT_BY: &str = "SORTBY";
+
 /// §2.1 core words and §2.2 namespaces, in the design's order.
 pub const SPELLINGS: &[Spelling] = &[
     // Core words: always there, never qualified.
@@ -83,6 +89,7 @@ pub const SPELLINGS: &[Spelling] = &[
     row("EXISTS", "exists", ExistsWalk),
     row("COALESCE", "coalesce", Same),
     row("SORT", "sort", SortKey),
+    old(SORT_BY, "sort", SettingsLast),
     row("MEMBERS", "members", Same),
     row("AI", "ai", AiTier),
     row("ERROR", "fail", Same),

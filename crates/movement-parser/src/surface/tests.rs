@@ -92,20 +92,45 @@ fn core_words() {
     same("count(co-[t:Team]->)", "COUNT(co-[t:Team]->)");
     same("first(xs)", "FIRST(xs)");
     same("only(co-[t:Team]->)", "ONLY(co-[t:Team]->)");
-    same("sort(rows, (r) => r.score, { order: \"desc\" })", "SORT(rows, `score`, DESC)");
     same("coalesce(a, b, \"unknown\")", "COALESCE(a, b, \"unknown\")");
     same("members(<Thesis>)", "MEMBERS(<Thesis>)");
     same("ai(prompt, { tier: \"careful\" })", "AI(prompt, \"careful\")");
     same("callback(() => `Chase`(company))", "callback(`Chase`(company))");
-    // `fail` is a statement; inside an expression it is not yet read.
-    assert_eq!(findings("coalesce(only(xs), fail(\"no #ops\"))")[0].code, super::NOT_YET_CODE);
+    // Inside an expression `fail` is the call `ERROR(…)`, a value that never
+    // arrives (the checkers type it; versions 1–4 never read it as one).
+    assert!(findings("coalesce(only(xs), fail(\"no #ops\"))").is_empty());
+    assert_eq!(lowered("coalesce(only(xs), fail(\"no #ops\"))", 5), lowered("COALESCE(ONLY(xs), ERROR(\"no #ops\"))", 4));
     // `sort` with no key, by its order alone, or keyed by the member itself.
     same("sort(xs)", "SORT(xs)");
     same("sort(xs, { order: \"desc\" })", "SORT(xs, DESC)");
     same("sort(xs, { order: \"asc\" })", "SORT(xs, asc)");
     assert_eq!(lowered("sort(xs, (x) => x, { order: \"desc\" })", 5), lowered("SORT(xs, DESC)", 4));
-    same("sort(rows, (r) => r.`Added At`)", "SORT(rows, `Added At`)");
-    assert_eq!(findings("sort(rows, (r) => Text.lower(r.name))")[0].code, super::NOT_YET_CODE);
+}
+
+/// `sort` by a function key reads as the collection op `SORTBY`, its
+/// settings where `MAP`'s go; the old field key is rewritten to a function,
+/// its fix safe only where no variable of the field's name is in scope.
+#[test]
+fn sort_by_a_function_key() {
+    for (new, canonical) in [
+        ("sort(rows, (r) => Text.lower(r.name), { order: \"desc\" })", "SORTBY(rows, { order: \"desc\" }, (r) => LOWER(r.name))"),
+        ("sort(rows, (r) => r.score)", "SORTBY(rows, (r) => r.score)"),
+        ("sort(rows, key)", "SORTBY(rows, key)"),
+        ("first(sort(rows, (r) => r.score))", "FIRST(SORTBY(rows, (r) => r.score))"),
+    ] {
+        assert!(findings(new).is_empty(), "{new}: {:?}", findings(new));
+        assert_eq!(lowered(new, 5), lowered(canonical, 4), "{new}");
+    }
+    // The tree's name is no spelling: under 5 it is refused as `sort`'s.
+    assert_eq!(upgraded("SORTBY(rows, { order: \"desc\" }, (r) => r.score)"), "sort(rows, (r) => r.score, { order: \"desc\" })");
+    // The old field key: a function reading the field, not marked safe on
+    // its own — the checker marks it where no variable hides the field.
+    let old = findings("SORT(rows, `score`, DESC)");
+    assert_eq!(old[0].edits.as_ref().unwrap()[0].text, "sort(rows, (r) => r.score, { order: \"desc\" })");
+    assert!(old[0].safe);
+    assert_eq!(old[0].unsafe_if_bound, vec!["score".to_string(), "r".to_string()]);
+    assert_eq!(upgraded("SORT(rows, `Added At`)"), "sort(rows, (r) => r.`Added At`)");
+    assert!(findings("SORT(xs, DESC)")[0].unsafe_if_bound.is_empty());
 }
 
 #[test]

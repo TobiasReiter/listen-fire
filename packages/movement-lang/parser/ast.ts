@@ -1014,7 +1014,7 @@ export interface CollectionOpExpression {
   span: Span;
 }
 
-export type CollectionOp = 'map' | 'filter' | 'reduce' | 'groupby' | 'keyby';
+export type CollectionOp = 'map' | 'filter' | 'reduce' | 'groupby' | 'keyby' | 'sort';
 
 /**
  * `MEMBERS(<Thesis>)` — a closed type's values, as a list in the order they

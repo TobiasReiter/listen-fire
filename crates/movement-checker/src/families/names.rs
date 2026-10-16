@@ -294,6 +294,28 @@ impl Checker<'_> {
         }
     }
 
+    /// Notes an old `SORT(xs, name)` at `at` (language version 5) where a
+    /// name its rewrite would read differently is in scope
+    /// (`SpellingFinding::unsafe_if_bound`, the key and the parameter `r`).
+    pub fn note_sort_key(&self, key: &str, at: Loc, scope: ScopeId) {
+        if since(self.version, 5) && [key, "r"].iter().any(|name| !matches!(self.scopes.resolve(scope, name), Resolution::Unknown)) {
+            self.bound_sort_keys.borrow_mut().insert((self.imports.current_path().map(str::to_string), at.line, at.col));
+        }
+    }
+
+    /// A spelling finding of the file at `path` as it stands: its fix not
+    /// marked safe where a name it must not meet is in scope (`note_sort_key`).
+    pub fn settled_spelling(&self, finding: &SpellingFinding, path: Option<&str>) -> SpellingFinding {
+        let mut finding = finding.clone();
+        if !finding.unsafe_if_bound.is_empty()
+            && self.bound_sort_keys.borrow().contains(&(path.map(str::to_string), finding.span.start.line, finding.span.start.col))
+            && let Some(fix) = &mut finding.fix
+        {
+            fix.safe = false;
+        }
+        finding
+    }
+
     /// Whether a spelling finding of the file at `path` (none for the root)
     /// stands: one about a call's bare name does not where the program binds
     /// that name.

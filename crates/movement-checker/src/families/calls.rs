@@ -63,7 +63,7 @@ pub fn builtin_form(builtin: &Builtin) -> BuiltinForm {
     match builtin.name {
         "MEMBERS" => BuiltinForm::Members,
         "EXTRACT" | "EXTRACTONE" => BuiltinForm::Extract,
-        "MAP" | "FILTER" | "REDUCE" | "GROUPBY" | "KEYBY" => BuiltinForm::Collection,
+        "MAP" | "FILTER" | "REDUCE" | "GROUPBY" | "KEYBY" | "SORTBY" => BuiltinForm::Collection,
         _ => BuiltinForm::Value,
     }
 }
@@ -524,7 +524,7 @@ impl Checker<'_> {
         if let Some(id) = self.scopes.resolve_function(scope, written).filter(|_| !since(self.version, 5)) {
             return Callee::Declared(self.scopes.symbol(id).name.clone());
         }
-        match lookup_builtin(written) {
+        match crate::types::stdlib::builtin_under(written, self.version) {
             Some(builtin) if !builtin.name.contains('.') => Callee::Builtin(builtin),
             _ => Callee::Unknown,
         }
@@ -808,11 +808,17 @@ fn collection_reading(call: &CallStatement, builtin: &Builtin) -> CallReading {
         "FILTER" => CollectionOp::Filter,
         "REDUCE" => CollectionOp::Reduce,
         "GROUPBY" => CollectionOp::Groupby,
+        "SORTBY" => CollectionOp::Sort,
         _ => CollectionOp::Keyby,
     };
-    let configurable = matches!(op, CollectionOp::Map | CollectionOp::Filter);
+    // `sort` by a function key is spelled `sort` wherever it is named: the
+    // tree's `SORTBY` is no spelling (movement_parser::surface::table::SORT_BY).
+    let spelling = if op == CollectionOp::Sort { "sort" } else { spelling.as_str() };
+    let configurable = matches!(op, CollectionOp::Map | CollectionOp::Filter | CollectionOp::Sort);
     let shape = if op == CollectionOp::Reduce {
         format!("{spelling}(<collection>, <starting value>, <function>)")
+    } else if op == CollectionOp::Sort {
+        "sort(<collection>, <function>) or sort(<collection>, <function>, { order: \"desc\" })".to_string()
     } else if configurable {
         format!("{spelling}(<collection>, <function>) or {spelling}(<collection>, {{ <settings> }}, <function>)")
     } else {
@@ -837,6 +843,9 @@ fn collection_reading(call: &CallStatement, builtin: &Builtin) -> CallReading {
     } else if args.len() == 3 {
         match value_slot(&args[1]) {
             Ok(slot) if slot.raw.trim_start().starts_with('{') => config = Some(slot.clone()),
+            _ if op == CollectionOp::Sort => {
+                return refused("'sort' takes its settings as a record written in place, after the function — `sort(xs, (x) => x.key, { order: \"desc\" })`".to_string());
+            }
             _ => {
                 return refused(format!(
                     "'{spelling}' takes its settings as a record written in place, between the collection and the function — `{spelling}(xs, {{ onError: \"warn\", concurrency: 4 }}, f)`"
@@ -1168,6 +1177,9 @@ impl Checker<'_> {
             }
         }
         let key = sort_key_of(expr);
+        if let (Some(MExpr::Name { name, .. }), MExpr::Call { at, .. }) = (key, expr) {
+            self.note_sort_key(&name.text, at_.span_of(*at).start, scope);
+        }
         // A resource hop's WHERE reads the resource's own fields by bare name.
         let resource_wheres: Vec<&MExpr> = match expr {
             MExpr::Path { hops, .. } => hops.iter().filter(|h| crate::families::extraction::is_resource_hop(h)).filter_map(|h| h.where_.as_ref()).collect(),

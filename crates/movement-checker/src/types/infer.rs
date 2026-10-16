@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 use movement_parser::ast::Span;
+use movement_parser::version::since;
 use movement_parser::surface::phrase::spell_word;
 use movement_parser::catalog::types::EdgeSchema;
 use movement_parser::lowering::expression::{
@@ -25,7 +26,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use super::field::*;
 use super::narrowing::{PresenceProof, exists_subject, is_position_terminal, negative_presence_proofs, presence_proofs};
 use super::position::{EdgeLanding, Position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
-use super::stdlib::{bare_coercer_returns, lookup_builtin, movement_meta_key_type, stdlib_function_by_id};
+use super::stdlib::{bare_coercer_returns, movement_meta_key_type, stdlib_function_by_id};
 
 /// What the typing asks of the scope it types in (the TypeScript's
 /// `ExpressionTyping` options).
@@ -727,13 +728,25 @@ impl<'a> Typing<'a> {
                     presence_proofs(condition, &mut type_of)
                 };
                 let then_ty = self.with_presence(&proofs, position, |t, narrowed| t.infer_at(then, narrowed));
-                let else_ty = self.infer_at(else_, position);
+                // From version 5 the `else` arm knows the condition false, as
+                // TypeScript's does (`x == null ? fail("…") : x.name`).
+                let else_ty = if since(self.version, 5) {
+                    let negated = {
+                        let mut type_of = |o: &Expression| self.infer_at(o, position);
+                        negative_presence_proofs(condition, &mut type_of)
+                    };
+                    self.with_presence(&negated, position, |t, narrowed| t.infer_at(else_, narrowed))
+                } else {
+                    self.infer_at(else_, position)
+                };
                 // A closure is not data (language version 5): IF chooses
                 // between values, never between closures.
                 if self.refuse_closure_operands(&[(then, then_ty.as_ref()), (else_, else_ty.as_ref())], expr, &format!("chosen by {}", spell_word("IF … THEN … ELSE … END", self.version))) {
                     return (None, vec![condition_ty, then_ty, else_ty]);
                 }
                 let ty = match (&then_ty, &else_ty) {
+                    // An arm that never arrives leaves the other's type.
+                    (Some(Ty::Never), other) | (other, Some(Ty::Never)) => other.clone(),
                     (Some(a), Some(b)) if field_type_equals(a, b) => then_ty.clone(),
                     _ => None,
                 };
@@ -873,7 +886,7 @@ impl<'a> Typing<'a> {
         if let Some(spec) = stdlib_function_by_id(function) {
             return spec.returns.ty();
         }
-        let builtin = if function == "extractone" && self.version < 3 { None } else { lookup_builtin(function) };
+        let builtin = if function == "extractone" && self.version < 3 { None } else { super::stdlib::builtin_under(&function.to_ascii_uppercase(), self.version) };
         match builtin {
             Some(builtin) if self.version >= 3 => builtin.returns.ty(),
             _ => None,

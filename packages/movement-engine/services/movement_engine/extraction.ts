@@ -2372,6 +2372,10 @@ export function zodForFieldType(type: FieldType | undefined, ctx?: FieldCoercion
       // it), so this never reaches an extraction schema; listed to keep the
       // switch total.
       return z.null();
+    // A value that never arrives (`fail` written as a value): checker-only,
+    // like `absent`; no value fits it.
+    case 'never':
+      return z.never();
     // `maybeAbsent` is a checker-only type (a race receipt read); it never
     // reaches extraction, but keep the switch total against its present shape.
     case 'maybeAbsent':
@@ -2651,6 +2655,7 @@ export function describeGuideType(type: FieldType | undefined): string {
     case 'file':
     case 'json':
     case 'absent':
+    case 'never':
       return variant.kind;
     case 'list':
       return `list of ${describeGuideType(variant.of)}`;

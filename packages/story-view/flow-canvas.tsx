@@ -530,6 +530,7 @@ const COLLECTION_SENTENCE: Record<
   reduce: "Folds these down into a single value:",
   groupby: "Groups these by a key, several to a key:",
   keyby: "Files these under a key, one to a key:",
+  sort: "Puts these in order, by what each answers:",
 };
 
 function StepNode({ step }: { step: Step }) {

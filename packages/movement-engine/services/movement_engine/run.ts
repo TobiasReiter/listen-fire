@@ -73,6 +73,7 @@ import {
   DiagnosticCodes,
   MovementParseError,
   readCollectionConfig,
+  readSortSettings,
   ALL_SETTING_KEYS,
   SEQUENTIAL_COLLECTION_SETTINGS,
   writtenArms,
@@ -192,6 +193,7 @@ import type {
   SuppliedSurface,
 } from 'movement-lang';
 import type { Expression, TraversalStep } from '#shared/expression/types';
+import { compareOrderValues } from '#shared/expression/order_limit';
 import {
   isPurePredicate,
   leafReadKey,
@@ -254,6 +256,7 @@ import {
   hopFilterKeeps,
   isCallableBinding,
   isDictValue,
+  failureMessage,
   isFileUnreadable,
   hopMemberGate,
   binding,
@@ -1881,6 +1884,26 @@ function memberValue(run: Pick<CollectionRun, 'expr' | 'spelling'>, outcome: Bod
   return outcome.value.kind === 'value' ? outcome.value.value : outcome.value;
 }
 
+/** Whether `sort`'s settings record (version 5) asks for descending order;
+ *  none written is ascending (`readSortSettings`). */
+function sortDescending(expr: CollectionOpExpression, spelling: string): boolean {
+  if (expr.config === undefined) return false;
+  let reading: ReturnType<typeof readSortSettings>;
+  try {
+    reading = readSortSettings(expressionOfSlot(expr.config));
+  } catch (e) {
+    if (!(e instanceof BridgeError)) throw e;
+    reading = { ok: false, problems: [e.message] };
+  }
+  if (!reading.ok) {
+    throw new MovementEngineError(
+      'MOVENG_RUNTIME',
+      `'${spelling}' was given settings it cannot run with — the checker should have caught this: ${reading.problems.join('; ')}`,
+    );
+  }
+  return reading.descending;
+}
+
 /** The op's value, from every member's answer, in MEMBER order. */
 function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]): Binding {
   const { expr, spelling, members } = run;
@@ -1897,6 +1920,25 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
       return answer?.kept === true ? [answer.value] : [];
     });
     return binding({ kind: 'value', value: out, provenance: transformed(run.sourceProvenance) });
+  }
+  if (expr.op === 'sort') {
+    // The members in the order of what the function answered for each
+    // (`sortByOrderKey`, as `SORT` orders): stable, a missing key last
+    // whichever the order. The members keep their own trail.
+    const sign = sortDescending(expr, spelling) ? -1 : 1;
+    const keyed = members.map((member, index) => {
+      const answer = answers[index];
+      return { member, index, key: answer?.kept === true ? answer.value : null };
+    });
+    keyed.sort((a, b) => {
+      const byKey = compareOrderValues(a.key, b.key);
+      if (byKey !== 0) {
+        if (a.key === null || a.key === undefined || b.key === null || b.key === undefined) return byKey;
+        return byKey * sign;
+      }
+      return a.index - b.index;
+    });
+    return binding({ kind: 'value', value: keyed.map((k) => k.member), provenance: run.sourceProvenance });
   }
   if (expr.op === 'filter') {
     // Truthiness is the language's own: the function returns a boolean, and
@@ -5030,6 +5072,12 @@ class Interpreter {
    *  run. */
   private collectionSettings(expr: CollectionOpExpression, spelling: string): CollectionRunSettings {
     if (expr.config === undefined) return SEQUENTIAL_COLLECTION_SETTINGS;
+    // `sort`'s settings say its order, read where it answers; it runs one
+    // member at a time.
+    if (expr.op === 'sort') {
+      sortDescending(expr, spelling);
+      return SEQUENTIAL_COLLECTION_SETTINGS;
+    }
     let reading: ReturnType<typeof readCollectionConfig>;
     try {
       reading = readCollectionConfig(expressionOfSlot(expr.config), spelling);
@@ -7311,8 +7359,7 @@ class Interpreter {
     env: Environment,
   ): Promise<void> {
     const { value } = await this.evaluateSlot(statement.message, { env });
-    const message = typeof value === 'string' ? value : String(value ?? '');
-    throw new MovementEngineError('MOVENG_ERROR', message);
+    throw new MovementEngineError('MOVENG_ERROR', failureMessage(value));
   }
 
   private async evaluateCondition(slot: ExprSlot, env: Environment): Promise<boolean> {
