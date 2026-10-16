@@ -310,7 +310,7 @@ impl Run<'_> {
         if self.version() < 3 {
             return false;
         }
-        scope.resolve_function(written).is_some() || (!written.contains('.') && is_call_form(written))
+        scope.resolve_function(written, self.version()).is_some() || (!written.contains('.') && is_call_form(written))
     }
 
     /// `stageNestedCalls`: the slot with its nested calls run, as the text
@@ -459,7 +459,7 @@ impl Run<'_> {
 
     /// Whether `callee` resolves to the built-in `COALESCE`.
     fn is_coalesce(&self, callee: &str, scope: &Scope) -> bool {
-        scope.resolve(callee).is_none() && scope.resolve_function(callee).is_none() && crate::js::to_upper_case(callee) == "COALESCE"
+        scope.resolve(callee).is_none() && scope.resolve_function(callee, self.version()).is_none() && crate::js::to_upper_case(callee) == "COALESCE"
     }
 
     /// `evaluateStagedCondition`: a condition holding nested calls, its

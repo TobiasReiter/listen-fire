@@ -148,6 +148,7 @@ function checkerDiagnostic(d: AuthoringDiagnostic): Diagnostic {
               span: { start: { line: e.line, col: e.col }, end: { line: e.endLine, col: e.endCol } },
               text: e.text,
             })),
+            ...(d.fix.safe === true ? { safe: true as const } : {}),
           },
         }
       : {}),
@@ -159,11 +160,17 @@ function checkerDiagnostic(d: AuthoringDiagnostic): Diagnostic {
  * none is left (movement-lang `upgradeSourceAsync`), and return the rewrite
  * with the validation of its final text. A text with nothing to rewrite costs
  * the one validation it always needed.
+ *
+ * Only fixes marked safe (they provably keep the meaning) are applied unless
+ * `all` is set — which only a person's explicit upgrade may ask; the deploy
+ * check's advance never does. An unapplied fix stays on its diagnostic, so
+ * the caller lists it.
  */
 export async function rewriteForUpgrade(input: {
   movement: MovementRow;
   to: LanguageVersion;
   validate: ValidateUnder;
+  all?: boolean;
 }): Promise<UpgradeRewrite> {
   const validations = new Map<string, Pick<TeamMovementValidation, 'diagnostics' | 'gaps'>>();
   const result = await upgradeSourceAsync(input.movement.source, async (source) => {
@@ -173,7 +180,7 @@ export async function rewriteForUpgrade(input: {
     });
     validations.set(source, validation);
     return validation.diagnostics.map(checkerDiagnostic);
-  });
+  }, { all: input.all === true });
   const validation = validations.get(result.source);
   if (validation === undefined) throw new Error('the upgrade loop answered a text it never validated');
   return { source: result.source, changed: result.changed, validation };
@@ -675,6 +682,9 @@ export async function upgradeMovement(input: {
   teamId: string;
   id: string;
   acknowledge: boolean;
+  /** Apply every fix offered, also those not proved to keep the meaning
+   *  (listed on the diagnostics otherwise). */
+  applyAllFixes?: boolean;
   validate?: ValidateUnder;
   advance?: Advance;
 }): Promise<UpgradeMovementResult> {
@@ -690,7 +700,12 @@ export async function upgradeMovement(input: {
     return { status: 'already_current', ...base, diagnostics: [] };
   }
 
-  const rewrite = await rewriteForUpgrade({ movement, to, validate: input.validate ?? validateUnderLiveCatalog });
+  const rewrite = await rewriteForUpgrade({
+    movement,
+    to,
+    validate: input.validate ?? validateUnderLiveCatalog,
+    all: input.applyAllFixes === true,
+  });
   const { validation } = rewrite;
   const diagnostics = blockingDiagnostics(validation.diagnostics);
   const shown = { ...base, ...(rewrite.changed ? { upgradedSource: rewrite.source } : {}) };

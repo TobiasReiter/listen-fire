@@ -192,6 +192,15 @@ pub struct WalkField {
     pub at: At,
     pub message: String,
     pub edits: Vec<(At, String)>,
+    /// A field read through the alias whose name the scope also binds: the
+    /// canonical tree reads both as the one bare name, which the engine takes
+    /// as the variable (MOV_SHADOWED_NAME, refused until the tree tells them
+    /// apart).
+    pub shadowed: bool,
+    /// The fix keeps the meaning: an alias read for a name the scope does not
+    /// bind is the field the bare name read. Moving a postfix WHERE into the
+    /// hop is not proved to.
+    pub safe: bool,
 }
 
 /// Every bare field in `tree`'s walks, `binds` telling whether the scope
@@ -215,6 +224,16 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
             if let Some(order) = &hop.order_by {
                 bare_names(&order.key, &mut names);
             }
+            for n in &names {
+                let written = src.text(n.at.start, n.at.end);
+                if written != n.text && written != format!("`{}`", n.text) && binds(&n.text) {
+                    let message = format!(
+                        "`{written}` reads the field '{}', but a variable named '{}' is in scope, and inside a hop's brackets the run cannot yet tell the two apart: it would read the variable. Rename the variable",
+                        n.text, n.text
+                    );
+                    out.push(WalkField { at: n.at, message, edits: Vec::new(), shadowed: true, safe: false });
+                }
+            }
             let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, src, binds)).collect();
             let Some(first) = fields.first() else { continue };
             let (alias, insert) = alias_of(hop, &here, src, binds);
@@ -224,7 +243,7 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
             let message = format!(
                 "from language version 5 a walk's field is read through the hop's alias: `{alias}.{written}` (a bare name inside the brackets is a variable from outside the walk)"
             );
-            out.push(WalkField { at: first.at, message, edits });
+            out.push(WalkField { at: first.at, message, edits, shadowed: false, safe: true });
         }
     }
     if let MExpr::Where { source, predicate, at } = e
@@ -261,7 +280,7 @@ fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -
         } else {
             Vec::new()
         };
-        out.push(WalkField { at: *at, message, edits });
+        out.push(WalkField { at: *at, message, edits, shadowed: false, safe: false });
     }
     for child in expression_children(e) {
         walk_visit(child, &here, src, binds, out);
@@ -313,9 +332,13 @@ impl Checker<'_> {
         };
         for f in found {
             let span = place.span_of(f.at);
+            if f.shadowed {
+                self.push(Diagnostic::error(codes::SHADOWED_NAME, f.message, span));
+                continue;
+            }
             let edits: Option<Vec<serde_json::Value>> =
                 f.edits.iter().map(|(at, text)| place.extent_of(*at).map(|span| serde_json::json!({ "span": span, "text": text }))).collect();
-            let fix = edits.filter(|e| !e.is_empty()).map(|edits| serde_json::json!({ "edits": edits }));
+            let fix = edits.filter(|e| !e.is_empty()).map(|edits| if f.safe { serde_json::json!({ "edits": edits, "safe": true }) } else { serde_json::json!({ "edits": edits }) });
             self.push(Diagnostic { fix, ..Diagnostic::error(codes::V5_SPELLING, f.message, span) });
         }
     }
@@ -336,8 +359,15 @@ pub fn positional(
     let first = named.args.first()?;
     let params = orders.get(&(first.at.line, first.at.col))?;
     let ordered: Option<Vec<&str>> = params.iter().map(|p| named.args.iter().find(|a| &a.name == p).map(|a| a.text.as_str())).collect();
-    let fix = ordered
-        .filter(|o| o.len() == named.args.len())
-        .map(|o| serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }] }));
+    // Safe when the arguments keep the order they were written in: moved,
+    // they would be evaluated in another order.
+    let kept = |o: &Vec<&str>| o.iter().zip(&named.args).all(|(t, a)| *t == a.text);
+    let fix = ordered.filter(|o| o.len() == named.args.len()).map(|o| {
+        if kept(&o) {
+            serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }], "safe": true })
+        } else {
+            serde_json::json!({ "edits": [{ "span": finding.span, "text": o.join(", ") }] })
+        }
+    });
     Some(Diagnostic { fix, ..Diagnostic::error(&finding.code, finding.message.clone(), finding.span) })
 }

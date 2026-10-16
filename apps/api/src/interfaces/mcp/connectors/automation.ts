@@ -303,7 +303,7 @@ function automationConnectorOptions(): McpRouterOptions {
       },
       upgradeAutomation: {
         description:
-          "Move a saved automation onto the current version of the automation language. Every automation is written in a language version (listAutomations' `languageVersion`); an older one keeps running exactly as it always has, and `upgradeDiagnostics` in listAutomations lists what stands between it and the current version. This rewrites the old spellings (and any other repair the checker is certain of) into the current version's, validates the rewritten text under it, and returns `status`, `from`, `to`, `diagnostics`, `upgradedSource` (the rewritten text, when the rewrite changed it; the diagnostics' lines are its lines) and a `message`: `blocked` — repair what the diagnostics name in the saved text (in either spelling: the rewrite runs again on every call), save, and call again; `needs_acknowledgement` — it has no errors, and a second call with acknowledge: true saves the rewritten text and moves it (any diagnostics listed are constructs whose meaning changes under the new version: read them and edit what assumed the old behaviour first); `upgraded`; `already_current`; `unverified` — a connected system could not be read. Nothing changes without acknowledge: true. An error blocks. A diagnostic marking a construct whose meaning changed between versions is shown, and the caller acknowledges it to move up. Any other warning (a cost note, say) reads the same under both and never blocks, so it is not listed.",
+          "Move a saved automation onto the current version of the automation language. Every automation is written in a language version (listAutomations' `languageVersion`); an older one keeps running exactly as it always has, and `upgradeDiagnostics` in listAutomations lists what stands between it and the current version. This rewrites the old spellings into the current version's by the rewrites proved to keep the meaning (applyAllFixes: true applies the others too), validates the rewritten text under it, and returns `status`, `from`, `to`, `diagnostics`, `upgradedSource` (the rewritten text, when the rewrite changed it; the diagnostics' lines are its lines) and a `message`: `blocked` — repair what the diagnostics name in the saved text (in either spelling: the rewrite runs again on every call), save, and call again; `needs_acknowledgement` — it has no errors, and a second call with acknowledge: true saves the rewritten text and moves it (any diagnostics listed are constructs whose meaning changes under the new version: read them and edit what assumed the old behaviour first); `upgraded`; `already_current`; `unverified` — a connected system could not be read. Nothing changes without acknowledge: true. An error blocks. A diagnostic marking a construct whose meaning changed between versions is shown, and the caller acknowledges it to move up. Any other warning (a cost note, say) reads the same under both and never blocks, so it is not listed.",
         inputSchema: {
           automation: z.string().describe('The automation id (from listAutomations).'),
           acknowledge: z
@@ -311,6 +311,12 @@ function automationConnectorOptions(): McpRouterOptions {
             .optional()
             .describe(
               'Move it once the check is clean. Without it, the call only reports. Pass it after telling the user what upgrading changes (nothing, when the result is clean).',
+            ),
+          applyAllFixes: z
+            .boolean()
+            .optional()
+            .describe(
+              'Also apply the rewrites not proved to keep the meaning. Without it only the safe ones are applied, and a blocking diagnostic that still carries a fix shows such a rewrite: read it (and tell the user what it changes) before passing this.',
             ),
           team: z.string().optional().describe('Team id (see instructions).'),
         },

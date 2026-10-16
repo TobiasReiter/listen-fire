@@ -520,7 +520,8 @@ impl Checker<'_> {
         if !since(self.version, 3) {
             return Callee::Unknown;
         }
-        if let Some(id) = self.scopes.resolve_function(scope, written) {
+        // From version 5 letter case counts (design §4.1): only 3 and 4 fold it.
+        if let Some(id) = self.scopes.resolve_function(scope, written).filter(|_| !since(self.version, 5)) {
             return Callee::Declared(self.scopes.symbol(id).name.clone());
         }
         match lookup_builtin(written) {

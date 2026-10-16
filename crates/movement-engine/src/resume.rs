@@ -491,7 +491,7 @@ impl Run<'_> {
     }
 
     fn op_of_call(&self, call: &CallStatement, scope: &Rc<Scope>) -> Result<Option<movement_parser::ast::CollectionOpExpression>, Stop> {
-        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee).is_some();
+        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee, self.version()).is_some();
         match crate::collection::reading(call, binds, self.version()) {
             Ok(Some(crate::collection::Reading::Collection(op))) => Ok(Some(op)),
             Ok(_) => Ok(None),

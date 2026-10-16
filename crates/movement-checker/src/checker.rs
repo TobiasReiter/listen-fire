@@ -475,10 +475,10 @@ impl<'c> Checker<'c> {
         Bound::default()
     }
 
-    /// The name a call or a listen fires: from version 3 a function written
-    /// in another letter case is the same function.
+    /// The name a call or a listen fires: under versions 3 and 4 a function
+    /// written in another letter case is the same function; from 5 case counts.
     pub fn callee_name(&self, written: &str, scope: ScopeId) -> String {
-        if matches!(self.scopes.resolve(scope, written), Resolution::Found(_)) || self.version < 3 {
+        if matches!(self.scopes.resolve(scope, written), Resolution::Found(_)) || self.version < 3 || self.version >= 5 {
             return written.to_string();
         }
         self.scopes.resolve_function(scope, written).map(|id| self.scopes.symbol(id).name.clone()).unwrap_or_else(|| written.to_string())

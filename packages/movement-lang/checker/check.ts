@@ -2125,8 +2125,11 @@ function positional(f: SpellingFinding, named: NamedCall, orders: ReadonlyMap<st
   if (params === undefined) return [];
   const ordered = params.map(p => named.args.find(a => a.name === p)?.text);
   const texts = ordered.flatMap(t => (t === undefined ? [] : [t]));
+  // Safe when the arguments keep the order they were written in: moved,
+  // they would be evaluated in another order.
+  const kept = texts.every((t, i) => t === named.args[i]?.text);
   const fix = texts.length === params.length && texts.length === named.args.length
-    ? { edits: [{ span: f.span, text: texts.join(', ') }] }
+    ? { edits: [{ span: f.span, text: texts.join(', ') }], ...(kept ? { safe: true as const } : {}) }
     : undefined;
   return [{ code: f.code, message: f.message, span: f.span, ...(fix ? { fix } : {}) }];
 }
@@ -6503,7 +6506,11 @@ class Checker {
         const span = place.extentOf(e.at);
         return span !== undefined ? [{ span, text: e.text }] : [];
       });
-      const fix = placed.length > 0 && placed.length === found.edits.length ? { edits: placed } : undefined;
+      if (found.shadowed === true) {
+        this.report(DiagnosticCodes.SHADOWED_NAME, found.message, place.spanOf(found.at));
+        continue;
+      }
+      const fix = placed.length > 0 && placed.length === found.edits.length ? { edits: placed, ...(found.safe === true ? { safe: true as const } : {}) } : undefined;
       this.reportWithFix({ code: 'MOV_V5_SPELLING', message: found.message, span: place.spanOf(found.at), ...(fix ? { fix } : {}) });
     }
   }
@@ -13879,7 +13886,8 @@ class Checker {
     if (before(this.languageVersion, 5)) return `${adapter}(${args.map(a => `${a.name}: ${a.value}`).join(', ')})`;
     const using = args.find(a => a.name === credential);
     const settings = args.filter(a => a.name !== credential).map(a => `${a.name.replace(/_(.)/g, (_, c: string) => c.toUpperCase())}: ${a.value}`);
-    return `connect ${adapter}${using !== undefined ? ` using ${using.value}` : ''}${settings.length > 0 ? ` { ${settings.join(', ')} }` : ''}`;
+    const name = adapter === '…' || /^[A-Za-z_][A-Za-z0-9_]*$/.test(adapter) ? adapter : `\`${adapter}\``;
+    return `connect ${name}${using !== undefined ? ` using ${using.value}` : ''}${settings.length > 0 ? ` { ${settings.join(', ')} }` : ''}`;
   }
 
   /**

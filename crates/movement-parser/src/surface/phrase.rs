@@ -83,8 +83,12 @@ pub fn connection(c: &Connection, version: u32) -> String {
     text
 }
 
-/// A name as source: bare when it is an identifier, backticked otherwise.
+/// A name as source: bare when it is an identifier (or the placeholder `…`),
+/// backticked otherwise (`native-valuations`).
 fn name_source(name: &str) -> String {
+    if name == "…" {
+        return name.to_string();
+    }
     let mut chars = name.chars();
     let ident = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if ident { name.to_string() } else { format!("`{name}`") }

@@ -50,7 +50,7 @@ impl Run<'_> {
         if scope.resolve(written).is_some() || self.version() < 3 {
             return written.to_string();
         }
-        scope.resolve_function(written).unwrap_or_else(|| written.to_string())
+        scope.resolve_function(written, self.version()).unwrap_or_else(|| written.to_string())
     }
 
     /// Whether `written` names a plugin (`runCall`'s `callee.kind ===

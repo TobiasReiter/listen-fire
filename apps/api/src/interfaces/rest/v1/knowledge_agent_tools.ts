@@ -950,6 +950,7 @@ const validateMovementHandler: RequestHandler = jsonHandler(
 const upgradeMovementSchema = z.object({
   automation: z.string(),
   acknowledge: z.boolean().optional(),
+  applyAllFixes: z.boolean().optional(),
   team: z.string().optional(),
 });
 
@@ -962,7 +963,7 @@ function upgradeMessage(result: Exclude<UpgradeMovementResult, { status: 'not_fo
       return `Already written in ${to}, the current language version. Nothing to do.`;
     case 'blocked':
       return rewritten
-        ? `Not upgraded: its old spellings rewrite into ${to} automatically (upgradedSource), and the rewritten text still reports the diagnostics listed — their lines are upgradedSource's, each with its source line. Repair them in the saved text (either spelling), save, and call this again.`
+        ? `Not upgraded: its old spellings rewrite into ${to} automatically (upgradedSource), and the rewritten text still reports the diagnostics listed — their lines are upgradedSource's, each with its source line. A diagnostic that carries a fix has a rewrite not proved to keep the meaning: read it, and call again with applyAllFixes: true to apply those too. Repair the others in the saved text (either spelling), save, and call this again.`
         : `Not upgraded: under ${to} it reports the diagnostics listed. Repair them (validate the edited text under languageVersion ${result.to.version}), save, and call this again.`;
     case 'unverified':
       return result.detail !== undefined
@@ -987,6 +988,7 @@ const upgradeMovementHandler: RequestHandler = jsonHandler(
       teamId: await resolveToolTeam(input.team),
       id: input.automation,
       acknowledge: input.acknowledge === true,
+      applyAllFixes: input.applyAllFixes === true,
     });
     if (result.status === 'not_found') {
       return { error: `No automation '${input.automation}' in this team.` };

@@ -409,6 +409,9 @@ impl Parser {
         use crate::surface::{Fix, SPELLING_CODE, SourceEdit, SpellingFinding};
         let fix = (!edits.is_empty()).then(|| Fix {
             edits: edits.into_iter().map(|(s, e, text)| SourceEdit { span: self.span_between(s, e), text }).collect(),
+            // A statement form's respelling (`fail`, `connect`, `if (…)`,
+            // `function`, an import): the statement reads into its old tree.
+            safe: true,
         });
         crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None, unless_bound: None });
     }

@@ -45,6 +45,8 @@ pub struct Finding {
     /// name itself (§4.2, a call goes to what is in scope), which the
     /// checker, holding the scopes, decides.
     pub unless_bound: Option<String>,
+    /// The fix provably keeps the program's meaning (`Fix::safe`).
+    pub safe: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +91,12 @@ pub struct NamedArg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fix {
     pub edits: Vec<SourceEdit>,
+    /// Safe to apply automatically: the rewrite provably keeps the program's
+    /// meaning (its text reads into the tree the old text did). Only such
+    /// fixes move a pin on their own (the deploy check's advance); the others
+    /// are applied by a person's upgrade, or listed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub safe: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,7 +195,7 @@ pub fn place(f: &Finding, src: &Utf16, start: Loc) -> SpellingFinding {
         code: f.code.to_string(),
         message: f.message.clone(),
         span: span(f.at),
-        fix: f.edits.as_ref().map(|edits| Fix { edits: edits.iter().map(|e| SourceEdit { span: span(e.at), text: e.text.clone() }).collect() }),
+        fix: f.edits.as_ref().map(|edits| Fix { edits: edits.iter().map(|e| SourceEdit { span: span(e.at), text: e.text.clone() }).collect(), safe: f.safe }),
         named: None,
         unless_bound: f.unless_bound.clone(),
     }

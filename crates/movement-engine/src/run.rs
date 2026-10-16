@@ -1125,7 +1125,7 @@ impl Run<'_> {
     fn reads_as_builtin(&self, call: &ast::CallStatement, scope: &Scope) -> bool {
         self.version() >= 3
             && scope.resolve(&call.callee).is_none()
-            && scope.resolve_function(&call.callee).is_none()
+            && scope.resolve_function(&call.callee, self.version()).is_none()
             && !call.callee.contains('.')
             && crate::stdlib::is_flat_builtin(&call.callee)
     }
@@ -1137,7 +1137,7 @@ impl Run<'_> {
         match file.resolve(callee) {
             Some(Binding::Movement(_) | Binding::Plugin(_)) => true,
             Some(_) => false,
-            None => self.version() >= 3 && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if js::to_lower_case(&m.name) == js::to_lower_case(callee))),
+            None => (3..5).contains(&self.version()) && program.statements.iter().any(|s| matches!(s, Statement::Movement(m) if js::to_lower_case(&m.name) == js::to_lower_case(callee))),
         }
     }
 
@@ -1571,7 +1571,7 @@ impl Run<'_> {
     /// `readCallIn`'s reading of a call of a collection op or `MEMBERS` (a
     /// built-in from version 3, when the program binds no such name).
     fn call_reading(&self, call: &ast::CallStatement, scope: &Scope) -> Result<Option<crate::collection::Reading>, Stop> {
-        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee).is_some();
+        let binds = scope.resolve(&call.callee).is_some() || scope.resolve_function(&call.callee, self.version()).is_some();
         crate::collection::reading(call, binds, self.version())
             .map_err(|refusal| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("{refusal} — the checker should have caught this"))))
     }

@@ -783,11 +783,12 @@ impl<'a> Typing<'a> {
                 (movement_meta_key_type(meta), Vec::new())
             }
             Expression::EdgeProperty { property_type_id } => {
-                if let Some(declared) = lookup_property_type(position, property_type_id) {
-                    return (Some(declared), Vec::new());
-                }
+                // Binding first, field second: the engine's order (typing.ts).
                 if let Some(bound) = self.scalar_type(property_type_id) {
                     return (Some(bound), Vec::new());
+                }
+                if let Some(declared) = lookup_property_type(position, property_type_id) {
+                    return (Some(declared), Vec::new());
                 }
                 if self.env.name_in_scope(property_type_id) || instance_of_ref(position).is_some_and(|i| i.schema.edges_carry_properties == Some(true)) {
                     return (None, Vec::new());

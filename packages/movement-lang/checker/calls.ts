@@ -60,7 +60,7 @@ export type CalleeResolution =
   | { kind: 'unknown' };
 
 /** Look a written callee up: the program's own scopes first, exactly as
- *  written, then (from version 3) a function in any letter case, then the
+ *  written, then (versions 3 and 4) a function in any letter case, then the
  *  standard library. A local therefore shadows a built-in, as TypeScript's
  *  does; a FUNCTION cannot, because declaring one under a built-in's name is
  *  refused. */
@@ -71,7 +71,8 @@ export function resolveCallee(
 ): CalleeResolution {
   if (scope.binds(written)) return { kind: 'declared', name: written };
   if (!since(languageVersion, 3)) return { kind: 'unknown' };
-  const spelled = scope.functionSpelled(written);
+  // From version 5 letter case counts (design §4.1): only 3 and 4 fold it.
+  const spelled = since(languageVersion, 5) ? undefined : scope.functionSpelled(written);
   if (spelled !== undefined) return { kind: 'declared', name: spelled };
   // A dotted member (`DATE.TODAY`) is never a bare callee: the expression
   // grammar reads it as a member of its family.

@@ -155,12 +155,19 @@ impl<'s> Canon<'s> {
         if self.whole(at) { text } else { format!("({text})") }
     }
 
+    /// An old spelling whose rewrite reads into the tree the old one did.
     fn old(&mut self, at: At, message: String, edit: Option<Edit>) {
-        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None });
+        self.old_kept(at, message, edit, true);
+    }
+
+    /// An old spelling, `safe` saying whether its rewrite provably keeps the
+    /// meaning (`Fix::safe`).
+    fn old_kept(&mut self, at: At, message: String, edit: Option<Edit>, safe: bool) {
+        self.findings.push(Finding { code: SPELLING_CODE, message, at, edits: edit.map(|e| vec![e]), unless_bound: None, safe });
     }
 
     fn not_yet(&mut self, at: At, message: String) {
-        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None, unless_bound: None });
+        self.findings.push(Finding { code: NOT_YET_CODE, message, at, edits: None, unless_bound: None, safe: false });
     }
 
     pub fn visit(&mut self, e: &mut MExpr, in_walk: bool) {
@@ -220,7 +227,7 @@ impl<'s> Canon<'s> {
             self.text(At { start: bang.start + 1, end: bang.end }).trim_start(),
             rest.trim_start()
         );
-        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]), unless_bound: None };
+        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]), unless_bound: None, safe: true };
         let same_bang = |f: &Finding| f.code == SPELLING_CODE && f.at.start == bang.start && f.message.starts_with("from language version 5 `!`");
         match self.findings.iter_mut().find(|f| same_bang(f)) {
             Some(inner) => *inner = finding,
@@ -372,7 +379,8 @@ impl<'s> Canon<'s> {
                 None => format!("`{ns}` has no member `{member}`"),
             };
             let edits = near.map(|s| vec![Edit { at: callee_at, text: s.v5.to_string() }]);
-            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits, unless_bound: None });
+            // A did-you-mean is a guess at what was meant, never safe.
+            self.findings.push(Finding { code: UNKNOWN_MEMBER_CODE, message, at: callee_at, edits, unless_bound: None, safe: false });
             return;
         }
         // An old spelling: refused with its rewrite.
@@ -483,7 +491,18 @@ impl<'s> Canon<'s> {
                 ),
             },
         };
-        self.old(at, message, edit);
+        // Proved only where the rewrite reads into the old tree. Not proved:
+        // `== null` / `!= null` (a comparison where the old text was a call,
+        // which the engines answer alike only for what sem1 pinned), and a
+        // sort key read off a bare name (the old key read an outer variable
+        // of that name first).
+        let safe = match row.shape {
+            Shape::NullTest => false,
+            Shape::ExistsWalk => args.first().is_some_and(|arg| is_walk(&arg.value)),
+            Shape::SortKey => !matches!(args.get(1).map(|a| &a.value), Some(MExpr::Name { name, .. }) if !name.text.eq_ignore_ascii_case("ASC") && !name.text.eq_ignore_ascii_case("DESC")),
+            _ => true,
+        };
+        self.old_kept(at, message, edit, safe);
     }
 
     /// Reads a v5 call into the canonical one.

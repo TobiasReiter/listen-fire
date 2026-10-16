@@ -343,7 +343,7 @@ fn admit_file<'p>(
         .collect();
     let plugin_named = |callee: &str| names_plugin(&plugins, callee, language_version);
     // `resolveCallee`: as written, or from version 3 in any letter case.
-    let movement_named = |callee: &str| spelled(&movement_names, String::as_str, callee, language_version >= 3).is_some();
+    let movement_named = |callee: &str| spelled(&movement_names, String::as_str, callee, folds_case(language_version)).is_some();
     // File-level values, in source order: each may read the ones before it.
     // One already refused binds its name and is not walked again.
     let mut file_values: Vec<(&str, Option<&RValue>)> = Vec::new();
@@ -1369,7 +1369,7 @@ impl<'p> Callees<'p> {
         if let Some(name) = spelled(self.closures.keys(), String::as_str, written, false) {
             return Some(name);
         }
-        if bound_exactly {
+        if bound_exactly || !folds_case(self.language_version) {
             return None;
         }
         let folded = crate::js::to_lower_case(written);
@@ -1396,7 +1396,7 @@ impl<'p> Callees<'p> {
         let bound = bound_in_body || self.file_scope.contains(written);
         let named: Vec<(&str, &'p ast::MovementDeclaration)> =
             self.movements.iter().map(|m| (m.name.as_str(), *m)).chain(self.imported.iter().map(|i| (i.local.as_str(), i.declaration))).collect();
-        spelled(&named, |(name, _)| name, written, self.language_version >= 3 && !bound).map(|(_, m)| *m)
+        spelled(&named, |(name, _)| name, written, folds_case(self.language_version) && !bound).map(|(_, m)| *m)
     }
 
     /// `isValueParam`. The checker holds every argument to a value
@@ -3667,7 +3667,7 @@ impl Names<'_> {
         }
         let declared = self.binds(&call.callee)
             || self.language_version < 3
-            || spelled(self.movements, String::as_str, &call.callee, true).is_some();
+            || spelled(self.movements, String::as_str, &call.callee, folds_case(self.language_version)).is_some();
         if declared {
             return Err("function_call".into());
         }
@@ -3686,7 +3686,7 @@ impl Names<'_> {
         args.iter().all(|arg| match arg {
             CallArg::Expr { name: None, .. } => true,
             CallArg::Call { name: None, call } => {
-                let function = self.binds(&call.callee) || self.plugin(&call.callee) || spelled(self.movements, String::as_str, &call.callee, true).is_some();
+                let function = self.binds(&call.callee) || self.plugin(&call.callee) || spelled(self.movements, String::as_str, &call.callee, folds_case(self.language_version)).is_some();
                 function
                     || (call.args.iter().all(|arg| arg.name().is_none())
                         && ((crate::nested::is_call_form(&call.callee) && call.expression.is_some()) || self.positional_values(&call.args)))
@@ -5125,6 +5125,12 @@ fn selection(expr: &Expression) -> Option<(&str, &[TraversalStep])> {
 /// written, or from version 3 in any letter case, as a function does.
 fn names_plugin(plugins: &BTreeSet<String>, callee: &str, language_version: u32) -> bool {
     spelled(plugins, String::as_str, callee, language_version >= 3).is_some()
+}
+
+/// Whether a call's name is read in any letter case: under versions 3 and 4;
+/// from 5 letter case counts (design §4.1).
+fn folds_case(language_version: u32) -> bool {
+    (3..5).contains(&language_version)
 }
 
 /// `resolveCallee`'s lookup, the one every name a call resolves goes

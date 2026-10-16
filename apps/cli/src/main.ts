@@ -2,7 +2,7 @@
 //
 //   lf init [dir]
 //   lf check
-//   lf upgrade [--check]
+//   lf upgrade [--check] [--all]
 //   lf run --event <file.json> [--dry-run]
 //   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]…
 //   lf resume [<run-id>]
@@ -24,7 +24,7 @@ import { upgradeProject } from './upgrade';
 const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs> [options]
   lf init [dir]
   lf check
-  lf upgrade [--check]   rewrite the movement files into the current language version (--check: print the diff, write nothing)
+  lf upgrade [--check] [--all]   rewrite the movement files into the current language version by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   lf run --event <file.json> [--dry-run]
   lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
   lf resume [<run-id>]
@@ -41,6 +41,7 @@ async function main(argv: string[]): Promise<number> {
       ephemeral: { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       check: { type: 'boolean', default: false },
+      all: { type: 'boolean', default: false },
       event: { type: 'string' },
       webhook: { type: 'string' },
       body: { type: 'string' },
@@ -83,7 +84,7 @@ async function main(argv: string[]): Promise<number> {
       const session = await checkingSession(values.dir);
       if (session === undefined) return 1;
       try {
-        const report = upgradeProject(session, { checkOnly: values.check });
+        const report = upgradeProject(session, { checkOnly: values.check, all: values.all });
         for (const line of report.lines) process.stdout.write(`${line}\n`);
         return report.left > 0 || (values.check && report.changed > 0) ? 1 : 0;
       } finally {

@@ -57,8 +57,9 @@ export interface AuthoringDiagnostic {
    *  checked, on an upgrade check (the checker's `Diagnostic.upgrade`). */
   upgrade?: true;
   /** The exact rewrite that resolves it (also spelled out in `message`):
-   *  replace each 1-based range with `text`; an empty range inserts. */
-  fix?: { edits: AuthoringEdit[] };
+   *  replace each 1-based range with `text`; an empty range inserts. `safe`:
+   *  it provably keeps the meaning, so an upgrade may apply it unasked. */
+  fix?: { edits: AuthoringEdit[]; safe?: true };
 }
 
 export interface AuthoringEdit {
@@ -104,6 +105,7 @@ function toAuthoringDiagnostic(
               endCol: edit.span.end.col,
               text: edit.text,
             })),
+            ...(diagnostic.fix.safe === true ? { safe: true as const } : {}),
           },
         }
       : {}),

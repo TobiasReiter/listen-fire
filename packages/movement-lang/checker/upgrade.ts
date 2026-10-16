@@ -42,6 +42,16 @@ export interface UpgradeResult {
   /** False when the fixes kept producing new ones past the pass limit — a
    *  bug in some fix, reported rather than looped on. */
   settled: boolean;
+  /** Among `remaining`, those whose fix was offered but not applied: it is
+   *  not marked safe (`DiagnosticFix.safe`) and `all` was not asked for. A
+   *  person reads these and decides. */
+  held: Diagnostic[];
+}
+
+export interface UpgradeOptions {
+  /** Apply every fix offered, not only those marked safe. Never for an
+   *  advance nobody asked for (the deploy check's). */
+  all?: boolean;
 }
 
 /** One fix per pass per place is safe; a well-behaved upgrade settles in a
@@ -58,10 +68,10 @@ function standing(diagnostics: Diagnostic[]): Diagnostic[] {
  * skipping any fix that overlaps one already taken (it is reported again
  * against the rewritten text). A fix is taken whole or not at all.
  */
-function fixesToApply(diagnostics: Diagnostic[]): DiagnosticFix[] {
+function fixesToApply(diagnostics: Diagnostic[], options: UpgradeOptions): DiagnosticFix[] {
   const offered = standing(diagnostics)
     .map((d) => d.fix)
-    .filter((fix): fix is DiagnosticFix => fix !== undefined && fix.edits.length > 0);
+    .filter((fix): fix is DiagnosticFix => fix !== undefined && fix.edits.length > 0 && (options.all === true || fix.safe === true));
   const extent = (fix: DiagnosticFix): Span => ({
     start: fix.edits.map((e) => e.span.start).reduce((a, b) => (compareLoc(a, b) <= 0 ? a : b)),
     end: fix.edits.map((e) => e.span.end).reduce((a, b) => (compareLoc(a, b) >= 0 ? a : b)),
@@ -105,8 +115,8 @@ interface Pass {
 
 /** One pass: what the check said, and the text after its fixes — or, when it
  *  offered none, the verdict. */
-function pass(source: string, diagnostics: Diagnostic[]): Pass {
-  const fixes = fixesToApply(diagnostics);
+function pass(source: string, diagnostics: Diagnostic[], options: UpgradeOptions): Pass {
+  const fixes = fixesToApply(diagnostics, options);
   if (fixes.length === 0) return { source, applied: 0, remaining: standing(diagnostics) };
   const rewritten = applyFix(source, { edits: fixes.flatMap((f) => f.edits) });
   // A fix that rewrites to the same text would loop forever.
@@ -115,11 +125,11 @@ function pass(source: string, diagnostics: Diagnostic[]): Pass {
 }
 
 /** Upgrade `source` by `check`'s fixes (see the top of this file). */
-export function upgradeSource(source: string, check: UpgradeCheck): UpgradeResult {
+export function upgradeSource(source: string, check: UpgradeCheck, options: UpgradeOptions = {}): UpgradeResult {
   let text = source;
   let applied = 0;
   for (let i = 0; i < MAX_PASSES; i++) {
-    const step = pass(text, check(text));
+    const step = pass(text, check(text), options);
     if (step.remaining !== undefined) return result(source, text, applied, step.remaining, true);
     text = step.source;
     applied += step.applied;
@@ -129,11 +139,11 @@ export function upgradeSource(source: string, check: UpgradeCheck): UpgradeResul
 
 /** `upgradeSource` over a check that answers asynchronously (the API's,
  *  which reads the team's connected systems). */
-export async function upgradeSourceAsync(source: string, check: AsyncUpgradeCheck): Promise<UpgradeResult> {
+export async function upgradeSourceAsync(source: string, check: AsyncUpgradeCheck, options: UpgradeOptions = {}): Promise<UpgradeResult> {
   let text = source;
   let applied = 0;
   for (let i = 0; i < MAX_PASSES; i++) {
-    const step = pass(text, await check(text));
+    const step = pass(text, await check(text), options);
     if (step.remaining !== undefined) return result(source, text, applied, step.remaining, true);
     text = step.source;
     applied += step.applied;
@@ -142,7 +152,8 @@ export async function upgradeSourceAsync(source: string, check: AsyncUpgradeChec
 }
 
 function result(original: string, source: string, applied: number, remaining: Diagnostic[], settled: boolean): UpgradeResult {
-  return { source, changed: source !== original, applied, remaining, settled };
+  const held = remaining.filter((d) => d.fix !== undefined && d.fix.edits.length > 0);
+  return { source, changed: source !== original, applied, remaining, settled, held };
 }
 
 // ── The checks an upgrade runs on ───────────────────────────────────────────

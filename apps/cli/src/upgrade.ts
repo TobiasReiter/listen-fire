@@ -6,6 +6,10 @@
 // spelling is simply refused until it is rewritten. That is why this checks
 // as `lf check` does (no move-up warnings) — what is left after the rewrite is
 // exactly what `lf check` would then report.
+//
+// Only fixes marked safe (they provably keep the meaning) are applied; the
+// others are listed with their rewrite, for a person to judge, and `--all`
+// applies them too.
 
 import { writeFileSync } from 'node:fs';
 import { relative } from 'node:path';
@@ -21,12 +25,16 @@ export interface UpgradeReport {
   left: number;
 }
 
-export function upgradeProject(session: Session, options: { checkOnly: boolean }): UpgradeReport {
+export function upgradeProject(session: Session, options: { checkOnly: boolean; all?: boolean }): UpgradeReport {
   const lines: string[] = [];
   let changed = 0;
   let left = 0;
   for (const file of session.files) {
-    const result = upgradeSource(file.source, rustCheck({ snapshot: session.catalog, languageVersion: session.project.languageVersion }));
+    const result = upgradeSource(
+      file.source,
+      rustCheck({ snapshot: session.catalog, languageVersion: session.project.languageVersion }),
+      { all: options.all === true },
+    );
     const shown = relative(session.project.root, file.path);
     if (result.changed) {
       changed++;
@@ -36,6 +44,10 @@ export function upgradeProject(session: Session, options: { checkOnly: boolean }
     for (const d of result.remaining) {
       left++;
       lines.push(`${shown}:${d.span.start.line}:${d.span.start.col} ${diagnosticSeverity(d)} ${d.code} ${d.message}`);
+      // A fix not proved to keep the meaning: shown, applied only with --all.
+      if (result.held.includes(d) && d.fix !== undefined) {
+        lines.push(`  fix (not applied, may change meaning; --all applies it): ${d.fix.edits.map((e) => JSON.stringify(e.text)).join(', ')}`);
+      }
     }
     if (!result.settled) {
       left++;

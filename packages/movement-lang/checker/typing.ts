@@ -5407,10 +5407,11 @@ export class ExpressionTyping {
         // types as nothing, and every rule that fires on a type (the
         // ordered-comparison presence rule above all) says nothing about it.
         //
-        // Field first, binding second, where the engine's order is the reverse.
-        // It only differs when a binding SHADOWS a declared field of the target,
-        // which no real movement does, and preferring the binding there would
-        // silently retype existing filters.
+        // Binding first, field second: the engine's order, which is what the
+        // filter means on every version (a binding that shadows a declared
+        // field of the target is read as the binding). From version 5 a field
+        // is read through the hop's alias, and an alias read whose name the
+        // scope binds is refused (`walkFields`), so there the two never meet.
         //
         // A name that is NEITHER is a mistake, and this is the only place that
         // can say so: the name-resolution pass reads a step filter in `field`
@@ -5425,10 +5426,10 @@ export class ExpressionTyping {
         // third surface and the one nothing enumerates: where an instance
         // declares them (`edgesCarryProperties`), an unrecognised name may be
         // the relationship's own fact and stays silent.
-        const declared = lookupPropertyType(position, expr.propertyTypeId);
-        if (declared !== undefined) return declared;
         const bound = this.scalarType(expr.propertyTypeId);
         if (bound !== undefined) return bound;
+        const declared = lookupPropertyType(position, expr.propertyTypeId);
+        if (declared !== undefined) return declared;
         if (this.options.nameInScope?.(expr.propertyTypeId) === true) return undefined;
         if (instanceOfRef(position)?.schema.edgesCarryProperties === true) return undefined;
         return this.readProperty(position, expr.propertyTypeId);
