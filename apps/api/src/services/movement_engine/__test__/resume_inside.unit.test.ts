@@ -345,23 +345,29 @@ describe('an engine suspension inside a MAP member', () => {
     expect(payloadOf(kg.creates)).toEqual({ total: 6 });
   });
 
+  // The parked member (n = 0) fails on resume: ONLY of two items. (ONLY of
+  // none is null, not a failure, and from version 5 `count` counts nulls.)
   it("onError: a resumed member that fails is left out, as when nothing parked", async () => {
-    const h: Harness = {
-      source: program(
-        '',
-        [
-          '  out = MAP([1, 0, 2], { onError: "ignore" }, (n) => {',
-          '    return ONLY([])',
-          '  })',
-          '  write graph-[:note]-> { payload: { n: COUNT(out) } }',
-        ].join('\n'),
-      ),
-      parks: makeParkSink(),
-    };
+    const source = program(
+      '',
+      [
+        '  out = MAP([1, 0, 2], { onError: "ignore" }, (n) => {',
+        '    if (n == 0) {',
+        '      return ONLY([n, n])',
+        '    }',
+        '    return n * 10',
+        '  })',
+        '  write graph-[:note]-> { payload: { n: COUNT(out), out: out } }',
+      ].join('\n'),
+    );
+    const unparked = await start({ source, parks: makeParkSink() });
+    expect(payloadOf(unparked.kg.creates)).toEqual({ n: 2, out: [10, 20] });
+
+    const h: Harness = { source, parks: makeParkSink() };
     await start(h, ['s0.c0.i1.s0']);
     const { result, kg } = await resumeAt(h, 's0.c0.i1.s0');
     expect(result.parked).toBeUndefined();
-    expect(payloadOf(kg.creates)).toEqual({ n: 0 });
+    expect(payloadOf(kg.creates)).toEqual({ n: 2, out: [10, 20] });
   });
 });
 
