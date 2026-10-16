@@ -851,6 +851,7 @@ impl<'c> Checker<'c> {
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
             let of = self.movement_param_of(&movement.name, scope);
             self.type_param(body, &param.name, type_, scope, &of);
+            self.note_undescribed_event(body, &param.name, type_, graph);
         }
         self.open_effect_frame();
         let what = format!("'{}'", movement.name);
@@ -1155,6 +1156,7 @@ impl<'c> Checker<'c> {
         };
         let probe = format!("{root}{}.`__movement_head_probe__`", head.hops_raw);
         let parsed = expression_of_text(&probe);
+        let walks_off_root = matches!(&parsed, Ok(movement_parser::lowering::expression::Expression::Traverse { steps, .. }) if !steps.is_empty());
         if let Err(error) = &parsed {
             self.report_head_parse_error(error, head.span);
         }
@@ -1175,6 +1177,9 @@ impl<'c> Checker<'c> {
         self.check_head_resources(head, &probe, root_name.as_deref(), scope);
         if let Some(name) = &root_name {
             self.check_path_root_constructed(name, root_symbol, &head.hops_raw, head.span);
+        }
+        if let (Some(name), Some(id), true) = (&root_name, root_symbol, walks_off_root) {
+            self.report_undescribed_event_head(id, name, head.span);
         }
         self.report_head_not_a_position(head, scope);
         aliases

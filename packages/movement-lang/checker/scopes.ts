@@ -30,7 +30,7 @@ import { FieldType, InstanceSchema } from './catalog';
 import type { EffectRow } from './effects';
 import type { CollectionOrder } from './typing';
 import type { CallCycle } from './call_cycles';
-import { FieldsNeed, PlaneType, PositionTypeRef, ReturnShape } from './typing';
+import { FieldsNeed, PlaneType, PositionTypeRef, ReturnShape, UndescribedEvent } from './typing';
 
 export type SymbolKind =
   /** `import { attio } from adapters` */
@@ -101,6 +101,11 @@ export interface ScopeSymbol {
   addressToken?: object;
   /** For `param` / `alias` / `binding`: the bound position's type (when derivable). */
   posType?: PositionTypeRef;
+  /** For a movement's `param`: the event its type names (`<runs-[:Invocation]->>`)
+   *  on an instance the catalog has no description for, so `posType` is
+   *  absent — and a read or a write off the parameter can't be checked
+   *  (MOV_EVENT_UNDESCRIBED, from version 5). */
+  undescribedEvent?: UndescribedEvent;
   /**
    * True for a `binding` on the ARROW plane whose value is a whole traversal
    * BLOCK's return (`all = graph-[c:companies]-> { return c }`) — the

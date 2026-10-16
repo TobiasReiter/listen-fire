@@ -36,6 +36,11 @@ pub trait TypeEnv {
     fn resolve_root(&self, name: &str) -> Option<Position>;
     /// A name bound on the dot plane: a value.
     fn resolve_scalar(&self, name: &str) -> Option<Ty>;
+    /// A movement parameter typed against an event the catalog does not
+    /// describe (`undescribedEventOf`); its `resolve_root` is `None`.
+    fn undescribed_event(&self, _name: &str) -> Option<crate::families::walks::UndescribedEvent> {
+        None
+    }
     /// What a name bound to a choice may hold where its type cannot say.
     fn resolve_may_hold(&self, _name: &str) -> Option<Ty> {
         None
@@ -280,6 +285,19 @@ impl<'a> Typing<'a> {
         self.report(crate::codes::CLOSURE_NOT_DATA, crate::types::field::closure_not_data_message(&format!("a value {operation} is")));
         self.closure_operand_refused.insert(key(whole));
         true
+    }
+
+    /// `reportUndescribedEvent`: a read off `name` — a field, a hop — where
+    /// `name` is a movement parameter whose event the catalog does not
+    /// describe, and nothing in this expression has given it a type.
+    fn report_undescribed_event(&mut self, name: &str) {
+        if self.narrowed_roots.contains_key(name) || self.locals.contains_key(name) {
+            return;
+        }
+        let Some(event) = self.env.undescribed_event(name) else { return };
+        if let Some(diagnostic) = crate::families::walks::undescribed_event_diagnostic(self.version, name, &event, self.span) {
+            self.diagnostics.push(diagnostic);
+        }
     }
 
     pub fn report_with(&mut self, code: &str, message: impl Into<String>, severity: Severity) {
@@ -822,6 +840,9 @@ impl<'a> Typing<'a> {
                     Some(root) => self.walk_start(root),
                     None => position.cloned(),
                 };
+                if let (Some(root), None) = (alias_root, &start) {
+                    self.report_undescribed_event(root);
+                }
                 let destination = self.walk_steps(start, steps, false);
                 self.walk_orderings.insert(key(expr), (self.last_ordering, self.last_ordering_edge.clone()));
                 if let Some(destination) = &destination {

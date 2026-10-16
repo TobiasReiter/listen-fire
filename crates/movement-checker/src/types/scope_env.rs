@@ -90,6 +90,11 @@ impl TypeEnv for ScopeEnv<'_> {
         self.types(name)?.field.clone()
     }
 
+    fn undescribed_event(&self, name: &str) -> Option<crate::families::walks::UndescribedEvent> {
+        let Resolution::Found(id) = self.scopes.resolve(self.scope, name) else { return None };
+        self.scopes.symbol(id).undescribed_event.clone()
+    }
+
     fn resolve_may_hold(&self, name: &str) -> Option<Ty> {
         self.types(name)?.may_hold.clone()
     }

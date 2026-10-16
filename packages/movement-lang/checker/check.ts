@@ -365,6 +365,8 @@ import {
   unifyValueTypes,
   WriteTargetRef,
   type TypingReporter,
+  undescribedEventMessage,
+  undescribedEventSeverity,
 } from './typing';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -4619,6 +4621,10 @@ class Checker {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
       },
+      undescribedEventOf: name => {
+        const resolution = scope.resolve(name);
+        return resolution.kind === 'found' ? resolution.symbol.undescribedEvent : undefined;
+      },
       resolveScalar: name => this.symbolScalarType(scope, name),
       resolveMayHold: name => this.symbolMayHold(scope, name),
       isRecordName: name => this.nodePlaneSymbol(name, scope) !== undefined,
@@ -4642,6 +4648,10 @@ class Checker {
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
+      },
+      undescribedEventOf: name => {
+        const resolution = scope.resolve(name);
+        return resolution.kind === 'found' ? resolution.symbol.undescribedEvent : undefined;
       },
       resolveScalar: name => this.symbolScalarType(scope, name),
       resolveMayHold: name => this.symbolMayHold(scope, name),
@@ -11685,6 +11695,9 @@ class Checker {
     const rootType =
       (rootSymbol ? this.symbolPositionType(rootSymbol) : undefined)
       ?? recordHeadPosition(rootValueType);
+    if (steps !== undefined && steps.length > 0 && rootName !== undefined && rootType === undefined) {
+      this.reportUndescribedEvent(rootSymbol, rootName, head.span);
+    }
     // `_resources` is an extraction's source content, and nothing else's
     // (language version 5). A head with hops before it is
     // MOV_RESOURCE_WALK_UNREAD already.
@@ -11737,6 +11750,16 @@ class Checker {
       rootType,
       ...(recorded !== undefined ? { recorded } : {}),
     };
+  }
+
+  /** A walk or a write off `name`, a movement parameter whose event the
+   *  catalog does not describe (`ScopeSymbol.undescribedEvent`). */
+  private reportUndescribedEvent(symbol: ScopeSymbol | undefined, name: string, span: Span): void {
+    const event = symbol?.undescribedEvent;
+    if (event === undefined) return;
+    const severity = undescribedEventSeverity(this.languageVersion);
+    if (severity === 'error') this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), span);
+    else if (severity === 'warning') this.reportWarning(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), span);
   }
 
   /**
@@ -13672,6 +13695,18 @@ class Checker {
         graphSymbol && graphSymbol.kind !== 'adapter'
           ? this.positionFromTypeRefStrict(graphSymbol, paramTypeRef, paramTypeRef.span)
           : undefined;
+      // An event on an instance the catalog has no description of: nothing
+      // types the parameter, so what is read or written off it is said where
+      // it is (MOV_EVENT_UNDESCRIBED).
+      const event =
+        graphSymbol?.kind === 'instance'
+        && graphSymbol.schema === undefined
+        // An adapter the catalog doesn't know is its own error already.
+        && graphSymbol.adapter !== undefined
+        && this.catalog.adapter(graphSymbol.adapter) !== undefined
+        && paramTypeRef.hopsRaw !== undefined
+          ? addressOfTypeRef(paramTypeRef.hopsRaw, this.languageVersion)?.event
+          : undefined;
       const info = scope.symbols.get(statement.name)?.movement;
       const posType =
         declared !== undefined && info?.decl === statement
@@ -13684,6 +13719,7 @@ class Checker {
           kind: 'param',
           span: param.span,
           ...(posType ? { posType } : {}),
+          ...(event !== undefined ? { undescribedEvent: { instance: paramTypeRef.graph, event } } : {}),
         },
         param.span,
       );

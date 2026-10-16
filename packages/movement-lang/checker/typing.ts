@@ -205,6 +205,11 @@ export const TypedDiagnosticCodes = {
    *  checked and returns null at run time. The rule for a `never` — don't
    *  error at the narrow, error where the handle is USED. */
   UNDESCRIBED_POSITION: 'MOV_UNDESCRIBED_POSITION',
+  /** A read or a write off a movement's EVENT parameter whose event the
+   *  catalog has no description for (`UndescribedEvent`): the instance's
+   *  system answered nothing, so the fields can't be checked and the read is
+   *  null at run time. An error from version 5; unsaid before. */
+  EVENT_UNDESCRIBED: 'MOV_EVENT_UNDESCRIBED',
   /** A property read names a WRITE-ONLY field — declared on the type's write
    *  shape only (`readable: false`): a value a write SETS (WhatsApp Message's
    *  send-side `File`), never one with a value to read. Distinct from
@@ -4688,6 +4693,34 @@ function collectFilterPredicates(expr: Expression): Array<{ field: string; op: F
   return out;
 }
 
+/**
+ * The event a movement's parameter is typed against (`<runs-[:Invocation]->>`)
+ * when the catalog holds no description of the instance it is on — the
+ * host could not introspect the system (no connection, or the call failed),
+ * or a test catalog left it out. The parameter then has no position type,
+ * and before version 3 every read off it went unsaid.
+ */
+export interface UndescribedEvent {
+  instance: string;
+  event: string;
+}
+
+/**
+ * MOV_EVENT_UNDESCRIBED's severity under `languageVersion`: refused from
+ * version 5; `undefined` — unsaid, as it always was — before.
+ */
+export function undescribedEventSeverity(languageVersion: LanguageVersion): 'error' | 'warning' | undefined {
+  if (since(languageVersion, 5)) return 'error';
+  return undefined;
+}
+
+/** MOV_EVENT_UNDESCRIBED's message: which event, and where its description
+ *  would have come from. */
+export function undescribedEventMessage(param: string, event: UndescribedEvent): string {
+  return `'${event.instance}-[:${event.event}]->' has no description in the catalog, so a read or write off '${param}' can't be checked — it would be null at run time. `
+    + `The catalog describes it from the system behind '${event.instance}': check that its connection resolves and the system answers, then check again.`;
+}
+
 export class ExpressionTyping {
   /** Aliases bound by traversal steps within the expression(s) this walker has seen. */
   readonly locals = new Map<string, PositionTypeRef | undefined>();
@@ -4770,6 +4803,10 @@ export class ExpressionTyping {
       upgradingFrom?: LanguageVersion;
       /** Statement-scope resolution: bound name → its position type (undefined = untyped/unknown). */
       resolveRoot: (name: string) => PositionTypeRef | undefined;
+      /** A movement parameter typed against an event the catalog does not
+       *  describe (`ScopeSymbol.undescribedEvent`); its `resolveRoot` is
+       *  undefined. */
+      undescribedEventOf?: (name: string) => UndescribedEvent | undefined;
       /** Statement-scope resolution of the SCALAR plane: bound name → the value
        *  type it carries (`domain = FIRST(co.Domains)` reads `text | absent`).
        *  Without it a binding's absence dies at the `=`. */
@@ -5641,6 +5678,7 @@ export class ExpressionTyping {
           return 'boolean';
         }
         const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : position;
+        if (expr.aliasRoot !== undefined && start === undefined) this.reportUndescribedEvent(expr.aliasRoot);
         const destination = this.walkSteps(start, expr.steps);
         this.rememberOrdering(expr, destination);
         this.recordWalked(expr);
@@ -7832,6 +7870,18 @@ export class ExpressionTyping {
         + `it would be null at run time. Narrow the type that reaches it to a concrete one first.`,
     );
     return true;
+  }
+
+  /** A read off `name` — a field, a hop — where `name` is a movement
+   *  parameter whose event the catalog does not describe, and no narrowing
+   *  or local binding in this expression has given it a type. */
+  private reportUndescribedEvent(name: string): void {
+    if (this.narrowedRoots.has(name) || this.locals.has(name)) return;
+    const event = this.options.undescribedEventOf?.(name);
+    if (event === undefined) return;
+    const severity = undescribedEventSeverity(this.options.languageVersion);
+    if (severity === undefined) return;
+    this.report(TypedDiagnosticCodes.EVENT_UNDESCRIBED, undescribedEventMessage(name, event), severity);
   }
 
   /** A read traversal walked a WRITE-ONLY edge — a pure create path with no
