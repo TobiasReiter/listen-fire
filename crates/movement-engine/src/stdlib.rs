@@ -64,10 +64,9 @@ pub fn whole_value_arg(id: &str) -> Option<usize> {
     (id == "text.serialise").then_some(0)
 }
 
-/// What a member reads beyond its arguments: the environment's services,
-/// the run's pinned instant (milliseconds), which only `DATE.TODAY` reads,
-/// and the zone a date-time text with no offset is read in (the run's
-/// `localZone`; absent, UTC).
+/// What a member reads beyond its arguments: the environment's services and
+/// the run's pinned instant (milliseconds), which only `DATE.TODAY` reads. A
+/// date-time text with no offset is UTC.
 #[derive(Clone, Copy)]
 pub struct Surroundings<'a> {
     pub services: &'a dyn EnvServices,

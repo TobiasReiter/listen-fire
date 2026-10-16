@@ -189,9 +189,7 @@ async function segmentInRust(
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
   const wire = new WireOut();
-  const localZone = processLocalZone();
-  if (localZone === undefined) throw unsupportedInRust(input, LOCAL_ZONE_UNVERIFIED);
-  const start = segmentInput(input, context, { resume, localZone }, wire);
+  const start = segmentInput(input, context, { resume }, wire);
   if (start === undefined) throw unsupportedInRust(input, EVENT_DOES_NOT_CROSS);
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
@@ -260,11 +258,6 @@ function canonicalJson(bySource: Record<string, number>): string {
 /** Why a run whose event, answer or parked state cannot cross the eval wire
  *  fails. */
 export const EVENT_DOES_NOT_CROSS = 'event_does_not_cross';
-
-/** Why a run fails when this process's `Date` reads in a zone `Intl` cannot
- *  name (`TZ=GMT+3`): no zone sent could make the Rust engine read as it
- *  does. */
-export const LOCAL_ZONE_UNVERIFIED = 'local_zone_unverified';
 
 /** The outcome a segment the Rust engine ran is logged with (to its end or
  *  its own failure). */
@@ -459,7 +452,7 @@ class SettleQueue {
 function segmentInput(
   input: RunMovementInput,
   context: RunContext,
-  { resume, localZone }: { resume: Resumption | undefined; localZone: string },
+  { resume }: { resume: Resumption | undefined },
   wire: WireOut,
 ): unknown {
   // The event is data, whatever keys it carries: a dict shaped like a
@@ -521,9 +514,6 @@ function segmentInput(
       ...(input.suspendAt !== undefined && input.suspendAt.length > 0 ? { suspendAt: [...input.suspendAt] } : {}),
       // The run's pinned instant, as the TypeScript interpreter pins it.
       now: input.firedAt ?? context.pinnedNow.toISOString(),
-      // The zone a date-time text with no offset is read in: this
-      // process's, as its `Date` reads one (verified against it).
-      localZone,
       // The snapshot, its `models` the run's one list (`runChatModels`): an
       // extraction call's `model` is held to it, as the TypeScript engine
       // holds it, and it is the list the checker held it to.
@@ -703,69 +693,6 @@ function readRequest(value: unknown, call: string): HostRequest {
 }
 
 // ── The evaluator ─────────────────────────────────────────────────────────────
-
-/**
- * The zone this process's `Date` reads a date-time text with no offset in
- * (`new Date("2026-03-12T09:30")`, `Date.parse("March 12, 2026")`), as an
- * IANA name the Rust engine is handed (it reads no environment) — or
- * undefined when `Intl` names no zone `Date` agrees with.
- *
- * `Intl`'s resolved zone is `Date`'s for an IANA `TZ` only: under
- * `TZ=GMT+3` it says `+03:00` where `Date` reads POSIX's three hours WEST,
- * under `TZ=UTC+3` or `TZ=utc` it names none, under `TZ=""` `Etc/Unknown`.
- * So the name is checked against `Date`'s own wall clock at a winter, a
- * summer, a historic and a far-future instant; an ICU canonical name passes
- * (`Asia/Calcutta`, not `Asia/Kolkata`). A zone `Intl` cannot name at all
- * (`TZ=utc`, the dev and CLI scripts' setting) is tried as `UTC`, and sent
- * as that when `Date`'s clock agrees.
- */
-export function processLocalZone(): string | undefined {
-  const resolved: unknown = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const named = typeof resolved === 'string' && resolved !== '' && resolved !== 'Etc/Unknown';
-  const zone = named ? resolved : 'UTC';
-  const key = `${process.env.TZ ?? ''}\u0000${zone}`;
-  const known = verifiedZones.get(key);
-  if (known !== undefined) return known ? zone : undefined;
-  // The wall clock each reads, to the second: `getTimezoneOffset` drops a
-  // local mean time's seconds (Monrovia's −0:44:30 in 1950).
-  const agrees = ZONE_PROBES.map((iso) => new Date(iso)).every(
-    (at) => wallInZone(at, zone) === wallOfDate(at),
-  );
-  verifiedZones.set(key, agrees);
-  return agrees ? zone : undefined;
-}
-
-/** Winter and summer in both hemispheres, an instant before most zones'
- *  present rules, and one under their final rules. Fixed instants: an
- *  engine file reads no clock (seam_guard). */
-const ZONE_PROBES = ['2026-01-15T12:00:00Z', '2026-07-15T12:00:00Z', '1950-07-01T12:00:00Z', '2100-07-15T12:00:00Z'];
-
-/** Per `TZ` and resolved name: whether `Date` agrees with the name. */
-const verifiedZones = new Map<string, boolean>();
-
-/** `at` on `zone`'s wall clock, as `Intl` reads it. */
-function wallInZone(at: Date, zone: string): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    })
-      .formatToParts(at)
-      .map((part) => [part.type, Number(part.value)]),
-  );
-  return [parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second].join(' ');
-}
-
-/** `at` on the wall clock this process's `Date` reads. */
-function wallOfDate(at: Date): string {
-  return [at.getFullYear(), at.getMonth() + 1, at.getDate(), at.getHours(), at.getMinutes(), at.getSeconds()].join(' ');
-}
 
 /** The error the TypeScript engine would have thrown. */
 function thrownBy(error: Record<string, unknown>): Error {
