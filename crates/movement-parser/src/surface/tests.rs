@@ -162,7 +162,14 @@ fn presence_and_walks() {
     // Inside walk brackets nothing is respelled: CAPS words, AND, any case.
     let walk = "crm-[c:Companies WHERE c.Categories == \"Customer\" AND LOWER(c.Name) CONTAINS \"x\" ORDER BY c.`Created At` DESC LIMIT 10]->";
     assert!(findings(walk).is_empty(), "{:?}", findings(walk));
-    assert_eq!(lowered(walk, 5), lowered(walk, 4));
+    // A field read through the hop's alias is the bare field versions 1–4
+    // wrote (the gates and the pushdown see the field they always saw).
+    let bare = "crm-[c:Companies WHERE Categories == \"Customer\" AND LOWER(Name) CONTAINS \"x\" ORDER BY `Created At` DESC LIMIT 10]->";
+    assert_eq!(lowered(walk, 5), lowered(bare, 4));
+    // Another hop's alias, and a walk nested in the WHERE, keep their reads.
+    let nested = "crm-[c:Companies]->-[t:Team WHERE c.Name == t.Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
+    let nested_bare = "crm-[c:Companies]->-[t:Team WHERE c.Name == Name AND EXISTS(t-[p:Posts WHERE t.Name == Title]->)]->";
+    assert_eq!(lowered(nested, 5), lowered(nested_bare, 4));
     assert!(findings("ch-[m:Messages WHERE lower(m.Text) CONTAINS \"urgent\"]->").is_empty());
     let everyday = findings("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->");
     assert_eq!(everyday.len(), 1);

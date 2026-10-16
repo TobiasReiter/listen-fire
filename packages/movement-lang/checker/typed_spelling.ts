@@ -10,7 +10,7 @@
 // The Rust twin is crates/movement-checker/src/families/typed_spelling.rs.
 
 import { children } from '../parser/expression/lower';
-import type { At, MExpr } from '../parser/expression/tree';
+import type { At, Hop, MExpr, Name } from '../parser/expression/tree';
 
 export type ValueKind = 'list' | 'text' | undefined;
 
@@ -92,4 +92,107 @@ function whole(raw: string, at: At): boolean {
   const before = raw.slice(0, at.start).trim();
   const after = raw.slice(at.end).trim();
   return (before === '' && after === '') || (before === '(' && after === ')');
+}
+
+// ── A walk's fields through its alias (design §2.5) ──
+//
+// From version 5 a hop's WHERE and ORDER BY read its record's fields through
+// the hop's alias (`c.Name`); a bare name there is a variable from outside the
+// walk, as it is everywhere else. The parser reads `c.Name` into the bare
+// field the canonical tree has always held (keeping the alias read's extent),
+// so a name the source writes bare that the scope does not bind is the old
+// spelling of a field: refused, its fix the alias read, with an alias added
+// to a hop that has none. A postfix `walk WHERE p` moves into the last hop.
+
+export interface WalkField {
+  at: At;
+  message: string;
+  /** Offsets into the text the tree was read from. */
+  edits: Array<{ at: At; text: string }>;
+}
+
+/** Every bare field in `tree`'s walks, `binds` telling whether the scope
+ *  binds a name (then it is an outer variable). */
+export function walkFields(tree: MExpr, raw: string, binds: (name: string) => boolean): WalkField[] {
+  const out: WalkField[] = [];
+  const text = (at: At): string => raw.slice(at.start, at.end);
+  const isField = (name: Name, aliases: readonly string[]): boolean => {
+    const written = text(name.at);
+    const bare = written === name.text || written === `\`${name.text}\``;
+    return bare && !aliases.includes(name.text) && name.text.toLowerCase() !== 'edge' && !binds(name.text);
+  };
+  const aliasOf = (hop: Hop, taken: readonly string[]): { alias: string; insert?: { at: At; text: string } } => {
+    if (hop.alias !== undefined) return { alias: hop.alias.text };
+    const letter = [...hop.label.text].find((c) => /[A-Za-z]/.test(c));
+    const stem = letter === undefined ? 'x' : letter.toLowerCase();
+    let alias = stem;
+    for (let i = 2; taken.includes(alias) || binds(alias); i++) alias = `${stem}${i}`;
+    let open = hop.label.at.start;
+    for (let i = hop.at.start; i < hop.label.at.start; i++) {
+      if (raw[i] === '[') {
+        open = i + 1;
+        break;
+      }
+    }
+    return { alias, insert: { at: { start: open, end: open }, text: alias } };
+  };
+  const visit = (e: MExpr, aliases: readonly string[]): void => {
+    const here = e.kind === 'path' ? [...aliases, ...e.hops.flatMap((h) => (h.alias !== undefined ? [h.alias.text] : []))] : aliases;
+    if (e.kind === 'path') {
+      for (const hop of e.hops) {
+        const names: Name[] = [];
+        if (hop.where !== undefined) bareNames(hop.where, names);
+        if (hop.orderBy !== undefined) bareNames(hop.orderBy.key, names);
+        const fields = names.filter((n) => isField(n, here));
+        const first = fields[0];
+        if (first === undefined) continue;
+        const { alias, insert } = aliasOf(hop, here);
+        const edits = [...(insert !== undefined ? [insert] : []), ...fields.map((n) => ({ at: n.at, text: `${alias}.${text(n.at)}` }))];
+        out.push({
+          at: first.at,
+          message: `from language version 5 a walk's field is read through the hop's alias: \`${alias}.${text(first.at)}\` (a bare name inside the brackets is a variable from outside the walk)`,
+          edits,
+        });
+      }
+    }
+    if (e.kind === 'where' && e.source.kind === 'path' && e.source.hops.length > 0) {
+      const source = e.source;
+      const last = source.hops[source.hops.length - 1];
+      const names: Name[] = [];
+      bareNames(e.predicate, names);
+      const fields = names.filter((n) => isField(n, here));
+      const simple = last.where === undefined && last.orderBy === undefined && last.limit === undefined && last.config === undefined;
+      const message =
+        "from language version 5 a walk's filter is written inside its last hop, its fields through the hop's alias: `-[a:Edge WHERE a.Field …]->`";
+      let edits: WalkField['edits'] = [];
+      if (simple) {
+        const { alias, insert } = aliasOf(last, here);
+        const p = e.predicate.at;
+        let moved = raw.slice(p.start, p.end);
+        for (const n of [...fields].sort((a, b) => b.at.start - a.at.start)) {
+          moved = moved.slice(0, n.at.start - p.start) + `${alias}.${text(n.at)}` + moved.slice(n.at.end - p.start);
+        }
+        const s = source.at;
+        const pieces = [{ at: last.label.at.end, text: ` WHERE ${moved}` }, ...(insert !== undefined ? [{ at: insert.at.start, text: insert.text }] : [])];
+        let walk = raw.slice(s.start, s.end);
+        for (const piece of pieces.sort((a, b) => b.at - a.at)) {
+          walk = walk.slice(0, piece.at - s.start) + piece.text + walk.slice(piece.at - s.start);
+        }
+        edits = [{ at: e.at, text: walk }];
+      }
+      out.push({ at: e.at, message, edits });
+    }
+    for (const child of children(e)) visit(child, here);
+  };
+  visit(tree, []);
+  return out;
+}
+
+/** The names `e` reads bare, outside any walk nested in it (whose hops are
+ *  read on their own) and never a call's callee. */
+function bareNames(e: MExpr, out: Name[]): void {
+  if (e.kind === 'name') out.push(e.name);
+  else if (e.kind === 'path' || e.kind === 'where') return;
+  else if (e.kind === 'call') for (const a of e.args) bareNames(a.value, out);
+  else for (const c of children(e)) bareNames(c, out);
 }

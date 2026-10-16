@@ -175,3 +175,148 @@ impl Checker<'_> {
         }
     }
 }
+
+// ── A walk's fields through its alias (design §2.5) ──
+//
+// From version 5 a hop's WHERE and ORDER BY read its record's fields through
+// the hop's alias (`c.Name`); a bare name there is a variable from outside the
+// walk, as it is everywhere else. The parser reads `c.Name` into the bare
+// field the canonical tree has always held (keeping the alias read's extent),
+// so a name the source writes bare that the scope does not bind is the old
+// spelling of a field: refused, its fix the alias read, with an alias added
+// to a hop that has none. A postfix `walk WHERE p` moves into the last hop.
+
+/// A walk-field finding: where, the message, and the fix's edits (offsets
+/// into the slot's text).
+pub struct WalkField {
+    pub at: At,
+    pub message: String,
+    pub edits: Vec<(At, String)>,
+}
+
+/// Every bare field in `tree`'s walks, `binds` telling whether the scope
+/// binds a name (then it is an outer variable).
+pub fn walk_fields(tree: &MExpr, raw: &str, binds: &dyn Fn(&str) -> bool) -> Vec<WalkField> {
+    let src = Utf16::new(raw);
+    let mut out = Vec::new();
+    walk_visit(tree, &[], &src, binds, &mut out);
+    out
+}
+
+fn walk_visit(e: &MExpr, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -> bool, out: &mut Vec<WalkField>) {
+    let mut here: Vec<String> = aliases.to_vec();
+    if let MExpr::Path { hops, .. } = e {
+        here.extend(hops.iter().filter_map(|h| h.alias.as_ref().map(|a| a.text.clone())));
+        for hop in hops {
+            let mut names = Vec::new();
+            if let Some(w) = &hop.where_ {
+                bare_names(w, &mut names);
+            }
+            if let Some(order) = &hop.order_by {
+                bare_names(&order.key, &mut names);
+            }
+            let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, src, binds)).collect();
+            let Some(first) = fields.first() else { continue };
+            let (alias, insert) = alias_of(hop, &here, src, binds);
+            let mut edits: Vec<(At, String)> = insert.into_iter().collect();
+            edits.extend(fields.iter().map(|n| (n.at, format!("{alias}.{}", src.text(n.at.start, n.at.end)))));
+            let written = src.text(first.at.start, first.at.end);
+            let message = format!(
+                "from language version 5 a walk's field is read through the hop's alias: `{alias}.{written}` (a bare name inside the brackets is a variable from outside the walk)"
+            );
+            out.push(WalkField { at: first.at, message, edits });
+        }
+    }
+    if let MExpr::Where { source, predicate, at } = e
+        && let MExpr::Path { hops, .. } = source.as_ref()
+        && let Some(last) = hops.last()
+    {
+        let mut names = Vec::new();
+        bare_names(predicate, &mut names);
+        let fields: Vec<&movement_parser::tree::Name> = names.into_iter().filter(|n| is_field(n, &here, src, binds)).collect();
+        let simple = last.where_.is_none() && last.order_by.is_none() && last.limit.is_none() && last.config.is_none();
+        let message = "from language version 5 a walk's filter is written inside its last hop, its fields through the hop's alias: `-[a:Edge WHERE a.Field …]->`".to_string();
+        let edits = if simple {
+            let (alias, insert) = alias_of(last, &here, src, binds);
+            let mut predicate_text: Vec<(usize, usize, String)> =
+                fields.iter().map(|n| (n.at.start, n.at.end, format!("{alias}.{}", src.text(n.at.start, n.at.end)))).collect();
+            predicate_text.sort_by_key(|(s, _, _)| std::cmp::Reverse(*s));
+            let p = predicate.at();
+            let mut moved: Vec<u16> = src.units()[p.start..p.end].to_vec();
+            for (s, e, t) in predicate_text {
+                moved.splice(s - p.start..e - p.start, t.encode_utf16());
+            }
+            let moved = String::from_utf16_lossy(&moved);
+            let s = source.at();
+            let mut pieces: Vec<(usize, String)> = vec![(last.label.at.end, format!(" WHERE {moved}"))];
+            if let Some((at, text)) = insert {
+                pieces.push((at.start, text));
+            }
+            pieces.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+            let mut walk: Vec<u16> = src.units()[s.start..s.end].to_vec();
+            for (at, text) in pieces {
+                walk.splice(at - s.start..at - s.start, text.encode_utf16());
+            }
+            vec![(*at, String::from_utf16_lossy(&walk))]
+        } else {
+            Vec::new()
+        };
+        out.push(WalkField { at: *at, message, edits });
+    }
+    for child in expression_children(e) {
+        walk_visit(child, &here, src, binds, out);
+    }
+}
+
+/// The names `e` reads bare, outside any walk nested in it (whose hops are
+/// read on their own) and never a call's callee.
+fn bare_names<'e>(e: &'e MExpr, out: &mut Vec<&'e movement_parser::tree::Name>) {
+    match e {
+        MExpr::Name { name, .. } => out.push(name),
+        MExpr::Path { .. } | MExpr::Where { .. } => {}
+        MExpr::Call { args, .. } => args.iter().for_each(|a| bare_names(&a.value, out)),
+        _ => expression_children(e).into_iter().for_each(|c| bare_names(c, out)),
+    }
+}
+
+/// A name written bare (its extent is its own text, not an alias read the
+/// parser folded) that is no alias, no `edge` and no variable in scope.
+fn is_field(name: &movement_parser::tree::Name, aliases: &[String], src: &Utf16, binds: &dyn Fn(&str) -> bool) -> bool {
+    let written = src.text(name.at.start, name.at.end);
+    let bare = written == name.text || written == format!("`{}`", name.text);
+    bare && !aliases.contains(&name.text) && !name.text.eq_ignore_ascii_case("edge") && !binds(&name.text)
+}
+
+/// The hop's alias, and the edit that adds it when it has none: its label's
+/// first letter lower-cased, numbered past any name already taken.
+fn alias_of(hop: &movement_parser::tree::Hop, taken: &[String], src: &Utf16, binds: &dyn Fn(&str) -> bool) -> (String, Option<(At, String)>) {
+    if let Some(alias) = &hop.alias {
+        return (alias.text.clone(), None);
+    }
+    let stem = hop.label.text.chars().find(|c| c.is_ascii_alphabetic()).map_or("x".to_string(), |c| c.to_ascii_lowercase().to_string());
+    let free = |n: &str| !taken.iter().any(|t| t == n) && !binds(n);
+    let alias = std::iter::once(stem.clone()).chain((2..).map(|i| format!("{stem}{i}"))).find(|n| free(n)).expect("a free name");
+    let open = (hop.at.start..hop.label.at.start).find(|&i| src.units()[i] == b'[' as u16).map_or(hop.label.at.start, |i| i + 1);
+    (alias.clone(), Some((At { start: open, end: open }, alias)))
+}
+
+impl Checker<'_> {
+    /// `checkWalkFields` (version 5): a walk's fields through its alias, in
+    /// a slot or a block head (read through its probe, `raw`).
+    pub fn check_walk_fields(&mut self, tree: &MExpr, raw: &str, place: crate::families::calls::TreeAt, scope: ScopeId) {
+        if self.type_only > 0 {
+            return;
+        }
+        let found = {
+            let binds = |name: &str| matches!(self.scopes.resolve(scope, name), crate::scope::Resolution::Found(_) | crate::scope::Resolution::Pending);
+            walk_fields(tree, raw, &binds)
+        };
+        for f in found {
+            let span = place.span_of(f.at);
+            let edits: Option<Vec<serde_json::Value>> =
+                f.edits.iter().map(|(at, text)| place.extent_of(*at).map(|span| serde_json::json!({ "span": span, "text": text }))).collect();
+            let fix = edits.filter(|e| !e.is_empty()).map(|edits| serde_json::json!({ "edits": edits }));
+            self.push(Diagnostic { fix, ..Diagnostic::error(codes::V5_SPELLING, f.message, span) });
+        }
+    }
+}

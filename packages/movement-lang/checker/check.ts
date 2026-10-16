@@ -153,7 +153,7 @@ import {
   lowerExpression,
   specialRecordField,
 } from '../parser/expression/lower';
-import { typedSpellings, type ValueKind } from './typed_spelling';
+import { typedSpellings, walkFields, type ValueKind } from './typed_spelling';
 import { ExpressionSyntaxError, parseExpression } from '../parser/expression/parse_expression';
 import { isMapSpread, type At, type Hop, type MapEntry, type MExpr } from '../parser/expression/tree';
 import { MovementParseError, parseNestedCall } from '../parser/parse';
@@ -6347,7 +6347,10 @@ class Checker {
     } catch {
       return; // the syntax error is reported where the slot is read
     }
-    if (since(this.languageVersion, 5)) this.checkTypedSpelling(tree, slot, scope);
+    if (since(this.languageVersion, 5)) {
+      this.checkTypedSpelling(tree, slot, scope);
+      this.checkWalkFields(tree, slot.raw, { spanOf: (at) => spanWithin(slot, at.start), extentOf: (at) => spanOfExtent(slot, at) }, scope);
+    }
     this.checkExpressionTree(tree, {
       spanOf: (at) => spanWithin(slot, at.start),
       extentOf: (at) => spanOfExtent(slot, at),
@@ -6383,6 +6386,29 @@ class Checker {
       const fix: DiagnosticFix = { edits: [{ span, text: found.text }] };
       if (found.kind === 'respell') this.respelled.set(spanKey(span), { message: found.message, fix });
       else this.reportWithFix({ code: DiagnosticCodes.BUILTIN_ARG_TYPE, message: found.message, span, fix });
+    }
+  }
+
+  /** A walk's fields through its alias (version 5, `typed_spelling`), in a
+   *  slot or a block head (read through its probe, `raw`). */
+  private checkWalkFields(
+    tree: MExpr,
+    raw: string,
+    place: { spanOf: (at: At) => Span; extentOf: (at: At) => Span | undefined },
+    scope: Scope,
+  ): void {
+    if (this.typeOnly) return;
+    const binds = (name: string): boolean => {
+      const kind = scope.resolve(name).kind;
+      return kind === 'found' || kind === 'pending';
+    };
+    for (const found of walkFields(tree, raw, binds)) {
+      const placed = found.edits.flatMap((e) => {
+        const span = place.extentOf(e.at);
+        return span !== undefined ? [{ span, text: e.text }] : [];
+      });
+      const fix = placed.length > 0 && placed.length === found.edits.length ? { edits: placed } : undefined;
+      this.reportWithFix({ code: 'MOV_V5_SPELLING', message: found.message, span: place.spanOf(found.at), ...(fix ? { fix } : {}) });
     }
   }
 
@@ -11012,6 +11038,9 @@ class Checker {
           if (!(e instanceof ExpressionSyntaxError)) throw e;
         }
         if (tree !== undefined) {
+          if (since(this.languageVersion, 5)) {
+            this.checkWalkFields(tree, probeText, { spanOf: () => head.span, extentOf: (at) => headHopsExtent(head, at) }, scope);
+          }
           // The probe reads a field off the head's walk; that walk is the head.
           const walk = tree.kind === 'member' ? tree.object : undefined;
           this.checkExpressionTree(tree, {

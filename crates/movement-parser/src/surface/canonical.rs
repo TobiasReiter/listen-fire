@@ -62,6 +62,31 @@ fn is_ident(text: &str) -> bool {
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// From version 5 a hop's WHERE and ORDER BY read its record's fields
+/// through its alias (`c.Name`, design §2.5); the canonical tree reads them
+/// bare, as versions 1–4 wrote them, so the gates and the pushdown see the
+/// field they always saw. The bare name keeps the alias read's extent, which
+/// is how the checker tells it from a name written bare (an outer variable
+/// from 5, refused when it is not one). A walk nested in the WHERE keeps its
+/// own hops' reads: a bare name there is ITS record's field.
+fn through_alias(e: &mut MExpr, alias: &str) {
+    if let MExpr::Member { object, property, at } = e
+        && matches!(object.as_ref(), MExpr::Name { name, .. } if name.text == alias && !name.quoted)
+    {
+        *e = MExpr::Name { name: Name { text: property.text.clone(), quoted: property.quoted, at: *at }, at: *at };
+        return;
+    }
+    match e {
+        MExpr::Path { root, .. } => {
+            if let Some(root) = root {
+                through_alias(root, alias);
+            }
+        }
+        MExpr::Where { source, .. } => through_alias(source, alias),
+        _ => tree::exclusive::expr(e, &mut |child| through_alias(child, alias)),
+    }
+}
+
 /// The `!` an expression tighter than `&&` begins with, when versions 1–4
 /// would have read that `!` over the whole of it.
 fn bang_on_left(e: &MExpr) -> Option<At> {
@@ -147,6 +172,9 @@ impl<'s> Canon<'s> {
                 for hop in hops {
                     if let Some(w) = &mut hop.where_ {
                         self.visit(w, true);
+                        if let Some(alias) = &hop.alias {
+                            through_alias(w, &alias.text);
+                        }
                     }
                     if let Some(config) = &mut hop.config {
                         for member in &mut config.entries {
@@ -158,6 +186,9 @@ impl<'s> Canon<'s> {
                     }
                     if let Some(order) = &mut hop.order_by {
                         self.visit(&mut order.key, true);
+                        if let Some(alias) = &hop.alias {
+                            through_alias(&mut order.key, &alias.text);
+                        }
                     }
                 }
             }

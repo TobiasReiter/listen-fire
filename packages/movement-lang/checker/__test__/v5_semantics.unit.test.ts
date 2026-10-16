@@ -191,3 +191,47 @@ describe('a list\'s length, membership and presence are chosen by the operand\'s
     expect(fixesOf(`${HEAD5}function go(c: <chat-[:channel]->>) {\n  ms = c-[m:Messages WHERE m.Tags CONTAINS "x" AND LENGTH(m.Text) > 2]->\n}`)).toEqual([]);
   });
 });
+
+describe('a walk\'s fields are read through the hop\'s alias from version 5', () => {
+  const v4 = (body: string): string => `${HEAD4}movement go(c: <chat-[:channel]->>, cutoff: <text>) {\n${body}\n}`;
+  const v5 = (body: string): string => `${HEAD5}function go(c: <chat-[:channel]->>, cutoff: <text>) {\n${body}\n}`;
+  const spelled = (source: string): Array<[string, string[]]> =>
+    check(source, 5)
+      .filter((d) => d.code === 'MOV_V5_SPELLING')
+      .map((d) => [d.message, (d.fix?.edits ?? []).map((e) => e.text)]);
+
+  it('under 4 a bare field reads as before', () => {
+    expect(codes(v4('  ms = c-[m:Messages WHERE Text == cutoff]->'), 4)).toEqual([]);
+  });
+
+  it('under 5 the alias read is clean and checks as the bare field did under 4', () => {
+    expect(codes(v5('  ms = c-[m:Messages WHERE m.Text == cutoff ORDER BY m.Text DESC LIMIT 3]->'), 5)).toEqual(
+      codes(v4('  ms = c-[m:Messages WHERE Text == cutoff ORDER BY Text DESC LIMIT 3]->'), 4),
+    );
+    expect(codes(v5('  ms = c-[m:Messages WHERE m.Nope == cutoff]->'), 5)).toEqual(codes(v4('  ms = c-[m:Messages WHERE Nope == cutoff]->'), 4));
+  });
+
+  it('a bare field is refused with the alias read; an outer variable is not a field', () => {
+    const found = spelled(v5('  ms = c-[m:Messages WHERE Text == cutoff]->'));
+    expect(found).toHaveLength(1);
+    expect(found[0][1]).toEqual(['m.Text']);
+    expect(upgraded(v5('  ms = c-[m:Messages WHERE Text == cutoff ORDER BY Text DESC]->'))).toContain('c-[m:Messages WHERE m.Text == cutoff ORDER BY m.Text DESC]->');
+  });
+
+  it('a hop with no alias gets one', () => {
+    const fixed = upgraded(v5('  ms = c-[:Messages WHERE Text == cutoff AND `Text` != "x"]->'));
+    expect(fixed).toContain('c-[m:Messages WHERE m.Text == cutoff AND m.`Text` != "x"]->');
+    expect(codes(fixed, 5)).toEqual([]);
+  });
+
+  it('a postfix filter moves into the hop', () => {
+    const fixed = upgraded(v5('  if (EXISTS(c-[:Messages]-> WHERE Text CONTAINS "pdf")) {\n    x = 1\n  }'));
+    expect(fixed).toContain('if (exists(c-[m:Messages WHERE m.Text CONTAINS "pdf"]->)) {');
+    expect(codes(fixed, 5)).toEqual([]);
+  });
+
+  it('a block head\'s walk too', () => {
+    const fixed = upgraded(v5('  c-[m:Messages WHERE Text == cutoff]-> {\n    x = 1\n  }'));
+    expect(fixed).toContain('c-[m:Messages WHERE m.Text == cutoff]-> {');
+  });
+});

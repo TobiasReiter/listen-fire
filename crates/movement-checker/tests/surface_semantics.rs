@@ -150,3 +150,27 @@ fn a_list_s_length_membership_and_presence_follow_the_operand_s_type() {
     let walk = format!("{HEAD5}function go(c: <chat-[:channel]->>) {{\n  ms = c-[m:Messages WHERE m.Tags CONTAINS \"x\" AND LENGTH(m.Text) > 2]->\n}}");
     assert_eq!(fixes_of(&walk), Vec::<String>::new());
 }
+
+#[test]
+fn a_walk_s_fields_are_read_through_the_hop_s_alias() {
+    let v4 = |body: &str| format!("{HEAD4}movement go(c: <chat-[:channel]->>, cutoff: <text>) {{\n{body}\n}}");
+    let v5 = |body: &str| format!("{HEAD5}function go(c: <chat-[:channel]->>, cutoff: <text>) {{\n{body}\n}}");
+    assert_eq!(codes(&v4("  ms = c-[m:Messages WHERE Text == cutoff]->"), 4), Vec::<String>::new());
+    assert_eq!(
+        codes(&v5("  ms = c-[m:Messages WHERE m.Text == cutoff ORDER BY m.Text DESC LIMIT 3]->"), 5),
+        codes(&v4("  ms = c-[m:Messages WHERE Text == cutoff ORDER BY Text DESC LIMIT 3]->"), 4)
+    );
+    assert_eq!(codes(&v5("  ms = c-[m:Messages WHERE m.Nope == cutoff]->"), 5), codes(&v4("  ms = c-[m:Messages WHERE Nope == cutoff]->"), 4));
+    let found: Vec<_> = check(&v5("  ms = c-[m:Messages WHERE Text == cutoff]->"), 5).into_iter().filter(|d| d.code == "MOV_V5_SPELLING").collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].fix.as_ref().unwrap()["edits"][0]["text"], "m.Text");
+    assert!(upgraded(&v5("  ms = c-[m:Messages WHERE Text == cutoff ORDER BY Text DESC]->")).contains("c-[m:Messages WHERE m.Text == cutoff ORDER BY m.Text DESC]->"));
+    let fixed = upgraded(&v5("  ms = c-[:Messages WHERE Text == cutoff AND `Text` != \"x\"]->"));
+    assert!(fixed.contains("c-[m:Messages WHERE m.Text == cutoff AND m.`Text` != \"x\"]->"), "{fixed}");
+    assert_eq!(codes(&fixed, 5), Vec::<String>::new());
+    let fixed = upgraded(&v5("  if (EXISTS(c-[:Messages]-> WHERE Text CONTAINS \"pdf\")) {\n    x = 1\n  }"));
+    assert!(fixed.contains("if (exists(c-[m:Messages WHERE m.Text CONTAINS \"pdf\"]->)) {"), "{fixed}");
+    assert_eq!(codes(&fixed, 5), Vec::<String>::new());
+    let fixed = upgraded(&v5("  c-[m:Messages WHERE Text == cutoff]-> {\n    x = 1\n  }"));
+    assert!(fixed.contains("c-[m:Messages WHERE m.Text == cutoff]-> {"), "{fixed}");
+}

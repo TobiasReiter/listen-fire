@@ -917,7 +917,7 @@ pub enum TreeAt<'s> {
 }
 
 impl TreeAt<'_> {
-    fn span_of(&self, at: At) -> Span {
+    pub fn span_of(&self, at: At) -> Span {
         match self {
             TreeAt::Slot(slot) => span_within(slot, Some(at.start)),
             TreeAt::Head { head, .. } => head.span,
@@ -1100,6 +1100,7 @@ impl Checker<'_> {
         let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { return };
         if since(self.version, 5) {
             self.check_typed_spelling(&tree, slot, scope);
+            self.check_walk_fields(&tree, &slot.raw, TreeAt::Slot(slot), scope);
         }
         self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
@@ -1117,6 +1118,9 @@ impl Checker<'_> {
             _ => None,
         };
         let at_ = TreeAt::Head { head, probe_len: probe.encode_utf16().count() };
+        if since(self.version, 5) {
+            self.check_walk_fields(&tree, probe, at_, scope);
+        }
         self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
     }
 
