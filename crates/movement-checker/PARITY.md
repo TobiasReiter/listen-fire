@@ -2,21 +2,21 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **225 of 242** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 34987 of 35335; 243 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 27752 of 28325.
-- Rust side: 101.5s; 0 records the Rust parser or catalog refused; 0 panics; 3 checks that did not finish (refused.txt names them).
+- Codes at parity: **228 of 242** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 35039 of 35335; 69 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 27945 of 28325.
+- Rust side: 118.7s; 0 records the Rust parser or catalog refused; 0 panics; 3 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 5805 | 5651 | 5655 |
+| checks under v5 | 5805 | 5709 | 5713 |
 | checks v1 | 2246 | 2185 | 2186 |
 | checks v2 | 2544 | 2533 | 2534 |
-| checks v3 | 3339 | 3255 | 3259 |
-| checks v4 | 5450 | 5320 | 5324 |
-| checks v5 | 5756 | 5623 | 5630 |
+| checks v3 | 3339 | 3275 | 3279 |
+| checks v4 | 5450 | 5378 | 5382 |
+| checks v5 | 5756 | 5680 | 5687 |
 | checks v99 | 9 | 9 | 9 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -39,7 +39,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | values | 22 | 18 | 2268 | 2259 | 7 | 3 | 2 |
 | versions | 2 | 2 | 11 | 11 | 0 | 0 | 0 |
 | walks | 22 | 21 | 1201 | 1201 | 0 | 3 | 0 |
-| writes | 48 | 44 | 1946 | 1819 | 78 | 174 | 49 |
+| writes | 48 | 47 | 1946 | 1871 | 26 | 0 | 49 |
 
 ## By code
 
@@ -269,7 +269,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_BIND_UNIQUE | writes | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_WRITE_DISCRIMINANT_NOT_LITERAL | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_EPHEMERAL_BOUND | writes | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_WRITE_FIELD_TYPE | writes | 673 | 586 | 38 | 0 | 49 |  |
+| MOV_WRITE_FIELD_TYPE | writes | 673 | 598 | 26 | 0 | 49 |  |
 | MOV_WRITE_GENERIC_NOT_LITERAL | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_LINK_FIELD_NUDGE | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_MAY_BE_EMPTY | writes | 154 | 154 | 0 | 0 | 0 | yes |
@@ -277,8 +277,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_MISSING_REQUIRED_FIELD | writes | 66 | 66 | 0 | 0 | 0 | yes |
 | MOV_WRITE_ONLY_EDGE | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_ONLY_PROPERTY | writes | 6 | 6 | 0 | 0 | 0 | yes |
-| MOV_WRITE_POSITION_NOT_RECORD | writes | 31 | 10 | 21 | 0 | 0 |  |
-| MOV_WRITE_POSITION_NO_UPDATE | writes | 14 | 14 | 0 | 174 | 0 |  |
+| MOV_WRITE_POSITION_NOT_RECORD | writes | 31 | 31 | 0 | 0 | 0 | yes |
+| MOV_WRITE_POSITION_NO_UPDATE | writes | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_WRITE_POSITION_UNIQUE | writes | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_WRITE_READ_ONLY_EDGE | writes | 53 | 53 | 0 | 0 | 0 | yes |
 | MOV_WRITE_SHAPE_RETIRED | writes | 22 | 22 | 0 | 0 | 0 | yes |
@@ -286,4 +286,4 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_TARGET_NOT_GRAPH | writes | 25 | 25 | 0 | 0 | 0 | yes |
 | MOV_WRITE_TUPLE_MISMATCH | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_UNION_UNSATISFIED | writes | 30 | 30 | 0 | 0 | 0 | yes |
-| MOV_WRITE_UNKNOWN_FIELD | writes | 156 | 137 | 19 | 0 | 0 |  |
+| MOV_WRITE_UNKNOWN_FIELD | writes | 156 | 156 | 0 | 0 | 0 | yes |

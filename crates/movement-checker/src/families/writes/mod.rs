@@ -851,15 +851,29 @@ impl Checker<'_> {
             RecordOf::Unknown => return described,
             RecordOf::Record(position) => position,
         };
+        // A record the run holds on one of its own edges: the run's graph is
+        // its system, and that system updates by id. What it may set is what
+        // it carries — the landing type IS the write shape, as for the write
+        // that put it there.
+        if let Some(run_built) = run_built_write_shape(&position) {
+            let root = WritableRootSchema { fields: run_built.fields.clone(), result_shape: run_built.fields, ..empty_writable_root() };
+            return Landing {
+                root: Some(root),
+                description: Some(format!("'{alias}' ({} this run built)", describe_position(&position))),
+                handle: Some(position),
+                local: true,
+                declared: run_built.declared,
+                resolved: None,
+            };
+        }
         let instance = match &position {
             Position::Position(p) => p.instance.clone(),
             Position::Handle(h) => h.instance.clone(),
             Position::Union(u) => u.instance.clone(),
-            // A record the run built (an extracted node, a landing of a
-            // node literal): the nodes family types those. A record that
-            // may be empty is told only where no guard proves it there,
-            // which the walk does not yet track for every guard (`IS`).
-            Position::Local(_) | Position::Extract { .. } | Position::MaybeEmpty(_) => return described,
+            // A record that may be empty is told only where no guard proves
+            // it there, which the walk does not yet track for every guard
+            // (`IS`); an extraction's result is the extraction family's.
+            Position::Extract { .. } | Position::MaybeEmpty(_) => return described,
             other => {
                 self.report(
                     codes::WRITE_POSITION_NOT_RECORD,
@@ -1555,6 +1569,30 @@ fn readable_match_root(position: Option<&PositionSchema>) -> Option<WritableRoot
     }
     let result_shape = entries.into_iter().collect();
     Some(WritableRootSchema { fields: position.properties.clone(), result_shape, ..empty_writable_root() })
+}
+
+/// `runBuiltWriteShape`: what a record this run built may set in place —
+/// an extracted record's declared fields, or the fields its landing type
+/// carries — and whether a node declaration types it.
+struct RunBuiltShape {
+    fields: movement_parser::catalog::types::JsMap<SchemaFieldType>,
+    declared: bool,
+}
+
+fn run_built_write_shape(position: &Position) -> Option<RunBuiltShape> {
+    if let Position::Local(local) = position
+        && let Some(extracted) = &local.extracted
+    {
+        return Some(RunBuiltShape { fields: extracted.iter().map(|(k, v)| (k.clone(), v.to_schema())).collect(), declared: true });
+    }
+    let landing = match position {
+        Position::Position(p) if p.run_built => position,
+        Position::Local(local) => local.run_built.as_deref()?,
+        _ => return None,
+    };
+    let schema = position_schema_of_ref(landing)?;
+    let instance = crate::types::position::instance_of_ref(Some(landing))?;
+    Some(RunBuiltShape { fields: schema.properties.clone(), declared: instance.declared.is_some() })
 }
 
 fn empty_writable_root() -> WritableRootSchema {

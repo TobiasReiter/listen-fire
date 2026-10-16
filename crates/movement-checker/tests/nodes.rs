@@ -45,6 +45,26 @@ fn a_shaped_graph_needs_every_required_field() {
     );
 }
 
+const RUN_BUILT: &str = "node Company {\n  name: <text>\n  thesis: <text | null>\n}\nmovement main() {\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  MAP(deduped-[:companies]->, (e) => {\n    BODY\n  })\n}\n";
+
+#[test]
+fn a_record_this_run_built_updates_in_place_by_its_landing_type() {
+    assert_eq!(codes_at(&RUN_BUILT.replace("BODY", "write e { thesis: \"x\" }"), 3), vec![]);
+    assert_eq!(
+        codes_at(&RUN_BUILT.replace("BODY", "write e { nope: \"x\" }"), 5),
+        vec![("MOV_WRITE_UNKNOWN_FIELD".into(), "'e' (Company.Company this run built) has no field 'nope' — it has: name, thesis".into())]
+    );
+}
+
+#[test]
+fn a_built_graph_is_not_a_record_to_update() {
+    let source = "node Company {\n  thesis: <text | null>\n}\nmovement main() {\n  g = graph<Company> { thesis: \"a\" }\n  write g { thesis: \"x\" }\n}\n";
+    assert_eq!(
+        codes_at(source, 4),
+        vec![("MOV_WRITE_POSITION_NOT_RECORD".into(), "'g' is a <Company> graph — 'write g { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result".into())]
+    );
+}
+
 /// Debugging aid: `NODES_CASE=<dir>` checks `<dir>/case.mov` against `<dir>/case.json`.
 #[test]
 fn debug_case() {

@@ -93,6 +93,42 @@ impl Ty {
         }
     }
 
+    /// The inverse of `from_schema`, for a type the program spelled where the
+    /// TypeScript holds one surface for both (an extracted record's fields
+    /// as a write shape). A record keeps no position, as a schema's never does.
+    pub fn to_schema(&self) -> SchemaFieldType {
+        let composite = match self {
+            Ty::Text => return SchemaFieldType::Scalar(Scalar::Text),
+            Ty::Number => return SchemaFieldType::Scalar(Scalar::Number),
+            Ty::Boolean => return SchemaFieldType::Scalar(Scalar::Boolean),
+            Ty::Date => return SchemaFieldType::Scalar(Scalar::Date),
+            Ty::Datetime => return SchemaFieldType::Scalar(Scalar::Datetime),
+            Ty::File => return SchemaFieldType::Scalar(Scalar::File),
+            Ty::Json => return SchemaFieldType::Scalar(Scalar::Json),
+            Ty::Absent => return SchemaFieldType::Scalar(Scalar::Absent),
+            Ty::List { of, unordered } => Composite::List { of: Box::new(of.to_schema()), unordered: unordered.then_some(true) },
+            Ty::Tuple { of, rest } => Composite::Tuple {
+                of: of.iter().map(|slot| slot.as_ref().map(Ty::to_schema)).collect(),
+                rest: rest.as_ref().map(|r| movement_parser::catalog::types::TupleRest {
+                    at: movement_parser::tree::JsNumber(r.at as f64),
+                    of: r.of.as_deref().map(|t| Box::new(t.to_schema())),
+                }),
+            },
+            Ty::Dict { of, shape } => Composite::Dict {
+                of: Box::new(of.to_schema()),
+                shape: shape.as_ref().map(|s| s.iter().map(|(k, v)| (k.clone(), v.as_ref().map(Ty::to_schema))).collect()),
+            },
+            Ty::Enum { options, open } => Composite::Enum {
+                options: options.clone(),
+                open: open.as_ref().map(|o| movement_parser::catalog::types::OpenEnum { allow_pattern: o.allow_pattern.clone() }),
+            },
+            Ty::MaybeAbsent(of) => Composite::MaybeAbsent { of: Box::new(of.to_schema()) },
+            Ty::Union(of) => Composite::Union { of: of.iter().map(Ty::to_schema).collect() },
+            Ty::Record(_) => Composite::Record { position: None },
+        };
+        SchemaFieldType::Composite(composite)
+    }
+
     /// `parseFieldTypeName`: a scalar's surface spelling.
     pub fn from_scalar_name(name: &str) -> Option<Ty> {
         Some(match name {
