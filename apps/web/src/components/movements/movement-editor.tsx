@@ -222,13 +222,23 @@ const theme = EditorView.theme({
   },
 });
 
-const movementHoverDocs = (snapshotRef: { current: CatalogSnapshot }) =>
+const movementHoverDocs = (
+  snapshotRef: { current: CatalogSnapshot },
+  languageVersionRef: { current: LanguageVersion | undefined },
+) =>
   hoverTooltip((view, pos) => {
     // The analyzer can throw on a program shape it doesn't handle yet — one
     // bad hover must degrade THAT request, not kill hover document-wide.
     let info;
     try {
-      info = getHoverInfo(view.state.doc.toString(), pos, snapshotRef.current);
+      info = getHoverInfo(
+        view.state.doc.toString(),
+        pos,
+        snapshotRef.current,
+        languageVersionRef.current !== undefined
+          ? { languageVersion: languageVersionRef.current }
+          : undefined,
+      );
     } catch (err) {
       console.error("Movement hover failed:", err);
       return null;
@@ -845,7 +855,7 @@ export const MovementEditor = forwardRef<
           movementLinter,
           lintGutter(),
           autocompletion({ override: [movementCompletions] }),
-          movementHoverDocs(snapshotRef),
+          movementHoverDocs(snapshotRef, languageVersionRef),
           definitionNavigation(snapshotRef, callbacksRef),
           keymap.of([
             ...closeBracketsKeymap,

@@ -105,6 +105,10 @@ inbox = email(credentials: dealflow_inbox)
 crm = attio(credentials: acme_main)
 `;
 
+/** This file pins the editor's view of the surface up to version 4; the
+ *  v5 surface's is surface_v5.unit.test.ts. */
+const VERSION_4 = { languageVersion: 4 } as const;
+
 function caret(text: string): { source: string; offset: number } {
   const offset = text.indexOf('¦');
   if (offset === -1) throw new Error('no caret in fixture');
@@ -113,7 +117,7 @@ function caret(text: string): { source: string; offset: number } {
 
 function completionsAt(text: string) {
   const { source, offset } = caret(text);
-  return getMovementCompletions(source, offset, snapshot);
+  return getMovementCompletions(source, offset, snapshot, VERSION_4);
 }
 
 function labels(result: { items: Array<{ label: string }> }): string[] {
@@ -281,7 +285,7 @@ movement intake(msg: <inbox-[:message]->>) {
 }
 `);
     const all = labels(result);
-    expect(all).toEqual(expect.arrayContaining(['write', 'if', 'all', 'link']));
+    expect(all).toEqual(expect.arrayContaining(['write', 'if', 'parallel', 'link']));
     expect(all).toContain('msg');
   });
 
@@ -354,7 +358,7 @@ import { \`Acme Prod\` } from credentials
 crm = attio(credentials: ¦)
 `;
     const { source: src, offset } = caret(source);
-    const result = getMovementCompletions(src, offset, snapshot);
+    const result = getMovementCompletions(src, offset, snapshot, VERSION_4);
     expect(result.items.find(i => i.label === 'Acme Prod')?.insert).toBe('`Acme Prod`');
   });
 
@@ -365,7 +369,7 @@ import { \`Acme Prod\` } from credentials
 crm = attio(credentials: \`Acme ¦)
 `;
     const { source: src, offset } = caret(source);
-    const result = getMovementCompletions(src, offset, snapshot);
+    const result = getMovementCompletions(src, offset, snapshot, VERSION_4);
     expect(result.items.find(i => i.label === 'Acme Prod')?.insert).toBe('`Acme Prod`');
     expect(src.slice(result.from, offset)).toBe('`Acme ');
   });
@@ -391,7 +395,7 @@ describe('completions: dash-slugged adapter with special-char credential', () =>
     "import { `Toni@acme.example's Listen-Fire Valuations` } from credentials\n";
   const at = (text: string) => {
     const { source, offset } = caret(text);
-    return getMovementCompletions(source, offset, dashSnapshot);
+    return getMovementCompletions(source, offset, dashSnapshot, VERSION_4);
   };
 
   it('suggests the special-char credential in the import list (backtick-wrapped)', () => {
@@ -828,7 +832,7 @@ movement m(msg: <inbox-[:message]->>) {
 describe('hover: value-binding types', () => {
   function hoverAt(text: string) {
     const { source, offset } = caret(text);
-    return getHoverInfo(source, offset, snapshot);
+    return getHoverInfo(source, offset, snapshot, VERSION_4);
   }
 
   it('shows the inferred scalar type of an expression binding', () => {
@@ -893,7 +897,7 @@ movement caller(msg: <inbox-[:message]->>) {
   greet(note: msg)
 }
 `;
-    const text = getHoverInfo(src, src.indexOf('greet(note:') + 1, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(src, src.indexOf('greet(note:') + 1, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('greet(note: <inbox-[:message]->>)');
   });
 
@@ -906,14 +910,14 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('field of crm.company');
     expect(text).toContain('text');
   });
 
   it('hovers construction-arg labels (credentials, dry_run)', () => {
     const src = 'import { attio } from adapters\nimport { acme_main } from credentials\ncrm = attio(credentials: acme_main, dry_run: true)\n';
-    const hov = (i: number) => getHoverInfo(src, i, snapshot)?.contents.join(' ') ?? '';
+    const hov = (i: number) => getHoverInfo(src, i, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(hov(src.indexOf('credentials: acme_main') + 1)).toContain('credential to authenticate');
     expect(hov(src.indexOf('dry_run') + 1)).toContain('rehearse');
   });
@@ -924,13 +928,13 @@ movement m(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> { unique by (\`name\`) name: "x" }
 }
 `;
-    const text = getHoverInfo(src, src.indexOf('crm-[:companies]') + 1, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(src, src.indexOf('crm-[:companies]') + 1, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('dry_run');
   });
 
   it('hovers an import source distinctly from the imported value, and import-from vs extract-from', () => {
     const src = 'import { attio } from adapters\nimport { writePersonToAttio } from "writePersonToAttio"\n';
-    const hov = (i: number) => getHoverInfo(src, i, snapshot)?.contents.join(' ') ?? '';
+    const hov = (i: number) => getHoverInfo(src, i, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(hov(src.indexOf('adapters') + 1)).toContain('adapter-type catalogue');
     // the quoted file path is a movement file, NOT the imported movement value
     expect(hov(src.indexOf('"writePersonToAttio"') + 3)).toContain('movement file');
@@ -948,7 +952,7 @@ listen to inbox fire m
     const at = (token: string, occ = 0) => {
       let i = -1;
       for (let n = 0; n <= occ; n++) i = src.indexOf(token, i + 1);
-      return getHoverInfo(src, i + 1, snapshot)?.contents.join(' ') ?? '';
+      return getHoverInfo(src, i + 1, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     };
     expect(at('movement')).toContain('unit of work');
     expect(at('extract')).toContain('materialise');
@@ -962,7 +966,7 @@ movement m(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> { unique by (\`name\`) name: msg.\`Sender ¦Name\` }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('Sender Name');
     expect(text).toContain('text');
   });
@@ -973,7 +977,7 @@ movement m(msg: <inbox-[:message]->>) {
   write crm-[:comp¦anies]-> { unique by (\`name\`) name: "x" }
 }
 `);
-    const joined = getHoverInfo(source, offset, snapshot)?.contents.join('\n') ?? '';
+    const joined = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join('\n') ?? '';
     expect(joined).toContain('object type');
     expect(joined).toMatch(/Fields:\n\s+name/);
   });
@@ -988,7 +992,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('field of crm.company');
     expect(text).toContain('text');
   });
@@ -1002,7 +1006,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('subject');
     expect(text).toContain('text');
   });
@@ -1018,7 +1022,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('field of crm.company');
     expect(text).toContain('list of text');
   });
@@ -1041,7 +1045,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('field of crm.company');
     expect(text).toContain('list of text');
   });
@@ -1056,7 +1060,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('field of crm.company');
     expect(text).toContain('list of text');
   });
@@ -1073,7 +1077,7 @@ movement m(msg: <inbox-[:message]->>) {
   }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('Matched natively by');
     expect(text).toContain('`name` + `domains`');
   });
@@ -1084,7 +1088,7 @@ movement m(msg: <inbox-[:message]->>) {
   write crm-[:comp¦anies]-> { unique by (\`url\`) name: msg.\`subject\` }
 }
 `);
-    const joined = getHoverInfo(source, offset, snapshot)?.contents.join('\n') ?? '';
+    const joined = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join('\n') ?? '';
     expect(joined).toContain('object type');
     expect(joined).toContain('Matched natively by');
     expect(joined).toContain('`name` + `domains`');
@@ -1098,7 +1102,7 @@ movement m(msg: <inbox-[:message]->>) {
   msg-[s:send¦er]-> { p = s.\`name\` }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('sender');
     expect(text).toContain('contact');
   });
@@ -1109,7 +1113,7 @@ movement m(msg: <inbox-[:message]->>) {
   crm-[c:compa¦nies]-> { write crm-[:companies]-> { unique by (\`name\`) name: c.\`name\` } }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('companies');
     expect(text).toContain('company');
   });
@@ -1124,7 +1128,7 @@ movement m(msg: <inbox-[:message]->>) {
   write p-[:comp¦any]-> { unique by (\`url\`) name: msg.\`subject\` }
 }
 `);
-    const text = getHoverInfo(source, offset, snapshot)?.contents.join(' ') ?? '';
+    const text = getHoverInfo(source, offset, snapshot, VERSION_4)?.contents.join(' ') ?? '';
     expect(text).toContain('company');
   });
 });
@@ -1132,7 +1136,7 @@ movement m(msg: <inbox-[:message]->>) {
 describe('meta-fields (@-prefixed ambient values)', () => {
   function hoverAt(text: string) {
     const { source, offset } = caret(text);
-    return getHoverInfo(source, offset, snapshot);
+    return getHoverInfo(source, offset, snapshot, VERSION_4);
   }
 
   it('offers the meta-fields as completions in an expression position', () => {
@@ -1194,7 +1198,7 @@ movement m(msg: <inbox-[:message]->>) {
 describe('stdlib: coercers and namespaced families surface in the editor', () => {
   function hoverAt(text: string) {
     const { source, offset } = caret(text);
-    return getHoverInfo(source, offset, snapshot);
+    return getHoverInfo(source, offset, snapshot, VERSION_4);
   }
 
   const exprFixture = (tail: string) => `${HEADER}
@@ -1459,7 +1463,7 @@ movement intake(msg: <inbox-[:message]->>) {
 
   it('types a movement parameter', () => {
     const offset = program.indexOf('msg-') !== -1 ? program.indexOf('msg-') : program.lastIndexOf('msg');
-    const hover = getHoverInfo(program, program.lastIndexOf('msg') + 1, snapshot);
+    const hover = getHoverInfo(program, program.lastIndexOf('msg') + 1, snapshot, VERSION_4);
     expect(hover).toBeDefined();
     expect(hover!.contents[0]).toContain('inbox.message');
     expect(hover!.contents.join('\n')).toContain('subject');
@@ -1467,14 +1471,14 @@ movement intake(msg: <inbox-[:message]->>) {
   });
 
   it('describes a constructed instance', () => {
-    const hover = getHoverInfo(program, program.indexOf('crm = ') + 1, snapshot);
+    const hover = getHoverInfo(program, program.indexOf('crm = ') + 1, snapshot, VERSION_4);
     expect(hover).toBeDefined();
     expect(hover!.contents[0]).toContain('attio instance');
     expect(hover!.contents.join('\n')).toContain('company');
   });
 
   it('types a write handle where it is read', () => {
-    const hover = getHoverInfo(program, program.indexOf('company.`name`') + 2, snapshot);
+    const hover = getHoverInfo(program, program.indexOf('company.`name`') + 2, snapshot, VERSION_4);
     expect(hover).toBeDefined();
     expect(hover!.contents[0]).toContain('crm.company handle');
     expect(hover!.contents.join('\n')).toContain('externalId');
@@ -1486,11 +1490,11 @@ movement m(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> { unique by (\`name\`) name: zzz_unknown_zzz }
 }
 `;
-    expect(getHoverInfo(src, src.indexOf('zzz_unknown_zzz') + 2, snapshot)).toBeUndefined();
+    expect(getHoverInfo(src, src.indexOf('zzz_unknown_zzz') + 2, snapshot, VERSION_4)).toBeUndefined();
   });
 
   it("hovering 'unique by' shows the target's native identity rules", () => {
-    const hover = getHoverInfo(program, program.indexOf('unique by') + 2, snapshot);
+    const hover = getHoverInfo(program, program.indexOf('unique by') + 2, snapshot, VERSION_4);
     expect(hover).toBeDefined();
     expect(hover!.contents[0]).toContain('identity for this write');
     expect(hover!.contents.join('\n')).toContain('`name` + `domains`');
@@ -1506,13 +1510,13 @@ movement intake(msg: <inbox-[:message]->>) {
   }
 }
 `;
-    const hover = getHoverInfo(personProgram, personProgram.indexOf('unique by') + 2, snapshot);
+    const hover = getHoverInfo(personProgram, personProgram.indexOf('unique by') + 2, snapshot, VERSION_4);
     expect(hover).toBeDefined();
     expect(hover!.contents.join('\n')).toContain('no native identity rules');
   });
 
   it("hovering 'unique' outside a write body falls through to symbols", () => {
-    expect(getHoverInfo('x = "unique"\n', 6, snapshot)).toBeUndefined();
+    expect(getHoverInfo('x = "unique"\n', 6, snapshot, VERSION_4)).toBeUndefined();
   });
 });
 
@@ -1558,7 +1562,7 @@ listen to inbox fire ¦`,
     const withVocabulary: CatalogSnapshot = JSON.parse(JSON.stringify(snapshot));
     withVocabulary.adapters.email.triggerConfig = ['key'];
     const { source, offset } = caret(`${HEADER}\nlisten to inbox { ¦`);
-    const result = getMovementCompletions(source, offset, withVocabulary);
+    const result = getMovementCompletions(source, offset, withVocabulary, VERSION_4);
     expect(result.items.map(i => i.label)).toEqual(['key']);
   });
 });
