@@ -4505,6 +4505,15 @@ pub fn parse_program(source: &str, version: u32, eager: bool) -> SResult<Program
     Ok(program)
 }
 
+/// A block closure's text (`{ … }`, starting at `origin` in the file) read
+/// for the old spellings its statements hold, which are reported into the
+/// gathering scope (crate::surface::slot_findings). A text that does not parse
+/// reports nothing here: the call it sits in reports why when it is read.
+pub(crate) fn read_block_for_findings(text: &str, origin: Loc) {
+    let mut parser = Parser::new(text, crate::surface::version(), origin, false);
+    let _ = parser.parse_block_body("the closure's body");
+}
+
 /// An adapter package's tag (`` `@lf/attio` ``), until packages are more than
 /// the built-in adapters: the tag names the adapter after the prefix.
 const ADAPTER_PACKAGE_PREFIX: &str = "@lf/";

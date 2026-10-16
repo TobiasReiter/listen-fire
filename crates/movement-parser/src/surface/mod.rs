@@ -106,9 +106,15 @@ pub fn is_v5() -> bool {
 }
 
 /// Records a finding in the innermost collecting scope, if there is one.
+///
+/// A finding already there is not recorded twice: a block closure's
+/// statements are read both by the statement grammar (a call written as a
+/// statement) and through the slot that call's expression is.
 pub fn report(finding: SpellingFinding) {
     SCOPE.with(|s| {
-        if let Some(findings) = s.borrow_mut().iter_mut().rev().find_map(|s| s.findings.as_mut()) {
+        if let Some(findings) = s.borrow_mut().iter_mut().rev().find_map(|s| s.findings.as_mut())
+            && !findings.contains(&finding)
+        {
             findings.push(finding);
         }
     });
@@ -124,11 +130,26 @@ pub fn canonicalize(tree: &mut crate::tree::MExpr, src: &Utf16) -> Vec<Finding> 
 
 /// The findings of a slot's text, placed in the file: its text begins at
 /// `start`. A text the grammar refuses has none; the checker reports why.
+///
+/// A block closure's statements inside the text are read here too, their
+/// findings reported as they are read: the statement grammar reads them only
+/// when the call they sit in is read (a nested call, long after the parse),
+/// where no finding is gathered.
 pub fn slot_findings(raw: &str, start: Loc) -> Vec<SpellingFinding> {
     let src = Utf16::new(raw);
     let Ok(mut tree) = crate::expr::parse_expression_raw(raw) else { return Vec::new() };
     let findings = canonicalize(&mut tree, &src);
+    read_blocks(&tree, &src, start);
     findings.into_iter().map(|f| place(&f, &src, start)).collect()
+}
+
+fn read_blocks(e: &crate::tree::MExpr, src: &Utf16, start: Loc) {
+    if let crate::tree::MExpr::Closure { body, .. } = e
+        && let crate::tree::ClosureBody::Block { at } = body.as_ref()
+    {
+        crate::stmt::read_block_for_findings(&src.text(at.start, at.end), loc_in(src, start, at.start));
+    }
+    crate::tree::shared::expr(e, &mut |child| read_blocks(child, src, start));
 }
 
 /// A finding at offsets into a text that starts at `start` in the file.
