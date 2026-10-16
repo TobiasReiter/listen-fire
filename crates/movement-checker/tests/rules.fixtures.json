@@ -1378,22 +1378,22 @@
    "snapshot": "old_edge",
    "version": 5,
    "upgradingFrom": 4,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = count(org-[:@previous]->)\n  write crm-[:notes]-> { title: org.created ? \"y\" : \"n\" }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if (ex != null) { k = count(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
-    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
-    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:56 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `exists(h-[:@old]->)` is false when this write created the record; `first(h-[:@old]->) == h` when it was only rehearsed; compare fields against `first(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:25-12:44 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
    ]
   },
   {
    "name": "the @old edge and a write handle's fields",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = COUNT(org-[:@previous]->)\n  write crm-[:notes]-> { title: IF org.created THEN \"y\" ELSE \"n\" END }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if ex != null { k = COUNT(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  org = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\", Domains: [\"acme.com\"] }\n  n = count(org-[:@previous]->)\n  write crm-[:notes]-> { title: org.created ? \"y\" : \"n\" }\n  ex = match crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n  if (ex != null) { k = count(ex-[:@old]->) }\n  write org { Name: \"Acme Ltd\" }\n  org2 = write org { Name: \"Acme Ltd\" }\n  d = org.Domains\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_ARTIFICIAL_EDGE_UNKNOWN 9:7-9:32 '-[:@previous]->': '@' names an edge the engine makes, not one a system declares — the only one is '@old' (the record as it stood before a write) (see handbook: writes#what-the-write-did)",
-    "MOV_HANDLE_FIELD_RETIRED 10:33-10:69 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `EXISTS(h-[:@old]->)` is FALSE when this write created the record; `FIRST(h-[:@old]->) == h` when it was only rehearsed; compare fields against `FIRST(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
-    "MOV_OLD_EDGE_NOT_A_WRITE 12:23-12:42 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
+    "MOV_HANDLE_FIELD_RETIRED 10:33-10:56 'created' is no longer a field of a write's handle since \"Luminous Owl\" (4) — ask the record before the write instead: `exists(h-[:@old]->)` is false when this write created the record; `first(h-[:@old]->) == h` when it was only rehearsed; compare fields against `first(h-[:@old]->)` for what changed (see handbook: writes#what-the-write-did)",
+    "MOV_OLD_EDGE_NOT_A_WRITE 12:25-12:44 only a handle a write returned has an '@old' (the record as it stood before that write), and a crm.company handle is not one — a record a match or a traversal found already is the record as it stands, so read it directly (see handbook: writes#what-the-write-did)"
    ]
   },
   {
@@ -1422,7 +1422,7 @@
    "name": "a hop's LIMIT where the source takes none",
    "snapshot": "cap",
    "version": 5,
-   "source": "import { cap } from adapters\nimport { cap_cred } from credentials\n\nc = cap(credentials: cap_cred)\nmovement main(msg: <c-[:company]->>) {\n  n = COUNT(msg-[p:staff LIMIT 3]->)\n  k = COUNT(msg-[p:people LIMIT 3]->)\n}\nlisten to c fire main\n",
+   "source": "import { cap } from adapters\nimport { cap_cred } from credentials\n\nc = connect cap using cap_cred\nfunction main(msg: <c-[:company]->>) {\n  n = count(msg-[p:staff LIMIT 3]->)\n  k = count(msg-[p:people LIMIT 3]->)\n}\nlisten to c fire main\n",
    "expected": [
     "MOV_LIMIT_NEEDS_ORDER 6:7-6:37 'staff' comes back in no particular order, so 'LIMIT 3' takes some 3 of them — a different 3 each run. Say which ones you mean with an ORDER BY (`-[:staff ORDER BY `…` DESC LIMIT 3]->`).",
     "MOV_HOP_LIMIT_UNSUPPORTED 6:7-6:37 'staff' can't be limited here — this source doesn't support LIMIT across that relationship.",
@@ -1433,7 +1433,7 @@
    "name": "delete refuses what is no deletable record",
    "snapshot": "delete",
    "version": 5,
-   "source": "import { crm, loose } from adapters\ndb = crm()\nfree = loose()\n\nnode Company: \"each company named\" {\n  name: <text> \"its name\"\n}\n\nmovement scan(x: <db-[:company]->>) {\n  x-[n:notes]-> {\n    delete n\n  }\n  v = \"Acme\"\n  delete v\n  people = x-[:people]->\n  delete people\n  w = IF x.name == \"a\" THEN x ELSE null END\n  delete w\n  d = extract from [x.name] {\n    node co: \"a company\" {\n      nm: <text> \"the name\"\n    }\n  }\n  delete d\n  d-[k:co]-> {\n    delete k\n  }\n  delete x\n}\n",
+   "source": "import { crm, loose } from adapters\ndb = connect crm\nfree = connect loose\n\nnode Company: \"each company named\" {\n  name: <text> \"its name\"\n}\n\nfunction scan(x: <db-[:company]->>) {\n  x-[n:notes]-> {\n    delete n\n  }\n  v = \"Acme\"\n  delete v\n  people = x-[:people]->\n  delete people\n  w = x.name == \"a\" ? x : null\n  delete w\n  d = extract from [x.name] {\n    node co: \"a company\" {\n      nm: <text> \"the name\"\n    }\n  }\n  delete d\n  d-[k:co]-> {\n    delete k\n  }\n  delete x\n}\n",
    "expected": [
     "MOV_DELETE_NOT_DECLARED 11:5-11:13 'n' is db.note, and its system does not declare that it can delete one — 'delete' is checked against the system's own promise ('deletable' on the type it describes). Change the record instead ('write n { … }'), or delete it in a system that can.",
     "MOV_DELETE_NOT_RECORD 14:3-14:11 'v' is text — 'delete' removes one record a system stores. Delete a record you walked to or wrote ('delete r' inside 'crm-[r:Companies]-> { … }', or 'rec = write …' then 'delete rec').",
@@ -1508,25 +1508,25 @@
    "name": "a credential is never a value",
    "snapshot": "cred",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { acme } from credentials\nimport { summarise } from plugins\ncrm = attio(credentials: acme)\nfunction echo(v: <text>) {\n  return v\n}\nmovement m() {\n  x1 = acme\n  x2 = acme.token\n  x3 = \"${acme}\"\n  x4 = acme == \"acme\"\n  if acme == null { ERROR(\"none\") }\n  x5 = EXISTS(acme)\n  x6 = [acme]\n  x7 = { a: acme }\n  ERROR(\"${acme}\")\n  x8 = AI(\"say ${acme}\")\n  x9 = TEXT.PAIRS(acme)\n  x10 = AT(acme, \"token\")\n  x11 = echo(acme)\n  x12 = summarise(data: acme)\n  write crm-[:companies]-> { name: acme }\n  return acme\n}\nmovement n(c: <acme-[:company]->>) {\n  y = 1\n}\n",
+   "source": "import { attio } from adapters\nimport { acme } from credentials\nimport { summarise } from plugins\ncrm = connect attio using acme\nfunction echo(v: <text>) {\n  return v\n}\nfunction m() {\n  x1 = acme\n  x2 = acme.token\n  x3 = \"${acme}\"\n  x4 = acme == \"acme\"\n  if (acme == null) { fail(\"none\") }\n  x5 = acme != null\n  x6 = [acme]\n  x7 = { a: acme }\n  fail(\"${acme}\")\n  x8 = ai(\"say ${acme}\")\n  x9 = Text.pairs(acme)\n  x10 = acme.token\n  x11 = echo(acme)\n  x12 = summarise(acme)\n  write crm-[:companies]-> { name: acme }\n  return acme\n}\nfunction n(c: <acme-[:company]->>) {\n  y = 1\n}\n",
    "expected": [
-    "MOV_CREDENTIAL_NOT_A_VALUE 9:8-9:12 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 10:8-10:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 11:8-11:17 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 12:8-12:22 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 13:6-13:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 14:8-14:20 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 15:8-15:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 16:8-16:19 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 17:9-17:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 18:8-18:25 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 19:8-19:24 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 20:9-20:26 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 21:14-21:18 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 22:25-22:29 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 23:36-23:40 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 24:10-24:14 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there",
-    "MOV_CREDENTIAL_NOT_A_VALUE 26:15-26:34 'acme' is a credential, which is never a value in a program — it is only named as the 'credentials:' argument where an integration is set up, and the host resolves it there"
+    "MOV_CREDENTIAL_NOT_A_VALUE 9:8-9:12 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 10:8-10:18 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 11:8-11:17 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 12:8-12:22 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 13:7-13:19 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 14:8-14:20 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 15:8-15:14 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 16:8-16:19 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 17:8-17:17 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 18:8-18:25 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 19:8-19:24 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 20:9-20:19 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 21:14-21:18 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 22:19-22:23 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 23:36-23:40 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 24:10-24:14 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there",
+    "MOV_CREDENTIAL_NOT_A_VALUE 26:15-26:34 'acme' is a credential, which is never a value in a program — it is only named after 'using' where an adapter is connected ('connect … using acme'), and the host resolves it there"
    ]
   },
   {
@@ -1553,7 +1553,7 @@
    "name": "a '#' hop is retired",
    "snapshot": "meta",
    "version": 5,
-   "source": "import { slack, loose } from adapters\nimport { vc_url_retrieval, linkedin_enrichment } from plugins\nchat = slack()\nfree = loose()\nmovement scan(c: <chat-[:channel]->>, d: <chat-[:channel]->-[:#members]->>) {\n  x1 = FIRST(c-[:#foo]->)\n  x2 = c-[:#foo]->.Name\n  c-[:#foo]-> {\n    y = 1\n  }\n  c-[#foo]-> {\n    y = 1\n  }\n  x3 = c-[:`#foo`]->.Name\n  write c-[:#foo]-> { Body: \"a\" }\n  x4 = COUNT(chat-[:#Channels]->)\n  x5 = FIRST(free-[:#foo]->)\n  c-[f:#resources]-> {\n    y = f.url\n  }\n  x6 = c-[t:#transform { plugin: \"vc_url_retrieval\" }]->.out\n  x7 = c-[t:#transform { plugin: \"linkedin_enrichment\" }]->.out\n  x8 = c-[#linked WHERE type = \"ATTIO\"]->.external_id\n  x9 = c-[t:#transform]->.out\n}\nlisten to chat fire scan\n",
+   "source": "import { slack, loose } from adapters\nimport { vcUrlRetrieval as vc_url_retrieval, linkedinEnrichment as linkedin_enrichment } from plugins\nchat = connect slack\nfree = connect loose\nfunction scan(c: <chat-[:channel]->>, d: <chat-[:channel]->-[:#members]->>) {\n  x1 = first(c-[:#foo]->)\n  x2 = c-[:#foo]->.Name\n  c-[:#foo]-> {\n    y = 1\n  }\n  c-[#foo]-> {\n    y = 1\n  }\n  x3 = c-[:`#foo`]->.Name\n  write c-[:#foo]-> { Body: \"a\" }\n  x4 = count(chat-[:#Channels]->)\n  x5 = first(free-[:#foo]->)\n  c-[f:#resources]-> {\n    y = f.url\n  }\n  x6 = c-[t:#transform { plugin: \"vc_url_retrieval\" }]->.out\n  x7 = c-[t:#transform { plugin: \"linkedin_enrichment\" }]->.out\n  x8 = c-[l:#linked WHERE l.type == \"ATTIO\"]->.external_id\n  x9 = c-[t:#transform]->.out\n}\nlisten to chat fire scan\n",
    "expected": [
     "MOV_META_HOP_RETIRED 5:42-5:75 '-[:#members]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
     "MOV_META_HOP_RETIRED 6:14-6:26 '-[:#foo]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
@@ -1567,16 +1567,16 @@
     "MOV_META_HOP_RETIRED 18:3-18:21 '-[:#resources]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files",
     "MOV_TRANSFORM_HOP_RETIRED 21:8-21:61 the '#transform' hop is retired — there are no meta edges, and a plugin is a function: import it and call it, and bind what it hands back like any function's result — 'import { vc_url_retrieval } from plugins', then 'out = vc_url_retrieval(text: …)'",
     "MOV_TRANSFORM_HOP_RETIRED 22:8-22:64 the '#transform' hop is retired — there are no meta edges, and a plugin is a function, but 'linkedin_enrichment' runs only as a stage of an extraction: 'import { linkedin_enrichment } from plugins', then 'extract from [ … ] through [linkedin_enrichment] { … }'",
-    "MOV_LINKED_HOP_RETIRED 23:8-23:54 the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; or store the link in the system that holds it — a field or an edge there (see handbook: front#identity)",
+    "MOV_LINKED_HOP_RETIRED 23:8-23:59 the '-[#linked …]->' hop is retired — it looked a record up by the id another system gave it, not by the record this run wrote. Keep the write's handle and read from it: 'rec = write crm-[:Companies]-> { … }', then 'rec.<field>' or 'rec-[:…]->'; or store the link in the system that holds it — a field or an edge there (see handbook: front#identity)",
     "MOV_TRANSFORM_HOP_RETIRED 24:8-24:30 the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads, e.g. 'import { fetch_url } from plugins', then 'page = fetch_url(url: m.u)'",
-    "MOV_LISTEN_PARAM_MISMATCH 26:1-26:25 'scan' takes 2 parameters — a movement fired by a listener takes exactly one, the event position"
+    "MOV_LISTEN_PARAM_MISMATCH 26:1-26:25 'scan' takes 2 parameters — a function fired by a listener takes exactly one, the event position"
    ]
   },
   {
    "name": "a '#' hop in a type's address",
    "snapshot": "meta",
    "version": 5,
-   "source": "import { slack } from adapters\nchat = slack()\nmovement scan(c: <chat-[:#channel]->>) {\n  sent = node { messages: <chat-[:Channels]->-[:#members]->> }\n  y = 1\n}\nlisten to chat fire scan\n",
+   "source": "import { slack } from adapters\nchat = connect slack\nfunction scan(c: <chat-[:#channel]->>) {\n  sent = node { messages: <chat-[:Channels]->-[:#members]->> }\n  y = 1\n}\nlisten to chat fire scan\n",
    "expected": [
     "MOV_META_HOP_RETIRED 3:18-3:38 '-[:#channel]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')",
     "MOV_META_HOP_RETIRED 4:27-4:61 '-[:#members]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')"
@@ -1648,7 +1648,7 @@
    "name": "__proto__ is no name",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = email(credentials: dealflow_inbox)\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nmovement main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
+   "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = connect email using dealflow_inbox\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nfunction main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = map([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
     "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
@@ -1664,13 +1664,13 @@
    "name": "a value that may be a record, handed to a value parameter",
    "snapshot": "maybe",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = attio(credentials: crm_cred)\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(COALESCE(co, 1))\n  c = TRUE\n  x2 = f(IF c THEN co ELSE 1 END)\n  v = COALESCE(co, 1)\n  x3 = f(v)\n  f(COALESCE(co, 1))\n  x4 = all3([COALESCE(co, 1)])\n}\n",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { score } from plugins\ncrm = connect attio using crm_cred\nfunction f(n: <number>) {\n  return n\n}\nfunction all3(ns: <number[]>) {\n  return 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x1 = f(coalesce(co, 1))\n  c = true\n  x2 = f(c ? co : 1)\n  v = coalesce(co, 1)\n  x3 = f(v)\n  f(coalesce(co, 1))\n  x4 = all3([coalesce(co, 1)])\n}\n",
    "expected": [
-    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
-    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:33 'f' expects number for 'n' (argument 1), but 'IF c THEN co ELSE 1 END' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
-    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
-    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'COALESCE(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value",
-    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[COALESCE(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value"
+    "MOV_CALL_ARG_MAYBE_RECORD 13:10-13:25 'f' expects number for 'n' (argument 1), but 'coalesce(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 15:10-15:20 'f' expects number for 'n' (argument 1), but 'c ? co : 1' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 17:10-17:11 'f' expects number for 'n' (argument 1), but 'v' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 18:5-18:20 'f' expects number for 'n' (argument 1), but 'coalesce(co, 1)' may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value",
+    "MOV_CALL_ARG_MAYBE_RECORD 19:13-19:30 'all3' expects list of number for 'ns' (argument 1), but '[coalesce(co, 1)]' may hold a crm.company handle at '[0]' — a record, not a value, and such a union is no list of number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value"
    ]
   },
   {
@@ -1704,10 +1704,10 @@
    "snapshot": "old_edge",
    "version": 5,
    "upgradingFrom": 4,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  n = AT(r, 0).Name\n  m = AT(r, 0) == null\n  k = AT(r, 1)\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  n = r[0].Name\n  m = r[0] == null\n  k = r[1]\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_PARALLEL_RETIRED 8:7-14:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run",
-    "MOV_RECEIPT_RECORD_SLOT 15:7-15:15 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`AT(r, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
+    "MOV_RECEIPT_RECORD_SLOT 15:7-15:11 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`r[i]`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
    ]
   },
   {
@@ -1715,11 +1715,11 @@
    "snapshot": "old_edge",
    "version": 5,
    "upgradingFrom": 4,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await race([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  h = AT(r, 0)\n  n = h.Name\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = await race([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  ])\n  h = r[0]\n  n = h.Name\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_COMBINATOR_ARMS_ARE_ARGUMENTS 8:18-14:4 'race' takes its functions as arguments, not in a list — a closure is not data, so there is no list of them to pass. Write 'race(f, g)'",
     "MOV_COMBINATOR_NO_AWAIT 8:7-14:5 'await' marks where the run itself parks — a sleep, an until, an answer read — and 'race(…)' does not park by itself: its arms may, and the run parks where they do. Write 'race(…)' without 'await'",
-    "MOV_RECEIPT_RECORD_SLOT 15:7-15:15 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`AT(r, i)`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
+    "MOV_RECEIPT_RECORD_SLOT 15:7-15:11 since \"Dancing Wren\" (5) a record an arm hands back reads as that record through 'r' (`r[i]`, a field of it, a null check); before, that slot read null. If the program relied on the null, change it, then upgrade."
    ]
   },
   {
@@ -1727,7 +1727,7 @@
    "snapshot": "old_edge",
    "version": 5,
    "upgradingFrom": 4,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => \"one\",\n    () => 2,\n  ])\n  n = AT(r, 0)\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => \"one\",\n    () => 2,\n  ])\n  n = r[0]\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_PARALLEL_RETIRED 8:7-11:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run"
    ]
@@ -1737,7 +1737,7 @@
    "snapshot": "old_edge",
    "version": 5,
    "upgradingFrom": 4,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return [a, a]\n    },\n    () => 2,\n  ])\n  n = AT(r, 0)\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = await parallel([\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return [a, a]\n    },\n    () => 2,\n  ])\n  n = r[0]\n}\nlisten to inbox fire main\n",
    "expected": [
     "MOV_PARALLEL_RETIRED 8:7-14:5 'parallel' is retired — 'all' is the same join, its functions passed as arguments: every one runs, and the answer is what each returned, in their order. Write 'all(…)' — no 'await': 'all' does not park by itself, and an arm that waits parks the run"
    ]
@@ -1754,42 +1754,42 @@
    "name": "all's receipt types each slot under 5",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  )\n  n = AT(r, 0).Name\n  t = AT(r, 1) + \"x\"\n  write crm-[:notes]-> { title: AT(r, 1) }\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = all(\n    () => {\n      a = write crm-[:companies]-> { unique by (`Name`), Name: \"Acme\" }\n      return a\n    },\n    () => 2,\n  )\n  n = r[0].Name\n  t = r[1] + \"x\"\n  write crm-[:notes]-> { title: r[1] }\n}\nlisten to inbox fire main\n",
    "expected": [
-    "MOV_ARITH_NON_NUMERIC 16:7-16:21 An arithmetic operation requires numeric operands — the right side of '+' is text. Build the string with \"${…}\" interpolation instead."
+    "MOV_ARITH_NON_NUMERIC 16:7-16:17 An arithmetic operation requires numeric operands — the right side of '+' is text. Build the string with \"${…}\" interpolation instead."
    ]
   },
   {
    "name": "all with onError warn leaves each slot maybe absent",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(() => \"one\", () => 2, { onError: \"warn\" })\n  write crm-[:notes]-> { title: AT(r, 0) }\n  write crm-[:notes]-> { title: AT(r, 1) }\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = all(() => \"one\", () => 2, { onError: \"warn\" })\n  write crm-[:notes]-> { title: r[0] }\n  write crm-[:notes]-> { title: r[1] }\n}\nlisten to inbox fire main\n",
    "expected": [
-    "MOV_ABSENT_REQUIRED 9:33-9:41 'title' on crm.note needs a value, but 'AT(r, 0)' may be absent (text (or absent)) — write 'title: COALESCE(AT(r, 0), \"unknown\")' to fall back to a value that is always there, or 'title ?: AT(r, 0)' to leave it unset when absent (see handbook: front#maybe-absent)",
-    "MOV_ABSENT_REQUIRED 10:33-10:41 'title' on crm.note needs a value, but 'AT(r, 1)' may be absent (number (or absent)) — write 'title: COALESCE(AT(r, 1), 0)' to fall back to a value that is always there, or 'title ?: AT(r, 1)' to leave it unset when absent (see handbook: front#maybe-absent)"
+    "MOV_ABSENT_REQUIRED 9:33-9:37 'title' on crm.note needs a value, but 'r[0]' may be absent (text (or absent)) — write 'title: coalesce(r[0], \"unknown\")' to fall back to a value that is always there, or 'title ?: r[0]' to leave it unset when absent (see handbook: front#maybe-absent)",
+    "MOV_ABSENT_REQUIRED 10:33-10:37 'title' on crm.note needs a value, but 'r[1]' may be absent (number (or absent)) — write 'title: coalesce(r[1], 0)' to fall back to a value that is always there, or 'title ?: r[1]' to leave it unset when absent (see handbook: front#maybe-absent)"
    ]
   },
   {
    "name": "an arm returning a closure is no data in the receipt",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  r = all(() => { return () => 1 }, () => 2)\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  r = all(() => { return () => 1 }, () => 2)\n}\nlisten to inbox fire main\n",
    "expected": [
-    "MOV_CLOSURE_NOT_DATA 8:11-8:35 'all' keeps what each arm returns in its answer, and this arm returns a closure, and a closure is not data — keep it in a variable ('g = …', called as 'g()') or pass it as an argument ('all(f, g)', 'MAP(xs, (x) => …)')"
+    "MOV_CLOSURE_NOT_DATA 8:11-8:35 'all' keeps what each arm returns in its answer, and this arm returns a closure, and a closure is not data — keep it in a variable ('g = …', called as 'g()') or pass it as an argument ('all(f, g)', 'map(xs, (x) => …)')"
    ]
   },
   {
    "name": "an until with an inline closure condition binds what it returns",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\ngraph = kg(credentials: native_knowledge)\nmovement main(msg: <inbox-[:message]->>) {\n  ok = await until(() => { return 3 }, every: 5m)\n  write crm-[:notes]-> { title: ok }\n  b = await until(() => { return msg }, every: 5m)\n  write crm-[:notes]-> { title: b.subject }\n}\nlisten to inbox fire main\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\ngraph = connect kg using native_knowledge\nfunction main(msg: <inbox-[:message]->>) {\n  ok = await until(() => { return 3 }, { every: 5m })\n  write crm-[:notes]-> { title: ok }\n  b = await until(() => { return msg }, { every: 5m })\n  write crm-[:notes]-> { title: b.subject }\n}\nlisten to inbox fire main\n",
    "expected": []
   },
   {
    "name": "closure candidates: a record the first named function returns (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return made\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if (c) {\n    return made\n  }\n    return label\n}\nfunction m() {\n  g = mk(true)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
    "expected": [
     "MOV_WRITE_FIELD_TYPE 23:33-23:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
    ]
@@ -1798,7 +1798,7 @@
    "name": "closure candidates: a record a later named function returns (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return made\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if (c) {\n    return label\n  }\n    return made\n}\nfunction m() {\n  g = mk(true)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
    "expected": [
     "MOV_WRITE_FIELD_TYPE 23:33-23:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
    ]
@@ -1807,7 +1807,7 @@
    "name": "closure candidates: a record a later closure literal returns (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return () => \"x\"\n    }\n    return () => made()\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nfunction m() {\n  c = true\n  mk = () => {\n    if (c) {\n      return () => \"x\"\n    }\n    return () => made()\n  }\n  g = mk()\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
    "expected": [
     "MOV_WRITE_FIELD_TYPE 25:33-25:34 'title' on crm.note is text, and this may be a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
    ]
@@ -1816,7 +1816,7 @@
    "name": "closure candidates: every candidate arity (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return pair\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if (c) {\n    return label\n  }\n    return pair\n}\nfunction m() {\n  g = mk(true)\n  x = g()\n}",
    "expected": [
     "MOV_CALL_ARITY 22:7-22:10 'g' may be any of several closures, taking 0 or 2 arguments, got 0"
    ]
@@ -1825,7 +1825,7 @@
    "name": "closure candidates: parameters no argument fits (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <text>) => n\n  }\n  g = mk()\n  x = g(1)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nfunction m() {\n  c = true\n  mk = () => {\n    if (c) {\n      return (n: <number>) => n + 1\n    }\n    return (n: <text>) => n\n  }\n  g = mk()\n  x = g(1)\n}",
    "expected": [
     "MOV_CALL_ARG_TYPE 24:7-24:11 'g' may be any of several closures, and two disagree about argument 1: a closure returning number takes number for 'n', and a closure returning text takes text for 'n'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known"
    ]
@@ -1834,7 +1834,7 @@
    "name": "closure candidates: the narrowest parameter (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nmovement m() {\n  c = TRUE\n  mk = () => {\n    if c {\n      return (n: <number>) => n + 1\n    }\n    return (n: <number>) => n\n  }\n  g = mk()\n  x = g(\"a\")\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\n\nfunction m() {\n  c = true\n  mk = () => {\n    if (c) {\n      return (n: <number>) => n + 1\n    }\n    return (n: <number>) => n\n  }\n  g = mk()\n  x = g(\"a\")\n}",
    "expected": [
     "MOV_CALL_ARG_TYPE 24:9-24:12 'g' expects number for 'n' (argument 1), but this argument is text"
    ]
@@ -1843,14 +1843,14 @@
    "name": "closure candidates: candidates that agree (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if c {\n    return label\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>) {\n  if (c) {\n    return label\n  }\n    return label\n}\nfunction m() {\n  g = mk(true)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
    "expected": []
   },
   {
    "name": "closure candidates: a declared return narrows (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>): <() => <text>> {\n  if c {\n    return made\n  }\n    return label\n}\nmovement m() {\n  g = mk(TRUE)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction mk(c: <boolean>): <() => <text>> {\n  if (c) {\n    return made\n  }\n    return label\n}\nfunction m() {\n  g = mk(true)\n  x = g()\n  write crm-[:notes]-> { title: x }\n}",
    "expected": [
     "MOV_RETURN_TYPE 16:5-16:16 'mk' declares it returns <() => <text>>, but this returns a closure returning a crm.company handle"
    ]
@@ -1951,7 +1951,7 @@
    "name": "closure candidates: a named function aliased and returned as a value (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction pick() {\n  return label\n}\nmovement m() {\n  f = made\n  y = f()\n  write crm-[:notes]-> { title: y }\n  h = pick()\n  z = h()\n  write crm-[:notes]-> { title: z }\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction made() {\n  o = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  return o\n}\nfunction label() {\n  return \"x\"\n}\nfunction pair(a: <number>, b: <number>) {\n  return a\n}\nfunction pick() {\n  return label\n}\nfunction m() {\n  f = made\n  y = f()\n  write crm-[:notes]-> { title: y }\n  h = pick()\n  z = h()\n  write crm-[:notes]-> { title: z }\n}",
    "expected": [
     "MOV_WRITE_FIELD_TYPE 20:33-20:34 'title' on crm.note is text, and this is a crm.company handle — a record, not a value. Write a field off it ('title: r.`Name`'), or join the two records with a link ('link … -[:edge]-> r')."
    ]
@@ -1960,9 +1960,9 @@
    "name": "member fit: MAP closure number (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (n: <number>) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([\"a\"], (n: <number>) => n)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'map' expects number for 'n' (argument 1), but each member 'map' hands it is text"
    ]
   },
   {
@@ -1978,9 +1978,9 @@
    "name": "member fit: MAP named (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], inc)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([\"a\"], inc)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:11-9:16 'inc' expects number for 'n' (argument 1), but each member 'MAP' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:11-9:16 'inc' expects number for 'n' (argument 1), but each member 'map' hands it is text"
    ]
   },
   {
@@ -1996,9 +1996,9 @@
    "name": "member fit: FILTER (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = FILTER([\"a\"], (n: <number>) => n > 1)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = filter([\"a\"], (n: <number>) => n > 1)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'FILTER' expects number for 'n' (argument 1), but each member 'FILTER' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'filter' expects number for 'n' (argument 1), but each member 'filter' hands it is text"
    ]
   },
   {
@@ -2014,9 +2014,9 @@
    "name": "member fit: GROUPBY (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = GROUPBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = List.groupBy([\"a\"], (n: <number>) => \"k\")\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:15-9:20 the function for 'GROUPBY' expects number for 'n' (argument 1), but each member 'GROUPBY' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:20-9:25 the function for 'List.groupBy' expects number for 'n' (argument 1), but each member 'List.groupBy' hands it is text"
    ]
   },
   {
@@ -2032,9 +2032,9 @@
    "name": "member fit: KEYBY (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = KEYBY([\"a\"], (n: <number>) => \"k\")\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = List.keyBy([\"a\"], (n: <number>) => \"k\")\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:13-9:18 the function for 'KEYBY' expects number for 'n' (argument 1), but each member 'KEYBY' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:18-9:23 the function for 'List.keyBy' expects number for 'n' (argument 1), but each member 'List.keyBy' hands it is text"
    ]
   },
   {
@@ -2050,9 +2050,9 @@
    "name": "member fit: REDUCE start (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([1, 2], \"s\", (acc: <number>, n: <number>) => acc + n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = reduce([1, 2], (acc: <number>, n: <number>) => acc + n, \"s\")\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:22-9:25 the function for 'REDUCE' expects number for 'acc' (argument 1), but its starting value 'REDUCE' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:63-9:66 the function for 'reduce' expects number for 'acc' (argument 1), but its starting value 'reduce' hands it is text"
    ]
   },
   {
@@ -2068,9 +2068,9 @@
    "name": "member fit: REDUCE member (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([\"a\"], 0, (acc: <number>, n: <number>) => acc + n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = reduce([\"a\"], (acc: <number>, n: <number>) => acc + n, 0)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'REDUCE' expects number for 'n' (argument 2), but each member 'REDUCE' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:14-9:19 the function for 'reduce' expects number for 'n' (argument 2), but each member 'reduce' hands it is text"
    ]
   },
   {
@@ -2086,9 +2086,9 @@
    "name": "member fit: record member (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([co], (n: <number>) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([co], (n: <number>) => n)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:11-9:15 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is a crm.company handle"
+    "MOV_CALL_ARG_TYPE 9:11-9:15 the function for 'map' expects number for 'n' (argument 1), but each member 'map' hands it is a crm.company handle"
    ]
   },
   {
@@ -2104,9 +2104,9 @@
    "name": "member fit: maybe record member (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([COALESCE(co, 1)], (n: <number>) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([coalesce(co, 1)], (n: <number>) => n)\n}",
    "expected": [
-    "MOV_CALL_ARG_MAYBE_RECORD 9:11-9:28 the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with IS and pass a field off it ('r.`Name`'), or fill every arm with a value"
+    "MOV_CALL_ARG_MAYBE_RECORD 9:11-9:28 the function for 'map' expects number for 'n' (argument 1), but each member 'map' hands it may be a crm.company handle — a record, not a value, and such a union is no number, as in TypeScript. Narrow it to the record with 'is' and pass a field off it ('r.`Name`'), or fill every arm with a value"
    ]
   },
   {
@@ -2122,9 +2122,9 @@
    "name": "member fit: hop records to text closure (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  up = (t: <text>) => UPPER(t)\n  x = MAP(crm-[:companies]->, up)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  up = (t: <text>) => Text.upper(t)\n  x = map(crm-[:companies]->, up)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 10:11-10:29 'up' expects text for 't' (argument 1), but each member 'MAP' hands it is crm.company"
+    "MOV_CALL_ARG_TYPE 10:11-10:29 'up' expects text for 't' (argument 1), but each member 'map' hands it is crm.company"
    ]
   },
   {
@@ -2140,9 +2140,9 @@
    "name": "member fit: FILTER hop (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  long = (t: <text>) => LENGTH(t) > 3\n  x = FILTER(crm-[:companies]->, long)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  long = (t: <text>) => Text.length(t) > 3\n  x = filter(crm-[:companies]->, long)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 10:14-10:32 'long' expects text for 't' (argument 1), but each member 'FILTER' hands it is crm.company"
+    "MOV_CALL_ARG_TYPE 10:14-10:32 'long' expects text for 't' (argument 1), but each member 'filter' hands it is crm.company"
    ]
   },
   {
@@ -2158,9 +2158,9 @@
    "name": "member fit: REDUCE record start (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  add = (acc: <text>, n: <text>) => CONCAT(acc, n)\n  x = REDUCE([\"a\"], co, add)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  add = (acc: <text>, n: <text>) => Text.concat(acc, n)\n  x = reduce([\"a\"], add, co)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 10:21-10:23 'add' expects text for 'acc' (argument 1), but its starting value 'REDUCE' hands it is a crm.company handle"
+    "MOV_CALL_ARG_TYPE 10:26-10:28 'add' expects text for 'acc' (argument 1), but its starting value 'reduce' hands it is a crm.company handle"
    ]
   },
   {
@@ -2176,9 +2176,9 @@
    "name": "member fit: MAP adding (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (t: <number>) => t + 1)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([\"a\"], (t: <number>) => t + 1)\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'MAP' expects number for 't' (argument 1), but each member 'MAP' hands it is text"
+    "MOV_CALL_ARG_TYPE 9:11-9:16 the function for 'map' expects number for 't' (argument 1), but each member 'map' hands it is text"
    ]
   },
   {
@@ -2194,35 +2194,35 @@
    "name": "member fit: fits (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([1, 2], (n: <number>) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([1, 2], (n: <number>) => n)\n}",
    "expected": []
   },
   {
    "name": "member fit: untyped (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([\"a\"], (n) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([\"a\"], (n) => n)\n}",
    "expected": []
   },
   {
    "name": "member fit: REDUCE fits (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = REDUCE([1, 2], 0, (acc: <number>, n: <number>) => acc + n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = reduce([1, 2], (acc: <number>, n: <number>) => acc + n, 0)\n}",
    "expected": []
   },
   {
    "name": "member fit: field off record (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([co], (c) => c.name)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([co], (c) => c.name)\n}",
    "expected": []
   },
   {
    "name": "member fit: untyped over maybe record (v5)",
    "snapshot": "cands",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction inc(n: <number>) {\n  return n + 1\n}\nmovement m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = MAP([COALESCE(co, 1)], (n) => n)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction inc(n: <number>) {\n  return n + 1\n}\nfunction m() {\n  co = write crm-[:companies]-> { name: \"a\" }\n  x = map([coalesce(co, 1)], (n) => n)\n}",
    "expected": []
   },
   {
@@ -2325,96 +2325,96 @@
    "name": "plugin arg: record in MULTI to structured (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: MULTI(org))\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = summarise(List.compact(org))\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:23-9:33 'summarise' takes structured data for 'data', and 'data[…]' is a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('r.`Name`')."
+    "MOV_CALL_ARG_TYPE 9:17-9:34 'summarise' takes structured data for 'data', and 'data[…]' is a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('r.`Name`')."
    ]
   },
   {
    "name": "plugin arg: record under a key (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { a: COALESCE(org, \"x\") })\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = summarise({ a: coalesce(org, \"x\") })\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:23-9:48 'summarise' takes structured data for 'data', and 'data.a' may be a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('a: r.`Name`')."
+    "MOV_CALL_ARG_TYPE 9:17-9:42 'summarise' takes structured data for 'data', and 'data.a' may be a crm.company handle — a record, not a value. A record goes to a plugin only as the whole argument ('data: r', which hands it the record's fields); inside a value, write a field off it ('a: r.`Name`')."
    ]
   },
   {
    "name": "plugin arg: file in COALESCE to open (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = relay(data: COALESCE(f, \"x\"))\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = relay(coalesce(f, \"x\"))\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:19-9:35 'relay' takes structured data for 'data', and 'data' may be file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('data: READ(f)')."
+    "MOV_CALL_ARG_TYPE 9:13-9:29 'relay' takes structured data for 'data', and 'data' may be file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('data: File.read(f)')."
    ]
   },
   {
    "name": "plugin arg: record whole of COALESCE (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: COALESCE(org, org))\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = summarise(coalesce(org, org))\n}",
    "expected": []
   },
   {
    "name": "plugin arg: system record whole (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  c = FIRST(crm-[:companies]->)\n  s = summarise(data: c)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  c = first(crm-[:companies]->)\n  s = summarise(c)\n}",
    "expected": [
-    "MOV_FOLD_NEEDS_ORDER 9:7-9:32 FIRST takes the first of a sequence, and 'companies' comes back in no particular order — so there is no first. If you mean the one that matched, write ONLY(…) — it answers that one and fails the run if there turns out to be more than one. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
-    "MOV_CALL_ARG_TYPE 10:23-10:24 'summarise' takes every field of the record it is given as 'data', and this is crm.company (which may be empty), whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')"
+    "MOV_FOLD_NEEDS_ORDER 9:7-9:32 first takes the first of a sequence, and 'companies' comes back in no particular order — so there is no first. If you mean the one that matched, write only(…) — it answers that one and fails the run if there turns out to be more than one. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_CALL_ARG_TYPE 10:17-10:18 'summarise' takes every field of the record it is given as 'data', and this is crm.company (which may be empty), whose fields are read from its system one at a time. Pass a dict of the fields it needs ('data: { name: r.name, … }')"
    ]
   },
   {
    "name": "plugin arg: file under a key to text (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: { a: f })\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = tag({ a: f })\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:18-9:26 'tag' takes text for 'label', and 'label.a' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; put its text in its place ('a: READ(f)')."
+    "MOV_CALL_ARG_TYPE 9:11-9:19 'tag' takes text for 'label', and 'label.a' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; put its text in its place ('a: File.read(f)')."
    ]
   },
   {
    "name": "plugin arg: file in a list to file (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: [f])\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = ocr([f])\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:16-9:19 'ocr' takes file for 'doc', and 'doc[0]' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; hand it over as the whole argument ('doc: f'), or put its text in its place ('READ(f)')."
+    "MOV_CALL_ARG_TYPE 9:11-9:14 'ocr' takes file for 'doc', and 'doc[0]' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; hand it over as the whole argument ('doc: f'), or put its text in its place ('File.read(f)')."
    ]
   },
   {
    "name": "plugin arg: file whole to file (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = ocr(doc: f)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = ocr(f)\n}",
    "expected": []
   },
   {
    "name": "plugin arg: maybe record to number (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = score(n: COALESCE(org, 1))\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = score(coalesce(org, 1))\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:16-9:32 'score' takes number for 'n', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('n: r.`Name`')."
+    "MOV_CALL_ARG_TYPE 9:13-9:29 'score' takes number for 'n', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('n: r.`Name`')."
    ]
   },
   {
    "name": "plugin arg: record in IF to text (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = tag(label: IF 1 > 0 THEN org ELSE \"x\" END)\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = tag(1 > 0 ? org : \"x\")\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:18-9:48 'tag' takes text for 'label', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('label: r.`Name`')."
+    "MOV_CALL_ARG_TYPE 9:11-9:28 'tag' takes text for 'label', and this may be a crm.company handle — a record, not a value. Pass one of its fields ('label: r.`Name`')."
    ]
   },
   {
    "name": "plugin arg: node literal with file to structured (v5)",
    "snapshot": "plug",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = FILE(\"contents\", \"pdf\")\n  s = summarise(data: { k: \"x\", up: f })\n}",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\nimport { summarise, relay, tag, ocr, score } from plugins\n\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme Inc.\" }\n  f = File.from(\"contents\", \"pdf\")\n  s = summarise({ k: \"x\", up: f })\n}",
    "expected": [
-    "MOV_CALL_ARG_TYPE 9:23-9:40 'summarise' takes structured data for 'data', and 'data.up' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('up: READ(f)')."
+    "MOV_CALL_ARG_TYPE 9:17-9:34 'summarise' takes structured data for 'data', and 'data.up' is file — a file, not a value. A file goes to a plugin only as an argument it takes a file for; inside a value, put its text in its place ('up: File.read(f)')."
    ]
   },
   {
@@ -2802,9 +2802,9 @@
    "name": "opaque record: a function parameter to a json plugin (v5)",
    "snapshot": "opaque",
    "version": 5,
-   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = attio()\nsink = sheets()\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nmovement use(e: <Entry>) {\n  s = summarise(data: e)\n  write sink-[:rows]-> { v: s }\n}\nmovement run(go: <src>) {\n  src-[c:companies]-> {\n    use(e: c)\n  }\n}\n",
+   "source": "import { attio, sheets } from adapters\nimport { summarise, relay, shout } from plugins\nsrc = connect attio\nsink = connect sheets\n\nnode Entry {\n  name: <text>\n  tag: <text>\n}\nfunction use(e: <Entry>) {\n  s = summarise(e)\n  write sink-[:rows]-> { v: s }\n}\nfunction run(go: <src>) {\n  src-[c:companies]-> {\n    use(c)\n  }\n}\n",
    "expected": [
-    "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
+    "MOV_CALL_ARG_OPAQUE_RECORD 16:9-16:10 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time for 'e' (argument 1). Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
     "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
    ]
   },
@@ -2863,7 +2863,7 @@
    "name": "checked against TS: AWAIT_REQUIRED a bare read of an answer-only edge (v5)",
    "snapshot": "polls",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  n = COUNT(a-[:Result]->)\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  n = count(a-[:Result]->)\n}\n",
    "expected": [
     "MOV_AWAIT_REQUIRED 8:7-8:27 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
    ]
@@ -2872,9 +2872,9 @@
    "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using EXISTS (v5)",
    "snapshot": "polls",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE EXISTS(a-[:Result]->)]->)\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await first(a-[:Result WHERE EXISTS(a-[:Result]->)]->)\n}\n",
    "expected": [
-    "MOV_AWAIT_IMPURE_WHERE 8:19-8:60 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields.",
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:60 The WHERE on '-[:Result]->' has to run in the app (it uses ai() or exists), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields.",
     "MOV_AWAIT_REQUIRED 8:19-8:60 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
    ]
   },
@@ -2882,23 +2882,23 @@
    "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using AI (v5)",
    "snapshot": "polls",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE AI(\"is it good?\")]->)\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await first(a-[:Result WHERE AI(\"is it good?\")]->)\n}\n",
    "expected": [
-    "MOV_AWAIT_IMPURE_WHERE 8:19-8:56 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields."
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:56 The WHERE on '-[:Result]->' has to run in the app (it uses ai() or exists), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields."
    ]
   },
   {
    "name": "checked against TS: an awaited pure WHERE is clean (v5)",
    "snapshot": "polls",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE Answer == \"Seed\"]->)\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await first(a-[r2:Result WHERE r2.Answer == \"Seed\"]->)\n}\n",
    "expected": []
   },
   {
    "name": "checked against TS: WRITE_GENERIC_UNTYPED a generic field built at run time (v5)",
    "snapshot": "polls_warn",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m(q: <text>) {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [q] }\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m(q: <text>) {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [q] }\n}\n",
    "expected": [
     "MOV_WRITE_GENERIC_UNTYPED 7:56-7:59 'Choices' is built at run time, so what '-[:Result]->' delivers on p.Poll cannot be typed here — it stays one opaque value you cannot read a part out of. Name 'Choices' with a literal to read the answer back by name"
    ]
@@ -2907,7 +2907,7 @@
    "name": "checked against TS: WRITE_GENERIC_UNTYPED silent for literals (v5)",
    "snapshot": "polls_warn",
    "version": 5,
-   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\", \"Series A\"] }\n}\n",
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = connect polls using probe\n\nfunction m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\", \"Series A\"] }\n}\n",
    "expected": []
   },
   {
@@ -2952,7 +2952,7 @@
    "name": "checked against TS: GRAPH_COPY_SHAPE a record copied whose edge records fit (v5)",
    "snapshot": "graphs",
    "version": 5,
-   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Archived> { ...e }\n}\n",
+   "source": "import { email } from adapters\ninbox = connect email\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nfunction m(e: <inbox-[:message]->>) {\n  g = graph<Archived> { ...e }\n}\n",
    "expected": [
     "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
    ]
@@ -2961,7 +2961,7 @@
    "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records miss a field (v5)",
    "snapshot": "graphs",
    "version": 5,
-   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e }\n}\n",
+   "source": "import { email } from adapters\ninbox = connect email\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nfunction m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e }\n}\n",
    "expected": [
     "MOV_GRAPH_COPY_SHAPE 29:23-29:27 '...e' copies its 'Attachments' records, and <Strict> → Attachments doesn't fit them: it has no `Missing` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
     "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
@@ -2971,9 +2971,9 @@
    "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records hold another type (v5)",
    "snapshot": "graphs",
    "version": 5,
-   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Typed> { ...e }\n}\n",
+   "source": "import { email } from adapters\ninbox = connect email\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nfunction m(e: <inbox-[:message]->>) {\n  g = graph<Typed> { ...e }\n}\n",
    "expected": [
-    "MOV_GRAPH_COPY_SHAPE 29:22-29:26 '...e' copies its 'Attachments' records, and <Typed> → Attachments doesn't fit them: its `Pages` is number, not text — write the text it should be: `TOSTRING(…)` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
+    "MOV_GRAPH_COPY_SHAPE 29:22-29:26 '...e' copies its 'Attachments' records, and <Typed> → Attachments doesn't fit them: its `Pages` is number, not text — write the text it should be: `Text.from(…)` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
     "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
    ]
   },
@@ -2981,7 +2981,7 @@
    "name": "checked against TS: GRAPH_COPY_SHAPE an edge written after the spread (v5)",
    "snapshot": "graphs",
    "version": 5,
-   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e, Attachments: e-[x:Attachments]-> { Missing: x.Type } }\n}\n",
+   "source": "import { email } from adapters\ninbox = connect email\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nfunction m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e, Attachments: e-[x:Attachments]-> { Missing: x.Type } }\n}\n",
    "expected": [
     "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
    ]
@@ -2999,7 +2999,7 @@
    "name": "checked against TS: BORROW_MALFORMED a field name holding a dot (v5)",
    "snapshot": "old_edge",
    "version": 5,
-   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    node company: \"each company\" {\n      name: \"the name\"\n      stage: <crm-[:companies]->.`Na.me`> \"the stage\"\n    }\n  }\n}\nlisten to inbox fire m\n",
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = connect email using dealflow_inbox\ncrm   = connect attio using acme_main\nfunction m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    node company: \"each company\" {\n      name: \"the name\"\n      stage: <crm-[:companies]->.`Na.me`> \"the stage\"\n    }\n  }\n}\nlisten to inbox fire m\n",
    "expected": [
     "MOV_BORROW_MALFORMED 10:7-10:54 'crm.companies.Na.me' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"
    ]
@@ -3032,11 +3032,11 @@
    "name": "a record this run built that may be empty is not written in place unless a != NULL guard proves it there",
    "snapshot": "none",
    "version": 5,
-   "source": "node Company: \"each company named here\" {\n  name: <text> \"the company's name\"\n  site: <text | null> \"its website\"\n}\nmovement m(t: <text>) {\n  found = EXTRACT([t], Company)\n  one = EXTRACTONE([t], Company)\n  write found { name: \"x\" }\n  write one { name: \"y\" }\n  if one != NULL {\n    write one { name: \"h\" }\n  }\n  if one IS <Company> {\n    write one { name: \"i\" }\n  }\n  first = AT(found, 0)\n  write first { name: \"w\" }\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  pick = AT(deduped-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  return 1\n}\n",
+   "source": "node Company: \"each company named here\" {\n  name: <text> \"the company's name\"\n  site: <text | null> \"its website\"\n}\nfunction m(t: <text>) {\n  found = EXTRACT([t], Company)\n  one = EXTRACTONE([t], Company)\n  write found { name: \"x\" }\n  write one { name: \"y\" }\n  if (one != null) {\n    write one { name: \"h\" }\n  }\n  if (one is <Company>) {\n    write one { name: \"i\" }\n  }\n  head = found[0]\n  write head { name: \"w\" }\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  pick = deduped-[:companies]->[0]\n  write pick { name: \"p\" }\n  if (pick != null) {\n    write pick { name: \"q\" }\n  }\n  return 1\n}\n",
    "expected": [
     "MOV_WRITE_POSITION_NOT_RECORD 9:9-9:12 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
     "MOV_WRITE_POSITION_NOT_RECORD 14:11-14:14 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
-    "MOV_WRITE_POSITION_NOT_RECORD 17:9-17:14 'first' is an extracted 'Company' record (which may be empty) — 'write first { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 17:9-17:13 'head' is an extracted 'Company' record (which may be empty) — 'write head { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
     "MOV_WRITE_POSITION_NOT_RECORD 21:9-21:13 'pick' is Company.Company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
    ]
   },
@@ -3062,7 +3062,7 @@
    "name": "an extraction's result is not a record to write in place",
    "snapshot": "none",
    "version": 5,
-   "source": "movement m(t: <text>) {\n  ex = extract from [t] {\n    company: \"the company\"\n  }\n  write ex { company: \"x\" }\n  return 1\n}\n",
+   "source": "function m(t: <text>) {\n  ex = extract from [t] {\n    company: \"the company\"\n  }\n  write ex { company: \"x\" }\n  return 1\n}\n",
    "expected": [
     "MOV_WRITE_POSITION_NOT_RECORD 5:9-5:11 'ex' is the extract result — 'write ex { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
    ]
@@ -3095,9 +3095,9 @@
    "name": "a system's record that may be empty is not written in place unless a != NULL guard proves it there",
    "snapshot": "maybe",
    "version": 5,
-   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"A\" }\n  pick = AT(crm-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  if pick IS <crm-[:company]->> {\n    write pick { name: \"r\" }\n  }\n  return 1\n}\n",
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"A\" }\n  pick = crm-[:companies]->[0]\n  write pick { name: \"p\" }\n  if (pick != null) {\n    write pick { name: \"q\" }\n  }\n  if (pick is <crm-[:company]->>) {\n    write pick { name: \"r\" }\n  }\n  return 1\n}\n",
    "expected": [
-    "MOV_FOLD_NEEDS_ORDER 6:10-6:35 AT reads a position in a sequence, and 'companies' comes back in no particular order — every index picks an arbitrary member. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_FOLD_NEEDS_ORDER 6:10-6:31 AT reads a position in a sequence, and 'companies' comes back in no particular order — every index picks an arbitrary member. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
     "MOV_WRITE_POSITION_NOT_RECORD 7:9-7:13 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
     "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
     "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
