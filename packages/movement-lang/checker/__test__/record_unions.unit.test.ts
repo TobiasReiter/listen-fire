@@ -15,6 +15,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -39,7 +40,7 @@ const PRELUDE = ['import { attio } from adapters', 'import { crm_cred } from cre
 
 const diagnosticsUnder = (version: LanguageVersion, body: string[], extra: string[] = []): Diagnostic[] => {
   const source = `${PRELUDE}\n${extra.join('\n')}\nmovement m() {\n${body.join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version });
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version });
 };
 
 /** Each refusal under 5, or upgrade warning before it: its code, its severity, its message. */
@@ -178,7 +179,7 @@ describe.each<LanguageVersion>([3, 4, 5])('what the union rule reaches beyond re
     });
     const refused = (body: string[]): Array<[string, string]> => {
       const source = `${PRELUDE}\nmovement m() {\n${[LEAD, CO, '  both = [lead, co]', ...body].join('\n')}\n}`;
-      return checkProgram(parseProgram(source, { languageVersion: version }), managedCatalog, { languageVersion: version })
+      return checkProgram(parseProgram(spelledFor(version, source, managedCatalog), { languageVersion: version }), managedCatalog, { languageVersion: version })
         .filter(d => d.severity === undefined || d.upgrade === true)
         .map(d => [d.code, d.severity ?? 'error']);
     };

@@ -153,14 +153,24 @@ ${body}
     return ts.source;
   };
 
-  it("puts a through stage's plugin arguments in position, its settings last", () => {
-    const upgraded = roundTrip(`  found = extract from [x] {
+  // The extraction keyword is retired from 5 and no rewrite keeps a through
+  // stage's meaning, so the upgrade leaves the keyword for a hand rewrite
+  // (MOV_EXTRACT_KEYWORD_RETIRED, in both checkers); what it can respell
+  // inside it, it still does.
+  it("puts a through stage's plugin arguments in position, its settings last, and leaves the keyword for a hand rewrite", () => {
+    const source = program(`  found = extract from [x] {
     name: "the name"
   } through [lookup(q: name, limit: 2)] {
     round: "the round"
   } through [lookup(q: x)] { detail: "more" }`);
-    expect(upgraded).toContain('through [lookup(name, { limit: 2 })]');
-    expect(upgraded).toContain('through [lookup(x)]');
+    const ts = upgradeSource(source, typescriptCheck({ catalog, upgradingFrom: 4 }));
+    const rust = upgradeSource(source, rustCheck({ snapshot, upgradingFrom: 4 }));
+    expect(rust.source).toBe(ts.source);
+    expect(underTs(source, 4)).toEqual([]);
+    expect(underTs(ts.source, 5)).toEqual(['MOV_EXTRACT_KEYWORD_RETIRED']);
+    expect(underRust(rust.source, 5)).toEqual(['MOV_EXTRACT_KEYWORD_RETIRED']);
+    expect(ts.source).toContain('through [lookup(name, { limit: 2 })]');
+    expect(ts.source).toContain('through [lookup(x)]');
   });
 
   it("keeps a record's AT refusal: AT(h, \"name\") is h[\"name\"], never the field read h.name", () => {

@@ -83,7 +83,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
-import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { runMovement as runMovementUnder } from 'movement-engine/services/movement_engine/run';
+
+// The extraction keyword is versions 1–4 only (MOV_EXTRACT_KEYWORD_RETIRED
+// from 5), so its recorded prompts are replayed under version 4, in the
+// spelling 4 reads.
+const runMovement = (input: Parameters<typeof runMovementUnder>[0]): ReturnType<typeof runMovementUnder> =>
+  runMovementUnder({ languageVersion: 4, ...input });
 import type {
   LlmCallInput,
   LlmCallResult,
@@ -151,7 +157,7 @@ const PRELUDE = [
   'import { email } from adapters',
   'import { dealflow_inbox } from credentials',
   '',
-  'inbox = connect email using dealflow_inbox',
+  'inbox = email(credentials: dealflow_inbox)',
   'type Thesis = <"Consumer" | "Infra">',
   'rules = "route infra to Infra"',
   'node Entry: "each company pitched in this message" {',
@@ -221,7 +227,7 @@ async function promptsOf(lines: string[]): Promise<LlmCallInput[]> {
     },
   };
   await runMovement({
-    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n'),
+    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,

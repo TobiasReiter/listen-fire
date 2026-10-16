@@ -194,11 +194,12 @@ describe("an extract result's nested nodes come back in the document's order", (
     expect(
       codes(
         [
-          '  found = extract from [c.`Name`] {',
+          '  found = extractOne([c.`Name`], node Found: "the companies mentioned" {',
           '    node entry: "each company mentioned" {',
-          '      name: "the name"',
+          '      name: <text> "the name"',
           '    }',
-          '  }',
+          '  })',
+          '  if (found == null) { fail("nothing found") }',
           '  t = Text.join(found-[e:entry]->.`name`, ", ")',
         ].join('\n'),
       ),

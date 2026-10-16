@@ -47,13 +47,30 @@ function check(body: string): Diagnostic[] {
 const codes = (body: string): string[] => check(body).map((d) => d.code);
 const messages = (body: string): string => check(body).map((d) => d.message).join('\n');
 
-function bindingType(body: string, name: string) {
-  const { recording } = checkProgramWithLink(parseProgram(source(body)), catalog, {
+function bindingType(body: string, name: string, languageVersion?: 4) {
+  const text = languageVersion === 4 ? sourceBefore5(body) : source(body);
+  const { recording } = checkProgramWithLink(parseProgram(text, { languageVersion }), catalog, {
     recordAnalysis: true,
+    languageVersion,
   });
   const symbols = (recording?.frames ?? []).flatMap((f) => [...f.scope.symbols.values()]);
   return symbols.find((s) => s.name === name);
 }
+
+// The extraction keyword is versions 1–4 only (MOV_EXTRACT_KEYWORD_RETIRED from
+// 5): a case over its result is pinned to 4, as 4 spells it.
+function sourceBefore5(body: string): string {
+  return `import { email } from adapters
+inbox = email()
+
+movement m(e: <inbox-[:message]->>) {
+${body}
+}`;
+}
+const codesBefore5 = (body: string): string[] =>
+  checkProgram(parseProgram(sourceBefore5(body), { languageVersion: 4 }), catalog, { languageVersion: 4 })
+    .filter((d) => (d.severity ?? 'error') === 'error')
+    .map((d) => d.code);
 
 describe("a bound block's value is what its iterations returned", () => {
   it('a returned value binds as a list of the per-iteration type', () => {
@@ -168,23 +185,23 @@ describe("a return the checker cannot type leaves the block's value untyped", ()
   // `MULTI` answers a list the walk does not type (its signature's return is
   // derived from its arguments, and nothing derives it yet). `TRIM` was the
   // example until the standard-library scope gave it its return, text.
-  it('an untyped call over an extracted field is not a record', () => {
-    const body = overExtraction('List.compact(md.`items`)');
-    expect(codes(body)).toEqual([]);
-    expect(bindingType(body, 'items')?.bindingPlane).toBeUndefined();
-    expect(codes(overExtraction('List.compact(md.`items`)', '  t = Text.join(items, "\\n")'))).toEqual(
+  it('an untyped call over an extracted field is not a record (version 4)', () => {
+    const body = overExtraction('MULTI(md.`items`)');
+    expect(codesBefore5(body)).toEqual([]);
+    expect(bindingType(body, 'items', 4)?.bindingPlane).toBeUndefined();
+    expect(codesBefore5(overExtraction('MULTI(md.`items`)', '  t = JOIN(items, "\\n")'))).toEqual(
       [],
     );
   });
 
-  it('an untyped call that touches nothing extracted is not a record either', () => {
-    const body = overExtraction('List.compact("x")', '  t = Text.join(items, "\\n")');
-    expect(codes(body)).toEqual([]);
+  it('an untyped call that touches nothing extracted is not a record either (version 4)', () => {
+    const body = overExtraction('MULTI("x")', '  t = JOIN(items, "\\n")');
+    expect(codesBefore5(body)).toEqual([]);
   });
 
-  it('a bare read of an unannotated extracted field is not a record', () => {
-    const body = overExtraction('md.`items`', '  t = Text.join(items, "\\n")');
-    expect(codes(body)).toEqual([]);
+  it('a bare read of an unannotated extracted field is not a record (version 4)', () => {
+    const body = overExtraction('md.`items`', '  t = JOIN(items, "\\n")');
+    expect(codesBefore5(body)).toEqual([]);
   });
 
   it('the same over a TRAVERSED position', () => {
@@ -202,13 +219,13 @@ describe("a return the checker cannot type leaves the block's value untyped", ()
     expect(codes(body)).toEqual([]);
   });
 
-  it('a return that IS the record still binds the record', () => {
+  it('a return that IS the record still binds the record (version 4)', () => {
     const body = overExtraction('md');
-    expect(codes(body)).toEqual([]);
-    expect(bindingType(body, 'items')?.bindingPlane).toBe('node');
-    expect(bindingType(body, 'items')?.posType).toMatchObject({ kind: 'extract' });
+    expect(codesBefore5(body)).toEqual([]);
+    expect(bindingType(body, 'items', 4)?.bindingPlane).toBe('node');
+    expect(bindingType(body, 'items', 4)?.posType).toMatchObject({ kind: 'extract' });
     // …and it is still refused where a VALUE is wanted.
-    expect(codes(overExtraction('md', '  t = Text.join(items, "\\n")'))).toContain(
+    expect(codesBefore5(overExtraction('md', '  t = JOIN(items, "\\n")'))).toContain(
       'MOV_RECORD_NOT_A_VALUE',
     );
   });

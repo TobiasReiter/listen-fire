@@ -66,6 +66,25 @@ const messages = (source: string, schema: InstanceSchema, plugins = {}): string 
     .map((d) => d.message)
     .join('\n');
 
+// A plugin kept to a `through` stage (an undeclared row or output, or an
+// argument the extraction feeds) is a version 1–4 rule: from 5 there is no
+// stage, and a plugin is an ordinary call. Those cases are pinned to 4, as 4
+// spells them.
+function diagnoseBefore5(source: string, schema: InstanceSchema, plugins = {}): Diagnostic[] {
+  const catalog = mockCatalog({ adapters: { desk: { constructionArgs: [], schema } }, plugins });
+  return checkProgram(parseProgram(source, { languageVersion: 4 }), catalog, { languageVersion: 4 }).filter(
+    (d) => d.code !== C.LISTEN_MISSING,
+  );
+}
+const errorsBefore5 = (source: string, schema: InstanceSchema, plugins = {}): string[] =>
+  diagnoseBefore5(source, schema, plugins)
+    .filter((d) => (d.severity ?? 'error') === 'error')
+    .map((d) => d.code);
+const messagesBefore5 = (source: string, schema: InstanceSchema, plugins = {}): string =>
+  diagnoseBefore5(source, schema, plugins)
+    .map((d) => d.message)
+    .join('\n');
+
 // ── Plugins are functions ────────────────────────────────────────────────────
 
 const PLUGIN_PROGRAM = (call: string): string => `import { desk } from adapters
@@ -128,11 +147,11 @@ describe('a plugin is a function whose row is declared', () => {
     expect(movement?.kind === 'movement' ? movement.effects.partial : undefined).toBe(true);
   });
 
-  it('an UNDECLARED row keeps the plugin to a through-stage, and says so', () => {
+  it('an UNDECLARED row keeps the plugin to a through-stage, and says so (version 4)', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
     const plugins = { scan_web: { args: ['url'], priced: false } };
-    expect(errors(source, PUSHED, plugins)).toEqual([C.PLUGIN_ROW_UNDECLARED]);
-    expect(messages(source, PUSHED, plugins)).toContain("through [scan_web]");
+    expect(errorsBefore5(source, PUSHED, plugins)).toEqual([C.PLUGIN_ROW_UNDECLARED]);
+    expect(messagesBefore5(source, PUSHED, plugins)).toContain("through [scan_web]");
   });
 
   it('the stage form stays legal whether or not a row was declared', () => {
@@ -166,18 +185,18 @@ describe('a plugin is a function whose row is declared', () => {
     expect(messages(PLUGIN_PROGRAM('  scan_web()'), PUSHED, plugins)).toContain("'url'");
   });
 
-  it('a plugin the EXTRACTION feeds stays a stage, and the refusal says why', () => {
+  it('a plugin the EXTRACTION feeds stays a stage, and the refusal says why (version 4)', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
     const plugins = {
       scan_web: { ...FOUND_TEXT, effects: { reads: ['the web'] }, fedByExtraction: true },
     };
-    expect(errors(source, PUSHED, plugins)).toEqual([C.PLUGIN_FED_BY_EXTRACTION]);
-    expect(messages(source, PUSHED, plugins)).toContain('through [scan_web]');
+    expect(errorsBefore5(source, PUSHED, plugins)).toEqual([C.PLUGIN_FED_BY_EXTRACTION]);
+    expect(messagesBefore5(source, PUSHED, plugins)).toContain('through [scan_web]');
     // …and the very same plugin is fine as the stage it is.
     const stage = `  m = extract from [t.\`Title\`] through [scan_web] {
     name: "the company"
   }`;
-    expect(errors(PLUGIN_PROGRAM(stage), PUSHED, plugins)).toEqual([]);
+    expect(errorsBefore5(PLUGIN_PROGRAM(stage), PUSHED, plugins)).toEqual([]);
   });
 });
 
@@ -250,21 +269,21 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
     expect(errors(asText, PUSHED, plugins).length).toBeGreaterThan(0);
   });
 
-  it('declaring no output keeps the plugin to a stage, and says which fact is missing', () => {
+  it('declaring no output keeps the plugin to a stage, and says which fact is missing (version 4)', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
     const plugins = { scan_web: { args: ['url'], priced: false, effects: { reads: ['the web'] } } };
-    expect(errors(source, PUSHED, plugins)).toEqual([C.PLUGIN_OUTPUT_UNDECLARED]);
-    expect(messages(source, PUSHED, plugins)).toContain('hands back');
+    expect(errorsBefore5(source, PUSHED, plugins)).toEqual([C.PLUGIN_OUTPUT_UNDECLARED]);
+    expect(messagesBefore5(source, PUSHED, plugins)).toContain('hands back');
     // …and the stage form, whose output goes to the extractor, stays legal.
     const stage = `  m = extract from [t.\`Title\`] through [scan_web] {
     name: "the company"
   }`;
-    expect(errors(PLUGIN_PROGRAM(stage), PUSHED, plugins)).toEqual([]);
+    expect(errorsBefore5(PLUGIN_PROGRAM(stage), PUSHED, plugins)).toEqual([]);
   });
 
-  it('an undeclared ROW is reported instead of an undeclared output — one refusal per call', () => {
+  it('an undeclared ROW is reported instead of an undeclared output — one refusal per call (version 4)', () => {
     const source = PLUGIN_PROGRAM('  found = scan_web(url: t.`Title`)');
-    expect(errors(source, PUSHED, { scan_web: { args: ['url'], priced: false } })).toEqual([
+    expect(errorsBefore5(source, PUSHED, { scan_web: { args: ['url'], priced: false } })).toEqual([
       C.PLUGIN_ROW_UNDECLARED,
     ]);
   });
