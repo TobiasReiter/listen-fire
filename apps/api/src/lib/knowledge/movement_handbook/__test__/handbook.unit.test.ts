@@ -613,8 +613,7 @@ describe('movement_handbook runnable examples check clean against the real check
   it.each(checkedClaims.map((c) => [c.chapter, c.construct, c] as const))(
     '%s — "%s" checks clean',
     (_chapter, _construct, claim) => {
-      // TEMP(v5-docs): the parser does not yet read a `fail(…)` statement
-      const probe = claim.probe.replace(/(^[ \t]*|\{ )fail\(/gm, '$1ERROR(');
+      const probe = claim.probe;
       const program = parseProgram(probe);
       const files = claim.status === 'runs' ? claim.files : undefined;
       const resolveFile = files
@@ -648,9 +647,7 @@ function orderCheck(body: string): Array<{ code: string; message: string }> {
 function m(evt: <crm-[:\`Webhook Event\`]->>) {
 ${body}
 }`;
-  // TEMP(v5-docs): the parser does not yet read a `fail(…)` statement
-  const checked = probe.replace(/(^[ \t]*|\{ )fail\(/gm, '$1ERROR(');
-  return checkProgram(parseProgram(checked), catalogFor(checked))
+  return checkProgram(parseProgram(probe), catalogFor(probe))
     .filter((d) => (d.severity ?? 'error') === 'error')
     .map((d) => ({ code: d.code, message: d.message }));
 }
