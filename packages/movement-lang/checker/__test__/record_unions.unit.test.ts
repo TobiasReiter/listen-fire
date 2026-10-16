@@ -18,7 +18,7 @@ import type { LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
   positions: {
-    People: { properties: { Name: 'text', Email: 'text', Age: 'number', Score: 'number' }, edges: { Employer: { target: 'Companies' } } },
+    People: { properties: { Name: 'text', Email: { kind: 'maybeAbsent', of: 'text' }, Age: 'number', Score: 'number' }, edges: { Employer: { target: 'Companies' } } },
     Companies: { properties: { Name: 'text', Domains: { kind: 'list', of: 'text' }, Age: 'text', Score: 'number' }, edges: { Employer: { target: 'Companies' } } },
   },
   collections: { people: { target: 'People' }, companies: { target: 'Companies' } },
@@ -136,5 +136,34 @@ describe.each<LanguageVersion>([3, 4, 5])("a list literal's members join by the 
     expect(codes(version, [LEAD, CO, '  x = FIRST(MULTI(lead, co)).Email'])).toEqual([
       ['MOV_UNKNOWN_PROPERTY', from5(version)],
     ]);
+  });
+});
+
+describe.each<LanguageVersion>([3, 4, 5])('an IF prefers no arm (version %i)', version => {
+  const within = (guard: string, read: string): string[] => [
+    '  crm-[a:people]-> {',
+    '    crm-[b:people]-> {',
+    `      if ${guard} {`,
+    '        c = 1 > 0',
+    '        v = IF c THEN a ELSE b END',
+    `        write crm-[:people]-> { Name: ${read} }`,
+    '      }',
+    '    }',
+    '  }',
+  ];
+
+  it('a field one arm proved present is not present unless every arm proved it', () => {
+    // Before 5 the IF was its THEN arm's type, `a` proved present: the write
+    // checked clean and wrote b's missing Email whenever c was false.
+    expect(codes(version, within('a.Email == "x"', 'v.Email'))).toEqual([['MOV_ABSENT_REQUIRED', from5(version)]]);
+    expect(codes(version, within('a.Email == "x"', 'a.Email'))).toEqual([]);
+  });
+
+  it('what every arm proved still counts', () => {
+    expect(codes(version, within('a.Email == "x" AND b.Email == "y"', 'v.Email'))).toEqual([]);
+  });
+
+  it('nothing proved is nothing proved', () => {
+    expect(codes(version, within('1 > 0', 'v.Email'))).toEqual([['MOV_ABSENT_REQUIRED', 'error']]);
   });
 });
