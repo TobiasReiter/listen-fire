@@ -117,8 +117,8 @@ content   = [m.Body]
 companies = extract(content, Company, { tier: "careful" })
 
 detailed = map(companies, (c) => {
-  page    = fetchUrl(url: c.website)
-  more    = research(name: c.name, context: m.Subject, questions: "what the company does")
+  page    = fetchUrl(c.website)
+  more    = research(c.name, { context: m.Subject, questions: "what the company does" })
   details = extractOne([...content, Json.stringify(c), coalesce(page, ""), coalesce(more.dossier, "")], CompanyDetail, { tier: "careful" })
   return graph<Detailed> { ...c, ...details }
 }, { initialConcurrency: 1, concurrency: 4, onError: "warn" })
@@ -129,7 +129,7 @@ map(detailed, (d) => {
 })
 \`\`\`
 
-- A plugin is imported (\`import { fetchUrl } from plugins\`) and called with named arguments. It returns a value: \`fetchUrl\` the page's text, \`research\` a record read by name (\`more.summary\`, \`more.dossier\`). Anything it found nothing for is absent, so \`coalesce\` it before it goes into content. Each plugin's own chapter (\`plugin:…\`) says what it takes and returns.
+- A plugin is imported (\`import { fetchUrl } from plugins\`) and called as a function is: its required input by position, any other in one settings record last (\`research(c.name, { context: m.Subject })\`). It returns a value: \`fetchUrl\` the page's text, \`research\` a record read by name (\`more.summary\`, \`more.dossier\`). Anything it found nothing for is absent, so \`coalesce\` it before it goes into content. Each plugin's own chapter (\`plugin:…\`) says what it takes and returns.
 - \`graph<Detailed> { ...c, ...details }\` copies the record and then its detail as a snapshot you can walk and write from; the declaration decides which fields, and a nested node is followed through the record's edge of the same name. A later field wins.
 - \`details\` may be absent, so a field only it supplies may be too. A required field fed from it is refused when you save: declare it \`<text | null>\`, or write it after the spread with a fallback (\`summary: coalesce(details.summary, "")\`).
 - \`{ ...c, ...details }\` builds a dict instead, read with a dot. Use it when nothing needs to walk the result.
@@ -374,8 +374,8 @@ function \`Enrich\`(m: <inbox-[:Email]->>) {
   companies = extract(content, Company, { tier: "careful" })
 
   detailed = map(companies, (c) => {
-    page    = fetchUrl(url: c.website)
-    more    = research(name: c.name, context: m.Subject, questions: "what the company does")
+    page    = fetchUrl(c.website)
+    more    = research(c.name, { context: m.Subject, questions: "what the company does" })
     details = extractOne([...content, Json.stringify(c), coalesce(page, ""), coalesce(more.dossier, "")], CompanyDetail, { tier: "careful" })
     return graph<Detailed> { ...c, ...details }
   }, { initialConcurrency: 1, concurrency: 4, onError: "warn" })
@@ -440,10 +440,10 @@ inbox = connect email
 crm   = connect attio using acme
 
 function \`Enrich\`(m: <inbox-[:Email]->>) {
-  linked = vcUrlRetrieval(text: m.Body)
+  linked = vcUrlRetrieval(m.Body)
   deck   = first(linked)
-  page   = fetchUrl(url: "https://example.com")
-  more   = research(name: m.Subject, questions: "what it does, which sector, where it is based")
+  page   = fetchUrl("https://example.com")
+  more   = research(m.Subject, { questions: "what it does, which sector, where it is based" })
   write crm-[:Companies]-> {
     unique by (FUZZY Name)
     Name:          m.Subject
@@ -478,7 +478,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
   }, { tier: "careful", effort: "medium" })
 
   map(companies, (c) => {
-    page   = fetchUrl(url: c.website)
+    page   = fetchUrl(c.website)
     detail = extractOne([...content, Json.stringify(c), coalesce(page, "")], Profile, { tier: "careful", effort: "medium" })
     write crm-[:Companies]-> {
       unique by (FUZZY Name)

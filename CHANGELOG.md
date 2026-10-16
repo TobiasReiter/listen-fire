@@ -143,6 +143,19 @@ for byte; on text already in the version 5 spelling it changes nothing.
   parks (a sleep, an until, an answer read with `await FIRST(…)`), and a combinator does not park
   by itself; its arms may, and the run parks where they do. Versions 1 to 4 keep `await race([…])`
   and `await parallel([…])` exactly.
+- **A callback's call that leaves its function a parameter open** (`MOV_CALL_ARITY`):
+  `callback(() => book("Acme"))` where `book` takes two. Why: `() => f(x)` is a closure that takes
+  nothing, so, as in TypeScript, it passes every argument itself; what the platform sends when the
+  callback fires is a parameter the closure declares (`callback((d: <date>) => book("Acme", d))`).
+  `callback(book)`, a function named bare, still leaves every parameter to the platform. Versions
+  1 to 4 keep `callback(book("Acme"))` filling the last parameter at fire time.
+- **A package of plugins imported without a name** (`MOV_V5_IMPORT_NEEDS_ALIAS`, the fix adds
+  one): ``import { `@lf/web` } from plugins``. Why: its members are called through the name after
+  `as` (`web.fetchUrl(u)`), and a tag is no name a program can write, so nothing could call them.
+- **A record value handed to a plugin's text input** (`MOV_CALL_ARG_MAYBE_RECORD`):
+  `research({ context: s })`, or a value that may be one. Why: as TypeScript refuses an object
+  for a `string`, a text input takes text. Under 3 and 4 the record was passed through as it was,
+  so there it is a warning that blocks the move up.
 
 ### Language version 5, Dancing Wren: new
 

@@ -18,7 +18,7 @@ export const FETCH_URL_HANDBOOK_SECTION: HandbookSection = {
 import { fetchUrl } from plugins
 
 detailed = map(companies, (c) => {
-  page = fetchUrl(url: c.website)
+  page = fetchUrl(c.website)
   return extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
 })
 \`\`\`
@@ -43,7 +43,7 @@ node Opportunity: "each opportunity this message is about" {
 }
 
 map(extract([m.Body], Opportunity), (o) => {
-  deck = fetchUrl(url: o.deck_url, email: @user_email, password: o.deck_password)
+  deck = fetchUrl(o.deck_url, { email: @user_email, password: o.deck_password })
   …
 })
 \`\`\`
@@ -85,7 +85,7 @@ node CompanyDetail: "the company" {
 function \`Intake\`(m: <inbox-[:Email]->>) {
   content = [m.Body]
   map(extract(content, Company), (c) => {
-    page   = fetchUrl(url: c.website)
+    page   = fetchUrl(c.website)
     detail = extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
     write crm-[:Companies]-> {
       unique by (Name)
@@ -119,7 +119,7 @@ node Raise: "the raise the deck describes" {
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   map(extract([m.Body], Opportunity), (o) => {
-    deck  = fetchUrl(url: o.deck_url, email: @user_email, password: o.deck_password)
+    deck  = fetchUrl(o.deck_url, { email: @user_email, password: o.deck_password })
     terms = extractOne([m.Body, coalesce(deck, "")], Raise)
     write crm-[:Companies]-> {
       unique by (Name)

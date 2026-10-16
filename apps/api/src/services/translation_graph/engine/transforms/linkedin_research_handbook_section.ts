@@ -23,7 +23,7 @@ node Person: "each person named in this message" {
 }
 
 map(extract(content, Person), (p) => {
-  activity = linkedinResearch(url: p.linkedin)
+  activity = linkedinResearch(p.linkedin)
   write crm-[:People]-> {
     unique by (FUZZY Name)
     Name:          p.name
@@ -70,7 +70,7 @@ node Person: "each person named in this message" {
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   map(extract([m.Body], Person), (p) => {
-    activity = linkedinResearch(url: p.linkedin)
+    activity = linkedinResearch(p.linkedin)
     write crm-[:Companies]-> {
       unique by (FUZZY Name)
       Name:          p.name

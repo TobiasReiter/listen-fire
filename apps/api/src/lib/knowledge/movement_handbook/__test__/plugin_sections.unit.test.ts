@@ -133,10 +133,10 @@ describe('the shipped plugin sections', () => {
   // record already carries. The research one is the choice not to choose: it
   // takes whatever the record has, and resolves a profile address from a name.
   it.each([
-    ['plugin:vc_url_retrieval', 'vcUrlRetrieval(text: msg.Body)'],
-    ['plugin:fetch_url', 'fetchUrl(url: c.website)'],
-    ['plugin:linkedin_research', 'linkedinResearch(url: p.linkedin)'],
-    ['plugin:web_research', 'webResearch(name: c.name, context: c.description'],
+    ['plugin:vc_url_retrieval', 'vcUrlRetrieval(msg.Body)'],
+    ['plugin:fetch_url', 'fetchUrl(c.website)'],
+    ['plugin:linkedin_research', 'linkedinResearch(p.linkedin)'],
+    ['plugin:web_research', 'webResearch(c.name, { context: c.description'],
     ['plugin:research', 'questions: "what it does, which sector it is in, where it is based"'],
   ])('%s is on the shelf and reads back', (chapter, marker) => {
     const read = readBook({ bookId: 'automations', chapter });

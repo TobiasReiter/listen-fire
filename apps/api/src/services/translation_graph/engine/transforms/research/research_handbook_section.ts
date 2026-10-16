@@ -31,7 +31,7 @@ node Profile: "the company" {
 }
 
 map(extract(content, Company), (c) => {
-  found   = research(name: c.name, context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin)
+  found   = research(c.name, { context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin })
   profile = extractOne([...content, Json.stringify(c), coalesce(found.dossier, "")], Profile)
   write crm-[:Companies]-> {
     unique by (FUZZY Name)
@@ -95,7 +95,7 @@ node Profile: "the company" {
 function \`Intake\`(m: <inbox-[:Email]->>) {
   content = [m.Body]
   map(extract(content, Company), (c) => {
-    found   = research(name: c.name, context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin)
+    found   = research(c.name, { context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin })
     profile = extractOne([...content, Json.stringify(c), coalesce(found.dossier, "")], Profile)
     write crm-[:Companies]-> {
       unique by (FUZZY Name)

@@ -18,7 +18,7 @@ export const VC_URL_RETRIEVAL_HANDBOOK_SECTION: HandbookSection = {
 \`\`\`
 import { vcUrlRetrieval } from plugins
 
-pages     = vcUrlRetrieval(text: msg.Body)
+pages     = vcUrlRetrieval(msg.Body)
 content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
 companies = extract(content, Company)
 \`\`\`
@@ -43,7 +43,7 @@ A slide deck behind a link comes back as a \`file\`, so the same write that atta
 ### gated-links
 
 \`\`\`
-pages = vcUrlRetrieval(text: msg.Body, email: @user_email)
+pages = vcUrlRetrieval(msg.Body, { email: @user_email })
 \`\`\`
 
 \`email\` is typed into a link that demands one before it will show its content. A passcode written next to a link in the text is picked up from the text itself. Without an address, a gated link is skipped rather than guessed at.
@@ -71,7 +71,7 @@ node Company: "each company named in this message" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  pages   = vcUrlRetrieval(text: m.Body, email: @user_email)
+  pages   = vcUrlRetrieval(m.Body, { email: @user_email })
   content = [m.Body, ...map(pages, (p) => coalesce(p.text, ""))]
   map(extract(content, Company), (c) => {
     record = write crm-[:Companies]-> { unique by (Name), Name: c.name, Description: c.summary }

@@ -25,7 +25,7 @@ node Company: "each company named in this message" {
 }
 
 map(extract(content, Company), (c) => {
-  site = webResearch(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
+  site = webResearch(c.name, { context: c.description, website: c.website, linkedin: c.linkedin })
   write crm-[:Companies]-> {
     unique by (FUZZY Name)
     Name:       c.name
@@ -77,8 +77,8 @@ node Profile: "the company" {
 function \`Intake\`(m: <inbox-[:Email]->>) {
   content = [m.Body]
   map(extract(content, Company), (c) => {
-    page    = fetchUrl(url: c.website, email: @user_email)
-    site    = webResearch(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
+    page    = fetchUrl(c.website, { email: @user_email })
+    site    = webResearch(c.name, { context: c.description, website: c.website, linkedin: c.linkedin })
     profile = extractOne([...content, Json.stringify(c), coalesce(page, site.text, "")], Profile)
     write crm-[:Companies]-> {
       unique by (FUZZY Name)

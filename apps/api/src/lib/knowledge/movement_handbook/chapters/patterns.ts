@@ -126,7 +126,7 @@ node Company: "each company this message is about" {
   }
 }
 
-pages     = vcUrlRetrieval(text: msg.Body)
+pages     = vcUrlRetrieval(msg.Body)
 content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
 companies = extract(content, Company, { tier: "careful" })
 
@@ -329,7 +329,7 @@ node Company: "each company this message is about" {
 }
 
 function \`Extract And Connect\`(msg: <inbox-[:Email]->>) {
-  pages     = vcUrlRetrieval(text: msg.Body)
+  pages     = vcUrlRetrieval(msg.Body)
   content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
   companies = extract(content, Company, { tier: "careful" })
 

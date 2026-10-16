@@ -146,7 +146,7 @@ inbox = connect email
 ```
 
 - `connect` is grammar, not a call: a credential is legal only after `using`, and a connection is made at file scope. Settings keys are camelCase (`dryRun`).
-- A built-in adapter is imported by its package tag, whole in backticks. Credentials and your own files are imported as before. Plugins are imported and called as before, with named arguments, until they are packaged.
+- A built-in adapter is imported by its package tag, whole in backticks. Credentials and your own files are imported as before. A plugin is imported by its name in camelCase (`fetch_url` → `fetchUrl`) and called as a function is: its required inputs by position, any other in one settings record last (`fetchUrl(u, { email: e })`). A package of plugins is imported under a name (``import { `@lf/web` as web } from plugins``) and its members called through it (`web.fetchUrl(u)`); without the name it is `MOV_V5_IMPORT_NEEDS_ALIAS`.
 
 ## 3. `write … bind` is retired
 
@@ -181,11 +181,11 @@ write crm-[:Companies]-> { unique by (`Deal ID`), `Deal ID`: deal.id, Name: deal
 pages = msg-[u:#transform { plugin: "vc_url_retrieval" }]->
 
 # after
-import { vc_url_retrieval } from plugins
-pages = vc_url_retrieval(text: msg.Body)
+import { vcUrlRetrieval } from plugins
+pages = vcUrlRetrieval(msg.Body)
 ```
 
-- A plugin that only an extraction can feed (one with no call form, such as `linkedin_enrichment`) stays a stage: `extract from [ … ] through [linkedin_enrichment] { … }`. The `through [ … ]` stage is not a hop and is unchanged.
+- A plugin that only an extraction can feed (one with no call form, such as `linkedinEnrichment`) stays a stage: `extract from [ … ] through [linkedinEnrichment] { … }`. The `through [ … ]` stage is not a hop; under 5 it takes its arguments by position, as a call does.
 - Not retired: the `#` prefix on the engine's own binding names (`MOV_RESERVED_NAME`), which keeps `#return` uncollidable. `-[:#extract]->` was never accepted.
 
 ## 5. `delete` only where the system declares it
@@ -260,6 +260,7 @@ write crm-[:notes]-> { title: "Attached", upload: f }
 - Why: `Org | number` is no `number`. Under versions 3 and 4 the check said nothing and the call ran: the record arrived where the number was typed, and a sum over it came out `NaN`. So under 3 and 4 it is a warning that blocks the move up, and the refusal is new under 5.
 - Narrow it to the record with `is` and pass a field off it (`f(coalesce(org.size, 1))`), or fill every arm with a value.
 - A built-in whose argument takes a value is held to the same rule: `Number.round(coalesce(org, 1))` and `Text.upper(coalesce(org, "b"))` are `MOV_CALL_ARG_MAYBE_RECORD`. Under 3 and 4 the built-in ran on the record as it was (`ROUND` gave `NaN`, `UPPER` gave `"[OBJECT OBJECT]"`), so there it is a warning that blocks the move up.
+- A plugin's text input is held to it for a record value (`{ … }`) as well: `research({ context: s })`, or a value that may be one, is `MOV_CALL_ARG_MAYBE_RECORD`. Under 3 and 4 the record was passed through as it was, so there it is a warning that blocks the move up.
 - A collection op calls its function with each member, so each member is an argument too: `map(["a"], (n: <number>) => n)` is `MOV_CALL_ARG_TYPE` (TypeScript refuses `["a"].map((n: number) => n)`), and a member that may be a record, handed to a value parameter, is `MOV_CALL_ARG_MAYBE_RECORD`. The same holds for `filter`, `List.groupBy`, `List.keyBy`, a function passed by name, and `reduce`, whose starting value is held to its accumulator. Under 3 and 4 the op ran with each member as it was (a sum over text came out `NaN`), so there it is a warning that blocks the move up. Type the parameter as the members are, or leave it untyped to take their type.
 
 ## 10. A record a combinator arm hands back reads as itself
@@ -361,6 +362,7 @@ function pick(): <() => <text>> { … }                               # a declar
 - A closure type is never a list's element or a record type's key (`<() => <text>>[]` and `<{ run: <() => <text>> }>` are `MOV_CLOSURE_NOT_DATA`): a closure is not data.
 - A closure that returns a list is `<() => <text[]>>`; `<() => <text>[]>` is ambiguous and refused. Every parameter needs a type: a caller of the closure is checked against it.
 - A parameter of closure type is called (`handler(c)`), typed by its return and held to its parameters (`MOV_CALL_ARITY`).
+- A callback's closure is held to the same rule: `callback(() => f(x))` takes nothing, so it passes every argument of `f` itself, and a parameter left open is `MOV_CALL_ARITY`. What the platform sends when it fires is a parameter the closure declares: `callback((d: <date>) => f(x, d))`. A function named bare (`callback(f)`) still leaves every parameter to the platform.
 - A closure fits a closure type as TypeScript's assignability says. Parameters are contravariant: each of the closure's parameters takes what the type's hands it. Returns are covariant: what the closure returns, what it may hold included, is what the type's returns. A closure that takes fewer parameters fits, and the extra arguments are dropped; one that takes more does not. A misfit is `MOV_CALL_ARG_TYPE` (or `MOV_RETURN_TYPE` for a declared return), naming what the closure returns.
 - A closure written in place is an argument to a closure-typed parameter: `run((c) => c.name)`. Its untyped parameters are typed by the closure type (contextual typing).
 - Under Quiet Heron (1) to Luminous Owl (4) the syntax is a parse error that names version 5, because a closure is not a value there.
@@ -412,6 +414,7 @@ r = all(a, () => { … })
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#8-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#6-_resources-only-on-an-extractions-result) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |
+| `MOV_V5_IMPORT_NEEDS_ALIAS` | [The everyday spelling](#2-the-everyday-spelling) (a package of plugins imported without `as`; the fix adds the name) |
 | `MOV_V5_NOT_YET` | [The everyday spelling](#2-the-everyday-spelling) (an old spelling whose rewrite needs a person, such as a `SORT` key that is not one field) |
 | `MOV_V5_SPELLING` | [The everyday spelling](#2-the-everyday-spelling) (an old spelling under 5; the fix is the rewrite) |
 | `MOV_V5_UNKNOWN_MEMBER` | [The everyday spelling](#2-the-everyday-spelling) (a namespace member that does not exist, with a did-you-mean) |

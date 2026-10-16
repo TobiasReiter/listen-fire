@@ -54,7 +54,7 @@ Read the message's \`From\` for this, not its \`To\` — on a forward, \`To\` is
 The substance of a dealflow message is in the deck, and a deck arrives two ways. Read **both**:
 
 \`\`\`
-decks     = vcUrlRetrieval(text: msg.Body, email: @user_email)
+decks     = vcUrlRetrieval(msg.Body, { email: @user_email })
 content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
 companies = extract(content, Company, { tier: "careful" })
 \`\`\`
@@ -92,7 +92,7 @@ node Introducer: "the person who sent or forwarded this message to us" {
 }
 
 function \`Log Dealflow\`(msg: <inbox-[:Email]->>) {
-  decks     = vcUrlRetrieval(text: msg.Body, email: @user_email)
+  decks     = vcUrlRetrieval(msg.Body, { email: @user_email })
   content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
   companies = extract(content, Company, { tier: "careful" })
   introducer = extractOne(content, Introducer, { tier: "careful" })

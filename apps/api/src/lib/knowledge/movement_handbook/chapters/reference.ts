@@ -12,7 +12,7 @@ A terse lookup, not a lesson. The teaching chapters explain *why*; this one is f
 \`\`\`
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters         # adapter types
 import { acme_main } from credentials          # stored connections, by saved name
-import { fetchUrl } from plugins              # functions the platform ships, called with named arguments
+import { fetchUrl } from plugins              # functions the platform ships, called by position, settings last
 import { \`Log Lead\`, Lead } from "lib/intake"  # exported declarations, by file path
 import { \`Files Out\` as send } from "lib/out"  # rename on import with: as
 
@@ -225,7 +225,7 @@ await until(() => { refresh co; return co.Stage == "Won" }, { every: 1h })   # r
 companies = extract([msg.Body, ...msg-[a:Attachments]->.File], Company, { tier: "careful" })   # a list of Company records
 details   = extractOne([...content, Json.stringify(c)], CompanyDetail, { tier: "careful" })   # the single record, or absent
 people    = extract(content, node Person: "each person named" { name: <text> "their name" })   # a shape written in place
-page      = fetchUrl(url: c.website)                                                         # a plugin: named arguments, absent when it finds nothing
+page      = fetchUrl(c.website)                                                              # a plugin: by position, settings last; absent when it finds nothing
 \`\`\`
 
 Content is a list (shared content first, record-specific content last, so repeated calls hit the prompt cache); the shape is a declared \`node\`; settings are \`tier\` (\`"quick"\` / \`"careful"\` / \`"thorough"\`), \`model\`, \`effort\`. The description carries cardinality ("the company" = one; "each company" = all). \`map(…, f, { initialConcurrency: 1 })\` warms the cache before the fan-out. An extraction writes nothing — writes are separate statements.
