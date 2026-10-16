@@ -340,6 +340,16 @@ fn a_plugin_reads_with_its_argument_types() {
 }
 
 #[test]
+fn a_plugin_without_priced_reads_as_unpriced_and_is_handed_back_as_written() {
+    // Specs written before plugins declared `priced`: the TypeScript reads the absence as unpriced.
+    let plugin = json!({ "args": ["data"] });
+    let snapshot = json!({ "adapters": {}, "credentials": {}, "plugins": { "p": plugin.clone() } });
+    let loaded = CatalogSnapshot::load(&snapshot.to_string()).unwrap();
+    assert!(!loaded.plugins["p"].priced());
+    assert_eq!(query(&snapshot, json!({ "op": "plugin", "name": "p" })), Ok(json!({ "value": plugin })));
+}
+
+#[test]
 fn a_query_answers_a_value_or_nothing() {
     let snapshot = json!({
         "adapters": { "email": { "constructionArgs": [], "schemas": { "": schema_with("messages") } } },

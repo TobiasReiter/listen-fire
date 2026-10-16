@@ -106,7 +106,7 @@ impl Ledger {
     /// plugin is found as `pluginSpecNamed` finds it, dashes read as
     /// underscores; one the catalog does not know is not priced.
     pub fn plugin_refusal(&self, plugins: &JsMap<PluginSpec>, plugin: &str) -> Option<CapExceeded> {
-        crate::plugin::spec_named(plugins, plugin).filter(|spec| spec.priced)?;
+        crate::plugin::spec_named(plugins, plugin).filter(|spec| spec.priced())?;
         self.exceeded()
     }
 }

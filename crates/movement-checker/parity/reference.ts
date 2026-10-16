@@ -91,28 +91,9 @@ for (const { file, version } of oracles) {
 }
 
 fs.writeFileSync(path.join(out, 'reference.jsonl'), lines.join('\n') + '\n');
-// Tests written before plugins declared `priced` hand the checker plugin specs
-// without it (they are transpiled, not type-checked), and the TypeScript reads
-// the absence as unpriced. The Rust catalog requires the field, so the Rust
-// side is handed the same reading, spelled out; the corpus itself stays as recorded.
-let unpricedPlugins = 0;
-function withPriced(snapshot: CatalogSnapshot): CatalogSnapshot {
-  const plugins = (snapshot as { plugins?: Record<string, Record<string, unknown>> }).plugins;
-  if (!plugins || Object.values(plugins).every(spec => 'priced' in spec)) return snapshot;
-  const filled: Record<string, Record<string, unknown>> = {};
-  for (const [name, spec] of Object.entries(plugins)) {
-    if ('priced' in spec) {
-      filled[name] = spec;
-    } else {
-      unpricedPlugins += 1;
-      filled[name] = { ...spec, priced: false };
-    }
-  }
-  return { ...snapshot, plugins: filled } as CatalogSnapshot;
-}
 fs.writeFileSync(
   path.join(out, 'snapshots.jsonl'),
-  [...table.entries()].map(([key, snapshot]) => JSON.stringify({ key, snapshot: withPriced(snapshot) })).join('\n') + '\n',
+  [...table.entries()].map(([key, snapshot]) => JSON.stringify({ key, snapshot })).join('\n') + '\n',
 );
 const seconds = Number(process.hrtime.bigint() - started) / 1e9;
-console.log(`typescript: ${lines.length} checks in ${seconds.toFixed(1)}s (${failed} skipped: no longer parse; ${unrepresentable} skipped: a lone UTF-16 surrogate Rust cannot hold; ${unpricedPlugins} plugin specs handed to Rust as unpriced)`);
+console.log(`typescript: ${lines.length} checks in ${seconds.toFixed(1)}s (${failed} skipped: no longer parse; ${unrepresentable} skipped: a lone UTF-16 surrogate Rust cannot hold)`);
