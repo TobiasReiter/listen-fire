@@ -197,7 +197,7 @@ impl Parse {
         let fields = stage.into_iter().flat_map(|s| &s.fields).map(|f| (f.name.clone(), CallDeclared::Field(f)));
         let children = stage.into_iter().flat_map(|s| &s.children).map(|c| (c.name.clone(), CallDeclared::Child(c)));
         for (key, kind) in fields.chain(children) {
-            js::insert_in_object_order(&mut declared, key, kind);
+            js::set_entry(&mut declared, key, kind);
         }
         let declared_names: Vec<String> = declared.iter().map(|(k, _)| k.clone()).collect();
         let before = self.issues.len();

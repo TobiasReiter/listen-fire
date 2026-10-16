@@ -97,6 +97,23 @@ fn accepted_difference(fn_: &str, case: &Json) -> bool {
         || negative_half(fn_, case)
         || code_point_order(fn_, case)
         || empty_text_is_no_number(fn_, case)
+        || number_like_key_serialised(fn_, case)
+}
+
+/// TEXT.SERIALISE of a map holding a number-like key: version 5 keeps a
+/// map's keys as texts, so the sorted keys put `"10"` before `"2"`
+/// (JavaScript listed integer keys first, in numeric order).
+fn number_like_key_serialised(fn_: &str, case: &Json) -> bool {
+    fn holds_number_key(json: &Json) -> bool {
+        match json {
+            Json::Array(items) if items.first() == Some(&Json::from("o")) => items[2]
+                .as_array()
+                .is_some_and(|entries| entries.iter().any(|e| e[0].as_str().is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit())) || holds_number_key(&e[1]))),
+            Json::Array(items) => items.iter().any(holds_number_key),
+            _ => false,
+        }
+    }
+    fn_ == "text.serialise" && holds_number_key(&case["args"])
 }
 
 /// `NUMBER` of a text that is empty once trimmed: version 5 answers null

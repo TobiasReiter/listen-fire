@@ -281,6 +281,9 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `m.toString` were JavaScript's built-ins. `TEXT(m)` is `"[object Object]"` whatever keys `m`
   holds (a `toString` key no longer changes it). An extraction reply's field named after a
   built-in (`constructor`) reads as the reply wrote it.
+- **A map keeps its keys in the order they were first set**, a number-like key included:
+  `{ z: 0, "10": 1, "2": 2 }` lists `z`, `10`, `2` (JavaScript listed `2`, `10`, `z`). TEXT.SERIALISE
+  still sorts keys, as texts: `"10"` before `"2"`.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

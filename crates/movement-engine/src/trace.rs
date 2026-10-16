@@ -50,7 +50,7 @@ pub struct Members(Vec<(String, Js)>);
 impl Members {
     /// `entry[key] = value`: a key already there keeps its place.
     pub fn set(&mut self, key: &str, value: Js) {
-        js::insert_in_object_order(&mut self.0, key.to_string(), value);
+        js::set_entry(&mut self.0, key.to_string(), value);
     }
 
     pub fn get(&self, key: &str) -> Option<&Js> {

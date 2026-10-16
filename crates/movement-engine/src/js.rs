@@ -68,8 +68,7 @@ impl JsArray {
     }
 }
 
-/// A plain object: own keys in JavaScript's order (array-index keys
-/// ascending first, then the rest as inserted).
+/// A map: its keys in the order they were first set.
 #[derive(Debug, Default)]
 pub struct JsObject {
     entries: Vec<(String, Js)>,
@@ -96,7 +95,7 @@ impl JsObject {
     /// An entry, whatever the key (`__proto__` is a key like any other).
     /// A key already there keeps its place.
     pub fn set(&mut self, key: String, value: Js) {
-        insert_in_object_order(&mut self.entries, key, value);
+        set_entry(&mut self.entries, key, value);
     }
 }
 
@@ -106,30 +105,13 @@ pub fn is_identifier(raw: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// `object[key] = value` over any keyed list: array-index keys ascending
-/// first, then the rest as inserted; a key already there keeps its place.
-pub fn insert_in_object_order<V>(entries: &mut Vec<(String, V)>, key: String, value: V) {
-    if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key) {
-        slot.1 = value;
-        return;
-    }
-    match array_index(&key) {
-        Some(index) => {
-            let at = entries.iter().position(|(k, _)| array_index(k).is_none_or(|other| other > index)).unwrap_or(entries.len());
-            entries.insert(at, (key, value));
-        }
+/// `map[key] = value` over any keyed list: a new key goes last, a key
+/// already there keeps its place.
+pub fn set_entry<V>(entries: &mut Vec<(String, V)>, key: String, value: V) {
+    match entries.iter_mut().find(|(k, _)| *k == key) {
+        Some(slot) => slot.1 = value,
         None => entries.push((key, value)),
     }
-}
-
-/// A key that is an array index (`"0"`, `"17"`, below 2³² − 1), which an
-/// object lists before its other keys, in numeric order.
-fn array_index(key: &str) -> Option<u32> {
-    let bytes = key.as_bytes();
-    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) || (bytes[0] == b'0' && bytes.len() > 1) {
-        return None;
-    }
-    key.parse::<u64>().ok().filter(|&n| n < u64::from(u32::MAX)).map(|n| n as u32)
 }
 
 impl Js {
@@ -628,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn objects_keep_javascript_key_order() {
+    fn maps_keep_their_keys_in_the_order_first_set() {
         let mut o = JsObject::new();
         o.set("b".into(), Js::Number(1.0));
         o.set("10".into(), Js::Number(2.0));
@@ -637,7 +619,7 @@ mod tests {
         o.set("b".into(), Js::Number(5.0));
         o.set("01".into(), Js::Number(6.0));
         let keys: Vec<_> = o.entries().iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["2", "10", "b", "a", "01"]);
+        assert_eq!(keys, ["b", "10", "a", "2", "01"]);
     }
 
     #[test]

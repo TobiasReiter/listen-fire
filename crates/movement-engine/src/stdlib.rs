@@ -1006,7 +1006,8 @@ mod tests {
         keyed.set("9".into(), Js::array(vec![Js::Undefined]));
         assert_eq!(
             text(call("text.serialise", vec![Js::object(keyed), s("JSON")])),
-            "{\n  \"9\": [\n    null\n  ],\n  \"10\": null,\n  \"b\": 0\n}"
+            // Keys sorted as texts: "10" before "9".
+            "{\n  \"10\": null,\n  \"9\": [\n    null\n  ],\n  \"b\": 0\n}"
         );
         assert_eq!(text(call("text.serialise", vec![Js::Undefined, s("JSON")])), "null");
         assert!(matches!(

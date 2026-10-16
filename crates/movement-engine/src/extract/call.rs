@@ -343,7 +343,7 @@ struct Tallies {
 fn bump(into: &mut Vec<(String, f64)>, name: &str) {
     match into.iter_mut().find(|(n, _)| n == name) {
         Some((_, n)) => *n += 1.0,
-        None => js::insert_in_object_order(into, name.to_string(), 1.0),
+        None => js::set_entry(into, name.to_string(), 1.0),
     }
 }
 
@@ -867,7 +867,7 @@ impl Run<'_> {
                     origin.push(("item", Js::Number(item)));
                 }
                 let id = self.mint_origin(env::object_of(origin));
-                js::insert_in_object_order(&mut provenance, field.name.clone(), Trail { origins: vec![id], direct: Some(id) });
+                js::set_entry(&mut provenance, field.name.clone(), Trail { origins: vec![id], direct: Some(id) });
             }
             let mut edges = Vec::new();
             for child in children_of {

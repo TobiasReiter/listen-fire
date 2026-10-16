@@ -85,7 +85,7 @@ pub(crate) fn absent_if_blank(value: &Js) -> Js {
 fn bump(into: &mut Vec<(String, f64)>, name: &str) {
     match into.iter_mut().find(|(n, _)| n == name) {
         Some(slot) => slot.1 += 1.0,
-        None => js::insert_in_object_order(into, name.to_string(), 1.0),
+        None => js::set_entry(into, name.to_string(), 1.0),
     }
 }
 
@@ -124,7 +124,7 @@ fn collect_traced(tree: &TracedTree, into: &mut Vec<(String, Vec<Js>)>, truncate
         let at = match into.iter().position(|(name, _)| *name == alias) {
             Some(at) => at,
             None => {
-                js::insert_in_object_order(into, alias.clone(), Vec::new());
+                js::set_entry(into, alias.clone(), Vec::new());
                 into.iter().position(|(name, _)| *name == alias).expect("just inserted")
             }
         };

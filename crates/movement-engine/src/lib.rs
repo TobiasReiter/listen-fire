@@ -260,11 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn maps_keep_javascript_key_order() {
+    fn maps_keep_their_keys_in_the_order_first_set() {
         assert_eq!(value("{ b: 1, a: 2, b: 3 }", json!({})), json!(["o", [["b", 3.0], ["a", 2.0]]]));
+        // Keys in the order first set, a number-like key no exception.
         assert_eq!(
             value("{ z: 0, ...m }", json!({ "m": ["o", [["10", true], ["2", false]]] })),
-            json!(["o", [["2", false], ["10", true], ["z", 0.0]]])
+            json!(["o", [["z", 0.0], ["10", true], ["2", false]]])
         );
         let refused = eval("{ ...m }", json!({ "m": 5 }));
         assert_eq!(refused["error"]["code"], "MOVENG_UNSUPPORTED");
