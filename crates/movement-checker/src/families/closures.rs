@@ -656,6 +656,12 @@ impl Checker<'_> {
             return;
         }
         if element.is_some_and(is_plain_value) && key_reads_off_member(&op.r#fn) {
+            // This says it of the key; the read's own refusal (a field off
+            // text) would say it twice.
+            let within = |d: &crate::diagnostic::Diagnostic| {
+                (d.span.start.line, d.span.start.col) >= (span.start.line, span.start.col) && (d.span.end.line, d.span.end.col) <= (span.end.line, span.end.col)
+            };
+            self.diagnostics.retain(|d| d.code != codes::TEXT_HAS_NO_FIELDS || !within(d));
             self.report(
                 codes::SORT_KEY_ON_SCALAR,
                 "sort reads this key off each member, and these members are plain values — there is nothing to read it from. Order them by themselves: `sort(…)` or `sort(…, { order: \"desc\" })`.",

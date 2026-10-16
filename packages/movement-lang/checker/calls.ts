@@ -56,7 +56,9 @@ export type CalleeResolution =
    *  was written only by letter case). Whether it is callable is the
    *  caller's to say: a local holding a value is not. */
   | { kind: 'declared'; name: string }
-  | { kind: 'builtin'; builtin: Builtin }
+  /** A built-in, as `languageVersion` reads it (from 5 a collection op's
+   *  settings come last). */
+  | { kind: 'builtin'; builtin: Builtin; languageVersion: LanguageVersion }
   | { kind: 'unknown' };
 
 /** Look a written callee up: the program's own scopes first, exactly as
@@ -77,7 +79,7 @@ export function resolveCallee(
   // A dotted member (`DATE.TODAY`) is never a bare callee: the expression
   // grammar reads it as a member of its family.
   const builtin = builtinUnder(written, languageVersion);
-  return builtin !== undefined && !builtin.name.includes('.') ? { kind: 'builtin', builtin } : { kind: 'unknown' };
+  return builtin !== undefined && !builtin.name.includes('.') ? { kind: 'builtin', builtin, languageVersion } : { kind: 'unknown' };
 }
 
 /**
@@ -177,7 +179,7 @@ function readOneCall(
       return { kind: 'value', expr: call.expression };
     }
     case 'collection':
-      return collectionReading(call, builtin.form.op);
+      return collectionReading(call, builtin.form.op, resolution.languageVersion);
     case 'members': {
       if (position === 'statement') {
         return refused('unused', `'${call.callee}(…)' reads a type's values and does nothing else — bind it: \`values = ${call.callee}(<…>)\``);
@@ -285,17 +287,25 @@ function describeArgForm(arg: CallArg): string {
  * ones the op's own grammar enforced before language version 3
  * (`Parser.parseCollectionOp`), said in the same words.
  */
-function collectionReading(call: CallStatement, op: CollectionOp): CallReading {
+function collectionReading(call: CallStatement, op: CollectionOp, languageVersion: LanguageVersion): CallReading {
   // `sort` by a function key is spelled `sort` wherever it is named: the
   // tree's `SORTBY` is no spelling (`SORT_BY`).
   const spelling = op === 'sort' ? 'sort' : call.callee;
   const configurable = op === 'map' || op === 'filter' || op === 'sort';
+  // From version 5 the function comes second and the rest after it
+  // (`map(xs, f, { … })`, `reduce(xs, f, start)`); the tree read here still
+  // holds them in the order versions 1–4 write.
+  const functionSecond = since(languageVersion, 5);
   const shape = op === 'reduce'
-    ? `${spelling}(<collection>, <starting value>, <function>)`
+    ? functionSecond
+      ? `${spelling}(<collection>, <function>, <starting value>)`
+      : `${spelling}(<collection>, <starting value>, <function>)`
     : op === 'sort'
       ? 'sort(<collection>, <function>) or sort(<collection>, <function>, { order: "desc" })'
       : configurable
-      ? `${spelling}(<collection>, <function>) or ${spelling}(<collection>, { <settings> }, <function>)`
+      ? functionSecond
+        ? `${spelling}(<collection>, <function>) or ${spelling}(<collection>, <function>, { <settings> })`
+        : `${spelling}(<collection>, <function>) or ${spelling}(<collection>, { <settings> }, <function>)`
       : `${spelling}(<collection>, <function>)`;
   const refused = (message: string): CallReading => ({
     kind: 'refused',
@@ -325,7 +335,9 @@ function collectionReading(call: CallStatement, op: CollectionOp): CallReading {
     }
     if (typeof slot === 'string' || !slot.raw.trimStart().startsWith('{')) {
       return refused(
-        `'${spelling}' takes its settings as a record written in place, between the collection and the function — \`${spelling}(xs, { onError: "warn", concurrency: 4 }, f)\``,
+        functionSecond
+          ? `'${spelling}' takes its settings as a record written in place, after the function — \`${spelling}(xs, f, { onError: "warn", concurrency: 4 })\``
+          : `'${spelling}' takes its settings as a record written in place, between the collection and the function — \`${spelling}(xs, { onError: "warn", concurrency: 4 }, f)\``,
       );
     }
     config = slot;

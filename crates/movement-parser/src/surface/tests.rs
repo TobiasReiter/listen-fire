@@ -183,8 +183,16 @@ fn namespaces() {
     ] {
         same(new, old);
     }
-    // `d.k` already reads a map's field under 5 (a member read, not `AT`).
-    assert_eq!(upgraded("AT(d, \"k\")"), "d.k");
+    // A text key stays an index: `d.k` is a field read, which on a record
+    // answers where `AT(d, "k")` refused. A non-primary object is grouped,
+    // and a grouped object is indexed (`(a).k` does not lower).
+    assert_eq!(upgraded("AT(d, \"k\")"), "d[\"k\"]");
+    same("d[\"k\"]", "AT(d, \"k\")");
+    assert_eq!(upgraded("AT(a + b, 0)"), "(a + b)[0]");
+    same("(a + b)[0]", "AT(a + b, 0)");
+    assert_eq!(upgraded("AT(IF c THEN d ELSE e END, \"k\")"), "(c ? d : e)[\"k\"]");
+    same("(c ? d : e)[\"k\"]", "AT(IF c THEN d ELSE e END, \"k\")");
+    assert_eq!(upgraded("AT(COALESCE(d, e), \"k\")"), "coalesce(d, e)[\"k\"]");
 }
 
 #[test]
@@ -201,6 +209,33 @@ fn operators_and_conditionals() {
     same("rec is <crm-[:People]->>", "rec IS <crm-[:People]->>");
     same("!done", "NOT done");
     same("a ? b ? 1 : 2 : 3", "IF a THEN IF b THEN 1 ELSE 2 END ELSE 3 END");
+}
+
+/// The first hop WHERE in a lowered walk.
+fn hop_filter(lowered: &Value) -> Option<Value> {
+    match lowered {
+        Value::Object(o) => o.get("expressionFilter").cloned().or_else(|| o.values().find_map(hop_filter)),
+        Value::Array(items) => items.iter().find_map(hop_filter),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_narrowing_key_does_not_depend_on_how_the_field_read_is_spelled() {
+    use crate::catalog::helpers::refinement_key;
+    let key = |text: &str, version: u32| refinement_key("Record Change", &hop_filter(&lowered(text, version)).expect("a hop WHERE"));
+    let alias = key("at-[e:`Record Change` WHERE e.action == \"record.created\" AND e.`table` == \"tblDeals\"]->", 5);
+    let bare = key("at-[:`Record Change` WHERE action == \"record.created\" AND `table` == \"tblDeals\"]->", 4);
+    assert!(lowered("at-[e:`Record Change` WHERE e.action == \"x\"]->", 5).to_string().contains("fieldOnly"));
+    assert_eq!(alias, bare);
+    // What a host registers: its own filter, no spelling marks.
+    let host = serde_json::json!({ "type": "logical", "op": "and", "operands": [
+        { "type": "compare", "op": "eq", "left": { "type": "edge_property", "propertyTypeId": "action" }, "right": { "type": "static", "value": "record.created" } },
+        { "type": "compare", "op": "eq", "left": { "type": "edge_property", "propertyTypeId": "table" }, "right": { "type": "static", "value": "tblDeals" } },
+    ] });
+    let bare_filter = hop_filter(&lowered("at-[:`Record Change` WHERE action == \"record.created\" AND `table` == \"tblDeals\"]->", 4)).unwrap();
+    assert_eq!(bare_filter, host);
+    assert_eq!(alias, refinement_key("Record Change", &host));
 }
 
 #[test]
@@ -227,6 +262,12 @@ fn presence_and_walks() {
     let everyday = findings("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->");
     assert_eq!(everyday.len(), 1);
     assert_eq!(everyday[0].edits.as_ref().unwrap()[0].text, "LOWER");
+    // The refused spelling reads as the walk word it means: the one finding,
+    // and no lowering refusal beside it.
+    assert_eq!(
+        lowered("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->", 5),
+        lowered("ch-[m:Messages WHERE LOWER(m.Text) CONTAINS \"urgent\"]->", 5)
+    );
 }
 
 #[test]

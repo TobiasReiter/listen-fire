@@ -510,6 +510,10 @@ export const TypedDiagnosticCodes = {
    *  not exist on type". A dict whose keys are data (`GROUPBY`, a system's
    *  json) has no such list and stays a lookup that may miss. */
   DICT_UNKNOWN_KEY: 'MOV_DICT_UNKNOWN_KEY',
+  /** `t.Name` where `t` holds text: a text has no fields. Both engines read
+   *  it as null, so before version 5 it is a warning (from 3, where values
+   *  are typed), and from 5 it is refused. */
+  TEXT_HAS_NO_FIELDS: 'MOV_TEXT_HAS_NO_FIELDS',
 } as const;
 
 // ── Tiers ──
@@ -4708,6 +4712,36 @@ export class ExpressionTyping {
     return this.readDictMember(held, expr.expression);
   }
 
+  /** `t.Name` (and `t.Name.x`) where `t` holds text: the field read off a
+   *  value that has none. Undefined for any other read. */
+  private textFieldRead(expr: Extract<Expression, { type: 'traverse' }>): { root: string; field: string } | undefined {
+    if (before(this.options.languageVersion, 3)) return undefined;
+    if (expr.aliasRoot === undefined || expr.steps.length > 0) return undefined;
+    if (this.rootType(expr.aliasRoot) !== undefined) return undefined;
+    const held = this.scalarType(expr.aliasRoot);
+    if (held === undefined) return undefined;
+    const kind = variantOf(stripAbsent(held)).kind;
+    if (kind !== 'text' && kind !== 'enum') return undefined;
+    const member = expr.expression;
+    const field =
+      member.type === 'property'
+        ? member.propertyTypeId
+        : member.type === 'traverse' && member.aliasRoot !== undefined
+          ? member.aliasRoot
+          : undefined;
+    return field === undefined ? undefined : { root: expr.aliasRoot, field };
+  }
+
+  private reportTextFieldRead(read: { root: string; field: string }): void {
+    // A nested call's staged value (`Text.upper(t).x`) has no name to show.
+    const named = !read.root.startsWith('#');
+    const message = named
+      ? `'${read.root}' is text, and a text has no fields — '${read.field}' is not something it holds. Use the text itself ('${read.root}'), or read '${read.field}' off the record the text came from`
+      : `this is text, and a text has no fields — '${read.field}' is not something it holds. Use the text itself, or read '${read.field}' off the record the text came from`;
+    if (since(this.options.languageVersion, 5)) this.report(TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS, message);
+    else this.report(TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS, `${message}. Before ${describeLanguageVersion(5)} it reads null; from it, this is refused`, 'warning');
+  }
+
   /**
    * `k`, `k.f`, `k.inner.f` read off a dict of type `held`: `d.k` ends at the
    * key; `d.k.f` reads on from what the key holds — a dict as a dict again
@@ -4900,6 +4934,8 @@ export class ExpressionTyping {
         this.exactTypes.set(expr, keyRead.type);
         return keyRead.type;
       }
+      const textRead = this.textFieldRead(expr);
+      if (textRead !== undefined) this.reportTextFieldRead(textRead);
       const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : undefined;
       const position = this.walkSteps(start, expr.steps);
       this.rememberOrdering(expr, position);
@@ -5182,6 +5218,9 @@ export class ExpressionTyping {
       case 'traverse': {
         const keyRead = this.dictMemberRead(expr);
         if (keyRead !== undefined) return keyRead.type;
+        // Said, and then read as it always was (as nothing).
+        const textRead = this.textFieldRead(expr);
+        if (textRead !== undefined) this.reportTextFieldRead(textRead);
         const exists = existsSubject(expr);
         if (exists !== undefined) {
           this.reportConstantPresenceTest(exists, this.code(`EXISTS(${exists})`), 'always true');

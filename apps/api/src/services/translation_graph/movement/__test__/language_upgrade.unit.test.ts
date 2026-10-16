@@ -445,27 +445,29 @@ describe('the upgrade rewrites the text by its fixes first', () => {
     deprecated: new Set<LanguageVersion>(),
   };
 
-  it('the deploy check advances a movement clean after the rewrite, saving the rewritten text with the pin', async () => {
+  it('the deploy check never rewrites: a movement in the old spelling keeps its text and its pin, and is told an upgrade rewrites it', async () => {
     const store = fakeStore({ movements: [movement({ id: 'old', languageVersion: 4, source: OLD })], verdicts: {}, release: FIVE });
     store.deps.validate = underFive();
     const summary = await runDeployCheck(store.deps);
-    expect(summary?.automations.map((a) => a.outcome)).toEqual(['advanced']);
-    expect(store.pins.get('old')).toBe(CURRENT_LANGUAGE_VERSION);
-    expect(store.sources.get('old')).toBe(NEW);
+    expect(summary?.automations.map((a) => a.outcome)).toEqual(['warned']);
+    expect(store.pins.get('old')).toBe(4);
+    expect(store.sources.has('old')).toBe(false);
+    expect(store.upgradeDiagnostics.get('old')?.map((d) => d.code)).toEqual(['MOV_V5_SPELLING', 'MOV_V5_SPELLING', 'MOV_V5_SPELLING']);
+    const issue = store.events.find((e) => e.kind === VALIDATION_ISSUE.typeId);
+    expect(issue?.reason).toContain('Upgrading the automation rewrites what the checker can fix');
   });
 
-  it('the deploy check keeps the text and the pin when the rewrite leaves an error, and says what is left', async () => {
+  it('the deploy check never rewrites, even where an error is left beside the old spellings', async () => {
     const left = diagnostic('error', 'no field Nope on note');
     const store = fakeStore({ movements: [movement({ id: 'old', languageVersion: 4, source: OLD })], verdicts: {}, release: FIVE });
     store.deps.validate = underFive([left]);
     const summary = await runDeployCheck(store.deps);
-    expect(summary?.automations.map((a) => [a.outcome, a.detail])).toEqual([['warned', 'line 3: no field Nope on note']]);
+    expect(summary?.automations.map((a) => a.outcome)).toEqual(['warned']);
     expect(store.pins.get('old')).toBe(4);
     expect(store.sources.has('old')).toBe(false);
-    expect(store.upgradeDiagnostics.get('old')).toEqual([left]);
   });
 
-  it('a movement already in the new spelling is not rewritten', async () => {
+  it('a movement already in the new spelling advances its pin alone, its text untouched', async () => {
     const store = fakeStore({ movements: [movement({ id: 'new', languageVersion: 4, source: NEW })], verdicts: {}, release: FIVE });
     store.deps.validate = underFive();
     await runDeployCheck(store.deps);

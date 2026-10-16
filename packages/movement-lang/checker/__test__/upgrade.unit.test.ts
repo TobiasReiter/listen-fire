@@ -2,8 +2,11 @@
 // by its own fixes, with nothing outside the rewritten spans touched.
 
 import { mockCatalog, type InstanceSchema } from '../catalog';
-import type { Diagnostic } from '../check';
-import { spellingCheck, typescriptCheck, unifiedDiff, upgradeSource, type UpgradeCheck } from '../upgrade';
+import { checkProgram, diagnosticSeverity, type Diagnostic } from '../check';
+import { parseProgram } from '../../parser/parse';
+import { mockCatalogSnapshot } from '../../service/snapshot';
+import { checkSourceInRust } from '../rust_checker';
+import { rustCheck, spellingCheck, typescriptCheck, unifiedDiff, upgradeSource, type UpgradeCheck } from '../upgrade';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -97,6 +100,85 @@ movement go(c: <chat-[:channel]->>) {
     );
     expect(upgraded.source).toContain('{ Nope: Text.upper(c.Name) }');
     expect(upgraded.remaining.map((d) => [d.code, d.span.start.line])).toEqual([['MOV_WRITE_UNKNOWN_FIELD', 5]]);
+  });
+});
+
+// A rewrite keeps the program's meaning: the upgraded text, checked under 5,
+// says what the original said under 4 — the same refusals, by code — in both
+// checkers, and reads into the tree the original did.
+describe('a rewritten program means what it meant', () => {
+  const crm: InstanceSchema = {
+    positions: { company: { properties: { name: 'text' }, edges: {} } },
+    collections: { companies: { target: 'company' } },
+    writableRoots: { company: { fields: { name: 'text' }, resultShape: { externalId: 'text', name: 'text' } } },
+  };
+  const spec = {
+    adapters: { attio: { constructionArgs: [{ name: 'credentials', kind: 'credential' as const, required: true }], schema: crm } },
+    credentials: { crm_cred: { adapter: 'attio' } },
+    plugins: {
+      lookup: {
+        args: ['q', 'limit'],
+        argTypes: { q: 'text' as const, limit: 'number' as const },
+        requiredArgs: ['q'],
+        output: { kind: 'value' as const, type: 'text' as const },
+      },
+    },
+  };
+  const catalog = mockCatalog(spec);
+  const snapshot = mockCatalogSnapshot(spec);
+  const program = (body: string): string =>
+    `import { attio } from adapters
+import { crm_cred } from credentials
+import { lookup } from plugins
+crm = attio(credentials: crm_cred)
+movement m(x: <text>) {
+${body}
+}
+`;
+  const errorCodes = (diagnostics: Diagnostic[]): string[] =>
+    diagnostics.filter((d) => diagnosticSeverity(d) === 'error').map((d) => d.code);
+  const underTs = (source: string, version: 4 | 5): string[] =>
+    errorCodes(checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }));
+  const underRust = (source: string, version: 4 | 5): string[] => errorCodes(checkSourceInRust(source, snapshot, { languageVersion: version }));
+
+  /** The upgrade in both checkers: one text, its refusals unchanged. */
+  const roundTrip = (body: string): string => {
+    const source = program(body);
+    const ts = upgradeSource(source, typescriptCheck({ catalog, upgradingFrom: 4 }));
+    const rust = upgradeSource(source, rustCheck({ snapshot, upgradingFrom: 4 }));
+    expect(rust.source).toBe(ts.source);
+    expect(ts.held).toEqual([]);
+    expect(underTs(ts.source, 5)).toEqual(underTs(source, 4));
+    expect(underRust(rust.source, 5)).toEqual(underRust(source, 4));
+    return ts.source;
+  };
+
+  it("puts a through stage's plugin arguments in position, its settings last", () => {
+    const upgraded = roundTrip(`  found = extract from [x] {
+    name: "the name"
+  } through [lookup(q: name, limit: 2)] {
+    round: "the round"
+  } through [lookup(q: x)] { detail: "more" }`);
+    expect(upgraded).toContain('through [lookup(name, { limit: 2 })]');
+    expect(upgraded).toContain('through [lookup(x)]');
+  });
+
+  it("keeps a record's AT refusal: AT(h, \"name\") is h[\"name\"], never the field read h.name", () => {
+    const body = `  h = write crm-[:companies]-> { name: "Acme" }
+  t = AT(h, "name")`;
+    expect(underTs(program(body), 4)).toEqual(['MOV_AT_RECORD_KEY']);
+    expect(roundTrip(body)).toContain('t = h["name"]');
+  });
+
+  it('indexes a conditional or a sum in parentheses, which parses', () => {
+    const upgraded = roundTrip(`  d = { name: "a" }
+  e = { name: "b" }
+  a = AT(IF LENGTH(x) > 1 THEN d ELSE e END, "name")
+  b = AT([1] + [2], 0)
+  c = AT(COALESCE(d, e), "name")`);
+    expect(upgraded).toContain('a = (Text.length(x) > 1 ? d : e)["name"]');
+    expect(upgraded).toContain('b = ([1] + [2])[0]');
+    expect(upgraded).toContain('c = coalesce(d, e)["name"]');
   });
 });
 

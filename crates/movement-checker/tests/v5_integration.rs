@@ -75,3 +75,22 @@ fn only_fixes_that_keep_the_meaning_are_marked_safe() {
     let walk = format!("{HEAD5}function go(c: <chat-[:channel]->>) {{\n  ms = c-[m:Messages WHERE Body == \"x\"]->\n}}\n");
     assert!(safe_of(&walk).iter().all(|(_, safe)| *safe), "{:?}", safe_of(&walk));
 }
+
+/// Twin of v5_leftovers.unit.test.ts: a field read off text is refused from
+/// 5 and warned under 3 and 4 (both engines read null); a three-argument
+/// `map`'s settings go after the function from 5.
+#[test]
+fn a_field_read_off_text_and_a_map_s_settings_say_what_version_5_writes() {
+    let text_read = |found: Vec<Diagnostic>| found.into_iter().filter(|d| d.code == "MOV_TEXT_HAS_NO_FIELDS").map(|d| d.is_error()).collect::<Vec<_>>();
+    let v5 = format!("{HEAD5}function go(t: <text>) {{\n  d = t.Name\n}}\n");
+    assert_eq!(text_read(check(&v5, 5)), vec![true]);
+    let v4 = format!("{HEAD4}movement go(t: <text>) {{\n  d = t.Name\n}}\n");
+    assert_eq!(text_read(check(&v4, 4)), vec![false]);
+    assert_eq!(text_read(check(&v4, 3)), vec![false]);
+    assert_eq!(text_read(check(&v4, 2)), Vec::<bool>::new());
+
+    let map = format!("{HEAD5}function go() {{\n  a = map([1, 2], (x) => x, 5)\n}}\n");
+    let found = check(&map, 5);
+    let message = &found.iter().find(|d| d.code == "MOV_BUILTIN_ARGS").expect("refused").message;
+    assert!(message.contains("after the function — `map(xs, f, {"), "{message}");
+}

@@ -1265,7 +1265,8 @@ impl crate::checker::Checker<'_> {
             }
         }
         let Some((plugin, spec)) = plugin.and_then(|p| self.catalog.plugin(p).map(|spec| (p, spec))) else {
-            return format!("{lead}, e.g. '{}', then 'page = fetch_url(url: m.u)'", import_line("fetch_url", "plugins"));
+            let arg = if self.version >= 5 { "m.u" } else { "url: m.u" };
+            return format!("{lead}, e.g. '{}', then 'page = fetch_url({arg})'", import_line("fetch_url", "plugins"));
         };
         if self.version >= 5 {
             return transform_hop_as_function(plugin, spec);
@@ -1289,15 +1290,8 @@ fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::type
     if spec.effects.is_none() || spec.fed_by_extraction == Some(true) || spec.output.is_none() {
         return format!("{lead}, but '{plugin}' runs only as a stage of an extraction: '{}', then 'extract from [ … ] through [{name}] {{ … }}'", import_line(plugin, "plugins"));
     }
-    let required: Vec<String> = spec
-        .required_args
-        .iter()
-        .flatten()
-        .cloned()
-        .chain(spec.fed_args.iter().flatten().filter(|fed| fed.required == Some(true)).map(|fed| fed.name.clone()))
-        .map(|arg| format!("{arg}: …"))
-        .collect();
-    let args = required.join(", ");
+    // Its arguments by position, each written as the parameter it is.
+    let args = spec.positional_params(movement_parser::catalog::plugin_args::PluginCallSite::Plain).join(", ");
     format!(
         "{lead}: import it and call it, and bind what it hands back like any function's result — '{}', then 'out = {name}({})'",
         import_line(plugin, "plugins"),

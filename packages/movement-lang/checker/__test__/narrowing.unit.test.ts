@@ -14,12 +14,13 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog, refinementKey } from '../catalog';
+import { mockCatalogSnapshot } from '../../service/snapshot';
+import { checkSourceInRust } from '../rust_checker';
 import { parseTraversalPath, scanInstanceChains } from '../../service/selectors';
 
 const REFINED = 'Spreadsheet "Pipeline Sheet"';
 
-/** Key a WHERE the way the host does — parsed IN ITS HOP, under the version the
- *  programs are checked under, since a field read through the hop's alias is an
+/** Key a WHERE the way the host does — parsed IN ITS HOP, since a field read through the hop's alias is an
  *  `edge_property` inside a bracket WHERE and a `property` standing alone. Both sides parse the hop, so both agree; a test that hand-wrote the
  *  key would be asserting its own arithmetic instead. */
 const keyFor = (where: string): string => {
@@ -298,5 +299,53 @@ function m(x: <runner-[:invocation]->>) {
 }`;
     expect(() => scanInstanceChains(source)).not.toThrow();
     expect(scanInstanceChains(source)).toEqual([]);
+  });
+});
+
+// A narrowing's key is the field it reads, not how the read is spelled: from
+// version 5 a hop's WHERE reads through the alias (`s.Title`, marked as only
+// ever the field), before it read the bare field (`Title`). A host keys its
+// refinement from its own filter — a bare read, a hop parsed under another
+// version — so both spellings must key alike or the narrowing silently stops
+// matching (structural, not nominal).
+describe('a narrowing key does not depend on how the field read is spelled', () => {
+  const filterOf = (hop: string, version: 4 | 5) => {
+    const steps = parseTraversalPath(hop, version);
+    const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
+    if (!filter) throw new Error(`test setup: no filter parsed out of \`${hop}\``);
+    return filter;
+  };
+  const bare = filterOf('-[:Spreadsheet WHERE `Title` == "Pipeline Sheet"]->', 4);
+  const alias = filterOf('-[s:Spreadsheet WHERE s.`Title` == "Pipeline Sheet"]->', 5);
+
+  it('the alias form and the bare form give one key', () => {
+    expect(JSON.stringify(alias)).toContain('fieldOnly');
+    expect(refinementKey({ type: 'Spreadsheet', filter: alias })).toBe(refinementKey({ type: 'Spreadsheet', filter: bare }));
+  });
+
+  it('a refinement the host registered from the bare form narrows a version 5 program', () => {
+    const hostSpec: Parameters<typeof mockCatalog>[0] = {
+      adapters: {
+        google_sheets: {
+          constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+          schema: { ...sheetsSchema, refinements: { [refinementKey({ type: 'Spreadsheet', filter: bare })]: REFINED } },
+        },
+        manual: { constructionArgs: [], schema: manualSchema },
+      },
+      credentials: { sheets_cred: { adapter: 'google_sheets' } },
+    };
+    const source = `${prelude}\nfunction m(x: <runner-[:invocation]->>) {
+  sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]-> {
+    write s-[:\`Deals (table)\`]-> { Name: "X" }
+  }
+}`;
+    const errors = (found: Diagnostic[]): Diagnostic[] => found.filter(d => (d.severity ?? 'error') === 'error');
+    for (const diagnostics of [
+      errors(checkProgram(parseProgram(source), mockCatalog(hostSpec))),
+      errors(checkSourceInRust(source, mockCatalogSnapshot(hostSpec), { languageVersion: 5 })),
+    ]) {
+      expect(diagnostics.map(d => d.code)).toEqual(['MOV_LINKED_UNKNOWN_EDGE']);
+      expect(diagnostics[0]!.message).toContain(REFINED);
+    }
   });
 });

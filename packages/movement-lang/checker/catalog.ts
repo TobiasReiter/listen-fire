@@ -1844,7 +1844,26 @@ function canonicalize(value: unknown): string {
  *
  */
 export function refinementKey(input: { type: string; filter: Expression }): string {
-  return JSON.stringify([input.type, canonicalize(input.filter)]);
+  return JSON.stringify([input.type, canonicalize(fieldReadsUnmarked(input.filter))]);
+}
+
+/**
+ * The filter with its field reads' `fieldOnly` marks dropped. The mark says
+ * how a read was SPELLED — through the hop's alias from version 5
+ * (`e.action`), bare before (`action`) — and both spellings name the same
+ * field, so the key must not tell them apart: a host registers its narrowing
+ * once, from its own filter, and every version's program must find it.
+ */
+function fieldReadsUnmarked(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(fieldReadsUnmarked);
+  const node = value as Record<string, unknown>;
+  const isFieldRead = node['type'] === 'property' || node['type'] === 'edge_property';
+  return Object.fromEntries(
+    Object.entries(node)
+      .filter(([k]) => !(isFieldRead && k === 'fieldOnly'))
+      .map(([k, v]) => [k, fieldReadsUnmarked(v)]),
+  );
 }
 
 /**

@@ -162,9 +162,30 @@ fn splice_start(at: f64, len: usize) -> usize {
 }
 
 /// `refinementKey({type, filter})`: a refinement's identity — the type and
-/// the filter written with sorted keys.
+/// the filter written with sorted keys, its field reads' `fieldOnly` marks
+/// dropped (`fieldReadsUnmarked`).
 pub fn refinement_key(type_: &str, filter: &Value) -> String {
-    serde_json::to_string(&(type_, canonicalize(filter))).expect("strings always serialise")
+    serde_json::to_string(&(type_, canonicalize(&field_reads_unmarked(filter)))).expect("strings always serialise")
+}
+
+/// catalog.ts's `fieldReadsUnmarked`: the mark says how a read was spelled
+/// (through the hop's alias from version 5, bare before), and both spellings
+/// name the same field, so a host's registered narrowing matches either.
+fn field_reads_unmarked(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(field_reads_unmarked).collect()),
+        Value::Object(members) => {
+            let is_field_read = matches!(members.get("type").and_then(Value::as_str), Some("property" | "edge_property"));
+            Value::Object(
+                members
+                    .iter()
+                    .filter(|(k, _)| !(is_field_read && k.as_str() == "fieldOnly"))
+                    .map(|(k, v)| (k.clone(), field_reads_unmarked(v)))
+                    .collect(),
+            )
+        }
+        other => other.clone(),
+    }
 }
 
 /// catalog.ts's `canonicalize`: JSON with every object's keys sorted, by

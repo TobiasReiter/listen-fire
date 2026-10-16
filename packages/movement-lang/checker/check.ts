@@ -122,7 +122,7 @@ import {
   type ValueTypeMember,
   type ClosureTypeRef,
 } from '../parser/ast';
-import { argumentBindings, isPositionalCall, isValueTypeRef, spellName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
+import { argumentBindings, isPositionalCall, isValueTypeRef, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
 
 export type { ReturnShape } from './typing';
@@ -3518,11 +3518,8 @@ function transformHopAsFunction(plugin: string, spec: PluginSpec): string {
   if (spec.effects === undefined || spec.fedByExtraction === true || spec.output === undefined) {
     return `${lead}, but '${plugin}' runs only as a stage of an extraction: '${importLine(plugin, 'plugins')}', then 'extract from [ … ] through [${name}] { … }'`;
   }
-  const required = [
-    ...(spec.requiredArgs ?? []),
-    ...(spec.fedArgs ?? []).filter(fed => fed.required === true).map(fed => fed.name),
-  ];
-  const args = required.map(arg => `${arg}: …`).join(', ');
+  // Its arguments by position, each written as the parameter it is.
+  const args = pluginPositionalParams(spec, 'plain').join(', ');
   return `${lead}: import it and call it, and bind what it hands back like any function's result — '${importLine(plugin, 'plugins')}', then 'out = ${name}(${args.length > 0 ? args : '…'})'`;
 }
 
@@ -6812,7 +6809,7 @@ class Checker {
       : undefined;
     const spec = plugin === undefined ? undefined : this.catalog.plugin(plugin);
     if (plugin === undefined || spec === undefined) {
-      return `${lead}, e.g. '${importLine('fetch_url', 'plugins')}', then 'page = fetch_url(url: m.u)'`;
+      return `${lead}, e.g. '${importLine('fetch_url', 'plugins')}', then 'page = fetch_url(${since(this.languageVersion, 5) ? 'm.u' : 'url: m.u'})'`;
     }
     if (since(this.languageVersion, 5)) return transformHopAsFunction(plugin, spec);
     const args = (spec.requiredArgs ?? []).map(arg => `${arg}: …`).join(', ');
@@ -8021,6 +8018,14 @@ class Checker {
       return;
     }
     if (members.element !== undefined && isPlainValue(members.element) && keyReadsOffMember(expr.fn)) {
+      // This says it of the key; the read's own refusal (a field off text)
+      // would say it twice.
+      const order = (a: Loc, b: Loc): number => a.line - b.line || a.col - b.col;
+      const inside = (d: Diagnostic): boolean => order(d.span.start, span.start) >= 0 && order(d.span.end, span.end) <= 0;
+      for (let i = this.diagnostics.length - 1; i >= 0; i--) {
+        const d = this.diagnostics[i]!;
+        if (d.code === TypedDiagnosticCodes.TEXT_HAS_NO_FIELDS && inside(d)) this.diagnostics.splice(i, 1);
+      }
       this.report(
         TypedDiagnosticCodes.SORT_KEY_ON_SCALAR,
         'sort reads this key off each member, and these members are plain values — there is nothing to read it from. Order them by themselves: `sort(…)` or `sort(…, { order: "desc" })`.',

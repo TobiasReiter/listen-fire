@@ -160,13 +160,14 @@ impl<'s> Canon<'s> {
         self.src.text(at.start, at.end)
     }
 
-    /// `at` is the whole text, or the whole of a parenthesised one (an `if`
-    /// condition from version 5): a rewrite there needs no parentheses.
+    /// `at` is the whole text, or all that is inside a pair of parentheses
+    /// (an `if` condition from version 5, a group, a call's one argument): a
+    /// rewrite there needs no parentheses of its own.
     fn whole(&self, at: At) -> bool {
         let before = self.text(At { start: 0, end: at.start });
         let after = self.text(At { start: at.end, end: self.src.len() });
         let (before, after) = (before.trim(), after.trim());
-        (before.is_empty() && after.is_empty()) || (before == "(" && after == ")")
+        (before.is_empty() && after.is_empty()) || (before.ends_with('(') && after.starts_with(')'))
     }
 
     /// `text`, parenthesised unless it is the whole expression.
@@ -262,8 +263,13 @@ impl<'s> Canon<'s> {
         let MExpr::Name { name: ns, .. } = object.as_ref() else { return };
         let written = format!("{}.{}", ns.text, property.text);
         if let Some((caps, _)) = table::WALK_CAPS.iter().find(|(_, everyday)| *everyday == written) {
+            let at = *at;
             let message = format!("inside walk brackets `{written}` is written `{caps}`");
-            self.old(*at, message, Some(Edit { at: *at, text: caps.to_string() }));
+            self.old(at, message, Some(Edit { at, text: caps.to_string() }));
+            // Read as the walk word it means, so the refusal is this one
+            // finding, not a second one from a lowering that knows no such
+            // name.
+            **callee = canonical_callee(caps, at);
             return;
         }
         // `Text.includes(t, v)` and `List.includes(xs, v)` read inside the
@@ -495,18 +501,17 @@ impl<'s> Canon<'s> {
                 format!("`{written}(x)` is written `x == null` from language version 5"),
                 Some(Edit { at, text: self.grouped(at, format!("{} == null", a(0))) }),
             ),
+            // Always `x[k]`, which reads back into `AT(x, k)`: `x.k` is a
+            // field read, which on a record answers where `AT` refused, and
+            // whether `x` is a record only the checker knows. The object is
+            // parenthesised unless it is a primary (`a + b[0]` is not
+            // `AT(a + b, 0)`).
             Shape::Index => {
-                let key = args.get(1).and_then(|k| match &k.value {
-                    MExpr::String { parts, .. } => match parts.as_slice() {
-                        [StringPart::Text(t)] if is_ident(t) => Some(t.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                });
-                let text = match key {
-                    Some(k) => format!("{}.{k}", a(0)),
-                    None => format!("{}[{}]", a(0), a(1)),
+                let object = match args.first() {
+                    Some(o) if !is_primary(&o.value) => format!("({})", a(0)),
+                    _ => a(0),
                 };
+                let text = format!("{object}[{}]", a(1));
                 (format!("`{written}(x, i)` is written `x[i]` from language version 5"), Some(Edit { at, text }))
             }
             Shape::ExistsWalk => match args.first() {

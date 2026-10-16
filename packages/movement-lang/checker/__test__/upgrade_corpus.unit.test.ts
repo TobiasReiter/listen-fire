@@ -26,8 +26,9 @@ const fs = require('fs') as { readFileSync(path: string, encoding: 'utf8'): stri
 const FIXTURES = path.join(__dirname, '__fixtures__');
 const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/oracle/handles.json');
 
-/** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records. */
-const FLOOR = 0.9;
+/** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records.
+ *  2026-10-16, v5b-upgrade: 4,082 of 4,449 programs (91.8%). */
+const FLOOR = 0.915;
 
 interface Program {
   source: string;

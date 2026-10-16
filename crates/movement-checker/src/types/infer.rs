@@ -579,6 +579,45 @@ impl<'a> Typing<'a> {
         self.read_dict_member(&held, member, false)
     }
 
+    /// `textFieldRead`: `t.Name` (and `t.Name.x`) where `t` holds text — the
+    /// field read off a value that has none (from version 3).
+    fn text_field_read(&self, alias_root: Option<&str>, steps: &[TraversalStep], member: &Expression) -> Option<(String, String)> {
+        let root = alias_root?;
+        if self.version < 3 || !steps.is_empty() || self.root_type(root).is_some() {
+            return None;
+        }
+        let held = self.scalar_type(root)?;
+        if !matches!(strip_absent(&held), Ty::Text | Ty::Enum { .. }) {
+            return None;
+        }
+        let field = match member {
+            Expression::Property { property_type_id, .. } => property_type_id.clone(),
+            Expression::Traverse { alias_root: Some(key), .. } => key.clone(),
+            _ => return None,
+        };
+        Some((root.to_string(), field))
+    }
+
+    /// `reportTextFieldRead`: refused from version 5; before it both engines
+    /// read null, so a warning.
+    fn report_text_field_read(&mut self, root: &str, field: &str) {
+        // A nested call's staged value (`Text.upper(t).x`) has no name to show.
+        let message = if root.starts_with('#') {
+            format!("this is text, and a text has no fields — '{field}' is not something it holds. Use the text itself, or read '{field}' off the record the text came from")
+        } else {
+            format!("'{root}' is text, and a text has no fields — '{field}' is not something it holds. Use the text itself ('{root}'), or read '{field}' off the record the text came from")
+        };
+        if since(self.version, 5) {
+            self.report(codes::TEXT_HAS_NO_FIELDS, message);
+        } else {
+            self.report_with(
+                codes::TEXT_HAS_NO_FIELDS,
+                format!("{message}. Before {} it reads null; from it, this is refused", crate::version::describe(5)),
+                Severity::Warning,
+            );
+        }
+    }
+
     fn read_dict_member(&mut self, held: &Ty, member: &Expression, within: bool) -> Option<Option<Ty>> {
         let Ty::Dict { of, shape } = strip_absent(held) else { return None };
         let (key, member_steps, member_expression) = match member {
@@ -659,6 +698,10 @@ impl<'a> Typing<'a> {
             Expression::Traverse { alias_root, steps, expression } => {
                 if let Some(read) = self.dict_member_read(alias_root.as_deref(), steps, expression) {
                     return (read, Vec::new());
+                }
+                // Said, and then read as it always was (as nothing).
+                if let Some((root, field)) = self.text_field_read(alias_root.as_deref(), steps, expression) {
+                    self.report_text_field_read(&root, &field);
                 }
                 if exists_subject(expr).is_some() {
                     return (Some(Ty::Boolean), Vec::new());
