@@ -168,6 +168,12 @@ impl Checker<'_> {
     fn visit_deletable(&mut self, position: &Position, undeclared: &mut Vec<String>, not_record: &dyn Fn(String) -> String, span: Span) -> bool {
         match position {
             Position::MaybeEmpty(of) => self.visit_deletable(of, undeclared, not_record, span),
+            // Every record it may be is deleted as that record, each reported
+            // (so every member is visited before the answer is read).
+            Position::OneOf(members) => {
+                let each: Vec<bool> = members.iter().map(|member| self.visit_deletable(member, undeclared, not_record, span)).collect();
+                each.into_iter().all(|deletable| deletable)
+            }
             Position::Position(p) => {
                 if p.run_built {
                     self.report(

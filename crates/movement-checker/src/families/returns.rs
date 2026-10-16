@@ -168,6 +168,9 @@ impl Checker<'_> {
             let merged = crate::types::position::one_of_closures(&closures, since(self.version, 5));
             return ReturnShape { returns: true, plane: PlaneType { pos: Some(Box::new(Position::Closure(merged))), field: None }, may_hold: None };
         }
+        if let Some(records) = self.joined_returns(&collector.returns) {
+            return records;
+        }
         // TypeScript's return type is the union of its returns: the type
         // stays the first's, and the union travels as a walk input (never a
         // type, so it is not made canonical), flattened and deduplicated.
@@ -193,6 +196,46 @@ impl Checker<'_> {
         };
         let revealed = may_hold.filter(|held| shows_more_handles(held, first.shape.plane.field.as_ref()));
         ReturnShape { returns: true, plane: first.shape.plane.clone(), may_hold: revealed }
+    }
+
+    /// `joinedReturns`: returns that each hand back a record are what the
+    /// union rule makes of them, as an IF of them is — one type where they
+    /// are one, keeping what every return vouches for, and a `OneOf` where
+    /// they are not. Before version 5 the body's type was its FIRST return's;
+    /// under an older pin that stays, and the rule is told it differed.
+    /// `None` where a return is no record, or the rule says what the first
+    /// already says.
+    fn joined_returns(&self, returns: &[Returned]) -> Option<ReturnShape> {
+        let first = returns.first()?;
+        if returns.len() < 2 {
+            return None;
+        }
+        let arms: Vec<Ty> = returns
+            .iter()
+            .map(|returned| {
+                let shape = &returned.shape;
+                shape.may_hold.clone().or_else(|| shape.plane.field.clone()).or_else(|| crate::types::field::record_value_of(shape.plane.pos.as_deref()))
+            })
+            .collect::<Option<_>>()?;
+        let joined = crate::types::unions::one_record_of(&arms)?;
+        let Ty::Record(Some(position)) = crate::types::field::strip_absent(&joined) else { return None };
+        let first_arm = &arms[0];
+        let unchanged = matches!(crate::types::field::strip_absent(first_arm), Ty::Record(Some(own)) if Rc::ptr_eq(own, position));
+        let maybe = crate::types::field::is_maybe_absent(Some(&joined));
+        if unchanged && maybe == crate::types::field::is_maybe_absent(Some(first_arm)) {
+            return None;
+        }
+        let rule = self.record_join();
+        if !rule.joins {
+            rule.withhold();
+            return None;
+        }
+        if first.shape.plane.pos.is_none() || first.shape.may_hold.is_some() {
+            return Some(ReturnShape { returns: true, plane: PlaneType { pos: None, field: Some(joined) }, may_hold: None });
+        }
+        let position = (**position).clone();
+        let position = if maybe && !matches!(position, Position::MaybeEmpty(_)) { Position::MaybeEmpty(Box::new(position)) } else { position };
+        Some(ReturnShape { returns: true, plane: PlaneType { pos: Some(Box::new(position)), field: None }, may_hold: None })
     }
 
     /// What a closure's call hands back: what it declares (version 3), else

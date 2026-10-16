@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **242 of 242** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 35347 of 35347; 0 extra in Rust.
+- Diagnostics matched: 35352 of 35352; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 28328 of 28328.
-- Rust side: 11.0s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 13.5s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -38,7 +38,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | systems | 8 | 8 | 166 | 166 | 0 | 0 | 0 |
 | values | 22 | 22 | 2272 | 2272 | 0 | 0 | 0 |
 | versions | 2 | 2 | 11 | 11 | 0 | 0 | 0 |
-| walks | 22 | 22 | 1201 | 1201 | 0 | 0 | 0 |
+| walks | 22 | 22 | 1206 | 1206 | 0 | 0 | 0 |
 | writes | 48 | 48 | 1946 | 1946 | 0 | 0 | 0 |
 
 ## By code
@@ -244,7 +244,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_THROUGH_FORWARD_REF | extraction | 11 | 11 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_NOT_PLUGIN | extraction | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_TRANSFORM_HOP_RETIRED | walks | 14 | 14 | 0 | 0 | 0 | yes |
-| MOV_TRAVERSE_UNKNOWN_EDGE | walks | 182 | 182 | 0 | 0 | 0 | yes |
+| MOV_TRAVERSE_UNKNOWN_EDGE | walks | 187 | 187 | 0 | 0 | 0 | yes |
 | MOV_UNDESCRIBED_POSITION | walks | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_UNIQUE_CONJUNCT_NEEDS_WHERE | writes | 37 | 37 | 0 | 0 | 0 | yes |
 | MOV_UNIQUE_FUZZY_UNSUPPORTED | writes | 25 | 25 | 0 | 0 | 0 | yes |

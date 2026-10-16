@@ -393,6 +393,7 @@ impl Checker<'_> {
             Position::Extract { .. } => true,
             Position::Local(_) => crate::families::records::live_reference_within(position, &declared, &String::new).is_none(),
             Position::MaybeEmpty(of) => self.holds_reached_fields_in_hand(of),
+            Position::OneOf(members) => members.iter().all(|member| self.holds_reached_fields_in_hand(member)),
             Position::Handle(handle) => declared(&handle.instance),
             Position::Position(record) => declared(&record.instance),
             Position::Union(union) => declared(&union.instance),

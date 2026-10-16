@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use movement_parser::catalog::types::{Composite, FieldType as SchemaFieldType, JsMap, Scalar};
 
+use super::unions::{RecordJoin, joined_under, one_record_of};
 use super::position::{ClosureType, PlaneType, Position, describe_position, positions_match, record_field_types, same_starting_point};
 
 #[derive(Debug, Clone)]
@@ -422,14 +423,22 @@ pub fn tuple_members(of: &[Option<Ty>], rest: Option<&TupleRest>) -> Vec<Option<
 
 /// `widenTuple`: the list a tuple reads as; `None` when no element can be named.
 pub fn widen_tuple(of: &[Option<Ty>], rest: Option<&TupleRest>, widening: Widening) -> Option<Ty> {
-    widen_tuple_in(of, rest, widening, &mut HashMap::new())
+    widen_tuple_in(of, rest, widening, None, &mut HashMap::new())
 }
 
 /// A tuple nested in itself many times over (`[a(), a(), a()]` a link
 /// further each time) widens each distinct tuple once.
-fn widen_tuple_in(of: &[Option<Ty>], rest: Option<&TupleRest>, widening: Widening, widened: &mut HashMap<NodeKey, Option<Ty>>) -> Option<Ty> {
-    let members: Vec<Option<Ty>> = tuple_members(of, rest).into_iter().map(|m| widen_tuples_in(m, widening, widened)).collect();
-    if let Some(shared) = unify_value_types(&members) {
+fn widen_tuple_in(
+    of: &[Option<Ty>],
+    rest: Option<&TupleRest>,
+    widening: Widening,
+    rule: Option<RecordJoin>,
+    widened: &mut HashMap<NodeKey, Option<Ty>>,
+) -> Option<Ty> {
+    let members: Vec<Option<Ty>> = tuple_members(of, rest).into_iter().map(|m| widen_tuples_in(m, widening, rule, widened)).collect();
+    // What the members share comes first, so a tuple that widened before
+    // still widens to exactly that.
+    if let Some(shared) = unify_value_types_under(&members, rule) {
         return Some(Ty::list(shared));
     }
     if widening == Widening::Shared {
@@ -449,11 +458,17 @@ pub fn widen_tuples(ty: Option<Ty>, version: u32) -> Option<Ty> {
     widen_tuples_by(ty, widening_under(version))
 }
 
-pub fn widen_tuples_by(ty: Option<Ty>, widening: Widening) -> Option<Ty> {
-    widen_tuples_in(ty, widening, &mut HashMap::new())
+/// `widenTuples` with the union rule: a tuple of records read as a list of
+/// what they join to, where the check joins.
+pub fn widen_tuples_joining(ty: Option<Ty>, version: u32, rule: RecordJoin) -> Option<Ty> {
+    widen_tuples_in(ty, widening_under(version), Some(rule), &mut HashMap::new())
 }
 
-fn widen_tuples_in(ty: Option<Ty>, widening: Widening, widened: &mut HashMap<NodeKey, Option<Ty>>) -> Option<Ty> {
+pub fn widen_tuples_by(ty: Option<Ty>, widening: Widening) -> Option<Ty> {
+    widen_tuples_in(ty, widening, None, &mut HashMap::new())
+}
+
+fn widen_tuples_in(ty: Option<Ty>, widening: Widening, rule: Option<RecordJoin>, widened: &mut HashMap<NodeKey, Option<Ty>>) -> Option<Ty> {
     let ty = ty?;
     let tuple = strip_absent(&ty);
     let Ty::Tuple { of, rest } = tuple else { return Some(ty) };
@@ -461,7 +476,7 @@ fn widen_tuples_in(ty: Option<Ty>, widening: Widening, widened: &mut HashMap<Nod
     let list = match key.and_then(|k| widened.get(&k)) {
         Some(list) => list.clone(),
         None => {
-            let list = widen_tuple_in(of, rest.as_ref(), widening, widened);
+            let list = widen_tuple_in(of, rest.as_ref(), widening, rule, widened);
             if let Some(key) = key {
                 widened.insert(key, list.clone());
             }
@@ -562,12 +577,21 @@ pub fn arms_union(arms: &[Option<Ty>]) -> Option<Ty> {
 
 /// `unifyValueTypes`: the one type every member shares.
 pub fn unify_value_types(types: &[Option<Ty>]) -> Option<Ty> {
+    unify_value_types_under(types, None)
+}
+
+/// `unifyValueTypes` with the union rule's switch: records are what it joins
+/// them to where the check joins, and before version 5 the first's type where
+/// they were one and an unnamed record where not (its `old` answer).
+pub fn unify_value_types_under(types: &[Option<Ty>], rule: Option<RecordJoin>) -> Option<Ty> {
     let first = types.first()?.as_ref()?;
+    let typed: Option<Vec<Ty>> = types.iter().cloned().collect();
+    if let Some(typed) = typed.filter(|typed| typed.iter().all(|t| is_record(Some(t)))) {
+        let old = if typed.iter().all(|t| field_type_equals(t, first)) { first.clone() } else { Ty::Record(None) };
+        return joined_under(rule, one_record_of(&typed), Some(old));
+    }
     if types.iter().all(|t| t.as_ref().is_some_and(|t| field_type_equals(t, first))) {
         return Some(first.clone());
-    }
-    if types.iter().all(|t| is_record(t.as_ref())) {
-        return Some(Ty::Record(None));
     }
     let unshaped: Vec<Option<Ty>> = types.iter().map(|t| t.as_ref().map(without_shape)).collect();
     let head = unshaped[0].as_ref()?;
@@ -678,13 +702,19 @@ pub fn tuple_slot_type(of: &[Option<Ty>], rest: Option<&TupleRest>, index: Optio
 
 /// `coalesceType`: `COALESCE(a, b, …)` typed as TypeScript types `a ?? b`.
 pub fn coalesce_type(args: &[Option<Ty>]) -> Option<Ty> {
+    coalesce_type_with(args, |_, old| old)
+}
+
+/// `coalesceType` with records joined by `join` (the union rule's switch,
+/// told the old answer: the shared kind where the arguments agree).
+pub fn coalesce_type_with(args: &[Option<Ty>], join: impl Fn(&[Ty], Option<Ty>) -> Option<Ty>) -> Option<Ty> {
     let typed: Vec<&Ty> = args.iter().map(Option::as_ref).collect::<Option<_>>()?;
     let valued: Vec<&Ty> = typed.into_iter().filter(|t| !matches!(t, Ty::Absent)).collect();
     if valued.is_empty() {
         return Some(Ty::Absent);
     }
-    let kinds: Vec<&Ty> = valued.iter().map(|t| strip_absent(t)).collect();
-    let shared = if kinds.iter().all(|k| field_type_equals(k, kinds[0])) { Some(kinds[0].clone()) } else { None };
+    let kinds: Vec<Ty> = valued.iter().map(|t| strip_absent(t).clone()).collect();
+    let shared = join(&kinds, kinds.iter().all(|k| field_type_equals(k, &kinds[0])).then(|| kinds[0].clone()));
     if valued.iter().any(|t| !is_maybe_absent(Some(t))) {
         return shared;
     }
@@ -695,7 +725,7 @@ pub fn coalesce_type(args: &[Option<Ty>]) -> Option<Ty> {
 }
 
 /// `multiType`: `MULTI(a, b, …)` — a list where the members share a record or a file.
-pub fn multi_type(args: &[Option<Ty>]) -> Option<Ty> {
+pub fn multi_type(args: &[Option<Ty>], rule: RecordJoin) -> Option<Ty> {
     let mut members: Vec<Option<Ty>> = Vec::new();
     for arg in args {
         let present = strip_absent(arg.as_ref()?);
@@ -711,7 +741,7 @@ pub fn multi_type(args: &[Option<Ty>]) -> Option<Ty> {
             other => members.push(Some(other.clone())),
         }
     }
-    let shared = unify_value_types(&members)?;
+    let shared = unify_value_types_under(&members, Some(rule))?;
     handle_within(Some(&shared), &HeldWalk::default())?;
     Some(list_of(shared, CollectionOrder::Ordered))
 }

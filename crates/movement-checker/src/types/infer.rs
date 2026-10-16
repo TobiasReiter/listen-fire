@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use movement_parser::ast::Span;
 use movement_parser::catalog::types::EdgeSchema;
 use movement_parser::lowering::expression::{
-    AggregationFunction, Expression, ListElement, LogicalOp, ObjectMember, StaticValue, TraversalStep,
+    AggregationFunction, EdgeStep, Expression, ListElement, LogicalOp, ObjectMember, StaticValue, TraversalStep,
 };
 
 use crate::codes;
@@ -23,7 +23,8 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 use super::field::*;
 use super::narrowing::{PresenceProof, exists_subject, is_position_terminal, negative_presence_proofs, presence_proofs};
-use super::position::{EdgeLanding, Position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
+use super::unions::{RecordJoin, join_field_types, join_positions, joined_under, one_record_of};
+use super::position::{EdgeLanding, Position, describe_position, edge_landing, refine_selected, instance_of_ref, lookup_property_type, narrow_present, narrow_present_node};
 use super::stdlib::{bare_coercer_returns, lookup_builtin, movement_meta_key_type, stdlib_function_by_id};
 
 /// What the typing asks of the scope it types in (the TypeScript's
@@ -63,6 +64,11 @@ pub trait TypeEnv {
     }
     /// `upgradingFrom`: the version a check for a move up starts from.
     fn upgrading_from(&self) -> Option<u32> {
+        None
+    }
+    /// Whether the check behind this typing applies the union rule before
+    /// version 5 (`RecordUnions`); `None` outside a check.
+    fn record_unions(&self) -> Option<&super::unions::RecordUnions> {
         None
     }
     /// Whether the host's zone database knows `zone`; `None` for a typing
@@ -156,6 +162,92 @@ impl<'a> Typing<'a> {
 
     pub fn report(&mut self, code: &str, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic::error(code, message, self.span));
+    }
+
+    /// Does this typing apply the union rule (`unions::one_record_of`)?
+    pub fn record_join(&self) -> RecordJoin<'a> {
+        RecordJoin::under(self.version, self.env.record_unions())
+    }
+
+    /// What a site whose arms are these types is under the union rule, where
+    /// this check applies it; `old`, its answer before version 5, where not.
+    fn joined_records(&self, types: &[Ty], old: Option<Ty>) -> Option<Ty> {
+        joined_under(Some(self.record_join()), one_record_of(types), old)
+    }
+
+    /// `probeEach`: one step (a field read, an edge hop) off every record a
+    /// `OneOf` may be — what every member offers, or a refusal naming the
+    /// member that does not offer it. The first refusal among a member's
+    /// reports is the union's, said of that member; anything that is no
+    /// refusal (a warning) is said as it was.
+    fn probe_each<T>(
+        &mut self,
+        members: &[Position],
+        mut step: impl FnMut(&mut Self, &Position) -> Option<T>,
+        refusal: impl Fn(&Position, &str) -> String,
+    ) -> Option<Vec<Option<T>>> {
+        let mut answers = Vec::new();
+        for member in members {
+            let (before, receipts) = (self.diagnostics.len(), self.receipt_reads.len());
+            let answer = step(self, member);
+            let gathered = self.diagnostics.split_off(before);
+            if let Some(refused) = gathered.iter().find(|d| d.is_error()) {
+                self.receipt_reads.truncate(receipts);
+                let message = refusal(member, refused.message.strip_suffix('.').unwrap_or(&refused.message));
+                self.report(&refused.code.clone(), message);
+                return None;
+            }
+            self.diagnostics.extend(gathered);
+            answers.push(answer);
+        }
+        Some(answers)
+    }
+
+    /// `stepEdge`: one edge step off `from`, reported.
+    fn step_edge(&mut self, from: Option<&Position>, edge: &EdgeStep) -> (Option<Position>, Option<EdgeSchema>) {
+        let landing = from.map(|f| edge_landing(f, &edge.edge_type_id, self.version));
+        let stepped = match &landing {
+            // A record reached through a function's parameter is the
+            // caller's record's child: what the body needs of it is the
+            // parameter's need.
+            Some(EdgeLanding::Landed { landing, edge: schema }) => (
+                super::position::with_parameter_of(from, Some(refine_selected(landing.clone(), edge.expression_filter.as_deref()))),
+                schema.clone(),
+            ),
+            Some(EdgeLanding::Untyped { edge }) => (None, edge.clone()),
+            _ => (None, None),
+        };
+        crate::families::walks::observe_step(self, from, edge, landing.as_ref());
+        stepped
+    }
+
+    /// `stepEveryMember`: `who-[:edge]->` off one of several records — every
+    /// member's landing, joined.
+    fn step_every_member(&mut self, members: &[Position], edge: &EdgeStep) -> Option<Position> {
+        let union = describe_position(&Position::OneOf(members.to_vec()));
+        let name = edge.edge_type_id.clone();
+        let landings = self.probe_each(members, |t, member| t.step_edge(Some(member), edge).0, |member, refused| {
+            format!(
+                "'-[:{name}]->' can't be walked here: this may be {union}, and it walks only what every one of them has — {} refuses it ({refused}). Walk it where you know which record you hold",
+                describe_position(member)
+            )
+        })?;
+        let landings: Vec<Position> = landings.into_iter().collect::<Option<_>>()?;
+        join_positions(&landings.iter().collect::<Vec<_>>()).map(|joined| joined.position)
+    }
+
+    /// `readEveryMember`: `who.Name` off one of several records — every
+    /// member's field, joined.
+    fn read_every_member(&mut self, members: &[Position], property: &str) -> Option<Ty> {
+        let union = describe_position(&Position::OneOf(members.to_vec()));
+        let types = self.probe_each(members, |t, member| t.read_property(Some(member), property), |member, refused| {
+            format!(
+                "'{property}' can't be read here: this may be {union}, and it reads only what every one of them has — {} refuses it ({refused}). Read it where you know which record you hold",
+                describe_position(member)
+            )
+        })?;
+        let types: Vec<Ty> = types.into_iter().collect::<Option<_>>()?;
+        join_field_types(&types)
     }
 
     /// `refuseClosureAsData` (language version 5): a value whose type is —
@@ -324,7 +416,7 @@ impl<'a> Typing<'a> {
         if let Some(mixed) = mixed_tuple_message(ty.as_ref()) {
             self.report(codes::LIST_MIXED, mixed);
         }
-        widen_tuples(ty, self.version)
+        widen_tuples_joining(ty, self.version, self.record_join())
     }
 
     /// `inferAt`: `expr` read with `position` as the record its bare names read.
@@ -488,20 +580,19 @@ impl<'a> Typing<'a> {
             match step {
                 TraversalStep::Edge(edge) => {
                     let from = current.clone();
-                    let landing = from.as_ref().map(|f| edge_landing(f, &edge.edge_type_id, self.version));
-                    let (next, schema) = match &landing {
-                        // A record reached through a function's parameter is the
-                        // caller's record's child: what the body needs of it is
-                        // the parameter's need.
-                        Some(EdgeLanding::Landed { landing, edge: schema }) => (
-                            super::position::with_parameter_of(from.as_ref(), Some(refine_selected(landing.clone(), edge.expression_filter.as_deref()))),
-                            schema.clone(),
-                        ),
-                        Some(EdgeLanding::Untyped { edge }) => (None, edge.clone()),
-                        _ => (None, None),
+                    let union = match &from {
+                        Some(Position::OneOf(members)) => Some(members),
+                        Some(Position::MaybeEmpty(of)) => match &**of {
+                            Position::OneOf(members) => Some(members),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let (next, schema) = match union {
+                        Some(members) if !(edge.edge_type_id.starts_with('#') && self.version >= 5) => (self.step_every_member(members, edge), None),
+                        _ => self.step_edge(from.as_ref(), edge),
                     };
                     self.last_edge_schema = schema.clone();
-                    crate::families::walks::observe_step(self, from.as_ref(), edge, landing.as_ref());
                     ordering =
                         self.hop_ordering(from.as_ref(), edge.cardinality.as_ref().is_some_and(|c| c.order_by.is_some()), &edge.edge_type_id, schema.as_ref());
                     ordering_edge = Some(edge.edge_type_id.clone());
@@ -541,6 +632,14 @@ impl<'a> Typing<'a> {
     /// `readProperty`, the typing half: a dot read off `position`. The walks
     /// family reports an unknown or ambiguous property.
     pub fn read_property(&mut self, position: Option<&Position>, property: &str) -> Option<Ty> {
+        match position {
+            Some(Position::OneOf(members)) => return self.read_every_member(members, property),
+            Some(Position::MaybeEmpty(of)) if matches!(**of, Position::OneOf(_)) => {
+                let Position::OneOf(members) = &**of else { unreachable!() };
+                return self.read_every_member(members, property).map(maybe_absent);
+            }
+            _ => {}
+        }
         let ty = match position {
             Some(Position::Extract { node, present }) => self.read_extract_field(node, property).map(|t| {
                 if present.contains(property) { strip_absent(&t).clone() } else { t }
@@ -727,7 +826,9 @@ impl<'a> Typing<'a> {
                     return (None, vec![condition_ty, then_ty, else_ty]);
                 }
                 let ty = match (&then_ty, &else_ty) {
-                    (Some(a), Some(b)) if field_type_equals(a, b) => then_ty.clone(),
+                    // Before version 5 an IF of one type was its THEN arm's —
+                    // what that arm alone had proved included.
+                    (Some(a), Some(b)) => self.joined_records(&[a.clone(), b.clone()], field_type_equals(a, b).then(|| a.clone())),
                     _ => None,
                 };
                 (ty, vec![condition_ty, then_ty, else_ty])
@@ -853,8 +954,8 @@ impl<'a> Typing<'a> {
             "file" => return Some(Ty::File),
             "read" => return crate::families::extraction::type_read_call(self, args),
             "chunks" => return Some(crate::families::extraction::type_chunks_call(self, args)),
-            "coalesce" => return coalesce_type(args),
-            "multi" => return multi_type(args),
+            "coalesce" => return coalesce_type_with(args, |kinds, old| self.joined_records(kinds, old)),
+            "multi" => return multi_type(args, self.record_join()),
             _ => {}
         }
         if let Some(coerced) = bare_coercer_returns(function) {
@@ -960,7 +1061,7 @@ impl<'a> Typing<'a> {
                 ObjectMember::Entry { key: name, value } => {
                     let exact = self.infer_exact_at(value, position);
                     self.refuse_closure_as_data(value, exact.as_ref(), &format!("'{name}' holds"));
-                    read_types.push(widen_tuples(exact.clone(), self.version));
+                    read_types.push(widen_tuples_joining(exact.clone(), self.version, self.record_join()));
                     shape.insert(name.clone(), exact);
                     written.insert(name.clone());
                 }
@@ -1021,7 +1122,7 @@ impl<'a> Typing<'a> {
                         };
                         written.remove(&name);
                         shape.insert(name, next.clone());
-                        read_types.push(widen_tuples(next, self.version));
+                        read_types.push(widen_tuples_joining(next, self.version, self.record_join()));
                     }
                 }
             }
@@ -1245,6 +1346,7 @@ pub fn holds_fields_in_hand(position: &Position) -> bool {
     match position {
         Position::Extract { .. } | Position::Handle(_) | Position::Local(_) => true,
         Position::MaybeEmpty(of) => holds_fields_in_hand(of),
+        Position::OneOf(members) => members.iter().all(holds_fields_in_hand),
         Position::Position(_) | Position::Union(_) | Position::Meta { .. } | Position::Closure(_) => false,
     }
 }

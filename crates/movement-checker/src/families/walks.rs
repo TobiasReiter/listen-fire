@@ -70,6 +70,8 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
         return;
     }
     match from {
+        // The typing walks each record it may be (`stepEveryMember`).
+        Position::OneOf(_) => {}
         Position::Meta { instance } => {
             if !instance.schema.collections.contains_key(edge) {
                 let available: Vec<&str> = instance.schema.collections.keys().map(String::as_str).collect();
@@ -296,6 +298,8 @@ fn refuse_unsent_file(typing: &mut Typing, handle: &crate::types::position::Hand
 /// family's, a retired handle field the records family's.
 fn report_read(typing: &mut Typing, position: &Position, property: &str) {
     match position {
+        // The typing reads each record it may be (`readEveryMember`).
+        Position::OneOf(_) => {}
         Position::Handle(h) => {
             if let Some(declared) = h.result_shape.get(property) {
                 refuse_unsent_file(typing, h, property, declared);

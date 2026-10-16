@@ -445,6 +445,7 @@ fn holds_fields_in_hand_given(position: &Position, is_local: &dyn Fn(crate::scop
         Position::Position(p) => p.instance.declared.is_some_and(is_local),
         Position::Union(u) => u.instance.declared.is_some_and(is_local),
         Position::MaybeEmpty(of) => holds_fields_in_hand_given(of, is_local),
+        Position::OneOf(members) => members.iter().all(|member| holds_fields_in_hand_given(member, is_local)),
         _ => crate::types::infer::holds_fields_in_hand(position),
     }
 }

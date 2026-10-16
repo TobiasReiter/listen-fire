@@ -46,6 +46,7 @@ pub struct ScopeEnv<'s> {
     /// Each function declared with a name read as a value (version 5,
     /// `functionAsValue`), typed before the typing that reads it.
     pub function_values: &'s std::collections::HashMap<crate::scope::SymbolId, super::position::ClosureType>,
+    pub record_unions: &'s super::unions::RecordUnions,
 }
 
 impl ScopeEnv<'_> {
@@ -64,6 +65,10 @@ impl TypeEnv for ScopeEnv<'_> {
 
     fn upgrading_from(&self) -> Option<u32> {
         self.upgrading_from
+    }
+
+    fn record_unions(&self) -> Option<&super::unions::RecordUnions> {
+        Some(self.record_unions)
     }
 
     fn is_zone(&self, zone: &str) -> Option<bool> {

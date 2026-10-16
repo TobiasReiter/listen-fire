@@ -953,46 +953,30 @@ impl Checker<'_> {
         if !is_resource_hop(hop) || hop.label.text.starts_with('#') {
             return;
         }
-        let (root_type, may_hold) = match &head.root {
-            None => (None, None),
+        let root_type = match &head.root {
+            None => None,
             Some(PathRoot::Name { name }) => {
                 use crate::types::TypeEnv as _;
                 let env = self.typing_env(scope);
-                let start = env.resolve_root(name).or_else(|| record_head_position(widen_tuples(env.resolve_scalar(name), self.version).as_ref()));
-                (start, env.resolve_may_hold(name))
+                env.resolve_root(name).or_else(|| record_head_position(widen_tuples(env.resolve_scalar(name), self.version).as_ref()))
             }
             Some(PathRoot::Expression { expr }) => {
                 let held = self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty);
-                (record_head_position(held.as_ref()), None)
+                record_head_position(held.as_ref())
             }
         };
-        self.check_resources_of_extraction(root_type.as_ref(), root_name, may_hold.as_ref(), head.span);
+        self.check_resources_of_extraction(root_type.as_ref(), root_name, head.span);
     }
 
     /// `checkResourcesOfExtraction`: the rule is structural — is the root an
     /// extraction's result? — and only the "write this instead" reads the
     /// schema. A record holding a file itself is pointed at its file field.
-    fn check_resources_of_extraction(&mut self, root_type: Option<&Position>, root_name: Option<&str>, may_hold: Option<&Ty>, span: Span) {
+    fn check_resources_of_extraction(&mut self, root_type: Option<&Position>, root_name: Option<&str>, span: Span) {
         let shown = root_name.unwrap_or("the root");
         let lead = "'-[:_resources]->' is read only off an extraction's result — the source content the extraction read ('found = extract …', then 'found-[f:_resources]-> { … }')";
         let Some(root_type) = root_type else {
             // A head with no root is the engine's to refuse, in every version.
             let Some(_) = root_name else { return };
-            // A name bound to an `IF` or a `COALESCE`: an extraction's result
-            // when every arm provably is one.
-            if let Some(may_hold) = may_hold {
-                let arms = match may_hold {
-                    Ty::Union(members) => members.to_vec(),
-                    other => vec![other.clone()],
-                };
-                let extracted = arms.iter().all(|arm| match strip_absent(arm) {
-                    Ty::Record(Some(position)) => matches!(unwrap_maybe_empty(position), Position::Extract { .. }),
-                    _ => false,
-                });
-                if extracted {
-                    return;
-                }
-            }
             self.report(
                 codes::RESOURCES_NOT_EXTRACTED,
                 format!("'{shown}' is not provably an extraction's result, and {lead}. A record reaches its files over an edge its system declares: walk that edge instead."),
@@ -1002,6 +986,13 @@ impl Checker<'_> {
         };
         let position = unwrap_maybe_empty(root_type);
         if matches!(position, Position::Extract { .. }) {
+            return;
+        }
+        // One of several records (an IF of extractions' results) is one when
+        // every member is.
+        if let Position::OneOf(members) = position
+            && members.iter().all(|member| matches!(unwrap_maybe_empty(member), Position::Extract { .. }))
+        {
             return;
         }
         let system_positions = match position {

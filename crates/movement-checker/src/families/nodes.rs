@@ -1455,6 +1455,9 @@ pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::positi
             }
             None
         }
+        Position::OneOf(members) => members.iter().find_map(|member| {
+            declared_param_misfit(member, param).map(|misfit| format!("{}, one of what this argument may be, does not fit: {misfit}", describe_position(member)))
+        }),
         Position::Meta { .. } | Position::Closure(_) => Some(format!("this argument is {}, not a record", describe_position(arg))),
         _ => surface_misfit(record_surface(arg).as_ref(), schema, &param.position, false),
     }

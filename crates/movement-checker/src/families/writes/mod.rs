@@ -36,7 +36,7 @@ use crate::types::field::{
     HeldHandle, HeldWalk, Ty, closure_not_data_message, describe_field_type, field_assignable, field_type_compatible, handle_within,
     holds_records, is_list, is_maybe_absent, may_be_closure, spell_held_steps, strip_absent,
 };
-use crate::types::position::{HandlePosition, InstanceRef, Position, describe_position, position_schema_of_ref, same_starting_point};
+use crate::types::position::{HandlePosition, InstanceRef, Position, describe_position, position_schema_of_ref};
 use crate::types::scope_env::SymbolTypes;
 use crate::types::Typing;
 use crate::version;
@@ -1509,20 +1509,27 @@ pub fn record_of(types: &SymbolTypes, kind: SymbolKind) -> RecordOf {
     }
 }
 
-/// `recordOfMayHold`: the record a name bound to an `IF` or a `COALESCE`
-/// whose arms have no one type is. Records alone are one record, as `A | B` of
-/// two `Org`s is an `Org`: theirs when they start at the same place, one
-/// nobody can name (so nothing is refused) when they do not; one that may be
-/// absent may be empty. A member that is not a record makes it a value.
-fn record_of_may_hold(may_hold: &Ty) -> RecordOf {
-    fn visit(member: &Ty, positions: &mut Vec<Option<std::rc::Rc<Position>>>, may_be_absent: &mut bool) -> bool {
+/// `recordOfMayHold`: the record a name bound to an `IF`, a `COALESCE` or a
+/// call whose arms have no one type is. Records alone are one record by the
+/// union rule (`join_positions`) — their type where they are one, a `OneOf`
+/// that every rule is held to member by member where they are not — on every
+/// version: before a058fda7 this was an internal error, so nothing it feeds
+/// ran. One nobody can name leaves it unnamed (so nothing is refused); one
+/// that may be absent may be empty. A member that is not a record makes it a
+/// value.
+pub(crate) fn record_of_may_hold(may_hold: &Ty) -> RecordOf {
+    fn visit(member: &Ty, positions: &mut Vec<std::rc::Rc<Position>>, unnamed: &mut bool, may_be_absent: &mut bool) -> bool {
         if matches!(member, Ty::Absent | Ty::MaybeAbsent(_)) {
             *may_be_absent = true;
         }
         match strip_absent(member) {
             Ty::Absent => true,
-            Ty::Union(members) => members.iter().all(|member| visit(member, positions, may_be_absent)),
-            Ty::Record(position) => {
+            Ty::Union(members) => members.iter().all(|member| visit(member, positions, unnamed, may_be_absent)),
+            Ty::Record(None) => {
+                *unnamed = true;
+                true
+            }
+            Ty::Record(Some(position)) => {
                 positions.push(position.clone());
                 true
             }
@@ -1530,16 +1537,16 @@ fn record_of_may_hold(may_hold: &Ty) -> RecordOf {
         }
     }
     let mut positions = Vec::new();
-    let mut may_be_absent = false;
-    if !visit(may_hold, &mut positions, &mut may_be_absent) || positions.is_empty() {
+    let (mut unnamed, mut may_be_absent) = (false, false);
+    if !visit(may_hold, &mut positions, &mut unnamed, &mut may_be_absent) || (positions.is_empty() && !unnamed) {
         return RecordOf::Value("a value that may hold something other than one record".to_string());
     }
-    let Some(Some(first)) = positions.first() else { return RecordOf::Unknown };
-    if !positions.iter().all(|position| position.as_ref().is_some_and(|position| same_starting_point(position, first))) {
+    if unnamed {
         return RecordOf::Unknown;
     }
-    let first = (**first).clone();
-    RecordOf::Record(if may_be_absent { Position::MaybeEmpty(Box::new(first)) } else { first })
+    let Some(one) = crate::types::unions::join_positions(&positions.iter().map(|p| &**p).collect::<Vec<_>>()) else { return RecordOf::Unknown };
+    let one = one.position;
+    RecordOf::Record(if may_be_absent && !matches!(one, Position::MaybeEmpty(_)) { Position::MaybeEmpty(Box::new(one)) } else { one })
 }
 
 fn target_span(target: &WriteTarget) -> Span {
@@ -1702,6 +1709,12 @@ fn known_fields_of(position: &Position) -> Option<Vec<String>> {
         Position::Extract { node, .. } => (!node.declared).then(|| node.properties.keys().cloned().collect()),
         Position::Local(local) => Some(local.reads.keys().cloned().collect()),
         Position::MaybeEmpty(of) => known_fields_of(of),
+        // What every record it may be carries.
+        Position::OneOf(members) => {
+            let each: Vec<Vec<String>> = members.iter().map(known_fields_of).collect::<Option<_>>()?;
+            let (head, rest) = each.split_first()?;
+            Some(head.iter().filter(|field| rest.iter().all(|fields| fields.contains(field))).cloned().collect())
+        }
         Position::Handle(h) => Some(match position_schema_of_ref(position) {
             Some(schema) => schema.properties.keys().cloned().collect(),
             None => h.result_shape.keys().cloned().collect(),
