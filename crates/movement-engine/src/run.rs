@@ -117,10 +117,10 @@ pub struct SegmentInput {
     #[serde(default)]
     pub dry_run: bool,
     /// Answer `check.program` with the Rust checker (crates/movement-checker)
-    /// instead of asking the host. Off by default, and nothing turns it on:
-    /// that checker reports only the families PARITY.md marks at parity, and
-    /// its answer carries no stamps and no file-import link, so a program
-    /// that needs either does not run the same way through it.
+    /// instead of asking the host: its diagnostics, stamps and import link
+    /// (movement_checker::answer). The host turns it on for every segment
+    /// it runs on this engine (rust_engine.ts); off, the host's checker
+    /// answers, as an admission dry run's start never asks.
     #[serde(default)]
     pub native_check: bool,
     /// Resume a parked run from its state (crate::park), rather than run it.
@@ -507,6 +507,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     }
     let root = match program::parse(&input.source, version) {
         Ok(root) => root,
+        Err(refusal) if input.native_check => return Err(native_unparsed(&refusal)),
         Err(_) => return Err(unparsed(host, input).await),
     };
     // What a plugin call binds is the snapshot's to say, read off the input.
@@ -547,7 +548,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         return Err(Stop::Declined("instant_does_not_read".into()));
     };
     let answer = if input.native_check {
-        native_check(&input.source, &catalog, version)?
+        native_check(&root.program, &catalog, version)?
     } else {
         host.request(host::check::program(&input.source, version, None))
             .await
@@ -628,14 +629,22 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
 }
 
 /// The Rust checker's answer to `check.program` (`SegmentInput::native_check`),
-/// on the source as this engine parsed it (in its text form), shaped as the host's: `{diagnostics, stamps}`. A program it refuses ends
-/// as the host ends one, with MOVENG_CHECK listing the blocking diagnostics
-/// (program_check.ts `checkPinned`): errors only, and a retired write form
-/// that still runs does not block.
-fn native_check(source: &str, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
+/// on the program as this engine parsed it, shaped as the host's
+/// (rust_host.ts): `{diagnostics, stamps, link?, versionWarning?}`. A
+/// program it refuses ends as the host ends one (program_check.ts
+/// `checkPinned`): a pin this release cannot honour with
+/// MOVENG_LANGUAGE_VERSION, else MOVENG_CHECK listing the blocking
+/// diagnostics — errors only, and a retired write form that still runs does
+/// not block.
+fn native_check(program: &ast::Program, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
+    let pin = movement_checker::language_version_diagnostic(version);
+    if let Some(pin) = pin.as_ref().filter(|d| d.is_error()) {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_LANGUAGE_VERSION", pin.message.clone())));
+    }
     let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &crate::env_services::EnvZones };
-    let diagnostics = movement_checker::check_form(source, catalog, options).map_err(|_| Stop::Declined("source_does_not_parse".into()))?;
-    let blocking: Vec<String> = diagnostics
+    let answer = movement_checker::answer::check_answer(program, catalog, options);
+    let blocking: Vec<String> = answer
+        .diagnostics
         .iter()
         .filter(|d| d.is_error() && d.code != movement_checker::codes::WRITE_SHAPE_RETIRED)
         .map(|d| format!("  {} (line {}): {}", d.code, d.span.start.line, d.message))
@@ -643,7 +652,21 @@ fn native_check(source: &str, catalog: &CatalogSnapshot, version: u32) -> Result
     if !blocking.is_empty() {
         return Err(Stop::Thrown(Failure::engine("MOVENG_CHECK", format!("the movement program failed checking:\n{}", blocking.join("\n")))));
     }
-    Ok(json!({ "diagnostics": diagnostics, "stamps": [] }))
+    let mut json = answer.to_json();
+    // The run's own version warning, as the host reads it (run.ts, before
+    // the body): a deprecated pin runs, and says so.
+    if let Some(warning) = pin {
+        json["versionWarning"] = json!({ "code": warning.code, "message": warning.message });
+    }
+    Ok(json)
+}
+
+/// A source this engine's parser refuses, under the native check: the
+/// check's MOVENG_PARSE, worded as the TypeScript's `MovementParseError`.
+fn native_unparsed(refusal: &Json) -> Stop {
+    let message = refusal.get("message").and_then(Json::as_str).unwrap_or("the source does not parse");
+    let at = |key: &str| refusal.get("loc").and_then(|l| l.get(key)).and_then(Json::as_u64).unwrap_or(0);
+    Stop::Thrown(Failure::engine("MOVENG_PARSE", format!("{message} (line {}, col {})", at("line"), at("col"))))
 }
 
 /// A source this engine's parser refuses: the check's to fail, as the
@@ -2792,9 +2815,15 @@ mod tests {
         assert!(done.get("result").is_some(), "{done}");
         assert!(seen.iter().all(|r| r.family != "check"), "{seen:?}");
         input["source"] = json!(source.replace("msg.`subject`", "nowhere"));
-        let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+        let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
         assert!(seen.is_empty(), "{seen:?}");
         assert!(done.to_string().contains("MOVENG_CHECK") && done.to_string().contains("MOV_NAME_UNRESOLVED"), "{done}");
+        // A source the parser refuses ends at the check too, with its parse
+        // error, and the host is asked nothing.
+        input["source"] = json!(source.replace("movement m(", "movement m(("));
+        let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+        assert!(seen.is_empty(), "{seen:?}");
+        assert!(done.to_string().contains("MOVENG_PARSE") && done.to_string().contains("(line 3, col"), "{done}");
     }
 
     /// A null test of a credential reads it, and is refused as every other

@@ -62,7 +62,8 @@ impl Sent {
 
 struct Host<'o> {
     sent: Sent,
-    check: &'o Json,
+    /// The TypeScript's check answer; none when the engine checks natively.
+    check: Option<&'o Json>,
     created: usize,
     tokens: usize,
     next_id: u64,
@@ -100,7 +101,7 @@ impl Host<'_> {
 
     fn answer(&mut self, request: &PendingRequest) -> Json {
         match (request.family, request.method.as_str()) {
-            ("check", "program") => json!({ "value": self.check }),
+            ("check", "program") => json!({ "value": self.check.expect("a native check asks the host for none") }),
             ("adapters", "resolve") => {
                 let slug = request.args.get("adapterType").and_then(Json::as_str).unwrap_or_default();
                 let methods = ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord", "updateRecord", "deleteRecord", "linkRecords"];
@@ -313,6 +314,17 @@ fn writes(done: &Json, sent: &Sent) -> Json {
 
 #[test]
 fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
+    run_parallel(false);
+}
+
+/// The same cases with the engine's own check (`nativeCheck`), the host
+/// never asked for one.
+#[test]
+fn parallel_arms_ask_lock_and_order_their_writes_on_the_native_check() {
+    run_parallel(true);
+}
+
+fn run_parallel(native: bool) {
     let oracle: Json = serde_json::from_str(include_str!("oracle/parallel.json")).expect("parallel.json reads");
     let prelude = oracle["prelude"].as_str().expect("a prelude");
     let cases = oracle["cases"].as_array().expect("cases");
@@ -334,8 +346,9 @@ fn parallel_arms_ask_lock_and_order_their_writes_as_the_typescript_does() {
             "event": event,
             "catalog": oracle["catalog"],
             "credentialIds": { "inbox_cred": "cred-inbox_cred", "kg_cred": "cred-kg_cred" },
+            "nativeCheck": native,
         });
-        let mut host = Host { sent: Sent::default(), check: &case["check"], created: 0, tokens: 0, next_id: 990_000, events: Vec::new(), minted: HashMap::new() };
+        let mut host = Host { sent: Sent::default(), check: (!native).then_some(&case["check"]), created: 0, tokens: 0, next_id: 990_000, events: Vec::new(), minted: HashMap::new() };
         host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");

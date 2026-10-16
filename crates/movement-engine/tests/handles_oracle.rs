@@ -130,7 +130,8 @@ struct Company {
 struct Host<'o> {
     sent: Sent,
     world: &'o Json,
-    check: &'o Json,
+    /// The TypeScript's check answer; none when the engine checks natively.
+    check: Option<&'o Json>,
     companies: Vec<Company>,
     /// Every instance the engine resolved, by id: whether it rehearses.
     instances: Vec<bool>,
@@ -170,7 +171,7 @@ impl Host<'_> {
 
     fn answer(&mut self, request: &PendingRequest) -> Json {
         match (request.family, request.method.as_str()) {
-            ("check", "program") => json!({ "value": self.check }),
+            ("check", "program") => json!({ "value": self.check.expect("a native check asks the host for none") }),
             ("adapters", "resolve") => {
                 let slug = request.args["adapterType"].as_str().expect("a slug").to_string();
                 let dry = request.args.get("dryRun") == Some(&json!(true));
@@ -341,6 +342,17 @@ fn ending(done: &Json) -> Json {
 
 #[test]
 fn version_4_handles_read_find_and_park_as_the_typescript_does() {
+    run_handles(false);
+}
+
+/// The same cases with the engine's own check (`nativeCheck`), the host
+/// never asked for one.
+#[test]
+fn version_4_handles_read_find_and_park_on_the_native_check() {
+    run_handles(true);
+}
+
+fn run_handles(native: bool) {
     let oracle: Json = serde_json::from_str(include_str!("oracle/handles.json")).expect("handles.json reads");
     let prelude = oracle["prelude"].as_str().expect("a prelude");
     let cases = oracle["cases"].as_array().expect("cases");
@@ -359,6 +371,7 @@ fn version_4_handles_read_find_and_park_as_the_typescript_does() {
             "event": event,
             "catalog": oracle["catalog"],
             "credentialIds": { "inbox_cred": "cred-inbox_cred", "acme_main": "cred-acme_main" },
+            "nativeCheck": native,
         });
         let companies = oracle["companies"]
             .as_array()
@@ -372,7 +385,7 @@ fn version_4_handles_read_find_and_park_as_the_typescript_does() {
         let mut host = Host {
             sent: Sent::default(),
             world: &case["world"],
-            check: &case["check"],
+            check: (!native).then_some(&case["check"]),
             companies,
             instances: Vec::new(),
             created: 0,
