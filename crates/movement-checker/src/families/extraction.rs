@@ -292,6 +292,10 @@ impl Checker<'_> {
                     None
                 }
             }
+            Resolution::Unknown if let Some(message) = self.unknown_package_member(&plugin.plugin) => {
+                self.report(codes::V5_UNKNOWN_MEMBER, message, plugin.span);
+                None
+            }
             failure => {
                 self.report_resolution_failure(&plugin.plugin, plugin.span, failure);
                 None

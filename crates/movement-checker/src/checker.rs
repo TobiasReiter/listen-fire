@@ -86,6 +86,9 @@ pub struct Checker<'c> {
     /// argument's value starts — what the parser's finding for it needs for
     /// its fix.
     pub named_orders: std::collections::HashMap<(usize, usize), crate::families::typed_spelling::ArgOrder>,
+    /// Each plugin package imported (version 5), by its local name: the
+    /// members it binds as `web.fetchUrl` (crate::families::names).
+    pub packages: std::collections::HashMap<String, Vec<movement_parser::catalog::packages::PackageMember>>,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
@@ -195,6 +198,7 @@ impl<'c> Checker<'c> {
             stamps: Default::default(),
             respelled: Default::default(),
             named_orders: Default::default(),
+            packages: Default::default(),
         }
     }
 

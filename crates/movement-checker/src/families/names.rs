@@ -10,7 +10,7 @@
 //! `reportResolutionFailure`, `declareAuthored`, `checkFunctionName`,
 //! `checkImport`, `checkAssign`; scopes.ts.
 
-use movement_parser::ast::{CallArg, CallStatement, ImportSource, ImportStatement, Loc, Span};
+use movement_parser::ast::{CallArg, CallStatement, ImportSource, ImportStatement, ImportedName, Loc, Span};
 use movement_parser::surface::SpellingFinding;
 use movement_parser::catalog::helpers::credential_arg_of;
 use movement_parser::surface::phrase::{Connection, connection};
@@ -315,6 +315,9 @@ impl Checker<'_> {
         }
         for imported in &statement.names {
             let local = imported.alias.clone().unwrap_or_else(|| imported.name.clone());
+            if self.declare_package(statement, imported, &local, scope) {
+                continue;
+            }
             let mut library = None;
             let kind = match &statement.source {
                 ImportSource::File { .. } => {
@@ -358,6 +361,45 @@ impl Checker<'_> {
                 self.report(codes::IMPORT_DUPLICATE, format!("Duplicate import '{local}' — already declared as {what}"), statement.span);
             }
         }
+    }
+
+    /// A package imported from plugins under version 5 (design §2.10): each
+    /// member declared as the plugin it is, under `web.fetchUrl`. False when
+    /// the import names no package, which is then an import of one plugin.
+    fn declare_package(&mut self, statement: &ImportStatement, imported: &ImportedName, local: &str, scope: ScopeId) -> bool {
+        use movement_parser::catalog::packages::{member_local, package_members};
+        if !since(self.version, 5) || !matches!(&statement.source, ImportSource::Builtin { namespace } if namespace == "plugins") {
+            return false;
+        }
+        let members = package_members(&self.catalog.plugins, &imported.name);
+        if members.is_empty() {
+            return false;
+        }
+        for member in &members {
+            let name = member_local(local, &member.name);
+            let mut symbol = Symbol::new(name.clone(), SymbolKind::Plugin, statement.span);
+            symbol.imported_name = Some(member.key.clone());
+            if let Some(existing) = self.declare_authored(scope, symbol, statement.span) {
+                let what = self.scopes.symbol(existing).kind.describe();
+                self.report(codes::IMPORT_DUPLICATE, format!("Duplicate import '{name}' — already declared as {what}"), statement.span);
+            }
+        }
+        // The package's own name binds no value: only its members are names.
+        self.scopes.scope_mut(scope).pending.remove(local);
+        self.packages.insert(local.to_string(), members);
+        true
+    }
+
+    /// `web.nope(…)`: a package imported here has no member of that name
+    /// (MOV_V5_UNKNOWN_MEMBER), its members listed. None when the head names
+    /// no package.
+    pub fn unknown_package_member(&self, written: &str) -> Option<String> {
+        let (head, member) = written.split_once('.')?;
+        let members = self.packages.get(head)?;
+        let names: Vec<String> = members.iter().map(|m| m.name.clone()).collect();
+        let hint = crate::families::calls::closest_by_edit_distance(member, &names).map(|n| format!(" — did you mean `{n}`?")).unwrap_or_default();
+        let listed = names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        Some(format!("`{head}` has no member `{member}` (its members: {listed}){hint}"))
     }
 
     /// The name rules of `checkAssign` that come before its value is checked.
