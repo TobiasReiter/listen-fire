@@ -32,6 +32,9 @@ pub const SPELLING_CODE: &str = "MOV_V5_SPELLING";
 pub const UNKNOWN_MEMBER_CODE: &str = "MOV_V5_UNKNOWN_MEMBER";
 /// A v5 form the spelling rewrite cannot read yet (the spine's edge).
 pub const NOT_YET_CODE: &str = "MOV_V5_NOT_YET";
+/// ``import { `@lf/web` } from plugins``: an imported name no program can
+/// write (a package's tag) bound without `as`, so nothing could call it.
+pub const IMPORT_NEEDS_ALIAS_CODE: &str = "MOV_V5_IMPORT_NEEDS_ALIAS";
 
 /// A finding inside one expression text; offsets are UTF-16 into it.
 #[derive(Debug, Clone, PartialEq)]

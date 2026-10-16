@@ -128,6 +128,19 @@ describe("a package's members (version 5)", () => {
     expect(found.map((d) => [d.code, d.message])).toEqual([['MOV_IMPORT_UNKNOWN', "Unknown plugin '@lf/nope' in 'plugins'"]]);
   });
 
+  it('a package imported without a name is refused with one', () => {
+    const found = check('import { `@lf/web` } from plugins\n\nfunction go(u: <text>) {\n  p = 1\n}\n', 5);
+    expect(found.map((d) => [d.code, d.message])).toEqual([
+      [
+        'MOV_V5_IMPORT_NEEDS_ALIAS',
+        "`@lf/web` is imported without a name to call it by — a package's members are called through the name after 'as' (web.<member>(…)), and `@lf/web` is not a name a program can write: write `@lf/web` as web",
+      ],
+    ]);
+    expect(found[0].fix?.edits.map((e) => e.text)).toEqual([' as web']);
+    expect(found[0].fix?.safe).toBeUndefined();
+    expect(codes('import { summarize } from plugins\n\nfunction go(u: <text>) {\n  p = summarize(u)\n}\n', 5)).toEqual([]);
+  });
+
   it('versions 1–4 read a tag as an unknown plugin', () => {
     expect(codes('import { `@lf/web` as web } from plugins\n\nmovement go(u: <text>) {\n  p = 1\n}\n', 4)).toEqual([
       'MOV_IMPORT_UNKNOWN',

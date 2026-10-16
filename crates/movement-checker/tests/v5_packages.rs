@@ -106,3 +106,19 @@ fn a_through_stage_names_a_package_s_member() {
     let unknown = check(&stage("web.linkedin"), 5);
     assert_eq!(unknown.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_V5_UNKNOWN_MEMBER"]);
 }
+
+#[test]
+fn a_package_imported_without_a_name_is_refused_with_one() {
+    let source = "import { `@lf/web` } from plugins\n\nfunction go(u: <text>) {\n  p = 1\n}\n";
+    let found = check(source, 5);
+    assert_eq!(found.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_V5_IMPORT_NEEDS_ALIAS"]);
+    assert_eq!(
+        found[0].message,
+        "`@lf/web` is imported without a name to call it by — a package's members are called through the name after 'as' (web.<member>(…)), and `@lf/web` is not a name a program can write: write `@lf/web` as web"
+    );
+    let fix = found[0].fix.as_ref().unwrap();
+    assert_eq!(fix["edits"][0]["text"], serde_json::json!(" as web"));
+    assert_eq!(fix.get("safe"), None, "the name it suggests may be taken");
+    // A plugin imported by its own name needs none.
+    assert_eq!(codes("import { summarize } from plugins\n\nfunction go(u: <text>) {\n  p = summarize(u)\n}\n", 5), Vec::<String>::new());
+}

@@ -396,6 +396,7 @@ export const DiagnosticCodes = {
   V5_UNKNOWN_MEMBER: 'MOV_V5_UNKNOWN_MEMBER',
   /** Language version 5: a v5 form the spelling rewrite cannot read yet. */
   V5_NOT_YET: 'MOV_V5_NOT_YET',
+  V5_IMPORT_NEEDS_ALIAS: 'MOV_V5_IMPORT_NEEDS_ALIAS',
   /** Language version 5: a name bound that hides a core word or a namespace. */
   V5_HIDES_BUILTIN: 'MOV_V5_HIDES_BUILTIN',
   /** A closure literal (`(n) => { … }`) written where the formula grammar

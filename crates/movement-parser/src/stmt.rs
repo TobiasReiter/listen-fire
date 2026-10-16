@@ -1282,6 +1282,10 @@ impl Parser {
     /// the old spelling, refused with the rewrite, the local name kept.
     fn read_plugin_import(&mut self, imported: &mut ImportedName, start: usize, end: usize) {
         use crate::surface::table::{plugin_key, plugin_name};
+        if imported.alias.is_none() && !is_plain_ident(&imported.name) {
+            self.refuse_unnamed_import(&imported.name, start, end);
+            return;
+        }
         if let Some(key) = plugin_key(&imported.name) {
             if key != imported.name {
                 let written = std::mem::replace(&mut imported.name, key);
@@ -1295,6 +1299,28 @@ impl Parser {
         }
         let text = if imported.alias.is_some() { name.clone() } else { format!("{name} as {}", imported.name) };
         self.spelling(format!("from language version 5 the plugin `{}` is imported as `{name}`", imported.name), start, end, vec![(start, end, text)]);
+    }
+
+    /// A package's tag (`` `@lf/web` ``) imported without `as`: its members
+    /// would be bound under a name nobody can write, so nothing could call
+    /// them. The fix names it after the tag's last word; not marked safe, as
+    /// that name may already be taken.
+    fn refuse_unnamed_import(&self, name: &str, start: usize, end: usize) {
+        use crate::surface::{Fix, IMPORT_NEEDS_ALIAS_CODE, SourceEdit, SpellingFinding};
+        let local = local_name_for_tag(name);
+        let written = self.text(start, end);
+        let fix = Fix { edits: vec![SourceEdit { span: self.span_between(end, end), text: format!(" as {local}") }], safe: false };
+        crate::surface::report(SpellingFinding {
+            code: IMPORT_NEEDS_ALIAS_CODE.into(),
+            message: format!(
+                "{written} is imported without a name to call it by — a package's members are called through the name after 'as' ({local}.<member>(…)), and {written} is not a name a program can write: write {written} as {local}"
+            ),
+            span: self.span_between(start, end),
+            fix: Some(fix),
+            named: None,
+            unless_bound: None,
+            unsafe_if_bound: Vec::new(),
+        });
     }
 
     // ── Assignment right-hand sides ──
@@ -5060,4 +5086,30 @@ fn sort_by_function(args: &[CallArg]) -> bool {
         [_, key, last] => !identity(key) || !settings(last),
         _ => true,
     }
+}
+
+/// A name a program writes bare: a letter or `_`, then letters, digits, `_`.
+fn is_plain_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The local name an unnamed package import's fix suggests: the tag's last
+/// word in camelCase (`@lf/web-tools` → `webTools`), or `pkg`.
+fn local_name_for_tag(tag: &str) -> String {
+    let last = tag.rsplit(['/', '@', '.', ':']).find(|w| !w.is_empty()).unwrap_or("");
+    let mut out = String::new();
+    let mut upper = false;
+    for c in last.chars() {
+        if c.is_ascii_alphanumeric() {
+            if out.is_empty() && c.is_ascii_digit() {
+                continue;
+            }
+            out.push(if upper && !out.is_empty() { c.to_ascii_uppercase() } else { c });
+            upper = false;
+        } else {
+            upper = true;
+        }
+    }
+    if out.is_empty() { "pkg".to_string() } else { out }
 }
