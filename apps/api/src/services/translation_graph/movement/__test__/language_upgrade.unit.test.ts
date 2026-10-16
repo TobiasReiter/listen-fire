@@ -420,7 +420,7 @@ describe('the upgrade rewrites the text by its fixes first', () => {
         col,
         endLine: line,
         endCol: col + from.length,
-        fix: { edits: [{ line, col, endLine: line, endCol: col + from.length, text: to }] },
+        fix: { edits: [{ line, col, endLine: line, endCol: col + from.length, text: to }], safe: true },
       },
     ];
   };
