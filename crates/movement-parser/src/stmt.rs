@@ -413,7 +413,7 @@ impl Parser {
             // `function`, an import): the statement reads into its old tree.
             safe: true,
         });
-        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None, unless_bound: None });
+        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, named: None, unless_bound: None, unsafe_if_bound: Vec::new() });
     }
 
     /// From version 5 an `if` condition is parenthesised, as TypeScript's.
@@ -2500,6 +2500,13 @@ impl Parser {
         }
         let Some(row) = by_v5(&callee) else { return callee };
         match row.shape {
+            // Only by a function key (`try_parse_invocation_call`): `SORTBY`.
+            Shape::SortKey => {
+                if args.len() == 3 {
+                    args.swap(1, 2);
+                }
+                return crate::surface::table::SORT_BY.to_string();
+            }
             Shape::SettingsLast | Shape::ReduceOrder if args.len() == 3 => args.swap(1, 2),
             Shape::Same | Shape::SettingsLast | Shape::ReduceOrder => {}
             _ => return callee,
@@ -2697,6 +2704,7 @@ impl Parser {
             fix: None,
             named: Some(crate::surface::NamedCall { callee: callee.to_string(), args }),
             unless_bound: None,
+            unsafe_if_bound: Vec::new(),
         });
     }
 
@@ -2754,13 +2762,24 @@ impl Parser {
         }
         let save = self.pos;
         let callee = self.read_callee("the name being called")?;
-        if self.rewritten_whole(&callee) {
+        let whole = self.rewritten_whole(&callee);
+        if whole && !is_sort(&callee) {
             self.pos = save;
             return Ok(None);
         }
         self.skip_inline_ws();
         self.pos += 1;
-        let args = self.parse_call_args(&callee, save)?;
+        // `sort` by a function key is a call (`SORTBY`, a collection op);
+        // any other `sort` is read as its expression.
+        let args = match self.parse_call_args(&callee, save) {
+            Ok(args) if !whole || sort_by_function(&args) => args,
+            Ok(_) | Err(_) if whole => {
+                self.pos = save;
+                return Ok(None);
+            }
+            Ok(args) => args,
+            Err(e) => return Err(e),
+        };
         let call = self.call_node(callee, args, save);
         let end = self.pos;
         self.skip_inline_ws();
@@ -4930,5 +4949,30 @@ mod tests {
         // backticked arm name, so the span runs past the token.
         let ast = crate::parse_program("x = MAP(xs, `ab`  )", 2).unwrap();
         assert_eq!(ast.pointer("/statements/0/value/collection/fn/span/end/col"), Some(&json!(19)));
+    }
+}
+
+/// `sort` in its v5 spelling.
+fn is_sort(callee: &str) -> bool {
+    crate::surface::table::by_v5(callee).is_some_and(|row| row.shape == crate::surface::table::Shape::SortKey)
+}
+
+/// `sort(xs, f)` / `sort(xs, f, settings)` with `f` no settings record and
+/// not the member itself (`(x) => x`): the tree's `SORTBY`, as the
+/// expression's rewrite reads it (crate::surface::canonical `sort_key`).
+fn sort_by_function(args: &[CallArg]) -> bool {
+    let settings = |arg: &CallArg| matches!(arg, CallArg::Expr { expr, .. } if expr.raw.trim_start().starts_with('{'));
+    let identity = |arg: &CallArg| match arg {
+        CallArg::Closure { closure, .. } => match (closure.params.as_slice(), closure.body.as_slice()) {
+            ([param], [Statement::Return(ReturnStatement { value: RValue::Expr { expr }, .. })]) => expr.raw.trim() == param.name,
+            _ => false,
+        },
+        _ => false,
+    };
+    match args {
+        [] | [_] => false,
+        [_, key] => !settings(key) && !identity(key),
+        [_, key, last] => !identity(key) || !settings(last),
+        _ => true,
     }
 }

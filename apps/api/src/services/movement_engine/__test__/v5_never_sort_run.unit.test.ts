@@ -151,3 +151,27 @@ describe('fail inside an expression runs on both engines', () => {
     expect(inCoalesce).toEqual(statement);
   });
 });
+
+/** The note bodies a run wrote. */
+function noteBodies(outcome: unknown): string[] {
+  const writes = (outcome as { writes?: Array<{ fields?: { body?: unknown } }> }).writes ?? [];
+  return writes.map((w) => JSON.stringify(w)).map((w) => /"body":"([^"]*)"/.exec(w)?.[1] ?? w);
+}
+
+describe('sort by a function key runs on both engines', () => {
+  it.each([
+    ['a computed key, descending', ['  words = Text.split(msg.text, " ")', '  ranked = sort(words, (w) => Text.upper(w), { order: "desc" })', '  write inbox-[:note]-> { body: Text.join(ranked, ",") }'], 'c,b,a'],
+    [
+      'records by a field, a missing key last whichever the order',
+      ['  rows = [{ n: "b", s: 2 }, { n: "a", s: 9 }, { n: "c" }, { n: "d", s: 5 }]', '  up = sort(rows, (r) => r.s)', '  down = sort(rows, (r) => r.s, { order: "desc" })', '  write inbox-[:note]-> { body: "${Text.join(map(up, (r) => r.n), ",")}|${Text.join(map(down, (r) => r.n), ",")}" }'],
+      'b,d,a,c|a,d,b,c',
+    ],
+    ['stable over equal keys', ['  rows = [{ n: "x", s: 1 }, { n: "y", s: 1 }, { n: "z", s: 0 }]', '  down = sort(rows, (r) => r.s, { order: "desc" })', '  write inbox-[:note]-> { body: Text.join(map(down, (r) => r.n), ",") }'], 'x,y,z'],
+    ['an outer variable never hides the field', ['  s = 100', '  rows = [{ n: "b", s: 2 }, { n: "a", s: 1 }]', '  up = sort(rows, (r) => r.s)', '  write inbox-[:note]-> { body: Text.join(map(up, (r) => r.n), ",") }'], 'a,b'],
+    ['inside an expression', ['  words = Text.split(msg.text, " ")', '  write inbox-[:note]-> { body: coalesce(first(sort(words, (w) => w == "a" ? 0 : 1)), fail("no words")) }'], 'a'],
+  ])('%s', async (_what, body, want) => {
+    const { rust, ts } = await onBoth(body);
+    expect(noteBodies(rust)).toEqual([want]);
+    expect(ts).toEqual(rust);
+  });
+});

@@ -661,6 +661,10 @@ pub enum CollectionOp {
     Reduce,
     Groupby,
     Keyby,
+    /// `sort(xs, (x) => key, { order })` (language version 5): the members
+    /// ordered by what the function answers for each. The tree calls it
+    /// `SORTBY`, a name no version reads as written (crate::surface::table).
+    Sort,
 }
 
 impl CollectionOp {

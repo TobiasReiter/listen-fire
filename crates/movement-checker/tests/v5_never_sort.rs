@@ -111,3 +111,57 @@ fn versions_1_to_4_read_error_as_no_value() {
     let refused = codes(&v5("  x = coalesce(t, fail(\"no\"))"), 5);
     assert!(refused.is_empty(), "{refused:?}");
 }
+
+
+const ROWS: &str = "  rows = List.from(crm-[:companies]->)";
+
+/// The safe marker on the fix of the first finding with `code`.
+fn fix_safe(source: &str) -> bool {
+    let found = check(source, 5);
+    let finding = found.iter().find(|d| d.code == "MOV_V5_SPELLING" && d.message.contains("its key a function")).unwrap_or_else(|| panic!("{source}\n{found:#?}"));
+    finding.fix.as_ref().unwrap()["safe"] == serde_json::Value::Bool(true)
+}
+
+#[test]
+fn sort_by_a_function_key() {
+    clean(&format!("{ROWS}\n  x = sort(rows, (r) => Text.lower(r.name), {{ order: \"desc\" }})"));
+    clean(&format!("{ROWS}\n  x = sort(rows, (r) => r.score)"));
+    clean(&format!("{ROWS}\n  k = (r: <crm-[:company]->>) => r.score\n  x = sort(rows, k)"));
+    // The members come back as themselves: a record's field reads off one.
+    clean(&format!("{ROWS}\n  top = first(sort(rows, (r) => r.score, {{ order: \"desc\" }}))\n  need(coalesce(top.name, fail(\"no top\")))"));
+    // Plain values by a computed key.
+    clean("  x = sort(xs, (s) => Text.length(s))");
+    // The key reads the member through its parameter, so an outer name never hides a field.
+    clean(&format!("{ROWS}\n  name = \"z\"\n  x = sort(rows, (r) => r.name)"));
+}
+
+#[test]
+fn sort_refuses_a_key_with_no_order() {
+    refused(&format!("{ROWS}\n  x = sort(rows, (r) => r)\n  y = 1"), "MOV_SORT_NEEDS_KEY");
+    refused(&format!("{ROWS}\n  x = sort(rows, (r) => co)"), "MOV_SORT_NEEDS_KEY");
+    refused("  x = sort(xs, (s) => Text.split(s, \",\"))", "MOV_ORDER_KEY_MULTI");
+    refused("  x = sort(xs, (s) => s, { order: \"down\" })", "MOV_V5_NOT_YET");
+    refused("  x = sort(xs, (s) => Text.length(s), { order: \"down\" })", "MOV_COLLECTION_OP_CONFIG");
+    refused("  x = sort(xs, (s) => Text.length(s), { by: \"desc\" })", "MOV_COLLECTION_OP_CONFIG");
+    refused("  x = sort(xs, (s) => Text.length(s), 3)", "MOV_BUILTIN_ARGS");
+    // No version before 5 has the tree's name.
+    assert!(codes(&v4("  x = SORTBY(xs, (s) => s)"), 4).contains(&"MOV_FUNCTION_UNKNOWN".to_string()));
+    // Under 5 the tree's name is an old spelling of `sort`.
+    refused("  x = SORTBY(xs, (s) => Text.length(s))", "MOV_V5_SPELLING");
+}
+
+#[test]
+fn the_old_field_key_upgrades_to_a_function_safe_only_where_no_variable_hides_the_field() {
+    let old = v4("  rows = COLLECT(crm-[:companies]->)\n  x = SORT(rows, `score`, DESC)");
+    let want = codes(&old, 4);
+    let fixed = upgraded(&old);
+    assert!(fixed.contains("sort(rows, (r) => r.score, { order: \"desc\" })"), "{fixed}");
+    assert_eq!(codes(&fixed, 5), want, "{fixed}");
+    assert!(fix_safe(&old));
+    // An outer `score` was what the old key read: the rewrite reads the field.
+    assert!(!fix_safe(&v4("  score = 3\n  rows = COLLECT(crm-[:companies]->)\n  x = SORT(rows, `score`, DESC)")));
+    // So was an outer `r`, which the rewrite's parameter would hide.
+    assert!(!fix_safe(&v4("  r = 3\n  rows = COLLECT(crm-[:companies]->)\n  x = SORT(rows, `score`)")));
+    // A name bound elsewhere, out of scope at the sort, changes nothing.
+    assert!(fix_safe(&v4("  rows = COLLECT(crm-[:companies]->)\n  x = SORT(rows, `score`)\n  if t == \"a\" {\n    score = 1\n  }")));
+}

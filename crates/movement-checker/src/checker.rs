@@ -50,6 +50,10 @@ pub struct Checker<'c> {
     /// a spelling finding about that name does not stand there
     /// (crate::families::names, `spelling_stands`).
     pub bound_callees: std::cell::RefCell<std::collections::HashSet<(Option<String>, usize, usize)>>,
+    /// Where an old `SORT(xs, name)` is written with a variable in scope that
+    /// its rewrite would read differently (`SpellingFinding::unsafe_if_bound`),
+    /// keyed as `bound_callees`: its fix is not marked safe there.
+    pub bound_sort_keys: std::cell::RefCell<std::collections::HashSet<(Option<String>, usize, usize)>>,
     /// Checking for a move up from this version (`upgradingFrom`).
     pub upgrading_from: Option<u32>,
     /// The host's zone database.
@@ -180,6 +184,7 @@ impl<'c> Checker<'c> {
             listens: Default::default(),
             imports: Default::default(),
             bound_callees: Default::default(),
+            bound_sort_keys: Default::default(),
             schemas: Default::default(),
             upgrading_from: options.upgrading_from,
             return_stack: Vec::new(),

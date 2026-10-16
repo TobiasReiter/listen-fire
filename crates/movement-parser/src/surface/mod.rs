@@ -47,6 +47,10 @@ pub struct Finding {
     pub unless_bound: Option<String>,
     /// The fix provably keeps the program's meaning (`Fix::safe`).
     pub safe: bool,
+    /// The fix keeps the meaning only where the program binds none of these
+    /// names at the finding (an old `SORT` key read an outer variable of its
+    /// name first): the checker, holding the scopes, unmarks it there.
+    pub unsafe_if_bound: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +71,9 @@ pub struct SpellingFinding {
     /// See `Finding::unless_bound`; the span starts where the call does.
     #[serde(rename = "unlessBound", skip_serializing_if = "Option::is_none", default)]
     pub unless_bound: Option<String>,
+    /// See `Finding::unsafe_if_bound`; the span starts where the call does.
+    #[serde(rename = "unsafeIfBound", skip_serializing_if = "Vec::is_empty", default)]
+    pub unsafe_if_bound: Vec<String>,
     /// A call with named arguments (from version 5 they are positional): its
     /// arguments as written, for the checker to order by the callee's
     /// parameters. The finding stands only where the checker can.
@@ -198,6 +205,7 @@ pub fn place(f: &Finding, src: &Utf16, start: Loc) -> SpellingFinding {
         fix: f.edits.as_ref().map(|edits| Fix { edits: edits.iter().map(|e| SourceEdit { span: span(e.at), text: e.text.clone() }).collect(), safe: f.safe }),
         named: None,
         unless_bound: f.unless_bound.clone(),
+        unsafe_if_bound: f.unsafe_if_bound.clone(),
     }
 }
 

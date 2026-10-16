@@ -141,6 +141,15 @@ for byte; on text already in the version 5 spelling it changes nothing.
   out (`y = m != null ? m : fail("…")` proves `m` present below). The run fails with the message
   exactly as the statement `fail("…")` does. Under 4, `ERROR` inside an expression stays
   `MOV_FUNCTION_UNKNOWN`.
+- **`sort` by a function key**: `sort(xs, (r) => Text.lower(r.name), { order: "desc" })`. The
+  function runs once per member with the member bound to its parameter, so a name inside it is
+  never a field read in the member's scope, and an outer variable can never hide a field. The sort
+  is stable and a missing key sorts last whichever the order, as `SORT` did. A key that answers a
+  record or a value with named parts is refused (`MOV_SORT_NEEDS_KEY`), one that answers several
+  values is `MOV_ORDER_KEY_MULTI`, and the one setting is `order` (`MOV_COLLECTION_OP_CONFIG`
+  otherwise). The upgrade rewrites ``SORT(xs, `field`)`` to `sort(xs, (r) => r.field)`; the fix
+  is marked safe only where no variable named `field` (or `r`) is in scope, because the old key
+  read such a variable first.
 - **A closure is not data** (`MOV_CLOSURE_NOT_DATA`). A closure lives in a variable (`g = label`,
   a call that answers one), in a parameter, or is passed as an argument to a parameter that takes
   one (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, a closure-typed parameter). It is never an

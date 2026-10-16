@@ -1062,7 +1062,7 @@ fn is_bare_walk(expr: &Expression) -> bool {
 }
 
 /// `isKeyedValue`: a value read by name — a dict, a record.
-fn is_keyed_value(ty: &Ty) -> bool {
+pub fn is_keyed_value(ty: &Ty) -> bool {
     match strip_absent(ty) {
         Ty::Dict { .. } | Ty::Record(_) => true,
         Ty::Union(members) => members.iter().all(is_keyed_value),

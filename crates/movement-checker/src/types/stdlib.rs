@@ -197,11 +197,21 @@ pub static STANDARD_LIBRARY: &[Builtin] = &[
 /// (`builtin_under`).
 pub static FAIL: Builtin = b!("ERROR", [p("message", T::Scalar)], R::Never);
 
+/// `sort(xs, f, settings)` by a function key, from language version 5: the
+/// tree calls it `SORTBY(xs, settings, f)` (movement_parser::surface::table::
+/// SORT_BY), a collection op like `GROUPBY`, which no earlier version reads.
+pub static SORT_BY: Builtin = b!("SORTBY", [p("collection", T::List), opt("settings", T::Options), p("key", T::Function)], R::Derived);
+
 /// The built-in `name` calls under `version`: the library's, and from 5 the
-/// `fail` of an expression.
+/// `fail` of an expression and `sort` by a function key.
 pub fn builtin_under(name: &str, version: u32) -> Option<&'static Builtin> {
-    if movement_parser::version::since(version, 5) && name == FAIL.name {
-        return Some(&FAIL);
+    if movement_parser::version::since(version, 5) {
+        if name == FAIL.name {
+            return Some(&FAIL);
+        }
+        if name == SORT_BY.name {
+            return Some(&SORT_BY);
+        }
     }
     lookup_builtin(name)
 }

@@ -82,6 +82,49 @@ pub fn collection_config_problems(record: &Expression, spelling: &str, keys: &[&
     problems
 }
 
+/// `SORT_ORDERS`: what `sort`'s `order` setting may be.
+pub const SORT_ORDERS: [&str; 2] = ["asc", "desc"];
+
+/// `readSortSettings`: `sort`'s settings record (`sort(xs, f, { order:
+/// "desc" })`, language version 5) — its one setting, written down. `Ok`
+/// holds whether the order is descending.
+pub fn read_sort_settings(record: &Expression) -> Result<bool, Vec<String>> {
+    const ONE: &str = "Its one setting is order — \"asc\" (the default) or \"desc\"";
+    let Expression::Object { entries } = record else {
+        return Err(vec![format!("'sort' takes its settings as a record written in place — `sort(xs, (x) => x.key, {{ order: \"desc\" }})`. {ONE}")]);
+    };
+    let mut problems = Vec::new();
+    let mut order = None;
+    for entry in entries {
+        let ObjectMember::Entry { key, value } = entry else {
+            problems.push(format!("'sort' takes its settings written out one by one — a spread ('...') is not accepted here. {ONE}"));
+            continue;
+        };
+        if key != "order" {
+            problems.push(format!("'sort' has no setting '{key}'{}. {ONE}", did_you_mean(key, &["order"])));
+            continue;
+        }
+        if order.is_some() {
+            problems.push("'sort' is given 'order' twice — write it once".to_string());
+            continue;
+        }
+        order = Some(value);
+    }
+    let descending = match order {
+        None => false,
+        Some(Expression::Static { value: StaticValue::String(written) }) if SORT_ORDERS.contains(&written.as_str()) => written == "desc",
+        Some(Expression::Static { value: StaticValue::String(written) }) => {
+            problems.push(format!("'sort': 'order' has no value \"{written}\"{} — write \"asc\" or \"desc\"", did_you_mean(written, &SORT_ORDERS)));
+            false
+        }
+        Some(_) => {
+            problems.push("'sort': 'order' is written down, not worked out — write order: \"asc\" or \"desc\"".to_string());
+            false
+        }
+    };
+    if problems.is_empty() { Ok(descending) } else { Err(problems) }
+}
+
 /// Whether a settings record reads and its `onError` lets a failed member
 /// through (anything but the default "error").
 pub fn on_error_lets_through(record: &Expression, keys: &[&str]) -> bool {
@@ -137,6 +180,21 @@ impl Checker<'_> {
             }
         };
         for problem in collection_config_problems(&parsed, spelling, keys.unwrap_or(OP_SETTING_KEYS)) {
+            self.report(codes::COLLECTION_OP_CONFIG, problem, config.span);
+        }
+    }
+
+    /// `checkSortSettings`: `sort`'s settings record, read as the engines
+    /// read it (`read_sort_settings`).
+    pub fn check_sort_settings(&mut self, config: &ExprSlot) {
+        let parsed = match expression_of_slot(config) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                self.report_slot_error(&error, config);
+                return;
+            }
+        };
+        for problem in read_sort_settings(&parsed).err().unwrap_or_default() {
             self.report(codes::COLLECTION_OP_CONFIG, problem, config.span);
         }
     }

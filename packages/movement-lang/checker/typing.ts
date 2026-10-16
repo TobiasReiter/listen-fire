@@ -1852,7 +1852,7 @@ export function isWalkProjection(expr: Expression): boolean {
 
 /** A value read BY NAME — a dict. It has parts, so a key can name one, and no
  *  order of its own, so a key must. */
-function isKeyedValue(type: FieldType): boolean {
+export function isKeyedValue(type: FieldType): boolean {
   const variant = variantOf(stripAbsent(type));
   switch (variant.kind) {
     // A record is read by name too — its fields are the keys — so ordering a

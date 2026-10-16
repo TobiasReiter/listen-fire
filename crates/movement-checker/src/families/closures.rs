@@ -60,6 +60,8 @@ fn op_spelling(op: CollectionOp) -> &'static str {
         CollectionOp::Reduce => "REDUCE",
         CollectionOp::Groupby => "GROUPBY",
         CollectionOp::Keyby => "KEYBY",
+        // No spelling of the tree's `SORTBY`: it exists only as `sort`.
+        CollectionOp::Sort => "sort",
     }
 }
 
@@ -499,7 +501,11 @@ impl Checker<'_> {
         let source = self.check_expr_slot_with(&op.source, scope, crate::checker::SlotOptions::default());
         let init = op.init.as_ref().map(|init| self.check_expr_slot_with(init, scope, crate::checker::SlotOptions::default()));
         if let Some(config) = &op.config {
-            self.check_collection_config(config, spelling, None);
+            if op.op == CollectionOp::Sort {
+                self.check_sort_settings(config);
+            } else {
+                self.check_collection_config(config, spelling, None);
+            }
         }
         let element = self.collection_element(&op.source, source.expr.as_ref(), source.ty.as_ref(), spelling, scope);
         let ordering = collection_order_of(source.ty.as_ref());
@@ -594,6 +600,9 @@ impl Checker<'_> {
                 self.report(codes::CLOSURE_NOT_DATA, closure_not_data_message(&format!("'{spelling}' files each member under a key, and each member is")), op.source.span);
             }
         }
+        if op.op == CollectionOp::Sort {
+            self.check_sort_key(returned.as_ref(), arm_span(&op.r#fn));
+        }
         if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
             let diagnostics = {
                 let env = self.typing_env(scope);
@@ -611,6 +620,8 @@ impl Checker<'_> {
             CollectionOp::Reduce => returned.or(carried),
             CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Rc::new(list_of(e, ordering)), shape: None }),
             CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Rc::new(e), shape: None }),
+            // The members themselves, now in an order.
+            CollectionOp::Sort => element.map(|e| list_of(e, CollectionOrder::Ordered)),
         };
         // What the function's returns may hold beyond that type travels with
         // the op's value, as a call's does: MAP's as members, REDUCE's as itself.
@@ -628,6 +639,28 @@ impl Checker<'_> {
 
     /// The parameters of a function named as an op's function, with the
     /// types they are written with.
+    /// `checkSortKey`: what `sort`'s function answers for each member is
+    /// what the members are ranked by, so it is one value with an order.
+    fn check_sort_key(&mut self, key: Option<&Ty>, span: Span) {
+        let Some(key) = key else { return };
+        if crate::families::values::is_keyed_value(key) {
+            let what = if crate::types::field::records_alone(Some(key)).is_some() { "a record" } else { "a value with named parts" };
+            self.report(
+                codes::SORT_NEEDS_KEY,
+                format!("sort ranks the members by what its function answers, and it answers {what}, which has no order of its own — answer one of its fields: `sort(xs, (x) => x.`Added At`)`."),
+                span,
+            );
+            return;
+        }
+        if crate::types::field::collection_element_of(key).is_some() {
+            self.report(
+                codes::ORDER_KEY_MULTI,
+                "sort needs one value per member to rank it by, and this function answers with several. Fold them to one (List.min(…), List.max(…), first(…)), or answer a single-valued field.",
+                span,
+            );
+        }
+    }
+
     fn named_function_params(&mut self, written: &str, scope: ScopeId) -> Vec<ClosureParam> {
         let callee = self.callee_name(written, scope);
         let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return Vec::new() };

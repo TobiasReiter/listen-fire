@@ -2555,7 +2555,8 @@ impl<'c> Bound<'c> {
         let init = op.init.as_ref().map_or(Holder::Free, |init| self.holds(&init.raw));
         match op.op {
             CollectionOp::Map => list(returned),
-            CollectionOp::Filter => list(source),
+            // The members themselves, kept or reordered.
+            CollectionOp::Filter | CollectionOp::Sort => list(source),
             // What the last member's call returned, or the initial value.
             CollectionOp::Reduce if init == Holder::Free && returned == Holder::Free => Holder::Free,
             // Each member under the key its function returned.
@@ -3539,7 +3540,8 @@ impl Names<'_> {
     /// its parameters values, which may hold records. A movement handed by
     /// name is walked under every kind a member may be (`Bound::collection`).
     fn collection_op(&self, op: &CollectionOpExpression, reason: &str) -> Admitted {
-        if crate::collection::settings(op.config.as_ref()).is_err() {
+        let settings_read = if op.op == CollectionOp::Sort { crate::collection::sort_descending(op.config.as_ref()).is_ok() } else { crate::collection::settings(op.config.as_ref()).is_ok() };
+        if !settings_read {
             return refuse(reason);
         }
         self.slot(&op.source)?;

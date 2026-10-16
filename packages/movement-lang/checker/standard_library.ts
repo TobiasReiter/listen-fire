@@ -194,10 +194,22 @@ export function lookupBuiltin(name: string): Builtin | undefined {
  *  a value — so it is no member of the library they read (`builtinUnder`). */
 export const FAIL: Builtin = builtin('ERROR', [p('message', 'scalar')], 'never', 'fails the run with the message; never returns');
 
+/** `sort(xs, f, settings)` by a function key, from language version 5: the
+ *  tree calls it `SORTBY(xs, settings, f)` (the spelling table's `SORT_BY`), a
+ *  collection op like `GROUPBY`, which no earlier version reads. */
+export const SORT_BY: Builtin = builtin(
+  'SORTBY',
+  [p('collection', 'list'), p('settings', 'options', { optional: true }), p('key', 'function')],
+  'derived',
+  'the members in the order of what a function answers for each',
+  { form: { kind: 'collection', op: 'sort' } },
+);
+
 /** The built-in `name` calls under `languageVersion`: the library's, and from
- *  5 the `fail` of an expression. */
+ *  5 the `fail` of an expression and `sort` by a function key. */
 export function builtinUnder(name: string, languageVersion: LanguageVersion): Builtin | undefined {
   if (since(languageVersion, 5) && name === FAIL.name) return FAIL;
+  if (since(languageVersion, 5) && name === SORT_BY.name) return SORT_BY;
   return lookupBuiltin(name);
 }
 
