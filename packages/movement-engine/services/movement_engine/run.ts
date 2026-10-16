@@ -1554,9 +1554,10 @@ function awaitEdgeName(hopsRaw: string): string {
  *  as an Expression — parsed off the head by probing the traversal with a
  *  sentinel terminal (the formula parser needs one). Undefined when the hop
  *  carries no WHERE or doesn't parse to a traversal. */
-function awaitHopFilter(head: PathHead): Expression | undefined {
+function awaitHopFilter(head: PathHead, languageVersion: LanguageVersion): Expression | undefined {
   const traverse = parseMovementExpression(
     `${probePathHead(head)}.\`__await_where_probe__\``,
+    languageVersion,
   );
   if (traverse.type !== 'traverse') return undefined;
   const last = traverse.steps[traverse.steps.length - 1];
@@ -1892,11 +1893,14 @@ function memberValue(run: Pick<CollectionRun, 'expr' | 'spelling'>, outcome: Bod
 
 /** Whether `sort`'s settings record (version 5) asks for descending order;
  *  none written is ascending (`readSortSettings`). */
-function sortDescending(expr: CollectionOpExpression, spelling: string): boolean {
+function sortDescending(
+  expr: CollectionOpExpression,
+  { spelling, languageVersion }: { spelling: string; languageVersion: LanguageVersion },
+): boolean {
   if (expr.config === undefined) return false;
   let reading: ReturnType<typeof readSortSettings>;
   try {
-    reading = readSortSettings(expressionOfSlot(expr.config));
+    reading = readSortSettings(expressionOfSlot(expr.config, languageVersion));
   } catch (e) {
     if (!(e instanceof BridgeError)) throw e;
     reading = { ok: false, problems: [e.message] };
@@ -1911,7 +1915,10 @@ function sortDescending(expr: CollectionOpExpression, spelling: string): boolean
 }
 
 /** The op's value, from every member's answer, in MEMBER order. */
-function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]): Binding {
+function collectionAnswer(
+  run: CollectionRun,
+  { answers, languageVersion }: { answers: readonly MemberAnswer[]; languageVersion: LanguageVersion },
+): Binding {
   const { expr, spelling, members } = run;
   if (expr.op === 'reduce') {
     return binding({
@@ -1931,7 +1938,7 @@ function collectionAnswer(run: CollectionRun, answers: readonly MemberAnswer[]):
     // The members in the order of what the function answered for each
     // (`sortByOrderKey`, as `SORT` orders): stable, a missing key last
     // whichever the order. The members keep their own trail.
-    const sign = sortDescending(expr, spelling) ? -1 : 1;
+    const sign = sortDescending(expr, { spelling, languageVersion }) ? -1 : 1;
     const keyed = members.map((member, index) => {
       const answer = answers[index];
       return { member, index, key: answer?.kept === true ? answer.value : null };
@@ -5018,7 +5025,7 @@ class Interpreter {
       member,
     });
     if (parked.length > 0) await this.parkCollectionOp(run, answers, parked.length);
-    return collectionAnswer(run, answers);
+    return collectionAnswer(run, { answers, languageVersion: this.languageVersion });
   }
 
   /** A member's run, inside its boundary — so a park in it records how to
@@ -5089,12 +5096,12 @@ class Interpreter {
     // `sort`'s settings say its order, read where it answers; it runs one
     // member at a time.
     if (expr.op === 'sort') {
-      sortDescending(expr, spelling);
+      sortDescending(expr, { spelling, languageVersion: this.languageVersion });
       return SEQUENTIAL_COLLECTION_SETTINGS;
     }
     let reading: ReturnType<typeof readCollectionConfig>;
     try {
-      reading = readCollectionConfig(expressionOfSlot(expr.config), spelling);
+      reading = readCollectionConfig(expressionOfSlot(expr.config, this.languageVersion), spelling);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       reading = { ok: false, problems: [e.message] };
@@ -5463,7 +5470,7 @@ class Interpreter {
     if (expr.kind !== 'all' || expr.settings === undefined) return allAtOnce;
     let reading: ReturnType<typeof readCollectionConfig>;
     try {
-      reading = readCollectionConfig(expressionOfSlot(expr.settings), expr.kind, { keys: ALL_SETTING_KEYS, concurrency: allAtOnce.concurrency });
+      reading = readCollectionConfig(expressionOfSlot(expr.settings, this.languageVersion), expr.kind, { keys: ALL_SETTING_KEYS, concurrency: allAtOnce.concurrency });
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       reading = { ok: false, problems: [e.message] };
@@ -5833,7 +5840,7 @@ class Interpreter {
     if (before(this.languageVersion, 3)) return undefined;
     let tree: MExpr;
     try {
-      tree = treeOfSlot(slot);
+      tree = treeOfSlot(slot, this.languageVersion);
     } catch {
       return undefined; // the evaluator reports the syntax error
     }
@@ -5951,7 +5958,7 @@ class Interpreter {
     if (before(this.languageVersion, 3)) return undefined;
     let tree: MExpr;
     try {
-      tree = treeOfSlot(slot);
+      tree = treeOfSlot(slot, this.languageVersion);
     } catch {
       return undefined;
     }
@@ -6700,7 +6707,7 @@ class Interpreter {
     // candidate landing's fields (B.1): a matching landing resolves the await,
     // an unmatched set leaves it armed. Undefined ⇒ no narrowing.
     const hopFilter = /\bWHERE\b/i.test(source.head.hopsRaw)
-      ? awaitHopFilter(source.head)
+      ? awaitHopFilter(source.head, this.languageVersion)
       : undefined;
 
     // Resolve the awaited head to a record identity. The head is a bound handle
@@ -7407,7 +7414,7 @@ class Interpreter {
     if (staged !== undefined) return staged;
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (e instanceof BridgeError) {
         throw new MovementEngineError(
@@ -7752,6 +7759,7 @@ class Interpreter {
    */
   private async runExtraction(_bindingName: string, extract: ExtractExpression, env: Environment) {
     const spec = await buildExtractSpec(extract, {
+      languageVersion: this.languageVersion,
       resolveBorrowed: ([instanceName, rootName, fieldName]) => {
         const schema = this.graphSchemaOf(instanceName, env);
         if (!schema) return undefined;
@@ -7856,7 +7864,7 @@ class Interpreter {
     let written: ReturnType<typeof readExtractCallConfig> = { ok: true, settings: {} };
     if (call.config !== undefined) {
       try {
-        written = readExtractCallConfig(expressionOfSlot(call.config));
+        written = readExtractCallConfig(expressionOfSlot(call.config, this.languageVersion));
       } catch (e) {
         if (!(e instanceof BridgeError)) throw e;
         throw new MovementEngineError('MOVENG_RUNTIME', `invalid 'extract' settings (the checker should have caught this): ${e.message}`);
@@ -11690,7 +11698,7 @@ class Interpreter {
       // plain predicates, but it carries the per-component fuzzy flag through.
       for (const part of splitUniquenessConjuncts(clause.predicate.raw)) {
         const fuzzyMark = part.fuzzy ? { fuzzy: true as const } : {};
-        for (const conjunct of flattenAndConjuncts(parseMovementExpression(part.raw))) {
+        for (const conjunct of flattenAndConjuncts(parseMovementExpression(part.raw, this.languageVersion))) {
           const key = identityKeyOf(conjunct);
           if (key === undefined) {
             nonKey.push(conjunct);
@@ -12238,7 +12246,7 @@ class Interpreter {
     } else {
       // Backtick-coined names only exist parsed.
       try {
-        name = bareName(expressionOfSlot(slot));
+        name = bareName(expressionOfSlot(slot, this.languageVersion));
       } catch {
         return undefined; // a parse failure is the evaluator's to report
       }
@@ -12281,7 +12289,7 @@ class Interpreter {
   ): Promise<Binding | undefined> {
     let path: ReturnType<typeof aggregatedBarePath>;
     try {
-      path = aggregatedBarePath(expressionOfSlot(slot));
+      path = aggregatedBarePath(expressionOfSlot(slot, this.languageVersion));
     } catch {
       return undefined; // a parse failure is the evaluator's to report
     }
@@ -12355,7 +12363,7 @@ class Interpreter {
    *  the walk's collapse, and the binding keeps the fact a spread reads
    *  (`isManyValued` in expression.ts; the checker's `ScopeSymbol.plural`). */
   private bindsManyValues(slot: ExprSlot, env: Environment): boolean {
-    const expr = expressionOfSlot(slot);
+    const expr = expressionOfSlot(slot, this.languageVersion);
     if (isWalkProjection(expr)) return true;
     const name = bareName(expr);
     if (name === undefined) return false;
@@ -12437,7 +12445,7 @@ class Interpreter {
     if (staged !== undefined) return this.evaluateSlot(staged.slot, { ...options, env: staged.env });
     let expr: Expression;
     try {
-      expr = expressionOfSlot(slot);
+      expr = expressionOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (e instanceof BridgeError) {
         throw new MovementEngineError(

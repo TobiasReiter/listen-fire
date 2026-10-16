@@ -333,3 +333,55 @@ describe('parked code is rebuilt from its tree on both engines', () => {
     expect(resumed).not.toContain('Co1-R');
   });
 });
+
+// A slot that arrives without its parse — a statement in a closure's body (its
+// tree rides inside the call's), code rebuilt from a parked tree on resume —
+// is read under the run's pinned version, as the program's own slots were. Read
+// under none, `Text.upper(v)` is a TEXT namespace with no UPPER, `xs[0]` an
+// index the lowering refuses and `a && b` a character the v1–4 grammar has no
+// reading for.
+describe('a slot read again is read under the run’s version, on both engines', () => {
+  const body = (sleep: boolean) => [
+    'function m(msg: <inbox-[:message]->>) {',
+    '  tags = ["b", "a"]',
+    '  out = map(["x", "y"], (v) => {',
+    ...(sleep ? ['    await sleep(1h)'] : []),
+    '    up = Text.upper(v)',
+    '    sorted = sort(tags, (t) => Text.upper(t), { order: "desc" })',
+    '    if (up == "X" && sorted[0] == "b") {',
+    '      write crm-[:notes]-> { body: Text.concat(up, "-", sorted[0], "-", tags[1]) }',
+    '    }',
+    '    return Text.upper(v)',
+    '  })',
+    '  write crm-[:notes]-> { body: Text.join(out, ",") }',
+    '}',
+  ].join('\n');
+
+  it('runs a closure’s statements under it', async () => {
+    const { ts } = await both({ source: body(false), files: {} });
+    expect(ts.observed).toContain('"body":"X-b-a"');
+    expect(ts.observed).toContain('"body":"X,Y"');
+  });
+
+  it('resumes a collection member parked in its closure under it', async () => {
+    const resumed = await parkAndResume({ source: body(true), files: {} });
+    expect(resumed).toContain('"body":"X-b-a"');
+  });
+
+  it('reads a unique by part written in a closure’s body under it', async () => {
+    const source = [
+      'function m(msg: <inbox-[:message]->>) {',
+      '  co = write crm-[:companies]-> { name: "Acme" }',
+      '  out = map(["n1"], (v) => {',
+      '    write crm-[:notes]-> {',
+      '      unique by (body && co)',
+      '      body: Text.upper(v)',
+      '    }',
+      '    return v',
+      '  })',
+      '}',
+    ].join('\n');
+    const { ts } = await both({ source, files: {} });
+    expect(ts.observed).toContain('"body":"N1"');
+  });
+});

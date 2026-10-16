@@ -629,7 +629,7 @@ class InterpretabilityScan {
     const slot = this.scanNestedCalls(written);
     let condition: MovementCondition;
     try {
-      condition = conditionOfSlot(slot);
+      condition = conditionOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (e instanceof BridgeError) return; // checker territory
       throw e;
@@ -643,7 +643,7 @@ class InterpretabilityScan {
         // Runtime IS runs (a type test against the runtime position's
         // type where known; falsy-skip otherwise — run.ts). The subject
         // may itself be an expression — scan it.
-        this.scanParsed(() => parseMovementExpression(condition.subjectRaw));
+        this.scanParsed(() => parseMovementExpression(condition.subjectRaw, this.languageVersion));
         return;
       case 'and':
         for (const conjunct of condition.conjuncts) this.scanParsedCondition(conjunct);
@@ -663,7 +663,7 @@ class InterpretabilityScan {
 
   private scanSlot(written: ExprSlot): void {
     const slot = this.scanNestedCalls(written);
-    this.scanParsed(() => expressionOfSlot(slot));
+    this.scanParsed(() => expressionOfSlot(slot, this.languageVersion));
   }
 
   /**
@@ -676,7 +676,7 @@ class InterpretabilityScan {
   private scanNestedCalls(slot: ExprSlot): ExprSlot {
     let tree: MExpr;
     try {
-      tree = treeOfSlot(slot);
+      tree = treeOfSlot(slot, this.languageVersion);
     } catch (e) {
       if (e instanceof BridgeError) return slot; // checker territory
       throw e;

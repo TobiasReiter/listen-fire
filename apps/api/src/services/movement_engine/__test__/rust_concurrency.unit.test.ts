@@ -545,8 +545,20 @@ function parkAt(o: Outcome, address?: string): ParkedScopeState {
 
 /** A case parked on both engines, which agree (every state key for key,
  *  as the sink received it); then each engine's states resumed on both,
- *  step by step, each step from the sink rows the step before left. */
+ *  step by step, each step from the sink rows the step before left.
+ *  Unpinned, the whole chain runs under version 3 and then under the
+ *  current version, whose chain is handed back: a park is resumed under the
+ *  pin it was written under, as a run's is (its code rides in it as written). */
 async function parkThenResume(c: Case, steps: Array<(previous: Outcome) => Case>) {
+  if (c.languageVersion === undefined) {
+    await parkThenResume({ ...c, languageVersion: 3 }, steps);
+    return parkThenResume({ ...c, languageVersion: 5 }, steps);
+  }
+  const pinned = c.languageVersion;
+  return parkThenResumeUnder(c, steps.map((step) => (previous: Outcome) => ({ languageVersion: pinned, ...step(previous) })));
+}
+
+async function parkThenResumeUnder(c: Case, steps: Array<(previous: Outcome) => Case>) {
   const parked = await agree(c);
   expect(JSON.stringify([...parked.rust.parks.entries()])).toBe(JSON.stringify([...parked.ts.parks.entries()]));
   const last: Outcome[] = [];

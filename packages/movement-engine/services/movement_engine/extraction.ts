@@ -219,6 +219,9 @@ export interface ExtractSpecOptions {
    * node cannot be built.
    */
   resolveDeclaredNode?: (type: string) => DeclaredNodeShape | undefined;
+  /** The program's pinned version, which a description's text is read under
+   *  when it arrives unparsed (an extract inside a closure's body). */
+  languageVersion?: LanguageVersion;
 }
 
 export interface DeclaredNodeShape {
@@ -248,7 +251,7 @@ async function describeSlot(
 ): Promise<string> {
   let expr;
   try {
-    expr = expressionOfSlot(slot);
+    expr = expressionOfSlot(slot, options?.languageVersion);
   } catch (e) {
     if (!(e instanceof BridgeError)) throw e;
     throw new MovementEngineError(
