@@ -161,10 +161,22 @@ jest.mock('../catalog', () => {
     movementCatalogForTeam: jest.fn(async () => ({
       catalog: mockCatalog({
         adapters: {
-          email: { constructionArgs: [{ name: 'credentials', kind: 'position', required: false }], triggerConfig: ['key'] },
+          email: {
+            constructionArgs: [{ name: 'credentials', kind: 'position', required: false }],
+            triggerConfig: ['key'],
+            // From 5 a read off an event the catalog does not describe is
+            // refused (MOV_EVENT_UNDESCRIBED), so the inbox's message is
+            // described with the fields the fixtures read.
+            schema: {
+              positions: { message: { properties: { subject: 'text', Subject: 'text', text: 'text' }, edges: {} } },
+              collections: {},
+              writableRoots: {},
+              eventPosition: 'message',
+            },
+          },
         },
         plugins: {
-          fetch_pages: { args: ['urls'] },
+          fetch_pages: { args: ['urls'], output: { kind: 'value', type: 'text' } },
         },
       }),
       resolveCredentialId: () => undefined,
@@ -723,21 +735,31 @@ describe('saveMovement — listener derivation', () => {
     expect(result.listeners.map((l) => l.movementName).sort()).toEqual(['intake', 'intake']);
   });
 
-  it('a through-staged extraction saves LIVE (the engine runs staging)', async () => {
+  // From 5 a plugin is an ordinary call, so what versions 1–4 staged with
+  // `through` is a call between two extractions.
+  it('an extraction fed through a plugin call saves LIVE', async () => {
     const staged = `import { email } from adapters
 import { fetchPages as fetch_pages } from plugins
 
 inbox = connect email
 
+node Mentions: "the companies mentioned" {
+  node company: "each company mentioned" {
+    name: <text> "the company's name"
+    urls: <text> "URLs for this company"
+  }
+}
+
+node Site: "the company's site" {
+  website: <text> "the company's official website"
+}
+
 function intake(m: <inbox-[:message]->>) {
-  mentions = extract from [m.\`text\`] {
-    node company: "each company mentioned" {
-      name: "the company's name"
-      urls: "URLs for this company"
-    } through [fetch_pages({ urls: urls })] {
-      name: "the company's name"
-      website: "the company's official website"
-    }
+  mentions = extractOne([m.\`text\`], Mentions)
+  if (mentions == null) { fail("nothing extracted") }
+  mentions-[c:company]-> {
+    pages = fetch_pages({ urls: c.urls })
+    site = extractOne([pages], Site)
   }
 }
 
