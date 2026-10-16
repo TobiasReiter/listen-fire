@@ -179,6 +179,14 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- **A program that runs on the Rust engine is checked by the Rust checker.** Every run on the Rust
+  engine (an automation pinned to version 5 or later, any run under `MOVEMENT_ENGINE=rust`, every
+  `lf` run, and their resumes) is checked inside the engine, with no `check.program` request to the
+  host; saving, validating, upgrading and the deploy check of a movement pinned to version 5 or
+  later use the Rust checker too, and so does `lf check`, so an author sees exactly the diagnostics
+  the run enforces. Versions 1 to 4 keep the TypeScript checker, as do the editor's live
+  diagnostics and completions for now. The two checkers give the same diagnostics, in the same
+  order, on the whole versions 1 to 5 corpus. Nothing to set.
 - **An automation runs on the engine its language version runs on.** `MOVEMENT_ENGINE` now defaults
   to `by-version` (was `ts`): an automation pinned to version 5 runs on the Rust engine, one pinned
   to 1 to 4 on the TypeScript engine, as before. A version-5 run the Rust engine refuses fails with
