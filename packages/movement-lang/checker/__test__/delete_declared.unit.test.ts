@@ -97,7 +97,9 @@ describe('`delete` under Dancing Wren (5)', () => {
     // A member that is not a record at all.
     expect(codes('  v = IF x.name == "a" THEN x ELSE null END\n  delete v', 5)).toEqual([C.DELETE_NOT_RECORD]);
     // Records of a system that describes nothing say nothing.
-    expect(codes('  y = ONLY(free-[:things]->)\n  v = IF x.name == "a" THEN x ELSE y END\n  delete v', 5, '<free-[:things]->>'))
+    // (x stays the described company: a read off an event its system does
+    // not describe is refused from 5, MOV_EVENT_UNDESCRIBED.)
+    expect(codes('  y = ONLY(free-[:things]->)\n  v = IF x.name == "a" THEN x ELSE y END\n  delete v', 5))
       .toEqual([]);
     expect(codes(`${company}  v = IF x.name == "a" THEN x ELSE y END\n  delete v`, 4)).toEqual([]);
   });

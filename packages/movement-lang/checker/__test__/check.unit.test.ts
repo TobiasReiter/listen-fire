@@ -9,8 +9,59 @@ import { mockCatalog } from '../catalog';
 
 const catalog = mockCatalog({
   adapters: {
-    email: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], triggerConfig: ['key'] },
-    attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }, { name: 'list', kind: 'position', required: false }]},
+    // The event is described, as a real email system describes it: an
+    // undescribed one is refused from version 5 (MOV_EVENT_UNDESCRIBED).
+    email: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }],
+      triggerConfig: ['key'],
+      schema: {
+        positions: {
+          message: {
+            properties: { subject: 'text', text: 'text' },
+            edges: {
+              sender: { target: 'contact' },
+              files: { target: 'attachment' },
+              mentions: { target: 'organisation' },
+            },
+          },
+          contact: { properties: { name: 'text', domain: 'text', email: 'text' }, edges: {} },
+          attachment: { properties: { filename: 'text', data: 'file' }, edges: {} },
+          organisation: { properties: { name: 'text', url: 'text' }, edges: {} },
+        },
+        collections: {},
+        writableRoots: {},
+        eventPosition: 'message',
+      },
+    },
+    attio: {
+      constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }, { name: 'list', kind: 'position', required: false }],
+      schema: {
+        positions: {
+          company: {
+            properties: { name: 'text', url: 'text', domains: { kind: 'list', of: 'text' }, Name: 'text', Domains: 'text' },
+            edges: {},
+          },
+          person: { properties: { Name: 'text' }, edges: { Company: { target: 'company' } } },
+          deal: { properties: { Name: 'text' }, edges: { Company: { target: 'company' } } },
+          note: { properties: { text: 'text' }, edges: {} },
+        },
+        unions: { record: ['company', 'person'] },
+        collections: {
+          company: { target: 'company' },
+          note: { target: 'note' },
+          companies: { target: 'company' },
+          deals: { target: 'deal' },
+        },
+        writableRoots: {
+          company: {
+            fields: { name: 'text', url: 'text', domains: { kind: 'list', of: 'text' } },
+            resultShape: { externalId: 'text', name: 'text', url: 'text' },
+          },
+          note: { fields: { text: 'text' }, resultShape: { externalId: 'text', text: 'text' } },
+        },
+        eventPosition: 'record',
+      },
+    },
     slack: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }]},
     affinity: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }]},
     dropbox: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }]},
@@ -246,7 +297,7 @@ describe('worked examples (zero diagnostics)', () => {
         '    write graph-[:deal]-> {',
         '      unique by (`name`)',
         '      name:    d.`Name`',
-        '      company: first(d-[:Company]->.`Domains`)',
+        '      company ?: only(d-[:Company]->.`Domains`)',
         '    }',
         '  }',
         '}',
@@ -503,7 +554,7 @@ describe('name resolution', () => {
     // undescribed field — so the unknown-stays-silent contract applies. Field
     // existence is enforced under a schema (see check_typed: UNIQUE_UNKNOWN_FIELD).
     expect(
-      codes(inMovement('  write crm-[:company]-> { unique by (ghost && `name`), name: msg.`subject` }')),
+      codes(inMovement('  write graph-[:company]-> { unique by (ghost && `name`), name: msg.`subject` }')),
     ).toEqual([]);
   });
 
@@ -524,7 +575,7 @@ describe('name resolution', () => {
       codes(
         inMovement(
           [
-            '  co = write crm-[:company]-> { name: msg.`subject` }',
+            '  co = write graph-[:company]-> { name: msg.`subject` }',
             '  p = match co-[:portfolio]-> { unique by (`name`), name: "Fund III" }',
           ].join('\n'),
         ),
@@ -537,7 +588,7 @@ describe('name resolution', () => {
       codes(
         inMovement(
           [
-            '  co = write crm-[:company]-> { name: msg.`subject` }',
+            '  co = write graph-[:company]-> { name: msg.`subject` }',
             '  found = match co-[:portfolio]-> { unique by (`name`), name: ghost.`name` }',
           ].join('\n'),
         ),
@@ -565,8 +616,8 @@ describe('name resolution', () => {
     expectClean(
       inMovement(
         [
-          '  co = write crm-[:company]-> { name: msg.`subject` }',
-          '  note = write crm-[:note]-> { text: msg.`text` }',
+          '  co = write graph-[:company]-> { name: msg.`subject` }',
+          '  note = write graph-[:note]-> { text: msg.`text` }',
           '  unlink co -[:notes]-> note',
           '  delete note',
         ].join('\n'),
@@ -596,7 +647,7 @@ describe('name resolution', () => {
 
   it('aliases bound inside an expression do not leak false positives', () => {
     expectClean(
-      inMovement('  write team-[:message]-> { text: first(msg-[s:sender]->.`name`) }'),
+      inMovement('  write team-[:message]-> { text: coalesce(only(msg-[s:sender]->.`name`), "someone") }'),
     );
   });
 });
