@@ -299,7 +299,7 @@ impl Parser {
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
         } else {
-            let callee = self.read_name("the name being called")?;
+            let callee = self.read_callee("the name being called")?;
             self.skip_inline_ws();
             self.expect("(", &format!("to open the call to '{callee}'"))?;
             let args = self.parse_call_args(&callee, start)?;
@@ -404,13 +404,21 @@ impl Parser {
     }
 
     /// From version 5 an `if` condition is parenthesised, as TypeScript's.
-    fn require_condition_parens(&self, condition: &ExprSlot, start: usize, end: usize) {
+    /// The parentheses are the statement's, not the condition's: the slot is
+    /// the text inside them, the condition versions 1–4 write bare (so `is`
+    /// keeps its narrowing as a top-level test).
+    fn condition_in_parens(&self, condition: ExprSlot, start: usize, end: usize) -> ExprSlot {
         if !since(self.version, 5) {
-            return;
+            return condition;
         }
         let whole = |t: &crate::tree::MExpr| t.at().start == 0 && t.at().end == crate::util::form::utf16_len(&condition.raw);
         match crate::expr::parse_expression_raw(&condition.raw) {
-            Ok(tree @ crate::tree::MExpr::Paren { .. }) if whole(&tree) => {}
+            Ok(tree @ crate::tree::MExpr::Paren { .. }) if whole(&tree) => {
+                let units = &self.src.units()[start + 1..end - 1];
+                let inner_start = start + 1 + (units.len() - trim_start(units).len());
+                let inner_end = inner_start + trim(units).len();
+                return ExprSlot { raw: self.text(inner_start, inner_end), span: self.span_between(inner_start, inner_end), eager: condition.eager };
+            }
             Ok(_) => self.spelling(
                 "from language version 5 an `if` condition is parenthesised: `if (…) {`",
                 start,
@@ -419,6 +427,7 @@ impl Parser {
             ),
             Err(_) => {}
         }
+        condition
     }
 
     fn fail<T>(&self, message: impl Into<String>) -> SResult<T> {
@@ -1014,7 +1023,11 @@ impl Parser {
                 }
             }
             "if" => return Ok(Statement::If(self.parse_if()?)),
-            "ERROR" => return Ok(Statement::Error(self.parse_error_statement()?)),
+            "ERROR" => return Ok(Statement::Error(self.parse_error_statement("ERROR")?)),
+            // From version 5 `fail("…")` is `ERROR("…")`: the same statement.
+            "fail" if since(self.version, 5) && self.followed_by_call("fail") => {
+                return Ok(Statement::Error(self.parse_error_statement("fail")?));
+            }
             "extract" => {
                 return self.fail_at("An 'extract' must be bound to a name — write `name = extract from […] { … }`", start);
             }
@@ -2424,11 +2437,69 @@ impl Parser {
 
     /// The call just read, from `start` to here — with its reading as one
     /// expression when its arguments are positional.
-    fn call_node(&self, callee: String, args: Vec<CallArg>, start: usize) -> CallStatement {
+    fn call_node(&self, callee: String, mut args: Vec<CallArg>, start: usize) -> CallStatement {
         let span = self.span_from(start);
         let positional = args.first().is_some_and(|arg| arg.name().is_none());
         let expression = positional.then(|| self.slot(self.text(start, self.pos), span));
+        let callee = if self.src.at(start) == Some(unit('`')) { callee } else { self.canonical_call(callee, &mut args) };
         CallStatement { callee, args, expression, span }
+    }
+
+    /// From version 5 a built-in called in its v5 spelling (`map(xs, f, s)`,
+    /// `List.groupBy(xs, f)`, `fail("…")`) reads as the canonical call versions
+    /// 1–4 write (`MAP(xs, s, f)`, `GROUPBY(xs, f)`, `ERROR("…")`), as its
+    /// expression slot does (crate::surface::canonical), so the call's
+    /// structure and its expression agree.
+    fn canonical_call(&self, callee: String, args: &mut [CallArg]) -> String {
+        use crate::surface::table::{Shape, by_v5};
+        if !since(self.version, 5) {
+            return callee;
+        }
+        let Some(row) = by_v5(&callee) else { return callee };
+        match row.shape {
+            Shape::SettingsLast | Shape::ReduceOrder if args.len() == 3 => args.swap(1, 2),
+            Shape::Same | Shape::SettingsLast | Shape::ReduceOrder => {}
+            _ => return callee,
+        }
+        row.canonical.to_string()
+    }
+
+    /// A v5 built-in whose canonical form the call's structure cannot hold
+    /// (`sort`'s key function, `ai`'s settings, `Text.includes` as an
+    /// operator): read as an expression, whose slot is rewritten whole.
+    fn rewritten_whole(&self, callee: &str) -> bool {
+        use crate::surface::table::{Shape, by_v5};
+        since(self.version, 5)
+            && by_v5(callee).is_some_and(|row| {
+                matches!(row.shape, Shape::SortKey | Shape::AiTier | Shape::Contains | Shape::ListIncludes | Shape::JsonStringify)
+            })
+    }
+
+    /// The name being called at the cursor and where it ends — from version 5
+    /// also a standard namespace's member (`List.groupBy`), one name.
+    fn scan_callee(&self) -> Option<(String, usize)> {
+        let (name, end) = scan_name(self.src.units(), self.pos)?;
+        if since(self.version, 5)
+            && !self.is('`')
+            && self.src.at(end) == Some(unit('.'))
+            && let Some((member, member_end)) = scan_ident(self.src.units(), end + 1)
+        {
+            let dotted = format!("{name}.{member}");
+            if crate::surface::table::by_v5(&dotted).is_some() {
+                return Some((dotted, member_end));
+            }
+        }
+        Some((name, end))
+    }
+
+    fn read_callee(&mut self, what: &str) -> SResult<String> {
+        match self.scan_callee() {
+            Some((callee, end)) if callee.contains('.') && !self.is('`') => {
+                self.pos = end;
+                Ok(callee)
+            }
+            _ => self.read_name(what),
+        }
     }
 
     /// `node { … }` or `graph<Shape> { … }` where an argument is written.
@@ -2604,7 +2675,11 @@ impl Parser {
             return Ok(None);
         }
         let save = self.pos;
-        let callee = self.read_name("the name being called")?;
+        let callee = self.read_callee("the name being called")?;
+        if self.rewritten_whole(&callee) {
+            self.pos = save;
+            return Ok(None);
+        }
         self.skip_inline_ws();
         self.pos += 1;
         let args = self.parse_call_args(&callee, save)?;
@@ -2634,7 +2709,7 @@ impl Parser {
             return false;
         }
         let save = self.pos;
-        let Some((name, end)) = scan_name(self.src.units(), self.pos) else {
+        let Some((name, end)) = self.scan_callee() else {
             return false;
         };
         if !self.is('`') && KEYWORDS.contains(&name.to_ascii_uppercase().as_str()) {
@@ -2879,11 +2954,17 @@ impl Parser {
                 self.pos = save;
             }
         }
-        if self.at_word("FIRST") {
+        // From version 5 the core word is `first`, as everywhere else.
+        let first = if since(self.version, 5) { "first" } else { "FIRST" };
+        if self.at_word("FIRST") || self.at_word(first) {
             let save = self.pos;
+            let old = !self.at_word(first);
             self.pos += "FIRST".len();
             self.skip_inline_ws();
             if self.is('(') {
+                if old {
+                    self.spelling("`FIRST` is written `first` from language version 5", save, save + 5, vec![(save, save + 5, first.into())]);
+                }
                 self.pos += 1;
                 self.skip_inline_ws();
                 let Some(head) = self.try_parse_path_head()? else {
@@ -3291,6 +3372,14 @@ impl Parser {
             }
             self.expect("=>", "between a callback's parameters and its body")?;
             self.skip_all_ws();
+            // From version 5 `callback(() => f(x))` is the deferred call
+            // `callback(f(x))` versions 1–4 write.
+            if since(self.version, 5) && !self.is('{') {
+                if !params.is_empty() {
+                    return self.fail("a callback's deferred call takes no parameters: `callback(() => f(x))`");
+                }
+                return self.parse_named_callback(start);
+            }
             let body = self.parse_block_body("a callback body")?;
             return Ok(CallbackSubject::Inline {
                 closure: ClosureExpression { params, return_type: None, body, span: self.span_from(closure_start) },
@@ -3298,6 +3387,23 @@ impl Parser {
             });
         }
         // `callback(<movementName>)` / `callback(<movementName>(…))`.
+        let name_start = self.pos;
+        let subject = self.parse_named_callback(start)?;
+        // A call written in place (`f(x)`), not a movement's bare name.
+        if since(self.version, 5) && self.src.at(self.pos - 1) == Some(unit(')')) {
+            let call = self.text(name_start, self.pos);
+            self.spelling(
+                "`callback(f(x))` is written `callback(() => f(x))` from language version 5",
+                name_start,
+                self.pos,
+                vec![(name_start, self.pos, format!("() => {call}"))],
+            );
+        }
+        Ok(subject)
+    }
+
+    /// `<movementName>` or `<movementName>(…)`: the movement a callback runs.
+    fn parse_named_callback(&mut self, start: usize) -> SResult<CallbackSubject> {
         let name_start = self.pos;
         let movement = self.read_name("a callback body ('{ … }' or '(<params>) => { … }') or the name of a movement")?;
         let name_span = self.span_from(name_start);
@@ -3537,7 +3643,7 @@ impl Parser {
                 return self.fail("Expected '{' after the 'if' condition");
             }
             let condition_end = condition_start + crate::util::form::utf16_len(&condition.raw);
-            self.require_condition_parens(&condition, condition_start, condition_end);
+            let condition = self.condition_in_parens(condition, condition_start, condition_end);
             let body = self.parse_block_body("the 'if' branch")?;
             arms.push(IfArm { condition, body, span: self.span_from(arm_start) });
             let save = self.pos;
@@ -3574,18 +3680,22 @@ impl Parser {
         Ok(DurationLiteral { raw, span: self.span_from(start) })
     }
 
-    /// `ERROR("message")` as a statement.
-    fn parse_error_statement(&mut self) -> SResult<ErrorStatement> {
+    /// `ERROR("message")` as a statement; from version 5 `fail("message")`.
+    fn parse_error_statement(&mut self, word: &str) -> SResult<ErrorStatement> {
         let start = self.pos;
-        let message = self.parse_error_call()?;
+        let message = self.parse_error_call(word)?;
         self.expect_statement_end()?;
         Ok(ErrorStatement { message, span: self.span_from(start) })
     }
 
-    fn parse_error_call(&mut self) -> SResult<ExprSlot> {
-        self.expect_word("ERROR", "an 'ERROR(…)' call")?;
+    fn parse_error_call(&mut self, word: &str) -> SResult<ExprSlot> {
+        let start = self.pos;
+        self.expect_word(word, &format!("a '{word}(…)' call"))?;
+        if word == "ERROR" && since(self.version, 5) {
+            self.spelling("`ERROR` is written `fail` from language version 5", start, self.pos, vec![(start, self.pos, "fail".into())]);
+        }
         self.skip_inline_ws();
-        self.expect("(", "after 'ERROR'")?;
+        self.expect("(", &format!("after '{word}'"))?;
         let (slot, _) = self.read_expr_slot(Scan::new(")", "for the ERROR message"))?;
         self.expect(")", "to close the 'ERROR(…)' message")?;
         Ok(slot)
@@ -4524,7 +4634,10 @@ impl Parser {
             self.pos += "using".len();
             self.skip_inline_ws();
             let at = self.pos;
-            let credential = self.read_name("the credential after 'using'")?;
+            self.read_name("the credential after 'using'")?;
+            // The name as written: a backticked one keeps its backticks, as
+            // the construction's `credentials: \`Acme CRM\`` does.
+            let credential = self.text(at, self.pos);
             let span = self.span_between(at, self.pos);
             args.push(NamedArg { name: "credentials".into(), value: ExprSlot { raw: credential, span, eager: self.eager }, is_type: None });
             self.skip_inline_ws();
@@ -4562,7 +4675,7 @@ impl Parser {
         if !since(self.version, 5) || !self.adapters.contains(&construct.callee) {
             return;
         }
-        let mut text = format!("connect {}", construct.callee);
+        let mut text = format!("connect {}", name_source(&construct.callee));
         let mut settings = Vec::new();
         for arg in &construct.args {
             if arg.name == "credentials" {
@@ -4578,6 +4691,13 @@ impl Parser {
         let message = format!("from language version 5 an adapter is set up with `{text}`");
         self.spelling(message, start, end, vec![(start, end, text)]);
     }
+}
+
+/// A name as source: bare when it is an identifier, backticked otherwise.
+fn name_source(name: &str) -> String {
+    let mut chars = name.chars();
+    let ident = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ident { name.to_string() } else { format!("`{name}`") }
 }
 
 fn snake_case(name: &str) -> String {

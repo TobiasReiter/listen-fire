@@ -80,9 +80,16 @@ fn core_words() {
     same("coalesce(a, b, \"unknown\")", "COALESCE(a, b, \"unknown\")");
     same("members(<Thesis>)", "MEMBERS(<Thesis>)");
     same("ai(prompt, { tier: \"careful\" })", "AI(prompt, \"careful\")");
-    same("fail(\"no #ops channel\")", "ERROR(\"no #ops channel\")");
     same("callback(() => `Chase`(company))", "callback(`Chase`(company))");
-    same("coalesce(only(xs), fail(\"no #ops\"))", "COALESCE(ONLY(xs), ERROR(\"no #ops\"))");
+    // `fail` is a statement; inside an expression it is not yet read.
+    assert_eq!(findings("coalesce(only(xs), fail(\"no #ops\"))")[0].code, super::NOT_YET_CODE);
+    // `sort` with no key, by its order alone, or keyed by the member itself.
+    same("sort(xs)", "SORT(xs)");
+    same("sort(xs, { order: \"desc\" })", "SORT(xs, DESC)");
+    same("sort(xs, { order: \"asc\" })", "SORT(xs, asc)");
+    assert_eq!(lowered("sort(xs, (x) => x, { order: \"desc\" })", 5), lowered("SORT(xs, DESC)", 4));
+    same("sort(rows, (r) => r.`Added At`)", "SORT(rows, `Added At`)");
+    assert_eq!(findings("sort(rows, (r) => Text.lower(r.name))")[0].code, super::NOT_YET_CODE);
 }
 
 #[test]

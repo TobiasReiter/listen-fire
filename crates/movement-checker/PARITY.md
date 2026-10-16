@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **243 of 243** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 123641 of 123641; 0 extra in Rust.
+- Diagnostics matched: 126271 of 126271; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 28328 of 28328.
-- Rust side: 12.4s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 21.5s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -26,7 +26,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| (not in PORT.md) | 1 | 1 | 88290 | 88290 | 0 | 0 | 0 |
+| (not in PORT.md) | 1 | 1 | 90920 | 90920 | 0 | 0 | 0 |
 | calls | 28 | 28 | 1642 | 1642 | 0 | 0 | 0 |
 | closures | 15 | 15 | 885 | 885 | 0 | 0 | 0 |
 | extraction | 20 | 20 | 439 | 439 | 0 | 0 | 0 |
@@ -260,7 +260,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNTIL_CADENCE_TOO_SHORT | flow | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_USE_BEFORE_BIND | names | 29 | 29 | 0 | 0 | 0 | yes |
-| MOV_V5_SPELLING | ? | 88290 | 88290 | 0 | 0 | 0 | yes |
+| MOV_V5_SPELLING | ? | 90920 | 90920 | 0 | 0 | 0 | yes |
 | MOV_VALUE_UNLISTED | values | 30 | 30 | 0 | 0 | 0 | yes |
 | MOV_WAIT_NOT_RESUMABLE | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_APPEND_NOT_MULTI | writes | 12 | 12 | 0 | 0 | 0 | yes |

@@ -316,21 +316,30 @@ impl<'s> Canon<'s> {
             ),
             Shape::ReduceOrder => (format!("`{written}` is written `{}`", row.v5), Some(rename)),
             Shape::SortKey => {
-                let key = args.get(1).and_then(|k| match &k.value {
-                    MExpr::Name { name, .. } => Some(name.text.clone()),
+                let direction = |e: &MExpr| match e {
+                    MExpr::Name { name, .. } if name.text.eq_ignore_ascii_case("ASC") || name.text.eq_ignore_ascii_case("DESC") => {
+                        Some(format!("{{ order: \"{}\" }}", name.text.to_ascii_lowercase()))
+                    }
                     _ => None,
-                });
-                let order = match args.get(2).map(|d| self.text(d.value.at()).to_ascii_lowercase()) {
-                    Some(d) if d == "desc" || d == "asc" => Some(format!(", {{ order: \"{d}\" }}")),
-                    None => Some(String::new()),
-                    Some(_) => None,
+                };
+                let values: Vec<&MExpr> = args.iter().map(|a| &a.value).collect();
+                // `/^(ASC|DESC)$/i` last is the direction, as the lowering reads it.
+                let (rest, order) = match values.split_last() {
+                    Some((last, rest)) if !rest.is_empty() && direction(last).is_some() => (rest, direction(last)),
+                    _ => (values.as_slice(), None),
+                };
+                let key = match rest {
+                    [_] => Some(None),
+                    [_, MExpr::Name { name, .. }] => Some(Some(format!("(r) => r.{}", field_source(&name.text)))),
+                    _ => None,
                 };
                 let message = format!("`{written}` is written `{}`, its key a function", row.v5);
-                match (key, order) {
-                    (Some(key), Some(order)) => {
-                        (message, Some(Edit { at, text: format!("{}({}, (r) => r.{}{order})", row.v5, a(0), field_source(&key)) }))
+                match key {
+                    Some(key) => {
+                        let text = [Some(a(0)), key, order].into_iter().flatten().collect::<Vec<_>>().join(", ");
+                        (message, Some(Edit { at, text: format!("{}({text})", row.v5) }))
                     }
-                    _ => (message, None),
+                    None => (message, None),
                 }
             }
             Shape::AiTier if args.len() == 2 => (
@@ -381,6 +390,12 @@ impl<'s> Canon<'s> {
         let MExpr::Call { callee, args, at } = e else { return };
         let at = *at;
         let callee_at = callee.at();
+        // `fail(…)` is a statement (`ERROR(…)`); no version has a value that
+        // never returns, which the design's `coalesce(x, fail("…"))` needs.
+        if row.canonical == "ERROR" {
+            self.not_yet(at, "for now `fail(…)` is a statement of its own: `if (x == null) { fail(\"…\") }`".into());
+            return;
+        }
         match row.shape {
             Shape::Contains => {
                 if args.len() != 2 {
@@ -403,7 +418,7 @@ impl<'s> Canon<'s> {
             Shape::SettingsLast | Shape::ReduceOrder if args.len() == 3 => args.swap(1, 2),
             Shape::SortKey => {
                 if !self.sort_key(args) {
-                    self.not_yet(at, "for now `sort`'s key is a closure reading one field, `(r) => r.field`, and its settings `{ order: \"asc\" | \"desc\" }`".into());
+                    self.not_yet(at, "for now `sort`'s key is absent, the member itself `(r) => r`, or one field `(r) => r.field`, and its settings `{ order: \"asc\" | \"desc\" }`".into());
                     return;
                 }
             }
@@ -448,34 +463,57 @@ impl<'s> Canon<'s> {
         **callee = canonical_callee(row.canonical, callee_at);
     }
 
-    /// `sort(xs, (r) => r.field, { order: "desc" })` → ``SORT(xs, `field`, DESC)``.
+    /// `sort(xs, (r) => r.field, { order: "desc" })` → ``SORT(xs, `field`, DESC)``;
+    /// `sort(xs)` and `sort(xs, { order: "desc" })` sort plain values by
+    /// themselves, as `SORT(xs)` and `SORT(xs, DESC)` do, and so does the
+    /// key `(r) => r`.
     fn sort_key(&mut self, args: &mut Vec<CallArg>) -> bool {
-        let key = match args.get(1).map(|a| &a.value) {
-            Some(MExpr::Closure { params, body, .. }) if params.len() == 1 => match body.as_ref() {
-                ClosureBody::Expr { expr: MExpr::Member { object, property, .. } } => match object.as_ref() {
-                    MExpr::Name { name, .. } if name.text == params[0].name.text => Some(property.clone()),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(key) = key else { return false };
-        let order = match args.get(2).map(|a| &a.value) {
-            None => None,
-            Some(MExpr::Map { entries, .. }) => match entries.as_slice() {
+        let settings_last = args.len() > 1 && matches!(args.last().map(|a| &a.value), Some(MExpr::Map { .. }));
+        let order = if settings_last {
+            let Some(MExpr::Map { entries, .. }) = args.last().map(|a| &a.value) else { return false };
+            match entries.as_slice() {
                 [MapMember::Entry { key: MapKey::Name(k), value: MExpr::String { parts, at, .. } }] if k.text == "order" => match parts.as_slice() {
                     [StringPart::Text(t)] if t == "asc" || t == "desc" => Some((t.to_ascii_uppercase(), *at)),
                     _ => return false,
                 },
                 _ => return false,
-            },
-            Some(_) => return false,
+            }
+        } else {
+            None
         };
-        let key_at = args[1].value.at();
-        args[1].value = MExpr::Name { name: Name { text: key.text, quoted: true, at: key_at }, at: key_at };
+        let keyed = args.len() == if settings_last { 3 } else { 2 };
+        if args.len() > 3 || (settings_last && args.len() == 3 && !keyed) {
+            return false;
+        }
+        // The key: `None` sorts each member by itself.
+        let key = if keyed {
+            let Some(MExpr::Closure { params, body, .. }) = args.get(1).map(|a| &a.value) else { return false };
+            let [param] = params.as_slice() else { return false };
+            let ClosureBody::Expr { expr } = body.as_ref() else { return false };
+            match expr {
+                MExpr::Name { name, .. } if name.text == param.name.text && !name.quoted => None,
+                MExpr::Member { object, property, .. } => match object.as_ref() {
+                    MExpr::Name { name, .. } if name.text == param.name.text => Some(property.clone()),
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        } else {
+            None
+        };
         if let Some((direction, at)) = order {
-            args[2].value = name_expr(&direction, at);
+            let last = args.len() - 1;
+            args[last].value = name_expr(&direction, at);
+        }
+        match key {
+            Some(key) => {
+                let key_at = args[1].value.at();
+                args[1].value = MExpr::Name { name: Name { text: key.text, quoted: true, at: key_at }, at: key_at };
+            }
+            None if keyed => {
+                args.remove(1);
+            }
+            None => {}
         }
         true
     }
