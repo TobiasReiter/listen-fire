@@ -45,7 +45,7 @@
 
 import type { Expression } from '@listen-fire/shared/expression/types';
 import { isPurePredicate, leafReadKey, pureLeafReads } from '@listen-fire/shared/expression/filter';
-import type { LanguageVersion } from '../language_version';
+import { since, type LanguageVersion } from '../language_version';
 import { parseTraversalPath } from '../service/selectors';
 
 /**
@@ -156,13 +156,19 @@ export function eventAddressDisplay(address: EventAddress): string {
  * action=record.created") does not. Derived from the address, never parsed
  * back — nothing may read a program out of this string.
  */
-export function eventAddressSource(instance: string, address: EventAddress): string {
+export function eventAddressSource(instance: string, address: EventAddress, languageVersion: LanguageVersion): string {
+  // Up to 4 a pin names the event's field bare; from 5 a bare name in a hop
+  // is a variable, so the hop takes the alias `e` and each pin reads the
+  // field through it.
+  const v5 = since(languageVersion, 5);
   const pins = pinsOf(address);
+  const field = (key: string): string => (!v5 ? `\`${key}\`` : /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? `e.${key}` : `e.\`${key}\``);
   const where =
     pins.length === 0
       ? ''
-      : ` WHERE ${pins.map(([key, value]) => `\`${key}\` == ${JSON.stringify(value)}`).join(' AND ')}`;
-  return `<${instance}-[:\`${address.event}\`${where}]->>`;
+      : ` WHERE ${pins.map(([key, value]) => `${field(key)} == ${JSON.stringify(value)}`).join(' AND ')}`;
+  const alias = v5 && pins.length > 0 ? 'e' : '';
+  return `<${instance}-[${alias}:\`${address.event}\`${where}]->>`;
 }
 
 /**

@@ -69,7 +69,7 @@ import {
   variantOf,
 } from './catalog';
 import type { DeclaredEffectRow, EffectRow } from './effects';
-import { eventAddressKey, type EventAddress } from './event_address';
+import { eventAddressKey, eventAddressSource, type EventAddress } from './event_address';
 import {
   closestByEditDistance,
   closestMovementMetaKey,
@@ -7207,7 +7207,7 @@ export class ExpressionTyping {
                 narrowing: { ...address.narrowing, [EVENT_ACTION_FIELD]: option },
               });
               if (carrying.includes(key)) {
-                example = `x IS <${from.instance.name}-[:\`${address.event}\` WHERE \`${EVENT_ACTION_FIELD}\` == "${option}"]->>`;
+                example = `x IS ${eventAddressSource(from.instance.name, { event: address.event, narrowing: { [EVENT_ACTION_FIELD]: option } }, this.options.languageVersion)}`;
                 break;
               }
             }

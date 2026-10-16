@@ -42,7 +42,7 @@ use crate::meta::did_you_mean;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
 use crate::slots::{expression_of_slot, is_bare_ident};
 
-mod event_types;
+pub(crate) mod event_types;
 use event_types::{EventRef, Kind};
 
 /// `SUPPRESS_SELF_KEY`: the listen key every listener accepts.
@@ -462,7 +462,7 @@ impl Checker<'_> {
         let movement = &statement.movement;
         let fires = event_types::describe_event_type(schema, mismatch, instance);
         if let Some((signature, binding, event_param)) =
-            event_types::record_signature_rewrite(schema, instance, mismatch, &param.name, &param_type)
+            event_types::record_signature_rewrite(schema, instance, mismatch, &param.name, &param_type, self.version)
         {
             self.report(
                 codes::LISTEN_PARAM_MISMATCH,

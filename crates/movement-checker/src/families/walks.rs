@@ -143,7 +143,7 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
             }
             if !carrying.is_empty() {
                 let shown: Vec<String> = carrying.iter().map(|v| format!("{}'s {}", u.instance.name, display_name_of(&u.instance, v))).collect();
-                let example = typing.code(&narrowing_example(u, &carrying));
+                let example = typing.code(&narrowing_example(u, &carrying, typing.version));
                 typing.report(
                     codes::NARROWING,
                     format!(
@@ -927,7 +927,7 @@ impl crate::checker::Checker<'_> {
 
 /// The IS test a NARROWING message suggests: the first `action` option whose
 /// narrowing of the union's own address carries what was asked for.
-fn narrowing_example(u: &crate::types::position::UnionPosition, carrying: &[&String]) -> String {
+fn narrowing_example(u: &crate::types::position::UnionPosition, carrying: &[&String], version: u32) -> String {
     let fallback = format!("x IS <{}-[:`…` WHERE …]->>", u.instance.name);
     let Some(address) = &u.address else { return fallback };
     let action = u.instance.schema.positions.get(&address.event).and_then(|p| p.properties.get("action")).map(Ty::from_schema);
@@ -940,7 +940,8 @@ fn narrowing_example(u: &crate::types::position::UnionPosition, carrying: &[&Str
         }
         let key = crate::types::event_address::event_address_key(&crate::types::event_address::EventAddress { event: address.event.clone(), narrowing });
         if carrying.iter().any(|v| **v == key) {
-            return format!("x IS <{}-[:`{}` WHERE `action` == \"{option}\"]->>", u.instance.name, address.event);
+            let address = crate::families::listens::event_types::address_source(&u.instance.name, &address.event, &[("action".to_string(), option.clone())], version);
+            return format!("x IS {address}");
         }
     }
     fallback

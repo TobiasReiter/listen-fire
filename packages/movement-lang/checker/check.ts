@@ -14200,7 +14200,7 @@ class Checker {
       // needs one of its own, and only has to differ from the name in hand.
       const eventParam = input.paramName === 'event' ? 'change' : 'event';
       return {
-        signature: eventAddressSource(input.instanceName, fires.address),
+        signature: eventAddressSource(input.instanceName, fires.address, this.languageVersion),
         // The BLOCK traversal, because that is the form the language has: a
         // bare `x = a-[:E]->` binding does not parse, and a suggestion that
         // does not compile sends the author somewhere that isn't there.
@@ -14248,7 +14248,7 @@ class Checker {
       const field = Object.keys(schema.positions[target]?.properties ?? {})[0];
       const read = field === undefined ? '…' : `… r.\`${field}\``;
       return (
-        `${spellIf(`${paramName} IS <${instanceName}-[:\`${eventName}\` WHERE \`${EVENT_ACTION_FIELD}\` == "${action}"]->>`, this.languageVersion)} `
+        `${spellIf(`${paramName} IS ${eventAddressSource(instanceName, { event: eventName, narrowing: { [EVENT_ACTION_FIELD]: action } }, this.languageVersion)}`, this.languageVersion)} `
         + `{ ${paramName}-[r:${edge}]-> { ${read} } }`
       );
     }

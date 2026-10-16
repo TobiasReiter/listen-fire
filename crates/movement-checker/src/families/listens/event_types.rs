@@ -56,15 +56,10 @@ impl Address {
         format!("{} where {}", self.event, pins.join(", "))
     }
 
-    /// `eventAddressSource`: the annotation an author would write for it.
-    pub fn source(&self, instance: &str) -> String {
-        let pins: Vec<String> = self
-            .pins
-            .iter()
-            .map(|(k, v)| format!("`{k}` == {}", serde_json::to_string(v).expect("strings always serialise")))
-            .collect();
-        let filter = if pins.is_empty() { String::new() } else { format!(" WHERE {}", pins.join(" AND ")) };
-        format!("<{instance}-[:`{}`{filter}]->>", self.event)
+    /// `eventAddressSource`: the annotation an author would write for it,
+    /// as `version` writes it.
+    pub fn source(&self, instance: &str, version: u32) -> String {
+        address_source(instance, &self.event, &self.pins, version)
     }
 
     fn is_narrowed(&self) -> bool {
@@ -315,6 +310,7 @@ pub fn record_signature_rewrite(
     fires: &EventRef,
     param_name: &str,
     param: &EventRef,
+    version: u32,
 ) -> Option<(String, String, String)> {
     let landed: Vec<&String> = match &fires.kind {
         Kind::Union { variants } => variants.iter().collect(),
@@ -332,7 +328,7 @@ pub fn record_signature_rewrite(
             continue;
         }
         let event_param = if param_name == "event" { "change" } else { "event" };
-        return Some((address.source(instance), format!("{event_param}-[{param_name}:{edge}]-> {{ … }}"), event_param.to_string()));
+        return Some((address.source(instance, version), format!("{event_param}-[{param_name}:{edge}]-> {{ … }}"), event_param.to_string()));
     }
     None
 }
@@ -354,7 +350,7 @@ pub fn event_traversal_example(schema: &InstanceSchema, param_name: &str, instan
         let field = schema.positions.get(&edge_schema.target).and_then(|p| p.properties.keys().next());
         let read = field.map_or("…".to_string(), |f| format!("… r.`{f}`"));
         let test = movement_parser::surface::phrase::spell_if(
-            &format!("{param_name} IS <{instance}-[:`{event}` WHERE `{EVENT_ACTION_FIELD}` == \"{action}\"]->>"),
+            &format!("{param_name} IS {}", address_source(instance, event, &[(EVENT_ACTION_FIELD.to_string(), action.clone())], version)),
             version,
         );
         return Some(format!("{test} {{ {param_name}-[r:{edge}]-> {{ {read} }} }}"));
@@ -362,9 +358,48 @@ pub fn event_traversal_example(schema: &InstanceSchema, param_name: &str, instan
     None
 }
 
+/// `eventAddressSource`: an event address as the annotation an author
+/// writes, ready to paste. Up to version 4 a pin names the event's field bare
+/// (`` WHERE `action` == "…" ``); from 5 a bare name in a hop is a variable,
+/// so the hop takes the alias `e` and each pin reads the field through it
+/// (`WHERE e.action == "…"`).
+pub fn address_source(instance: &str, event: &str, pins: &[(String, String)], version: u32) -> String {
+    let v5 = movement_parser::version::since(version, 5);
+    let pins: Vec<String> = pins
+        .iter()
+        .map(|(k, v)| {
+            let value = serde_json::to_string(v).expect("strings always serialise");
+            let field = if !v5 {
+                format!("`{k}`")
+            } else if is_plain_name(k) {
+                format!("e.{k}")
+            } else {
+                format!("e.`{k}`")
+            };
+            format!("{field} == {value}")
+        })
+        .collect();
+    let alias = if v5 && !pins.is_empty() { "e" } else { "" };
+    let filter = if pins.is_empty() { String::new() } else { format!(" WHERE {}", pins.join(" AND ")) };
+    format!("<{instance}-[{alias}:`{event}`{filter}]->>")
+}
+
+fn is_plain_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_an_address_as_its_version_spells_it() {
+        let pins = vec![("action".to_string(), "record.created".to_string()), ("base id".to_string(), "b".to_string())];
+        assert_eq!(address_source("crm", "Webhook Event", &pins, 5), "<crm-[e:`Webhook Event` WHERE e.action == \"record.created\" AND e.`base id` == \"b\"]->>");
+        assert_eq!(address_source("crm", "Webhook Event", &pins, 4), "<crm-[:`Webhook Event` WHERE `action` == \"record.created\" AND `base id` == \"b\"]->>");
+        assert_eq!(address_source("crm", "Webhook Event", &[], 5), "<crm-[:`Webhook Event`]->>");
+    }
 
     #[test]
     fn keys_an_address_as_the_host_does() {

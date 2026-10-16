@@ -8,7 +8,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram } from '../check';
 import { mockCatalog } from '../catalog';
-import { eventAddressOfHops } from '../event_address';
+import { eventAddressOfHops, eventAddressSource } from '../event_address';
 
 const catalog = mockCatalog({ adapters: {} });
 
@@ -48,6 +48,15 @@ describe("an address's WHERE read through the hop's alias", () => {
   it('names the same address under 5 as the bare field did under 4', () => {
     expect(eventAddressOfHops(aliased, 5)).toEqual(address);
     expect(eventAddressOfHops(bare, 4)).toEqual(address);
+  });
+
+  it('is what advice suggests: the alias form under 5, the bare field under 4, and both read back', () => {
+    const address = { event: 'Webhook Event', narrowing: { action: 'record.created', 'base id': 'b' } };
+    const v5 = eventAddressSource('crm', address, 5);
+    expect(v5).toBe('<crm-[e:`Webhook Event` WHERE e.action == "record.created" AND e.`base id` == "b"]->>');
+    expect(eventAddressSource('crm', address, 4)).toBe('<crm-[:`Webhook Event` WHERE `action` == "record.created" AND `base id` == "b"]->>');
+    expect(eventAddressOfHops(v5.slice('<crm'.length, -1), 5)).toEqual(address);
+    expect(eventAddressSource('crm', { event: 'Webhook Event', narrowing: {} }, 5)).toBe('<crm-[:`Webhook Event`]->>');
   });
 
   it('is not an address under 4, as it never was', () => {
