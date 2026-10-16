@@ -65,6 +65,34 @@ fn date_v8_read(fn_: &str, case: &Json) -> bool {
     dated && case["args"].as_array().unwrap().iter().any(|a| a.as_str().is_some_and(|t| movement_engine::js_date::parse(t).is_none()))
 }
 
+/// A number read from a text the version 5 way: trimmed of Rust's
+/// whitespace (U+0085 is whitespace, U+FEFF is not) and read as a decimal
+/// (no `0x`/`0o`/`0b` prefix), so such a text may answer differently.
+fn number_text_v5(case: &Json) -> bool {
+    case["args"].as_array().unwrap().iter().filter_map(Json::as_str).any(|t| {
+        t.contains(['\u{FEFF}', '\u{85}']) || ["0x", "0X", "0o", "0O", "0b", "0B"].iter().any(|p| t.trim().trim_start_matches(['+', '-']).starts_with(p))
+    })
+}
+
+/// ROUND of a negative half: version 5 rounds half away from zero
+/// (`ROUND(-2.5)` is -3; JavaScript's `Math.round` said -2).
+fn negative_half(fn_: &str, case: &Json) -> bool {
+    fn_ == "flat.round" && case["args"][0].as_f64().is_some_and(|x| x < 0.0 && x.fract() == -0.5)
+}
+
+/// An ordering of texts holding an astral character or a lone surrogate:
+/// version 5 orders texts by code point (Rust's `Ord`), where JavaScript
+/// ordered UTF-16 units (`"\u{FF61}" < "😀"` in version 5, `>` before).
+fn code_point_order(fn_: &str, case: &Json) -> bool {
+    fn_.starts_with("compare.") && { let text = case["args"].to_string(); text.contains("\"s16\"") || text.chars().any(|c| u32::from(c) > 0xFFFF) }
+}
+
+/// A case where version 5 answers differently from the TypeScript on
+/// purpose, each kind named by its own function above.
+fn accepted_difference(fn_: &str, case: &Json) -> bool {
+    regex_over_astral(fn_, case) || date_v8_read(fn_, case) || number_text_v5(case) || negative_half(fn_, case) || code_point_order(fn_, case)
+}
+
 fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
     if let Some(op) = fn_.strip_prefix("compare.") {
         let op: FilterOperator = serde_json::from_value(json!(op)).unwrap();
@@ -107,7 +135,7 @@ fn the_standard_library_answers_as_typescript_does() {
             Json::Object(o) if o.contains_key("value") => json!({ "value": shape(&o["value"]) }),
             other => other.clone(),
         };
-        if got != want && !regex_over_astral(fn_, case) && !date_v8_read(fn_, case) {
+        if got != want && !accepted_difference(fn_, case) {
             mismatches.push(format!("{fn_}({}) = {got}, TypeScript {want}", case["args"]));
         }
     }
@@ -182,7 +210,7 @@ fn strings_hold_what_javascript_holds() {
             Json::Object(o) if o.contains_key("throws") => json!({ "throws": o["throws"]["message"] }),
             other => other.clone(),
         };
-        if got != want && !regex_over_astral(fn_, case) && !date_v8_read(fn_, case) {
+        if got != want && !accepted_difference(fn_, case) {
             mismatches.push(format!("{fn_}({}) = {got}, TypeScript {want}", case["args"]));
         }
     }

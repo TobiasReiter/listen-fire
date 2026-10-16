@@ -675,7 +675,7 @@ pub fn normalise_identity_value(value: &Js) -> String {
     let mut collapsed = String::with_capacity(lowered.len());
     let mut in_space = false;
     for c in lowered.chars() {
-        if js::is_js_space(c) {
+        if char::is_whitespace(c) {
             if !in_space {
                 collapsed.push(' ');
             }

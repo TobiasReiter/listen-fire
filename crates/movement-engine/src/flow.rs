@@ -296,7 +296,7 @@ pub(crate) fn canonical_requests(requests: Vec<LockRequest>) -> Vec<LockRequest>
         }
     }
     // JavaScript's `<` on two texts: by UTF-16 code units.
-    by_name.sort_by(|a, b| crate::js::utf16_cmp(&a.name, &b.name));
+    by_name.sort_by(|a, b| a.name.cmp(&b.name));
     by_name
 }
 
@@ -304,7 +304,7 @@ pub(crate) fn canonical_requests(requests: Vec<LockRequest>) -> Vec<LockRequest>
 /// name, sorted.
 pub(crate) fn cross_run_names(requests: &[LockRequest]) -> Vec<String> {
     let mut names: Vec<String> = requests.iter().filter(|r| !r.in_run_only).map(|r| r.name.clone()).collect();
-    names.sort_by(|a, b| crate::js::utf16_cmp(a, b));
+    names.sort();
     names.dedup();
     names
 }

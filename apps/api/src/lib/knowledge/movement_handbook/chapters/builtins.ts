@@ -275,7 +275,7 @@ diff = Number.abs(before - after)
 
 ### ROUND
 
-\`Number.round(number)\` → \`number\`, rounded to the nearest whole number (half rounds up).
+\`Number.round(number)\` → \`number\`, rounded to the nearest whole number (a half rounds away from zero: 2.5 is 3, -2.5 is -3).
 
 \`\`\`
 pct = Number.round(score * 100)

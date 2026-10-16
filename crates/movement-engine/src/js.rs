@@ -10,7 +10,6 @@
 //! not equal. A value that came from the caller remembers its `origin`, so
 //! handing it back hands back the caller's own object.
 
-use std::cmp::Ordering;
 use std::rc::Rc;
 
 pub use crate::js_string::JsString;
@@ -500,29 +499,14 @@ pub fn same_value_zero(a: &Js, b: &Js) -> bool {
 
 // ── Strings ───────────────────────────────────────────────────────────────────
 
-/// JavaScript's WhiteSpace and LineTerminator, which `trim` and `\s` strip.
-/// Not Rust's `char::is_whitespace`: that one has U+0085 and lacks U+FEFF.
-pub fn is_js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}'
-            | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}'
-    )
-}
-
+/// A text without the whitespace (Rust's `char::is_whitespace`) at either end.
 pub fn trim(s: &str) -> &str {
-    s.trim_matches(is_js_space)
+    s.trim()
 }
 
 /// `.length`: UTF-16 code units, not bytes or chars.
 pub fn utf16_len(s: &str) -> usize {
     crate::js_string::utf16_len(s)
-}
-
-/// `a < b` on strings: UTF-16 code-unit order, which differs from Rust's
-/// code-point order where an astral character meets one above U+E000.
-pub fn utf16_cmp(a: &str, b: &str) -> Ordering {
-    crate::js_string::units_of(a).cmp(crate::js_string::units_of(b))
 }
 
 // ── Case ──────────────────────────────────────────────────────────────────────
@@ -540,89 +524,22 @@ pub fn to_upper_case(s: &str) -> String {
 
 // ── Numbers ───────────────────────────────────────────────────────────────────
 
-/// `Number(text)`: StringToNumber. Rust's `parse::<f64>` disagrees in both
-/// directions (it reads `inf`, `nan` and `1_0`-free forms but not `0x10`, and
-/// refuses `""`), so the grammar is checked here and only the decimal digits
-/// are handed to it.
+/// A text as a number: trimmed, then read as a decimal (`12`, `-1.5e3`,
+/// `.5`, `5.`) or `Infinity`; an empty text is 0, anything else (`0x10`,
+/// `inf`, `1_0`) NaN.
 pub fn string_to_number(text: &str) -> f64 {
-    let t = trim(text);
+    let t = text.trim();
     if t.is_empty() {
         return 0.0;
     }
-    for (prefixes, radix) in [(["0x", "0X"], 16), (["0o", "0O"], 8), (["0b", "0B"], 2)] {
-        if let Some(digits) = prefixes.iter().find_map(|p| t.strip_prefix(p)) {
-            return radix_digits(digits, radix);
-        }
+    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if body == "Infinity" {
+        return if t.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
     }
-    let (negative, body) = match t.as_bytes()[0] {
-        b'+' => (false, &t[1..]),
-        b'-' => (true, &t[1..]),
-        _ => (false, t),
-    };
-    let magnitude = if body == "Infinity" { f64::INFINITY } else { decimal(body) };
-    if negative { -magnitude } else { magnitude }
-}
-
-/// `StrUnsignedDecimalLiteral`: `1`, `1.`, `.5`, `1.5e-3`; anything else NaN.
-fn decimal(body: &str) -> f64 {
-    let bytes = body.as_bytes();
-    let digits = |from: usize| bytes[from..].iter().take_while(|b| b.is_ascii_digit()).count();
-    let int = digits(0);
-    let mut at = int;
-    let mut frac = 0;
-    if bytes.get(at) == Some(&b'.') {
-        frac = digits(at + 1);
-        at += 1 + frac;
-    }
-    if int + frac == 0 {
+    if !body.starts_with(|c: char| c.is_ascii_digit() || c == '.') || body.starts_with(['0']) && body[1..].starts_with(['x', 'X', 'o', 'O', 'b', 'B']) {
         return f64::NAN;
     }
-    let mantissa_end = at;
-    if matches!(bytes.get(at), Some(b'e' | b'E')) {
-        let sign = usize::from(matches!(bytes.get(at + 1), Some(b'+' | b'-')));
-        let exp = digits(at + 1 + sign);
-        if exp == 0 {
-            return f64::NAN;
-        }
-        at += 1 + sign + exp;
-    }
-    if at != bytes.len() {
-        return f64::NAN;
-    }
-    let int_part = if int == 0 { "0" } else { &body[..int] };
-    let frac_part = if frac == 0 { "0" } else { &body[int + 1..int + 1 + frac] };
-    let exponent = &body[mantissa_end..];
-    format!("{int_part}.{frac_part}{exponent}").parse().unwrap_or(f64::NAN)
-}
-
-/// A `0x`/`0o`/`0b` literal's digits, rounded once to the nearest double as
-/// JavaScript rounds the mathematical value.
-fn radix_digits(digits: &str, radix: u32) -> f64 {
-    if digits.is_empty() {
-        return f64::NAN;
-    }
-    let bits_per = radix.trailing_zeros();
-    let mut bits: Vec<bool> = Vec::new();
-    for c in digits.chars() {
-        let Some(d) = c.to_digit(radix) else { return f64::NAN };
-        for i in (0..bits_per).rev() {
-            bits.push((d >> i) & 1 == 1);
-        }
-    }
-    let first = bits.iter().position(|&b| b).unwrap_or(bits.len());
-    let bits = &bits[first..];
-    if bits.is_empty() {
-        return 0.0;
-    }
-    let take = bits.len().min(64);
-    let mut m: u64 = bits[..take].iter().fold(0, |acc, &b| (acc << 1) | u64::from(b));
-    // The dropped bits only matter as "some were set": 64 kept bits are
-    // well past the 53 of the mantissa, so a sticky low bit rounds right.
-    if bits[take..].iter().any(|&b| b) {
-        m |= 1;
-    }
-    let scale = (bits.len() - take) as i32;
-    (m as f64) * 2f64.powi(scale)
+    t.parse().unwrap_or(f64::NAN)
 }
 
 /// A number as text: the shortest digits that read back as the same number,
@@ -635,67 +552,15 @@ pub fn is_integer(x: f64) -> bool {
     x.is_finite() && x.trunc() == x
 }
 
-/// `Math.round`: half toward +∞ (`Math.round(-2.5)` is `-2`), and a negative
-/// that rounds to zero is `-0`. Not Rust's `round`, which goes half away
-/// from zero.
-pub fn math_round(x: f64) -> f64 {
-    if !x.is_finite() || x == 0.0 {
-        return x;
-    }
-    if x > 0.0 && x < 0.5 {
-        return 0.0;
-    }
-    if (-0.5..0.0).contains(&x) {
-        return -0.0;
-    }
-    let floor = x.floor();
-    if x - floor >= 0.5 { floor + 1.0 } else { floor }
-}
-
 /// `Math.sign`.
 pub fn math_sign(x: f64) -> f64 {
     if x.is_nan() || x == 0.0 { x } else { x.signum() }
 }
 
-/// `Number.prototype.toFixed(digits)`: the exact decimal value of the
-/// double, rounded half UP at `digits` places (`(0.25).toFixed(1)` is `0.3`,
-/// where Rust's `{:.1}` rounds half to even and prints `0.2`), and
-/// `String(x)` from 1e21 up.
+/// A number with exactly `digits` decimals: Rust's `{:.N}`, which rounds
+/// the double's exact value half to even (`0.25` → `0.2`).
 pub fn to_fixed(x: f64, digits: usize) -> String {
-    if x.is_nan() {
-        return "NaN".into();
-    }
-    if x.abs() >= 1e21 || x.is_infinite() {
-        return number_to_string(x);
-    }
-    let negative = x < 0.0;
-    // 1100 places hold any double's exact expansion (at most 1074), so this
-    // prints the value itself, unrounded.
-    let exact = format!("{:.1100}", x.abs());
-    let (int, frac) = exact.split_once('.').expect("a fixed-point print has a point");
-    let mut kept: Vec<u8> = int.bytes().chain(frac.bytes().take(digits)).collect();
-    let rest = &frac.as_bytes()[digits..];
-    if rest.first().is_some_and(|&d| d >= b'5') {
-        let mut i = kept.len();
-        loop {
-            if i == 0 {
-                kept.insert(0, b'1');
-                break;
-            }
-            i -= 1;
-            if kept[i] == b'9' {
-                kept[i] = b'0';
-            } else {
-                kept[i] += 1;
-                break;
-            }
-        }
-    }
-    let int_len = kept.len() - digits;
-    let text = String::from_utf8(kept).expect("digits are ASCII");
-    let body = if digits == 0 { text } else { format!("{}.{}", &text[..int_len], &text[int_len..]) };
-    // `(-0.01).toFixed(1)` is `-0.0`: the sign is the input's, not the digits'.
-    if negative { format!("-{body}") } else { body }
+    if x.is_finite() { format!("{x:.digits$}") } else { number_to_string(x) }
 }
 
 // ── JSON.stringify ────────────────────────────────────────────────────────────
@@ -957,55 +822,45 @@ mod tests {
             ("   ", 0.0),
             ("  12 ", 12.0),
             ("1e3", 1000.0),
-            ("0x10", 16.0),
-            ("0X1f", 31.0),
-            ("0o17", 15.0),
-            ("0b101", 5.0),
             (".5", 0.5),
             ("5.", 5.0),
             ("+.5e1", 5.0),
             ("-12.25", -12.25),
             ("Infinity", f64::INFINITY),
             ("-Infinity", f64::NEG_INFINITY),
-            ("\u{a0}12\u{feff}", 12.0),
-            ("0x1fffffffffffff1", 144115188075855860.0),
+            ("\u{a0}12\u{85}", 12.0),
         ];
         for (s, want) in cases {
             assert_eq!(string_to_number(s), *want, "{s:?}");
         }
-        for s in ["infinity", "inf", "nan", "NaN", "1_0", "-0x10", "0x", "1e", "e3", ".", "+", "12abc", "\u{85}12", "1 2"] {
+        // Version 5 reads no radix prefix and Rust's whitespace (U+0085 in,
+        // U+FEFF out).
+        for s in ["infinity", "inf", "nan", "NaN", "1_0", "-0x10", "0x10", "0o17", "0b101", "0x", "1e", "e3", ".", "+", "12abc", "\u{feff}12", "1 2"] {
             assert!(string_to_number(s).is_nan(), "{s:?}");
         }
         assert!(string_to_number("-0").is_sign_negative());
     }
 
+    /// Version 5 rounds the double's exact value half to even at the last
+    /// place (JavaScript's `toFixed` rounded half up: `0.25` → `0.3`).
     #[test]
-    fn math_round_is_half_toward_positive_infinity() {
-        assert_eq!(math_round(2.5), 3.0);
-        assert_eq!(math_round(-2.5), -2.0);
-        assert_eq!(math_round(-2.6), -3.0);
-        assert_eq!(math_round(0.49999999999999994), 0.0);
-        assert!(math_round(-0.4).is_sign_negative());
-        assert_eq!(math_round(4503599627370497.0), 4503599627370497.0);
-    }
-
-    #[test]
-    fn to_fixed_rounds_the_exact_value_half_up() {
-        assert_eq!(to_fixed(0.25, 1), "0.3");
+    fn to_fixed_is_rusts_fixed_point() {
+        assert_eq!(to_fixed(0.25, 1), "0.2");
         assert_eq!(to_fixed(1.45, 1), "1.4");
-        assert_eq!(to_fixed(0.05, 1), "0.1");
-        assert_eq!(to_fixed(2.5, 0), "3");
+        assert_eq!(to_fixed(2.5, 0), "2");
         assert_eq!(to_fixed(9.96, 1), "10.0");
         assert_eq!(to_fixed(1.2, 1), "1.2");
-        assert_eq!(to_fixed(1e21, 1), "1e+21");
+        assert_eq!(to_fixed(f64::INFINITY, 1), "Infinity");
     }
 
     #[test]
     fn strings_are_utf16_where_javascript_says_so() {
         assert_eq!(utf16_len("a😀"), 3);
-        assert_eq!(utf16_cmp("\u{FF61}", "😀"), Ordering::Greater);
-        assert_eq!(trim("\u{FEFF} x \u{2028}"), "x");
-        assert_eq!(trim("\u{85}x"), "\u{85}x");
+        // Texts order by code point (JavaScript ordered UTF-16 units, so
+        // U+FF61 sorted after an emoji).
+        assert!("\u{FF61}" < "😀");
+        assert_eq!(trim("\u{85} x \u{2028}"), "x");
+        assert_eq!(trim("\u{FEFF}x"), "\u{FEFF}x");
     }
 
     #[test]

@@ -95,7 +95,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
             other => Js::Number(js::utf16_len(&other.to_js_string()) as f64),
         },
         "abs" => Js::Number(a.to_number().abs()),
-        "round" => Js::Number(js::math_round(a.to_number())),
+        "round" => Js::Number(a.to_number().round()),
         "floor" => Js::Number(a.to_number().floor()),
         "ceil" => Js::Number(a.to_number().ceil()),
         "tostring" => if a.is_nullish() { Js::Null } else { Js::str(a.to_js_string()) },
@@ -200,7 +200,7 @@ fn figure_match(text: &str) -> Option<(String, Option<String>)> {
     }
     let number: String = chars[start..at].iter().collect();
     // `\s` is UTF-16 based, but every JavaScript space is a BMP character.
-    while at < chars.len() && js::is_js_space(chars[at]) {
+    while at < chars.len() && char::is_whitespace(chars[at]) {
         at += 1;
     }
     let word_end = chars[at..].iter().position(|c| !c.is_ascii_alphabetic()).map_or(chars.len(), |n| at + n);
@@ -256,7 +256,7 @@ fn compact_magnitude(abs: f64) -> String {
     let Some((threshold, suffix)) = COMPACT_TIERS.iter().find(|(t, _)| abs >= *t) else {
         return js::number_to_string(abs);
     };
-    let scaled = js::math_round((abs / threshold) * 10.0) / 10.0;
+    let scaled = ((abs / threshold) * 10.0).round() / 10.0;
     let digits = if js::is_integer(scaled) { js::number_to_string(scaled) } else { js::to_fixed(scaled, 1) };
     format!("{digits}{suffix}")
 }
@@ -282,7 +282,7 @@ fn group_thousands(int: &str) -> String {
 }
 
 fn grouped_magnitude(abs: f64) -> String {
-    let rounded = js::math_round(abs * 100.0) / 100.0;
+    let rounded = (abs * 100.0).round() / 100.0;
     let text = js::number_to_string(rounded);
     match text.split_once('.') {
         Some((int, frac)) => format!("{}.{frac}", group_thousands(int)),
@@ -379,7 +379,7 @@ fn digits_at(c: &[char], at: usize) -> (usize, i64) {
 }
 
 fn spaces_at(c: &[char], at: usize) -> usize {
-    at + c[at.min(c.len())..].iter().take_while(|&&ch| js::is_js_space(ch)).count()
+    at + c[at.min(c.len())..].iter().take_while(|&&ch| char::is_whitespace(ch)).count()
 }
 
 fn letters_at(c: &[char], at: usize) -> usize {
@@ -418,7 +418,7 @@ fn read_date_parts(value: &Js) -> Option<DateParts> {
         let rest = &c[end..];
         let tail_ok = rest.is_empty()
             || (separator == '-'
-                && (rest[0] == 'T' || js::is_js_space(rest[0]))
+                && (rest[0] == 'T' || char::is_whitespace(rest[0]))
                 && !rest[1..].iter().any(|&ch| matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}')));
         if tail_ok {
             return valid_parts(y, m, d);
@@ -694,7 +694,7 @@ fn to_stable_json(value: &Js) -> Js {
         Js::Object(object) => {
             let mut out = JsObject::new();
             let mut entries: Vec<&(String, Js)> = object.entries().iter().collect();
-            entries.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
             for (key, item) in entries {
                 out.set(key.clone(), to_stable_json(item));
             }
@@ -1086,17 +1086,19 @@ mod tests {
 
     #[test]
     fn flat_builtins() {
-        assert_eq!(text(call("trim", vec![s("\u{feff} x\u{a0}")])), "x");
+        assert_eq!(text(call("trim", vec![s("\u{85} x\u{a0}")])), "x");
+        assert_eq!(text(call("trim", vec![s("\u{feff} x")])), "\u{feff} x");
         assert_eq!(text(call("upper", vec![s("straße")])), "STRASSE");
         assert_eq!(text(call("lower", vec![s("ΣΑΣ")])), "σας");
         assert!(matches!(call("length", vec![s("a😀")]), Js::Number(n) if n == 3.0));
         assert!(matches!(call("length", vec![Js::Null]), Js::Number(n) if n == 0.0));
         assert!(matches!(call("length", vec![Js::Number(-1.5)]), Js::Number(n) if n == 4.0));
-        assert!(matches!(call("round", vec![s("-2.5")]), Js::Number(n) if n == -2.0));
+        // Half away from zero (JavaScript went half toward +∞: -2).
+        assert!(matches!(call("round", vec![s("-2.5")]), Js::Number(n) if n == -3.0));
         assert!(matches!(call("tonumber", vec![s("abc")]), Js::Null));
         assert!(matches!(call("tonumber", vec![s("")]), Js::Number(n) if n == 0.0));
         assert!(matches!(call("number", vec![s("")]), Js::Null));
-        assert!(matches!(call("number", vec![s("0x10")]), Js::Number(n) if n == 16.0));
+        assert!(matches!(call("number", vec![s("0x10")]), Js::Null));
         assert_eq!(text(call("tostring", vec![Js::Number(1e21)])), "1e+21");
         assert_eq!(text(call("tostring", vec![Js::array(vec![Js::Number(1.0), Js::Null])])), "1,");
         let Js::Array(parts) = call("split", vec![s(" a, ,b ,"), Js::Null]) else { panic!("a list") };

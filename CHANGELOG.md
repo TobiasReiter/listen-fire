@@ -254,6 +254,17 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - **Self-hosting: the engine's `builtins.function` request is gone.** A version 5 run never asks
   the TypeScript standard library for a reading; an unknown function fails the run
   (`MOVENG_RUNTIME: unknown built-in function`).
+- **ROUND rounds a half away from zero:** `ROUND(-2.5)` is `-3` (it was `-2`); `ROUND(2.5)` is
+  still `3`.
+- **A number read from text is a plain decimal.** `NUMBER("0x10")` is absent (it was 16);
+  `"0b101"` and `"0o17"` likewise. `"Infinity"`, `".5"` and `"5."` still read.
+- **Whitespace is Rust's.** TRIM and a number read from text strip U+0085 and no longer strip
+  U+FEFF (`TRIM("﻿ x")` keeps the mark); a regex's `\s` follows suit.
+- **Fixed decimals round a tie to even.** A figure with a fixed number of decimals (compact
+  numbers, a run's cost in its trace) rounds an exact tie to even: a cost of 0.03125 dollars
+  shows `$0.0312` (it showed `$0.0313`).
+- **Texts order by code point.** An ORDER BY, SORT or `<` over texts puts `"｡"` (U+FF61) before
+  an emoji; JavaScript ordered by UTF-16 unit and put it after.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

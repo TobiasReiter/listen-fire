@@ -82,7 +82,7 @@ fn duration_to_ms(spec: &Js) -> Option<f64> {
         'w' => 604_800_000.0,
         _ => return None,
     };
-    let amount = text[..text.len() - unit.len_utf8()].trim_end_matches(js::is_js_space);
+    let amount = text[..text.len() - unit.len_utf8()].trim_end_matches(char::is_whitespace);
     let (whole, fraction) = match amount.split_once('.') {
         Some((whole, fraction)) => (whole, Some(fraction)),
         None => (amount, None),
@@ -147,7 +147,7 @@ fn relational_order(left: &Js, right: &Js) -> Option<f64> {
         return Some(js::math_sign(l - r));
     }
     match (left, right) {
-        (Js::String(l), Js::String(r)) => Some(match js::utf16_cmp(l.as_form(), r.as_form()) {
+        (Js::String(l), Js::String(r)) => Some(match l.as_form().cmp(r.as_form()) {
             std::cmp::Ordering::Less => -1.0,
             std::cmp::Ordering::Equal => 0.0,
             std::cmp::Ordering::Greater => 1.0,

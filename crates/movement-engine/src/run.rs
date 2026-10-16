@@ -2644,7 +2644,7 @@ pub fn event_address_key(address: &EventAddress) -> String {
     if pins.is_empty() {
         return address.event.clone();
     }
-    pins.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
+    pins.sort_by(|(a, _), (b, _)| a.cmp(b));
     crate::js_string::to_json_text(&json!([address.event, pins]))
 }
 

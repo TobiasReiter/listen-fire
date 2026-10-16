@@ -520,11 +520,11 @@ impl<'a> Parser<'a> {
             let saved = self.at;
             self.at += 2;
             match self.hex4() {
-                Some(trail @ 0xDC00..=0xDFFF) => return Ok(0x10000 + ((u32::from(lead) - 0xD800) << 10) + (u32::from(trail) - 0xDC00)),
+                Some(trail @ 0xDC00..=0xDFFF) => return Ok(0x10000 + ((lead - 0xD800) << 10) + (trail - 0xDC00)),
                 _ => self.at = saved,
             }
         }
-        Ok(u32::from(lead))
+        Ok(lead)
     }
 
     /// Four hex digits at the cursor, consumed; nothing consumed otherwise.
@@ -767,7 +767,7 @@ fn is_word(u: u32) -> bool {
 }
 
 fn is_space(u: u32) -> bool {
-    char::from_u32(u32::from(u)).is_some_and(crate::js::is_js_space)
+    char::from_u32(u).is_some_and(char::is_whitespace)
 }
 
 fn is_line_terminator(u: u32) -> bool {
@@ -1111,7 +1111,9 @@ mod tests {
         assert_eq!(found(r"(?=(a+))a*b\1", "baaabac"), ["aba", "a"]);
         assert_eq!(found(r"(.*?)a(?!(a+)b\2c)\2(.*)", "baaabaac"), ["baaabaac", "ba", "undefined", "abaac"]);
         assert_eq!(found(r"\bfoo\b", "a foo."), ["foo"]);
-        assert_eq!(found(r"^\s+x$", "\u{feff}\u{a0} x"), ["\u{feff}\u{a0} x"]);
+        // `\s` is Rust's whitespace: U+0085 in, U+FEFF out.
+        assert_eq!(found(r"^\s+x$", "\u{85}\u{a0} x"), ["\u{85}\u{a0} x"]);
+        assert!(exec(r"^\s+x$", "\u{feff} x").unwrap().is_none());
         assert_eq!(found(r"a.c", "a\u{2028}c abc"), ["abc"]);
         assert_eq!(found(r"[^]", "\n"), ["\n"]);
         assert_eq!(found(r"x{2,3}", "xxxx"), ["xxx"]);
