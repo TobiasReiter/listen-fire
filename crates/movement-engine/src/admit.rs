@@ -1956,8 +1956,9 @@ impl<'c> Bound<'c> {
     /// (`n = make(l)`, `said = summarise(pick("a"))`); where the call runs
     /// as a call — a function's, a plugin's, a closure's, one through a
     /// value — and not as the built-in's expression it reads as
-    /// (`builtin_reading`), that slot is the call itself, walked where the
-    /// statement or argument holds it, so it is skipped.
+    /// (`builtin_reading`), that slot is the call and its arguments, each
+    /// read where the statement or argument holds it: what it hands back is
+    /// noted, but nothing in it is refused as a value.
     fn nested_movement_calls(&mut self, statement: &Statement) {
         let Some(callees) = self.callees else { return };
         if callees.language_version < 3 {
@@ -1965,7 +1966,8 @@ impl<'c> Bound<'c> {
         }
         let runs_as_call = |callee: &str| self.callee(callee).is_some() || self.plugin_kind(callee).is_some() || self.calls_closure(callee) || self.value_callee(callee);
         let readings: Vec<ast::Span> = call_readings(statement).into_iter().filter(|(callee, _)| runs_as_call(callee)).map(|(_, span)| span).collect();
-        for slot in direct_slots(statement).into_iter().filter(|slot| !readings.contains(&slot.span)) {
+        for slot in direct_slots(statement) {
+            let own_reading = readings.contains(&slot.span);
             let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { continue };
             let runs = |call: &movement_parser::tree::MExpr| match call {
                 movement_parser::tree::MExpr::Call { callee, .. } => matches!(callee.as_ref(), movement_parser::tree::MExpr::Name { name, .. } if self.callee(&name.text).is_some()),
@@ -1976,7 +1978,7 @@ impl<'c> Bound<'c> {
                 if self.callee(&call.callee).is_none() {
                     continue;
                 }
-                if self.known_call_kind(&call) != Some(Kind::Value) {
+                if self.known_call_kind(&call) != Some(Kind::Value) && !own_reading {
                     self.unknown_calls.push(call.span);
                 }
                 let text = movement_parser::util::utf16::Utf16::new(&slot.raw).text(at.start, at.end);
@@ -5352,7 +5354,8 @@ mod tests {
         let program = movement_parser::stmt::parse_program(source, language_version, false).expect("the test's program parses");
         let declared: Vec<&ast::MovementDeclaration> = program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
         let picked = entry_of(&declared, Some(entry), language_version);
-        refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None), &Libraries::default()).reasons
+        // As a run walks it: slot text re-read under the run's version.
+        movement_parser::surface::with_version(language_version, || refusals(&program, &reachable(&program, Some(entry), language_version), picked, language_version, &Plugins(None), &Libraries::default()).reasons)
     }
 
     /// A movement nothing the entry reaches names is not walked: what it
@@ -6299,6 +6302,11 @@ mod tests {
                 (make, "  n = make(t: msg.`subject`)\n  x = n.`title`"),
                 (keep, "  k = keep(msg)\n  keep(msg)"),
                 (pick, "  co = pick(\"Acme\")\n  write co { name: \"b\" }"),
+                // A closure's call handing back a function's value: the
+                // function's call in the closure's return is read for what
+                // it hands back.
+                ("stamp(t: <text>) {\n  return t\n}\n", "  k = (v: <text>) => stamp(v)\n  x = k(\"a\")\n  write crm-[:notes]-> { body: x }"),
+                ("stamp(t: <text>) {\n  return t\n}\n", "  k = (v: <text>) => {\n    await sleep(1h)\n    return stamp(v)\n  }\n  x = k(\"a\")\n  write crm-[:notes]-> { body: x }"),
             ] {
                 assert_eq!(reasons_of(&file(helper, body), "m", version), none, "version {version}: {body}");
             }
@@ -6309,3 +6317,4 @@ mod tests {
         assert_eq!(reasons_of(&nested, "m", 5), ["nested_movement_call"]);
     }
 }
+
