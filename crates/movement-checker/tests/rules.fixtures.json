@@ -3106,6 +3106,17 @@
     "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
     "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
    ]
+  },
+  {
+   "name": "a write off a binding nothing typed is the internal error; a name bound to a write the checker could not type is a record",
+   "snapshot": "delete",
+   "version": 4,
+   "source": "import { crm } from adapters\nbroken = connect crm using nothing at all\nmovement m() {\n  w = write broken-[:company]-> { name: \"a\" }\n  write w-[:people]-> { name: \"b\" }\n  write broken { name: \"c\" }\n}\n",
+   "expected": [
+    "MOV_EXPR_PARSE 2:18-2:42 Unexpected 'crm'",
+    "MOV_INTERNAL_UNTYPED_BINDING 4:13-4:33 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program",
+    "MOV_INTERNAL_UNTYPED_BINDING 6:9-6:15 internal: 'broken' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program"
+   ]
   }
  ]
 }

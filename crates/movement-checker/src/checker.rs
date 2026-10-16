@@ -175,6 +175,15 @@ pub struct Bound {
     pub arms_each_return: Option<crate::types::position::ReturnShape>,
 }
 
+impl Bound {
+    /// A record bound on the node plane: its type, or a record nobody could
+    /// type (`bindingPlane: 'node'` with or without a `posType`).
+    fn on_node_plane(pos: Option<crate::types::Position>) -> Bound {
+        let record = pos.is_none();
+        Bound { pos, record, ..Bound::default() }
+    }
+}
+
 impl<'c> Checker<'c> {
     /// Program text a message suggests, in this program's spelling.
     pub fn code(&self, text: &str) -> String {
@@ -435,17 +444,17 @@ impl<'c> Checker<'c> {
             }
             RValue::Write { write } => {
                 let handle = self.check_write(write, scope, name, name.is_some());
-                return Bound { pos: handle, ..Bound::default() };
+                return Bound::on_node_plane(handle);
             }
             RValue::Match { r#match } => {
                 self.check_match(r#match, scope);
                 let handle = self.check_match_rules(r#match, scope, name, false);
                 let handle = if self.version >= 4 { handle.map(|h| crate::types::Position::MaybeEmpty(Box::new(h))) } else { handle };
-                return Bound { pos: handle, ..Bound::default() };
+                return Bound::on_node_plane(handle);
             }
             RValue::Link { link } => {
                 let handle = self.check_link(link, scope, name);
-                return Bound { pos: handle, ..Bound::default() };
+                return Bound::on_node_plane(handle);
             }
             RValue::Extract { extract } => self.check_extract(extract, scope, name, span),
             RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
@@ -504,7 +513,7 @@ impl<'c> Checker<'c> {
                     }
                     None => walk.and_then(|w| w.landed),
                 };
-                return Bound { pos, ..Bound::default() };
+                return Bound::on_node_plane(pos);
             }
             RValue::Expr { expr } => {
                 self.check_expr_slot_as(expr, scope, name.is_some());
