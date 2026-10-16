@@ -282,6 +282,7 @@ The family is also the Rust module (`src/families/<family>.rs`).
 | MOV_ARTIFICIAL_EDGE_UNKNOWN | typing.ts:stepArtificialEdge | 0 |
 | MOV_AWAIT_IMPURE_WHERE | typing.ts:stepEdge ×2 | 0 |
 | MOV_AWAIT_REQUIRED | typing.ts:stepEdge | 0 |
+| MOV_EVENT_UNDESCRIBED | typing.ts:reportUndescribedEvent, check.ts:reportUndescribedEvent | 394 |
 | MOV_HEAD_NOT_A_POSITION | check.ts:checkPathHead | 18 |
 | MOV_HOP_CONFIG_UNREAD | check.ts:checkWalkKeepsWhatIsWritten | 3 |
 | MOV_HOP_FILTER_ENGINE | typing.ts:gateHopCapability | 6 |

@@ -27,6 +27,7 @@
 //! - MOV_SHAPE_HOP_RETIRED
 //! - MOV_TRANSFORM_HOP_RETIRED
 //! - MOV_TRAVERSE_UNKNOWN_EDGE
+//! - MOV_EVENT_UNDESCRIBED
 //! - MOV_UNDESCRIBED_POSITION
 //! - MOV_UNKNOWN_POSITION
 //! - MOV_UNKNOWN_PROPERTY
@@ -229,6 +230,35 @@ fn edge_is_readable(edge: &EdgeSchema) -> bool {
 /// ` — it has: a, b` when there is anything to list.
 fn it_has(available: &[&str]) -> String {
     if available.is_empty() { String::new() } else { format!(" — it has: {}", available.join(", ")) }
+}
+
+/// `UndescribedEvent`: the event a movement's parameter is typed against
+/// (`<runs-[:Invocation]->>`) when the catalog holds no description of the
+/// instance it is on, so the parameter has no position type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UndescribedEvent {
+    pub instance: String,
+    pub event: String,
+}
+
+/// MOV_EVENT_UNDESCRIBED for a read or write off `param`, at `span`
+/// (`undescribedEventSeverity`, `undescribedEventMessage`): refused from
+/// version 5; a warning in 3 and 4, whose programs checked clean and ran (the
+/// read was null); unsaid before 3.
+pub fn undescribed_event_diagnostic(version: u32, param: &str, event: &UndescribedEvent, span: movement_parser::ast::Span) -> Option<crate::diagnostic::Diagnostic> {
+    if version < 3 {
+        return None;
+    }
+    let message = format!(
+        "'{instance}-[:{ev}]->' has no description in the catalog, so a read or write off '{param}' can't be checked — it would be null at run time. The catalog describes it from the system behind '{instance}': check that its connection resolves and the system answers, then check again.",
+        instance = event.instance,
+        ev = event.event,
+    );
+    let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::EVENT_UNDESCRIBED, message, span);
+    if version < 5 {
+        diagnostic.severity = Some(Severity::Warning);
+    }
+    Some(diagnostic)
 }
 
 /// `reportUndescribed`: true when nothing can be checked against `schema`
@@ -1362,4 +1392,39 @@ fn meta_hop_retired_message(label: &str) -> String {
         return format!("{lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files");
     }
     format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(…)')")
+}
+
+impl crate::checker::Checker<'_> {
+    /// A movement parameter typed against an event on an instance the
+    /// catalog has no description of (`checkMovement`): nothing types it, so
+    /// what is read or written off it is said where it is.
+    pub(crate) fn note_undescribed_event(&mut self, body: ScopeId, param: &str, type_: &movement_parser::ast::ParamTypeRef, graph: Option<crate::scope::SymbolId>) {
+        let movement_parser::ast::ParamTypeRef::Name(reference) = type_ else { return };
+        let (Some(hops), Some(graph)) = (&reference.hops_raw, graph) else { return };
+        let symbol = self.scopes.symbol(graph);
+        if symbol.kind != crate::scope::SymbolKind::Instance || symbol.instance.as_ref().is_some_and(|i| i.schema.is_some()) {
+            return;
+        }
+        // An adapter the catalog doesn't know is its own error already.
+        if !symbol.adapter.as_deref().is_some_and(|adapter| self.catalog.adapter(adapter).is_some()) {
+            return;
+        }
+        let Some(address) = crate::types::event_address::event_address_of_hops(hops) else { return };
+        let event = UndescribedEvent { instance: reference.graph.clone(), event: address.event };
+        if let Some(id) = self.scopes.scope(body).symbols.get(param).copied() {
+            self.scopes.symbol_mut(id).undescribed_event = Some(event);
+        }
+    }
+
+    /// `reportUndescribedEvent` (check.ts): a walk or a write off `name`.
+    pub(crate) fn report_undescribed_event_head(&mut self, id: crate::scope::SymbolId, name: &str, span: movement_parser::ast::Span) {
+        let symbol = self.scopes.symbol(id);
+        if symbol.types.pos.is_some() {
+            return;
+        }
+        let Some(event) = symbol.undescribed_event.clone() else { return };
+        if let Some(diagnostic) = undescribed_event_diagnostic(self.version, name, &event, span) {
+            self.push(diagnostic);
+        }
+    }
 }
