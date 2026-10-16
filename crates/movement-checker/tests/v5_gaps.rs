@@ -80,6 +80,7 @@ fn same(new: &str, old: &str) {
 fn fail_is_the_error_statement() {
     same("  if (t == null) {\n    fail(\"no text\")\n  }\n  y = Text.upper(t)", "  if t == NULL {\n    ERROR(\"no text\")\n  }\n  y = UPPER(t)");
     same("  fail(\"always\")", "  ERROR(\"always\")");
+    same("  if (t == null) { fail(\"no text\") }", "  if t == NULL { ERROR(\"no text\") }");
     let refused = check(&v4("  ERROR(\"x\")"), 5);
     let error = refused.iter().find(|d| d.message.contains("`ERROR`")).unwrap();
     assert_eq!(error.fix.as_ref().unwrap()["edits"][0]["text"], "fail");
