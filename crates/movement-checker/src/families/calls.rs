@@ -548,6 +548,11 @@ impl Checker<'_> {
     /// not a value.
     pub fn runs_as_call(&self, call: &MExpr, scope: ScopeId) -> bool {
         let MExpr::Call { callee, .. } = call else { return false };
+        // A package's member runs as the plugin it is; one it lacks is read
+        // as a call too, so the call's check names the package's members.
+        if self.package_member_callee(callee, scope).is_some() {
+            return true;
+        }
         let MExpr::Name { name, .. } = callee.as_ref() else { return false };
         match self.resolve_callee(&name.text, scope) {
             Callee::Declared(declared) => match self.scopes.resolve(scope, &declared) {
@@ -560,6 +565,18 @@ impl Checker<'_> {
             Callee::Builtin(builtin) => builtin_form(builtin) != BuiltinForm::Value,
             Callee::Unknown => false,
         }
+    }
+
+    /// `web.fetchUrl` where an expression calls it: the member of a package
+    /// imported here, as the one dotted name it is bound to. A local binding
+    /// is never a package (design §4.3).
+    pub fn package_member_callee(&self, callee: &MExpr, scope: ScopeId) -> Option<String> {
+        let MExpr::Member { object, property, .. } = callee else { return None };
+        let MExpr::Name { name, .. } = object.as_ref() else { return None };
+        if name.quoted || property.quoted || !self.packages.contains_key(&name.text) || !matches!(self.scopes.resolve(scope, &name.text), Resolution::Unknown) {
+            return None;
+        }
+        Some(movement_parser::catalog::packages::member_local(&name.text, &property.text))
     }
 
     /// `hoistNestedCalls`: each call the engine runs inside the slot is
@@ -1350,12 +1367,17 @@ impl Checker<'_> {
     /// `checkCall`: a function's call — its callee, its arity, and its
     /// arguments against the parameters they bind.
     pub fn check_call(&mut self, call: &CallStatement, scope: ScopeId) -> crate::types::position::ReturnShape {
+        let bound = self.bind_plugin_call(call, scope);
+        let call = bound.as_ref().unwrap_or(call);
         let mut params = None;
         let mut value = crate::types::position::ReturnShape::default();
         let callee = self.callee_name(&call.callee, scope);
         let resolution = self.scopes.resolve(scope, &callee);
+        let unknown_member = matches!(resolution, Resolution::Unknown).then(|| self.unknown_package_member(&call.callee)).flatten();
+        if let Some(message) = unknown_member {
+            self.report(codes::V5_UNKNOWN_MEMBER, message, call.span);
         // Before version 3 a built-in is not a callee (no standard library).
-        if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
+        } else if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
             match resolution {
                 Resolution::Found(id) => (params, value) = self.check_callee(call, id, scope),
                 Resolution::Unknown
@@ -1373,7 +1395,7 @@ impl Checker<'_> {
             && first.name().is_some()
         {
             let at = call_arg_span(first).start;
-            self.named_orders.insert((at.line, at.col), names.clone());
+            self.named_orders.insert((at.line, at.col), crate::families::typed_spelling::ArgOrder { positional: names.clone(), settings: None });
         }
         self.check_argument_bindings(&call.callee, &call.args, names.as_deref(), call.span, false);
         // A plugin's argument values are held to what it declares it takes.

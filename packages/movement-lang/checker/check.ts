@@ -200,6 +200,15 @@ import {
   type PluginOutput,
   type PluginSpec,
   pluginOutputUnder,
+  bindPluginArgs,
+  bindStageArgs,
+  callArgSpan,
+  memberLocal,
+  packageMembers,
+  type PackageMember,
+  pluginArgMisfitMessage,
+  pluginPositionalParams,
+  type PluginCallSite,
   type PositionSchema,
   type EdgeSchema,
   SUPPRESS_SELF_KEY,
@@ -2119,22 +2128,42 @@ function rawPath(path: PathHead): string {
   return spellPathHead(path);
 }
 
+/** A callee's parameters as a call passes them from version 5: in order,
+ *  then (a plugin's) the names its settings record takes — absent for a
+ *  function, whose every parameter is positional. */
+interface ArgOrder {
+  positional: string[];
+  settings?: string[];
+}
+
+/** A plugin's parameters as a call passes them from version 5: by position,
+ *  then the names its settings record takes. */
+function pluginArgOrder(spec: PluginSpec, site: PluginCallSite): ArgOrder {
+  const positional = pluginPositionalParams(spec, site);
+  const fed = site === 'plain' ? (spec.fedArgs ?? []).map(f => f.name) : [];
+  return { positional, settings: [...spec.args, ...fed].filter(a => !positional.includes(a)) };
+}
+
 /** The parser's finding for a call with named arguments (version 5), its
- *  fix the arguments in the order of the callee's parameters: kept only for
- *  a callee whose parameters the check saw (a function, not a plugin), and
- *  without a fix where the names do not match the parameters one for one
+ *  fix the arguments in the order of the callee's parameters, a plugin's
+ *  settings in a trailing record: kept only for a callee whose parameters the
+ *  check saw, and without a fix where the names do not match the parameters
  *  (the call's own diagnostics say why). */
-function positional(f: SpellingFinding, named: NamedCall, orders: ReadonlyMap<string, string[]>): Diagnostic[] {
+function positional(f: SpellingFinding, named: NamedCall, orders: ReadonlyMap<string, ArgOrder>): Diagnostic[] {
   const first = named.args[0];
   if (first === undefined) return [];
-  const params = orders.get(`${first.at.line}:${first.at.col}`);
-  if (params === undefined) return [];
-  const ordered = params.map(p => named.args.find(a => a.name === p)?.text);
-  const texts = ordered.flatMap(t => (t === undefined ? [] : [t]));
+  const order = orders.get(`${first.at.line}:${first.at.col}`);
+  if (order === undefined) return [];
+  const ordered = order.positional.map(p => named.args.find(a => a.name === p));
+  const settings = named.args.filter(a => !order.positional.includes(a.name));
+  const settles = order.settings === undefined ? settings.length === 0 : settings.every(a => order.settings?.includes(a.name) === true);
+  const found = ordered.flatMap(a => (a === undefined ? [] : [a]));
+  const texts = found.map(a => a.text);
+  if (settings.length > 0) texts.push(`{ ${settings.map(a => `${a.name}: ${a.text}`).join(', ')} }`);
   // Safe when the arguments keep the order they were written in: moved,
   // they would be evaluated in another order.
-  const kept = texts.every((t, i) => t === named.args[i]?.text);
-  const fix = texts.length === params.length && texts.length === named.args.length
+  const kept = [...found, ...settings].every((a, i) => a === named.args[i]);
+  const fix = settles && found.length === ordered.length && found.length + settings.length === named.args.length
     ? { edits: [{ span: f.span, text: texts.join(', ') }], ...(kept ? { safe: true as const } : {}) }
     : undefined;
   return [{ code: f.code, message: f.message, span: f.span, ...(fix ? { fix } : {}) }];
@@ -2817,22 +2846,6 @@ function valueOfReturn(shape: ReturnShape): FieldType | undefined {
   return shape.posType !== undefined ? recordOf(shape.posType) : undefined;
 }
 
-/** Where an argument is written, whatever form it takes. */
-function callArgSpan(arg: CallArg): Span {
-  switch (arg.kind) {
-    case 'expr':
-      return arg.expr.span;
-    case 'write':
-      return arg.write.span;
-    case 'node':
-      return arg.node.span;
-    case 'call':
-      return arg.call.span;
-    case 'closure':
-    case 'type':
-      return arg.span;
-  }
-}
 
 /**
  * Does a supplied position fit a required one BY STRUCTURE?
@@ -3925,10 +3938,14 @@ class Checker {
    *  span: the message and fix the checker, which knows the type, gives them
    *  instead (`typed_spelling`). */
   readonly respelled = new Map<string, { message: string; fix: DiagnosticFix }>();
-  /** A call with named arguments to a function whose parameters are known
-   *  (version 5): its parameters in order, by where its first argument's
-   *  value starts — what the parser's finding for it needs for its fix. */
-  readonly namedOrders = new Map<string, string[]>();
+  /** A call with named arguments to a function or a plugin whose parameters
+   *  are known (version 5): its parameters in order, by where its first
+   *  argument's value starts — what the parser's finding for it needs for
+   *  its fix. */
+  readonly namedOrders = new Map<string, ArgOrder>();
+  /** Each plugin package imported (version 5), by its local name: the members
+   *  it binds as `web.fetchUrl` (`declarePackage`). */
+  readonly packages = new Map<string, PackageMember[]>();
   /** The old spellings (language version 5) of the libraries this file
    *  imports, each at the import that pulled its library in. Kept apart from
    *  `diagnostics`: a finding's message names the old spelling, which the
@@ -5730,6 +5747,7 @@ class Checker {
     };
     for (const { name, alias } of statement.names) {
       const local = alias ?? name;
+      if (this.declarePackage(statement, name, local, scope)) continue;
       let symbol: ScopeSymbol;
       if (statement.source.kind === 'file') {
         const resolved = fileImports
@@ -5776,6 +5794,61 @@ class Checker {
         );
       }
     }
+  }
+
+  /** A package imported from plugins under version 5 (design §2.10): each
+   *  member declared as the plugin it is, under `web.fetchUrl`. False when the
+   *  import names no package, which is then an import of one plugin. */
+  private declarePackage(statement: ImportStatement, name: string, local: string, scope: Scope): boolean {
+    if (!since(this.languageVersion, 5) || statement.source.kind !== 'builtin' || statement.source.namespace !== 'plugins') {
+      return false;
+    }
+    const members = packageMembers(this.catalog, name);
+    if (members.length === 0) return false;
+    for (const member of members) {
+      const memberName = memberLocal(local, member.name);
+      const symbol: ScopeSymbol = { name: memberName, importedName: member.key, kind: 'plugin', span: statement.span };
+      const existing = this.declareAuthored(scope, symbol, statement.span);
+      if (existing) {
+        this.report(
+          DiagnosticCodes.IMPORT_DUPLICATE,
+          `Duplicate import '${memberName}' — already declared as ${describeKind[existing.kind]}`,
+          statement.span,
+        );
+      }
+    }
+    // The package's own name binds no value: only its members are names.
+    scope.pending.delete(local);
+    this.packages.set(local, members);
+    return true;
+  }
+
+  /** `web.nope(…)`: a package imported here has no member of that name
+   *  (MOV_V5_UNKNOWN_MEMBER), its members listed. Undefined when the head
+   *  names no package. */
+  private unknownPackageMember(written: string): string | undefined {
+    const dot = written.indexOf('.');
+    if (dot < 0) return undefined;
+    const head = written.slice(0, dot);
+    const member = written.slice(dot + 1);
+    const members = this.packages.get(head);
+    if (members === undefined) return undefined;
+    const names = members.map(m => m.name);
+    const closest = closestByEditDistance(member, names);
+    const hint = closest !== undefined ? ` — did you mean \`${closest}\`?` : '';
+    return `\`${head}\` has no member \`${member}\` (its members: ${names.map(n => `\`${n}\``).join(', ')})${hint}`;
+  }
+
+  /** `web.fetchUrl` where an expression calls it: the member of a package
+   *  imported here, as the one dotted name it is bound to. A local binding is
+   *  never a package (design §4.3). */
+  private packageMemberCallee(callee: MExpr, scope: Scope): string | undefined {
+    if (callee.kind !== 'member' || callee.object.kind !== 'name') return undefined;
+    const head = callee.object.name;
+    if (head.quoted || callee.property.quoted || !this.packages.has(head.text) || scope.resolve(head.text).kind !== 'unknown') {
+      return undefined;
+    }
+    return memberLocal(head.text, callee.property.text);
   }
 
   // ── Assignment ──
@@ -6356,6 +6429,11 @@ class Checker {
     resolution: Exclude<Resolution, { kind: 'found' }>,
     scope: Scope,
   ): void {
+    const unknownMember = resolution.kind === 'unknown' ? this.unknownPackageMember(name) : undefined;
+    if (unknownMember !== undefined) {
+      this.report(DiagnosticCodes.V5_UNKNOWN_MEMBER, unknownMember, span);
+      return;
+    }
     if (
       resolution.kind !== 'unknown'
       || before(this.languageVersion, 3)
@@ -6457,6 +6535,9 @@ class Checker {
 
   /** Whether a call in an expression is one the engine runs (./nested_calls.ts). */
   private runsAsCall(call: CallNode, scope: Scope): boolean {
+    // A package's member runs as the plugin it is; one it lacks is read as a
+    // call too, so the call's check names the package's members.
+    if (this.packageMemberCallee(call.callee, scope) !== undefined) return true;
     const callScope = this.callScope(scope);
     return runsAsCall(
       call,
@@ -11419,10 +11500,11 @@ class Checker {
    * name to nothing.
    */
   private checkCall(
-    statement: CallStatement,
+    written: CallStatement,
     scope: Scope,
     binding?: string,
   ): ReturnShape {
+    const statement = this.bindPluginCall(written, scope) ?? written;
     const resolution = this.calleeResolution(statement.callee, scope);
     const recorded = this.recordNode<RecordedCall>({
       kind: 'call',
@@ -11491,7 +11573,7 @@ class Checker {
     const first = statement.args[0];
     if (since(this.languageVersion, 5) && params !== undefined && first !== undefined && first.name !== undefined) {
       const at = callArgSpan(first).start;
-      this.namedOrders.set(`${at.line}:${at.col}`, params.map(p => p.name));
+      this.namedOrders.set(`${at.line}:${at.col}`, { positional: params.map(p => p.name) });
     }
     const bound = this.checkArgumentBindings({
       callee: statement.callee,
@@ -14863,7 +14945,10 @@ class Checker {
   private checkPluginCall(plugin: PluginCall, scope: Scope, fields: ThroughFieldsContext): void {
     const resolution = scope.resolve(plugin.plugin);
     let spec;
-    if (resolution.kind !== 'found') {
+    const unknownMember = resolution.kind === 'unknown' ? this.unknownPackageMember(plugin.plugin) : undefined;
+    if (unknownMember !== undefined) {
+      this.report(DiagnosticCodes.V5_UNKNOWN_MEMBER, unknownMember, plugin.span);
+    } else if (resolution.kind !== 'found') {
       this.reportResolutionFailure(plugin.plugin, plugin.span, resolution);
     } else if (resolution.symbol.kind !== 'plugin') {
       this.report(
@@ -14877,9 +14962,10 @@ class Checker {
     // A stage is plain function application — the same call, in the position
     // that feeds the extraction. So it folds the same row.
     this.absorbPluginRow(spec);
-    const supplied = new Set(plugin.args.map(arg => arg.name));
+    const args = this.bindPluginStage(plugin, spec);
+    const supplied = new Set(args.map(arg => arg.name));
     this.reportPluginMissingArgs(plugin.plugin, spec, supplied, plugin.span);
-    for (const arg of plugin.args) {
+    for (const arg of args) {
       this.reportPluginBadArg(plugin.plugin, spec, arg.name, arg.value.span);
       // Held to what the plugin takes exactly as a plain call's argument is:
       // a stage is the same call, and the engine hands it the same value.
@@ -14896,6 +14982,26 @@ class Checker {
         span: arg.value.span,
       });
     }
+  }
+
+  /**
+   * A stage's arguments by position (version 5), as the named ones versions
+   * 1–4 write, each misfit reported. A stage still written with named
+   * arguments leaves the plugin's order for the parser's finding's fix.
+   */
+  private bindPluginStage(plugin: PluginCall, spec: PluginSpec | undefined): NamedArg[] {
+    if (spec === undefined || before(this.languageVersion, 5)) return plugin.args;
+    const first = plugin.args[0];
+    if (first !== undefined) {
+      const at = first.value.span.start;
+      this.namedOrders.set(`${at.line}:${at.col}`, pluginArgOrder(spec, 'stage'));
+    }
+    const bound = bindStageArgs(spec, plugin);
+    const positional = pluginPositionalParams(spec, 'stage');
+    for (const misfit of bound.misfits) {
+      this.report(DiagnosticCodes.THROUGH_BAD_ARG, pluginArgMisfitMessage(misfit, plugin.plugin, positional), misfit.span);
+    }
+    return bound.args;
   }
 
   /**
@@ -14959,6 +15065,32 @@ class Checker {
   }
 
   /**
+   * A plugin's call with arguments by position (version 5), as the named call
+   * versions 1–4 write, each misfit reported; undefined where there is
+   * nothing to bind. A call still written with named arguments leaves the
+   * plugin's order for the parser's finding's fix.
+   */
+  private bindPluginCall(statement: CallStatement, scope: Scope): CallStatement | undefined {
+    if (before(this.languageVersion, 5)) return undefined;
+    const resolution = this.calleeResolution(statement.callee, scope);
+    if (resolution.kind !== 'found' || resolution.symbol.kind !== 'plugin') return undefined;
+    const spec = this.catalog.plugin(resolution.symbol.importedName ?? statement.callee);
+    const first = statement.args[0];
+    if (spec === undefined || first === undefined) return undefined;
+    if (first.name !== undefined) {
+      const at = callArgSpan(first).start;
+      this.namedOrders.set(`${at.line}:${at.col}`, pluginArgOrder(spec, 'plain'));
+      return undefined;
+    }
+    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const positional = pluginPositionalParams(spec, 'plain');
+    for (const misfit of bound.misfits) {
+      this.report(DiagnosticCodes.THROUGH_BAD_ARG, pluginArgMisfitMessage(misfit, statement.callee, positional), misfit.span);
+    }
+    return { ...statement, args: bound.args };
+  }
+
+  /**
    * `vc_url_retrieval(email: @user_email)` written as an ordinary call — the
    * one-function-sort ruling, where a plugin is a function whose body isn't
    * visible and whose DECLARED row says what calling it does.
@@ -14972,9 +15104,11 @@ class Checker {
   private checkPluginApplication(statement: CallStatement, symbol: ScopeSymbol, scope: Scope): ReturnShape {
     const spec = this.catalog.plugin(symbol.importedName ?? statement.callee);
     this.absorbPluginRow(spec);
-    // A plugin's parameters are a registry's flat config, in no order anyone
-    // designed — so there is no position for an argument to take. Named only.
-    if (isPositionalCall(statement.args)) {
+    // Before version 5 a plugin's parameters are a registry's flat config, in
+    // no order anyone designed — so there is no position for an argument to
+    // take. Named only. From 5 they are bound by position before this
+    // (`bindPluginCall`).
+    if (before(this.languageVersion, 5) && isPositionalCall(statement.args)) {
       this.report(
         DiagnosticCodes.PLUGIN_ARGS_NAMED,
         `'${statement.callee}' is a plugin, and a plugin's arguments are named — write each as '<parameter>: <value>'${spec !== undefined && spec.args.length > 0 ? ` (it takes: ${spec.args.join(', ')})` : ''}`,
@@ -15238,7 +15372,7 @@ class Checker {
     if (unfed.length > 0) {
       this.report(
         DiagnosticCodes.PLUGIN_FED_BY_EXTRACTION,
-        `'${statement.callee}' is missing ${unfed.length === 1 ? 'the argument' : 'the arguments'} ${unfed.map(fed => `'${fed.name}'`).join(', ')} — inside a 'through [ … ]' the extraction supplies ${unfed.length === 1 ? 'it' : 'them'}, so a call on its own has to say ${unfed.length === 1 ? 'it' : 'them'} (\`${statement.callee}(${unfed.map(fed => `${fed.name}: …`).join(', ')})\`).`,
+        `'${statement.callee}' is missing ${unfed.length === 1 ? 'the argument' : 'the arguments'} ${unfed.map(fed => `'${fed.name}'`).join(', ')} — inside a 'through [ … ]' the extraction supplies ${unfed.length === 1 ? 'it' : 'them'}, so a call on its own has to say ${unfed.length === 1 ? 'it' : 'them'} (\`${statement.callee}(${unfed.map(fed => (since(this.languageVersion, 5) ? fed.name : `${fed.name}: …`)).join(', ')})\`).`,
         statement.span,
       );
       return true;

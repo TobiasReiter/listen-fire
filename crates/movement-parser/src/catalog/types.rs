@@ -608,6 +608,10 @@ pub struct PluginSpec {
     pub output: Option<PluginOutput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub earlier_outputs: Option<Vec<EarlierOutput>>,
+    /// The package tag it is a member of (`@lf/web`), matched exactly
+    /// (crate::catalog::packages); absent when it is in none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
 }
 
 impl PluginSpec {

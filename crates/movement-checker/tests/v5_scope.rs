@@ -45,7 +45,7 @@ fn under_4_a_library_has_no_spelling_findings() {
     assert!(found.iter().all(|d| d.code != "MOV_V5_SPELLING"), "{found:#?}");
 }
 
-const PLUGINS: &str = r#"{"adapters":{},"credentials":{},"plugins":{"fetch_url":{"args":["url"]}}}"#;
+const PLUGINS: &str = r#"{"adapters":{},"credentials":{},"plugins":{"fetch_url":{"args":["url"],"requiredArgs":["url"]}}}"#;
 
 fn codes_of(found: &[Diagnostic]) -> Vec<&str> {
     found.iter().map(|d| d.code.as_str()).collect()
@@ -53,17 +53,17 @@ fn codes_of(found: &[Diagnostic]) -> Vec<&str> {
 
 #[test]
 fn a_plugin_is_imported_by_its_exact_camel_case_name_under_5() {
-    let new = "import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(url: u)\n}";
+    let new = "import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(u)\n}";
     let old = "import { fetch_url } from plugins\nmovement go(u: <text>) {\n  p = fetch_url(url: u)\n}";
     assert_eq!(codes_of(&check_with(new, 5, PLUGINS)), codes_of(&check_with(old, 4, PLUGINS)));
     // Under its own name as an alias, too.
-    let aliased = "import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(url: u)\n}";
+    let aliased = "import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(u)\n}";
     assert_eq!(codes_of(&check_with(aliased, 5, PLUGINS)), codes_of(&check_with(old, 4, PLUGINS)));
 }
 
 #[test]
 fn the_catalog_s_key_is_the_old_spelling_under_5() {
-    let old = "import { fetch_url } from plugins\nfunction go(u: <text>) {\n  p = fetch_url(url: u)\n}";
+    let old = "import { fetch_url } from plugins\nfunction go(u: <text>) {\n  p = fetch_url(u)\n}";
     let found = check_with(old, 5, PLUGINS);
     let spelling: Vec<_> = found.iter().filter(|d| d.code == "MOV_V5_SPELLING").collect();
     assert_eq!(spelling.len(), 1, "{found:#?}");

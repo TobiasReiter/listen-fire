@@ -135,6 +135,11 @@ import {
   treeOfSlot,
   valueChildren,
   withValueChildren,
+  bindPluginArgs,
+  memberLocal,
+  packageMembers,
+  pluginArgMisfitMessage,
+  pluginPositionalParams,
 } from 'movement-lang';
 import type {
   CallNode,
@@ -152,6 +157,7 @@ import type {
   MembersExpression,
   ArmExpression,
   CallArg,
+  PluginSpec,
   CallPosition,
   CallReading,
   CallScope,
@@ -4198,6 +4204,14 @@ class Interpreter {
           // name means something different from a call on a movement, and the
           // binding is what says so, exactly as the checker's scope does.
           if (statement.source.namespace === 'plugins') {
+            // A package (version 5) binds each member under `web.fetchUrl`.
+            const members = since(this.languageVersion, 5) ? packageMembers(this.catalog, name) : [];
+            if (members.length > 0) {
+              for (const member of members) {
+                env.declare(memberLocal(alias ?? name, member.name), binding({ kind: 'plugin', plugin: member.key }));
+              }
+              continue;
+            }
             env.declare(alias ?? name, binding({ kind: 'plugin', plugin: name }));
             continue;
           }
@@ -5790,6 +5804,12 @@ class Interpreter {
 
   /** Whether a call in an expression is one this engine runs. */
   private runsAsCall(call: CallNode, env: Environment): boolean {
+    // `web.fetchUrl(…)`: a package's member, bound under the one dotted name
+    // (version 5). A local binding is never a package.
+    const { callee } = call;
+    if (callee.kind === 'member' && callee.object.kind === 'name' && env.resolve(callee.object.name.text) === undefined) {
+      return env.resolve(memberLocal(callee.object.name.text, callee.property.text))?.kind === 'plugin';
+    }
     const scope = this.callScope(env);
     return runsAsCall(
       call,
@@ -6231,7 +6251,8 @@ class Interpreter {
         `'${statement.callee}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this`,
       );
     }
-    if (isPositionalCall(statement.args)) {
+    const args = this.boundPluginArgs(statement, spec);
+    if (isPositionalCall(args)) {
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
         `'${statement.callee}' is a plugin, and a plugin's arguments are named — the checker should have caught this`,
@@ -6239,7 +6260,7 @@ class Interpreter {
     }
     const config: Record<string, unknown> = {};
     const trails: Provenance[] = [];
-    for (const arg of statement.args) {
+    for (const arg of args) {
       if (arg.name === undefined) continue; // refused above: never positional
       if (arg.kind === 'write' || arg.kind === 'closure' || arg.kind === 'type') {
         // A plugin's parameters are values: a write is an effect, and a
@@ -6279,6 +6300,25 @@ class Interpreter {
       returned: handedBack ? 'value' : 'absent',
     });
     return binding;
+  }
+
+  /** From version 5 a plugin's arguments are by position, bound to its
+   *  parameters as the checker bound them; one that does not fit is a
+   *  checker miss. */
+  private boundPluginArgs(statement: Extract<Statement, { kind: 'call' }>, spec: PluginSpec | undefined): CallArg[] {
+    if (spec === undefined || before(this.languageVersion, 5) || statement.args.every((arg) => arg.name !== undefined)) {
+      return statement.args;
+    }
+    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const [misfit] = bound.misfits;
+    if (misfit !== undefined) {
+      const positional = pluginPositionalParams(spec, 'plain');
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `${pluginArgMisfitMessage(misfit, statement.callee, positional)} — the checker should have caught this`,
+      );
+    }
+    return bound.args;
   }
 
   /** A plugin argument's value: what `v = <argument>` would bind, read back

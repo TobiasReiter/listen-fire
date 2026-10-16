@@ -295,6 +295,18 @@ struct Staging<'s> {
     bound: Cell<usize>,
 }
 
+/// `web.fetchUrl` where an expression calls it: a package's member, as the
+/// one dotted name the package import bound it to (version 5). A local
+/// binding is never a package, so a head the scope binds is none.
+pub(crate) fn package_member_callee(callee: &MExpr, scope: &Scope) -> Option<String> {
+    let MExpr::Member { object, property, .. } = callee else { return None };
+    let MExpr::Name { name, .. } = object.as_ref() else { return None };
+    if name.quoted || property.quoted || scope.resolve(&name.text).is_some() {
+        return None;
+    }
+    Some(movement_parser::catalog::packages::member_local(&name.text, &property.text))
+}
+
 type Staged<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Piece, Stop>> + 's>>;
 type Settled<'s> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Binding, Stop>> + 's>>;
 
@@ -304,6 +316,9 @@ impl Run<'_> {
     /// no value.
     pub(crate) fn runs_as_call(&self, call: &MExpr, scope: &Scope) -> bool {
         let MExpr::Call { callee, .. } = call else { return false };
+        if let Some(member) = package_member_callee(callee, scope) {
+            return matches!(scope.resolve(&member), Some(Binding::Plugin(_)));
+        }
         let MExpr::Name { name, .. } = callee.as_ref() else { return false };
         let written = &name.text;
         if let Some(binding) = scope.resolve(written) {

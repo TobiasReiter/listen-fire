@@ -580,7 +580,14 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
             .map_err(|e| Stop::Thrown(Failure::Host(e)))?
             .ok_or_else(|| Stop::Declined("check_answer_malformed".into()))?
     };
-    let checked = program::join_check(root, &answer, version).map_err(|_| Stop::Declined("check_answer_malformed".into()))?;
+    // A package import binds its members (`web.fetchUrl`) as the imports of
+    // the plugins they are; the check above read it as written.
+    let mut root = root;
+    movement_parser::catalog::packages::expand_package_imports(&mut root.program, &catalog.plugins, version);
+    let mut checked = program::join_check(root, &answer, version).map_err(|_| Stop::Declined("check_answer_malformed".into()))?;
+    for (file, _) in checked.files.values_mut() {
+        movement_parser::catalog::packages::expand_package_imports(&mut file.program, &catalog.plugins, version);
+    }
     let run = Run {
         host,
         input,

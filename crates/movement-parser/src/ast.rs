@@ -806,6 +806,30 @@ impl CallArg {
             | CallArg::Type { name, .. } => name.as_deref(),
         }
     }
+
+    /// Where the argument's value is written.
+    pub fn span(&self) -> Span {
+        match self {
+            CallArg::Expr { expr, .. } => expr.span,
+            CallArg::Write { write, .. } => write.span,
+            CallArg::Node { node, .. } => node.span,
+            CallArg::Call { call, .. } => call.span,
+            CallArg::Closure { span, .. } | CallArg::Type { span, .. } => *span,
+        }
+    }
+
+    /// The same argument, passed under `parameter`.
+    pub fn named(self, parameter: &str) -> CallArg {
+        let name = Some(parameter.to_string());
+        match self {
+            CallArg::Expr { expr, .. } => CallArg::Expr { name, expr },
+            CallArg::Write { write, .. } => CallArg::Write { name, write },
+            CallArg::Node { node, .. } => CallArg::Node { name, node },
+            CallArg::Call { call, .. } => CallArg::Call { name, call },
+            CallArg::Closure { closure, span, .. } => CallArg::Closure { name, closure, span },
+            CallArg::Type { type_, span, .. } => CallArg::Type { name, type_, span },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1019,5 +1043,10 @@ pub enum ExtractCallShape {
 pub struct PluginCall {
     pub plugin: String,
     pub args: Vec<NamedArg>,
+    /// From version 5: the arguments written by position, the settings
+    /// record among them, bound to the plugin's parameters where its spec is
+    /// known (`PluginSpec::bind_stage_args`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positional: Vec<ExprSlot>,
     pub span: Span,
 }

@@ -53,20 +53,31 @@ enum PluginBinds {
     Unknown,
 }
 
+/// A plugin a file imports, by its local name: what a plain call binds, and
+/// its spec where the snapshot has it (from version 5 its parameters bind a
+/// call's arguments by position).
+#[derive(Debug, Clone, PartialEq)]
+struct PluginImport {
+    binds: PluginBinds,
+    spec: Option<Rc<PluginSpec>>,
+}
+
 /// The plugins a run's catalog snapshot describes, when it reads: what
 /// admission knows of a plugin call's output.
 pub struct Plugins<'a>(pub Option<&'a JsMap<PluginSpec>>);
 
 impl Plugins<'_> {
-    fn binds(&self, registered: &str, language_version: u32) -> PluginBinds {
-        let Some(specs) = self.0 else { return PluginBinds::Unknown };
-        let Some(spec) = crate::plugin::spec_named(specs, registered) else { return PluginBinds::Unknown };
-        match crate::plugin::output_under(spec, language_version) {
+    fn import(&self, registered: &str, language_version: u32) -> PluginImport {
+        let Some(spec) = self.0.and_then(|specs| crate::plugin::spec_named(specs, registered)) else {
+            return PluginImport { binds: PluginBinds::Unknown, spec: None };
+        };
+        let binds = match crate::plugin::output_under(spec, language_version) {
             Some(PluginOutput::Value { .. }) => PluginBinds::Value,
             Some(PluginOutput::Record { .. }) => PluginBinds::Record,
             Some(PluginOutput::Records { .. }) => PluginBinds::Records,
             None => PluginBinds::Nothing,
-        }
+        };
+        PluginImport { binds, spec: Some(Rc::new(spec.clone())) }
     }
 }
 
@@ -893,7 +904,7 @@ struct Imported<'p> {
     /// Its library, and what the library's own plugin imports and file
     /// imports bind: what its body's names are read against.
     library: &'p ast::Program,
-    plugin_binds: BTreeMap<String, PluginBinds>,
+    plugin_binds: BTreeMap<String, PluginImport>,
     nested: Vec<Imported<'p>>,
     /// The library read as a file of its own, built once per import (its
     /// fixpoint is not cheap) and shared by every lookup.
@@ -916,14 +927,22 @@ impl Clone for Imported<'_> {
 }
 
 /// What a plain call of each plugin a file imports binds, by its local name.
-fn plugin_binds_of(program: &ast::Program, catalog: &Plugins<'_>, language_version: u32) -> BTreeMap<String, PluginBinds> {
+fn plugin_binds_of(program: &ast::Program, catalog: &Plugins<'_>, language_version: u32) -> BTreeMap<String, PluginImport> {
     let mut plugin_binds = BTreeMap::new();
     for statement in &program.statements {
         if let Statement::Import(import) = statement
             && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
         {
             for name in &import.names {
-                plugin_binds.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), catalog.binds(&name.name, language_version));
+                let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
+                let members = catalog.0.map(|specs| movement_parser::catalog::packages::package_members(specs, &name.name)).unwrap_or_default();
+                if movement_parser::version::since(language_version, 5) && !members.is_empty() {
+                    for member in members {
+                        plugin_binds.insert(movement_parser::catalog::packages::member_local(&local, &member.name), catalog.import(&member.key, language_version));
+                    }
+                    continue;
+                }
+                plugin_binds.insert(local, catalog.import(&name.name, language_version));
             }
         }
     }
@@ -977,7 +996,7 @@ struct Callees<'p> {
     /// The movements the file imports from libraries: callees too, walked
     /// in their own files.
     imported: Vec<Imported<'p>>,
-    plugin_binds: BTreeMap<String, PluginBinds>,
+    plugin_binds: BTreeMap<String, PluginImport>,
     /// The `type`s the file declares: a parameter typed by one takes a value.
     types: BTreeSet<String>,
     /// The names the file's scope binds (its imports, shapes, values,
@@ -1031,7 +1050,7 @@ enum ValueCalls {
 }
 
 impl<'p> Callees<'p> {
-    fn of(program: &'p ast::Program, plugin_binds: &BTreeMap<String, PluginBinds>, language_version: u32, imported: Vec<Imported<'p>>) -> Callees<'p> {
+    fn of(program: &'p ast::Program, plugin_binds: &BTreeMap<String, PluginImport>, language_version: u32, imported: Vec<Imported<'p>>) -> Callees<'p> {
         let mut movements = Vec::new();
         let mut types = BTreeSet::new();
         let mut file_scope = BTreeSet::new();
@@ -1508,7 +1527,7 @@ fn construction_as_call(construct: &ast::ConstructionCall) -> CallStatement {
 #[derive(Default)]
 struct Bound<'c> {
     /// What a plain call of each plugin binds (`refusal`'s table).
-    plugin_binds: BTreeMap<String, PluginBinds>,
+    plugin_binds: BTreeMap<String, PluginImport>,
     /// The program's movements, for the calls the body makes: what each
     /// passes and what it hands back.
     callees: Option<&'c Callees<'c>>,
@@ -2768,7 +2787,7 @@ struct Names<'n> {
     /// The plugins the file imports, by local name.
     plugins: &'n BTreeSet<String>,
     /// What a plain call of each binds.
-    plugin_binds: &'n BTreeMap<String, PluginBinds>,
+    plugin_binds: &'n BTreeMap<String, PluginImport>,
     /// What extractions yielded: a root, or an entity a head landed on.
     extracts: &'n BTreeSet<String>,
     /// The nodes a `graph { … }` literal built.
@@ -3709,12 +3728,27 @@ impl Names<'_> {
             None | Some(PluginBinds::Unknown) => return refuse("plugin_call"),
             Some(PluginBinds::Value | PluginBinds::Record | PluginBinds::Records | PluginBinds::Nothing) => {}
         }
+        // From version 5 its arguments are by position, bound to its
+        // parameters as crate::plugin binds them; one that does not fit fails
+        // the call before any is read.
+        let spec = plugin_import(self.plugin_binds, &call.callee, self.language_version).and_then(|import| import.spec.as_deref());
+        let bound = match spec {
+            Some(spec) if self.language_version >= 5 && call.args.iter().any(|arg| arg.name().is_none()) => {
+                let bound = spec.bind_args(movement_parser::catalog::plugin_args::PluginCallSite::Plain, &call.args);
+                if !bound.misfits.is_empty() {
+                    return Ok(());
+                }
+                Some(bound.args)
+            }
+            _ => None,
+        };
+        let args = bound.as_deref().unwrap_or(&call.args);
         // A first argument unnamed fails the call before any is read, on
         // either engine; a later unnamed one is skipped.
-        if call.args.first().is_some_and(|arg| arg.name().is_none()) {
+        if args.first().is_some_and(|arg| arg.name().is_none()) {
             return Ok(());
         }
-        for arg in &call.args {
+        for arg in args {
             match arg {
                 CallArg::Expr { name: None, .. } | CallArg::Call { name: None, .. } | CallArg::Node { name: None, .. } => {}
                 CallArg::Expr { expr, .. } => {
@@ -3827,7 +3861,23 @@ impl Names<'_> {
                 if !self.plugins.contains(&plugin.plugin) {
                     return refuse("plugin_call");
                 }
-                for arg in &plugin.args {
+                // From version 5 its arguments are by position, bound as
+                // crate::extract binds them; one that does not fit fails the
+                // stage before any is read.
+                let spec = plugin_import(self.plugin_binds, &plugin.plugin, self.language_version).and_then(|import| import.spec.as_deref());
+                let bound = match spec {
+                    Some(spec) if self.language_version >= 5 && !plugin.positional.is_empty() => {
+                        let bound = spec.bind_stage_args(plugin);
+                        if !bound.misfits.is_empty() {
+                            continue;
+                        }
+                        Some(bound.args)
+                    }
+                    // Unbound, a positional argument is read as nothing would read it.
+                    _ if !plugin.positional.is_empty() => return refuse("plugin_call_form"),
+                    _ => None,
+                };
+                for arg in bound.as_deref().unwrap_or(&plugin.args) {
                     // A bare name the body binds as a value may name the
                     // entity's field instead, decided at run time; one bound
                     // to a record is handed its fields, as a plain call's is.
@@ -4210,7 +4260,10 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
+                member => {
+                    package_member_written(member).is_some_and(|written| self.plugin(&written))
+                        || callee_written(member).is_some_and(|written| self.value_callee(&written))
+                }
             },
             _ => false,
         };
@@ -4325,7 +4378,10 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
+                member => {
+                    package_member_written(member).is_some_and(|written| self.plugin(&written))
+                        || callee_written(member).is_some_and(|written| self.value_callee(&written))
+                }
             },
             _ => false,
         };
@@ -4947,7 +5003,7 @@ fn plan_nested(
     if matches!(tree, movement_parser::tree::MExpr::Call { .. }) && calls.contains(&at) {
         plan.calls.push(at);
         let held = match tree {
-            movement_parser::tree::MExpr::Call { callee, .. } => match callee_written(callee) {
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee_written(callee).or_else(|| package_member_written(callee)) {
                 Some(written) => call_holder(&written, &units.text(at.start, at.end)),
                 None => Holder::Other,
             },
@@ -5002,6 +5058,16 @@ fn callee_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
         MExpr::Name { name, .. } => Some(name.text.clone()),
         _ => None,
     }
+}
+
+/// `web.fetchUrl` where an expression calls it (language version 5): the
+/// one dotted name a package import binds its member to, which only a plugin
+/// bind answers for.
+fn package_member_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
+    use movement_parser::tree::MExpr;
+    let MExpr::Member { object, property, .. } = callee else { return None };
+    let MExpr::Name { name, .. } = object.as_ref() else { return None };
+    (!name.quoted && !property.quoted).then(|| movement_parser::catalog::packages::member_local(&name.text, &property.text))
 }
 
 /// A slot's text with its nested calls (crate::nested) read as the names
@@ -5080,7 +5146,7 @@ fn nested_rewrite(raw: &str, is_function: &dyn Fn(&str) -> bool, call_holder: &d
     let runs = |call: &movement_parser::tree::MExpr| match call {
         movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
             movement_parser::tree::MExpr::Name { name, .. } => is_function(&name.text) || crate::nested::is_call_form(&name.text),
-            member => callee_written(member).is_some_and(|written| is_function(&written)),
+            member => callee_written(member).or_else(|| package_member_written(member)).is_some_and(|written| is_function(&written)),
         },
         _ => false,
     };
@@ -5153,8 +5219,12 @@ where
 /// What a call of the plugin `callee` resolves to binds (`resolveCallee`):
 /// the plugin imported as written, or from version 3 the one imported in
 /// another letter case.
-fn plugin_bind(binds: &BTreeMap<String, PluginBinds>, callee: &str, language_version: u32) -> Option<PluginBinds> {
-    spelled(binds.keys(), String::as_str, callee, language_version >= 3).and_then(|name| binds.get(name)).copied()
+fn plugin_bind(binds: &BTreeMap<String, PluginImport>, callee: &str, language_version: u32) -> Option<PluginBinds> {
+    plugin_import(binds, callee, language_version).map(|import| import.binds)
+}
+
+fn plugin_import<'b>(binds: &'b BTreeMap<String, PluginImport>, callee: &str, language_version: u32) -> Option<&'b PluginImport> {
+    spelled(binds.keys(), String::as_str, callee, language_version >= 3).and_then(|name| binds.get(name))
 }
 
 /// An expression slot, lowered.

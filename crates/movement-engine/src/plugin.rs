@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use movement_parser::catalog::plugin_args::PluginCallSite;
 use movement_parser::catalog::types::{JsMap, PluginOutput, PluginSpec};
 
 use crate::bindings::{Binding, Node, Scope};
@@ -90,6 +91,23 @@ impl Run<'_> {
                 format!("'{written}' declares no output, so there is nothing a call to it can hand back — the checker should have caught this"),
             )));
         };
+        // From version 5 its arguments are by position, bound to its
+        // parameters as the checker bound them.
+        let bound = match self.plugin_spec(&registered) {
+            Some(spec) if self.version() >= 5 && args.iter().any(|arg| arg.name().is_none()) => {
+                let bound = spec.bind_args(PluginCallSite::Plain, args);
+                if !bound.misfits.is_empty() {
+                    let positional = spec.positional_params(PluginCallSite::Plain);
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("{} — the checker should have caught this", bound.misfits[0].message(written, &positional)),
+                    )));
+                }
+                Some(bound.args)
+            }
+            _ => None,
+        };
+        let args = bound.as_deref().unwrap_or(args);
         if args.first().is_some_and(|arg| arg.name().is_none()) {
             return Err(Stop::Thrown(Failure::engine(
                 "MOVENG_RUNTIME",

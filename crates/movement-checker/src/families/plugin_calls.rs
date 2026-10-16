@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 
 use movement_parser::ast::{CallArg, CallStatement, Span};
+use movement_parser::catalog::plugin_args::PluginCallSite;
 use movement_parser::catalog::types::{FieldType as SchemaFieldType, PluginOutput, PluginSpec};
 use movement_parser::version::before;
 
@@ -65,7 +66,9 @@ impl Checker<'_> {
         if let Some(effects) = spec.as_ref().and_then(|s| s.effects.as_ref()) {
             self.absorb_suspend(effects.suspend == Some(true));
         }
-        if call.args.first().is_some_and(|a| a.name().is_none()) {
+        // From version 5 a plugin's arguments are positional, bound to its
+        // parameters before this reads them (`bind_plugin_call`).
+        if before(self.version, 5) && call.args.first().is_some_and(|a| a.name().is_none()) {
             let takes = match &spec {
                 Some(spec) if !spec.args.is_empty() => format!(" (it takes: {})", spec.args.join(", ")),
                 _ => String::new(),
@@ -103,6 +106,34 @@ impl Checker<'_> {
         ReturnShape { returns: true, plane, may_hold: None }
     }
 
+    /// `bindPluginCall` (version 5): a plugin's call with arguments by
+    /// position, as the named call versions 1–4 write, each misfit reported;
+    /// `None` where there is nothing to bind. A call still written with named
+    /// arguments leaves the plugin's order for the parser's finding's fix.
+    pub fn bind_plugin_call(&mut self, call: &CallStatement, scope: crate::scope::ScopeId) -> Option<CallStatement> {
+        if before(self.version, 5) {
+            return None;
+        }
+        let callee = self.callee_name(&call.callee, scope);
+        let crate::scope::Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return None };
+        if self.scopes.symbol(id).kind != crate::scope::SymbolKind::Plugin {
+            return None;
+        }
+        let spec = self.plugin_spec_of(id, &call.callee)?.clone();
+        let first = call.args.first()?;
+        if first.name().is_some() {
+            let at = first.span().start;
+            self.named_orders.insert((at.line, at.col), plugin_arg_order(&spec, PluginCallSite::Plain));
+            return None;
+        }
+        let bound = spec.bind_args(PluginCallSite::Plain, &call.args);
+        let positional = spec.positional_params(PluginCallSite::Plain);
+        for misfit in &bound.misfits {
+            self.report(codes::THROUGH_BAD_ARG, misfit.message(&call.callee, &positional), misfit.span());
+        }
+        Some(CallStatement { args: bound.args, ..call.clone() })
+    }
+
     /// `refusePlainPluginCall`: whether this plugin can only run as an
     /// extraction stage, reporting why.
     fn refuse_plain_plugin_call(&mut self, call: &CallStatement, spec: Option<&PluginSpec>, supplied: &HashSet<&str>) -> bool {
@@ -137,7 +168,8 @@ impl Checker<'_> {
         if !unfed.is_empty() {
             let one = unfed.len() == 1;
             let listed = unfed.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
-            let spelled = unfed.iter().map(|n| format!("{n}: …")).collect::<Vec<_>>().join(", ");
+            // From version 5 they are written by position.
+            let spelled = unfed.iter().map(|n| if before(self.version, 5) { format!("{n}: …") } else { n.to_string() }).collect::<Vec<_>>().join(", ");
             self.report(
                 codes::PLUGIN_FED_BY_EXTRACTION,
                 format!(
@@ -330,6 +362,15 @@ impl Checker<'_> {
         diagnostic.upgrade = Some(true);
         self.push(diagnostic);
     }
+}
+
+/// A plugin's parameters as a call passes them from version 5: by position,
+/// then the names its settings record takes.
+pub fn plugin_arg_order(spec: &PluginSpec, site: PluginCallSite) -> crate::families::typed_spelling::ArgOrder {
+    let positional: Vec<String> = spec.positional_params(site).into_iter().map(str::to_string).collect();
+    let fed = spec.fed_args.iter().flatten().map(|f| &f.name).filter(|_| site == PluginCallSite::Plain);
+    let settings = spec.args.iter().chain(fed).filter(|a| !positional.contains(a)).cloned().collect();
+    crate::families::typed_spelling::ArgOrder { positional, settings: Some(settings) }
 }
 
 fn is_json(declared: &SchemaFieldType) -> bool {
