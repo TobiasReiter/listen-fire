@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **244 of 244** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 135313 of 135313; 0 extra in Rust.
+- Diagnostics matched: 139822 of 139822; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 28328 of 28328.
-- Rust side: 13.0s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 15.1s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -26,10 +26,10 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| (not in PORT.md) | 2 | 2 | 99947 | 99947 | 0 | 0 | 0 |
-| calls | 28 | 28 | 1658 | 1658 | 0 | 0 | 0 |
+| (not in PORT.md) | 2 | 2 | 104457 | 104457 | 0 | 0 | 0 |
+| calls | 28 | 28 | 1655 | 1655 | 0 | 0 | 0 |
 | closures | 15 | 15 | 885 | 885 | 0 | 0 | 0 |
-| extraction | 20 | 20 | 439 | 439 | 0 | 0 | 0 |
+| extraction | 20 | 20 | 441 | 441 | 0 | 0 | 0 |
 | flow | 10 | 10 | 108 | 108 | 0 | 0 | 0 |
 | imports | 5 | 5 | 66 | 66 | 0 | 0 | 0 |
 | listens | 12 | 12 | 24306 | 24306 | 0 | 0 | 0 |
@@ -205,7 +205,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_PARALLEL_RETIRED | closures | 195 | 195 | 0 | 0 | 0 | yes |
 | MOV_PARAM_NEEDS_TYPE | calls | 31 | 31 | 0 | 0 | 0 | yes |
 | MOV_PARENT_READ_RETIRED | walks | 8 | 8 | 0 | 0 | 0 | yes |
-| MOV_PLUGIN_ARGS_NAMED | calls | 5 | 5 | 0 | 0 | 0 | yes |
+| MOV_PLUGIN_ARGS_NAMED | calls | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_FED_BY_EXTRACTION | extraction | 17 | 17 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_OUTPUT_CHANGED | versions | 2 | 2 | 0 | 0 | 0 | yes |
 | MOV_PLUGIN_OUTPUT_UNDECLARED | calls | 6 | 6 | 0 | 0 | 0 | yes |
@@ -241,7 +241,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_TARGET_WHERE_LOCAL | writes | 9 | 9 | 0 | 0 | 0 | yes |
 | MOV_TARGET_WHERE_NOT_FINAL | writes | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_ARG_MISSING | extraction | 23 | 23 | 0 | 0 | 0 | yes |
-| MOV_THROUGH_BAD_ARG | extraction | 18 | 18 | 0 | 0 | 0 | yes |
+| MOV_THROUGH_BAD_ARG | extraction | 20 | 20 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_FORWARD_REF | extraction | 11 | 11 | 0 | 0 | 0 | yes |
 | MOV_THROUGH_NOT_PLUGIN | extraction | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_TRANSFORM_HOP_RETIRED | walks | 14 | 14 | 0 | 0 | 0 | yes |
@@ -261,7 +261,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNTIL_EDGE_WATCHABLE | flow | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_USE_BEFORE_BIND | names | 29 | 29 | 0 | 0 | 0 | yes |
 | MOV_V5_HIDES_BUILTIN | ? | 167 | 167 | 0 | 0 | 0 | yes |
-| MOV_V5_SPELLING | ? | 99780 | 99780 | 0 | 0 | 0 | yes |
+| MOV_V5_SPELLING | ? | 104290 | 104290 | 0 | 0 | 0 | yes |
 | MOV_VALUE_UNLISTED | values | 30 | 30 | 0 | 0 | 0 | yes |
 | MOV_WAIT_NOT_RESUMABLE | flow | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_APPEND_NOT_MULTI | writes | 12 | 12 | 0 | 0 | 0 | yes |
