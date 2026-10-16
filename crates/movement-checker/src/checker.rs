@@ -94,7 +94,7 @@ pub struct Checker<'c> {
     /// span and rewritten text: the text as written, which a message or a fix
     /// quotes (the TypeScript's rewritten slot keeps its text; only its tree
     /// reads the hoisted names). Offsets agree, the rewrite being padded.
-    pub hoisted_texts: std::collections::HashMap<((usize, usize, usize, usize), String), String>,
+    pub hoisted_texts: std::collections::HashMap<HoistedKey, String>,
     /// The name each call hoisted out of an expression is bound to, by where
     /// the call starts in the file (`nested_call_name`).
     pub nested_call_names: std::cell::RefCell<std::collections::HashMap<(usize, usize), String>>,
@@ -192,7 +192,10 @@ impl Bound {
     }
 }
 
-fn hoisted_key(slot: &ExprSlot) -> ((usize, usize, usize, usize), String) {
+/// A slot by its span and its text (`Span` is not hashable).
+type HoistedKey = ((usize, usize, usize, usize), String);
+
+fn hoisted_key(slot: &ExprSlot) -> HoistedKey {
     let Span { start, end } = slot.span;
     ((start.line, start.col, end.line, end.col), slot.raw.clone())
 }

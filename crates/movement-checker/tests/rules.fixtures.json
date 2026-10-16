@@ -3173,6 +3173,18 @@
     "MOV_ARITH_NON_NUMERIC 6:7-6:29 An arithmetic operation requires numeric operands — both sides of '+' are text. Build the string with \"${…}\" interpolation instead.",
     "MOV_EXPR_PARSE 7:7-7:28 CONTAINS is written between its operands — 'a CONTAINS b', not 'CONTAINS(a, b)'"
    ]
+  },
+  {
+   "name": "a version 5 block head whose WHERE joins with && is read under version 5: its bare fields are refused",
+   "snapshot": "delete",
+   "version": 5,
+   "source": "import { crm } from adapters\nc = connect crm\nfunction m() {\n  wanted = \"a\"\n  c-[co:company WHERE co.name == wanted && co.name != wante]-> {\n    c-[p:company WHERE p.name == \"x\" && nam == \"y\"]-> {\n    }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_V5_SPELLING 5:3-5:63 from language version 5 a walk's field is read through the hop's alias: `co.wante` (a bare name inside the brackets is a variable from outside the walk)",
+    "MOV_UNKNOWN_PROPERTY 5:3-5:63 c.company has no field 'wante' — it has: name",
+    "MOV_V5_SPELLING 6:5-6:54 from language version 5 a walk's field is read through the hop's alias: `p.nam` (a bare name inside the brackets is a variable from outside the walk)",
+    "MOV_UNKNOWN_PROPERTY 6:5-6:54 c.company has no field 'nam' — it has: name — did you mean 'name'?"
+   ]
   }
  ]
 }
