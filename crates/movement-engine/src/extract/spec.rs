@@ -1,14 +1,12 @@
-//! The extraction keyword's spec, as extraction.ts `buildExtractSpec` and
-//! `buildDeclarationSpec` build it per firing, and the calls a
-//! materialisation of it makes (`planRegion`).
+//! A node declaration's extraction spec, as extraction.ts
+//! `buildDeclarationSpec` builds it per firing for the extraction call.
 //!
 //! A spec is RESOLVED: every field is typed (a primitive, a declared `type`,
 //! a type borrowed from a live instance schema, or untyped), every
-//! description is text, and every `node x: <Shape>` is the inline tree its
-//! declaration spells, `extends` folded in. Each description is evaluated in
-//! the scope that wrote it — the firing for the extraction's own words, the
-//! declaring file for a declaration's — and each declared field reads its
-//! own file's `type`s. Nothing downstream reads the program's AST again.
+//! description is text, and `extends` is folded in. Each description is
+//! evaluated in the scope that wrote it (the declaring file, or the body that
+//! declared the shape), and each declared field reads its own file's
+//! `type`s. Nothing downstream reads the program's AST again.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -16,15 +14,12 @@ use std::pin::Pin;
 use movement_parser::ast::{self, ExprSlot};
 use movement_parser::catalog::types::{Composite, FieldType, InstanceSchema, Scalar};
 use movement_parser::lowering::expression::{Expression, StaticValue};
-use serde_json::{Value as Json, json};
 
 use crate::executor::join_all;
 use crate::program::{DeclaredShape, Declarations, DeclaringFile, FileDeclarations};
 
 /// The root node's name and words (extraction.ts `ROOT_EXTRACT_DESCRIPTION`).
 pub const ROOT_NAME: &str = "extract result";
-pub const ROOT_DESCRIPTION: &str =
-    "the relevant information in the provided source content (exactly one entity carrying the requested fields)";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSpec {
@@ -55,37 +50,11 @@ pub struct NodeSpec {
     pub exported: Vec<String>,
 }
 
-impl NodeSpec {
-    /// `ExtractNodeSpec` as the TypeScript holds it.
-    pub fn to_json(&self) -> Json {
-        json!({
-            "name": self.name,
-            "description": self.description,
-            "exported": self.exported,
-            "stages": self.stages.iter().map(|stage| json!({
-                "through": stage.through,
-                "fields": stage.fields.iter().map(|field| {
-                    let mut out = json!({ "name": field.name, "description": field.description });
-                    if let Some(type_) = &field.type_ {
-                        out["type"] = json!(type_);
-                    }
-                    if field.nullable {
-                        out["nullable"] = json!(true);
-                    }
-                    out
-                }).collect::<Vec<_>>(),
-                "children": stage.children.iter().map(NodeSpec::to_json).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-        })
-    }
-}
-
-/// Where a description is evaluated: the firing environment (the
-/// extraction's own words), the file that declared the words, or the body
-/// that declared them (a shape declared in a body, or written in place).
+/// Where a description is evaluated: the file that declared the words, or
+/// the body that declared them (a shape declared in a body, or written in
+/// place).
 #[derive(Debug, Clone)]
 pub enum WordsScope {
-    Firing,
     File(DeclaringFile),
     Body(std::rc::Rc<crate::bindings::Scope>),
 }
@@ -119,16 +88,6 @@ pub trait Firing {
     /// `describeIn`: a value that is not a string is `String(value ?? '')`).
     fn describe(&self, slot: &ExprSlot, scope: &WordsScope) -> impl Future<Output = Result<String, Self::Error>>;
 
-    /// The file the firing runs in: the `type`s its own words read.
-    fn file(&self) -> DeclaringFile {
-        DeclaringFile::Root
-    }
-
-    /// The node declaration `name` names where the extraction runs.
-    fn shape(&self, name: &str, declarations: &Declarations) -> Option<ShapeLink> {
-        declarations.of_file(&self.file())?.shapes.get(name).map(ShapeLink::declared)
-    }
-
     /// The base `name` an `extends` in `of` names (run.ts `shapeChain`):
     /// found where `of` was declared.
     fn base(&self, of: &ShapeLink, name: &str, declarations: &Declarations) -> Option<ShapeLink> {
@@ -142,16 +101,6 @@ pub enum SpecError<E> {
     Runtime(String),
     /// Evaluating a description failed.
     Firing(E),
-}
-
-/// `buildExtractSpec`: the extraction's tree, resolved for this firing.
-pub async fn build_extract_spec<F: Firing>(
-    extract: &ast::ExtractExpression,
-    declarations: &Declarations,
-    firing: &F,
-) -> Result<NodeSpec, SpecError<F::Error>> {
-    let builder = Builder { declarations, firing };
-    builder.node(ROOT_NAME.to_string(), ROOT_DESCRIPTION.to_string(), &extract.stages).await
 }
 
 /// `buildDeclarationSpec`: a declaration as the single-stage spec its inline
@@ -196,104 +145,6 @@ struct Builder<'a, F: Firing> {
 }
 
 impl<'a, F: Firing> Builder<'a, F> {
-    fn firing_reading(&self) -> Reading<'a> {
-        Reading { words: WordsScope::Firing, types: self.declarations.of_file(&self.firing.file()).unwrap_or(&self.declarations.root) }
-    }
-
-    /// `buildNodeSpec`: an inline node, its words already resolved. Its
-    /// stages are built at once, and in each its fields' words at once,
-    /// then its children's, as `settledAll` starts them: a description that
-    /// asks the host asks it where the TypeScript does.
-    fn node(&'a self, name: String, description: String, stages: &'a [ast::ExtractStage]) -> Built<'a, F::Error> {
-        Box::pin(async move {
-            let reading = self.firing_reading();
-            let mut exported: Vec<String> = Vec::new();
-            for field in stages.iter().flat_map(|stage| &stage.fields) {
-                if !exported.contains(&field.name) {
-                    exported.push(field.name.clone());
-                }
-            }
-            let built = settled(join_all(stages.iter().map(|stage| self.stage(stage, reading.clone())).collect()).await)?;
-            Ok(NodeSpec { name, description, stages: built, exported })
-        })
-    }
-
-    /// One inline stage: its fields' words together, then its children
-    /// together.
-    fn stage(&'a self, stage: &'a ast::ExtractStage, reading: Reading<'a>) -> Built<'a, F::Error, StageSpec> {
-        Box::pin(async move {
-            let fields = join_all(
-                stage
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        let reading = reading.clone();
-                        async move {
-                            Ok(FieldSpec {
-                                name: field.name.clone(),
-                                type_: self.field_type(field.type_.as_deref(), &reading),
-                                description: self.describe(&field.description, &reading).await?,
-                                nullable: field.nullable == Some(true),
-                            })
-                        }
-                    })
-                    .collect(),
-            )
-            .await;
-            let fields = settled(fields)?;
-            let children = join_all(
-                stage
-                    .children
-                    .iter()
-                    .map(|child| -> Built<'a, F::Error> {
-                        let reading = reading.clone();
-                        Box::pin(async move {
-                            match child {
-                                ast::ExtractNode::Inline(child) => {
-                                    let words = self.describe(&child.description, &reading).await?;
-                                    self.node(child.name.clone(), words, &child.stages).await
-                                }
-                                ast::ExtractNode::Declared(child) => self.declared_node(child).await,
-                            }
-                        })
-                    })
-                    .collect(),
-            )
-            .await;
-            let children = settled(children)?;
-            Ok(StageSpec { through: stage.through.clone().unwrap_or_default(), fields, children })
-        })
-    }
-
-    /// `buildDeclaredNodeSpec`: `node x: <Shape> "…" through […] { … }` —
-    /// the declaration as the first stage, the stages written after it
-    /// following, and the use site's words over the declaration's.
-    fn declared_node(&'a self, node: &'a ast::DeclaredExtractNode) -> Built<'a, F::Error> {
-        Box::pin(async move {
-            let Some(shape) = self.firing.shape(&node.declared.type_, self.declarations) else {
-                return Err(SpecError::Runtime(format!(
-                    "'{}' is not a node declaration in scope, so '{}' has no shape to extract (the checker should have caught this)",
-                    node.declared.type_, node.name
-                )));
-            };
-            let chain = self.chain(shape)?;
-            let declared = self.declaration(&node.name, &chain).await?.into_spec();
-            let following = self.node(node.name.clone(), String::new(), &node.stages).await?;
-            let description = match &node.description {
-                Some(slot) => self.describe(slot, &self.firing_reading()).await?,
-                None => declared.description,
-            };
-            let mut exported = declared.exported;
-            for name in following.exported {
-                if !exported.contains(&name) {
-                    exported.push(name);
-                }
-            }
-            let mut stages = declared.stages;
-            stages.extend(following.stages);
-            Ok(NodeSpec { name: node.name.clone(), description, stages, exported })
-        })
-    }
 
     /// run.ts `shapeChain`: the `extends` chain from `shape` to the
     /// declaration that stands on its own, `shape` first — each base found
@@ -460,92 +311,4 @@ pub fn borrowable_field(schema: &InstanceSchema, root: &str, field: &str) -> Opt
     let writable = schema.writable_roots.get(root).and_then(|r| r.fields.get(field));
     let readable = schema.positions.get(root).and_then(|p| p.properties.get(field));
     writable.or(readable).cloned()
-}
-
-// ── The calls a materialisation makes ────────────────────────────────────────
-
-/// One planned model call (extraction.ts `CallSite`): a node's stage, and the
-/// through-free descendants batched into the same call.
-#[derive(Debug, Clone)]
-pub struct Region<'s> {
-    pub site_id: String,
-    pub spec: &'s NodeSpec,
-    pub stage_index: usize,
-    /// Exactly one entity: the root, a node's continuation stage.
-    pub single: bool,
-    pub children: Vec<Region<'s>>,
-}
-
-impl<'s> Region<'s> {
-    /// `planRegion`: the region at `spec`'s stage `stage_index`, its sites
-    /// numbered by `next_site` as they are reached — its own first, then its
-    /// unfenced children depth first. A fenced child (its first stage behind
-    /// a pipeline) is a call of its own, planned by whoever runs the fence.
-    pub fn plan(spec: &'s NodeSpec, stage_index: usize, single: bool, next_site: &mut dyn FnMut() -> u64) -> Region<'s> {
-        // TypeScript also refuses a region rooted at a fenced first stage it
-        // was not told to skip; every caller of either plans the stage behind
-        // a fence only once the fence has run, and the children here are
-        // filtered to the unfenced, so the refusal guards nothing.
-        let site_id = format!("x:{}#{}", sanitize_site_name(&spec.name), next_site());
-        let children = spec.stages[stage_index]
-            .children
-            .iter()
-            .filter(|child| child.stages.first().is_none_or(|stage| stage.through.is_empty()))
-            .map(|child| Region::plan(child, 0, false, next_site))
-            .collect();
-        Region { site_id, spec, stage_index, single, children }
-    }
-
-    /// The fields this call asks for: its stage's.
-    pub fn fields(&self) -> &'s [FieldSpec] {
-        &self.spec.stages[self.stage_index].fields
-    }
-
-    /// `countSites`: what the density heuristic picks a model by.
-    pub fn sites(&self) -> usize {
-        1 + self.children.iter().map(Region::sites).sum::<usize>()
-    }
-
-    /// `declaredKeys`: every key one of this node's records may carry.
-    pub fn declares(&self, key: &str) -> bool {
-        self.fields().iter().any(|f| f.name == key) || self.children.iter().any(|c| c.spec.name == key)
-    }
-
-    pub fn declares_nothing(&self) -> bool {
-        self.fields().is_empty() && self.children.is_empty()
-    }
-}
-
-/// `sanitizeSiteName`: lower case, every run of anything but `a-z0-9` one
-/// `_`, none at either end, at most 40 characters.
-pub fn sanitize_site_name(name: &str) -> String {
-    let mut out = String::new();
-    let mut gap = false;
-    for c in crate::js::to_lower_case(name).chars() {
-        if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            if gap && !out.is_empty() {
-                out.push('_');
-            }
-            gap = false;
-            out.push(c);
-        } else {
-            gap = true;
-        }
-    }
-    out.truncate(40);
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn site_names_sanitise_as_the_typescript_does() {
-        assert_eq!(sanitize_site_name("extract result"), "extract_result");
-        assert_eq!(sanitize_site_name("  Big--Co!! "), "big_co");
-        assert_eq!(sanitize_site_name("Ünï"), "n");
-        assert_eq!(sanitize_site_name("___"), "");
-        assert_eq!(sanitize_site_name(&"a".repeat(50)), "a".repeat(40));
-    }
 }

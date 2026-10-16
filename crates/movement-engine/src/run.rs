@@ -269,6 +269,15 @@ pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
     done
 }
 
+/// The extraction keyword, which admission refuses on every version
+/// (crate::admit::LEGACY_EXTRACTION) before a run starts.
+fn legacy_extraction() -> Failure {
+    Failure::unsupported(
+        "the extraction keyword ('x = extract from […] { … }')",
+        "legacy_extraction: this engine does not run it on any version; version 5 writes 'extract(content, Shape)', and a version 1–4 program runs on the TypeScript engine",
+    )
+}
+
 /// How a run stops early.
 pub(crate) enum Stop {
     /// Not admitted: nothing but the parse and the walk happened. Every
@@ -995,7 +1004,8 @@ impl Run<'_> {
                             let bound = self.bind_slot(expr, file).await?;
                             file.declare(assign.name.clone(), Binding::Value(bound));
                         }
-                        RValue::Extract { .. } | RValue::ExtractCall { .. } => {
+                        RValue::Extract { .. } => return Err(Stop::Thrown(legacy_extraction())),
+                        RValue::ExtractCall { .. } => {
                             return Err(Stop::Thrown(Failure::unsupported(
                                 "file-level extract expressions",
                                 "extraction runs inside a movement body, where the event is in scope",
@@ -1466,10 +1476,8 @@ impl Run<'_> {
                 let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                 scope.declare(name, Binding::Node(built));
             }
-            RValue::Extract { extract } => {
-                let emission = self.extraction(extract, scope).await?;
-                scope.declare(name, Binding::Extracted { emission, root: true, id: crate::bindings::Identity::new() });
-            }
+            // Admission refused it (crate::admit::LEGACY_EXTRACTION): no run reaches here.
+            RValue::Extract { .. } => return Err(Stop::Thrown(legacy_extraction())),
             // A call like any other: re-running its statement takes the
             // value it already extracted instead of paying for it again.
             RValue::ExtractCall { extract_call } => {
@@ -3127,55 +3135,15 @@ mod tests {
         assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
     }
 
-    /// An extraction asks what the TypeScript asks, in its order: the
-    /// `from` slot's read, one `ids.mint` for its text resource, then per
-    /// region the cancel gate, the clock either side of the priced model
-    /// call; a head over what it yielded asks nothing.
+    /// The extraction keyword is refused by name before anything runs, on
+    /// every version: its host is asked nothing.
     #[test]
-    fn an_extraction_asks_its_host_what_the_typescript_asks_in_its_order() {
-        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: \"its name\"\n    }\n  }\n  deals-[c:co]-> {\n    n = c.`name`\n  }\n}";
-        let payload = json!({ "text": "Acme raised." });
-        let host = plain_host(payload.clone());
-        let reply = env::encode_plain(&env::js_of_json(&json!({ "parsedJson": { "x:extract_result#1": [{
-            "digest": { "evidence": "q", "value": "a raise" },
-            "co": [{ "name": { "evidence": "Acme", "value": "Acme" } }, { "name": { "evidence": null, "value": " " } }],
-        }] } })));
-        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
-            ("ids", "mint") => json!({ "value": ["id-1"] }),
-            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
-            ("llm.client", "call") => json!({ "value": reply.clone() }),
-            _ => host(request),
-        });
-        assert!(done.get("result").is_some(), "{done}");
-        let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
-        assert_eq!(
-            calls,
-            [
-                "check.program", "adapters.resolve", "control.cancel.cancelled", "adapters.call", "ids.mint", "control.cancel.cancelled",
-                "clock.now", "llm.client.call", "clock.now", "trace.append", "control.cancel.cancelled", "control.cancel.cancelled",
-                "trace.append", "control.cancel.cancelledNow",
-            ]
-        );
-        let call = &seen[7].args;
-        assert_eq!((call["label"].clone(), call["model"].clone(), call["effort"].clone()), (json!("movement_extraction"), json!("sonnet"), json!("low")));
-        assert!(call["system"].as_str().unwrap().contains("**x:co#2** (an array under the key `co` inside each **x:extract_result#1** entity)"));
-        assert_eq!(call["userMessage"], json!("## TEXT\nAcme raised."));
-        assert_eq!(call["budget"], json!({ "remainingMicrodollars": null }));
-        // The blank entity is counted empty and dropped; the trace names
-        // what was extracted.
-        let entries = appended(&seen[9]);
-        let entry = &entries[0];
-        // In the TypeScript's key order, the members `extractRegion` writes.
-        let Js::Array(wired) = env::decode(&seen[9].args["entries"]).unwrap() else { panic!("a list") };
-        let Js::Object(first) = &wired.items()[0] else { panic!("an entry") };
-        assert_eq!(
-            first.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
-            ["kind", "node", "inputChars", "inputs", "emissions", "model", "durationMs", "reply", "empty", "dropped", "entities"]
-        );
-        assert_eq!(entry["emissions"], json!({ "extract result": 1 }));
-        assert_eq!((entry["empty"].clone(), entry["dropped"].clone()), (json!({ "co": 1 }), json!({ "co": 1 })));
-        assert_eq!(entry["entities"], json!({ "extract result": [{ "fields": { "digest": "a raise" } }], "co": [{ "fields": { "name": "Acme" } }] }));
-        assert_eq!(appended(&seen[12]), json!([{ "kind": "block", "root": "deals-[c:co]->", "positions": 1 }]));
+    fn the_extraction_keyword_is_refused_by_name_and_asks_nothing() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n  }\n}";
+        let host = plain_host(json!({ "text": "Acme raised." }));
+        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), host);
+        assert_eq!(done["refused"], json!(crate::admit::LEGACY_EXTRACTION), "{done}");
+        assert!(seen.is_empty(), "{seen:?}");
     }
 
     /// What a `trace.append` handed over, its entries off the eval wire.

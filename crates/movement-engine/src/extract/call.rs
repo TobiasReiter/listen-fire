@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use movement_parser::ast::{self, ExtractCallFinds, ExtractCallShape};
-use movement_parser::catalog::types::{FieldType, Scalar};
+use movement_parser::catalog::types::{Composite, FieldType, Scalar};
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
 use serde_json::json;
 
@@ -229,15 +229,42 @@ fn answer_key(one: bool) -> &'static str {
     if one { "record" } else { "records" }
 }
 
+/// `describeGuideType`: a field's type as the entity guide names it.
+fn guide_type(type_: Option<&FieldType>) -> String {
+    let Some(type_) = type_ else { return "text".into() };
+    match type_ {
+        FieldType::Scalar(scalar) => match scalar {
+            Scalar::Text | Scalar::Number | Scalar::Boolean | Scalar::Date | Scalar::Datetime | Scalar::File | Scalar::Json | Scalar::Absent | Scalar::Never => {
+                scalar.name().into()
+            }
+        },
+        FieldType::Composite(composite) => match composite {
+            Composite::List { of, .. } => format!("list of {}", guide_type(Some(of))),
+            Composite::MaybeAbsent { of } => guide_type(Some(of)),
+            Composite::Tuple { .. } => "a list of values".into(),
+            Composite::Dict { .. } => "a set of named values".into(),
+            Composite::Record { .. } => "a record".into(),
+            Composite::Union { of } => of.iter().map(|member| guide_type(Some(member))).collect::<Vec<_>>().join(" or "),
+            Composite::Enum { options, open: Some(_) } => format!("text, known values: {}", options.join(" | ")),
+            Composite::Enum { options, open: None } => format!("enum: {}", options.join(" | ")),
+        },
+    }
+}
+
+/// `described`: `: <words>` after a name, nothing without words.
+fn described(description: &str) -> String {
+    if description.is_empty() { String::new() } else { format!(": {description}") }
+}
+
 /// `guideLines`: the shape as the prompt describes it, nested nodes
 /// indented under their parents.
 fn guide_lines(spec: &NodeSpec, parent: Option<&str>, depth: usize, one: bool, into: &mut Vec<String>) {
     let indent = "  ".repeat(depth);
-    let described = crate::extract::prompt::described(&spec.description);
+    let words = described(&spec.description);
     into.push(match parent {
-        None if one => format!("{indent}**{}**{described} — the one record, as the object under `record`", spec.name),
-        None => format!("{indent}**{}**{described} — emit each one as an element of the `records` array (zero, one, or many, as the description says)", spec.name),
-        Some(parent) => format!("{indent}**{}** (an array under the key `{}` inside each **{parent}**){described}", spec.name, spec.name),
+        None if one => format!("{indent}**{}**{words} — the one record, as the object under `record`", spec.name),
+        None => format!("{indent}**{}**{words} — emit each one as an element of the `records` array (zero, one, or many, as the description says)", spec.name),
+        Some(parent) => format!("{indent}**{}** (an array under the key `{}` inside each **{parent}**){words}", spec.name, spec.name),
     });
     let stage = spec.stages.first();
     let fields = stage.map_or(&[][..], |s| s.fields.as_slice());
@@ -248,8 +275,8 @@ fn guide_lines(spec: &NodeSpec, parent: Option<&str>, depth: usize, one: bool, i
         into.push(format!(
             "{indent}    - `{}` ({}){}",
             field.name,
-            crate::extract::prompt::guide_type(field.type_.as_ref()),
-            crate::extract::prompt::described(&field.description)
+            guide_type(field.type_.as_ref()),
+            described(&field.description)
         ));
     }
     for child in stage.map_or(&[][..], |s| s.children.as_slice()) {
@@ -746,8 +773,6 @@ impl Run<'_> {
                 Js::String(text) => Some(text.into_string()),
                 _ => None,
             },
-            effort_stepped_down: None,
-            continuations: 0.0,
         })
     }
 

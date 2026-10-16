@@ -30,6 +30,12 @@ use movement_parser::lowering::expression::{AggregationFunction, Expression, Lis
 
 use crate::write::{EdgeShape, TargetWhere, edge_shape};
 
+/// The extraction keyword (`x = extract from […] { … }`, versions 1–4): this
+/// engine does not run it on any version. Version 5 refuses it at the check
+/// (MOV_EXTRACT_KEYWORD_RETIRED), and a version 1–4 program holding one runs
+/// on the TypeScript engine, which keeps it as those versions' reference.
+pub const LEGACY_EXTRACTION: &str = "legacy_extraction";
+
 /// The flat built-ins and namespaced members the evaluator runs
 /// (crate::stdlib): an expression calling any other is refused.
 const FUNCTIONS: [&str; 35] = [
@@ -407,7 +413,11 @@ fn admit_file<'p>(
                     // `resolvedRValue`), and a file has no event to make it about
                     // (`fileLevelCall`).
                     RValue::Call { call } if plugin_named(&call.callee) || movement_named(&call.callee) => fails_at_file = true,
-                    RValue::Extract { .. } | RValue::ExtractCall { .. } | RValue::Block { .. } | RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => {
+                    // The extraction keyword is not this engine's on any
+                    // version: the program is refused by name, wherever it
+                    // writes one.
+                    RValue::Extract { .. } => reasons.note(LEGACY_EXTRACTION),
+                    RValue::ExtractCall { .. } | RValue::Block { .. } | RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => {
                         fails_at_file = true;
                     }
                     RValue::Expr { .. } | RValue::Call { .. } => file_values.push((&assign.name, Some(&assign.value))),
@@ -470,7 +480,6 @@ fn admit_file<'p>(
                 movements: &movement_names,
                 plugins: &plugins,
                 plugin_binds: &plugin_binds,
-                extracts: &none,
                 graphs: &none,
                 shapes: &shapes,
                 shape_aliases: &none,
@@ -513,7 +522,6 @@ fn admit_file<'p>(
         movements: &movement_names,
         plugins: &plugins,
         plugin_binds: &plugin_binds,
-        extracts: &none,
         graphs: &none,
         shapes: &shapes,
         shape_aliases: &none,
@@ -585,7 +593,6 @@ fn admit_file<'p>(
             movements: &movement_names,
             plugins: &plugins,
             plugin_binds: &plugin_binds,
-            extracts: &bound.extracts,
             graphs: &bound.graphs,
             shapes: &body_shapes,
             shape_aliases: &shape_aliases,
@@ -1552,8 +1559,6 @@ struct Bound<'c> {
     /// made or a match found, or a hop alias over such an edge — a node of
     /// the run's, or a record of a system a `link` put there.
     members: BTreeSet<String>,
-    /// An extraction's root, or an entity a head over one landed on.
-    extracts: BTreeSet<String>,
     /// The nodes a `graph { … }` literal built (a subset of `nodes`), which
     /// may hold records of a system.
     graphs: BTreeSet<String>,
@@ -1613,7 +1618,6 @@ enum Kind {
     /// A node a `graph { … }` literal built.
     Graph,
     Landing,
-    Extracted,
     /// What a run-built node's edge holds (`Bound::members`).
     Member,
     /// A walk kept to run at each read.
@@ -1629,7 +1633,7 @@ enum Kind {
 
 /// The record kinds a value handed to a position parameter may hold
 /// (`evaluateCallArg`'s position case).
-const HELD_KINDS: [Kind; 6] = [Kind::Event, Kind::Handle, Kind::Landing, Kind::Extracted, Kind::Node, Kind::Lazy];
+const HELD_KINDS: [Kind; 5] = [Kind::Event, Kind::Handle, Kind::Landing, Kind::Node, Kind::Lazy];
 
 /// A signature with each `Held` parameter as each kind it may be (of
 /// `held`); `None` past a bound on how many walks one call may cost.
@@ -1848,7 +1852,6 @@ impl<'c> Bound<'c> {
                             }
                             Kind::Node
                         }
-                        RValue::Extract { .. } => Kind::Extracted,
                         RValue::Lazy { .. } => Kind::Lazy,
                         RValue::Expr { expr } => {
                             if let Ok(Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name }) = lowered(&expr.raw)
@@ -2133,16 +2136,8 @@ impl<'c> Bound<'c> {
     /// iteration's).
     fn block(&mut self, block: &TraversalBlock, scope: &[usize]) {
         let inner = self.enter(scope);
-        // A head over what an extraction yielded lands on its entities.
-        let over_extract = matches!(&block.head.root, Some(PathRoot::Name { name }) if self.extracts.contains(name));
         let over_node = matches!(&block.head.root, Some(PathRoot::Name { name }) if self.nodes.contains(name) || self.members.contains(name));
-        let kind = if over_extract {
-            Kind::Extracted
-        } else if over_node {
-            Kind::Member
-        } else {
-            Kind::Landing
-        };
+        let kind = if over_node { Kind::Member } else { Kind::Landing };
         // Every hop's alias names its own level's record on the path; a
         // `_resources` hop's, the resource (a record, as a landing is).
         if let Some(alias) = crate::traverse::resources_alias(&block.head.hops_raw) {
@@ -2187,7 +2182,7 @@ impl<'c> Bound<'c> {
         let bound = self.sites.iter().rev().find(|(n, _, _)| n == name).map(|(_, kind, _)| *kind);
         match bound.or_else(|| self.params.iter().find(|(n, _)| n == name).map(|(_, kind)| *kind)) {
             Some(Kind::Node) if self.graphs.contains(name) => Kind::Graph,
-            Some(kind @ (Kind::Handle | Kind::Node | Kind::Graph | Kind::Landing | Kind::Extracted | Kind::Member | Kind::Lazy | Kind::Event)) => kind,
+            Some(kind @ (Kind::Handle | Kind::Node | Kind::Graph | Kind::Landing | Kind::Member | Kind::Lazy | Kind::Event)) => kind,
             _ => Kind::Value,
         }
     }
@@ -2246,7 +2241,6 @@ impl<'c> Bound<'c> {
             RValue::Write { write } if self.into_node(&write.target) => Kind::Member,
             RValue::Match { r#match } if self.into_node(&r#match.target) => Kind::Member,
             RValue::Write { .. } | RValue::Match { .. } | RValue::Link { .. } => Kind::Handle,
-            RValue::Extract { .. } => Kind::Extracted,
             RValue::Lazy { .. } => Kind::Lazy,
             _ => Kind::Value,
         })
@@ -2378,7 +2372,7 @@ impl<'c> Bound<'c> {
         if self.events.contains(name) || self.event_aliases.contains(name) {
             return Holder::Free;
         }
-        let records = [&self.handles, &self.landings, &self.instances, &self.nodes, &self.members, &self.extracts, &self.graphs, &self.lazies];
+        let records = [&self.handles, &self.landings, &self.instances, &self.nodes, &self.members, &self.graphs, &self.lazies];
         if records.iter().any(|set| set.contains(name)) {
             return Holder::Record;
         }
@@ -2710,7 +2704,6 @@ impl<'c> Bound<'c> {
                 &mut self.graphs
             }
             Kind::Landing => &mut self.landings,
-            Kind::Extracted => &mut self.extracts,
             Kind::Member => &mut self.members,
             Kind::Lazy => &mut self.lazies,
             Kind::Event => &mut self.event_aliases,
@@ -2789,7 +2782,6 @@ struct Names<'n> {
     /// What a plain call of each binds.
     plugin_binds: &'n BTreeMap<String, PluginImport>,
     /// What extractions yielded: a root, or an entity a head landed on.
-    extracts: &'n BTreeSet<String>,
     /// The nodes a `graph { … }` literal built.
     graphs: &'n BTreeSet<String>,
     /// The node declarations the file makes.
@@ -2850,7 +2842,7 @@ impl Names<'_> {
                 RValue::Construct { construct } if self.plugin(&construct.callee) => {
                     self.plugin_invocation(&construct.callee, construct.args.iter().map(|a| Some(&a.value)))
                 }
-                RValue::Extract { extract } => self.extract(extract),
+                RValue::Extract { .. } => refuse(LEGACY_EXTRACTION),
                 RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
                 // `f(n: 3)` of a closure or a value the body binds is its
                 // call (the construction spelling of one), not an instance.
@@ -2882,7 +2874,7 @@ impl Names<'_> {
                 RValue::Match { r#match } => self.match_(r#match),
                 RValue::Link { link } => self.link(link),
                 RValue::Block { block } => self.block(block),
-                RValue::Extract { extract } => self.extract(extract),
+                RValue::Extract { .. } => refuse(LEGACY_EXTRACTION),
                 RValue::ExtractCall { extract_call } => self.extract_call(extract_call),
                 RValue::Call { call } if self.callee(&call.callee).is_some() => self.call(call),
                 RValue::Construct { construct } if self.callee(&construct.callee).is_some() => self.call(&construction_as_call(construct)),
@@ -3003,14 +2995,13 @@ impl Names<'_> {
         let params: BTreeSet<String> = declared.iter().map(|p| p.name.clone()).collect();
         let without = |set: &BTreeSet<String>| -> BTreeSet<String> { set.difference(&params).cloned().collect() };
         let values: BTreeSet<String> = self.values.union(&params).cloned().collect();
-        let (events, handles, nodes, landings, members, lazies, extracts, graphs) = (
+        let (events, handles, nodes, landings, members, lazies, graphs) = (
             without(self.events),
             without(self.handles),
             without(self.nodes),
             without(self.landings),
             without(self.members),
             without(self.lazies),
-            without(self.extracts),
             without(self.graphs),
         );
         let mut value_holders = self.value_holders.clone();
@@ -3043,7 +3034,6 @@ impl Names<'_> {
             landings: &landings,
             members: &members,
             lazies: &lazies,
-            extracts: &extracts,
             graphs: &graphs,
             instances: without(&self.instances),
             ..*self
@@ -3248,7 +3238,7 @@ impl Names<'_> {
         matches!(
             expr,
             Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false }
-                if self.handles.contains(name) || self.instances.contains(name) || self.extracts.contains(name) || self.events.contains(name)
+                if self.handles.contains(name) || self.instances.contains(name) || self.events.contains(name)
         )
     }
 
@@ -3333,9 +3323,6 @@ impl Names<'_> {
         if self.lazies.contains(root) {
             return self.value_head(head);
         }
-        if self.extracts.contains(root) {
-            return self.extract_head(root, head);
-        }
         if self.nodes.contains(root) {
             return self.node_head(root, head);
         }
@@ -3415,28 +3402,6 @@ impl Names<'_> {
         })
     }
 
-    /// A head over what an extraction yielded: one hop down one of its
-    /// edges, as the TypeScript walks it: a WHERE fails the run as its
-    /// `headIterationsFrom` fails it (crate::traverse `extract_paths`, the
-    /// same `unsupported`), and an ORDER BY, a LIMIT or a direction is not
-    /// read, by either engine.
-    fn extract_head(&self, root: &str, head: &PathHead) -> Admitted {
-        let probe = format!("{}{}.`__movement_engine_probe__`", crate::write::spell_name(root), head.hops_raw);
-        let Ok(tree) = movement_parser::expr::parse_expression(&probe) else { return refuse("block_head_does_not_lower") };
-        let Ok(walk) = movement_parser::lowering::lower_expression(&tree, &probe) else { return refuse("block_head_does_not_lower") };
-        let steps = match &walk {
-            Expression::Traverse { steps, .. } => steps,
-            // The content the extraction read, as it stamped it (a file
-            // among them carried forward as the very file).
-            Expression::ResourceTraverse { expression_filter, .. } => return self.resource_filter(expression_filter.as_deref()),
-            _ => return refuse("block_head_does_not_lower"),
-        };
-        match steps.iter().all(|step| matches!(step, TraversalStep::Edge(_))) {
-            true => Ok(()),
-            false => refuse("block_head_step"),
-        }
-    }
-
     /// `x = <expression>`: a bare name of a record is a second name for it
     /// (`aliasedNodeBinding`), and `FIRST`/`LAST`/`ONLY` of a bare walk the
     /// record it picks (`selectedPositionBinding`), of one hop off a root a
@@ -3475,7 +3440,6 @@ impl Names<'_> {
             || self.handles.contains(name)
             || self.landings.contains(name)
             || self.nodes.contains(name)
-            || self.extracts.contains(name)
             || self.members.contains(name)
             || self.lazies.contains(name)
     }
@@ -3502,19 +3466,11 @@ impl Names<'_> {
         Ok(())
     }
 
-    /// A walk's hops off `root` (crate::reading `read_from`): edges, each
-    /// one's WHERE and ORDER BY scoped at the record it lands on; off an
-    /// extraction, plain hops down its result. Off a value, the walk is off
-    /// the records it holds; off a kept walk, the walk runs on past its head
-    /// (`resolveDeferred`), each hop held to what every kind reads.
-    fn walk_hops(&self, root: &str, steps: &[TraversalStep]) -> Admitted {
-        // Down an extraction, plain hops (`walkExtractSteps`): a WHERE or a
-        // hop that is no edge fails the run as the TypeScript's fails it
-        // (crate::traverse `walk_extract`, the same `unsupported`, before the
-        // WHERE is read); an ORDER BY, a LIMIT or a direction is not read.
-        if self.extracts.contains(root) {
-            return Ok(());
-        }
+    /// A walk's hops (crate::reading `read_from`): edges, each one's WHERE
+    /// and ORDER BY scoped at the record it lands on. Off a value, the walk
+    /// is off the records it holds; off a kept walk, the walk runs on past
+    /// its head (`resolveDeferred`), each hop held to what every kind reads.
+    fn walk_hops(&self, steps: &[TraversalStep]) -> Admitted {
         steps.iter().try_for_each(|step| match step {
             TraversalStep::Edge(step) => self.hop(step),
             _ => refuse("traversal_step"),
@@ -3522,8 +3478,8 @@ impl Names<'_> {
     }
 
     /// `EXISTS(root…)`: over a value, whether it holds one (or, with hops,
-    /// a walk off the records it holds); over anything else, edges — down
-    /// an extraction its entities' children, each hop's WHERE, ORDER BY and
+    /// a walk off the records it holds); over anything else, edges, each
+    /// hop's WHERE, ORDER BY and
     /// LIMIT read there as the TypeScript's `evaluateExists` reads them
     /// (crate::reading `exists`); each hop's WHERE and ORDER BY, and the
     /// final WHERE, scoped at the record reached.
@@ -3574,14 +3530,13 @@ impl Names<'_> {
                 let params: BTreeSet<String> = closure.params.iter().map(|p| p.name.clone()).collect();
                 let without = |set: &BTreeSet<String>| -> BTreeSet<String> { set.difference(&params).cloned().collect() };
                 let values: BTreeSet<String> = self.values.union(&params).cloned().collect();
-                let (events, handles, nodes, landings, members, lazies, extracts, graphs) = (
+                let (events, handles, nodes, landings, members, lazies, graphs) = (
                     without(self.events),
                     without(self.handles),
                     without(self.nodes),
                     without(self.landings),
                     without(self.members),
                     without(self.lazies),
-                    without(self.extracts),
                     without(self.graphs),
                 );
                 // A member of a source free of records is free of them; a
@@ -3604,7 +3559,6 @@ impl Names<'_> {
                     landings: &landings,
                     members: &members,
                     lazies: &lazies,
-                    extracts: &extracts,
                     graphs: &graphs,
                     instances: without(&self.instances),
                     ..*self
@@ -3811,11 +3765,6 @@ impl Names<'_> {
         Ok(())
     }
 
-    /// `x = extract from […] { tree }` (crate::extract): its tier read off
-    /// the run's input (`extractionTiers`), the `from` slots and every word the
-    /// tree writes walked as expressions, each `through` plugin's arguments
-    /// too — a bare name there reads the entity's field of that name first,
-    /// else a value the body binds.
     /// The extraction call (crate::extract::call): its content walked as an
     /// expression; its shape a declaration in scope (or a name bound to one,
     /// from version 3), or one written in place, whose words read the body's
@@ -3846,70 +3795,6 @@ impl Names<'_> {
         self.slot(&call.content)
     }
 
-    fn extract(&self, extract: &ast::ExtractExpression) -> Admitted {
-        // A `from` datum is written into the prompt as its value, a record at
-        // any depth as its fields (`fieldsValueOf`, extract/prompt.rs), and
-        // a record whose fields are not in hand fails the run as the
-        // TypeScript's does: every record a `from` datum may hold runs here.
-        extract.from.iter().try_for_each(|slot| self.slot(slot))?;
-        self.extract_stages(&extract.stages)
-    }
-
-    fn extract_stages(&self, stages: &[ast::ExtractStage]) -> Admitted {
-        for stage in stages {
-            for plugin in stage.through.iter().flatten() {
-                if !self.plugins.contains(&plugin.plugin) {
-                    return refuse("plugin_call");
-                }
-                // From version 5 its arguments are by position, bound as
-                // crate::extract binds them; one that does not fit fails the
-                // stage before any is read.
-                let spec = plugin_import(self.plugin_binds, &plugin.plugin, self.language_version).and_then(|import| import.spec.as_deref());
-                let bound = match spec {
-                    Some(spec) if self.language_version >= 5 && !plugin.positional.is_empty() => {
-                        let bound = spec.bind_stage_args(plugin);
-                        if !bound.misfits.is_empty() {
-                            continue;
-                        }
-                        Some(bound.args)
-                    }
-                    // Unbound, a positional argument is read as nothing would read it.
-                    _ if !plugin.positional.is_empty() => return refuse("plugin_call_form"),
-                    _ => None,
-                };
-                for arg in bound.as_deref().unwrap_or(&plugin.args) {
-                    // A bare name the body binds as a value may name the
-                    // entity's field instead, decided at run time; one bound
-                    // to a record is handed its fields, as a plain call's is.
-                    let bare = crate::js::trim(&arg.value.raw);
-                    if crate::js::is_identifier(bare) && !self.holds_other_than_value(bare) {
-                        continue;
-                    }
-                    self.slot(&arg.value)?;
-                    self.plugin_arg(&arg.value)?;
-                }
-            }
-            for field in &stage.fields {
-                self.slot(&field.description)?;
-            }
-            for child in &stage.children {
-                match child {
-                    ast::ExtractNode::Inline(child) => {
-                        self.slot(&child.description)?;
-                        self.extract_stages(&child.stages)?;
-                    }
-                    ast::ExtractNode::Declared(child) => {
-                        if let Some(words) = &child.description {
-                            self.slot(words)?;
-                        }
-                        self.extract_stages(&child.stages)?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// A declared shape's words, at every depth. (A field or node named
     /// `__proto__` is the checker's `MOV_SHAPE_FIELD_PROTO`: the run ends at
     /// the check on either engine.)
@@ -3923,21 +3808,6 @@ impl Names<'_> {
             }
         }
         shape.children.iter().try_for_each(|child| self.shape_words(child))
-    }
-
-    /// A name bound to anything but a value: read bare, the TypeScript
-    /// refuses it with an error of its own.
-    fn holds_other_than_value(&self, name: &str) -> bool {
-        !self.values.contains(name)
-            && (self.events.contains(name)
-                || self.handles.contains(name)
-                || self.nodes.contains(name)
-                || self.landings.contains(name)
-                || self.extracts.contains(name)
-                || self.members.contains(name)
-                || self.lazies.contains(name)
-                || self.instances.contains(name)
-                || self.file_names.contains(name))
     }
 
     /// The movement a call names (`Callees::callee`).
@@ -3963,7 +3833,6 @@ impl Names<'_> {
     /// A name the body itself binds (a parameter, a value, a record).
     fn binds_in_body(&self, name: &str) -> bool {
         self.events.contains(name)
-            || self.extracts.contains(name)
             || self.values.contains(name)
             || self.handles.contains(name)
             || self.nodes.contains(name)
@@ -3978,8 +3847,8 @@ impl Names<'_> {
     /// instance, for a name in any letter case.
     fn binds_any_case(&self, name: &str) -> bool {
         let lowered = crate::js::to_lower_case(name);
-        let sets: [&BTreeSet<String>; 15] = [
-            self.events, self.extracts, self.values, self.handles, self.nodes, self.members, self.lazies, self.body_instances,
+        let sets: [&BTreeSet<String>; 14] = [
+            self.events, self.values, self.handles, self.nodes, self.members, self.lazies, self.body_instances,
             self.file_names, self.landings, &self.instances, self.movements, self.plugins, self.graphs, self.shapes,
         ];
         sets.iter().any(|set| set.iter().any(|bound| crate::js::to_lower_case(bound) == lowered))
@@ -3987,7 +3856,6 @@ impl Names<'_> {
 
     fn binds(&self, name: &str) -> bool {
         self.events.contains(name)
-            || self.extracts.contains(name)
             || self.values.contains(name)
             || self.handles.contains(name)
             || self.nodes.contains(name)
@@ -4214,18 +4082,16 @@ impl Names<'_> {
             Some(PathRoot::Name { name }) => name.as_str(),
             _ => "",
         };
-        let (mut extracts, mut members, mut landings) = (self.extracts.clone(), self.members.clone(), self.landings.clone());
+        let (mut members, mut landings) = (self.members.clone(), self.landings.clone());
         landings.extend(crate::traverse::resources_alias(&head.hops_raw));
         for alias in crate::traverse::head_steps(head).unwrap_or_default().into_iter().filter_map(|step| step.alias) {
-            if self.extracts.contains(root) {
-                extracts.insert(alias);
-            } else if self.nodes.contains(root) || self.members.contains(root) {
+            if self.nodes.contains(root) || self.members.contains(root) {
                 members.insert(alias);
             } else {
                 landings.insert(alias);
             }
         }
-        let item = Names { extracts: &extracts, members: &members, landings: &landings, instances: self.instances.clone(), ..*self };
+        let item = Names { members: &members, landings: &landings, instances: self.instances.clone(), ..*self };
         item.node(mapping, graph)
     }
 
@@ -4477,7 +4343,7 @@ impl Names<'_> {
             // A walk read for a field, many-valued.
             // A walk read for a field, or as the records it lands on.
             Expression::Traverse { alias_root: Some(root), steps, expression } if !steps.is_empty() => match expression.as_ref() {
-                Expression::Property { .. } | Expression::EdgeProperty { .. } => self.walk_hops(root, steps),
+                Expression::Property { .. } | Expression::EdgeProperty { .. } => self.walk_hops(steps),
                 _ => refuse("traversal_terminal"),
             },
             Expression::Aggregate { fn_, expression, order_by, .. } => self.aggregate(*fn_, expression, order_by.as_deref(), scoped),
@@ -4600,7 +4466,7 @@ impl Names<'_> {
         if self.events.contains(name) {
             return Holder::Free;
         }
-        let records = [self.handles, self.landings, self.nodes, self.members, self.extracts, self.graphs, self.lazies];
+        let records = [self.handles, self.landings, self.nodes, self.members, self.graphs, self.lazies];
         if records.iter().any(|set| set.contains(name)) || self.instances.contains(name) {
             return Holder::Record;
         }
@@ -5788,10 +5654,10 @@ mod tests {
     fn refuses_what_the_file_says_it_does_not_run() {
         let movement = "movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}";
         assert_eq!(file(&format!("import {{ x }} from \"./lib.mov\"\n{movement}")).as_deref(), Some("import_from_file"));
-        // A file-level extraction, write or call fails every run as the
+        // A file-level extraction call, write or call fails every run as the
         // TypeScript's does, before any body: nothing after it is walked.
         let refused_body = "movement m(msg: <inbox-[:message]->>) {\n  x = @trigger\n}";
-        assert_eq!(file(&format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\n{refused_body}")), None);
+        assert_eq!(file(&format!("{PRELUDE}r = extract([\"a\"], Lead)\n{refused_body}")), None);
         assert_eq!(file(&format!("{PRELUDE}w = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")), None);
         assert_eq!(file(&format!("{PRELUDE}y = @trigger\nw = write crm-[:companies]-> {{ name: \"a\" }}\n{refused_body}")).as_deref(), Some("meta:trigger"));
         // A statement at file scope runs nothing.
@@ -5813,7 +5679,7 @@ mod tests {
             "  x = 1",
             "  write crm-[:companies]-> { name: tag, stage: \"${rules} ${msg.`subject`}\" }",
             "  await sleep(1h)\n  y = tag",
-            "  found = extract from [msg.`text`] {\n    node lead: <Lead>\n  }",
+            "  found = extract([msg.`text`], Lead)",
             // A shaped graph (chunk 7A Task 2).
             "  g = graph<Lead> { name: \"a\" }",
         ] {
@@ -5846,60 +5712,29 @@ mod tests {
         }
     }
 
-    /// The extraction keyword runs whole (chunk 6A Task 3b): its words, its
-    /// `from` slots and its stages' plugin arguments are walked as
-    /// expressions, a head over what it yielded walks one of its edges, and
-    /// a field of an extracted entity reads as a record's.
+    /// The extraction keyword is refused by name on every version, wherever
+    /// it is written (a body, a return, file level, beside an admitted
+    /// extraction call); `AI()` is the run's call; a declared shape's words
+    /// are walked in the file's scope.
     #[test]
-    fn admits_extraction_and_refuses_by_name_what_it_does_not_run() {
-        let plugins = format!("import {{ fetch_url }} from plugins\n{PRELUDE}");
-        let with = |body: &str| file(&format!("{plugins}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
-        let tree = "  deals = extract from [msg.`text`, \"also ${msg.`subject`}\"] through [fetch_url(url: msg.`text`)] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: <text> \"its name\"\n      website: \"its site\"\n    } through [fetch_url(url: website)] {\n      summary: \"what it does\"\n    }\n  }";
-        for after in [
-            "",
-            "\n  write crm-[:notes]-> { body: deals.`digest` }",
-            "\n  deals-[c:co]-> {\n    write crm-[:companies]-> { unique by (`name`) name: c.`name`, summary: c.summary }\n    c-[p:people]-> {\n      x = p.`name`\n    }\n  }",
-            "\n  if deals.`digest` != \"\" {\n    y = deals.digest\n  }",
-            // A WHERE down an extraction fails the run as the TypeScript's
-            // does; an ORDER BY or a LIMIT is not read.
-            "\n  x = deals-[c:co WHERE c.`name` == \"a\"]->.`name`",
-            "\n  deals-[c:co WHERE `name` == \"x\"]-> {\n    x = 1\n  }",
-            "\n  deals-[c:co LIMIT 1]-> {\n    x = 1\n  }",
-            "\n  if EXISTS(deals-[c:co ORDER BY `name` LIMIT 1]->) {\n    x = 1\n  }",
-            "\n  deals-[c:co]->-[p:people]-> {\n    x = p.`name`\n  }",
-            // A `_resources` head: the record's bundle, or the content the
-            // extraction read, its WHERE over each resource.
-            "\n  msg-[f:_resources]-> {\n    x = f.`name`\n  }",
-            "\n  deals-[f:_resources WHERE type == \"FILE\"]-> {\n    write crm-[:notes]-> { body: f.`name` }\n  }",
-        ] {
-            assert_eq!(with(&format!("{tree}{after}")), None, "{after}");
+    fn refuses_the_extraction_keyword_by_name_on_every_version() {
+        let tree = "deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n    node co: \"each company\" {\n      name: <text> \"its name\"\n    }\n  }";
+        for version in [1, 2, 3, 4] {
+            let body = |text: &str| format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n  {text}\n}}");
+            for source in [
+                body(tree),
+                body(&format!("{tree}\n  deals-[c:co]-> {{\n    x = c.`name`\n  }}")),
+                body("return extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }"),
+                format!("{PRELUDE}r = extract from [\"a\"] {{\n  node n: \"n\" {{ a: \"a\" }}\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"),
+            ] {
+                assert!(reasons_of(&source, "m", version).contains(&LEGACY_EXTRACTION.to_string()), "v{version}\n{source}");
+            }
         }
-        for (after, reason) in [
-            ("\n  delete deals", "delete_not_record"),
-        ] {
-            assert_eq!(with(&format!("{tree}{after}")).as_deref(), Some(reason), "{after}");
-        }
-        for (body, reason) in [
-            ("  d = extract from [msg.`text`] {\n    a: \"${@trigger}\"\n  }", "meta:trigger"),
-            ("  d = extract from [msg.`text`] through [nowhere(url: msg.`text`)] {\n    a: \"a\"\n  }", "plugin_call"),
-        ] {
-            assert_eq!(with(body).as_deref(), Some(reason), "{body}");
-        }
-        // A record named bare as a stage plugin's argument is handed its
-        // fields, as a plain call's argument is; a SORT key of any form is
-        // read in each member's scope.
-        for body in [
-            "  d = extract from [SORT([msg.`text`], UPPER(\"a\"))] {\n    a: \"a\"\n  }",
-            "  d = extract from [msg.`text`] through [fetch_url(url: msg)] {\n    a: \"a\"\n  }",
-            "  co = write crm-[:companies]-> { name: \"Acme\" }\n  d = extract from [msg.`text`] through [fetch_url(url: co)] {\n    a: \"a\"\n  }",
-        ] {
-            assert_eq!(with(body), None, "{body}");
-        }
-        // A tier is read off the run's input; `AI()` is the run's call.
-        for body in ["  d = extract \"careful\" from [msg.`text`] {\n    a: \"a\"\n  }", "  d = extract from [msg.`text`] {\n    a: \"${AI(\"why\")}\"\n  }", "  x = AI(msg.`text`, \"thorough\")"] {
-            assert_eq!(with(body), None, "{body}");
-        }
-        // A declared shape's words are walked in the file's scope.
+        let v5 = "import { `@lf/email` as email } from adapters\nimport { dealflow_inbox } from credentials\ninbox = connect email using dealflow_inbox\nnode Co: \"each company\" {\n  name: <text> \"its name\"\n}\nfunction m(msg: <inbox-[:message]->>) {\n  cos = extract([msg.`text`], Co)\n  deals = extract from [msg.`text`] {\n    node co: \"each company\" { name: <text> \"its name\" }\n  }\n}";
+        assert_eq!(reasons_of(v5, "m", 5), vec![LEGACY_EXTRACTION.to_string()]);
+        assert_eq!(reasons_of(&v5.replace("  deals = extract from [msg.`text`] {\n    node co: \"each company\" { name: <text> \"its name\" }\n  }\n", ""), "m", 5), Vec::<String>::new());
+        let with = |body: &str| file(&format!("{PRELUDE}movement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
+        assert_eq!(with("  x = AI(msg.`text`, \"thorough\")"), None);
         let shaped = |words: &str| file(&format!("{PRELUDE}node Lead {{\n  name: <text> \"{words}\"\n}}\nmovement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}"));
         assert_eq!(shaped("its name"), None);
         assert_eq!(shaped("its ${@trigger} name").as_deref(), Some("meta:trigger"));
@@ -6026,10 +5861,7 @@ mod tests {
             "  co = write crm-[:companies]-> { name: \"a\" }\n  x = echo(q: co)\n  y = echo(q: co.`name`)",
             "  rows = crm-[c:companies]->\n  top = FIRST(rows)\n  x = echo(q: top)\n  names = MAP(rows, (r) => {\n    return r.`name`\n  })\n  y = echo(q: names)",
             "  co = write crm-[:companies]-> { name: \"a\" }\n  held = { k: co }\n  write crm-[:notes]-> { body: held.k.`name` }",
-            "  x = DATE.FORMAT(msg.`sent`, \"YYYY\")\n  found = extract from [msg, msg.`text`] {\n    name: \"the company\"\n  }",
-            // A record in an extraction's input is written as its fields.
-            "  rows = crm-[c:companies]->\n  found = extract from [rows] {\n    name: \"the company\"\n  }",
-            "  co = write crm-[:companies]-> { name: \"a\" }\n  found = extract from [co, { k: co }] {\n    name: \"the company\"\n  }",
+            "  x = DATE.FORMAT(msg.`sent`, \"YYYY\")",
         ] {
             assert_eq!(with(body), None, "{body}");
         }
