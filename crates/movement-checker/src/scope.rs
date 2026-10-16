@@ -187,6 +187,20 @@ impl Scopes {
         Resolution::Unknown
     }
 
+    /// Every variable (no function) visible from `scope`, innermost first.
+    pub fn value_names(&self, scope: ScopeId) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for id in self.chain(scope) {
+            for symbol in self.scopes[id.0].symbols.values() {
+                let s = &self.symbols[symbol.0];
+                if !s.is_function() && !names.contains(&s.name) {
+                    names.push(s.name.clone());
+                }
+            }
+        }
+        names
+    }
+
     /// The function in scope written `name` in any letter case.
     pub fn resolve_function(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
         let folded = name.to_lowercase();

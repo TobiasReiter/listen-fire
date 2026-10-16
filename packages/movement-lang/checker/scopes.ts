@@ -322,6 +322,17 @@ export class Scope {
     return names;
   }
 
+  /** Every variable (no function) visible from here, innermost first. */
+  valueNames(): string[] {
+    const names: string[] = [];
+    for (let scope: Scope | undefined = this; scope; scope = scope.parent) {
+      for (const symbol of scope.symbols.values()) {
+        if (!isFunctionSymbol(symbol) && !names.includes(symbol.name)) names.push(symbol.name);
+      }
+    }
+    return names;
+  }
+
   resolve(name: string): Resolution {
     for (let scope: Scope | undefined = this; scope; scope = scope.parent) {
       const symbol = scope.symbols.get(name);

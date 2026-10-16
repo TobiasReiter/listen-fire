@@ -4532,6 +4532,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
+      valueNamesInScope: () => scope.valueNames(),
       report: () => {},
       span,
     });
@@ -4633,6 +4634,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
+      valueNamesInScope: () => scope.valueNames(),
       isRecordReceipt: name => this.isRecordReceipt(name, scope),
       firstRecordReceiptReport: name => this.firstRecordReceiptReport(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
@@ -4661,6 +4663,7 @@ class Checker {
       isManyValuedName: name => this.isManyValuedSymbol(name, scope),
       isDeclaredGraphToken: token => this.declaredShapeTokens.has(token),
       nameInScope: name => scope.resolve(name).kind === 'found',
+      valueNamesInScope: () => scope.valueNames(),
       isRecordReceipt: name => this.isRecordReceipt(name, scope),
       firstRecordReceiptReport: name => this.firstRecordReceiptReport(name, scope),
       report: (code, message, at, severity) => this.reportTyped(code, message, at, severity),
@@ -6810,9 +6813,19 @@ class Checker {
     scope: Scope,
   ): void {
     if (this.typeOnly) return;
+    // A bare name the hop's type is known not to carry is no field's old
+    // spelling: the typing reports it as one unknown name.
+    let unknown: Map<string, boolean> | undefined;
+    try {
+      const typing = this.silentTyping(scope, place.spanOf(tree.at));
+      typing.infer(lowerExpression(tree, raw));
+      unknown = typing.bareWalkNames;
+    } catch {
+      unknown = undefined;
+    }
     const binds = (name: string): boolean => {
       const kind = scope.resolve(name).kind;
-      return kind === 'found' || kind === 'pending';
+      return kind === 'found' || kind === 'pending' || unknown?.get(name) === true;
     };
     for (const found of walkFields(tree, raw, binds)) {
       const placed = found.edits.flatMap((e) => {

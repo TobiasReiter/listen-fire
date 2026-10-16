@@ -48,6 +48,11 @@ pub trait TypeEnv {
     fn name_in_scope(&self, _name: &str) -> bool {
         false
     }
+    /// The variables in scope, innermost first: what a bare name in a hop's
+    /// WHERE may have meant (version 5's did-you-mean).
+    fn value_names_in_scope(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// A name known to hold a record nobody can name.
     fn is_record_name(&self, _name: &str) -> bool {
         false
@@ -126,6 +131,11 @@ pub struct Typing<'a> {
     /// The field a write puts this value into (`WriteTargetRef`): its type,
     /// and its borrowable spelling (`crm.companies.stage`) when known.
     pub write_target: Option<(Ty, Option<String>)>,
+    /// From version 5, each bare name read in a hop's WHERE or ORDER BY that
+    /// no variable in scope binds: true while every hop it was read in is
+    /// known not to carry it (reported here as an unknown name, so the
+    /// spelling rule that would offer the hop's alias leaves it alone).
+    pub bare_walk_names: IndexMap<String, bool>,
     narrowed_scalars: HashMap<String, Ty>,
     narrowed_roots: HashMap<String, Position>,
     read_types: HashMap<usize, Option<Ty>>,
@@ -156,6 +166,7 @@ impl<'a> Typing<'a> {
             receipt_reads: Vec::new(),
             diagnostics: Vec::new(),
             write_target: None,
+            bare_walk_names: IndexMap::new(),
             narrowed_scalars: HashMap::new(),
             narrowed_roots: HashMap::new(),
             read_types: HashMap::new(),
@@ -989,18 +1000,34 @@ impl<'a> Typing<'a> {
             }
             Expression::EdgeProperty { property_type_id, field_only } => {
                 // Binding first, field second: the engine's order (typing.ts).
-                // A hop's alias read is only ever the field.
-                if !field_only && let Some(bound) = self.scalar_type(property_type_id) {
+                // A hop's alias read is only ever the field. From version 5 a
+                // bare name no variable binds, where the hop's type is known
+                // not to carry it, is one unknown name.
+                let name = property_type_id;
+                if !field_only && let Some(bound) = self.scalar_type(name) {
                     return (Some(bound), Vec::new());
                 }
-                if let Some(declared) = lookup_property_type(position, property_type_id) {
-                    return (Some(declared), Vec::new());
+                let in_scope = !field_only && self.env.name_in_scope(name);
+                let carries = instance_of_ref(position).is_some_and(|i| i.schema.edges_carry_properties == Some(true));
+                // (`POSITION_SENTINEL` is the records themselves, no name at all.)
+                let v5_bare = !field_only && !in_scope && name != super::narrowing::POSITION_SENTINEL && since(self.version, 5);
+                let fields = if v5_bare && !carries { closed_fields_of(position) } else { None };
+                let unknown = fields.as_ref().is_some_and(|f| !f.contains(name));
+                if v5_bare {
+                    let was = self.bare_walk_names.get(name).copied().unwrap_or(true);
+                    self.bare_walk_names.insert(name.clone(), was && unknown);
                 }
-                let a_variable = !field_only && self.env.name_in_scope(property_type_id);
-                if a_variable || instance_of_ref(position).is_some_and(|i| i.schema.edges_carry_properties == Some(true)) {
+                if let (true, Some(position), Some(fields)) = (unknown, position, &fields) {
+                    self.report_unknown_walk_name(position, name, fields);
                     return (None, Vec::new());
                 }
-                (self.read_property(position, property_type_id), Vec::new())
+                if let Some(declared) = lookup_property_type(position, name) {
+                    return (Some(declared), Vec::new());
+                }
+                if in_scope || carries {
+                    return (None, Vec::new());
+                }
+                (self.read_property(position, name), Vec::new())
             }
             Expression::AliasRef { name } => {
                 self.bare_names.insert(key(expr), name.clone());
@@ -1012,6 +1039,26 @@ impl<'a> Typing<'a> {
             | Expression::Resource { .. }
             | Expression::LinkedObject { .. } => (None, Vec::new()),
         }
+    }
+
+    /// `reportUnknownWalkName`: version 5's unknown name in a hop's WHERE or
+    /// ORDER BY — no variable binds it and the hop's type (`fields`, every
+    /// one it carries) does not carry it.
+    fn report_unknown_walk_name(&mut self, position: &Position, name: &str, fields: &[String]) {
+        let scope: Vec<String> = self.env.value_names_in_scope().into_iter().filter(|n| !fields.contains(n)).collect();
+        let candidates: Vec<String> = fields.iter().cloned().chain(scope).collect();
+        let hint = match crate::meta::closest_by_edit_distance(name, &candidates) {
+            None => String::new(),
+            Some(closest) if fields.iter().any(|f| f == closest) => format!(" — did you mean the field '{closest}', read through the hop's alias?"),
+            Some(closest) => format!(" — did you mean '{closest}'?"),
+        };
+        self.report(
+            codes::NAME_UNRESOLVED,
+            format!(
+                "Unknown name '{name}' — no variable in scope is called that, and {} has no such field (a bare name inside a walk's brackets is a variable from outside the walk; a field is read through the hop's alias){hint}",
+                describe_position(position)
+            ),
+        );
     }
 
     /// `AT(x, i)`: a dict's key, a tuple's slot, a list's member.
@@ -1510,4 +1557,33 @@ struct ScalarFieldRead {
     root: String,
     field: String,
     scalar: FieldlessScalar,
+}
+
+/// `closedFieldsOf`: every field a hop landing on `position` carries — read
+/// or write-only — when its type is known and closed; `None` when a record
+/// there may carry fields nothing enumerates (an open, undescribed or pending
+/// type, or a type that is not a system's record).
+fn closed_fields_of(position: Option<&Position>) -> Option<Vec<String>> {
+    fn fields_of(schema: Option<&movement_parser::catalog::types::PositionSchema>) -> Option<Vec<String>> {
+        let schema = schema?;
+        if schema.open_properties == Some(true) || schema.undescribed == Some(true) || schema.pending == Some(true) {
+            return None;
+        }
+        Some(schema.properties.keys().cloned().chain(schema.write_only_properties.iter().flatten().cloned()).collect())
+    }
+    match position? {
+        p @ Position::Position(_) => fields_of(super::position::position_schema_of_ref(p).as_deref()),
+        Position::Union(u) => {
+            let mut all: Vec<String> = Vec::new();
+            for v in &u.variants {
+                for f in fields_of(u.instance.schema.positions.get(v))? {
+                    if !all.contains(&f) {
+                        all.push(f);
+                    }
+                }
+            }
+            Some(all)
+        }
+        _ => None,
+    }
 }

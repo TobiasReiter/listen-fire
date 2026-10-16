@@ -1175,7 +1175,7 @@ impl Checker<'_> {
         if since(self.version, 5) {
             self.check_typed_spelling(&tree, slot, scope);
             let written = self.written_text(slot).to_string();
-            self.check_walk_fields(&tree, &written, TreeAt::Slot(slot), scope);
+            self.check_walk_fields(&tree, (&written, &slot.raw), TreeAt::Slot(slot), scope);
         }
         self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
     }
@@ -1194,7 +1194,7 @@ impl Checker<'_> {
         };
         let at_ = TreeAt::Head { head, probe_len: probe.encode_utf16().count() };
         if since(self.version, 5) {
-            self.check_walk_fields(&tree, probe, at_, scope);
+            self.check_walk_fields(&tree, (probe, probe), at_, scope);
         }
         self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
     }

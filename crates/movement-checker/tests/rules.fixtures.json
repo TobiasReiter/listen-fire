@@ -3180,10 +3180,8 @@
    "version": 5,
    "source": "import { crm } from adapters\nc = connect crm\nfunction m() {\n  wanted = \"a\"\n  c-[co:company WHERE co.name == wanted && co.name != wante]-> {\n    c-[p:company WHERE p.name == \"x\" && nam == \"y\"]-> {\n    }\n  }\n  return 1\n}\n",
    "expected": [
-    "MOV_V5_SPELLING 5:3-5:63 from language version 5 a walk's field is read through the hop's alias: `co.wante` (a bare name inside the brackets is a variable from outside the walk)",
-    "MOV_UNKNOWN_PROPERTY 5:3-5:63 c.company has no field 'wante' — it has: name",
-    "MOV_V5_SPELLING 6:5-6:54 from language version 5 a walk's field is read through the hop's alias: `p.nam` (a bare name inside the brackets is a variable from outside the walk)",
-    "MOV_UNKNOWN_PROPERTY 6:5-6:54 c.company has no field 'nam' — it has: name — did you mean 'name'?"
+    "MOV_NAME_UNRESOLVED 5:3-5:63 Unknown name 'wante' — no variable in scope is called that, and c.company has no such field (a bare name inside a walk's brackets is a variable from outside the walk; a field is read through the hop's alias) — did you mean 'wanted'?",
+    "MOV_NAME_UNRESOLVED 6:5-6:54 Unknown name 'nam' — no variable in scope is called that, and c.company has no such field (a bare name inside a walk's brackets is a variable from outside the walk; a field is read through the hop's alias) — did you mean the field 'name', read through the hop's alias?"
    ]
   }
  ]

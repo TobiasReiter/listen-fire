@@ -120,8 +120,9 @@ export interface WalkField {
   safe?: true;
 }
 
-/** Every bare field in `tree`'s walks, `binds` telling whether the scope
- *  binds a name (then it is an outer variable). */
+/** Every bare field in `tree`'s walks, `binds` telling whether a name is no
+ *  field: a variable the scope binds, or a name the hop's type is known not
+ *  to carry (the typing reports that one as an unknown name). */
 export function walkFields(tree: MExpr, raw: string, binds: (name: string) => boolean): WalkField[] {
   const out: WalkField[] = [];
   const text = (at: At): string => raw.slice(at.start, at.end);

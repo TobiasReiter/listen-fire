@@ -13,6 +13,8 @@ use movement_parser::ast::{ExprSlot, Span};
 use movement_parser::tree::{At, BinaryOp, MExpr};
 use movement_parser::util::utf16::Utf16;
 
+use indexmap::IndexMap;
+
 use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
@@ -206,8 +208,9 @@ pub struct WalkField {
     pub safe: bool,
 }
 
-/// Every bare field in `tree`'s walks, `binds` telling whether the scope
-/// binds a name (then it is an outer variable).
+/// Every bare field in `tree`'s walks, `binds` telling whether a name is no
+/// field: a variable the scope binds, or a name the hop's type is known not
+/// to carry (the typing reports that one as an unknown name).
 pub fn walk_fields(tree: &MExpr, raw: &str, binds: &dyn Fn(&str) -> bool) -> Vec<WalkField> {
     let src = Utf16::new(raw);
     let mut out = Vec::new();
@@ -316,12 +319,26 @@ fn alias_of(hop: &movement_parser::tree::Hop, taken: &[String], src: &Utf16, bin
 impl Checker<'_> {
     /// `checkWalkFields` (version 5): a walk's fields through its alias, in
     /// a slot or a block head (read through its probe, `raw`).
-    pub fn check_walk_fields(&mut self, tree: &MExpr, raw: &str, place: crate::families::calls::TreeAt, scope: ScopeId) {
+    /// `parsed` is the text `tree` was parsed from (what it lowers against).
+    pub fn check_walk_fields(&mut self, tree: &MExpr, (raw, parsed): (&str, &str), place: crate::families::calls::TreeAt, scope: ScopeId) {
         if self.type_only > 0 {
             return;
         }
+        // A bare name the hop's type is known not to carry is no field's old
+        // spelling: the typing reports it as one unknown name.
+        let unknown: IndexMap<String, bool> = {
+            let env = self.typing_env(scope);
+            movement_parser::lowering::lower_expression(tree, parsed).ok().map_or_else(IndexMap::new, |lowered| {
+                let mut typing = Typing::new(&env, self.version, place.span_of(tree.at()));
+                typing.infer(&lowered);
+                typing.bare_walk_names
+            })
+        };
         let found = {
-            let binds = |name: &str| matches!(self.scopes.resolve(scope, name), crate::scope::Resolution::Found(_) | crate::scope::Resolution::Pending);
+            let binds = |name: &str| {
+                matches!(self.scopes.resolve(scope, name), crate::scope::Resolution::Found(_) | crate::scope::Resolution::Pending)
+                    || unknown.get(name).copied() == Some(true)
+            };
             walk_fields(tree, raw, &binds)
         };
         for f in found {

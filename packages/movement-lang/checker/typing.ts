@@ -163,6 +163,10 @@ export const TypedDiagnosticCodes = {
   /** A property read names a field a CLOSED typed position does not declare
    *  (positions are closed unless the schema marks them `openProperties`). */
   UNKNOWN_PROPERTY: 'MOV_UNKNOWN_PROPERTY',
+  /** From version 5, a bare name in a hop's WHERE or ORDER BY that no
+   *  variable in scope binds and the hop's type does not carry (the walk's
+   *  own unknown name: one diagnostic, not the alias spelling as well). */
+  NAME_UNRESOLVED: 'MOV_NAME_UNRESOLVED',
   /** Since language version 4: `.created` / `.committed` read off a write's
    *  handle, where the record declares no such field. They were facts about
    *  the write, not fields of the record, and `-[:@old]->` answers both: no
@@ -4131,6 +4135,30 @@ export function recordFieldTypes(position: PositionTypeRef): Record<string, Fiel
   }
 }
 
+/**
+ * Every field a hop landing on `position` carries — read or write-only — when
+ * its type is known and closed; undefined when a record there may carry
+ * fields nothing enumerates (an open, undescribed or pending type, or a type
+ * that is not a system's record).
+ */
+function closedFieldsOf(position: PositionTypeRef | undefined): string[] | undefined {
+  const fieldsOf = (schema: PositionSchema | undefined): string[] | undefined =>
+    schema === undefined || schema.openProperties === true || schema.undescribed === true || schema.pending === true
+      ? undefined
+      : [...Object.keys(schema.properties), ...(schema.writeOnlyProperties ?? [])];
+  switch (position?.kind) {
+    case 'position':
+      return fieldsOf(positionSchemaOfRef(position));
+    case 'union': {
+      const each = position.variants.map(v => fieldsOf(position.instance.schema.positions[v]));
+      if (each.some(f => f === undefined)) return undefined;
+      return [...new Set(each.flatMap(f => f ?? []))];
+    }
+    default:
+      return undefined;
+  }
+}
+
 export function lookupPropertyType(
   position: PositionTypeRef | undefined,
   propertyId: string,
@@ -4736,6 +4764,12 @@ export class ExpressionTyping {
   /** Aliases bound by traversal steps within the expression(s) this walker has seen. */
   readonly locals = new Map<string, PositionTypeRef | undefined>();
 
+  /** From version 5, each bare name read in a hop's WHERE or ORDER BY that no
+   *  variable in scope binds: true while every hop it was read in is known
+   *  not to carry it (reported here as an unknown name, so the spelling rule
+   *  that would offer the hop's alias leaves it alone). */
+  readonly bareWalkNames = new Map<string, boolean>();
+
   /** True while walking the traversal INSIDE an `await` — an awaitable final
    *  edge then types as its landing (no MOV_AWAIT_REQUIRED). Set per-walk by
    *  `walkSteps`'s `awaited` option. */
@@ -4837,6 +4871,9 @@ export class ExpressionTyping {
        *  bare name there is either a field of the hop target or an outer
        *  binding, and anything that is neither is a mistake. */
       nameInScope?: (name: string) => boolean;
+      /** The variables in scope, innermost first: what a bare name in a
+       *  hop's WHERE may have meant (version 5's did-you-mean). */
+      valueNamesInScope?: () => readonly string[];
       /** Is this name bound on the ARROW plane — a record — whether or not a
        *  position type came with it? `resolveRoot` answers `undefined` both for
        *  a record nobody could type and for a name that is not a record at all,
@@ -6051,14 +6088,33 @@ export class ExpressionTyping {
         // third surface and the one nothing enumerates: where an instance
         // declares them (`edgesCarryProperties`), an unrecognised name may be
         // the relationship's own fact and stays silent.
+        //
+        // From version 5 a bare name that no variable binds is either the old
+        // spelling of a field (the spelling rule offers the hop's alias) or,
+        // where the hop's type is known not to carry it, neither: one unknown
+        // name, its did-you-mean over the hop's fields and the scope's names.
         const fieldOnly = expr.fieldOnly === true;
-        const bound = fieldOnly ? undefined : this.scalarType(expr.propertyTypeId);
+        const name = expr.propertyTypeId;
+        const bound = fieldOnly ? undefined : this.scalarType(name);
         if (bound !== undefined) return bound;
-        const declared = lookupPropertyType(position, expr.propertyTypeId);
+        const inScope = !fieldOnly && this.options.nameInScope?.(name) === true;
+        const carries = instanceOfRef(position)?.schema.edgesCarryProperties === true;
+        // (`POSITION_SENTINEL` is the records themselves, no name at all.)
+        const v5Bare = !fieldOnly && !inScope && name !== POSITION_SENTINEL && since(this.options.languageVersion, 5);
+        const fields = v5Bare && !carries ? closedFieldsOf(position) : undefined;
+        const unknown = fields !== undefined && !fields.includes(name);
+        if (v5Bare) {
+          this.bareWalkNames.set(name, (this.bareWalkNames.get(name) ?? true) && unknown);
+        }
+        if (unknown && position !== undefined && fields !== undefined) {
+          this.reportUnknownWalkName(position, name, fields);
+          return undefined;
+        }
+        const declared = lookupPropertyType(position, name);
         if (declared !== undefined) return declared;
-        if (!fieldOnly && this.options.nameInScope?.(expr.propertyTypeId) === true) return undefined;
-        if (instanceOfRef(position)?.schema.edgesCarryProperties === true) return undefined;
-        return this.readProperty(position, expr.propertyTypeId);
+        if (inScope) return undefined;
+        if (carries) return undefined;
+        return this.readProperty(position, name);
       }
       case 'alias_ref':
         // The bridge only emits this where its property resolver is partial;
@@ -6076,6 +6132,23 @@ export class ExpressionTyping {
       case 'linked_object':
         return undefined;
     }
+  }
+
+  /** Version 5's unknown name in a hop's WHERE or ORDER BY: no variable
+   *  binds it and the hop's type (`fields`, every one it carries) does not
+   *  carry it. */
+  private reportUnknownWalkName(position: PositionTypeRef, name: string, fields: readonly string[]): void {
+    const scope = (this.options.valueNamesInScope?.() ?? []).filter(n => !fields.includes(n));
+    const closest = closestByEditDistance(name, [...fields, ...scope]);
+    const hint = closest === undefined
+      ? ''
+      : fields.includes(closest)
+        ? ` — did you mean the field '${closest}', read through the hop's alias?`
+        : ` — did you mean '${closest}'?`;
+    this.report(
+      TypedDiagnosticCodes.NAME_UNRESOLVED,
+      `Unknown name '${name}' — no variable in scope is called that, and ${describePosition(position)} has no such field (a bare name inside a walk's brackets is a variable from outside the walk; a field is read through the hop's alias)${hint}`,
+    );
   }
 
   /** A built-in's declared effect row, into the function around the call. */
