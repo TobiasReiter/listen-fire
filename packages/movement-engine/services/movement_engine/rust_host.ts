@@ -176,7 +176,7 @@ const ROUTES: Record<string, Route> = {
     const required = declaredSchema(program, declaration);
     const at = declaredPositionAt(required.schema, required.declaration.name, optionalStringList(request.path, 'check.compatible path'));
     if (at === undefined) return { fits: true };
-    return { fits: surfaceMisfit(supplied, { schema: required.schema, position: at.position }, { seen: at.seen }) === undefined };
+    return { fits: surfaceMisfit(supplied, { schema: required.schema, position: at.position }, { languageVersion, seen: at.seen }) === undefined };
   },
   async 'adapters.resolve'(request, { host }) {
     const role = request.role;

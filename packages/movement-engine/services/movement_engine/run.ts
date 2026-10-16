@@ -7548,10 +7548,11 @@ class Interpreter {
     }
     const declared = this.resolvedShape(graph).schema;
     return (
-      surfaceMisfit(subjectSurface.surface, {
-        schema: declared,
-        position: graph.declaration.name,
-      }) === undefined
+      surfaceMisfit(
+        subjectSurface.surface,
+        { schema: declared, position: graph.declaration.name },
+        { languageVersion: this.languageVersion },
+      ) === undefined
     );
   }
 

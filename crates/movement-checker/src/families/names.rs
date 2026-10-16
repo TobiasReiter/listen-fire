@@ -118,7 +118,7 @@ impl Checker<'_> {
             format!(
                 "'{name}' is a credential, which is never a value in a program — it is only named {}, and the host resolves it there",
                 if since(self.version, 5) {
-                    let connect = connection(&Connection { adapter: "…", args: &[("credentials", &name)], credential: Some("credentials") }, self.version);
+                    let connect = connection(&Connection { adapter: "…", args: &[("credentials", name)], credential: Some("credentials") }, self.version);
                     format!("after 'using' where an adapter is connected ('{connect}')")
                 } else {
                     "as the 'credentials:' argument where an integration is set up".to_string()
