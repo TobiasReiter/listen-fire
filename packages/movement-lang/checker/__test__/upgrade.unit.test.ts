@@ -39,8 +39,15 @@ movement go(c: <chat-[:channel]->>) {
 `;
 
 describe('upgrading a program to version 5', () => {
-  it('rewrites every old spelling and checks clean under 5', () => {
+  it('applies the safe fixes and holds the one not proved to keep the meaning', () => {
     const upgraded = upgradeSource(V4, checked);
+    expect(upgraded.source).toContain('ISNULL(first(names))');
+    expect(upgraded.held.map((d) => d.code)).toEqual(['MOV_V5_SPELLING']);
+    expect(upgraded.held[0]?.message).toContain('ISNULL');
+  });
+
+  it('rewrites every old spelling and checks clean under 5, every fix applied when asked', () => {
+    const upgraded = upgradeSource(V4, checked, { all: true });
     expect(upgraded.remaining).toEqual([]);
     expect(upgraded.settled).toBe(true);
     expect(upgraded.changed).toBe(true);
@@ -61,21 +68,21 @@ function go(c: <chat-[:channel]->>) {
   });
 
   it('the parse alone rewrites the same spellings, without a catalog', () => {
-    expect(upgradeSource(V4, spellingCheck()).source).toBe(upgradeSource(V4, checked).source);
+    expect(upgradeSource(V4, spellingCheck(), { all: true }).source).toBe(upgradeSource(V4, checked, { all: true }).source);
   });
 
   it('keeps comments, blank lines and spacing outside the rewritten spans byte for byte', () => {
     const before = V4.split('\n');
-    const after = upgradeSource(V4, checked).source.split('\n');
+    const after = upgradeSource(V4, checked, { all: true }).source.split('\n');
     expect(after).toHaveLength(before.length);
     for (const i of [0, 1, 3, 5, 12, 13]) expect(after[i]).toBe(before[i]);
     expect(after[2]!.endsWith('    # the   workspace')).toBe(true);
   });
 
   it('changes nothing in a program already in the version 5 surface', () => {
-    const once = upgradeSource(V4, checked).source;
+    const once = upgradeSource(V4, checked, { all: true }).source;
     const again = upgradeSource(once, checked);
-    expect(again).toEqual({ source: once, changed: false, applied: 0, remaining: [], settled: true });
+    expect(again).toEqual({ source: once, changed: false, applied: 0, remaining: [], settled: true, held: [] });
   });
 
   it('reports what it cannot rewrite by line, against the rewritten text', () => {
@@ -99,7 +106,7 @@ describe('which fixes one pass takes', () => {
     code: 'MOV_TEST',
     message: 'test',
     span: { start: at(...from), end: at(...to) },
-    fix: { edits: [{ span: { start: at(...from), end: at(...to) }, text }] },
+    fix: { edits: [{ span: { start: at(...from), end: at(...to) }, text }], safe: true },
     ...extra,
   });
   /** A check that answers `rounds[i]` on its i-th call, then nothing. */
@@ -130,6 +137,7 @@ describe('which fixes one pass takes', () => {
           { span: { start: at(1, 2), end: at(1, 3) }, text: 'Y' },
           { span: { start: at(1, 3), end: at(1, 4) }, text: 'Z' },
         ],
+        safe: true,
       },
     };
     // `both` overlaps `first` in one edit, so neither of its edits applies.

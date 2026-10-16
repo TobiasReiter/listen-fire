@@ -70,6 +70,7 @@ function fixOf(value: unknown): DiagnosticFix {
       if (!isRecord(edit) || typeof edit.text !== 'string') throw new Error(`the Rust checker answered an edit that is not one: ${JSON.stringify(edit)}`);
       return { span: spanOf(edit.span), text: edit.text };
     }),
+    ...(isRecord(value) && value.safe === true ? { safe: true as const } : {}),
   };
 }
 
