@@ -130,6 +130,7 @@ export function scanInstanceChains(
     try {
       const parsed = parseMovementExpression(
         `${probePathHead(head)}.\`__movement_selector_probe__\``,
+        languageVersion,
       );
       return parsed.type === 'traverse' ? parsed.steps : undefined;
     } catch {
@@ -307,7 +308,7 @@ export function scanInstanceChains(
   const visitSlot = (slot: ExprSlot, aliasScope: Map<string, AliasGrounding>): void => {
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(slot);
+      parsed = expressionOfSlot(slot, languageVersion);
     } catch {
       // Unparseable slot — any parser error class. The checker reports it to
       // the author; the scan must never throw (a prod save 500'd otherwise).

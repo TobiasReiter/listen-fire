@@ -1057,7 +1057,7 @@ class Projection {
     const source = slot.raw.trim();
     let parsed: Expression;
     try {
-      parsed = expressionOfSlot(slot);
+      parsed = expressionOfSlot(slot, this.input.languageVersion);
     } catch {
       return { source, role: 'unparsed', refs: [], parts: [{ kind: 'text', text: source }] };
     }

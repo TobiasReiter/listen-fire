@@ -93,3 +93,25 @@ describe('version 5 checker leftovers, in both checkers', () => {
     expect(check(V5('  d = c.name'), 5)).toEqual([]);
   });
 });
+
+// A slot can arrive without the tree its program's parse cached (a program
+// rebuilt from stored JSON, a slot the checker builds itself); the checker
+// then reads its text again, and must read it under the program's version.
+describe('a version 5 slot read again is read under 5', () => {
+  const body = [
+    '  u = Text.upper(t)',
+    '  xs = [t, u]',
+    '  y = xs[0]',
+    '  if (y == "a" && u != "b") {',
+    '    z = sort(xs, (x) => x, { order: "desc" })',
+    '  }',
+  ].join('\n');
+
+  it('a program whose slots lost their cached parse checks as the parsed one does', () => {
+    const parsed = parseProgram(V5(body), { languageVersion: 5 });
+    const rebuilt = structuredClone(parsed);
+    const found = said(checkProgram(rebuilt, catalog, { languageVersion: 5 }));
+    expect(found).toEqual(said(checkProgram(parsed, catalog, { languageVersion: 5 })));
+    expect(found.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+});

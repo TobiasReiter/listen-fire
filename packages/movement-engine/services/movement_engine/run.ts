@@ -6317,7 +6317,7 @@ class Interpreter {
     if (spec === undefined || before(this.languageVersion, 5) || statement.args.every((arg) => arg.name !== undefined)) {
       return statement.args;
     }
-    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const bound = bindPluginArgs(spec, 'plain', statement.args, { languageVersion: this.languageVersion });
     const [misfit] = bound.misfits;
     if (misfit !== undefined) {
       const positional = pluginPositionalParams(spec, 'plain');

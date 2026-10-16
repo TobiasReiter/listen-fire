@@ -20,6 +20,7 @@ import {
   scanInstanceChains,
   type CatalogSnapshot,
   type InstanceSchema,
+  CURRENT_LANGUAGE_VERSION,
 } from 'movement-lang';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
@@ -59,6 +60,7 @@ async function grafted(body: string): Promise<InstanceSchema> {
   return graftGenericLandings({
     instance: { adapterType: 'ask', schema, entryPoints },
     chains: scanInstanceChains(source),
+    languageVersion: CURRENT_LANGUAGE_VERSION,
   }).schema;
 }
 

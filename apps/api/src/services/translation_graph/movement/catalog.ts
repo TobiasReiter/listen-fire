@@ -42,6 +42,8 @@ import {
   referencedEventAddresses,
   scanInstanceChains,
   surfaceNotEnumerated,
+  CURRENT_LANGUAGE_VERSION,
+  type InstanceChain,
   type AdapterSpec,
   type Catalog,
   type CatalogSnapshot,
@@ -850,13 +852,17 @@ async function assembleTeamCatalog(
     options.source !== undefined ? [options.source, ...fileSources.values()] : [...fileSources.values()];
   const pinnedOf = (languageVersion: LanguageVersion | undefined) =>
     languageVersion !== undefined ? { languageVersion } : undefined;
+  // Each chain's pin, so a write body is read under its own program's version.
+  const chainPins = new Map<InstanceChain, LanguageVersion>();
+  const scanPinned = (source: string, languageVersion: LanguageVersion | undefined) => {
+    const chains = scanInstanceChains(source, pinnedOf(languageVersion));
+    for (const chain of chains) chainPins.set(chain, languageVersion ?? CURRENT_LANGUAGE_VERSION);
+    return chains;
+  };
+  const pinOf = (chain: InstanceChain) => chainPins.get(chain) ?? CURRENT_LANGUAGE_VERSION;
   const allChains = [
-    ...(options.source !== undefined
-      ? scanInstanceChains(options.source, pinnedOf(options.languageVersion))
-      : []),
-    ...[...fileSources].flatMap(([path, source]) =>
-      scanInstanceChains(source, pinnedOf(filePins.get(path))),
-    ),
+    ...(options.source !== undefined ? scanPinned(options.source, options.languageVersion) : []),
+    ...[...fileSources].flatMap(([path, source]) => scanPinned(source, filePins.get(path))),
   ];
   const chainsForKey = (key: string) =>
     allChains.filter((chain) => {
@@ -1080,16 +1086,16 @@ async function assembleTeamCatalog(
     if (chains.length === 0) continue;
     const projection = schemaByAdapterAndCred.get(key);
     if (!projection) continue;
-    const landed = graftGenericLandings({
-      instance: {
-        adapterType: instance.adapter.adapterType,
-        schema: projection.schema,
-        entryPoints: instance.entryPoints,
-      },
-      chains,
-    });
-    if (landed.schema !== projection.schema) {
-      schemaByAdapterAndCred.set(key, { ...projection, schema: landed.schema });
+    let schema = projection.schema;
+    for (const languageVersion of new Set(chains.map(pinOf))) {
+      schema = graftGenericLandings({
+        instance: { adapterType: instance.adapter.adapterType, schema, entryPoints: instance.entryPoints },
+        chains: chains.filter((chain) => pinOf(chain) === languageVersion),
+        languageVersion,
+      }).schema;
+    }
+    if (schema !== projection.schema) {
+      schemaByAdapterAndCred.set(key, { ...projection, schema });
     }
   }
 

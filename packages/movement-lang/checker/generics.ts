@@ -20,6 +20,7 @@
 // literals MEAN is the host's synthesis. The checker only agrees on a key.
 
 import { BridgeError, parseMovementExpression } from '../expression/bridge';
+import type { LanguageVersion } from '../language_version';
 
 /**
  * THE IDENTITY of a construction-site landing — the key it lives under in
@@ -72,10 +73,10 @@ export function genericLandingName(input: {
  * (reading the same slot at the write site) so the two cannot disagree about
  * what a literal is.
  */
-export function literalStringValuesOf(raw: string): string[] | undefined {
+export function literalStringValuesOf(raw: string, options: { languageVersion: LanguageVersion }): string[] | undefined {
   let parsed;
   try {
-    parsed = parseMovementExpression(raw);
+    parsed = parseMovementExpression(raw, options.languageVersion);
   } catch (e) {
     if (e instanceof BridgeError) return undefined;
     throw e;
