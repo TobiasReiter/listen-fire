@@ -260,7 +260,7 @@ impl Checker<'_> {
 
 /// Every statement carries its span under one name; the tree is the one
 /// place that says so for all of them.
-fn statement_span(statement: &Statement) -> Option<Span> {
+pub(crate) fn statement_span(statement: &Statement) -> Option<Span> {
     let tree = serde_json::to_value(statement).ok()?;
     serde_json::from_value(tree.get("span")?.clone()).ok()
 }

@@ -101,6 +101,9 @@ fn stage(through: &str) -> String {
 
 #[test]
 fn a_through_stage_names_a_package_s_member() {
+    // The stage's own checks, beside the keyword's retirement under 5
+    // (MOV_EXTRACT_KEYWORD_RETIRED, which has no rewrite for a stage).
+    let check = |source: &str, version| check(source, version).into_iter().filter(|d| d.code != "MOV_EXTRACT_KEYWORD_RETIRED").collect::<Vec<_>>();
     assert_eq!(check(&stage("web.linkedinEnrichment"), 5), Vec::<Diagnostic>::new());
     assert_eq!(check(&stage("web.linkedinEnrichment({ depth: 2 })"), 5), Vec::<Diagnostic>::new());
     let unknown = check(&stage("web.linkedin"), 5);

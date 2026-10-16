@@ -14,6 +14,7 @@ import { checkProgram, DiagnosticCodes as C } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
 import { spelledFor } from './surface_spelling';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const mailSchema: InstanceSchema = {
   positions: {
@@ -86,7 +87,7 @@ ${body}
   );
 
 function check(param: string, body: string, languageVersion: LanguageVersion) {
-  return checkProgram(parseProgram(source(param, body, languageVersion), { languageVersion }), catalog, { languageVersion }).filter(
+  return checkProgram(parseProgram(source(param, body, languageVersion), { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
@@ -184,7 +185,7 @@ describe('`_resources` under Dancing Wren (5)', () => {
     };
     const only = mockCatalog({ adapters: { send: { constructionArgs: [], schema: writeOnly } } });
     const src = `import { send } from adapters\nout = connect send\n\nfunction scan(x: <out-[:post]->>) {\n${walk('x')}\n}`;
-    const found = checkProgram(parseProgram(src, { languageVersion: 5 }), only, { languageVersion: 5 })
+    const found = checkProgram(parseProgram(src, { languageVersion: 5 }), only, { languageVersion: 5 }).filter(notKeywordRetirement)
       .filter((d) => (d.severity ?? 'error') === 'error');
     expect(found.map((d) => d.code)).toEqual([C.RESOURCES_NOT_EXTRACTED]);
     expect(found[0].message).not.toContain('Uploads');

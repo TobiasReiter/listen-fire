@@ -14,6 +14,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { mockCatalog, InstanceSchema } from '../catalog';
 import { spelledFor } from './surface_spelling';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const CODE = 'MOV_STDLIB_ARG_NOT_RECORD';
 
@@ -57,7 +58,7 @@ const onDeal = (body: string): string =>
   `${PRELUDE}\nmovement m(d: <c-[:deal]->>) {\n${body}\n}`;
 
 const errors = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(d => (d.severity ?? 'error') === 'error');
+  checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(notKeywordRetirement).filter(d => (d.severity ?? 'error') === 'error');
 const codes = (source: string): string[] => errors(source).map(d => d.code);
 const messageFor = (source: string): string | undefined =>
   errors(source).find(e => e.code === CODE)?.message;

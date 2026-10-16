@@ -26,8 +26,11 @@ const fs = require('fs') as { readFileSync(path: string, encoding: 'utf8'): stri
 const FIXTURES = path.join(__dirname, '__fixtures__');
 const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/oracle/handles.json');
 
-/** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records. */
-const FLOOR = 0.9;
+/** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records.
+ *  Lowered the same day by Henry's ruling retiring the extraction keyword
+ *  (MOV_EXTRACT_KEYWORD_RETIRED, whose fix is never safe, so the loop leaves
+ *  it for a person): 3,862 of 4,449, with 241 programs left holding it. */
+const FLOOR = 0.868;
 
 interface Program {
   source: string;

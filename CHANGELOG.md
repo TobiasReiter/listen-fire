@@ -134,6 +134,22 @@ for byte; on text already in the version 5 spelling it changes nothing.
   written last (`all(a, b, { concurrency: 2 })`); every arm runs at once without one, and an arm
   whose failure `onError` forgives leaves its slot null. Arms built at run time are rewritten by
   hand, naming each function. The `parallel { … }` block refusal points at `all` under 5.
+- **The extraction keyword is retired** (`MOV_EXTRACT_KEYWORD_RETIRED`): `x = extract from [a, b]
+  { node c: "…" { … } }`, with its inline node shapes and `through […]` stages. An extraction is
+  the call over a declared node shape: `extract(content, Shape, { tier })` for each record the
+  content holds, `extractOne(…)` for the one it describes, and a plugin is called as a function
+  (the handbook's enrichment example composes them). Why: one way to extract, whose shape is an
+  ordinary declaration. The diagnostic's fix declares the tree as `node XShape` (named after the
+  binding, numbered past a name the file holds) and writes `x = extractOne([a, b], XShape, {
+  tier })`: the one record the keyword's result was, its fields and nodes read as before. It is
+  never applied on its own: that record may be absent where the keyword's result never was (a
+  field read off it then needs a fallback), an untyped field becomes `<text>`, and the model is
+  asked through the call's prompt. A `through […]` stage has no fix, since no composition of
+  plugin calls is provably the same: rewrite it as the enrichment example does.
+  **The Rust engine no longer runs the keyword on any version** (`legacy_extraction` at
+  admission; its code is deleted). A version 1–4 automation holding one still runs on the
+  TypeScript engine, by its version, exactly as before; `lf` runs and `MOVEMENT_ENGINE=rust`
+  with `MOVEMENT_ENGINE_FALLBACK=none` fail such a run with that reason.
 - **`race` and `all` take their arms as arguments** (`MOV_COMBINATOR_ARMS_ARE_ARGUMENTS`):
   `race([q, t])` is `race(q, t)`, which the diagnostic applies. Why: a closure is not data, so there
   is no list of them to pass. A name that is not a function is refused where it is passed

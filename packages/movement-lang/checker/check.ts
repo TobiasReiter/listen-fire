@@ -181,6 +181,7 @@ import {
 import { builtinArity, describeBuiltin, flatBuiltinNames, lookupBuiltin } from './standard_library';
 import { HANDBOOK_POINTERS, seeHandbook, withHandbookPointer } from './handbook_pointers';
 import { importLine, insertLineAtTop, type DiagnosticFix, type SourceEdit } from './fixes';
+import { extractKeywordRetirement } from './extract_keyword_retired';
 import { hiddenBy, isRespelled, pluginName, spellCode, spellIf, spellMessage, spellWord, type NamedCall, type SpellingFinding } from '../parser/surface';
 import {
   borrowableFieldsOf,
@@ -888,6 +889,12 @@ export const DiagnosticCodes = {
    *  its functions passed as arguments — a list of what each returned, in the
    *  arms' order. The fix rewrites a literal arm list. */
   PARALLEL_RETIRED: 'MOV_PARALLEL_RETIRED',
+  /** The extraction keyword (`x = extract from […] { … }`) under language
+   *  version 5: an extraction is the call over a declared node shape. The fix
+   *  declares the tree and calls `extractOne` where that is mechanical (never
+   *  safe: the record may be absent where the keyword's result never was);
+   *  a `through […]` stage has none. */
+  EXTRACT_KEYWORD_RETIRED: 'MOV_EXTRACT_KEYWORD_RETIRED',
   /** `race([f, g])` / `all([f, g])` under language version 5: a closure is
    *  not data, so there is no list of them to pass — the arms are the call's
    *  arguments (`race(f, g)`). The fix drops the brackets. */
@@ -2714,6 +2721,11 @@ function adoptSchema(target: InstanceSchema, source: InstanceSchema): void {
   target.writableRoots = source.writableRoots;
 }
 
+/** Whether `a` is before `b` in the file. */
+function locBefore(a: Loc, b: Loc): boolean {
+  return a.line < b.line || (a.line === b.line && a.col < b.col);
+}
+
 function declaredExtractShape(resolution: Resolution): DeclaredExtractShape | undefined {
   if (resolution.kind !== 'found' || resolution.symbol.kind !== 'shape') return undefined;
   const { declaration, schema } = resolution.symbol;
@@ -4026,6 +4038,11 @@ class Checker {
    * accepting a live position it mistook for a declared one.
    */
   private readonly declaredShapeTokens = new WeakSet<object>();
+  /** The file's statements' spans, and every name it declares or binds at its
+   *  top (with the shapes the extraction keyword's rewrites generate): where
+   *  a rewrite hoists a declaration, and the names it may not take. */
+  private fileStatementSpans: Span[] = [];
+  private readonly fileNames = new Set<string>();
   /** Combinators with an arm that hands back a record (`ScopeSymbol.receiptHoldsRecord`). */
   private readonly recordSlotCombinators = new WeakSet<CombinatorExpression>();
   /** Receipts already warned about (`MOV_RECEIPT_RECORD_SLOT`) — once per binding. */
@@ -4127,6 +4144,14 @@ class Checker {
     // recorded frame always has the history a cursor query resolves against.
     const file = new Scope('file', undefined, { log: this.options.recording !== undefined });
     this.recordFrame('file', SYNTHETIC_SPAN, file);
+    this.fileStatementSpans = program.statements.map((statement) => statement.span);
+    for (const statement of program.statements) {
+      if (statement.kind === 'import') {
+        for (const imported of statement.names) this.fileNames.add(imported.alias ?? imported.name);
+      } else if (statement.kind === 'assign' || statement.kind === 'shape' || statement.kind === 'type' || statement.kind === 'movement') {
+        this.fileNames.add(statement.name);
+      }
+    }
     // Nothing is ambient. The knowledge graph is an ordinary adapter as of
     // D25 — imported, then CONSTRUCTED against a connection like any other
     // (`graph = kg(credentials: native_knowledge)`); an unconstructed `kg`
@@ -6033,7 +6058,7 @@ class Checker {
         break;
       }
       case 'extract': {
-        const result = this.checkExtract(value.extract, scope, name);
+        const result = this.checkExtract(value.extract, scope, name, span);
         symbol = { ...symbol, posType: result, bindingPlane: 'node' };
         break;
       }
@@ -14512,8 +14537,10 @@ class Checker {
   private checkExtract(
     extract: ExtractExpression,
     scope: Scope,
-    binding?: string,
+    binding: string | undefined,
+    statement: Span,
   ): PositionTypeRef {
+    if (since(this.languageVersion, 5)) this.reportExtractKeywordRetired(extract, scope, binding, statement);
     // Extraction IS the typed model read — the row's `ai`. Its sources are
     // ordinary expressions and raise their own reads.
     this.effects?.flag('ai');
@@ -14539,6 +14566,25 @@ class Checker {
       node,
     });
     return { kind: 'extract', node };
+  }
+
+  /** `MOV_EXTRACT_KEYWORD_RETIRED`, with the rewrite where it is mechanical
+   *  (extract_keyword_retired.ts). */
+  private reportExtractKeywordRetired(extract: ExtractExpression, scope: Scope, binding: string | undefined, statement: Span): void {
+    const at = extract.span.start;
+    const topLevel = this.fileStatementSpans.find((span) => !locBefore(at, span.start) && !locBefore(span.end, at))?.start ?? statement.start;
+    const retirement = extractKeywordRetirement(extract, {
+      ...(binding !== undefined ? { binding } : {}),
+      statement: statement.start,
+      topLevel,
+      taken: this.fileNames,
+      resolveDeclared: (type) => declaredExtractShape(scope.resolve(type))?.declaration.root,
+    });
+    if (retirement.fix === undefined) {
+      this.report(DiagnosticCodes.EXTRACT_KEYWORD_RETIRED, retirement.message, extract.span);
+      return;
+    }
+    this.reportWithFix({ code: DiagnosticCodes.EXTRACT_KEYWORD_RETIRED, message: retirement.message, span: extract.span, fix: retirement.fix });
   }
 
   /**

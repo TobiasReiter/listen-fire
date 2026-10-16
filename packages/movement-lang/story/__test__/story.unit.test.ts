@@ -208,8 +208,9 @@ function stepsOfKind<K extends Step['kind']>(steps: Step[], kind: K): Array<Extr
 
 describe('the fixture program', () => {
   it('checks without errors, so the story is of a program that would run', () => {
+    // Beside the extraction keyword's retirement under 5 (its tree is still checked).
     const errors = checkProgramWithLink(parseProgram(SOURCE), catalog).diagnostics.filter(
-      (d) => (d.severity ?? 'error') === 'error',
+      (d) => (d.severity ?? 'error') === 'error' && d.code !== 'MOV_EXTRACT_KEYWORD_RETIRED',
     );
     expect(errors.map((d) => `${d.code}: ${d.message}`)).toEqual([]);
   });
@@ -240,7 +241,9 @@ describe('storyOf — the whole IR', () => {
   it('carries the movement name and a truthful validity', () => {
     const ir = story();
     expect(ir.movement.name).toBe('Deal intake');
-    expect(ir.movement.validity.status).toBe('valid');
+    // Under 5 the fixture's extraction keyword is retired, and that is its one error.
+    expect(ir.movement.validity.status).toBe('invalid');
+    expect(ir.movement.validity.problems.filter((p) => p.severity === 'error').map((p) => p.code)).toEqual(['MOV_EXTRACT_KEYWORD_RETIRED']);
   });
 
   it('renders the truth for an INVALID program rather than refusing it', () => {

@@ -90,6 +90,11 @@ pub struct Checker<'c> {
     /// argument's value starts — what the parser's finding for it needs for
     /// its fix.
     pub named_orders: std::collections::HashMap<(usize, usize), crate::families::typed_spelling::ArgOrder>,
+    /// The file's statements' spans, and every name it declares or binds at
+    /// its top (with the shapes the extraction keyword's rewrites generate):
+    /// where a rewrite hoists a declaration, and the names it may not take.
+    pub file_statement_spans: Vec<Span>,
+    pub file_names: std::collections::HashSet<String>,
     /// Each plugin package imported (version 5), by its local name: the
     /// members it binds as `web.fetchUrl` (crate::families::names).
     pub packages: std::collections::HashMap<String, Vec<movement_parser::catalog::packages::PackageMember>>,
@@ -203,6 +208,8 @@ impl<'c> Checker<'c> {
             stamps: Default::default(),
             respelled: Default::default(),
             named_orders: Default::default(),
+            file_statement_spans: Vec::new(),
+            file_names: Default::default(),
             packages: Default::default(),
         }
     }
@@ -237,9 +244,29 @@ impl<'c> Checker<'c> {
 
     pub fn run(&mut self, statements: &[Statement]) -> ScopeId {
         let file = self.scopes.open(None);
+        self.enter_file_facts(statements);
         self.check_statement_list(statements, file);
         self.report_missing_listens();
         file
+    }
+
+    /// The file's statements' spans and the names it holds at its top
+    /// (`fileStatementSpans`, `fileNames`), for the file now checked; what
+    /// they were, to restore when a library's check ends.
+    pub(crate) fn enter_file_facts(&mut self, statements: &[Statement]) -> (Vec<Span>, std::collections::HashSet<String>) {
+        let spans = statements.iter().filter_map(crate::families::flow::statement_span).collect();
+        let mut names = std::collections::HashSet::new();
+        for statement in statements {
+            match statement {
+                Statement::Import(import) => names.extend(import.names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone()))),
+                Statement::Assign(s) => _ = names.insert(s.name.clone()),
+                Statement::Shape(s) => _ = names.insert(s.name.clone()),
+                Statement::Type(s) => _ = names.insert(s.name.clone()),
+                Statement::Movement(s) => _ = names.insert(s.name.clone()),
+                _ => {}
+            }
+        }
+        (std::mem::replace(&mut self.file_statement_spans, spans), std::mem::replace(&mut self.file_names, names))
     }
 
     pub fn check_statement_list(&mut self, statements: &[Statement], scope: ScopeId) {
@@ -420,7 +447,7 @@ impl<'c> Checker<'c> {
                 let handle = self.check_link(link, scope, name);
                 return Bound { pos: handle, ..Bound::default() };
             }
-            RValue::Extract { extract } => self.check_extract(extract, scope),
+            RValue::Extract { extract } => self.check_extract(extract, scope, name, span),
             RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
             RValue::Block { block } => {
                 let (returned, ordering) = self.check_traversal_block(block, scope, name);
@@ -929,7 +956,10 @@ impl<'c> Checker<'c> {
         self.check_link_rules(link, scope, binding)
     }
 
-    fn check_extract(&mut self, extract: &ExtractExpression, scope: ScopeId) {
+    fn check_extract(&mut self, extract: &ExtractExpression, scope: ScopeId, binding: Option<&str>, statement: Span) {
+        if self.version >= 5 {
+            self.report_extract_keyword_retired(extract, scope, binding, statement);
+        }
         self.check_ai_tier(extract.tier.as_deref(), extract.span);
         for input in &extract.from {
             self.check_extract_input(input, scope);

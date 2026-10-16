@@ -6,6 +6,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, type Diagnostic } from '../check';
 import { expandPackageImports, mockCatalog, packageMembers, type PluginSpec } from '../catalog';
+import { notKeywordRetirement } from './keyword_retirement';
 
 const plugins: Record<string, PluginSpec> = {
   fetch_url: {
@@ -48,7 +49,7 @@ const HEAD = 'import { `@lf/web` as web } from plugins\n\n';
 const v5 = (body: string): string => `${HEAD}function go(u: <text>, n: <text>, s: <text>) {\n${body}\n}\n`;
 
 function check(source: string, languageVersion: number): Diagnostic[] {
-  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(
+  return checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).filter(notKeywordRetirement).filter(
     (d) => d.severity === undefined,
   );
 }
