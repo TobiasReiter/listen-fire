@@ -329,6 +329,10 @@ import {
   valuesBesideRecord,
   recordsAlone,
   sameStartingPoint,
+  oneRecordOf,
+  joinPositions,
+  joinedUnder,
+  type RecordJoin,
   positionSchemaOfRef,
   recordHeadPosition,
   recordOf,
@@ -1360,17 +1364,24 @@ export function checkProgramWithLink(
     : undefined;
   const recording: CheckRecording | undefined =
     options?.recordAnalysis === true ? { frames: [], writes: [], nodes: [] } : undefined;
-  const checker = new Checker(catalog, {
-    languageVersion,
-    ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
-    addressTokens: new Map(),
-    ...(link ? { linkContext: { link, checked: new Map() } } : {}),
-    ...(recording ? { recording } : {}),
-  });
-  checker.run(program);
+  const checkOnce = (joinBefore5: boolean, recordingInto?: CheckRecording) => {
+    const recordUnions: RecordUnions = { joinBefore5, withheld: false };
+    const checker = new Checker(catalog, {
+      languageVersion,
+      ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+      addressTokens: new Map(),
+      ...(link ? { linkContext: { link, checked: new Map() } } : {}),
+      ...(recordingInto ? { recording: recordingInto } : {}),
+      recordUnions,
+    });
+    checker.run(program);
+    return { diagnostics: checker.diagnostics, withheld: recordUnions.withheld };
+  };
+  const checked = checkOnce(false, recording);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const found = checker.diagnostics.map(withHandbookPointer);
+  const joinedRefusals = checked.withheld ? refusedOnceJoined(checked.diagnostics, checkOnce(true).diagnostics) : [];
+  const found = [...checked.diagnostics, ...joinedRefusals].map(withHandbookPointer);
   if (!link) {
     return {
       diagnostics: [...versionDiagnostics, ...found],
@@ -1382,6 +1393,24 @@ export function checkProgramWithLink(
     link,
     ...(recording ? { recording } : {}),
   };
+}
+
+/**
+ * The errors a check applying the union rule reports that the check under an
+ * older pin did not (`RecordUnions`) — each an upgrade warning, since before
+ * version 5 the value was typed otherwise (or not at all) and ran so.
+ */
+function refusedOnceJoined(underPin: Diagnostic[], joined: Diagnostic[]): Diagnostic[] {
+  const keyOf = (d: Diagnostic) => `${d.code}\u0000${d.message}\u0000${JSON.stringify(d.span)}`;
+  const seen = new Set(underPin.map(keyOf));
+  return joined
+    .filter(d => d.severity === undefined && !seen.has(keyOf(d)))
+    .map(d => ({
+      ...d,
+      message: `${d.message.replace(/\.$/, '')}. Before ${describeLanguageVersion(5)} a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused`,
+      severity: 'warning' as const,
+      upgrade: true as const,
+    }));
 }
 
 const BARE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -2333,6 +2362,11 @@ function traversalFrom(type: PositionTypeRef | undefined): 'graph' | 'result' | 
       return undefined;
     case 'maybeEmpty':
       return traversalFrom(type.of);
+    // One answer where every record it may be gives it.
+    case 'oneOf': {
+      const [first, ...rest] = type.members.map(traversalFrom);
+      return rest.every(each => each === first) ? first : undefined;
+    }
   }
 }
 
@@ -2605,6 +2639,12 @@ function knownFieldsOf(type: PositionTypeRef): string[] | undefined {
     }
     case 'maybeEmpty':
       return knownFieldsOf(type.of);
+    // What every record it may be carries.
+    case 'oneOf': {
+      const each = type.members.map(knownFieldsOf);
+      if (each.some(fields => fields === undefined)) return undefined;
+      return each[0]!.filter(field => each.every(fields => fields!.includes(field)));
+    }
     // A record this program wrote: its type's fields. What the system handed
     // back besides (its id) is the system's identity, not a field to copy.
     case 'handle':
@@ -3104,6 +3144,13 @@ function declaredParamMisfit(
       }
       return undefined;
     }
+    case 'oneOf': {
+      for (const member of arg.members) {
+        const misfit = declaredParamMisfit(member, param);
+        if (misfit !== undefined) return `${describePosition(member)}, one of what this argument may be, does not fit: ${misfit}`;
+      }
+      return undefined;
+    }
     case 'meta':
     case 'closure':
       return `this argument is ${describePosition(arg)}, not a record`;
@@ -3596,34 +3643,42 @@ function withoutValueType<T extends ValueTypeFacts>(shape: T): T {
 
 /**
  * The record a value that may be one of several things is, for a rule that
- * needs one record (`recordOfName`): a name bound to an `IF` or a `COALESCE`
- * whose arms have no one type. Records alone are one record, as `A | B` of two
- * `Org`s is an `Org` — its type the members' when they agree, and unnamed (so
- * nothing is refused) when they do not; one that may be absent may be empty.
- * A member that is not a record makes it a value.
+ * needs one record (`recordOfName`): a name bound to an `IF`, a `COALESCE` or a
+ * call whose arms have no one type. Records alone are one record by the union
+ * rule (`joinPositions`) — their type where they are one, a `oneOf` that every
+ * rule is held to member by member where they are not — on every version:
+ * before a058fda7 this was an internal error, so nothing it feeds ran. One
+ * nobody can name leaves it unnamed (so nothing is refused); one that may be
+ * absent may be empty. A member that is not a record makes it a value.
  */
+/** The position `recordOfMayHold` finds, where it finds one record. */
+function recordOfMayHoldType(mayHold: FieldType): PositionTypeRef | undefined {
+  const record = recordOfMayHold(mayHold);
+  return record.kind === 'record' ? record.type : undefined;
+}
+
 function recordOfMayHold(
   mayHold: FieldType,
 ): { kind: 'record'; type: PositionTypeRef } | { kind: 'value'; what: string } | { kind: 'undescribed' } {
-  const positions: Array<PositionTypeRef | undefined> = [];
+  const positions: PositionTypeRef[] = [];
   let mayBeAbsent = false;
+  let unnamed = false;
   const visit = (member: FieldType): boolean => {
     if (member === 'absent' || isMaybeAbsent(member)) mayBeAbsent = true;
     if (member === 'absent') return true;
     const variant = variantOf(stripAbsent(member));
     if (variant.kind === 'union') return variant.of.every(visit);
     if (variant.kind !== 'record') return false;
-    positions.push(variant.position);
+    if (variant.position === undefined) unnamed = true;
+    else positions.push(variant.position);
     return true;
   };
-  if (!visit(mayHold) || positions.length === 0) {
+  if (!visit(mayHold) || (positions.length === 0 && !unnamed)) {
     return { kind: 'value', what: 'a value that may hold something other than one record' };
   }
-  const first = positions[0];
-  if (first === undefined || !positions.every(position => position !== undefined && sameStartingPoint(position, first))) {
-    return { kind: 'undescribed' };
-  }
-  return { kind: 'record', type: mayBeAbsent ? { kind: 'maybeEmpty', of: first } : first };
+  const one = unnamed ? undefined : joinPositions(positions);
+  if (one === undefined) return { kind: 'undescribed' };
+  return { kind: 'record', type: mayBeAbsent && one.kind !== 'maybeEmpty' ? { kind: 'maybeEmpty', of: one } : one };
 }
 
 function typeTooLargeMessage(name: string): string {
@@ -3860,6 +3915,21 @@ interface CheckerOptions {
    *  the compile path, which records nothing. Imported libraries are checked
    *  by their own Checker without one, so a recording stays file-local. */
   recording?: CheckRecording;
+  /** Shared by the root file's checker and every library's in one check. */
+  recordUnions: RecordUnions;
+}
+
+/**
+ * Whether this check applies the union rule (`oneRecordOf`) to a value that
+ * may be one of several records, and whether a check that did not apply it met
+ * a site where it would have answered otherwise. From version 5 it applies.
+ * Before it each site answered as it always had and ran so: the check under the
+ * pin keeps those answers, and where it kept one, `checkProgramWithLink` checks
+ * again applying the rule and reports what that refuses as an upgrade warning.
+ */
+interface RecordUnions {
+  joinBefore5: boolean;
+  withheld: boolean;
 }
 
 class Checker {
@@ -3917,6 +3987,18 @@ class Checker {
     private readonly catalog: Catalog,
     private readonly options: CheckerOptions,
   ) {}
+
+  /** This check's half of `RecordUnions`, as every site of the union rule
+   *  reads it. */
+  private recordJoin(): RecordJoin {
+    const unions = this.options.recordUnions;
+    return {
+      joins: since(this.languageVersion, 5) || unions.joinBefore5,
+      onWithheld: () => {
+        unions.withheld = true;
+      },
+    };
+  }
 
   private get languageVersion(): LanguageVersion {
     return this.options.languageVersion;
@@ -4230,6 +4312,7 @@ class Checker {
   private silentTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      recordJoin: this.recordJoin(),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -4325,6 +4408,7 @@ class Checker {
   private reportingTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      recordJoin: this.recordJoin(),
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
@@ -4348,6 +4432,7 @@ class Checker {
   private slotTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      recordJoin: this.recordJoin(),
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
@@ -4819,9 +4904,9 @@ class Checker {
   /**
    * One body's collected `return`s, as its value. A body has ONE value, so
    * returns that disagree about which PLANE they are on — a record position
-   * versus a value — is an error naming both. (Returns that agree on the plane
-   * but differ in type take the first one's; a real union of position types
-   * arrives with the type-model wave.)
+   * versus a value — is an error naming both. Returns of records are joined
+   * by the union rule (`joinedReturns`); other returns that agree on the plane
+   * but differ in type take the first one's.
    */
   private closeReturns(collector: ReturnCollector): ReturnShape {
     const first = collector.returns[0];
@@ -4844,6 +4929,8 @@ class Checker {
     if (closures.length > 1 && closures.length === collector.returns.length) {
       return { returns: true, posType: oneOfClosures(closures, { typedBy: since(this.languageVersion, 5) ? 'every' : 'first' }) };
     }
+    const records = this.joinedReturns(collector.returns);
+    if (records !== undefined) return records;
     // What the value may hold is what ANY return may hold — TypeScript's
     // return type is the union of its returns. The type stays the first's;
     // the union travels as the walk input a bound conditional's arms do, so a
@@ -4871,6 +4958,39 @@ class Checker {
       ...(first.fieldType !== undefined ? { fieldType: first.fieldType } : {}),
       ...(revealed !== undefined ? { mayHold: revealed } : {}),
     };
+  }
+
+  /**
+   * Returns that each hand back a record are what the union rule makes of
+   * them (`oneRecordOf`), as an IF of them is: one type where they are one,
+   * keeping what every return vouches for, and a `oneOf` where they are not.
+   * Before version 5 the body's type was its FIRST return's, so a read off
+   * the call was checked against that record alone; under an older pin that
+   * stays, and the rule is told it differed. Undefined where a return is no
+   * record, or the rule says what the first already says.
+   */
+  private joinedReturns(returns: ReadonlyArray<ReturnShape & { span: Span }>): ReturnShape | undefined {
+    const first = returns[0];
+    if (first === undefined || returns.length < 2) return undefined;
+    const arms: FieldType[] = [];
+    for (const returned of returns) {
+      const arm = returned.mayHold ?? returned.fieldType ?? recordValueOf(returned.posType);
+      if (arm === undefined) return undefined;
+      arms.push(arm);
+    }
+    const joined = oneRecordOf(arms);
+    const record = recordIn(joined);
+    if (joined === undefined || record === undefined || record.position === undefined) return undefined;
+    const firstArm = arms[0]!;
+    if (record.position === recordIn(firstArm)?.position && isMaybeAbsent(joined) === isMaybeAbsent(firstArm)) return undefined;
+    const rule = this.recordJoin();
+    if (!rule.joins) {
+      rule.onWithheld?.();
+      return undefined;
+    }
+    if (first.posType === undefined || first.mayHold !== undefined) return { returns: true, fieldType: joined };
+    const position = record.position;
+    return { returns: true, posType: isMaybeAbsent(joined) && position.kind !== 'maybeEmpty' ? { kind: 'maybeEmpty', of: position } : position };
   }
 
   /** Is this concise body's call one whose callee is known to return nothing? */
@@ -5505,6 +5625,7 @@ class Checker {
       linkContext: context,
       currentFile: file,
       library: true,
+      recordUnions: this.options.recordUnions,
     });
     const scope = checker.run(file.program);
     const surfaced = checker.diagnostics.filter(d => diagnosticSeverity(d) !== 'info');
@@ -7446,6 +7567,9 @@ class Checker {
             );
           }
           return true;
+        // Every record it may be is deleted as that record.
+        case 'oneOf':
+          return type.members.map(visit).every(Boolean);
         case 'extract':
           notRecord(`${describePosition(type)}, an extracted node — a transient graph the extraction built, which nothing stores`);
           return false;
@@ -7491,7 +7615,6 @@ class Checker {
   private checkResourcesOfExtraction(
     rootType: PositionTypeRef | undefined,
     rootName: string | undefined,
-    mayHold: FieldType | undefined,
     span: Span,
   ): void {
     const shown = rootName ?? 'the root';
@@ -7499,17 +7622,6 @@ class Checker {
     if (rootType === undefined) {
       // A head with no root is the engine's to refuse, in every version.
       if (rootName === undefined) return;
-      // A name bound to an `IF` or a `COALESCE` is the union of its arms: it
-      // is an extraction's result when every arm provably is one.
-      if (mayHold !== undefined) {
-        const variant = variantOf(mayHold);
-        const arms = variant.kind === 'union' ? variant.of : [mayHold];
-        const extracted = arms.every(arm => {
-          const one = variantOf(stripAbsent(arm));
-          return one.kind === 'record' && one.position !== undefined && unwrapMaybeEmpty(one.position).kind === 'extract';
-        });
-        if (extracted) return;
-      }
       this.report(
         DiagnosticCodes.RESOURCES_NOT_EXTRACTED,
         `'${shown}' is not provably an extraction's result, and ${lead}. A record reaches its files over an edge its system declares: walk that edge instead.`,
@@ -7519,6 +7631,9 @@ class Checker {
     }
     const type = unwrapMaybeEmpty(rootType);
     if (type.kind === 'extract') return;
+    // One of several records (an IF of extractions' results) is one when
+    // every member is.
+    if (type.kind === 'oneOf' && type.members.every(member => unwrapMaybeEmpty(member).kind === 'extract')) return;
     let instead = '';
     if (type.kind === 'position' || type.kind === 'handle' || type.kind === 'union') {
       const positions =
@@ -9157,6 +9272,68 @@ class Checker {
   }
 
   /**
+   * A write starting at a record that may be one of several (`write who { … }`,
+   * `write who-[:edge]-> { … }`, `who` an IF or a COALESCE of People and
+   * Companies), as one scope per member with the name bound to that member:
+   * the union rule writes only what every member takes, so every write rule
+   * holds against each. Undefined where no root is such a record.
+   */
+  private scopesByMember(target: WriteTarget, scope: Scope): { members: PositionTypeRef[]; scopes: Scope[] } | undefined {
+    let found: { name: string; symbol: ScopeSymbol; union: Extract<PositionTypeRef, { kind: 'oneOf' }>; mayBeEmpty: boolean } | undefined;
+    mapTargetRoots(target, (root) => {
+      if (found !== undefined || root.kind !== 'name') return root;
+      const resolution = scope.resolve(root.name);
+      if (resolution.kind !== 'found') return root;
+      const symbol = resolution.symbol;
+      const typed = this.symbolPositionType(symbol);
+      const position = typed ?? (symbol.mayHold !== undefined ? recordOfMayHoldType(symbol.mayHold) : undefined);
+      const union = position?.kind === 'maybeEmpty' ? position.of : position;
+      if (union?.kind === 'oneOf') {
+        found = { name: root.name, symbol, union, mayBeEmpty: position?.kind === 'maybeEmpty' || (typed !== undefined && isMaybeAbsent(symbol.fieldType)) };
+      }
+      return root;
+    });
+    if (found === undefined) return undefined;
+    const { name, symbol, union, mayBeEmpty } = found;
+    return {
+      members: union.members,
+      scopes: union.members.map(member => {
+        const own = new Scope('branch', scope);
+        own.declare({ name, kind: 'binding', span: symbol.span, posType: mayBeEmpty ? { kind: 'maybeEmpty', of: member } : member });
+        return own;
+      }),
+    };
+  }
+
+  /**
+   * A check run once per member of a union (`scopesByMember`). What every
+   * member refuses alike is said once; what only some refuse is said of each,
+   * with the union named, so the author sees which record would not take it.
+   */
+  private everyMember<T>(byMember: { members: PositionTypeRef[]; scopes: Scope[] }, check: (scope: Scope) => T): T[] {
+    const keyOf = (d: Diagnostic) => `${d.code}\u0000${d.message}\u0000${JSON.stringify(d.span)}`;
+    const answers: T[] = [];
+    const each: Diagnostic[][] = [];
+    for (const own of byMember.scopes) {
+      const before = this.diagnostics.length;
+      answers.push(check(own));
+      each.push(this.diagnostics.splice(before));
+    }
+    const union = describePosition({ kind: 'oneOf', members: byMember.members });
+    const said = new Set<string>();
+    for (const diagnostics of each) {
+      for (const d of diagnostics) {
+        const key = keyOf(d);
+        if (said.has(key)) continue;
+        said.add(key);
+        const everywhere = each.every(others => others.some(other => keyOf(other) === key));
+        this.diagnostics.push(everywhere ? d : { ...d, message: `${d.message.replace(/\.$/, '')} (this may be ${union}, and a write to it is held to every one of them)` });
+      }
+    }
+    return answers;
+  }
+
+  /**
    * A target that starts at a MEMBER PATH (`write m.k { … }`,
    * `write m.k-[:child]-> { … }`) starts at the record the path holds, bound
    * exactly as `x = m.k` binds it — the same right-hand side, checked into a
@@ -9186,6 +9363,12 @@ class Checker {
   ): PositionTypeRef | undefined {
     const rooted = this.bindTargetRoots(authored.target, scope);
     if (rooted.scope !== scope) return this.checkWrite({ ...authored, target: rooted.target }, rooted.scope, options);
+    const byMember = this.scopesByMember(authored.target, scope);
+    if (byMember !== undefined) {
+      const handles = this.everyMember(byMember, own => this.checkWrite(authored, own, options));
+      const landed = handles.filter((handle): handle is PositionTypeRef => handle !== undefined);
+      return landed.length === handles.length ? joinPositions(landed) : undefined;
+    }
     // A spread is the field lines it stands for, so every check below — an
     // excess field, a maybe-absent value, a required field — reads them as if
     // they had been written out.
@@ -11008,7 +11191,7 @@ class Checker {
       // `#resources`, its old spelling, is a retired `#` hop of its own.
       && !hopsOfAddress(head.hopsRaw)[0].label.text.startsWith('#')
     ) {
-      this.checkResourcesOfExtraction(rootType, rootName, rootSymbol?.mayHold, head.span);
+      this.checkResourcesOfExtraction(rootType, rootName, head.span);
     }
     // A root that is a VALUE and NOT a record — a name bound to one, or an
     // expression that computes one. There are no positions on the value plane —
@@ -15039,7 +15222,7 @@ class Checker {
   private readHeldValue(type: FieldType | undefined, span: Span): FieldType | undefined {
     const mixed = mixedTupleMessage(type);
     if (mixed !== undefined) this.report(TypedDiagnosticCodes.LIST_MIXED, mixed, span);
-    return widenTuples(type, this.languageVersion);
+    return widenTuples(type, this.languageVersion, this.recordJoin());
   }
 
   /**
