@@ -4,10 +4,11 @@
 // subtrees are withdrawn. The hosted product and `lf` both run these; neither
 // keeps a copy.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isAncestorOrSelf, parseAddress } from '../movement_engine/address';
 import type { ParkSink, RunLimitPause } from '../movement_engine/run';
-import type { AwaitKeeper, RunHostStore } from './store';
+import type { ParkSources } from '../movement_engine/host';
+import type { AwaitKeeper, RunHostStore, SourceStore } from './store';
 
 /** What the product keeps about a run beyond its live state: its status, and
  *  the records only it knows of (callbacks, the ops feed). */
@@ -37,6 +38,25 @@ export interface RunHostLog {
 }
 
 export const CANCELLED_BY_OPERATOR = 'Cancelled by an operator';
+
+// ── The library texts a park pins ───────────────────────────────────────────
+
+/** The `park.sources` family over a backend's source store: a text is named
+ *  by the sha-256 of its UTF-8 bytes, so the same library text parked by any
+ *  number of runs is one row. */
+export function parkSources(sources: SourceStore, teamId: string): ParkSources {
+  return {
+    save: async ({ source }) => {
+      const hash = `sha256:${createHash('sha256').update(source, 'utf8').digest('hex')}`;
+      await sources.put({ teamId, hash, source });
+      return { hash };
+    },
+    load: async ({ hash }) => {
+      const source = await sources.get({ teamId, hash });
+      return source === null ? null : { source };
+    },
+  };
+}
 
 // ── Work the run host queues ────────────────────────────────────────────────
 

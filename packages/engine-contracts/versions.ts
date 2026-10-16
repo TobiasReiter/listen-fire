@@ -22,11 +22,12 @@ import { MANIFEST_PROTOCOL_VERSION } from './protocol';
 export { CATALOG_SNAPSHOT_VERSION, DEPRECATED_CATALOG_SNAPSHOT_VERSIONS, SUPPORTED_CATALOG_SNAPSHOT_VERSIONS };
 
 /** A parked flow's state (docs/contracts/park-state.md). Engine to engine: a
- *  host stores it and hands it back. */
-export const PARK_STATE_VERSION = 1;
+ *  host stores it and hands it back. Version 2 is the Rust engine's (language
+ *  version 5 on); the TypeScript engine (versions 1–4) writes and reads 1. */
+export const PARK_STATE_VERSION = 2;
 
-/** The park state versions this release reads. */
-export const SUPPORTED_PARK_STATE_VERSIONS: ReadonlySet<number> = new Set([1]);
+/** The park state versions this release reads: each engine its own. */
+export const SUPPORTED_PARK_STATE_VERSIONS: ReadonlySet<number> = new Set([1, 2]);
 
 /** The host families and the entry points (docs/contracts/host-families.md),
  *  carried on every `segment.open`. */

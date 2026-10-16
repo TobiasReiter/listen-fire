@@ -1,12 +1,11 @@
 // Parked code — a closure, a kept walk's head and mapping, a body-local
-// declaration — rides in the parked state as its syntax tree
-// (docs/contracts/park-state.md, "Code is carried as a name, or as its syntax
-// tree"), and a resume rebuilds it from that tree on either engine, never by
-// looking for its span in the program. Each case parks inside a library
-// function on both engines, then resumes each engine's state on both: where
-// the root writes other code at the same span, or the library is edited while
-// the run sleeps, both engines still run the code that was parked (PLAN-08A
-// batch review, R1 and R2).
+// declaration — is named in the parked state by its place in the pinned
+// program (park state version 2, docs/contracts/park-state.md), and the
+// libraries the run linked ride beside it: their text, or the hash the host's
+// source store (`park.sources`) keeps it by. Each case parks inside a library
+// function and resumes: where the root writes other code at the same span, or
+// the library is edited while the run sleeps, the run still runs the code that
+// was parked (PLAN-08A batch review, R1 and R2).
 
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
@@ -14,9 +13,9 @@ import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import { credentialIdsFor, makeFakeParkSink, makeMemoryParkSources, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import type { CodeByPlace, ParkedScopeState } from 'engine-contracts';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
@@ -61,16 +60,16 @@ interface Case {
   /** `getRelated` answers by field. */
   related?: Record<string, Array<Record<string, unknown>>>;
   replies?: unknown[];
-  resume?: ParkedScopeState;
+  resume?: ParkedScopeState<CodeByPlace>;
+  /** The host's library source store; absent, a park carries each text. */
+  sources?: ReturnType<typeof makeMemoryParkSources>;
 }
-
-type Engine = 'ts' | 'rust';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isParkedScopeState(value: unknown): value is ParkedScopeState {
+function isParkedScopeState(value: unknown): value is ParkedScopeState<CodeByPlace> {
   return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
 }
 
@@ -113,9 +112,9 @@ function fakeAdapter(adapterType: string, calls: unknown[], c: Case): Adapter {
   };
 }
 
-async function runOn(engine: Engine, c: Case) {
+async function runOnRust(c: Case) {
   const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+  process.env.MOVEMENT_ENGINE = 'rust';
   const calls: unknown[] = [];
   const asked: unknown[] = [];
   const replies = [...(c.replies ?? [])];
@@ -147,7 +146,7 @@ async function runOn(engine: Engine, c: Case) {
           },
         },
       },
-      park: { sink: park.sink },
+      park: { sink: park.sink, ...(c.sources !== undefined ? { sources: c.sources.sources } : {}) },
     }),
   };
   resetRustRunStats();
@@ -179,40 +178,31 @@ function normalised(value: unknown): string {
   });
 }
 
-/** One segment on both engines: identical, and run whole on Rust. */
-async function both(c: Case) {
-  const ts = await runOn('ts', c);
-  const rust = await runOn('rust', c);
-  expect(rust.observed).toBe(ts.observed);
+/** One segment, run whole on Rust. */
+async function onRust(c: Case) {
+  const rust = await runOnRust(c);
   expect(rust.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, declined: {} });
-  return { ts, rust };
+  return rust;
 }
 
-/**
- * Park on both engines, then resume each engine's state on both against
- * `resumeFiles` (the library as it stands at the resume): every resume
- * identical across the engines and across the two park writers. Returns the
- * resumed outcome.
- */
+/** The one park a run left. */
+function parkedState(run: { parks: Array<{ state: unknown }> }): ParkedScopeState<CodeByPlace> {
+  expect(run.parks).toHaveLength(1);
+  const state = run.parks[0]?.state;
+  if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+  return state;
+}
+
+/** Park, then resume against `resumeFiles` (the library as it stands at the
+ *  resume). Returns the resumed outcome. */
 async function parkAndResume(c: Case, resumeFiles: Record<string, { source: string }> = c.files): Promise<string> {
-  const parked = await both(c);
-  const resumed: string[] = [];
-  for (const writer of [parked.ts, parked.rust]) {
-    expect(writer.parks).toHaveLength(1);
-    const state = writer.parks[0]?.state;
-    if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
-    const { rust, ts } = await both({ ...c, files: resumeFiles, resume: state });
-    resumed.push(ts.observed, rust.observed);
-  }
-  expect(new Set(resumed).size).toBe(1);
-  const [outcome] = resumed;
-  if (outcome === undefined) throw new Error('nothing resumed');
-  return outcome;
+  const state = parkedState(await onRust(c));
+  return (await onRust({ ...c, files: resumeFiles, resume: state })).observed;
 }
 
 const library = (body: string[]) => ({ 'lib/keep': { source: PRELUDE + body.join('\n') } });
 
-describe('parked code is rebuilt from its tree on both engines', () => {
+describe('parked code is read at its place in the program it parked with', () => {
   const closureLibrary = (suffix: string) =>
     library([
       'export function keep(n: <text>) {',
@@ -252,7 +242,7 @@ describe('parked code is rebuilt from its tree on both engines', () => {
     expect(resumed).not.toContain('Acme-X');
   });
 
-  it('reads a parked closure’s checked spread from the tree it rode in (R1)', async () => {
+  it('reads a parked closure’s checked spread in the library it parked with (R1)', async () => {
     const files = library([
       'export function keep(n: <text>) {',
       '  f = (x: <text>) => {',
@@ -338,13 +328,64 @@ describe('parked code is rebuilt from its tree on both engines', () => {
   });
 });
 
+describe('a park pins the libraries the run linked', () => {
+  const keep = (suffix: string) =>
+    library([
+      'export function keep(n: <text>) {',
+      `  f = (x: <text>) => Text.concat(x, "-${suffix}")`,
+      '  await sleep(1h)',
+      '  return first(map([n], f))',
+      '}',
+    ]);
+  const source = [
+    'import { keep } from "lib/keep"',
+    'function m(msg: <inbox-[:message]->>) {',
+    '  r = keep(msg.subject)',
+    '  write crm-[:notes]-> { body: coalesce(r, "none") }',
+    '}',
+  ].join('\n');
+
+  it('names its code by place and carries each library’s text when the host keeps no store', async () => {
+    const state = parkedState(await onRust({ source, files: keep('L') }));
+    expect(state.version).toBe(2);
+    expect(state.libraries).toEqual([{ path: 'lib/keep', source: keep('L')['lib/keep'].source }]);
+    const closure = state.scopeChain.flatMap((scope) => Object.values(scope.bindings)).find((b) => b.kind === 'closure');
+    expect(closure).toMatchObject({ kind: 'closure', closure: '@lib~1keep/statements/4/body/0/value/closure' });
+  });
+
+  it('names each library by the hash the store keeps its text by, and resumes with the text it parked with', async () => {
+    const sources = makeMemoryParkSources();
+    const state = parkedState(await onRust({ source, files: keep('L'), sources }));
+    const [pinned] = state.libraries ?? [];
+    if (pinned === undefined || !('hash' in pinned)) throw new Error('the park named no library by its hash');
+    expect(sources.texts.get(pinned.hash)).toBe(keep('L')['lib/keep'].source);
+    const resumed = await onRust({ source, files: keep('X'), sources, resume: state });
+    expect(resumed.observed).toContain('"body":"Acme-L"');
+    expect(resumed.observed).not.toContain('Acme-X');
+  });
+
+  it('keeps one text for two runs parked on the same library', async () => {
+    const sources = makeMemoryParkSources();
+    const first = parkedState(await onRust({ source, files: keep('L'), sources }));
+    const second = parkedState(await onRust({ source, files: keep('L'), sources }));
+    expect(second.libraries).toEqual(first.libraries);
+    expect(sources.texts.size).toBe(1);
+  });
+
+  it('fails the resume naming the library when the store holds no text for its hash', async () => {
+    const state = parkedState(await onRust({ source, files: keep('L'), sources: makeMemoryParkSources() }));
+    const resumed = await onRust({ source, files: keep('L'), sources: makeMemoryParkSources(), resume: state });
+    expect(resumed.observed).toContain('the source store holds no text for \\"lib/keep\\"');
+  });
+});
+
 // A slot that arrives without its parse — a statement in a closure's body (its
-// tree rides inside the call's), code rebuilt from a parked tree on resume —
+// tree rides inside the call's), code read again at its place on resume —
 // is read under the run's pinned version, as the program's own slots were. Read
 // under none, `Text.upper(v)` is a TEXT namespace with no UPPER, `xs[0]` an
 // index the lowering refuses and `a && b` a character the v1–4 grammar has no
 // reading for.
-describe('a slot read again is read under the run’s version, on both engines', () => {
+describe('a slot read again is read under the run’s version', () => {
   const body = (sleep: boolean) => [
     'function m(msg: <inbox-[:message]->>) {',
     '  tags = ["b", "a"]',
@@ -362,9 +403,9 @@ describe('a slot read again is read under the run’s version, on both engines',
   ].join('\n');
 
   it('runs a closure’s statements under it', async () => {
-    const { ts } = await both({ source: body(false), files: {} });
-    expect(ts.observed).toContain('"body":"X-b-a"');
-    expect(ts.observed).toContain('"body":"X,Y"');
+    const { observed } = await onRust({ source: body(false), files: {} });
+    expect(observed).toContain('"body":"X-b-a"');
+    expect(observed).toContain('"body":"X,Y"');
   });
 
   it('resumes a collection member parked in its closure under it', async () => {
@@ -385,7 +426,7 @@ describe('a slot read again is read under the run’s version, on both engines',
       '  })',
       '}',
     ].join('\n');
-    const { ts } = await both({ source, files: {} });
-    expect(ts.observed).toContain('"body":"N1"');
+    const { observed } = await onRust({ source, files: {} });
+    expect(observed).toContain('"body":"N1"');
   });
 });

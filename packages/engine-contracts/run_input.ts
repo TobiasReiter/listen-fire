@@ -5,7 +5,7 @@
 import type { CatalogSnapshot, LanguageVersion } from 'movement-lang';
 
 import type { TriggerEvent } from './event';
-import type { ParkedScopeState } from './park_state';
+import type { AnyParkedScopeState } from './park_state';
 import type { TenantId } from './tenant';
 
 export interface RunInput {
@@ -93,7 +93,7 @@ export interface RunInput {
 export interface ResumeInput extends RunInput {
   /** The parked leaf's state, as the host's park sink stored it. With the
    *  re-parsed pinned source it rebuilds the leaf's scopes. */
-  state: ParkedScopeState;
+  state: AnyParkedScopeState;
   /** What to bind at the leaf's binding name on a step-past resume: a JSON
    *  scalar, or a curated row set `{ __correct: { type, rows } }`. Ignored
    *  under `reenter`. */

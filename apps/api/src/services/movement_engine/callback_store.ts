@@ -26,7 +26,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type AutomationsSchema from '../../generated/kysely/automations/AutomationsSchema';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import type { AnyParkedScopeState } from 'engine-contracts';
 
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { apiBaseUrl } from '../../lib/api_base_url';
@@ -111,7 +111,7 @@ export interface CallbackRecord {
   address: string;
   params: CallbackParamSpec[];
   /** The captured closure, in the park machinery's own shape. */
-  state: ParkedScopeState;
+  state: AnyParkedScopeState;
   calls: LedgerCall[];
   singleUse: boolean;
   expiresAt: Date | null;
@@ -149,7 +149,7 @@ function toRecord(row: CallbackRow): CallbackRecord {
     runId: row.run_id,
     address: row.address,
     params: (row.params as CallbackParamSpec[] | null) ?? [],
-    state: row.state as ParkedScopeState,
+    state: row.state as AnyParkedScopeState,
     calls: ledgerOf(row),
     singleUse: row.single_use,
     expiresAt: row.expires_at,
@@ -188,7 +188,7 @@ export interface MintCallbackInput {
   runId: TriggerRunId;
   address: string;
   params: CallbackParamSpec[];
-  state: ParkedScopeState;
+  state: AnyParkedScopeState;
   /** `once` — defaults TRUE. The DEFAULT is the engine's, deliberately not the
    *  AST's (chunk 1), so it lives here and nowhere else. */
   singleUse?: boolean;

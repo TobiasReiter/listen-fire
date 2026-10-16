@@ -7,7 +7,8 @@ import { guidSequence } from 'engine-contracts';
 import type { ActingUser } from '../translation_graph/adapter';
 import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
 import type { MovementTraceEntry } from './expression';
-import type { EngineHost, RenderFile } from './host';
+import type { EngineHost, ParkSources, RenderFile } from './host';
+import { parkSources } from '../run_host/rules';
 import type { ParkSink } from './run';
 import { MovementEngineError, isCheckFailure, runFailureCause } from './errors';
 
@@ -141,6 +142,7 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
     park: {
       ...(park.sink !== undefined ? { sink: park.sink } : {}),
       ...(park.callbacks !== undefined ? { callbacks: park.callbacks } : {}),
+      ...(park.sources !== undefined ? { sources: park.sources } : {}),
       wake:
         park.wake ??
         (async ({ segmentId, adapterType, correlationKey }) => {
@@ -283,6 +285,23 @@ export function makeFakeParkSink(): {
     async cancelSubtrees() {},
   };
   return { sink, timerParks, awaitParks, joins };
+}
+
+/** An in-memory `park.sources`: the library texts parks pinned, by hash, for
+ *  the test to read (`texts`). Over the core's own `parkSources`, so a hash
+ *  here is the one a backend's store keys. */
+export function makeMemoryParkSources(): { sources: ParkSources; texts: Map<string, string> } {
+  const texts = new Map<string, string>();
+  const sources = parkSources(
+    {
+      put: async ({ hash, source }) => {
+        texts.set(hash, source);
+      },
+      get: async ({ hash }) => texts.get(hash) ?? null,
+    },
+    'test-team',
+  );
+  return { sources, texts };
 }
 
 // ── How a Rust-routed run ended ───────────────────────────────────────────────

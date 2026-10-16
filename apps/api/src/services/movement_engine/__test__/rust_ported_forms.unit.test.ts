@@ -6,17 +6,17 @@
 // against fresh fakes, and the two must agree on everything a caller can see
 // — the result or the error, every adapter call in order and key for key, the
 // judge's questions, and the parks — and the Rust run must run whole. Where a
-// form sits beside a park, each engine's parked state resumes on both.
+// form sits beside a park, the run parks and resumes on Rust (version 5 runs
+// only there).
 
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
-import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
+import { PARK_STATE_VERSION, tenantIdOf, type CodeByPlace, type ParkedScopeState } from 'engine-contracts';
 
 import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
@@ -91,7 +91,7 @@ interface Case {
   /** The CRM answers no `readRecord`. */
   noReadRecord?: boolean;
   languageVersion?: LanguageVersion;
-  resume?: ParkedScopeState;
+  resume?: ParkedScopeState<CodeByPlace>;
 }
 
 type Engine = 'ts' | 'rust';
@@ -100,7 +100,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isParkedScopeState(value: unknown): value is ParkedScopeState {
+function isParkedScopeState(value: unknown): value is ParkedScopeState<CodeByPlace> {
   return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
 }
 
@@ -255,26 +255,19 @@ async function both(c: Case) {
   return { ts, rust };
 }
 
-/** Park on both engines, then resume each engine's state on both: every
- *  resume identical across the engines and the two park writers. */
+/** Park on Rust (version 5 runs only there; its park names code by place,
+ *  park state version 2), then resume the state there, as production stores
+ *  it. Returns the resumed outcome. */
 async function parkAndResume(c: Case): Promise<string> {
-  const parked = await both(c);
-  const resumed: string[] = [];
-  for (const writer of [parked.ts, parked.rust]) {
-    expect(writer.parks).toHaveLength(1);
-    // The bytes themselves: either engine writes the same state.
-    expect(normalised(parked.rust.parks[0]?.state)).toBe(normalised(parked.ts.parks[0]?.state));
-    // As production stores it: parked state is jsonb, so object identity
-    // does not survive the park.
-    const state: unknown = JSON.parse(JSON.stringify(writer.parks[0]?.state));
-    if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
-    const { rust, ts } = await both({ ...c, resume: state });
-    resumed.push(ts.observed, rust.observed);
-  }
-  expect(new Set(resumed).size).toBe(1);
-  const [outcome] = resumed;
-  if (outcome === undefined) throw new Error('nothing resumed');
-  return outcome;
+  const parked = await runOn('rust', c);
+  expect(parked.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, notAdmitted: {}, declined: {} });
+  expect(parked.parks).toHaveLength(1);
+  // Parked state is jsonb: object identity does not survive the park.
+  const state: unknown = JSON.parse(JSON.stringify(parked.parks[0]?.state));
+  if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+  const resumed = await runOn('rust', { ...c, resume: state });
+  expect(resumed.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, notAdmitted: {}, declined: {} });
+  return resumed.observed;
 }
 
 const library = (body: string[]) => ({ 'lib/forms': { source: PRELUDE + body.join('\n') } });
@@ -339,7 +332,7 @@ describe('a match over a tuple of paths', () => {
     expect(rust.observed).toContain('"body":"Acme"');
   });
 
-  it('matches after a park, on whichever engine resumes it', async () => {
+  it('matches after a park', async () => {
     // Parked before the parents are written: a handle rehydrated from a
     // park lands in a graph of its own on both engines, so two of them fail
     // a tuple's one-graph rule (reported, not this port's to change).
@@ -405,7 +398,7 @@ describe('IS <Decl> of a graph literal', () => {
     expect(rust.observed).toContain('"body":"does not"');
   });
 
-  it('compares a handle the graph held across a park, on whichever engine resumes it', async () => {
+  it('compares a handle the graph held across a park', async () => {
     const source = [TYPED_LEAD, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', '  await sleep(1h)', ...VERDICT])].join('\n');
     const resumed = await parkAndResume({ source });
     expect(resumed).toContain('"body":"does not"');
@@ -456,7 +449,7 @@ describe('a graph spread of a record', () => {
     expect(rust.observed).toContain('"body":"Acme"');
   });
 
-  it('keeps the event’s copy across a park, on whichever engine resumes it', async () => {
+  it('keeps the event’s copy across a park', async () => {
     const body = ['  g = graph { ...msg }', '  await sleep(1h)', '  write crm-[:notes]-> { body: g.`subject` }'].join('\n');
     const resumed = await parkAndResume({ body });
     expect(resumed).toContain('"body":"Acme"');
@@ -464,7 +457,7 @@ describe('a graph spread of a record', () => {
 });
 
 describe('a parked closure holding a record spread', () => {
-  it('parks the same bytes from either engine, for a handle, a landing and the event', async () => {
+  it('parks and resumes a closure spreading a handle, a landing and the event', async () => {
     for (const spread of ['...co', '...msg']) {
       const body = [
         '  co = write crm-[:companies]-> { name: "Acme" }',
@@ -534,7 +527,7 @@ describe('refresh', () => {
     expect(ts.observed).toContain('"kept":[{"name":"Acme"}');
   });
 
-  it('carries a refreshed handle through a park, and refreshes one after it, on whichever engine resumes', async () => {
+  it('carries a refreshed handle through a park, and refreshes one after it', async () => {
     const before = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', '  await sleep(1h)', NOTE_OF_CO].join('\n'), read: FRESH });
     expect(before).toContain('"body":"Acme Inc EU"');
     const after = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  await sleep(1h)', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
@@ -573,7 +566,7 @@ describe('a closure called by name inside a library function', () => {
     expect(rust.observed).toContain('"body":"Acme-R/none"');
   });
 
-  it('resumes a park inside the library’s closure, on whichever engine resumes it', async () => {
+  it('resumes a park inside the library’s closure', async () => {
     const files = library(['export function tag(n: <text>) {', '  f = (x: <text>) => {', '    await sleep(1h)', '    return Text.concat(x, "-L")', '  }', '  return f(n)', '}']);
     const resumed = await parkAndResume({ source: root, files });
     expect(resumed).toContain('"body":"Acme-L"');

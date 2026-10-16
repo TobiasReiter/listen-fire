@@ -252,6 +252,7 @@ Every entry answers the segment's result (`MovementRunResult`, `movement_engine/
 | `park.sink` | `recordJoin`, `commitTimerPark`, `commitAwaitPark`, `decrementJoin`, `persistBranchExport`, `collectBranchExports`, `cancelSubtrees`, `commitSuspension`, `commitLimitPause` | yes: absent, a run that reaches a park fails (a dry run) |
 | `park` | `wake` | no (may throw, if `park.sink` is absent: only an await park asks for a wake) |
 | `park.callbacks` | `mint`, `calls` | yes: absent, `callback(…)` fails as unsupported |
+| `park.sources` | `save`, `load` | yes: absent, a park carries each library's text itself |
 | `park.bindings` | `record`, `findBoundCounterpart`, `delete` | no (may throw, if no program binds) |
 | `control.cancel` | `cancelled`, `cancelledNow` | no (answer `false` for a run nothing cancels) |
 | `files` | `resolveFileText`, `render` | no |
@@ -610,6 +611,30 @@ answer:  Array<{ at: string; values: Record<string, unknown> }>   // at: ISO 860
 - A call is in the answer once its body has started. Production runs a call's body under the run's lease and marks it started first, so a segment holding the lease never sees a call whose body has yet to run.
 - **Persist:** nothing. **Retry:** idempotent.
 
+### `park.sources`
+
+The library texts a park pins ([park-state.md](park-state.md), version 2's `libraries`), each kept once by its content. A park names a library by the hash `save` answers; a resume reads the text back by that hash, whatever the team has saved since. The text is opaque to the host. Only the Rust engine asks (park state version 2).
+
+#### `park.sources.save`
+
+```ts
+request: { segmentId: string; source: string }
+answer:  { hash: string }
+```
+
+- **Persist:** the text under its hash, once; saving the same text again is a no-op that answers the same hash. The core names a text `sha256:` + the hex digest of its UTF-8 bytes (`parkSources`, run_host/rules.ts), kept per tenant.
+- **Retry:** idempotent. A text is never changed or deleted while a park may still name it.
+
+#### `park.sources.load`
+
+```ts
+request: { segmentId: string; hash: string }
+answer:  { source: string } | {}   // {}: no text under that hash
+```
+
+- **Persist:** nothing. **Retry:** idempotent.
+- A resume whose state names a hash the store does not hold fails, naming the library.
+
 ### `park.bindings`
 
 The symmetric correspondence store a `write … bind other { … }` keeps: "this record IS the counterpart of that one", in the segment's team. The engine skips every binding write on a dry run.
@@ -800,7 +825,7 @@ The engine keeps the run's ledger (`movement_engine/run_context.ts`). The budget
 
 ## The Rust engine's requests
 
-The Rust engine (`crates/movement-engine`; under `MOVEMENT_ENGINE=by-version`, the default, the engine for language version 5 and later, and under `MOVEMENT_ENGINE=rust` for every version) is an engine, not a host: it runs a segment the run host opened (`inRunContext` in `movement_engine/run.ts`), and its shim (`movement_engine/rust_host.ts`) forwards each request it makes to the run's `EngineHost`. Every request that names an `EngineHost` method is that method's request, in the shape above, with the segment's id; the engine's slice reaches `segment` only through the run host, and `adapters.resolve`, `adapters.call`, `llm.client.call`, `llm.extractCall.call` (an extraction call, `extract(…)`, `extractOne(…)`), `llm.transforms.invoke`, `llm.arbitrateEntities`, `files.resolveFileText`, `files.render`, `lookup.resolveActingUser`, `park.sink.*` (a timer, a suspension, an await's park under its correlation key, a limit pause, and a combinator's join: `recordJoin`, `persistBranchExport`, `decrementJoin`, `collectBranchExports`, `cancelSubtrees`), `park.wake` (a callback fired from inside the run), `park.callbacks.mint` and `park.callbacks.calls`, `control.cancel.*`, `locks.*`, `trace.append`, `clock.now` and `ids.mint` itself. It asks `ids.mint` for an extraction's resources (once per batch, in the tree's order); a callback's id is minted by `park.callbacks.mint`, as the TypeScript engine's is. An await of a landing asks the awaited adapter's `resolveAwait` through `adapters.call`. `parallel` and `race` arms run as concurrent flows: their requests are in flight together, interleaved as the TypeScript engine's arms interleave them, and effects take the run's in-run locks in the same order.
+The Rust engine (`crates/movement-engine`; under `MOVEMENT_ENGINE=by-version`, the default, the engine for language version 5 and later, and under `MOVEMENT_ENGINE=rust` for every version) is an engine, not a host: it runs a segment the run host opened (`inRunContext` in `movement_engine/run.ts`), and its shim (`movement_engine/rust_host.ts`) forwards each request it makes to the run's `EngineHost`. Every request that names an `EngineHost` method is that method's request, in the shape above, with the segment's id; the engine's slice reaches `segment` only through the run host, and `adapters.resolve`, `adapters.call`, `llm.client.call`, `llm.extractCall.call` (an extraction call, `extract(…)`, `extractOne(…)`), `llm.transforms.invoke`, `llm.arbitrateEntities`, `files.resolveFileText`, `files.render`, `lookup.resolveActingUser`, `park.sink.*` (a timer, a suspension, an await's park under its correlation key, a limit pause, and a combinator's join: `recordJoin`, `persistBranchExport`, `decrementJoin`, `collectBranchExports`, `cancelSubtrees`), `park.wake` (a callback fired from inside the run), `park.callbacks.mint` and `park.callbacks.calls`, `park.sources.save` and `park.sources.load` (a park's library texts), `control.cancel.*`, `locks.*`, `trace.append`, `clock.now` and `ids.mint` itself. It asks `ids.mint` for an extraction's resources (once per batch, in the tree's order); a callback's id is minted by `park.callbacks.mint`, as the TypeScript engine's is. An await of a landing asks the awaited adapter's `resolveAwait` through `adapters.call`. `parallel` and `race` arms run as concurrent flows: their requests are in flight together, interleaved as the TypeScript engine's arms interleave them, and effects take the run's in-run locks in the same order.
 
 - **What it admits.** The engine decides what it runs on its own parse of the program, before it asks for the check or touches anything; a program or a parked state it does not run is refused with a stable reason (`crates/movement-engine/README.md`, "Admission"), and the run fails with it or, where its route falls back, the TypeScript engine runs it. A refused run has made no host call.
 - **The values on the eval wire.** In process, the shim hands the host the very JavaScript values the TypeScript engine would (key order, `undefined`), so `adapters.call`'s `args` and `result`, a park's `state`, a plugin's `config` and `extractedContext`, a file's descriptor, and the answers of `llm.client.call`, `llm.transforms.invoke` and `files.resolveFileText` cross between the engine and its shim on the eval wire (`wire: true`; `crates/movement-engine/src/env.rs`) and reach the host as plain objects. A value on the eval wire is data or one of the engine's records, and the two never share a form: every object the host sends is data, whatever keys it carries (a `kind` naming an engine binding's included); a record whose binding object is data (the event, a callback) reaches the host as `["x", id, descriptor]`, the host hands it back as `["x", id]`, and no other record crosses. A model reply's `parsedJson` therefore reaches the engine as `JSON.parse` left it — its key order, and a number past the double range as `Infinity`, which the engine's validator refuses as zod does. A remote host serves the JSON shapes above, where such a number is already `null`. A text holding a lone surrogate (`JSON.parse` makes one of a `\udXXX` escape) crosses the eval wire as `["s16", [units…]]`, its UTF-16 code units, wherever a text stands (a value, a key, a file's display); over JSON text, in either direction, it is the `\udXXX` escape `JSON.stringify` writes, which the engine reads and writes as `JSON.parse` and `JSON.stringify` do.
@@ -830,6 +855,8 @@ Five requests are the Rust engine's own: they are not `EngineHost` methods, and 
 | `log.write { lines }` | `undefined`; each line `{ level: 'info' \| 'warn', message, fields }` written to the platform's log, the run's id added; sent as a statement's trace is handed over | the log lines the TypeScript engine writes (an extraction stage skipped, a plugin's empty argument, a continued answer, a source file truncated for the prompt, a refinement kept) |
 
 ## Changes
+
+- **Within version 1, the optional `park.sources` family (shrink-park, 2026-10-16).** Additive: an optional family, which a host without it leaves out, and the engine then writes each library's text into the park itself.
 
 - **Within version 1, `check.compatible` takes `file?` and `path?` (PLAN-08B Task 2).** Additive (an engine's own request, as chunk 7A's): a declaration a library writes is named by its file, and a record a synthesised node's edge holds is compared with the declaration's node at `path`.
 - **Within version 1, a lone surrogate crosses (chunk 8A).** Additive, so the version holds: a text holding a lone surrogate, which the round trip and the Rust engine's shim refused, now crosses — over JSON text as the `\udXXX` escape `JSON.stringify` writes, on the eval wire as `["s16", units]` ("The values on the eval wire"). A host that stores what it is handed (a parked state) stores the escape as written; a store that refuses it (Postgres `jsonb`, which the parked-run tables use) refused it from the TypeScript engine before and refuses it from either engine now. A remote host's own JSON reader may not read the escape as `JSON.parse` does: a strict one replaces it with U+FFFD (Go's `encoding/json`) or refuses the text (Rust's serde_json), so a host in another language reads and writes it with an escape-aware reader, as this engine does (`crates/movement-engine/src/js_string.rs`).

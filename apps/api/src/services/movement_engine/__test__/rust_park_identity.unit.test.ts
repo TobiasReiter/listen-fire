@@ -1,8 +1,7 @@
-// What a park says about identity and where code is declared, on both engines
-// (main's B7, B11 and B13, mirrored in crates/movement-engine): each case
-// parks on the TypeScript engine and on the Rust engine, the two parked
-// states byte-identical, then resumes each engine's state on each engine,
-// every resume identical.
+// What a park says about identity and where code is declared (main's B7, B11
+// and B13, mirrored in crates/movement-engine): each case parks on the engine
+// its version runs on (5 on: Rust, park state version 2; 1–4: TypeScript,
+// version 1) and resumes there.
 //
 //   · B7 — one write handle two names hold (`b = a`, `b = write a { … }`, a
 //     record's `-[:@old]->`) is written once and referenced after
@@ -19,14 +18,13 @@
 import { spelledForVersion5 } from './combinator_spelling';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { fromCatalogSnapshot, mockCatalogSnapshot, resolveFileFromSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
-import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
+import { SUPPORTED_PARK_STATE_VERSIONS, tenantIdOf, type AnyParkedScopeState } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { positionData } from 'movement-engine/services/translation_graph/types';
 import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { resumeMovement, runFailureCause, runMovement, type ParkSink, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
@@ -74,25 +72,25 @@ interface Case {
   languageVersion?: LanguageVersion;
   /** The stored rows a resume reads: parks, joins and branch exports. */
   store?: Store;
-  resume?: { address: string; state: ParkedScopeState };
+  resume?: { address: string; state: AnyParkedScopeState };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isParkedScopeState(value: unknown): value is ParkedScopeState {
-  return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
+function isParkedScopeState(value: unknown): value is AnyParkedScopeState {
+  return isRecord(value) && typeof value.version === 'number' && SUPPORTED_PARK_STATE_VERSIONS.has(value.version) && typeof value.address === 'string';
 }
 
 /** A park sink that keeps what it is handed, as the database would hand it
  *  back (JSON), so a resume reads the joins and branch exports a park wrote. */
 function makeStore() {
-  const parks = new Map<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>();
+  const parks = new Map<string, { kind: 'timer' | 'await' | 'suspension'; state: AnyParkedScopeState }>();
   const joins = new Map<string, { pending: number; closedBy: string | null; decremented: Set<string> }>();
   const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
   const keep = (kind: 'timer' | 'await' | 'suspension', address: string, state: unknown): void => {
-    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as ParkedScopeState });
+    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as AnyParkedScopeState });
   };
   const sink: ParkSink = {
     async recordJoin(input) {
@@ -140,7 +138,7 @@ function makeStore() {
   const snapshot = () => JSON.stringify({ parks: [...parks], joins: [...joins].map(([k, v]) => [k, { ...v, decremented: [...v.decremented] }]), exports: [...exports].map(([k, v]) => [k, [...v]]) });
   const restore = (text: string): void => {
     const saved = JSON.parse(text) as {
-      parks: Array<[string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }]>;
+      parks: Array<[string, { kind: 'timer' | 'await' | 'suspension'; state: AnyParkedScopeState }]>;
       joins: Array<[string, { pending: number; closedBy: string | null; decremented: string[] }]>;
       exports: Array<[string, Array<[string, { branchIndex: number; exports: unknown }]>]>;
     };
@@ -234,41 +232,35 @@ async function runOn(engine: Engine, c: Case) {
   return { observed: JSON.stringify({ outcome, calls, parked, exported }), outcome, calls, parked, exported, store, stats };
 }
 
-/** One segment on both engines: identical, and run whole on Rust. */
-async function both(c: Case) {
-  const ts = await runOn('ts', c);
-  const rust = await runOn('rust', c);
-  expect(rust.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, declined: {}, notAdmitted: {} });
-  expect(rust.parked).toBe(ts.parked);
-  expect(rust.exported).toBe(ts.exported);
-  expect(rust.observed).toBe(ts.observed);
-  return { ts, rust };
+/** The engine a version runs on: 5 on, Rust; 1–4, TypeScript. */
+function engineOf(c: Case): Engine {
+  return (c.languageVersion ?? 5) >= 5 ? 'rust' : 'ts';
+}
+
+/** One segment on the engine its version runs on (Rust runs it whole). */
+async function once(c: Case) {
+  const engine = engineOf(c);
+  const run = await runOn(engine, c);
+  if (engine === 'rust') expect(run.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, declined: {}, notAdmitted: {} });
+  return run;
 }
 
 /**
- * Park on both engines (the states byte-identical), then resume each
- * engine's state at `address` (the only park, when not given) on both: every
- * resume identical across the engines and the two park writers. Returns the
- * first park's state and the resumed outcome.
+ * Park, then resume the state at `address` (the only park, when not given) on
+ * the same engine. Returns the park's state and the resumed outcome.
  */
 async function parkAndResume(c: Case, address?: string): Promise<{ state: string; resumed: ReturnType<typeof JSON.parse> }> {
-  const parked = await both(c);
-  const resumed: string[] = [];
-  for (const writer of [parked.ts, parked.rust]) {
-    const at = address ?? [...writer.store.parks.keys()][0];
-    const state = writer.store.parks.get(at ?? '')?.state;
-    if (at === undefined || !isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
-    const { ts, rust } = await both({ ...c, store: writer.store, resume: { address: at, state } });
-    resumed.push(ts.observed, rust.observed);
-  }
-  expect(new Set(resumed).size).toBe(1);
-  const at = address ?? [...parked.ts.store.parks.keys()][0]!;
-  return { state: JSON.stringify(parked.ts.store.parks.get(at)!.state), resumed: JSON.parse(resumed[0]!) };
+  const parked = await once(c);
+  const at = address ?? [...parked.store.parks.keys()][0];
+  const state = parked.store.parks.get(at ?? '')?.state;
+  if (at === undefined || !isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+  const resumed = await once({ ...c, store: parked.store, resume: { address: at, state } });
+  return { state: JSON.stringify(state), resumed: JSON.parse(resumed.observed) };
 }
 
 const movement = (...body: string[]) => ['movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 
-describe('one write handle two names hold, across a park, on both engines (B7)', () => {
+describe('one write handle two names hold, across a park (B7)', () => {
   for (const languageVersion of [4, 5] as LanguageVersion[]) {
     for (const [how, alias] of [
       ['b = a', '  b = a'],
@@ -349,7 +341,7 @@ describe('one write handle two names hold, across a park, on both engines (B7)',
   });
 });
 
-describe('a library declaration parks with its file and is found there, on both engines (B11)', () => {
+describe('a library declaration parks with its file and is found there (B11)', () => {
   const files = {
     'lib/leads': {
       source: [
@@ -410,7 +402,7 @@ describe('a library declaration parks with its file and is found there, on both 
   });
 });
 
-describe('a file-level closure holds its file by reference and parks by name, on both engines (B13)', () => {
+describe('a file-level closure holds its file by reference and parks by name (B13)', () => {
   it('an earlier one calls a later one, parking inside it', async () => {
     const { state, resumed } = await parkAndResume({
       source: [
@@ -455,15 +447,13 @@ describe('a file-level closure holds its file by reference and parks by name, on
   });
 });
 
-describe('a parked state neither engine can rebuild is refused loudly, alike', () => {
-  /** Resume `state` at its only park on both engines: the same failure. */
+describe('a parked state the engine cannot rebuild is refused loudly', () => {
+  /** Resume `state` at its only park: the run fails naming why. */
   async function refusedAlike(c: Case, state: string, message: string) {
-    const parsed = JSON.parse(state) as ParkedScopeState;
+    const parsed = JSON.parse(state) as AnyParkedScopeState;
     const resumeCase: Case = { ...c, resume: { address: parsed.address, state: parsed } };
-    const ts = await runOn('ts', resumeCase);
     const rust = await runOn('rust', resumeCase);
-    expect(ts.outcome.error).toContain(message);
-    expect(rust.observed).toBe(ts.observed);
+    expect(rust.outcome.error).toContain(message);
     expect(rust.stats).toMatchObject({ routed: 1, unreproduced: 0, declined: {}, notAdmitted: {} });
   }
 
@@ -522,7 +512,7 @@ describe('a parked state neither engine can rebuild is refused loudly, alike', (
 // Each reader indexes every numbered descriptor in the whole state by the
 // descriptor's STRUCTURE first, so a variable named like a code-tree member
 // of a descriptor (`body`, `position`, `fields`, …) resumes too.
-describe('a reference read before its descriptor, and names like a descriptor member, on both engines (R1)', () => {
+describe('a reference read before its descriptor, and names like a descriptor member (R1)', () => {
   const closure = ['  f = (x: <text>) => {', '    await sleep(1h)', '    return x', '  }'];
   const names = ['a', 'op', 'body', 'closure', 'head', 'mapping', 'fields', 'fieldProvenance', 'position', 'declaration'];
 
@@ -533,7 +523,7 @@ describe('a reference read before its descriptor, and names like a descriptor me
           languageVersion,
           source: movement(`  ${name} = write crm-[:companies]-> { name: "one" }`, ...closure, '  y = f("q")', `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`),
         });
-        expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain('"kind":"handleRef"');
+        expect(JSON.stringify((JSON.parse(state) as AnyParkedScopeState).frames)).toContain('"kind":"handleRef"');
         expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');
       });
 
@@ -542,7 +532,7 @@ describe('a reference read before its descriptor, and names like a descriptor me
           languageVersion,
           source: movement(`  ${name} = node { name: "one" }`, ...closure, '  y = f("q")', `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`),
         });
-        expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain('"kind":"nodeRef"');
+        expect(JSON.stringify((JSON.parse(state) as AnyParkedScopeState).frames)).toContain('"kind":"nodeRef"');
         expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');
       });
     }
@@ -612,7 +602,7 @@ describe('a reference read before its descriptor, and names like a descriptor me
 // version 5 `AT(r, i)` reads that record, as it does off a list literal; before
 // 5 it read null, and a program pinned there still does. Version 5 retired
 // `parallel`: its form there is `all`.
-describe("a combinator receipt's record slot, on both engines (B16)", () => {
+describe("a combinator receipt's record slot (B16)", () => {
   const arms = (languageVersion: 4 | 5, park: boolean) => [
     languageVersion === 4 ? '  r = await parallel([' : '  r = all(',
     '    () => {',
@@ -629,8 +619,8 @@ describe("a combinator receipt's record slot, on both engines (B16)", () => {
 
   for (const languageVersion of [4, 5] as const) {
     it(`version ${languageVersion}, no park`, async () => {
-      const { ts } = await both({ languageVersion, source: movement(...arms(languageVersion, false)) });
-      expect(JSON.stringify(ts.calls)).toContain(expected[languageVersion]);
+      const run = await once({ languageVersion, source: movement(...arms(languageVersion, false)) });
+      expect(JSON.stringify(run.calls)).toContain(expected[languageVersion]);
     });
 
     it(`version ${languageVersion}, the arm parked before its return`, async () => {

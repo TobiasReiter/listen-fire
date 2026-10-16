@@ -144,6 +144,12 @@ create table if not exists record_binding (
   bound_seq integer not null,
   primary key (a_adapter_type, a_instance_key, a_type_id, a_record_id, b_adapter_type, b_instance_key, b_type_id, b_record_id)
 );
+create table if not exists park_library_source (
+  team_id text not null,
+  hash text not null,
+  source text not null,
+  primary key (team_id, hash)
+);
 create table if not exists work (
   id integer primary key autoincrement,
   kind text not null,
@@ -585,9 +591,23 @@ export class State {
           ).run(version, work.dueAt ?? null, Number(work.id), leaseToken);
         },
       },
+
+      // The library texts parks pin, once each by their hash (park state
+      // version 2's `libraries`).
+      sources: {
+        put: async ({ teamId, hash, source }) => {
+          db.prepare('insert into park_library_source (team_id, hash, source) values (?, ?, ?) on conflict do nothing').run(teamId, hash, source);
+        },
+        get: async ({ teamId, hash }) => {
+          const row = db.prepare('select source from park_library_source where team_id = ? and hash = ?').get(teamId, hash);
+          return row === undefined ? null : SourceRow.parse(row).source;
+        },
+      },
     };
   }
 }
+
+const SourceRow = z.object({ source: z.string() });
 
 const BindingRow = z.object({
   a_adapter_type: z.string(),

@@ -71,7 +71,7 @@ const BUILT_IN = new Set(['Array', 'Record', 'Omit']);
 /** Types a doc points to in prose rather than inlining. */
 const POINTED_TO: Record<string, string[]> = {
   'catalog-snapshot.md': [],
-  'park-state.md': ['BindingDescriptor', 'CollectionOpExpression', 'ClosureExpression'],
+  'park-state.md': ['BindingDescriptor', 'CollectionOpExpression', 'ClosureExpression', 'Span'],
 };
 
 describe.each(['catalog-snapshot.md', 'park-state.md'])('%s', (doc) => {

@@ -9,6 +9,7 @@
 //   leases        the lease columns of automations.trigger_run
 //   work          automations.work, through work/store.ts (the drain claims
 //                 it richer than the core needs, so its queries live there)
+//   sources       automations.park_library_source (one row per team and hash)
 //
 // The run lease is a fence on every live-state write: a write that names the
 // token it holds lands only while the run's lease is still that token's.
@@ -497,6 +498,26 @@ export const postgresRunHostStore: RunHostStore = {
 
     async release(work) {
       await releaseWork({ ...claimOf(work), ...(work.dueAt !== undefined ? { dueAt: new Date(work.dueAt) } : {}) });
+    },
+  },
+
+  sources: {
+    async put({ teamId, hash, source }) {
+      await getAutomationsQb(['park_library_source'])
+        .insertInto('park_library_source')
+        .values({ team_id: teamId, hash, source })
+        .onConflict((oc) => oc.columns(['team_id', 'hash']).doNothing())
+        .execute();
+    },
+
+    async get({ teamId, hash }) {
+      const row = await getAutomationsQb(['park_library_source'])
+        .selectFrom('park_library_source')
+        .select('source')
+        .where('team_id', '=', teamId)
+        .where('hash', '=', hash)
+        .executeTakeFirst();
+      return row?.source ?? null;
     },
   },
 };

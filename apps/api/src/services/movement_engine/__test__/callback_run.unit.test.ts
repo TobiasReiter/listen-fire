@@ -20,7 +20,7 @@ import type { TriggerEvent } from 'movement-engine/services/translation_graph/tr
 import { tenantIdOf } from 'engine-contracts';
 import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
 import type { CallbackCall } from 'engine-contracts';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import type { AnyParkedScopeState } from 'engine-contracts';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
@@ -109,7 +109,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
     id: string;
     address: string;
     params: Array<{ name: string; type: string }>;
-    state: ParkedScopeState;
+    state: AnyParkedScopeState;
     singleUse: boolean;
     expiresAt?: string;
   }> = [];
@@ -131,7 +131,7 @@ function makeFakeCallbackSink(ledger: Record<string, CallbackCall[]> = {}) {
 function makeFakeParkSink() {
   const awaitParks: Array<{
     address: string;
-    state: ParkedScopeState;
+    state: AnyParkedScopeState;
     adapterType: string;
     correlationKey: string;
   }> = [];
@@ -146,7 +146,7 @@ function makeFakeParkSink() {
     }) {
       awaitParks.push({
         address: input.address,
-        state: input.state as ParkedScopeState,
+        state: input.state as AnyParkedScopeState,
         adapterType: input.adapterType,
         correlationKey: input.correlationKey,
       });
@@ -226,7 +226,7 @@ listen to runs {} fire m
     expect(mint.state.address).toBe('s1');
     expect(mint.state.bindingName).toBeNull();
     // The closure carries what the body will read.
-    const captured = JSON.parse(JSON.stringify(mint.state)) as ParkedScopeState;
+    const captured = JSON.parse(JSON.stringify(mint.state)) as AnyParkedScopeState;
     const movementScope = captured.scopeChain[captured.scopeChain.length - 1];
     expect(movementScope.bindings.greeting).toMatchObject({ kind: 'value', value: 'hello' });
   });
@@ -429,7 +429,7 @@ listen to runs {} fire m
         park: { callbacks: callbacks.sink, sink: parks.sink },
       }),
       // The stored state, JSON round-tripped exactly as the DB would.
-      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
+      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as AnyParkedScopeState,
       values,
       callIndex,
     });
@@ -478,7 +478,7 @@ listen to runs {} fire m
         adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
         park: { callbacks: callbacks.sink, sink: parks.sink },
       }),
-      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
+      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as AnyParkedScopeState,
       values: {},
       callIndex: 0,
     });
@@ -511,7 +511,7 @@ listen to runs {} fire m
           adapters: { resolve: makeResolver({ manual: manualAdapter, [KG]: fireKg.adapter }) },
           park: { callbacks: callbacks.sink, sink: parks.sink },
         }),
-        state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
+        state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as AnyParkedScopeState,
         values: {},
         callIndex: 0,
       }),
@@ -670,7 +670,7 @@ listen to runs {} fire m
         },
         park: { callbacks: callbacks.sink },
       }),
-      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as ParkedScopeState,
+      state: JSON.parse(JSON.stringify(callbacks.mints[0].state)) as AnyParkedScopeState,
       values: {},
       callIndex: 0,
     });
