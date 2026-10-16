@@ -209,13 +209,13 @@ describe('worked examples (zero diagnostics)', () => {
         '',
         '    c-[r:round]-> {',
         '      fr = write co-[:rounds]-> {',
-        '        unique by (co AND `stage`)',
+        '        unique by (co && `stage`)',
         '        stage: r.`stage`',
         '      }',
         '',
         '      r-[i:investor]-> {',
         '        write fr-[:participants]-> {',
-        '          unique by (fr AND `investor_name`)',
+        '          unique by (fr && `investor_name`)',
         '          investor_name: i.`name`',
         '          lead:          i.`lead`',
         '        }',
@@ -503,7 +503,7 @@ describe('name resolution', () => {
     // undescribed field — so the unknown-stays-silent contract applies. Field
     // existence is enforced under a schema (see check_typed: UNIQUE_UNKNOWN_FIELD).
     expect(
-      codes(inMovement('  write crm-[:company]-> { unique by (ghost AND `name`), name: msg.`subject` }')),
+      codes(inMovement('  write crm-[:company]-> { unique by (ghost && `name`), name: msg.`subject` }')),
     ).toEqual([]);
   });
 

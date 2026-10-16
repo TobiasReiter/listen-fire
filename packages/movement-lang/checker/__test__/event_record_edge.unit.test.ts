@@ -226,7 +226,7 @@ describe('a record-shaped signature gets the exact rewrite', () => {
     expect(msg).toContain('the EVENT, not the record it is about');
     // The signature, pasteable, with THIS instance's event name and pins.
     expect(msg).toContain(
-      `'m(event: <graph-[e:\`${event}\` WHERE e.action == "record.created" AND e.${key} == "${record}"]->>)'`,
+      `'m(event: <graph-[e:\`${event}\` WHERE e.action == "record.created" && e.${key} == "${record}"]->>)'`,
     );
     // The body hop, over THIS adapter's subject edge, rebinding the author's
     // own parameter name — the block form, which is the one the language has.

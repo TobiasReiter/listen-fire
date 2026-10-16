@@ -275,7 +275,7 @@ describe('SORT orders a collection already in hand', () => {
   it('a key over plain values is refused — a member IS the key there', () => {
     const body = `${bound}  t = Text.join(sort(names, (r) => r.Name), ", ")`;
     expect(codes(body)).toContain('MOV_SORT_KEY_ON_SCALAR');
-    expect(messages(body)).toContain('SORT(…, DESC)');
+    expect(messages(body)).toContain('sort(…, { order: "desc" })');
   });
 
   it('SORT of one value is refused — there is nothing to put in order', () => {
