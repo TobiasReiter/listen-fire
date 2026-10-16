@@ -104,7 +104,7 @@ fn instance_of_position(position: &Position) -> Option<&InstanceRef> {
         Position::Position(p) => Some(&p.instance),
         Position::Union(u) => Some(&u.instance),
         Position::Handle(h) => Some(&h.instance),
-        Position::Extract { .. } | Position::Closure(_) | Position::MaybeEmpty(_) | Position::Local(_) => None,
+        Position::Extract { .. } | Position::Closure(_) | Position::MaybeEmpty(_) | Position::Local(_) | Position::OneOf(_) => None,
     }
 }
 
@@ -224,12 +224,17 @@ pub fn union_returns(shapes: &[ReturnShape]) -> ReturnShape {
         }
     }
     let one_arm = arms.len() == 1;
+    // Records are what the union rule makes of them, as an IF of them is. One
+    // of several closures is called so only from version 5 (before it, a
+    // call is typed by the first).
+    let records = if arms.len() > 1 { super::unions::one_record_of(&arms) } else { None };
     let union = match arms.len() {
         0 => None,
         1 => arms.pop(),
         _ => Some(Ty::Union(Rc::new(arms))),
     };
     let typed = match &union {
+        Some(_) if !unknown && records.is_some() => records,
         Some(union) if !unknown => {
             if one_arm || super::field::records_alone(Some(union)).is_some() {
                 Some(union.clone())
@@ -373,6 +378,13 @@ pub enum Position {
     /// A landing that may be empty: a dot read yields `T | absent`.
     MaybeEmpty(Box<Position>),
     Local(LocalNode),
+    /// ONE OF several records of different types — TypeScript's `Person |
+    /// Company`: an `IF` or a `COALESCE` of them, a function returning
+    /// either, a list holding both. It reads, walks and writes only what
+    /// EVERY member offers. Built only by `unions::join_positions`, which
+    /// keeps it canonical: at least two members, none itself one of these,
+    /// none maybe-empty (absence wraps the whole), no two members one type.
+    OneOf(Vec<Position>),
 }
 
 impl Position {
@@ -417,6 +429,11 @@ pub fn instance_of_ref(position: Option<&Position>) -> Option<&InstanceRef> {
         Position::Union(u) => Some(&u.instance),
         Position::Handle(h) => Some(&h.instance),
         Position::MaybeEmpty(of) => instance_of_ref(Some(of)),
+        // The graph every record it may be is in, where they share one.
+        Position::OneOf(members) => {
+            let first = instance_of_ref(members.first())?;
+            members[1..].iter().all(|m| instance_of_ref(Some(m)).is_some_and(|i| same_instance(i, first))).then_some(first)
+        }
         Position::Extract { .. } | Position::Closure(_) | Position::Local(_) => None,
     }
 }
@@ -477,6 +494,7 @@ pub fn describe_position(position: &Position) -> String {
         }
         Position::Local(local) => local.label.clone(),
         Position::MaybeEmpty(of) => format!("{} (which may be empty)", describe_position(of)),
+        Position::OneOf(members) => members.iter().map(describe_position).collect::<Vec<_>>().join(" or "),
     }
 }
 
@@ -495,6 +513,14 @@ fn accepts_any_narrowing(param_name: &str, param_narrows: &Option<String>, arg_n
 /// `positionsMatch`: whether a record at `arg` may stand where `param` is
 /// asked for. `None` is "cannot say" (a handle of no position, a local node).
 pub fn positions_match(arg: &Position, param: &Position) -> Option<bool> {
+    // One of several records fits where every one of them does.
+    if let Position::OneOf(members) = arg {
+        let fits: Vec<Option<bool>> = members.iter().map(|member| positions_match(member, param)).collect();
+        if fits.contains(&Some(false)) {
+            return Some(false);
+        }
+        return fits.iter().all(|fit| *fit == Some(true)).then_some(true);
+    }
     match param {
         Position::Position(param) => match arg {
             Position::Position(arg) => {
@@ -539,7 +565,7 @@ pub fn positions_match(arg: &Position, param: &Position) -> Option<bool> {
             _ => Some(false),
         },
         Position::Meta { instance } => Some(matches!(arg, Position::Meta { instance: a } if same_instance(a, instance))),
-        Position::Handle(_) | Position::Extract { .. } | Position::Closure(_) | Position::Local(_) | Position::MaybeEmpty(_) => None,
+        Position::Handle(_) | Position::Extract { .. } | Position::Closure(_) | Position::Local(_) | Position::MaybeEmpty(_) | Position::OneOf(_) => None,
     }
 }
 
@@ -613,6 +639,11 @@ pub fn lookup_property_type(position: Option<&Position>, property: &str) -> Opti
             types.iter().all(|t| field_type_equals(t, &types[0])).then(|| types[0].clone())
         }
         Position::MaybeEmpty(of) => lookup_property_type(Some(of), property).map(maybe_absent),
+        // A field every record it may be has, as the union of their types.
+        Position::OneOf(members) => {
+            let types: Option<Vec<Ty>> = members.iter().map(|member| lookup_property_type(Some(member), property)).collect();
+            super::unions::join_field_types(&types?)
+        }
         Position::Local(local) => local.reads.get(property).cloned().flatten(),
         Position::Closure(_) | Position::Meta { .. } | Position::Extract { .. } => None,
     }
@@ -655,6 +686,20 @@ pub fn record_field_types(position: &Position) -> Option<IndexMap<String, Option
         Position::MaybeEmpty(of) => {
             Some(record_field_types(of)?.into_iter().map(|(name, ty)| (name, ty.map(maybe_absent))).collect())
         }
+        // The fields every record it may be has, each the union of their types.
+        Position::OneOf(members) => {
+            let each: Vec<IndexMap<String, Option<Ty>>> = members.iter().map(record_field_types).collect::<Option<_>>()?;
+            let (head, rest) = each.split_first()?;
+            Some(
+                head.keys()
+                    .filter(|name| rest.iter().all(|fields| fields.contains_key(*name)))
+                    .map(|name| {
+                        let types: Option<Vec<Ty>> = each.iter().map(|fields| fields.get(name).cloned().flatten()).collect();
+                        (name.clone(), types.and_then(|types| super::unions::join_field_types(&types)))
+                    })
+                    .collect(),
+            )
+        }
         Position::Union(_) | Position::Meta { .. } | Position::Closure(_) => None,
     }
 }
@@ -664,6 +709,15 @@ pub fn record_field_types(position: &Position) -> Option<IndexMap<String, Option
 pub fn narrow_present(position: &Position, property: &str) -> Option<Position> {
     match position {
         Position::MaybeEmpty(of) => is_maybe_absent(lookup_property_type(Some(position), property).as_ref()).then(|| (**of).clone()),
+        // The proof discharges the field in each record it may be.
+        Position::OneOf(members) => {
+            let narrowed: Vec<Option<Position>> = members.iter().map(|member| narrow_present(member, property)).collect();
+            if narrowed.iter().all(Option::is_none) {
+                return None;
+            }
+            let each: Vec<&Position> = narrowed.iter().zip(members).map(|(n, m)| n.as_ref().unwrap_or(m)).collect();
+            super::unions::join_positions(&each).map(|joined| joined.position)
+        }
         Position::Extract { node, present } => {
             let field = node.properties.get(property)?;
             if field.reads_as_present_text || present.contains(property) {
@@ -843,6 +897,20 @@ pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
             None => EdgeLanding::Unknown { available: local.edges.as_ref().map(|e| e.keys().cloned().collect()).unwrap_or_default() },
         },
         Position::MaybeEmpty(of) => edge_landing(of, edge, version),
+        // Every record it may be lands; the typing walks each (`stepEveryMember`).
+        Position::OneOf(members) => {
+            let landings: Option<Vec<Position>> = members
+                .iter()
+                .map(|member| match edge_landing(member, edge, version) {
+                    EdgeLanding::Landed { landing, .. } => Some(landing),
+                    _ => None,
+                })
+                .collect();
+            match landings.as_deref().map(|l| l.iter().collect::<Vec<_>>()).and_then(|l| super::unions::join_positions(&l)) {
+                Some(joined) => EdgeLanding::Landed { landing: joined.position, edge: None },
+                None => EdgeLanding::Untyped { edge: None },
+            }
+        }
     }
 }
 

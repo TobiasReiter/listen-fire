@@ -13,7 +13,7 @@ use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
 use crate::families::returns::Body;
-use crate::types::field::{HeldHandle, Ty, mixed_tuple_message, widen_tuples};
+use crate::types::field::{HeldHandle, Ty, mixed_tuple_message};
 use crate::types::{TypeEnv, Typing};
 
 use crate::types::narrowing::{negative_presence_proofs, presence_proofs};
@@ -106,6 +106,14 @@ pub struct Checker<'c> {
     /// Each plugin package imported (version 5), by its local name: the
     /// members it binds as `web.fetchUrl` (crate::families::names).
     pub packages: std::collections::HashMap<String, Vec<movement_parser::catalog::packages::PackageMember>>,
+    /// Whether this check applies the union rule, and whether it withheld it.
+    pub record_unions: crate::types::unions::RecordUnions,
+}
+
+/// A write's scopes, one per record its root may be (`scopesByMember`).
+struct ByMember {
+    members: Vec<Position>,
+    scopes: Vec<ScopeId>,
 }
 
 /// How `checkExprSlot` reads a slot (`SlotOptions`).
@@ -249,7 +257,14 @@ impl<'c> Checker<'c> {
             file_statement_spans: Vec::new(),
             file_names: Default::default(),
             packages: Default::default(),
+            record_unions: Default::default(),
         }
+    }
+
+    /// This check's half of `RecordUnions`, as every site of the union rule
+    /// reads it.
+    pub fn record_join(&self) -> crate::types::unions::RecordJoin<'_> {
+        crate::types::unions::RecordJoin::under(self.version, Some(&self.record_unions))
     }
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
@@ -647,7 +662,7 @@ impl<'c> Checker<'c> {
         if let Some(mixed) = mixed_tuple_message(ty.as_ref(), self.version) {
             self.report(crate::codes::LIST_MIXED, mixed, span);
         }
-        widen_tuples(ty, self.version)
+        crate::types::field::widen_tuples_joining(ty, self.version, self.record_join())
     }
 
     /// `checkIf`: each arm's condition is checked in the arm's own scope and
@@ -954,6 +969,103 @@ impl<'c> Checker<'c> {
     }
 
     pub(crate) fn check_write(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
+        if let Some(by_member) = self.scopes_by_member(&write.target, scope) {
+            let handles = self.every_member(&by_member, |checker, own| checker.check_write_once(write, own, binding, is_bound));
+            let landed: Vec<Position> = handles.into_iter().collect::<Option<_>>()?;
+            return crate::types::unions::join_positions(&landed.iter().collect::<Vec<_>>()).map(|joined| joined.position);
+        }
+        self.check_write_once(write, scope, binding, is_bound)
+    }
+
+    /// `scopesByMember`: a write starting at a record that may be one of
+    /// several (`write who { … }`, `write who-[:edge]-> { … }`, `who` an IF
+    /// or a COALESCE of People and Companies), as one scope per member with
+    /// the name bound to that member: the union rule writes only what every
+    /// member takes, so every write rule holds against each.
+    fn scopes_by_member(&mut self, target: &WriteTarget, scope: ScopeId) -> Option<ByMember> {
+        let roots: Vec<&PathRoot> = match target {
+            WriteTarget::Position { root, .. } => vec![root],
+            WriteTarget::Linked { path, .. } => path.root.iter().collect(),
+            WriteTarget::Tuple { paths, .. } => paths.iter().filter_map(|path| path.root.as_ref()).collect(),
+        };
+        let (name, id, members, may_be_empty) = roots.into_iter().find_map(|root| {
+            let PathRoot::Name { name } = root else { return None };
+            let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
+            let types = &self.scopes.symbol(id).types;
+            let typed = types.pos.clone().or_else(|| match &types.field {
+                Some(Ty::Record(Some(position))) => Some((**position).clone()),
+                _ => None,
+            });
+            // A held tuple of records (`both = [lead, co]`) is walked as the
+            // list it widens to, so a write off it is held to every member too.
+            let held = || match types.field.as_ref().map(crate::types::field::strip_absent) {
+                Some(Ty::Tuple { .. }) => crate::types::field::record_head_position(
+                    crate::types::field::widen_tuples_joining(types.field.clone(), self.version, self.record_join()).as_ref(),
+                ),
+                _ => None,
+            };
+            let position = typed
+                .clone()
+                .or_else(|| match types.may_hold.as_ref().map(crate::families::writes::record_of_may_hold) {
+                    Some(crate::families::writes::RecordOf::Record(position)) => Some(position),
+                    _ => None,
+                })
+                .or_else(held)?;
+            let may_be_empty = matches!(position, Position::MaybeEmpty(_)) || (typed.is_some() && crate::types::field::is_maybe_absent(types.field.as_ref()));
+            let union = match position {
+                Position::MaybeEmpty(of) => *of,
+                other => other,
+            };
+            let Position::OneOf(members) = union else { return None };
+            Some((name.clone(), id, members, may_be_empty))
+        })?;
+        let span = self.scopes.symbol(id).span;
+        let scopes = members
+            .iter()
+            .map(|member| {
+                let own = self.scopes.open(Some(scope));
+                let mut symbol = crate::scope::Symbol::new(name.clone(), crate::scope::SymbolKind::Binding, span);
+                symbol.types.pos = Some(if may_be_empty { Position::MaybeEmpty(Box::new(member.clone())) } else { member.clone() });
+                let symbol = self.scopes.add_symbol(symbol);
+                self.scopes.declare(own, symbol);
+                own
+            })
+            .collect();
+        Some(ByMember { members, scopes })
+    }
+
+    /// `everyMember`: a check run once per member of a union. What every
+    /// member refuses alike is said once; what only some refuse is said of
+    /// each, with the union named, so the author sees which record would not
+    /// take it.
+    fn every_member<T>(&mut self, by_member: &ByMember, mut check: impl FnMut(&mut Self, ScopeId) -> T) -> Vec<T> {
+        let key = |d: &crate::Diagnostic| (d.code.clone(), d.message.clone(), format!("{:?}", d.span));
+        let mut answers = Vec::new();
+        let mut each: Vec<Vec<crate::Diagnostic>> = Vec::new();
+        for own in &by_member.scopes {
+            let before = self.diagnostics.len();
+            answers.push(check(self, *own));
+            each.push(self.diagnostics.split_off(before));
+        }
+        let union = crate::types::position::describe_position(&Position::OneOf(by_member.members.clone()));
+        let mut said = std::collections::HashSet::new();
+        for diagnostics in &each {
+            for d in diagnostics {
+                if !said.insert(key(d)) {
+                    continue;
+                }
+                let everywhere = each.iter().all(|others| others.iter().any(|other| key(other) == key(d)));
+                let mut d = d.clone();
+                if !everywhere {
+                    d.message = format!("{} (this may be {union}, and a write to it is held to every one of them)", d.message.strip_suffix('.').unwrap_or(&d.message));
+                }
+                self.diagnostics.push(d);
+            }
+        }
+        answers
+    }
+
+    fn check_write_once(&mut self, write: &WriteExpression, scope: ScopeId, binding: Option<&str>, is_bound: bool) -> Option<crate::types::Position> {
         self.check_target(&write.target, scope);
         // From version 5 a `bind` is refused whole (MOV_WRITE_BIND_RETIRED, the writes family's).
         if let Some(bind) = &write.bind

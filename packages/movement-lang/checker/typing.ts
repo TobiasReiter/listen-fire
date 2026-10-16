@@ -847,6 +847,17 @@ export type PositionTypeRef =
    * scalar case. */
   | { kind: 'maybeEmpty'; of: PositionTypeRef }
   /**
+   * ONE OF several records of different types — TypeScript's `Person |
+   * Company`: an `IF` or a `COALESCE` of them, a function returning either, a
+   * list holding both. It reads, walks and writes only what EVERY member
+   * offers: a field every member has is read as the union of their types, and
+   * one a member lacks is refused, naming that member. Built only by
+   * `joinPositions` (`oneRecordOf`), which keeps it canonical: at least two
+   * members, none itself one of these, none maybe-empty (absence wraps the
+   * whole), no two members one type.
+   */
+  | { kind: 'oneOf'; members: PositionTypeRef[] }
+  /**
    * A CHECKER-LOCAL node — a position a CONSTRUCT mints rather than a system.
    * It belongs to no graph, so there is no schema to consult and nothing to
    * re-resolve at run time: it carries exactly what the construct declared, a
@@ -924,6 +935,8 @@ export function holdsFieldsInHand(
       return true;
     case 'maybeEmpty':
       return holdsFieldsInHand(position.of, isDeclaredGraphToken);
+    case 'oneOf':
+      return position.members.every(member => holdsFieldsInHand(member, isDeclaredGraphToken));
     case 'position':
     case 'union':
       return isDeclaredGraphToken?.(position.instance.token) === true;
@@ -952,6 +965,8 @@ export function holdsReachedFieldsInHand(
       return liveReferenceWithin(position, isDeclaredGraphToken) === undefined;
     case 'maybeEmpty':
       return holdsReachedFieldsInHand(position.of, isDeclaredGraphToken);
+    case 'oneOf':
+      return position.members.every(member => holdsReachedFieldsInHand(member, isDeclaredGraphToken));
     case 'handle':
     case 'position':
     case 'union':
@@ -1108,6 +1123,11 @@ export function instanceOfType(type: PositionTypeRef): InstanceRef | undefined {
       return type.instance;
     case 'maybeEmpty':
       return instanceOfType(type.of);
+    // The graph every record it may be is in, where they share one.
+    case 'oneOf': {
+      const [first, ...rest] = type.members.map(instanceOfType);
+      return first !== undefined && rest.every(each => each?.token === first.token) ? first : undefined;
+    }
     case 'local':
     case 'extract':
     case 'closure':
@@ -1237,6 +1257,8 @@ export function describePosition(type: PositionTypeRef): string {
       return type.label;
     case 'maybeEmpty':
       return `${describePosition(type.of)} (which may be empty)`;
+    case 'oneOf':
+      return type.members.map(describePosition).join(' or ');
   }
 }
 
@@ -1507,22 +1529,25 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  *
  * KIND: the kind the arguments share (`null` aside), so
  * `COALESCE(e.diverse, FALSE)` is a boolean wherever it goes — a text field
- * declared on a node refuses it, as it refuses `FALSE`. Arguments of different
- * kinds have no one kind (the model has no unions), and the result is then
- * untyped, as it always was.
+ * declared on a node refuses it, as it refuses `FALSE`. Records are joined by
+ * the union rule (`oneRecordOf`, through `join`). Values of different kinds
+ * have no one kind, and the result is then untyped, as it always was.
  *
  * An UNTYPED argument leaves the result unknown: nothing here knows whether it
  * answers, or what, so this manufactures neither a presence nor a kind
  * (unknown stays unknown, as in TS).
  */
-function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
+function coalesceType(
+  args: Array<FieldType | undefined>,
+  options: { join: (kinds: FieldType[], old: FieldType | undefined) => FieldType | undefined },
+): FieldType | undefined {
   // An argument that never arrives ends the search: `coalesce(x, fail("…"))`
   // is `x` present, or the run has failed there, and nothing after it is
   // reached.
   const cut = args.indexOf('never');
   if (cut === 0) return 'never';
   if (cut > 0) {
-    const reached = coalesceType(args.slice(0, cut));
+    const reached = coalesceType(args.slice(0, cut), options);
     if (reached === undefined) return undefined;
     if (reached === 'absent') return 'never';
     return stripAbsent(reached);
@@ -1533,7 +1558,7 @@ function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined
   // Every argument is the `null` literal — the value that is never there.
   if (valued.length === 0) return 'absent';
   const kinds = valued.map(stripAbsent);
-  const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
+  const shared = options.join(kinds, kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined);
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
   return shared !== undefined ? maybeAbsent(shared) : valued.find(isMaybeAbsent);
 }
@@ -1548,7 +1573,7 @@ function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined
  * language change, not this fix. Undefined where an argument is untyped or the
  * members share nothing.
  */
-function multiType(args: Array<FieldType | undefined>): FieldType | undefined {
+function multiType(args: Array<FieldType | undefined>, rule: RecordJoin): FieldType | undefined {
   const members: Array<FieldType | undefined> = [];
   for (const arg of args) {
     if (arg === undefined) return undefined;
@@ -1567,7 +1592,7 @@ function multiType(args: Array<FieldType | undefined>): FieldType | undefined {
         members.push(present);
     }
   }
-  const shared = unifyValueTypes(members);
+  const shared = unifyValueTypes(members, rule);
   if (shared === undefined || handleWithin(shared) === undefined) return undefined;
   return listOf(shared, 'ordered');
 }
@@ -1678,12 +1703,12 @@ export function tupleAsList(tuple: TupleType, languageVersion: LanguageVersion):
   return widenTuple(tuple, wideningUnder(languageVersion));
 }
 
-function widenTuple(tuple: TupleType, widening: Widening): ListType | undefined {
-  const members = tupleMembers(tuple).map(member => widenTuplesBy(member ?? undefined, widening));
+function widenTuple(tuple: TupleType, widening: Widening, rule?: RecordJoin): ListType | undefined {
+  const members = tupleMembers(tuple).map(member => widenTuplesBy(member ?? undefined, widening, rule));
   // What the members share comes first, so a tuple that widened before still
   // widens to exactly that (a dict's written keys forgotten, records of
   // different positions one record type).
-  const shared = unifyValueTypes(members);
+  const shared = unifyValueTypes(members, rule);
   if (shared !== undefined) return { kind: 'list', of: shared };
   if (widening === 'shared') return undefined;
   const typed = members.filter((member): member is FieldType => member !== undefined);
@@ -1694,15 +1719,15 @@ function widenTuple(tuple: TupleType, widening: Widening): ListType | undefined 
 
 /** `type` with a tuple at its top read as the list it widens to under
  *  `languageVersion`, absence kept; any other type unchanged. */
-export function widenTuples(type: FieldType | undefined, languageVersion: LanguageVersion): FieldType | undefined {
-  return widenTuplesBy(type, wideningUnder(languageVersion));
+export function widenTuples(type: FieldType | undefined, languageVersion: LanguageVersion, rule?: RecordJoin): FieldType | undefined {
+  return widenTuplesBy(type, wideningUnder(languageVersion), rule);
 }
 
-function widenTuplesBy(type: FieldType | undefined, widening: Widening): FieldType | undefined {
+function widenTuplesBy(type: FieldType | undefined, widening: Widening, rule?: RecordJoin): FieldType | undefined {
   if (type === undefined) return undefined;
   const present = stripAbsent(type);
   if (!isTupleType(present)) return type;
-  const list = widenTuple(present, widening);
+  const list = widenTuple(present, widening, rule);
   return isMaybeAbsent(type) ? maybeAbsent(list) : list;
 }
 
@@ -3245,11 +3270,17 @@ export function handleSpreadOf(type: FieldType | undefined, walk: HeldWalk): Hel
  * `undefined` where nothing can be said — an untyped member, or a genuine
  * mixture — which is the caller's cue to stay silent or to refuse.
  */
-export function unifyValueTypes(types: Array<FieldType | undefined>): FieldType | undefined {
+export function unifyValueTypes(types: Array<FieldType | undefined>, rule?: RecordJoin): FieldType | undefined {
   const first = types[0];
   if (first === undefined || types.length === 0) return undefined;
+  const typed = types.filter((t): t is FieldType => t !== undefined);
+  if (typed.length === types.length && typed.every(t => isRecordType(t))) {
+    // Before version 5 they were the first's type where they were one, and an
+    // unnamed record where not — the union rule's `old` answer.
+    const old: FieldType = typed.every(t => fieldTypeEquals(t, first)) ? first : { kind: 'record' };
+    return joinedUnder(rule, oneRecordOf(typed), old);
+  }
   if (types.every(t => t !== undefined && fieldTypeEquals(t, first))) return first;
-  if (types.every(t => isRecordType(t))) return { kind: 'record' };
   // Dicts that hold the same thing under different written keys are still a
   // dict of that thing — only the keys stop being knowable, so the shape goes
   // and a lookup falls back to one that may miss.
@@ -3657,6 +3688,12 @@ function acceptsAnyNarrowing(
  * `undefined` = cannot tell (stay silent).
  */
 export function positionsMatch(arg: PositionTypeRef, param: PositionTypeRef): boolean | undefined {
+  // One of several records fits where every one of them does.
+  if (arg.kind === 'oneOf') {
+    const fits = arg.members.map(member => positionsMatch(member, param));
+    if (fits.some(fit => fit === false)) return false;
+    return fits.every(fit => fit === true) ? true : undefined;
+  }
   switch (param.kind) {
     case 'position':
       if (arg.kind === 'position') {
@@ -3701,6 +3738,7 @@ export function positionsMatch(arg: PositionTypeRef, param: PositionTypeRef): bo
     case 'closure':
     case 'local':
     case 'maybeEmpty':
+    case 'oneOf':
       // Parameters come from TypeRefs; these kinds cannot be declared.
       return undefined;
   }
@@ -3718,6 +3756,206 @@ export function sameStartingPoint(a: PositionTypeRef, b: PositionTypeRef): boole
   // is a list of THAT record, not of a record nobody can name.
   if (a === b) return true;
   return positionsMatch(a, b) === true && positionsMatch(b, a) === true;
+}
+
+type HandleRef = Extract<PositionTypeRef, { kind: 'handle' }>;
+
+/** A report `probeEach` gathered off one member of a union. */
+interface ProbedReport {
+  code: string;
+  message: string;
+  severity?: 'error' | 'info' | 'warning' | 'upgrade';
+}
+
+/**
+ * THE UNION RULE — what a value that may be one of several records is, as
+ * TypeScript's union: `A | A` IS `A`, and `Person | Company` reads, walks and
+ * writes only what both offer. Every place a value can be one of several
+ * records asks this: an `IF`, a `COALESCE`, a function's returns, a list's
+ * members (a literal, `MULTI`).
+ *
+ * Members of one type join into that type, keeping only what EVERY member
+ * vouches for, so no arm is preferred: a field a guard proved present where
+ * every arm proved it, an `-[:@old]->` where every member was written, a field
+ * read as set where every write set it (`mergeOneType`). Members of different
+ * types make a `oneOf`. A record nobody can name among them leaves the whole
+ * unnamed (unknown stays unknown); a maybe-absent member makes the whole maybe
+ * absent. Undefined where a member is not a record (`null` included) — records
+ * and values have no union.
+ *
+ * Where the joined answer is the first member's own type, it is that very
+ * value, so a site can tell "nothing changed" by identity (`joinedUnder`).
+ */
+export function oneRecordOf(types: ReadonlyArray<FieldType>): FieldType | undefined {
+  let mayBeAbsent = false;
+  let unnamed = false;
+  const positions: PositionTypeRef[] = [];
+  for (const type of types) {
+    if (isMaybeAbsent(type)) mayBeAbsent = true;
+    const variant = variantOf(stripAbsent(type));
+    // `null` beside a record (`IF c THEN r ELSE NULL END`) is no record: that
+    // is a value that may be one, and stays one.
+    if (variant.kind !== 'record') return undefined;
+    // A closure is a value with a signature; several are joined by their own
+    // rule (`oneOfClosures`).
+    if (variant.position?.kind === 'closure') return undefined;
+    if (variant.position === undefined) unnamed = true;
+    else positions.push(variant.position);
+  }
+  if (positions.length === 0 && !unnamed) return undefined;
+  const joined = unnamed ? undefined : joinPositions(positions);
+  const first = types[0];
+  if (
+    first !== undefined
+    && joined === recordIn(first)?.position
+    && variantOf(stripAbsent(first)).kind === 'record'
+    && isMaybeAbsent(first) === mayBeAbsent
+  ) {
+    return first;
+  }
+  const record = recordOf(joined);
+  return mayBeAbsent ? maybeAbsent(record) : record;
+}
+
+/**
+ * The position a value that may be at any of these positions is — the union
+ * rule (`oneRecordOf`) on the arrow plane: one type where they are one, a
+ * `oneOf` where they are not, maybe-empty where any member may be. The first
+ * member itself where it already says everything every member does.
+ */
+export function joinPositions(positions: readonly PositionTypeRef[]): PositionTypeRef | undefined {
+  let mayBeEmpty = false;
+  const members: PositionTypeRef[] = [];
+  const add = (position: PositionTypeRef): void => {
+    if (position.kind === 'maybeEmpty') {
+      mayBeEmpty = true;
+      add(position.of);
+      return;
+    }
+    if (position.kind === 'oneOf') {
+      position.members.forEach(add);
+      return;
+    }
+    for (const [i, member] of members.entries()) {
+      const merged = mergeOneType(member, position);
+      if (merged !== undefined) {
+        members[i] = merged;
+        return;
+      }
+    }
+    members.push(position);
+  };
+  positions.forEach(add);
+  const first = members[0];
+  if (first === undefined) return undefined;
+  const one: PositionTypeRef = members.length === 1 ? first : { kind: 'oneOf', members };
+  if (!mayBeEmpty) return one;
+  const head = positions[0];
+  if (members.length === 1 && head?.kind === 'maybeEmpty' && head.of === first) return head;
+  return { kind: 'maybeEmpty', of: one };
+}
+
+/**
+ * Two positions as ONE type, where they are one: the same place to start a
+ * walk from, keeping what both vouch for. `a` itself where `b` takes nothing
+ * from it. Undefined where they are different types.
+ */
+function mergeOneType(a: PositionTypeRef, b: PositionTypeRef): PositionTypeRef | undefined {
+  if (a === b) return a;
+  if (a.kind === 'handle' && b.kind === 'handle') return joinHandles(a, b);
+  if (a.kind === 'extract' && b.kind === 'extract') {
+    return a.node === b.node ? withPresent(a, sharedPresent(a.present, b.present)) : undefined;
+  }
+  if (a.kind === 'position' && b.kind === 'position' && sameStartingPoint(a, b)) {
+    return withPresent(a, sharedPresent(a.present, b.present));
+  }
+  return sameStartingPoint(a, b) ? a : undefined;
+}
+
+/** What two guards both proved present — nothing where either proved nothing. */
+function sharedPresent(a: ReadonlySet<string> | undefined, b: ReadonlySet<string> | undefined): ReadonlySet<string> | undefined {
+  if (a === undefined || b === undefined) return undefined;
+  const shared = new Set([...a].filter(field => b.has(field)));
+  return shared.size > 0 ? shared : undefined;
+}
+
+type PresentingRef = Extract<PositionTypeRef, { kind: 'position' | 'extract' }>;
+
+function withPresent(position: PresentingRef, present: ReadonlySet<string> | undefined): PresentingRef {
+  if ((position.present?.size ?? 0) === (present?.size ?? 0)) return position;
+  switch (position.kind) {
+    case 'position': {
+      const { present: _proved, ...rest } = position;
+      return present !== undefined ? { ...rest, present } : rest;
+    }
+    case 'extract': {
+      const { present: _proved, ...rest } = position;
+      return present !== undefined ? { ...rest, present } : rest;
+    }
+    default:
+      return neverAsAny(position);
+  }
+}
+
+/**
+ * Whether a check applies the union rule (`oneRecordOf`) — from version 5;
+ * before it, every site answered as it always had (an `IF` of different
+ * records untyped, a function's first return its type, a list of them an
+ * unnamed record) — and the cue that a site withheld a joined answer, so the
+ * checker can check again joining and say what 5 would refuse.
+ */
+export interface RecordJoin {
+  joins: boolean;
+  onWithheld?: () => void;
+}
+
+/** One site's answer under the union rule: `joined` where the check joins,
+ *  else what the site answered before (`old`), telling the rule where the two
+ *  differ. */
+export function joinedUnder<T>(rule: RecordJoin | undefined, joined: T | undefined, old: T | undefined): T | undefined {
+  if (joined === old || joined === undefined) return old;
+  if (rule?.joins === true) return joined;
+  rule?.onWithheld?.();
+  return old;
+}
+
+/** What a field every member of a `oneOf` carries is: their union — records
+ *  joined by the union rule, values by `valueUnion`. */
+export function joinFieldTypes(types: readonly FieldType[]): FieldType | undefined {
+  const first = types[0];
+  if (first === undefined) return undefined;
+  const records = oneRecordOf(types);
+  if (records !== undefined) return records;
+  if (types.every(type => fieldTypeEquals(type, first))) return first;
+  return valueUnion(types);
+}
+
+function joinHandles(a: HandleRef, b: HandleRef): HandleRef | undefined {
+  if (a === b) return a;
+  if (a.instance.token !== b.instance.token || a.position === undefined || a.position !== b.position) return undefined;
+  if (!sameEntries(a.resultShape, b.resultShape, fieldTypeEquals)) return undefined;
+  if (!sameEntries(a.edges ?? {}, b.edges ?? {}, (x, y) => x === y)) return undefined;
+  if (!sameEntries(a.genericLandings ?? {}, b.genericLandings ?? {}, (x, y) => x === y)) return undefined;
+  const written = a.written === true && b.written === true;
+  // No `setFields` on a written handle means its write vouched for nothing.
+  const setFields = written && a.setFields !== undefined && b.setFields !== undefined
+    ? new Set([...a.setFields].filter(field => b.setFields!.has(field)))
+    : undefined;
+  return {
+    kind: 'handle',
+    instance: a.instance,
+    position: a.position,
+    resultShape: a.resultShape,
+    ...(a.edges !== undefined ? { edges: a.edges } : {}),
+    ...(a.genericLandings !== undefined ? { genericLandings: a.genericLandings } : {}),
+    ...(written ? { written: true as const } : {}),
+    ...(setFields !== undefined ? { setFields } : {}),
+  };
+}
+
+function sameEntries<T>(a: Record<string, T>, b: Record<string, T>, same: (x: T, y: T) => boolean): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && same(a[key]!, b[key]!));
 }
 
 // ── Schema lookups ──
@@ -3861,6 +4099,23 @@ export function recordFieldTypes(position: PositionTypeRef): Record<string, Fiel
         Object.entries(inner).map(([name, type]) => [name, type !== null ? maybeAbsent(type)! : null]),
       );
     }
+    // The fields every record it may be has, each the union of their types.
+    case 'oneOf': {
+      const each: Array<Record<string, FieldType | null>> = [];
+      for (const member of position.members) {
+        const fields = recordFieldTypes(member);
+        if (fields === undefined) return undefined;
+        each.push(fields);
+      }
+      const [head, ...rest] = each;
+      if (head === undefined) return undefined;
+      return Object.fromEntries(
+        Object.keys(head).filter(name => rest.every(fields => Object.hasOwn(fields, name))).map(name => {
+          const types = each.map(fields => fields[name] ?? null);
+          return [name, types.every((type): type is FieldType => type !== null) ? joinFieldTypes(types) ?? null : null];
+        }),
+      );
+    }
     case 'union':
     case 'meta':
     case 'closure':
@@ -3895,6 +4150,11 @@ export function lookupPropertyType(
     case 'maybeEmpty':
       // A field of a maybe-empty node is itself possibly-absent (F19).
       return maybeAbsent(lookupPropertyType(position.of, propertyId));
+    // A field every record it may be has, as the union of their types.
+    case 'oneOf': {
+      const types = position.members.map(member => lookupPropertyType(member, propertyId));
+      return types.every((type): type is FieldType => type !== undefined) ? joinFieldTypes(types) : undefined;
+    }
     case 'local':
       return position.reads[propertyId];
     case 'closure':
@@ -4214,6 +4474,12 @@ export function narrowPresent(
   switch (position.kind) {
     case 'maybeEmpty':
       return isMaybeAbsent(lookupPropertyType(position, propertyId)) ? position.of : undefined;
+    // - one of several records: the proof discharges the field in each.
+    case 'oneOf': {
+      const narrowed = position.members.map(member => narrowPresent(member, propertyId));
+      if (narrowed.every(each => each === undefined)) return undefined;
+      return joinPositions(narrowed.map((each, i) => each ?? position.members[i]!));
+    }
     // - an extracted TYPED field is `T | absent` on a node that is always
     //   there, so the proof discharges just that field (text is already
     //   present, and testing it is refused elsewhere).
@@ -4311,6 +4577,9 @@ function holdsInMemory(from: PositionTypeRef, edge: string): boolean {
       return from.edges?.[edge] !== undefined && from.edges[edge].deferred !== true;
     case 'maybeEmpty':
       return holdsInMemory(from.of, edge);
+    // One of several records: the order may change if any of them is held.
+    case 'oneOf':
+      return from.members.some(member => holdsInMemory(member, edge));
     case 'meta':
     case 'position':
     case 'union':
@@ -4509,6 +4778,9 @@ export class ExpressionTyping {
        *  hold where its type cannot say — the arms, as a walk input
        *  (`ScopeSymbol.mayHold`). Only the walk for an engine object reads it. */
       resolveMayHold?: (name: string) => FieldType | undefined;
+      /** Does this check apply the union rule (`oneRecordOf`) to a value that
+       *  may be one of several records? From version 5 (`RecordJoin`). */
+      recordJoin: RecordJoin;
       /** Is this name BOUND in statement scope at all — whatever plane it sits
        *  on, and whether or not a type came with it? `resolveScalar` and
        *  `resolveRoot` both answer `undefined` for a name that IS declared but
@@ -4590,7 +4862,79 @@ export class ExpressionTyping {
   ) {}
 
   private report(code: string, message: string, severity?: 'error' | 'info' | 'warning' | 'upgrade'): void {
-    this.options.report(code, message, this.options.span, severity);
+    if (this.probe !== undefined) this.probe.push({ code, message, ...(severity !== undefined ? { severity } : {}) });
+    else this.options.report(code, message, this.options.span, severity);
+  }
+
+  /** Where `probeEach` gathers one member's reports instead of reporting them. */
+  private probe: ProbedReport[] | undefined = undefined;
+
+  /**
+   * One step (a field read, an edge hop) off every record a `oneOf` may be —
+   * the union rule's read: what every member offers, or a refusal naming the
+   * member that does not offer it. Each member's own reports are gathered; the
+   * first refusal among them is the union's, said of that member; anything
+   * that is no refusal (a warning) is said as it was.
+   */
+  private probeEach<T>(
+    union: Extract<PositionTypeRef, { kind: 'oneOf' }>,
+    step: (member: PositionTypeRef) => T | undefined,
+    refusal: (member: PositionTypeRef, report: ProbedReport) => string,
+  ): Array<T | undefined> | undefined {
+    const answers: Array<T | undefined> = [];
+    for (const member of union.members) {
+      const outer = this.probe;
+      const gathered: ProbedReport[] = [];
+      this.probe = gathered;
+      let answer: T | undefined;
+      try {
+        answer = step(member);
+      } finally {
+        this.probe = outer;
+      }
+      const refused = gathered.find(r => r.severity === undefined || r.severity === 'error');
+      for (const r of gathered) {
+        if (r !== refused && refused === undefined) this.report(r.code, r.message, r.severity);
+      }
+      if (refused !== undefined) {
+        this.report(refused.code, refusal(member, refused));
+        return undefined;
+      }
+      answers.push(answer);
+    }
+    return answers;
+  }
+
+  /** `who.Name` off one of several records: every member's field, joined. */
+  private readEveryMember(
+    union: Extract<PositionTypeRef, { kind: 'oneOf' }>,
+    propertyId: string,
+    writeTarget: WriteTargetRef | undefined,
+  ): FieldType | undefined {
+    const types = this.probeEach(
+      union,
+      member => this.readProperty(member, propertyId, writeTarget),
+      (member, r) => `'${propertyId}' can't be read here: this may be ${describePosition(union)}, and it reads only what every one of them has — ${describePosition(member)} refuses it (${r.message.replace(/\.$/, '')}). Read it where you know which record you hold`,
+    );
+    if (types === undefined || types.some(type => type === undefined)) return undefined;
+    return joinFieldTypes(types.filter((type): type is FieldType => type !== undefined));
+  }
+
+  /** `who-[:edge]->` off one of several records: every member's landing,
+   *  joined. */
+  private stepEveryMember(
+    union: Extract<PositionTypeRef, { kind: 'oneOf' }>,
+    edge: string,
+    filter: Expression | undefined,
+  ): PositionTypeRef | undefined {
+    const landings = this.probeEach(
+      union,
+      member => this.stepEdge(member, edge, filter),
+      (member, r) => `'-[:${edge}]->' can't be walked here: this may be ${describePosition(union)}, and it walks only what every one of them has — ${describePosition(member)} refuses it (${r.message.replace(/\.$/, '')}). Walk it where you know which record you hold`,
+    );
+    this.lastEdgeSchema = undefined;
+    if (landings === undefined || landings.some(landing => landing === undefined)) return undefined;
+    return joinPositions(landings.filter((landing): landing is PositionTypeRef => landing !== undefined));
   }
 
   /** This walk is for a move up across the change version `n` made. */
@@ -4702,7 +5046,9 @@ export class ExpressionTyping {
     const root = this.rootType(name);
     if (root !== undefined) return root;
     const scalar = this.scalarType(name);
-    const position = recordHeadPosition(scalar);
+    // A tuple of records walks as the list it widens to, its members joined
+    // by the union rule, so a walk off `[lead, co]` asks every member.
+    const position = recordHeadPosition(isTupleType(stripAbsent(scalar ?? 'absent')) ? widenTuples(scalar, this.options.languageVersion, this.options.recordJoin) : scalar);
     // A record that may not be there (`ONLY(…)`, `FIRST(…)`, `AT(rows, 0)`) is
     // read as the maybe-empty landing it is, so a field read off it is
     // `T | absent` — TypeScript's `r?.name`. Before version 3 the absence was
@@ -5023,7 +5369,7 @@ export class ExpressionTyping {
   private widen(type: FieldType | undefined): FieldType | undefined {
     const mixed = mixedTupleMessage(type, this.options.languageVersion);
     if (mixed !== undefined) this.report(TypedDiagnosticCodes.LIST_MIXED, mixed);
-    return widenTuples(type, this.options.languageVersion);
+    return widenTuples(type, this.options.languageVersion, this.options.recordJoin);
   }
 
   /** The type of a sub-expression as the expression around it READS it — a
@@ -5208,6 +5554,12 @@ export class ExpressionTyping {
     }
   }
 
+  /** What a site whose arms are these types is under the union rule, where
+   *  this check applies it; `old`, its answer before version 5, where not. */
+  private joinedRecords(types: readonly FieldType[], old: FieldType | undefined): FieldType | undefined {
+    return joinedUnder(this.options.recordJoin, oneRecordOf(types), old);
+  }
+
   /** A read picking one member of `operand`: its own type where it has one,
    *  else any member the operand may hold. */
   private mayHoldPicked(expr: Expression, operand: Expression): FieldType | undefined {
@@ -5374,11 +5726,10 @@ export class ExpressionTyping {
         // the value-level guard clause, and TS narrows inside a ternary too.
         const proofs = presenceProofs(expr.condition, o => this.inferAt(o, position));
         const thenType = this.withPresence(proofs, position, narrowed => this.inferAt(expr.then, narrowed));
-        // From version 5 the `else` arm knows the condition false, as
-        // TypeScript's does (`x == null ? fail("…") : x.name`).
-        const elseType = since(this.options.languageVersion, 5)
-          ? this.withPresence(negativePresenceProofs(expr.condition, o => this.inferAt(o, position)), position, narrowed => this.inferAt(expr.else, narrowed))
-          : this.inferAt(expr.else, position);
+        // …and its ELSE by what a false condition proves, as TS narrows
+        // `x == null ? a : x.b`: each arm is narrowed before the arms join.
+        const elseProofs = negativePresenceProofs(expr.condition, o => this.inferAt(o, position));
+        const elseType = this.withPresence(elseProofs, position, narrowed => this.inferAt(expr.else, narrowed));
         // A closure is not data (language version 5): IF chooses between
         // values, and a closure is kept in a variable or passed as an
         // argument, never chosen by a value expression.
@@ -5388,10 +5739,17 @@ export class ExpressionTyping {
         // An arm that never arrives leaves the other's type.
         if (thenType === 'never') return elseType;
         if (elseType === 'never') return thenType;
-        if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
-          return thenType;
-        }
-        return undefined;
+        if (thenType === undefined || elseType === undefined) return undefined;
+        // Before version 5 an IF of one type was its THEN arm's — what that
+        // arm alone had proved included — and an IF of arms of different
+        // types, or of one that may be absent beside one that may not, untyped.
+        const old = fieldTypeEquals(thenType, elseType) ? thenType : undefined;
+        if (oneRecordOf([thenType, elseType]) !== undefined) return this.joinedRecords([thenType, elseType], old);
+        // `null` beside a record stays a value that may be one (`mayHold`).
+        if (isRecordType(thenType) || isRecordType(elseType)) return old;
+        // Values are what either arm may be, as TypeScript's `c ? a : b` is `A | B`.
+        const values = old !== undefined && isMaybeAbsent(thenType) === isMaybeAbsent(elseType) ? old : valueUnion([thenType, elseType]);
+        return joinedUnder(this.options.recordJoin, values, old);
       }
       case 'at': {
         // AT reads a SLOT, so it is the one reader that sees a tuple as one.
@@ -5589,8 +5947,8 @@ export class ExpressionTyping {
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
-        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
-        if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
+        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, { join: (kinds, old) => this.joinedRecords(kinds, old) });
+        if (expr.fn === MULTI_FUNCTION_ID) return multiType(args, this.options.recordJoin);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {
           // Before version 3 a flat built-in's call is untyped; from 3 it is
@@ -5866,7 +6224,7 @@ export class ExpressionTyping {
         this.refuseClosureAsData(member.value, exact, `'${member.key}' holds`);
         shape[member.key] = exact ?? null;
         written.add(member.key);
-        readTypes.push(widenTuples(exact, this.options.languageVersion));
+        readTypes.push(widenTuples(exact, this.options.languageVersion, this.options.recordJoin));
         continue;
       }
       const spread = this.spreadKeys(member.expression, position);
@@ -5896,7 +6254,7 @@ export class ExpressionTyping {
           shape[key] = earlier !== null && type !== null ? valueUnion([earlier, type]) ?? null : null;
         }
         written.delete(key);
-        readTypes.push(widenTuples(shape[key] ?? undefined, this.options.languageVersion));
+        readTypes.push(widenTuples(shape[key] ?? undefined, this.options.languageVersion, this.options.recordJoin));
       }
     }
     const first = readTypes[0];
@@ -7172,6 +7530,7 @@ export class ExpressionTyping {
     // type's address. That is the one refusal: 'has no edge #foo' would be a
     // second diagnostic on the same span, so the hop is untyped onward.
     if (edge.startsWith('#') && since(this.options.languageVersion, 5)) return undefined;
+    if (from.kind === 'oneOf') return this.stepEveryMember(from, edge, filter);
     // A maybe-empty node steps its inner node (below), which comes back here.
     // Before 4 an `@` name is an ordinary edge name and its lookup fails as
     // any unknown edge's does — the behaviour a pinned program was checked by.
@@ -7405,6 +7764,8 @@ export class ExpressionTyping {
         // Traversing INTO a maybe-empty node is gate-discharged (an absent edge
         // matches nothing, so the block runs zero times) — step the inner node.
         return this.stepEdge(from.of, edge, filter);
+      default:
+        return neverAsAny(from);
     }
   }
 
@@ -7702,8 +8063,12 @@ export class ExpressionTyping {
         );
         return undefined;
       }
+      case 'oneOf':
+        return this.readEveryMember(position, propertyId, writeTarget);
       case 'meta':
         return undefined;
+      default:
+        return neverAsAny(position);
     }
   }
 

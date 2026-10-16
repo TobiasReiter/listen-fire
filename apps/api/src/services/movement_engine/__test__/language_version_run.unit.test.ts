@@ -33,10 +33,7 @@ import { teamOfTenant } from '../../translation_graph/movement/tenant';
 
 // A release other than this one, so the deprecated path is reachable while
 // this release deprecates nothing. Only the ENGINE's view is redirected; the
-// checker inside movement-lang keeps this release's. The Rust engine's own
-// check reads the release it was built with, so under a redirected release a
-// Rust segment's own check is turned off and the engine asks its host for the
-// check (`check.program`), the TypeScript's, which reads the redirect.
+// checker inside movement-lang keeps this release's.
 let mockRelease: LanguageRelease | undefined;
 jest.mock('movement-lang', () => {
   const actual = jest.requireActual('movement-lang');
@@ -44,17 +41,6 @@ jest.mock('movement-lang', () => {
     ...actual,
     languageVersionDiagnostic: (version: number) =>
       actual.languageVersionDiagnostic(version, mockRelease ?? actual.THIS_RELEASE),
-    openEngineSegment: () => {
-      const segment = actual.openEngineSegment();
-      return {
-        ...segment,
-        start: (inputJson: string) => {
-          if (mockRelease === undefined) return segment.start(inputJson);
-          const { nativeCheck: _native, snapshotModels: _models, ...input } = JSON.parse(inputJson);
-          return segment.start(JSON.stringify(input));
-        },
-      };
-    },
   };
 });
 

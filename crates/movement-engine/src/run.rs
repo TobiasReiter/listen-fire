@@ -80,6 +80,13 @@ pub(crate) const UNREPRODUCED: &str = "unreproduced";
 /// the grammar cannot spell.
 pub(crate) const RETURN_SLOT: &str = "#return";
 
+/// A pin's standing warning: `{code, message}`, the check answer's `versionWarning`.
+#[derive(Deserialize, Clone)]
+pub struct VersionWarning {
+    pub code: String,
+    pub message: String,
+}
+
 /// What the shim sends (rust_engine.ts `segmentInput`).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,6 +138,12 @@ pub struct SegmentInput {
     /// the catalog's.
     #[serde(default, deserialize_with = "present")]
     pub snapshot_models: Option<Json>,
+    /// With `native_check`: the pin's standing warning (a deprecated
+    /// version) as the run's release words it (`languageVersionDiagnostic`).
+    /// The release is the host's, so its answer is the one the run traces,
+    /// as the host's check answer's would be. Absent: this engine's own table.
+    #[serde(default)]
+    pub version_warning: Option<VersionWarning>,
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
@@ -579,9 +592,9 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         match snapshot_models {
             Some(models) if models != catalog.models => {
                 let checked_against = CatalogSnapshot { models, ..catalog.clone() };
-                native_check(&root.program, &checked_against, version)?
+                native_check(&root.program, &checked_against, version, input.version_warning.as_ref())?
             }
-            _ => native_check(&root.program, &catalog, version)?,
+            _ => native_check(&root.program, &catalog, version, input.version_warning.as_ref())?,
         }
     } else {
         host.request(host::check::program(&input.source, version, None))
@@ -677,7 +690,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
 /// MOVENG_LANGUAGE_VERSION, else MOVENG_CHECK listing the blocking
 /// diagnostics — errors only, and a retired write form that still runs does
 /// not block.
-fn native_check(program: &ast::Program, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
+fn native_check(program: &ast::Program, catalog: &CatalogSnapshot, version: u32, release_warning: Option<&VersionWarning>) -> Result<Json, Stop> {
     let pin = movement_checker::language_version_diagnostic(version);
     if let Some(pin) = pin.as_ref().filter(|d| d.is_error()) {
         return Err(Stop::Thrown(Failure::engine("MOVENG_LANGUAGE_VERSION", pin.message.clone())));
@@ -695,9 +708,11 @@ fn native_check(program: &ast::Program, catalog: &CatalogSnapshot, version: u32)
     }
     let mut json = answer.to_json();
     // The run's own version warning, as the host reads it (run.ts, before
-    // the body): a deprecated pin runs, and says so.
-    if let Some(warning) = pin {
-        json["versionWarning"] = json!({ "code": warning.code, "message": warning.message });
+    // the body): a deprecated pin runs, and says so — in the release's words
+    // when the host sent them.
+    let warning = release_warning.map(|w| (w.code.clone(), w.message.clone())).or(pin.map(|d| (d.code, d.message)));
+    if let Some((code, message)) = warning {
+        json["versionWarning"] = json!({ "code": code, "message": message });
     }
     Ok(json)
 }

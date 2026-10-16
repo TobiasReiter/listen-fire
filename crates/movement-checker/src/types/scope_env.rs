@@ -46,6 +46,7 @@ pub struct ScopeEnv<'s> {
     /// Each function declared with a name read as a value (version 5,
     /// `functionAsValue`), typed before the typing that reads it.
     pub function_values: &'s std::collections::HashMap<crate::scope::SymbolId, super::position::ClosureType>,
+    pub record_unions: &'s super::unions::RecordUnions,
 }
 
 impl ScopeEnv<'_> {
@@ -66,6 +67,10 @@ impl TypeEnv for ScopeEnv<'_> {
         self.upgrading_from
     }
 
+    fn record_unions(&self) -> Option<&super::unions::RecordUnions> {
+        Some(self.record_unions)
+    }
+
     fn is_zone(&self, zone: &str) -> Option<bool> {
         Some(self.zones.is_zone(zone))
     }
@@ -78,8 +83,7 @@ impl TypeEnv for ScopeEnv<'_> {
             .pos
             .clone()
             .or_else(|| self.function_values.get(&id).cloned().map(Position::Closure))
-            // A node declaration is a graph, as a constructed instance is (`positionTypeOf`).
-            .or_else(|| self.nodes.declared(id).map(|declared| Position::Meta { instance: declared.instance.clone() }))
+            .or_else(|| self.nodes.walk_root(id))
     }
 
     fn resolve_scalar(&self, name: &str) -> Option<Ty> {

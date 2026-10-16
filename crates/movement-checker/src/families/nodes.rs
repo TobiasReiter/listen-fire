@@ -59,6 +59,13 @@ impl NodeState {
         self.declared.get(&symbol)
     }
 
+    /// Where a walk rooted at a node declaration starts, as at an instance
+    /// (`positionTypeOf` of a graph symbol): its own meta position, whose one
+    /// collection is the declaration itself.
+    pub fn walk_root(&self, symbol: SymbolId) -> Option<crate::types::Position> {
+        self.declared(symbol).map(|d| crate::types::Position::Meta { instance: d.instance.clone() })
+    }
+
     /// `declaredShapeTokens`: a declaration this file wrote (not an imported one).
     pub fn is_local(&self, symbol: SymbolId) -> bool {
         self.local.contains_key(&symbol)
@@ -1457,6 +1464,9 @@ pub(crate) fn declared_param_misfit(arg: &Position, param: &crate::types::positi
             }
             None
         }
+        Position::OneOf(members) => members.iter().find_map(|member| {
+            declared_param_misfit(member, param, version).map(|misfit| format!("{}, one of what this argument may be, does not fit: {misfit}", describe_position(member)))
+        }),
         Position::Meta { .. } | Position::Closure(_) => Some(format!("this argument is {}, not a record", describe_position(arg))),
         _ => surface_misfit(record_surface(arg).as_ref(), schema, &param.position, options),
     }

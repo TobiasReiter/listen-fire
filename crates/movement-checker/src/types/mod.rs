@@ -19,6 +19,7 @@ pub mod narrowing;
 pub mod position;
 pub mod scope_env;
 pub mod stdlib;
+pub mod unions;
 
 pub use field::Ty;
 pub use infer::{TypeEnv, Typing};

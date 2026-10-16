@@ -26,7 +26,7 @@ use crate::types::{TypeEnv, Typing};
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
     pub fn typing_env(&self, scope: ScopeId) -> ScopeEnv<'_> {
-        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from, function_values: &self.function_values }
+        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from, function_values: &self.function_values, record_unions: &self.record_unions }
     }
 
     /// An expression slot's type in `scope`, and what it may hold where its

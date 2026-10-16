@@ -40,14 +40,13 @@ impl Checker<'_> {
             return;
         }
         for clause in unique_by {
-            // `None` once a part fails to parse (MOV_EXPR_PARSE's to report).
+            // `None` once a part fails to parse (MOV_EXPR_PARSE, said here).
             let mut has_key: Option<bool> = Some(false);
             for part in split_conjuncts(&clause.predicate.raw) {
                 let parsed = match expression_of_text(&part.raw) {
                     Ok(parsed) => parsed,
-                    Err(refused) => {
-                        let span = span_within(&clause.predicate, part.offset + refused.pos.unwrap_or(0));
-                        self.report(codes::EXPR_PARSE, refused.message, span);
+                    Err(error) => {
+                        self.report(codes::EXPR_PARSE, error.message, span_within(&clause.predicate, part.offset + error.pos.unwrap_or(0)));
                         has_key = None;
                         continue;
                     }

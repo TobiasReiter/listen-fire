@@ -21,7 +21,7 @@
 // is the TypeScript evaluator's switch (expression.ts `evalMovementExpr`) for
 // an expression `rustCanEval` admits whose every name is a value binding.
 
-import { callEvalExpression, openEngineSegment, since, type LanguageVersion } from 'movement-lang';
+import { callEvalExpression, languageVersionDiagnostic, openEngineSegment, since, type LanguageVersion } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import { isObjectSpread, listElementExpression, objectMemberExpression } from '#shared/expression/types';
@@ -831,8 +831,10 @@ function segmentInput(
       // this engine is held to it, and the host is never asked. The
       // admission dry run's start, never answered, leaves it off.
       // It checks against the snapshot's own `models`, as the host's checker
-      // does, not the run's list sent on the catalog below.
-      ...(nativeCheck ? { nativeCheck: true, snapshotModels: input.catalog.models ?? null } : {}),
+      // does, not the run's list sent on the catalog below. A deprecated
+      // pin's warning is the release's, which is this host's, as the host's
+      // check answer's is (rust_host.ts `check.program`).
+      ...(nativeCheck ? { nativeCheck: true, snapshotModels: input.catalog.models ?? null, ...versionWarningOf(context.languageVersion) } : {}),
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
       languageVersion: context.languageVersion,
@@ -876,6 +878,12 @@ function segmentInput(
     },
     'the segment input',
   );
+}
+
+/** The pin's standing warning as this release words it (`languageVersionDiagnostic`). */
+function versionWarningOf(languageVersion: LanguageVersion): { versionWarning?: { code: string; message: string } } {
+  const warning = languageVersionDiagnostic(languageVersion);
+  return warning !== undefined ? { versionWarning: { code: warning.code, message: warning.message } } : {};
 }
 
 /** What a segment ended in: its result, a refusal by its admission (nothing

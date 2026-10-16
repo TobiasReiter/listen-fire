@@ -854,6 +854,9 @@ function positionAddress(
       return { instance: type.instance.name };
     case 'maybeEmpty':
       return positionAddress(type.of);
+    // One of several records has no one place.
+    case 'oneOf':
+      return undefined;
     case 'extract':
     case 'closure':
     case 'local':

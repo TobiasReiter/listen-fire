@@ -86,6 +86,7 @@ fn holds_fields_in_hand_here(typing: &Typing, position: Option<&Position>) -> bo
     match position {
         None => false,
         Some(Position::MaybeEmpty(of)) => holds_fields_in_hand_here(typing, Some(of)),
+        Some(Position::OneOf(members)) => members.iter().all(|member| holds_fields_in_hand_here(typing, Some(member))),
         Some(Position::Position(record)) => typing.env.is_declared_graph(&record.instance),
         Some(Position::Union(union)) => typing.env.is_declared_graph(&union.instance),
         Some(other) => holds_fields_in_hand(other),

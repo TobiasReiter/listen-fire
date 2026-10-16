@@ -22,7 +22,8 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 - [14. A closure's type is written `<(params) => <return>>`](#14-a-closures-type-is-written-params--return)
 - [15. `parallel` is retired for `all`; combinators take arguments and no `await`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
 - [16. The extraction keyword is retired](#16-the-extraction-keyword-is-retired)
-- [17. Diagnostic code index](#17-diagnostic-code-index)
+- [17. A value that may be one of several records reads only what every one offers](#17-a-value-that-may-be-one-of-several-records-reads-only-what-every-one-offers)
+- [18. Diagnostic code index](#18-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -420,7 +421,30 @@ found = extractOne([m.Body], FoundShape, { tier: "careful" })
 - A `through […]` stage has no fix. It hands each record's plugin answers to a further extraction of that record and merges what that finds into it; plugins called as functions hand back values of their own, so no rewrite is provably the same. Write the composition out: declare the shape, `extract` it, `map` over the records calling each plugin, `extractOne` over the content plus what the plugin returned, and merge the two with a spread into `graph<Shape> { ...c, ...details }`. The handbook's enrichment example is exactly this.
 - The Rust engine does not run the keyword on any version. A Quiet Heron (1) to Luminous Owl (4) automation that holds one runs on the TypeScript engine by its version, exactly as before; a run forced onto the Rust engine (`lf`, or `MOVEMENT_ENGINE=rust` with `MOVEMENT_ENGINE_FALLBACK=none`) fails naming `legacy_extraction`.
 
-## 17. Diagnostic code index
+## 17. A value that may be one of several records reads only what every one offers
+
+One rule, TypeScript's union, for every place a value can be one of several records: an `IF`, a `COALESCE`, a function's returns, a list literal's members, `MULTI`.
+
+```
+who = COALESCE(lead, co)          # People | Companies
+who.Name                          # both have Name → typed (union of the field types)
+who.Domains                       # only Companies → refused, naming the member that lacks it
+write who { Name: "Acme" }        # allowed, value checked against Name in every member
+write who { Domains: ["a.com"] }  # refused: People has no Domains
+```
+
+- Records of one type are that type, as `A | A` is `A`: `COALESCE(pick, org)` of two Companies a write returned is a Company.
+- Records of different types are a union. This includes one type read two ways, such as a Company found by a walk and one a write returned.
+- A field read off a union is typed when every member has it, as the union of its types (`number | text`). A field one member lacks is `MOV_UNKNOWN_PROPERTY`, naming that member. A walk off it takes only an edge every member has.
+- No arm is preferred. Only what every arm proved counts: a field a guard proved present (`if a.Email == "x"`), a field a write set. Before, an `IF` of two records of one type took its `THEN` arm's proof.
+- A function returning a Person on one path and a Company on another is their union. Before, it was its first return's type, so a field only People have checked clean and read null when the call returned the Company.
+- A list `[lead, co]` holds the union. Before, a member was a record nobody could name, and nothing was checked.
+- Why: each of these ran unchecked under 4 and earlier. `.nope` read null; `.name + 1` was NaN; an `IF` whose `ELSE` arm had no Email wrote a missing value into a required field.
+- Under 3 and 4 each refusal the rule adds is an upgrade warning; the program runs as before.
+- The fix: read the field where you know which record you hold (inside the arm, or after an `IS` test), or read a field every member has.
+- Writing in place to a union (`write who { … }`) is held to every member on every version: a field one member lacks is `MOV_WRITE_UNKNOWN_FIELD`, said of that member. Before, it was an internal error, so it never ran.
+
+## 18. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
@@ -448,6 +472,7 @@ found = extractOne([m.Body], FoundShape, { tier: "careful" })
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#10-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#8-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#6-_resources-only-on-an-extractions-result) |
+| `MOV_UNKNOWN_PROPERTY` | [A value that may be one of several records reads only what every one offers](#17-a-value-that-may-be-one-of-several-records-reads-only-what-every-one-offers) (a field the type does not have, read off one; warning under 3 and 4) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |
 | `MOV_V5_IMPORT_NEEDS_ALIAS` | [The everyday spelling](#2-the-everyday-spelling) (a package of plugins imported without `as`; the fix adds the name) |
 | `MOV_V5_NOT_YET` | [The everyday spelling](#2-the-everyday-spelling) (an old spelling whose rewrite needs a person, such as a `SORT` key that is not one field) |

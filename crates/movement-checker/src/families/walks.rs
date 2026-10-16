@@ -41,7 +41,7 @@ use movement_parser::surface::phrase::spell_word;
 use crate::codes;
 use crate::diagnostic::Severity;
 use crate::scope::{Resolution, ScopeId};
-use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, record_head_position, widen_tuples};
+use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, record_head_position};
 use crate::types::scope_env::SymbolTypes;
 use crate::types::infer::Typing;
 use crate::types::position::{EdgeLanding, Position, describe_position, display_name_of, is_artificial_edge, position_schema_of_ref};
@@ -72,6 +72,8 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
         return;
     }
     match from {
+        // The typing walks each record it may be (`stepEveryMember`).
+        Position::OneOf(_) => {}
         Position::Meta { instance } => {
             if !instance.schema.collections.contains_key(edge) {
                 let available: Vec<&str> = instance.schema.collections.keys().map(String::as_str).collect();
@@ -302,6 +304,8 @@ fn refuse_unsent_file(typing: &mut Typing, handle: &crate::types::position::Hand
 /// family's, a retired handle field the records family's.
 fn report_read(typing: &mut Typing, position: &Position, property: &str) {
     match position {
+        // The typing reads each record it may be (`readEveryMember`).
+        Position::OneOf(_) => {}
         Position::Handle(h) => {
             if let Some(declared) = h.result_shape.get(property) {
                 refuse_unsent_file(typing, h, property, declared);
@@ -537,6 +541,8 @@ fn holds_in_memory(from: &Position, edge: &str) -> bool {
         Position::Extract { .. } => true,
         Position::Local(local) => local.edges.as_ref().and_then(|edges| edges.get(edge)).is_some_and(|e| !e.deferred),
         Position::MaybeEmpty(inner) => holds_in_memory(inner, edge),
+        // One of several records: the order may change if any of them is held.
+        Position::OneOf(members) => members.iter().any(|member| holds_in_memory(member, edge)),
         Position::Meta { .. } | Position::Position(_) | Position::Union(_) | Position::Handle(_) | Position::Closure(_) => false,
     }
 }
@@ -833,7 +839,9 @@ impl crate::checker::Checker<'_> {
                 if types.pos.is_some() {
                     return None;
                 }
-                widen_tuples(types.field.clone(), self.version)
+                // Walking a held tuple reads it as the list of records it
+                // widens to, its members joined by the union rule.
+                crate::types::field::widen_tuples_joining(types.field.clone(), self.version, self.record_join())
             }
             None => None,
         }
@@ -850,10 +858,7 @@ impl crate::checker::Checker<'_> {
     fn head_root_type(&self, head: &PathHead, scope: ScopeId) -> Option<Position> {
         let symbol_pos = match &head.root {
             Some(PathRoot::Name { name }) => match self.scopes.resolve(scope, name) {
-                Resolution::Found(id) => self.scopes.symbol(id).types.pos.clone().or_else(|| {
-                    // A node declaration is a graph, as a constructed instance is (`positionTypeOf`).
-                    self.declared_node(id).map(|declared| Position::Meta { instance: declared.instance.clone() })
-                }),
+                Resolution::Found(id) => self.scopes.symbol(id).types.pos.clone().or_else(|| self.nodes.walk_root(id)),
                 _ => None,
             },
             _ => None,

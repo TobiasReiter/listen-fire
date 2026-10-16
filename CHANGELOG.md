@@ -190,6 +190,21 @@ for byte; on text already in the version 5 spelling it changes nothing.
   `research({ context: s })`, or a value that may be one. Why: as TypeScript refuses an object
   for a `string`, a text input takes text. Under 3 and 4 the record was passed through as it was,
   so there it is a warning that blocks the move up.
+- **A value that may be one of several records reads only what every one offers**, as a
+  TypeScript union. One rule types an `IF`, a `COALESCE`, a function's returns, a list literal's
+  members and `MULTI`. Records of one type are that type (`A | A` is `A`). Records of different
+  types (People or Companies) read a field every member has as the union of its types, and a field
+  one lacks is `MOV_UNKNOWN_PROPERTY`, naming it. No arm is preferred: a field one arm proved present
+  is present only when every arm proved it, and a function is no longer typed by its first return.
+  Why: each ran unchecked (a missing field read null, or a missing value was written). Under 3 and 4
+  what the rule refuses is an upgrade warning.
+- **The same rule reaches three more places.** Calling one of several closures hands back the union
+  of their records, so a read one record lacks is `MOV_UNKNOWN_PROPERTY`. A walk or a linked write
+  off a held list of records (`both = [lead, co]`, then `both-[:Manager]->`) asks every member, so
+  an edge one lacks is `MOV_TRAVERSE_UNKNOWN_EDGE` or `MOV_LINKED_UNKNOWN_EDGE`. An `IF` of plain
+  values is what either arm may be: `IF c THEN p.Name ELSE p.Email END` may be absent, so a
+  required field refuses it (`MOV_ABSENT_REQUIRED`). Why: each was untyped and ran unchecked. Under
+  3 and 4 what this refuses is an upgrade warning; a closure value is called only from 5.
 
 ### Language version 5, Dancing Wren: new
 
@@ -643,7 +658,7 @@ for byte; on text already in the version 5 spelling it changes nothing.
   the failure line: a paused run's closures, walks and local shapes are rebuilt on resume from the
   syntax tree saved with the pause rather than looked up by position, and reading that tree back
   takes about 100 KB. The Rust checker now ships inside it too (a run on the Rust engine is checked
-  by it), which takes it to 1,483,136 bytes, still under the failure line.
+  by it), which takes it to 1,494,633 bytes, still under the failure line.
 - The browser now loads the parser's own WebAssembly artifact (`movement_parser.wasm`, 325 KB
   gzipped, a little over the earlier 323 KB because the parser reads text in the engine's in-band
   form, so a U+FDD0 or a lone surrogate half in a source crosses it exactly), not the API's
@@ -828,6 +843,9 @@ for byte; on text already in the version 5 spelling it changes nothing.
   reports the checker's own internal error (`MOV_INTERNAL_UNTYPED_BINDING`) on any language version.
   `v` is read as what it may hold, as `delete` and a graph entry read it: records alone are one
   record; one that may be absent, or a value among them, is `MOV_WRITE_POSITION_NOT_RECORD`.
+  A write in place to one of several records (`write who { … }`) is held to every member on every
+  version, so a field one member lacks is `MOV_WRITE_UNKNOWN_FIELD` and every write check applies to
+  each.
 - A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
   the credential the adapter was installed with, saying the remote install serves only its own. It
   used to be ignored: two accounts on one remote adapter silently reached the install's account, so
