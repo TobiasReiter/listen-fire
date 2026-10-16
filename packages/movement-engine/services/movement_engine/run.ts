@@ -352,7 +352,7 @@ import {
   type CallbackParamSpec,
   type WriteRecord as RecordedWrite,
 } from 'engine-contracts';
-import { checkPinned, type CheckInput, type CheckedProgram } from './program_check';
+import { checkPinned, checkPinnedInRust, type CheckInput, type CheckedProgram } from './program_check';
 import {
   ENGINE_CHOICE_TS,
   checkBeforeRustSegment,
@@ -631,22 +631,25 @@ export async function runMovement(given: RunMovementInput): Promise<MovementRunR
   // the engine's import structure — validation and execution consume one
   // resolution.
   //
-  // On the Rust route the program is checked here too, before its segment
-  // opens, so a program that fails its check makes no host request on either
-  // engine. The Rust engine then admits it on its own parse and asks for its
-  // check (`check.program`), answered from this one. It runs inside the same
-  // segment the interpreter would: its host calls are the run's.
+  // On the Rust route the program is checked here too, by the Rust checker,
+  // before its segment opens, so a program that fails its check makes no
+  // host request on either engine. The Rust engine then admits it on its own
+  // parse and checks it again itself (`nativeCheck`), its stamps and import
+  // link that check's; the host is never asked. It runs inside the same
+  // segment the interpreter would: its host calls are the run's. A run it
+  // hands back goes to the TypeScript engine, checked by its own checker.
   const route = routeOf(input);
   if (route.engine === 'rust') {
-    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
+    checkBeforeRustSegment(input, () => checkPinnedInRust(checkInputOf(input)));
     return inRunContext(input, async (context) => {
-      const outcome = await runSegmentInRust({ input, context, checked, fallback: route.fallback });
+      const outcome = await runSegmentInRust({ input, context, checkedBefore: true, fallback: route.fallback });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined, route);
       if (refusal !== undefined) throw refusal;
       // Refused or declined before any host-visible effect: the interpreter
       // runs it, in the same segment.
-      const { program, prepared } = preparedOf(checked);
+      // The TypeScript engine runs it, held to its own checker.
+      const { program, prepared } = parseAndCheck(input);
       return new Interpreter(input, { ...prepared, context }).run(program);
     });
   }
@@ -766,13 +769,14 @@ export async function resumeMovement(given: ResumeMovementInput): Promise<Moveme
   // its program, as `runMovement` routes a run.
   const route = routeOf(input);
   if (route.engine === 'rust') {
-    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
+    checkBeforeRustSegment(input, () => checkPinnedInRust(checkInputOf(input)));
     return inRunContext(input, async (context) => {
-      const outcome = await resumeSegmentInRust({ input, context, checked, fallback: route.fallback });
+      const outcome = await resumeSegmentInRust({ input, context, checkedBefore: true, fallback: route.fallback });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined, route);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = preparedOf(checked);
+      // The TypeScript engine runs it, held to its own checker.
+      const { program, prepared } = parseAndCheck(input);
       return resumeInterpreter(input, { program, prepared, context });
     });
   }
@@ -822,13 +826,14 @@ export async function settleRaceFrame(
   refuseUnsupportedParkStateVersion(input.state.version);
   const route = routeOf(input);
   if (route.engine === 'rust') {
-    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
+    checkBeforeRustSegment(input, () => checkPinnedInRust(checkInputOf(input)));
     return inRunContext(input, async (context) => {
-      const outcome = await settleSegmentInRust({ input, context, checked, fallback: route.fallback });
+      const outcome = await settleSegmentInRust({ input, context, checkedBefore: true, fallback: route.fallback });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined, route);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = preparedOf(checked);
+      // The TypeScript engine runs it, held to its own checker.
+      const { program, prepared } = parseAndCheck(input);
       return new Interpreter(input, { ...prepared, context }).settleRaceFrame({
         program,
         state: input.state,
@@ -861,13 +866,14 @@ export async function fireCallbackBody(
   refuseUnsupportedParkStateVersion(input.state.version);
   const route = routeOf(input);
   if (route.engine === 'rust') {
-    const checked = checkBeforeRustSegment(input, () => checkPinned(checkInputOf(input)));
+    checkBeforeRustSegment(input, () => checkPinnedInRust(checkInputOf(input)));
     return inRunContext(input, async (context) => {
-      const outcome = await fireSegmentInRust({ input, context, checked, fallback: route.fallback });
+      const outcome = await fireSegmentInRust({ input, context, checkedBefore: true, fallback: route.fallback });
       if ('ran' in outcome) return outcome.ran;
       const refusal = refusalOutcome(outcome.declined, route);
       if (refusal !== undefined) throw refusal;
-      const { program, prepared } = preparedOf(checked);
+      // The TypeScript engine runs it, held to its own checker.
+      const { program, prepared } = parseAndCheck(input);
       return new Interpreter(input, { ...prepared, context }).fireCallback({
         program,
         state: input.state,

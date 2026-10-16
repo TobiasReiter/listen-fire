@@ -1,8 +1,10 @@
 // The check every run passes before it executes: the language-version pin,
 // the parse, and the checker with its file resolver, throwing MOVENG_LANGUAGE_
 // VERSION, MOVENG_PARSE or MOVENG_CHECK. The TypeScript interpreter calls it
-// in-process; the Rust engine asks for it as the `check.program` host call
-// (rust_engine.ts), and reads the answer as plain data (`checkAnswer`).
+// in-process. A run on the Rust engine is checked by the Rust checker
+// (`checkPinnedInRust` before its segment opens, then the engine's own check);
+// the `check.program` host call (rust_engine.ts), answered with `checkAnswer`,
+// remains for a segment started without the native check.
 //
 // The checker MUTATES the program it checks: it records on a write's spread
 // the fields it stands for (`WriteSpread.fields`), on a graph's spread what
@@ -42,6 +44,7 @@ import {
   nestedCallsReadIn,
   diagnosticSeverity,
   parseProgram,
+  checkSourceInRust,
 } from 'movement-lang';
 
 import type {
@@ -132,6 +135,34 @@ export function checkPinned(input: CheckInput, parsed?: Program): CheckedProgram
     ...(input.upgradingFrom !== undefined ? { upgradingFrom: input.upgradingFrom } : {}),
     ...(resolveFile !== undefined ? { resolveFile } : {}),
   });
+  throwIfBlocking(diagnostics);
+  return {
+    program,
+    catalog,
+    diagnostics,
+    ...(link !== undefined ? { link } : {}),
+    ...(resolveFile !== undefined ? { resolveFile } : {}),
+  };
+}
+
+/** `checkPinned` by the Rust checker (crates/movement-checker), the one a
+ *  run on the Rust engine is held to: the same pin, parse and blocking rule,
+ *  throwing the same errors, before anything of the run reaches its host.
+ *  The engine checks again as its segment starts (`nativeCheck`), and it is
+ *  that check whose stamps and link the run reads; this one answers only
+ *  whether the run may open a segment at all. */
+export function checkPinnedInRust(input: CheckInput): Diagnostic[] {
+  const languageVersion = input.languageVersion ?? CURRENT_LANGUAGE_VERSION;
+  parsePinned(input);
+  const diagnostics = checkSourceInRust(input.source, input.catalog, {
+    languageVersion,
+    ...(input.upgradingFrom !== undefined ? { upgradingFrom: input.upgradingFrom } : {}),
+  });
+  throwIfBlocking(diagnostics);
+  return diagnostics;
+}
+
+function throwIfBlocking(diagnostics: Diagnostic[]): void {
   const blocking = diagnostics.filter(
     (d) => (d.severity ?? 'error') === 'error' && !RETIRED_BUT_STILL_RUNNABLE.has(d.code),
   );
@@ -144,13 +175,6 @@ export function checkPinned(input: CheckInput, parsed?: Program): CheckedProgram
       blocking,
     );
   }
-  return {
-    program,
-    catalog,
-    diagnostics,
-    ...(link !== undefined ? { link } : {}),
-    ...(resolveFile !== undefined ? { resolveFile } : {}),
-  };
 }
 
 // ── The check as data ─────────────────────────────────────────────────────────

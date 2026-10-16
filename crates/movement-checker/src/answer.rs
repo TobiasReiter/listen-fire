@@ -53,6 +53,10 @@ struct Recorded {
     kind: StampKind,
 }
 
+/// What a walk of a movement's body replaced: the file a stamp was in
+/// (none: no such walk) and the nested calls.
+type Outer = (Option<Option<String>>, Vec<(Span, At)>);
+
 /// The stamps the walk records, and the nested calls it is inside now.
 #[derive(Default)]
 pub struct Stamps {
@@ -63,7 +67,7 @@ pub struct Stamps {
     /// A movement's body walked from elsewhere (to learn what a call to it
     /// returns) is still its declaration's: the state each such walk
     /// replaced, innermost last.
-    walking: Vec<(Option<Option<String>>, Vec<(Span, At)>)>,
+    walking: Vec<Outer>,
     /// Inside such a walk, the file it is in (none: the program checked).
     file: Option<Option<String>>,
 }

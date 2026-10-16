@@ -123,6 +123,14 @@ pub struct SegmentInput {
     /// answers, as an admission dry run's start never asks.
     #[serde(default)]
     pub native_check: bool,
+    /// With `native_check`: the `models` the run's snapshot itself lists
+    /// (null: none), which the check holds a written model to, as the
+    /// host's checker does. The catalog's own `models` is the run's list
+    /// (`runChatModels`), which a run holds a model to as it calls; a
+    /// snapshot listing none leaves the model unchecked until then. Absent:
+    /// the catalog's.
+    #[serde(default, deserialize_with = "present")]
+    pub snapshot_models: Option<Json>,
     /// Resume a parked run from its state (crate::park), rather than run it.
     #[serde(default)]
     pub resume: Option<crate::park::ResumeInput>,
@@ -171,6 +179,12 @@ pub struct SegmentInput {
     /// which a real run leaves to the check, is named among the refusals.
     #[serde(default)]
     pub dry_admission: bool,
+}
+
+/// A field that is there, null included (serde reads a null `Option` as
+/// absent).
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Json>, D::Error> {
+    Json::deserialize(deserializer).map(Some)
 }
 
 /// A fired callback (`fireCallbackBody`): the call's values on the eval
@@ -548,7 +562,18 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         return Err(Stop::Declined("instant_does_not_read".into()));
     };
     let answer = if input.native_check {
-        native_check(&root.program, &catalog, version)?
+        let snapshot_models = match &input.snapshot_models {
+            None => None,
+            Some(Json::Null) => Some(None),
+            Some(models) => Some(Some(serde_json::from_value::<Vec<String>>(models.clone()).map_err(|_| Stop::Declined("snapshot_models_do_not_read".into()))?)),
+        };
+        match snapshot_models {
+            Some(models) if models != catalog.models => {
+                let checked_against = CatalogSnapshot { models, ..catalog.clone() };
+                native_check(&root.program, &checked_against, version)?
+            }
+            _ => native_check(&root.program, &catalog, version)?,
+        }
     } else {
         host.request(host::check::program(&input.source, version, None))
             .await

@@ -60,6 +60,9 @@ interface ParserExports extends BufferExports {
   call(fn: WasmFunction, args: number[]): number;
   /** Absent from a module built without the engine (the loader test's). */
   evalExpression: ((...args: number[]) => number) | undefined;
+  /** The Rust checker's export: absent from a module built without the
+   *  engine (the browser's parser artifact). */
+  checkProgram: ((...args: number[]) => number) | undefined;
 }
 
 interface Loaded {
@@ -189,6 +192,37 @@ export function callEvalExpression(exprJson: string, envelopeJson: string): { ok
     throw new Error(`movement engine crashed in eval_expression: ${trap.detail}`, { cause: trap.trapped });
   }
   return statusReply(reply, 'movement engine returned unknown status %s from eval_expression');
+}
+
+/**
+ * The Rust checker over `source` (crates/movement-checker/src/abi.rs
+ * `check_program`), on the parser's instance: the snapshot as JSON, the
+ * version checked under and the one upgraded from (0: none), and the reply —
+ * `{diagnostics}`, or `{error}` for a source that does not parse or a
+ * snapshot that does not load.
+ *
+ * @internal Used by the Rust checker's wrapper (checker/rust_checker.ts).
+ */
+export function callCheckProgram(
+  source: string,
+  snapshotJson: string,
+  languageVersion: number,
+  upgradingFrom: number,
+): { ok: boolean; json: unknown } {
+  const exports = currentExports();
+  const checkProgram = exports.checkProgram;
+  if (checkProgram === undefined) throw new Error('this movement artifact has no check_program()');
+  let reply: { status: number; text: string };
+  try {
+    reply = exchange(exports, [source, snapshotJson], (pairs, slots) =>
+      checkProgram(...pairs, languageVersion, upgradingFrom, slots, slots + 4),
+    );
+  } catch (trap) {
+    if (!(trap instanceof WasmTrap)) throw trap;
+    if (loaded) loaded.exports = undefined;
+    throw new Error(`movement checker crashed in check_program: ${trap.detail}`, { cause: trap.trapped });
+  }
+  return statusReply(reply, 'movement checker returned unknown status %s from check_program');
 }
 
 /** `inputs`: one (pointer, length) pair each, in order, before `extra`. */
@@ -425,11 +459,13 @@ function readExports(raw: Record<string, unknown>): ParserExports {
     catalog_query: exported('catalog_query'),
   };
   const evalExpression = typeof raw.eval_expression === 'function' ? exported('eval_expression') : undefined;
+  const checkProgram = typeof raw.check_program === 'function' ? exported('check_program') : undefined;
   return {
     memory,
     ...buffers,
     call: (fn, args) => number(parsers[fn](...args), fn),
     evalExpression: evalExpression && ((...args) => number(evalExpression(...args), 'eval_expression')),
+    checkProgram: checkProgram && ((...args) => number(checkProgram(...args), 'check_program')),
   };
 }
 

@@ -99,7 +99,7 @@ type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<u
 /** The routes that are the Rust engine's own, not `EngineHost` methods, and
  *  why each is not on the host boundary. */
 export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
-  'check.program': 'the TypeScript checker, which the Rust engine asks for until the checker is Rust',
+  'check.program': 'the TypeScript checker, asked only by a segment started without the native check (the admission dry run, whose start is never answered)',
   'check.compatible': "the checker's assignability, which an `IS <Decl>` test of a system's record asks of its record type's schema",
   'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
   'log.write': "the platform's log, for the lines the TypeScript engine writes (sent as a statement ends)",

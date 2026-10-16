@@ -36,7 +36,6 @@ import type { Binding, MovementEvalResult, MovementExprContext } from './express
 import { bindingOf, pinnedNow } from './expression';
 import { NO_PROVENANCE, type Provenance, type ProvenanceOrigin } from './provenance';
 import { maxFileChars } from './extraction';
-import type { CheckedProgram } from './program_check';
 import type { MovementRunResult, ResumeMovementInput, RunMovementInput } from './run';
 import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
@@ -237,14 +236,15 @@ export function refusalOutcome(reason: string, route?: Pick<EngineRoute, 'fallba
 }
 
 /** What a segment in the Rust engine runs: the run's input, the segment
- *  the run host opened, and the check the run host made before opening it
- *  (run.ts), which answers the engine's `check.program` (absent: the route
- *  checks), and what a refusal does next (`fallback`; absent:
- *  `MOVEMENT_ENGINE_FALLBACK`'s). */
+ *  the run host opened, whether the run host checked the program before
+ *  opening it (run.ts, by the Rust checker), and what a refusal does next
+ *  (`fallback`; absent: `MOVEMENT_ENGINE_FALLBACK`'s). The engine checks
+ *  the program itself as the segment starts (`nativeCheck`): the run's
+ *  stamps and import link are that check's. */
 export interface RustSegment<Input extends RunMovementInput = RunMovementInput> {
   input: Input;
   context: RunContext;
-  checked?: CheckedProgram;
+  checkedBefore?: boolean;
   fallback?: EngineFallback;
 }
 
@@ -317,7 +317,7 @@ interface Resumption {
 }
 
 async function segmentInRust(
-  { input, context, checked, fallback = engineFallback() }: RustSegment,
+  { input, context, checkedBefore = false, fallback = engineFallback() }: RustSegment,
   resume: Resumption | undefined,
   engine?: EngineProtocol,
 ): Promise<{ ran: MovementRunResult } | { declined: string }> {
@@ -330,7 +330,7 @@ async function segmentInRust(
   const wire = new WireOut({ whole: true });
   const localZone = processLocalZone();
   if (localZone === undefined) return notAdmitted(input, fallback, LOCAL_ZONE_UNVERIFIED);
-  const start = segmentInput(input, context, { resume, localZone }, wire);
+  const start = segmentInput(input, context, { resume, localZone, nativeCheck: true }, wire);
   if (start === undefined) return notAdmitted(input, fallback, EVENT_DOES_NOT_CROSS);
   const hostErrors: unknown[] = [];
   let outcome: RunOutcome;
@@ -342,16 +342,15 @@ async function segmentInRust(
       catalog: input.catalog,
       hostErrors,
       wire,
-      ...(checked !== undefined ? { prechecked: { source: input.source, languageVersion: context.languageVersion, checked } } : {}),
     });
     unreproduced = endedUnreproduced(done);
     outcome = readRunResult(done, { context, hostErrors, wire });
   } catch (error) {
     // A driver that did not check before the segment opened (run.ts does):
-    // the engine's own `check.program` ended it, counted as the run host's
-    // check ending is, never as a run the engine ran.
+    // the engine's own check ended it, counted as the run host's check
+    // ending is, never as a run the engine ran.
     if (isCheckFailure(error)) {
-      if (checked === undefined) endedAtItsCheck(input);
+      if (!checkedBefore) endedAtItsCheck(input);
       else failedCheckMidRun(input);
       throw error;
     }
@@ -462,13 +461,13 @@ export const ENDED_AT_CHECK = 'ended_at_check';
 export const FAILED_CHECK_MID_RUN = 'failed_check_mid_run';
 
 /**
- * The Rust route's check (`check`: run.ts's own, `checkPinned`), made where
- * the TypeScript route makes it: before the segment opens, so a program that
- * fails it makes no host request on either engine. A check failure
- * (`isCheckFailure`) is counted and logged as that ending; anything else the
- * check throws is a fault of the shim's check, counted as one.
+ * The Rust route's check (`check`: run.ts's own, `checkPinnedInRust`), made
+ * where the TypeScript route makes it: before the segment opens, so a
+ * program that fails it makes no host request on either engine. A check
+ * failure (`isCheckFailure`) is counted and logged as that ending; anything
+ * else the check throws is a fault of the shim's check, counted as one.
  */
-export function checkBeforeRustSegment(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, check: () => CheckedProgram): CheckedProgram {
+export function checkBeforeRustSegment<T>(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, check: () => T): T {
   try {
     return check();
   } catch (error) {
@@ -643,7 +642,7 @@ function admissionReasons(
 ): string[] {
   const localZone = processLocalZone();
   if (localZone === undefined) return [LOCAL_ZONE_UNVERIFIED];
-  const start = segmentInput(input, context, { resume, localZone }, new WireOut({ whole: true }));
+  const start = segmentInput(input, context, { resume, localZone, nativeCheck: false }, new WireOut({ whole: true }));
   if (start === undefined) return [EVENT_DOES_NOT_CROSS];
   // Never answered: a lowering miss a real run leaves to its check is named
   // here, as the refusal it is until the check passes it.
@@ -794,7 +793,7 @@ class SettleQueue {
 function segmentInput(
   input: RunMovementInput,
   context: RunContext,
-  { resume, localZone }: { resume: Resumption | undefined; localZone: string },
+  { resume, localZone, nativeCheck }: { resume: Resumption | undefined; localZone: string; nativeCheck: boolean },
   wire: WireOut,
 ): unknown {
   // The event is data, whatever keys it carries: a dict shaped like a
@@ -828,6 +827,12 @@ function segmentInput(
       ...(resume?.settle !== undefined ? { settle: resume.settle } : {}),
       ...(resume?.fire !== undefined ? { fire: { values, callIndex: resume.fire.callIndex } } : {}),
       source: input.source,
+      // The engine checks the program itself (the Rust checker): a run on
+      // this engine is held to it, and the host is never asked. The
+      // admission dry run's start, never answered, leaves it off.
+      // It checks against the snapshot's own `models`, as the host's checker
+      // does, not the run's list sent on the catalog below.
+      ...(nativeCheck ? { nativeCheck: true, snapshotModels: input.catalog.models ?? null } : {}),
       // The pin the run is under, written out: the engine cannot know this
       // release's current version.
       languageVersion: context.languageVersion,
@@ -1339,6 +1344,10 @@ function engineErrorCode(code: unknown): MovementEngineErrorCode {
     case 'MOVENG_NOT_FOUND':
     case 'MOVENG_ERROR':
     case 'MOVENG_PARK_NONSERIALIZABLE':
+    // The engine's own check (`nativeCheck`): its pin, its parse, the checker.
+    case 'MOVENG_LANGUAGE_VERSION':
+    case 'MOVENG_PARSE':
+    case 'MOVENG_CHECK':
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);
