@@ -185,6 +185,12 @@ export const TypedDiagnosticCodes = {
    *  Before 5 those records always counted as present, so the test had one
    *  answer; from 5 it says whether the block returned any, as `EXISTS` did. */
   PRESENCE_OF_RETURNED: 'MOV_PRESENCE_OF_RETURNED',
+  /** Warning, upgrade only: `ORDER BY` or `LIMIT` on a hop over records the
+   *  run already holds (an extraction's entities, a node or graph literal's
+   *  entries, a run-built node's landings), in a program moving up across 5.
+   *  Before 5 both engines ignored them there; from 5 they are read, so the
+   *  hop's result may change. */
+  IN_MEMORY_HOP_ORDER: 'MOV_IN_MEMORY_HOP_ORDER',
   /** Warning, upgrade only: `COUNT` of a list that may hold an empty item,
    *  in a program moving up across 5. Before 5 it skipped empty items; from 5
    *  it counts every item, as TypeScript's `.length` does. */
@@ -4294,6 +4300,28 @@ export interface WriteTargetRef {
  *  {@link ExpressionTyping.checkCompareOperands}. */
 type CompareOperandRule = 'same-category' | 'element-wise' | 'duration' | 'none';
 
+/** Whether the hop `edge` off `from` walks records the run already holds —
+ *  an extraction's entities, or a local node's landed entries (a lazy entry
+ *  walks its source again at every read, so it is not one). */
+function holdsInMemory(from: PositionTypeRef, edge: string): boolean {
+  switch (from.kind) {
+    case 'extract':
+      return true;
+    case 'local':
+      return from.edges?.[edge] !== undefined && from.edges[edge].deferred !== true;
+    case 'maybeEmpty':
+      return holdsInMemory(from.of, edge);
+    case 'meta':
+    case 'position':
+    case 'union':
+    case 'handle':
+    case 'closure':
+      return false;
+    default:
+      return neverAsAny(from);
+  }
+}
+
 /** A value with no fields to read: text (an enum's value is text), a
  *  number, or a true/false value. */
 type FieldlessScalar = 'text' | 'number' | 'boolean';
@@ -6291,6 +6319,23 @@ export class ExpressionTyping {
     }
   }
 
+  /** `ORDER BY` / `LIMIT` on a hop over records the run already holds, on a
+   *  move up across 5: before 5 both engines kept every record, in the order
+   *  held; from 5 they sort and cut as any hop does. */
+  private reportInMemoryHopOrder(from: PositionTypeRef, step: Extract<TraversalStep, { type: 'edge' }>): void {
+    const clauses = [
+      ...(step.cardinality?.orderBy !== undefined ? ['ORDER BY'] : []),
+      ...(step.cardinality?.limit !== undefined ? ['LIMIT'] : []),
+    ];
+    if (clauses.length === 0 || !holdsInMemory(from, step.edgeTypeId) || !this.upgradeCrosses(5)) return;
+    const written = clauses.join(' and ');
+    this.report(
+      TypedDiagnosticCodes.IN_MEMORY_HOP_ORDER,
+      `since ${describeLanguageVersion(5)} the ${written} on '-[:${step.edgeTypeId}]->' ${clauses.length === 1 ? 'is' : 'are'} read: the hop walks records the run already holds, and before, such a hop ignored ${clauses.length === 1 ? 'it' : 'them'} and kept every record in the order held. Its result may change: if the program relied on that, change it, then upgrade.`,
+      'upgrade',
+    );
+  }
+
   /** The block's returned records, tested against null on a move up across
    *  5: the answer was fixed before (present) and is the real one from 5. */
   private reportPresenceOfReturned(subject: Expression, op: 'eq' | 'neq'): void {
@@ -6460,6 +6505,7 @@ export class ExpressionTyping {
         // Gate the hop's WHERE / ORDER BY / LIMIT against the source's declared
         // filter/order/limit capability (chunk 6). Silent when undeclared.
         if (current !== undefined) this.gateHopCapability(current, step, next);
+        if (current !== undefined) this.reportInMemoryHopOrder(current, step);
         current = next;
       } else if (step.type === 'meta_edge') {
         if (step.alias) this.locals.set(step.alias, undefined);

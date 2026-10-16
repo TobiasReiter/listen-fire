@@ -151,3 +151,38 @@ describe('a version 5 slot read again is read under 5', () => {
     expect(found.filter((d) => d.severity === 'error')).toEqual([]);
   });
 });
+
+// ORDER BY and LIMIT on a hop over records the run already holds were ignored
+// by both engines before 5 and are read from 5, so a move up says so.
+describe('an in-memory hop with ORDER BY or LIMIT, on a move up across 5', () => {
+  const upgrade = (body: string, options: { languageVersion: LanguageVersion; upgradingFrom?: LanguageVersion }): Said[] => {
+    const ts = said(checkProgram(parseProgram(V4(body), { languageVersion: options.languageVersion }), catalog, options));
+    const rust = said(checkSourceInRust(V4(body), snapshot, options));
+    expect(rust).toEqual(ts);
+    return ts.filter((d) => d.code === 'MOV_IN_MEMORY_HOP_ORDER');
+  };
+  const GRAPH = '  g = graph { title: "t", parts: [{ label: "two", n: 2 }, { label: "one", n: 1 }] }\n';
+  const NODE = '  d = node { title: "t", people: [node { name: "Cy", rank: 3 }, node { name: "Ann", rank: 1 }] }\n';
+
+  it('warns a graph literal, a node literal and an expression hop', () => {
+    const [d] = upgrade(`${GRAPH}  g-[p:parts ORDER BY p.n]-> {\n    x = p.label\n  }`, { languageVersion: 5, upgradingFrom: 4 });
+    expect(d).toEqual({
+      code: 'MOV_IN_MEMORY_HOP_ORDER',
+      severity: 'warning',
+      message: expect.stringContaining("the ORDER BY on '-[:parts]->' is read: the hop walks records the run already holds"),
+    });
+    expect(d?.message).toContain('Its result may change');
+    const [both] = upgrade(`${NODE}  d-[p:people ORDER BY p.rank LIMIT 1]-> {\n    x = p.name\n  }`, { languageVersion: 5, upgradingFrom: 4 });
+    expect(both?.message).toContain("the ORDER BY and LIMIT on '-[:people]->' are read");
+    expect(upgrade(`${GRAPH}  xs = g-[p:parts LIMIT 1]->.label`, { languageVersion: 5, upgradingFrom: 4 })).toHaveLength(1);
+    const extracted = '  x = extract from [t] {\n    node deals: "each deal" {\n      name: "the company name"\n    }\n  }\n';
+    expect(upgrade(`${extracted}  x-[k:deals LIMIT 2]-> {\n    y = k.name\n  }`, { languageVersion: 5, upgradingFrom: 4 })).toHaveLength(1);
+  });
+
+  it('says nothing of a source hop, a hop without either, or a check that is no move up', () => {
+    expect(upgrade('  c-[n:notes ORDER BY n.title]-> {\n    x = n.title\n  }', { languageVersion: 5, upgradingFrom: 4 })).toEqual([]);
+    expect(upgrade(`${GRAPH}  g-[p:parts]-> {\n    x = p.label\n  }`, { languageVersion: 5, upgradingFrom: 4 })).toEqual([]);
+    expect(upgrade(`${GRAPH}  g-[p:parts ORDER BY p.n]-> {\n    x = p.label\n  }`, { languageVersion: 4 })).toEqual([]);
+    expect(upgrade(`${GRAPH}  g-[p:parts ORDER BY p.n]-> {\n    x = p.label\n  }`, { languageVersion: 5 })).toEqual([]);
+  });
+});

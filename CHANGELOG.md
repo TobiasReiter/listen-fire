@@ -134,7 +134,8 @@ for byte; on text already in the version 5 spelling it changes nothing.
   entities (`deals-[c:company ORDER BY c.rank]->`), a `node { … }` or `graph { … }` literal's
   entries and the records written onto a local node, in a block head, an expression and `exists`.
   Under 1 to 4 those two were silently not read there (only `exists` read them). Why: a hop means
-  the same thing whatever it walks over.
+  the same thing whatever it walks over. A move up across 5 warns each such hop
+  (`MOV_IN_MEMORY_HOP_ORDER`): its result may change.
 - **`found != null` on the records a block returned says whether it returned any**, as
   `EXISTS(found)` does. Why: from 5 `!= null` is how a program asks what `EXISTS` asked of a
   value. Under 4 and earlier those records always counted as present, so the test was always true,

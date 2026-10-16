@@ -499,6 +499,48 @@ pub fn observe_hop(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep
     }
 }
 
+/// `reportInMemoryHopOrder`: `ORDER BY` / `LIMIT` on a hop over records the
+/// run already holds, on a move up across 5 — before 5 both engines kept every
+/// record, in the order held; from 5 they sort and cut as any hop does.
+pub fn report_in_memory_hop_order(typing: &mut Typing, from: Option<&Position>, step: &EdgeStep) {
+    let Some(from) = from else { return };
+    let cardinality = step.cardinality.as_ref();
+    let mut clauses = Vec::new();
+    if cardinality.is_some_and(|c| c.order_by.is_some()) {
+        clauses.push("ORDER BY");
+    }
+    if cardinality.is_some_and(|c| c.limit.is_some()) {
+        clauses.push("LIMIT");
+    }
+    if clauses.is_empty() || !holds_in_memory(from, &step.edge_type_id) || !typing.upgrade_crosses(5) {
+        return;
+    }
+    let one = clauses.len() == 1;
+    typing.report_upgrade(
+        codes::IN_MEMORY_HOP_ORDER,
+        format!(
+            "since {} the {} on '-[:{}]->' {} read: the hop walks records the run already holds, and before, such a hop ignored {} and kept every record in the order held. Its result may change: if the program relied on that, change it, then upgrade.",
+            crate::version::describe(5),
+            clauses.join(" and "),
+            step.edge_type_id,
+            if one { "is" } else { "are" },
+            if one { "it" } else { "them" },
+        ),
+    );
+}
+
+/// `holdsInMemory`: whether the hop `edge` off `from` walks records the run
+/// already holds — an extraction's entities, or a local node's landed entries
+/// (a lazy entry walks its source again at every read, so it is not one).
+fn holds_in_memory(from: &Position, edge: &str) -> bool {
+    match from {
+        Position::Extract { .. } => true,
+        Position::Local(local) => local.edges.as_ref().and_then(|edges| edges.get(edge)).is_some_and(|e| !e.deferred),
+        Position::MaybeEmpty(inner) => holds_in_memory(inner, edge),
+        Position::Meta { .. } | Position::Position(_) | Position::Union(_) | Position::Handle(_) | Position::Closure(_) => false,
+    }
+}
+
 /// `edgeCapabilityFor`.
 fn edge_capability_for(from: &Position, edge: &str) -> Option<EdgeCapability> {
     match from {

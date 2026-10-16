@@ -525,6 +525,7 @@ impl<'a> Typing<'a> {
                         crate::families::values::ordering_key(self, order_by, key_ty.as_ref(), &format!("ORDER BY on '{}'", edge.edge_type_id));
                     }
                     crate::families::walks::observe_hop(self, from.as_ref(), edge, next.as_ref());
+                    crate::families::walks::report_in_memory_hop_order(self, from.as_ref(), edge);
                     current = next;
                 }
                 TraversalStep::MetaEdge(meta) => {
