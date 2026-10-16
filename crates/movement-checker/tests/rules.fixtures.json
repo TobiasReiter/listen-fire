@@ -3139,6 +3139,16 @@
     "MOV_TRAVERSE_UNKNOWN_EDGE 6:7-6:21 'Note' has no collection 'item' — it has: Note",
     "MOV_TRAVERSE_UNKNOWN_EDGE 7:3-7:18 'Note' has no collection 'item' — it has: Note"
    ]
+  },
+  {
+   "name": "a unique by part the lowering refuses is MOV_EXPR_PARSE at the part",
+   "snapshot": "delete",
+   "version": 5,
+   "source": "import { crm } from adapters\nc = connect crm\nfunction m() {\n  write c-[:company]-> { unique by (`name` == map([1], (v) => v)[0]) name: \"a\" }\n  found = match c-[:company]-> { unique by (`name` && `name` == map([1], (v) => v)[0]) name: \"a\" }\n  return 1\n}\n",
+   "expected": [
+    "MOV_EXPR_PARSE 4:37-4:68 a closure cannot be written here — bind it to a name first and pass the name",
+    "MOV_EXPR_PARSE 5:45-5:86 a closure cannot be written here — bind it to a name first and pass the name"
+   ]
   }
  ]
 }
