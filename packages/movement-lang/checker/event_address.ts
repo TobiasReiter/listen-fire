@@ -159,14 +159,14 @@ export function eventAddressDisplay(address: EventAddress): string {
 export function eventAddressSource(instance: string, address: EventAddress, languageVersion: LanguageVersion): string {
   // Up to 4 a pin names the event's field bare; from 5 a bare name in a hop
   // is a variable, so the hop takes the alias `e` and each pin reads the
-  // field through it.
+  // field through it, the pins joined by 5's `&&`.
   const v5 = since(languageVersion, 5);
   const pins = pinsOf(address);
   const field = (key: string): string => (!v5 ? `\`${key}\`` : /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? `e.${key}` : `e.\`${key}\``);
   const where =
     pins.length === 0
       ? ''
-      : ` WHERE ${pins.map(([key, value]) => `${field(key)} == ${JSON.stringify(value)}`).join(' AND ')}`;
+      : ` WHERE ${pins.map(([key, value]) => `${field(key)} == ${JSON.stringify(value)}`).join(v5 ? ' && ' : ' AND ')}`;
   const alias = v5 && pins.length > 0 ? 'e' : '';
   return `<${instance}-[${alias}:\`${address.event}\`${where}]->>`;
 }

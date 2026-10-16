@@ -8,7 +8,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram } from '../check';
 import { mockCatalog } from '../catalog';
-import { eventAddressOfHops, eventAddressSource } from '../event_address';
+import { eventAddressKey, eventAddressOfHops, eventAddressSource } from '../event_address';
 import { typescriptCheck, upgradeSource } from '../upgrade';
 
 const catalog = mockCatalog({ adapters: {} });
@@ -54,7 +54,7 @@ describe("an address's WHERE read through the hop's alias", () => {
   it('is what advice suggests: the alias form under 5, the bare field under 4, and both read back', () => {
     const address = { event: 'Webhook Event', narrowing: { action: 'record.created', 'base id': 'b' } };
     const v5 = eventAddressSource('crm', address, 5);
-    expect(v5).toBe('<crm-[e:`Webhook Event` WHERE e.action == "record.created" AND e.`base id` == "b"]->>');
+    expect(v5).toBe('<crm-[e:`Webhook Event` WHERE e.action == "record.created" && e.`base id` == "b"]->>');
     expect(eventAddressSource('crm', address, 4)).toBe('<crm-[:`Webhook Event` WHERE `action` == "record.created" AND `base id` == "b"]->>');
     expect(eventAddressOfHops(v5.slice('<crm'.length, -1), 5)).toEqual(address);
     expect(eventAddressSource('crm', { event: 'Webhook Event', narrowing: {} }, 5)).toBe('<crm-[:`Webhook Event`]->>');
@@ -269,5 +269,42 @@ describe("sort by a function key is refused where SORT(xs, key) was", () => {
   it('a walk written inside the call, as SORT(c-[p:Members]->, Name) was; a bound one stands', () => {
     expect(codes('  t = count(sort(c-[p:Members]->, (r) => r.Name))')).toEqual(['MOV_SORT_KEY_ON_WALK']);
     expect(codes('  people = c-[p:Members]-> { return p }\n  t = count(sort(people, (r) => r.Name))')).toEqual([]);
+  });
+});
+
+describe("a listen's pasteable signature joins its pins with 5's &&", () => {
+  const ACTIONS = ['record.created', 'record.updated', 'record.deleted'];
+  const change = { properties: { action: { kind: 'enum' as const, options: ACTIONS }, type: 'text' as const } };
+  const variants = ACTIONS.map((action) => eventAddressKey({ event: 'Change', narrowing: { action, type: 'Ticket' } }));
+  const graph = mockCatalog({
+    adapters: {
+      kg: {
+        constructionArgs: [],
+        triggerConfig: ['type', 'events'],
+        triggerConfigOptions: { events: ACTIONS },
+        schema: {
+          positions: {
+            Ticket: { properties: { Status: 'text' }, edges: {} },
+            Kind: { properties: {}, edges: {}, undescribed: true },
+            Change: { ...change, edges: { Record: { target: 'Kind', subject: true, requiresLiveRecord: true } } },
+            ...Object.fromEntries(
+              variants.map((key, i) => [key, { ...change, edges: ACTIONS[i] === 'record.deleted' ? {} : { Record: { target: 'Ticket', subject: true } } }]),
+            ),
+          },
+          collections: {},
+          unions: { [eventAddressKey({ event: 'Change', narrowing: { type: 'Ticket' } })]: variants },
+          writableRoots: {},
+          eventPosition: 'Change',
+          eventPositions: [{ position: 'Change' }],
+          eventNarrowingKeys: ['type'],
+        },
+      },
+    },
+  });
+
+  it('under 5, where AND is an old spelling', () => {
+    const source = 'import { kg } from adapters\ngraph = connect kg\nfunction m(t: <graph-[:Ticket]->>) {\n}\nlisten to graph { type: "Ticket", events: ["record.created"] } fire m';
+    const [d] = checkProgram(parseProgram(source, { languageVersion: 5 }), graph, { languageVersion: 5 }).filter((d) => d.code === 'MOV_LISTEN_PARAM_MISMATCH');
+    expect(d?.message).toContain("'m(event: <graph-[e:\`Change\` WHERE e.action == \"record.created\" && e.type == \"Ticket\"]->>)'");
   });
 });

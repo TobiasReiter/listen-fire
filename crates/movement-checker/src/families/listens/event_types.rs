@@ -362,7 +362,7 @@ pub fn event_traversal_example(schema: &InstanceSchema, param_name: &str, instan
 /// writes, ready to paste. Up to version 4 a pin names the event's field bare
 /// (`` WHERE `action` == "…" ``); from 5 a bare name in a hop is a variable,
 /// so the hop takes the alias `e` and each pin reads the field through it
-/// (`WHERE e.action == "…"`).
+/// (`WHERE e.action == "…"`), the pins joined by 5's `&&`.
 pub fn address_source(instance: &str, event: &str, pins: &[(String, String)], version: u32) -> String {
     let v5 = movement_parser::version::since(version, 5);
     let pins: Vec<String> = pins
@@ -380,7 +380,7 @@ pub fn address_source(instance: &str, event: &str, pins: &[(String, String)], ve
         })
         .collect();
     let alias = if v5 && !pins.is_empty() { "e" } else { "" };
-    let filter = if pins.is_empty() { String::new() } else { format!(" WHERE {}", pins.join(" AND ")) };
+    let filter = if pins.is_empty() { String::new() } else { format!(" WHERE {}", pins.join(if v5 { " && " } else { " AND " })) };
     format!("<{instance}-[{alias}:`{event}`{filter}]->>")
 }
 
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn writes_an_address_as_its_version_spells_it() {
         let pins = vec![("action".to_string(), "record.created".to_string()), ("base id".to_string(), "b".to_string())];
-        assert_eq!(address_source("crm", "Webhook Event", &pins, 5), "<crm-[e:`Webhook Event` WHERE e.action == \"record.created\" AND e.`base id` == \"b\"]->>");
+        assert_eq!(address_source("crm", "Webhook Event", &pins, 5), "<crm-[e:`Webhook Event` WHERE e.action == \"record.created\" && e.`base id` == \"b\"]->>");
         assert_eq!(address_source("crm", "Webhook Event", &pins, 4), "<crm-[:`Webhook Event` WHERE `action` == \"record.created\" AND `base id` == \"b\"]->>");
         assert_eq!(address_source("crm", "Webhook Event", &[], 5), "<crm-[:`Webhook Event`]->>");
     }

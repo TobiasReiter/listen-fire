@@ -216,3 +216,15 @@ fn sort_by_a_function_key_is_refused_where_sort_with_a_key_was() {
     assert_eq!(codes("  t = count(sort(c-[p:Members]->, (r) => r.Name))"), ["MOV_SORT_KEY_ON_WALK"]);
     assert_eq!(codes("  people = c-[p:Members]-> { return p }\n  t = count(sort(people, (r) => r.Name))"), Vec::<String>::new());
 }
+
+const EVENTS: &str = r#"{"contractVersion":1,"adapters":{"kg":{"canFire":true,"constructionArgs":[],"triggerConfig":["type","events"],"triggerConfigOptions":{"events":["record.created","record.updated","record.deleted"]},"schemas":{"":{"positions":{"Ticket":{"properties":{"Status":"text"},"edges":{}},"Kind":{"properties":{},"edges":{},"undescribed":true},"Change":{"properties":{"action":{"kind":"enum","options":["record.created","record.updated","record.deleted"]},"type":"text"},"edges":{"Record":{"target":"Kind","subject":true,"requiresLiveRecord":true}}},"[\"Change\",[[\"action\",\"record.created\"],[\"type\",\"Ticket\"]]]":{"properties":{"action":{"kind":"enum","options":["record.created","record.updated","record.deleted"]},"type":"text"},"edges":{"Record":{"target":"Ticket","subject":true}}},"[\"Change\",[[\"action\",\"record.updated\"],[\"type\",\"Ticket\"]]]":{"properties":{"action":{"kind":"enum","options":["record.created","record.updated","record.deleted"]},"type":"text"},"edges":{"Record":{"target":"Ticket","subject":true}}},"[\"Change\",[[\"action\",\"record.deleted\"],[\"type\",\"Ticket\"]]]":{"properties":{"action":{"kind":"enum","options":["record.created","record.updated","record.deleted"]},"type":"text"},"edges":{}}},"collections":{},"unions":{"[\"Change\",[[\"type\",\"Ticket\"]]]":["[\"Change\",[[\"action\",\"record.created\"],[\"type\",\"Ticket\"]]]","[\"Change\",[[\"action\",\"record.updated\"],[\"type\",\"Ticket\"]]]","[\"Change\",[[\"action\",\"record.deleted\"],[\"type\",\"Ticket\"]]]"]},"writableRoots":{},"eventPosition":"Change","eventPositions":[{"position":"Change"}],"eventNarrowingKeys":["type"]}}}},"credentials":{},"plugins":{}}"#;
+
+#[test]
+fn a_listens_pasteable_signature_joins_its_pins_with_the_v5_conjunction() {
+    let source = "import { kg } from adapters\ngraph = connect kg\nfunction m(t: <graph-[:Ticket]->>) {\n}\nlisten to graph { type: \"Ticket\", events: [\"record.created\"] } fire m";
+    let catalog = CatalogSnapshot::load(EVENTS).unwrap();
+    let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let found = check_source(source, &catalog, options).unwrap();
+    let d = found.iter().find(|d| d.code == "MOV_LISTEN_PARAM_MISMATCH").expect("a mismatch");
+    assert!(d.message.contains("'m(event: <graph-[e:`Change` WHERE e.action == \"record.created\" && e.type == \"Ticket\"]->>)'"), "{}", d.message);
+}
