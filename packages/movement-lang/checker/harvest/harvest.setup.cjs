@@ -93,6 +93,8 @@ function recordingCatalog(catalog) {
     },
   };
   if (catalog.credentialNames) recording.credentialNames = () => catalog.credentialNames();
+  // A package import asks every plugin's spec (`packageMembers`), so each is recorded.
+  if (catalog.pluginNames) recording.pluginNames = () => catalog.pluginNames();
   if (catalog.models) recording.models = () => catalog.models();
   if (catalog.constructionArgOptions) {
     recording.constructionArgOptions = (input) => {
