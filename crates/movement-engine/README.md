@@ -1397,7 +1397,7 @@ writes back the same way.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now, localZone?,
-catalog, dryRun?, nativeCheck?, snapshotModels?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
+catalog, dryRun?, nativeCheck?, snapshotModels?, versionWarning?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
 extractionFileChars?, maxCallDepth?, extractionTiers?, dryAdmission?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
@@ -1406,7 +1406,9 @@ rehearsal (writes captured, `sleep` fast-forwarded); `nativeCheck` makes the
 engine answer `check.program` with the Rust checker instead of asking the host
 (off by default; the host turns it on for every run segment);
 `snapshotModels` is, with `nativeCheck`, the run snapshot's own `models`
-(null: none) the check holds a written model to; `resume` is `{state,
+(null: none) the check holds a written model to, and `versionWarning`
+(`{code, message}`) a deprecated pin's warning in the host release's words,
+which the run traces; `resume` is `{state,
 reenter?}`, a `ParkedScopeState` (on the eval wire) to resume rather than a
 run to start; `limitPaused` says the run's pause holds, and `suspendAt` lists
 the addresses to suspend at (both "Parks" above). `languageVersion` is the pin,
