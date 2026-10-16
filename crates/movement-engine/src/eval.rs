@@ -153,9 +153,6 @@ pub enum Ask {
     /// as a list's or a map's member (`evalValueMember`, which hands a
     /// record over as itself).
     Bare { name: String, member: bool },
-    /// A built-in this engine does not reproduce for these arguments: the
-    /// TypeScript member answers.
-    Function { id: String, args: Vec<Js> },
     /// A `WITHIN`, measured from the host's clock (`compareValues`'
     /// `within`): the only comparison `compare_values` hands back.
     Within { left: Js, right: Js },
@@ -868,9 +865,7 @@ impl<'a> Evaluator<'a> {
                 };
                 values.push(value);
             }
-            let value = self
-                .or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() })
-                .await?;
+            let value = stdlib::apply_namespaced(id, &values, self.around)?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if id == "chunks"
@@ -931,7 +926,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value: Js::Null, prov: self.union(&provs) });
         }
         let values: Vec<Js> = results.iter().map(|r| r.value.clone()).collect();
-        let value = self.or_ask(stdlib::apply_flat(id, &values), || Ask::Function { id: id.to_string(), args: values.clone() }).await?;
+        let value = stdlib::apply_flat(id, &values)?;
         Ok(Evaluated { value, prov: self.union(&provs) })
     }
 

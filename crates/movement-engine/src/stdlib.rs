@@ -157,7 +157,7 @@ pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Resu
         "text.serialise" => text_serialise(&a, &b),
         "url.host" => url_host(&a, around.services),
         "number.format" => Ok(number_format(&a, &b)),
-        other => Err(EvalError::Fallback(format!("{other} is not a member this engine runs"))),
+        other => Err(EvalError::engine("MOVENG_RUNTIME", format!("unknown built-in function: {other}"))),
     }
 }
 

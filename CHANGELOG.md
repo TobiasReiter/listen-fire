@@ -251,6 +251,9 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   to March 2). A comparison reads only ISO texts as dates: `"item 3" < "item 12"` is false, as
   texts (V8 read both as dates and said true); `true < "9"` no longer orders. Written dates
   (`DATE.PARSE("12 March 2026")`) are read as before.
+- **Self-hosting: the engine's `builtins.function` request is gone.** A version 5 run never asks
+  the TypeScript standard library for a reading; an unknown function fails the run
+  (`MOVENG_RUNTIME: unknown built-in function`).
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

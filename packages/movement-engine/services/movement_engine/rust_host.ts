@@ -9,8 +9,7 @@
 // forwarded as it is: the engine names the segment the run host opened. Two
 // families are the engine's own and never reach an `EngineHost`
 // (`ENGINE_OWN_ROUTES`): `check`, the TypeScript checker until the checker is
-// Rust, and `builtins`, the TypeScript standard library for the readings the
-// Rust engine hands back.
+// Rust, and `log`, the platform's log.
 //
 // One encoding is this shim's own: a request marked `wire: true` carries its
 // values on the eval wire (rust_wire.ts), not as plain JSON, so the host is
@@ -18,12 +17,10 @@
 // engine hands it in process, and an adapter's result comes back the same way.
 
 import {
-  applyStdlib,
   declaredTypesIn,
   languageVersionDiagnostic,
   pluginOutputUnder,
   schemaSurface,
-  stdlibFunctionById,
   surfaceMisfit,
   type CatalogSnapshot,
   type InstanceSchema,
@@ -43,8 +40,6 @@ import type { UniquenessConstraints } from '../translation_graph/uniqueness';
 import { hasCapability, isModelName } from '../../lib/models/registry';
 import { foldedShape } from './declared_shape';
 import { EFFORTS, type Effort, type TierModel } from './ai_tiers';
-import { applyMovementFunction } from './builtins';
-import { MovementEngineError } from './errors';
 import { ADAPTER_METHODS, type AdapterCall, type AdapterMethod, type EngineHost } from './host';
 import { hostCallFailure, isoDates } from './host_adapter';
 import { checkAnswer, checkPinned, type CheckedProgram } from './program_check';
@@ -101,7 +96,6 @@ type Route = (args: Record<string, unknown>, context: RouteContext) => Promise<u
 export const ENGINE_OWN_ROUTES: Readonly<Record<string, string>> = {
   'check.program': 'the TypeScript checker, asked only by a segment started without the native check (the admission dry run, whose start is never answered)',
   'check.compatible': "the checker's assignability, which an `IS <Decl>` test of a system's record asks of its record type's schema",
-  'builtins.function': 'a TypeScript standard-library member, for a reading the Rust engine hands back',
   'log.write': "the platform's log, for the lines the TypeScript engine writes (sent as a statement ends)",
 };
 
@@ -626,16 +620,6 @@ const ROUTES: Record<string, Route> = {
     }
     return undefined;
   },
-  /** A built-in the Rust engine hands back for these arguments, answered by
-   *  the TypeScript member: its value, or what it throws. */
-  async 'builtins.function'(request, { wire }) {
-    const id = string(request.id, 'builtins.function id');
-    if (!Array.isArray(request.args)) throw new RustShimError('builtins.function args must be an array');
-    const values = request.args.map((arg) => wire.read(arg));
-    const now = new Date(string(request.now, 'builtins.function now'));
-    const spec = stdlibFunctionById(id);
-    return builtinAnswer(wire, () => (spec !== undefined ? applyStdlib(spec, values, now) : applyMovementFunction(id, values)));
-  },
 };
 
 /** Every route's path: each an `EngineHost` method or one of
@@ -903,28 +887,6 @@ export async function serve(request: HostRequest, context: RouteContext): Promis
  *  inside it). */
 class Plain {
   constructor(readonly json: unknown) {}
-}
-
-/** `{value: wire}` or `{threw: {class, code?, message}}`. */
-function builtinAnswer(segment: WireOut, run: () => unknown): unknown {
-  let value: unknown;
-  try {
-    value = run();
-  } catch (error) {
-    if (error instanceof MovementEngineError) return { threw: { class: 'MovementEngineError', code: error.code, message: unprefixed(error) } };
-    if (error instanceof RangeError) return { threw: { class: 'RangeError', message: error.message } };
-    if (error instanceof TypeError) return { threw: { class: 'TypeError', message: error.message } };
-    if (error instanceof Error && error.constructor === Error) return { threw: { class: 'Error', message: error.message } };
-    throw new RustShimError(`a built-in threw what the Rust engine cannot rethrow: ${String(error)}`);
-  }
-  if (new WireOut().value(value) === REFUSED) throw new RustShimError('a built-in answered a value the eval wire cannot carry as itself');
-  return { value: segment.value(value) };
-}
-
-/** A MovementEngineError's message without the `CODE: ` its constructor adds. */
-function unprefixed(error: MovementEngineError): string {
-  const prefix = `${error.code}: `;
-  return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
 }
 
 /** The trace entry kinds the Rust engine appends (crates/movement-engine/src/trace.rs). */

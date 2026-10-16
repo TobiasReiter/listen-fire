@@ -426,14 +426,7 @@ describe('a whole run in the Rust engine', () => {
     });
   });
 
-  it('asks the TypeScript member for a reading it does not reproduce, mid-run', async () => {
-    // A pattern nested past 1,000 groups, which V8's stack decides.
-    const pattern = `${'(?:'.repeat(1001)}a${')'.repeat(1001)}`;
-    const { rust } = await agree({
-      source: ['function m(msg: <inbox-[:message]->>) {', `  found = Text.regexExtract(msg.\`text\`, "${pattern}")`, '}'].join('\n'),
-      event: webhook({ text: 'xay' }),
-    });
-    expect(rust.result).toBeDefined();
+   expect(rust.result).toBeDefined();
     expect(rustRunStats.hostCalls).toMatchObject({ 'builtins.function': 1 });
   });
 

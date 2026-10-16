@@ -1873,11 +1873,6 @@ impl Run<'_> {
                 let found = self.exists(steps, where_.as_deref(), vec![subject], scope, &span).await?;
                 Ok(Ok(Evaluated { value: Js::Bool(found), prov: Prov::Built(Trail::default()) }))
             }
-            Ask::Function { id, args } => {
-                let args = args.iter().map(|arg| self.encode(arg)).collect::<Result<_, _>>()?;
-                let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
-                self.builtin(request).await
-            }
             Ask::Within { left, right } => {
                 let now = self.clock_now().await?;
                 let value = Js::Bool(crate::filter::within(&left, &right, now));
@@ -2055,27 +2050,6 @@ impl Run<'_> {
         };
         *self.actor.borrow_mut() = Some(resolved.clone());
         Ok(resolved)
-    }
-
-    /// `{value: wire}` or `{threw: {class, code?, message}}`: the TypeScript
-    /// member's answer, its value or the error it throws.
-    async fn builtin(&self, request: host::Request) -> Result<Result<Evaluated, EvalError>, Failure> {
-        let answer = self.ask(request).await?.unwrap_or(Json::Null);
-        if let Some(threw) = answer.get("threw") {
-            let message = threw.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
-            let class = match (threw.get("class").and_then(Json::as_str), threw.get("code").and_then(Json::as_str)) {
-                (Some("MovementEngineError"), Some("MOVENG_RUNTIME")) => ErrorClass::Engine("MOVENG_RUNTIME"),
-                (Some("MovementEngineError"), Some("MOVENG_UNSUPPORTED")) => ErrorClass::Engine("MOVENG_UNSUPPORTED"),
-                (Some("RangeError"), _) => ErrorClass::RangeError,
-                (Some("TypeError"), _) => ErrorClass::TypeError,
-                (Some("Error"), _) => ErrorClass::Error,
-                _ => return Err(Failure::engine("MOVENG_RUNTIME", format!("a built-in threw what this engine cannot rethrow: {threw}"))),
-            };
-            return Ok(Err(EvalError::Thrown { class, message }));
-        }
-        let value = answer.get("value").ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("a built-in answered {answer}")))?;
-        let value = self.wire.decode(value).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
-        Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
     }
 
     /// `readSourcePositionField` on the event: the source adapter's
