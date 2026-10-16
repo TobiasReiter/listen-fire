@@ -57,6 +57,11 @@ pub struct ImportState {
     link: Option<Rc<ProgramLink>>,
     current_file: Option<Rc<LinkedFile>>,
     checked: HashMap<String, IndexMap<String, SymbolId>>,
+    /// The old spellings (language version 5) of the libraries the file
+    /// being checked imports, each at the import that pulled its library in.
+    /// Kept apart from the walk's diagnostics: a finding's message names the
+    /// old spelling, which the program's own spelling must not rewrite.
+    pub spelling: Vec<Diagnostic>,
 }
 
 impl ImportState {
@@ -303,6 +308,8 @@ impl Checker<'_> {
             return checked.clone();
         }
         let outer_diagnostics = std::mem::take(&mut self.diagnostics);
+        let own_spelling = file.program.spelling.iter().map(crate::diagnostic::of_spelling).collect();
+        let outer_spelling = std::mem::replace(&mut self.imports.spelling, own_spelling);
         let outer_file = self.imports.current_file.replace(file.clone());
         let outer_listens = self.listens.enter_file();
         let scope = self.scopes.open(None);
@@ -310,12 +317,21 @@ impl Checker<'_> {
         self.listens.leave_file(outer_listens);
         self.imports.current_file = outer_file;
         let surfaced = std::mem::replace(&mut self.diagnostics, outer_diagnostics);
+        let surfaced_spelling = std::mem::replace(&mut self.imports.spelling, outer_spelling);
         let symbols = self.scopes.scope(scope).symbols.clone();
         self.imports.checked.insert(file.path.clone(), symbols.clone());
         for mut diagnostic in surfaced.into_iter().filter(|d| d.severity != Some(Severity::Info)) {
             diagnostic.message = format!("\"{}\" line {}: {}", file.path, diagnostic.span.start.line, diagnostic.message);
             diagnostic.span = at;
             self.push(diagnostic);
+        }
+        // A fix's edits are the library file's, so none is carried to the
+        // import.
+        if self.type_only == 0 {
+            for diagnostic in surfaced_spelling {
+                let message = format!("\"{}\" line {}: {}", file.path, diagnostic.span.start.line, diagnostic.message);
+                self.imports.spelling.push(Diagnostic::error(&diagnostic.code, message, at));
+            }
         }
         symbols
     }

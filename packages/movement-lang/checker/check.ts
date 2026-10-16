@@ -1350,6 +1350,17 @@ export function checkProgram(
   return checkProgramWithLink(program, catalog, options).diagnostics;
 }
 
+/** The old spellings a program holds under language version 5 (the parser's
+ *  `Program.spelling`), refused, each with its rewrite as the fix. */
+function spellingDiagnostics(program: Program): Diagnostic[] {
+  return (program.spelling ?? []).map(f => ({
+    code: f.code,
+    message: f.message,
+    span: f.span,
+    ...(f.fix ? { fix: f.fix } : {}),
+  }));
+}
+
 /**
  * `checkProgram` plus the resolved import structure (`ProgramLink`) — the
  * movement engine's seam: it validates through this call and then executes
@@ -1378,12 +1389,7 @@ export function checkProgramWithLink(
   checker.run(program);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const spelling: Diagnostic[] = (program.spelling ?? []).map(f => ({
-    code: f.code,
-    message: f.message,
-    span: f.span,
-    ...(f.fix ? { fix: f.fix } : {}),
-  }));
+  const spelling = [...spellingDiagnostics(program), ...checker.librarySpelling];
   const found = checker.diagnostics
     .map(withHandbookPointer)
     .map(d => ({ ...d, message: spellMessage(d.message, languageVersion) }));
@@ -3880,6 +3886,11 @@ interface CheckerOptions {
 
 class Checker {
   readonly diagnostics: Diagnostic[] = [];
+  /** The old spellings (language version 5) of the libraries this file
+   *  imports, each at the import that pulled its library in. Kept apart from
+   *  `diagnostics`: a finding's message names the old spelling, which the
+   *  program's own spelling must not rewrite. */
+  readonly librarySpelling: Diagnostic[] = [];
 
   /** Node declarations made in the files being checked, by the symbol that
    *  declares them — how `extends` reaches a base declared in the same file,
@@ -5529,6 +5540,15 @@ class Checker {
     for (const diagnostic of this.typeOnly ? [] : surfaced) {
       this.diagnostics.push({
         ...diagnostic,
+        message: `"${file.path}" line ${diagnostic.span.start.line}: ${diagnostic.message}`,
+        span: at,
+      });
+    }
+    // A fix's edits are the library file's, so none is carried to the import.
+    const spelling = [...spellingDiagnostics(file.program), ...checker.librarySpelling];
+    for (const diagnostic of this.typeOnly ? [] : spelling) {
+      this.librarySpelling.push({
+        code: diagnostic.code,
         message: `"${file.path}" line ${diagnostic.span.start.line}: ${diagnostic.message}`,
         span: at,
       });

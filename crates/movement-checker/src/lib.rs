@@ -61,6 +61,7 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
     let diagnostics = version::standing_diagnostic(options.language_version)
         .into_iter()
         .chain(program.spelling.iter().map(diagnostic::of_spelling))
+        .chain(std::mem::take(&mut checker.imports.spelling))
         .chain(problems)
         .chain(
             std::mem::take(&mut checker.diagnostics)
