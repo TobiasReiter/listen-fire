@@ -23,7 +23,9 @@ import type {
 } from '@listen-fire/shared/expression/types';
 import { neverAsAny } from '../never';
 import { before, type LanguageVersion } from '../language_version';
-import type { Program, TypeDeclaration } from '../parser/ast';
+import type { CallArg, ExprSlot, Loc, Program, Span, TypeDeclaration } from '../parser/ast';
+import { parseExpression } from '../parser/expression/parse_expression';
+import { isMapSpread, type At, type MapMember, type MExpr } from '../parser/expression/tree';
 import type { DeclaredEffectRow } from './effects';
 // A record is a value, so `FieldType` names the arrow plane's own type and
 // spells it with the arrow plane's own words. That is a cycle with `typing.ts`
@@ -393,6 +395,166 @@ export interface PluginSpec {
 export interface PluginFedArg {
   name: string;
   required?: true;
+}
+
+// ── A plugin's arguments by position (language version 5, design §2.7) ──
+//
+// Its required inputs in the manifest's declared order, then one optional
+// settings record `{ name: value }` for the rest. Binding turns that call into
+// the named arguments versions 1–4 write, so every check and the wire to the
+// plugin read one form. The Rust twin is `PluginSpec::bind_args`
+// (crates/movement-parser/src/catalog/plugin_args.rs); both checkers and both
+// engines bind through these two and nothing else.
+
+/** Where a plugin is called: a plain call writes the arguments a stage is
+ *  fed, a `through [ … ]` stage never does. */
+export type PluginCallSite = 'plain' | 'stage';
+
+/** A positional call that does not fit the plugin's parameters. */
+export type PluginArgMisfit =
+  /** An argument past the positional parameters that is not the settings record. */
+  | { kind: 'extra'; span: Span }
+  /** A settings key that names a parameter taken by position. */
+  | { kind: 'settingIsPositional'; name: string; span: Span }
+  /** A settings record member that is not `name: value`. */
+  | { kind: 'settingNotNamed'; span: Span };
+
+/** A call's arguments, bound to the plugin's parameters by name. */
+export interface PluginArgBinding {
+  args: CallArg[];
+  misfits: PluginArgMisfit[];
+}
+
+/** The parameters a call fills by position, in the manifest's declared
+ *  order. The spec keeps the fed parameters apart from the author's, and
+ *  every plugin declares its fed one first, so fed-then-author is that order. */
+export function pluginPositionalParams(spec: PluginSpec, site: PluginCallSite): string[] {
+  const fed = site === 'plain' ? (spec.fedArgs ?? []).filter(f => f.required === true).map(f => f.name) : [];
+  const required = spec.requiredArgs ?? [];
+  return [...fed, ...spec.args.filter(a => required.includes(a))];
+}
+
+/** What is wrong, in the words both checkers report (MOV_THROUGH_BAD_ARG). */
+export function pluginArgMisfitMessage(misfit: PluginArgMisfit, callee: string, positional: readonly string[]): string {
+  switch (misfit.kind) {
+    case 'extra': {
+      const byPosition =
+        positional.length === 0
+          ? 'no argument by position'
+          : positional.length === 1
+            ? `one argument by position (${positional[0]})`
+            : `${positional.length} arguments by position (${positional.join(', ')})`;
+      return `'${callee}' takes ${byPosition}, then its settings as one record \`{ name: value }\` — this argument is past them`;
+    }
+    case 'settingIsPositional':
+      return `'${misfit.name}' is an argument '${callee}' takes by position — write it in its place, not in the settings record`;
+    case 'settingNotNamed':
+      return `'${callee}'s settings record holds only \`name: value\` entries`;
+    default:
+      return neverAsAny(misfit);
+  }
+}
+
+/** Positional arguments named by `pluginPositionalParams`; the argument
+ *  after those, written as a record literal, is the settings, each entry a
+ *  named argument whose value is its own slot; any further one is a misfit.
+ *  A named argument stays as written. */
+export function bindPluginArgs(spec: PluginSpec, site: PluginCallSite, args: readonly CallArg[]): PluginArgBinding {
+  const params = pluginPositionalParams(spec, site);
+  const positional = args.filter(a => a.name === undefined);
+  const settingsArg = positional[params.length];
+  const settings = settingsArg !== undefined ? recordLiteral(settingsArg) : undefined;
+  const binding: PluginArgBinding = { args: [], misfits: [] };
+  let at = 0;
+  for (const arg of args) {
+    if (arg.name !== undefined) {
+      binding.args.push(arg);
+      continue;
+    }
+    const index = at++;
+    const param = params[index];
+    if (param !== undefined) {
+      binding.args.push({ ...arg, name: param });
+    } else if (settings !== undefined && index === params.length) {
+      bindSettings(settings, params, binding);
+    } else {
+      binding.misfits.push({ kind: 'extra', span: callArgSpan(arg) });
+    }
+  }
+  return binding;
+}
+
+interface RecordLiteral {
+  slot: ExprSlot;
+  entries: MapMember[];
+}
+
+function recordLiteral(arg: CallArg): RecordLiteral | undefined {
+  if (arg.kind !== 'expr') return undefined;
+  let tree: MExpr;
+  try {
+    tree = parseExpression(arg.expr.raw);
+  } catch {
+    return undefined;
+  }
+  return tree.kind === 'map' ? { slot: arg.expr, entries: tree.entries } : undefined;
+}
+
+function bindSettings(record: RecordLiteral, params: readonly string[], binding: PluginArgBinding): void {
+  const spanOf = (at: At): Span => ({ start: locIn(record.slot, at.start), end: locIn(record.slot, at.end) });
+  for (const member of record.entries) {
+    if (isMapSpread(member)) {
+      binding.misfits.push({ kind: 'settingNotNamed', span: spanOf(member.at) });
+      continue;
+    }
+    const { key, value } = member;
+    if (key.quoted === 'string') {
+      binding.misfits.push({ kind: 'settingNotNamed', span: spanOf(key.at) });
+      continue;
+    }
+    if (params.includes(key.text)) {
+      binding.misfits.push({ kind: 'settingIsPositional', name: key.text, span: spanOf(key.at) });
+      continue;
+    }
+    binding.args.push({
+      kind: 'expr',
+      name: key.text,
+      expr: { raw: record.slot.raw.slice(value.at.start, value.at.end), span: spanOf(value.at) },
+    });
+  }
+}
+
+/** The file's line and column of `offset` into a slot's text. */
+function locIn(slot: ExprSlot, offset: number): Loc {
+  let { line, col } = slot.span.start;
+  for (let i = 0; i < Math.min(offset, slot.raw.length); i++) {
+    if (slot.raw[i] === '\n') {
+      line++;
+      col = 1;
+    } else {
+      col++;
+    }
+  }
+  return { line, col };
+}
+
+/** Where an argument is written, whatever form it takes. */
+export function callArgSpan(arg: CallArg): Span {
+  switch (arg.kind) {
+    case 'expr':
+      return arg.expr.span;
+    case 'write':
+      return arg.write.span;
+    case 'node':
+      return arg.node.span;
+    case 'call':
+      return arg.call.span;
+    case 'closure':
+    case 'type':
+      return arg.span;
+    default:
+      return neverAsAny(arg);
+  }
 }
 
 /**
