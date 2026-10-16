@@ -285,6 +285,11 @@ pub struct Parser {
     /// The local names imported from plugins so far: from version 5 one may
     /// name a package, whose members are called `web.fetchUrl(u)`.
     plugin_locals: Vec<String>,
+    /// A nested call read on its own (`parse_nested_call_value`): the file's
+    /// imports are not in sight, so from version 5 any dotted head that is no
+    /// standard namespace's names a package's member, in the call and in
+    /// every closure it holds.
+    imports_unseen: bool,
 }
 
 impl Parser {
@@ -296,7 +301,7 @@ impl Parser {
                 line_starts.push(i + 1);
             }
         }
-        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new(), plugin_locals: Vec::new() }
+        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new(), plugin_locals: Vec::new(), imports_unseen: false }
     }
 
     /// `parseNestedCall`'s reading: one call from `start` to the end of the
@@ -306,13 +311,7 @@ impl Parser {
         // Only a call that runs is read here, so a dotted head that is no
         // standard namespace's names a package's member: the file's imports
         // are not in sight of this parse.
-        if since(self.version, 5)
-            && let Some((head, end)) = scan_name(self.src.units(), start)
-            && self.src.at(end) == Some(unit('.'))
-            && !crate::surface::table::NAMESPACES.contains(&head.as_str())
-        {
-            self.plugin_locals.push(head);
-        }
+        self.imports_unseen = true;
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
         } else {
@@ -2594,7 +2593,7 @@ impl Parser {
             && let Some((member, member_end)) = scan_ident(self.src.units(), end + 1)
         {
             let dotted = format!("{name}.{member}");
-            if crate::surface::table::by_v5(&dotted).is_some() || self.plugin_locals.contains(&name) {
+            if crate::surface::table::by_v5(&dotted).is_some() || self.names_plugin_import(&name) {
                 return Some((dotted, member_end));
             }
         }
@@ -2607,9 +2606,16 @@ impl Parser {
     /// named and the empty call forms never read whole.
     fn scan_head(&self) -> Option<(String, usize)> {
         match self.scan_callee() {
-            Some((callee, end)) if callee.split_once('.').is_some_and(|(head, _)| self.plugin_locals.iter().any(|l| l == head)) => Some((callee, end)),
+            Some((callee, end)) if callee.split_once('.').is_some_and(|(head, _)| self.names_plugin_import(head)) => Some((callee, end)),
             _ => scan_name(self.src.units(), self.pos),
         }
+    }
+
+    /// Whether `head` is a plugin import's local name: one this file imports,
+    /// or, where its imports are not in sight, any head no standard namespace
+    /// owns.
+    fn names_plugin_import(&self, head: &str) -> bool {
+        self.plugin_locals.iter().any(|l| l == head) || (self.imports_unseen && !crate::surface::table::NAMESPACES.contains(&head))
     }
 
     fn read_callee(&mut self, what: &str) -> SResult<String> {

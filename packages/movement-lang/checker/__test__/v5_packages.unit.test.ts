@@ -128,6 +128,14 @@ describe("a package's members (version 5)", () => {
     expect(found.map((d) => [d.code, d.message])).toEqual([['MOV_IMPORT_UNKNOWN', "Unknown plugin '@lf/nope' in 'plugins'"]]);
   });
 
+  it.each([
+    '  ys = map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  })',
+    '  k = count(map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  }))',
+    '  r = web.research(n, { context: Text.join(map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  }), ",") })',
+  ])('a bare member call in a closure of a nested call parses: %s', (body) => {
+    expect(check(v5(body), 5)).toEqual([]);
+  });
+
   it('a package imported without a name is refused with one', () => {
     const found = check('import { `@lf/web` } from plugins\n\nfunction go(u: <text>) {\n  p = 1\n}\n', 5);
     expect(found.map((d) => [d.code, d.message])).toEqual([

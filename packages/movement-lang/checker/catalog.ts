@@ -24,7 +24,8 @@ import type {
 import { neverAsAny } from '../never';
 import { before, since, type LanguageVersion } from '../language_version';
 import type { CallArg, ExprSlot, Loc, NamedArg, PluginCall, Program, Span, TypeDeclaration } from '../parser/ast';
-import { parseExpression } from '../parser/expression/parse_expression';
+import { treeOfSlot } from '../expression/bridge';
+import { slotTrees } from '../expression/slot_trees';
 import { pluginName } from '../parser/surface';
 import { isMapSpread, type At, type MapMember, type MExpr } from '../parser/expression/tree';
 import type { DeclaredEffectRow } from './effects';
@@ -570,11 +571,34 @@ function recordLiteral(arg: CallArg): RecordLiteral | undefined {
   if (arg.kind !== 'expr') return undefined;
   let tree: MExpr;
   try {
-    tree = parseExpression(arg.expr.raw);
+    // The tree the program's own parse read, under its version (a text
+    // re-read here would read as versions 1–4 do).
+    tree = treeOfSlot(arg.expr);
   } catch {
     return undefined;
   }
   return tree.kind === 'map' ? { slot: arg.expr, entries: tree.entries } : undefined;
+}
+
+/** An entry's value as a slot of its own: its text, and the tree the
+ *  record's parse read for it, its offsets moved to that text. */
+function entrySlot(record: RecordLiteral, value: MExpr, span: Span): ExprSlot {
+  const slot: ExprSlot = { raw: record.slot.raw.slice(value.at.start, value.at.end), span };
+  slotTrees.set(slot, shiftedTree(value, value.at.start));
+  return slot;
+}
+
+/** The tree (plain JSON, as the parser handed it over) with every offset
+ *  moved back by `by`. */
+function shiftedTree(tree: MExpr, by: number): MExpr {
+  return JSON.parse(JSON.stringify(tree), (key: string, value: unknown) =>
+    key === 'at' && isAt(value) ? { start: value.start - by, end: value.end - by } : value,
+  );
+}
+
+function isAt(value: unknown): value is At {
+  return typeof value === 'object' && value !== null && 'start' in value && 'end' in value
+    && typeof value.start === 'number' && typeof value.end === 'number';
 }
 
 function bindSettings(record: RecordLiteral, params: readonly string[], binding: PluginArgBinding): void {
@@ -596,7 +620,7 @@ function bindSettings(record: RecordLiteral, params: readonly string[], binding:
     binding.args.push({
       kind: 'expr',
       name: key.text,
-      expr: { raw: record.slot.raw.slice(value.at.start, value.at.end), span: spanOf(value.at) },
+      expr: entrySlot(record, value, spanOf(value.at)),
     });
   }
 }

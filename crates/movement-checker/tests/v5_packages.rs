@@ -122,3 +122,14 @@ fn a_package_imported_without_a_name_is_refused_with_one() {
     // A plugin imported by its own name needs none.
     assert_eq!(codes("import { summarize } from plugins\n\nfunction go(u: <text>) {\n  p = summarize(u)\n}\n", 5), Vec::<String>::new());
 }
+
+#[test]
+fn a_bare_member_call_in_a_closure_of_a_nested_call_parses() {
+    for body in [
+        "  ys = map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  })",
+        "  k = count(map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  }))",
+        "  r = web.research(n, { context: Text.join(map([u], (x) => {\n    web.fetchUrl(x)\n    return x\n  }), \",\") })",
+    ] {
+        assert_eq!(check(&v5(body), 5), Vec::<Diagnostic>::new(), "{body}");
+    }
+}
