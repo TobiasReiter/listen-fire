@@ -4031,6 +4031,20 @@ ALTER TABLE ONLY automations.join_branch_export
 CREATE INDEX join_branch_export_frame_idx
     ON automations.join_branch_export (run_id, frame_address);
 
+-- park_library_source — the library texts a parked run pins (park state version
+-- 2's `libraries`), each kept ONCE per team by its content's hash (`sha256:<hex>`),
+-- however many parks name it: a resume reads its libraries from here, never from
+-- the team's saved files, so an edit while a run waits never reaches its parked
+-- code. Content-addressed and immutable; never deleted (small, and a park
+-- written long ago may still name a row).
+CREATE TABLE automations.park_library_source (
+    team_id uuid NOT NULL,                 -- the team whose parks named it
+    hash text NOT NULL,                    -- `sha256:` + the hex digest of the text's UTF-8 bytes
+    source text NOT NULL,                  -- the library's text, exactly as the run read it
+    created_at timestamptz DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT park_library_source_pkey PRIMARY KEY (team_id, hash)
+);
+
 -- record_binding — the engine-owned, generic, SYMMETRIC correspondence
 -- store. One row binds two fully-qualified record POSITIONS across any
 -- pair of systems ("this record IS the counterpart of that one"), declared

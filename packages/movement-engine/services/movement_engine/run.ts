@@ -355,6 +355,7 @@ import {
   type SerializedCallEvent,
   type SerializedFrame,
   type SerializedScope,
+  typescriptParkState,
 } from './serialize';
 import {
   CALLBACK_AWAIT_TYPE,
@@ -788,7 +789,7 @@ function resumeInterpreter(
   const answer: Binding | undefined = input.reenter ? undefined : rematerialiseAnswer(input.answer);
   return new Interpreter(input, { ...prepared, context }).resume({
     program,
-    state: input.state,
+    state: typescriptParkState(input.state),
     ...(answer !== undefined ? { answer } : {}),
     ...(input.reenter !== undefined ? { reenter: input.reenter } : {}),
     ...(input.deferRaceSettlement !== undefined
@@ -819,7 +820,7 @@ export async function settleRaceFrame(
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).settleRaceFrame({
       program,
-      state: input.state,
+      state: typescriptParkState(input.state),
       frameAddress: input.frameAddress,
     }),
   );
@@ -845,7 +846,7 @@ export async function fireCallbackBody(
   return inRunContext(input, (context) =>
     new Interpreter(input, { ...prepared, context }).fireCallback({
       program,
-      state: input.state,
+      state: typescriptParkState(input.state),
       values: input.values,
       callIndex: input.callIndex,
     }),

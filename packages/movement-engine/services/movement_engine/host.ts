@@ -51,7 +51,7 @@ import type { MovementTraceEntry } from './expression';
 import type { FileTextResolution, TransformInvocationResult, TransformInvokeInput } from './extraction';
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from './extraction_call';
 import type { CancelGate, ParkSink } from './run';
-import type { ParkedScopeState } from './serialize';
+import type { AnyParkedScopeState } from 'engine-contracts';
 
 export {
   ADAPTER_METHODS,
@@ -242,6 +242,14 @@ export interface ResolveActingUserInput {
   event: TriggerEvent;
 }
 
+/** The library texts a park pins (park state version 2's `libraries`), kept
+ *  once by their content: a park names a text by the hash `save` answers, and
+ *  a resume reads it back with `load` (null: the store holds no such text). */
+export interface ParkSources {
+  save(input: { source: string }): Promise<{ hash: string }>;
+  load(input: { hash: string }): Promise<{ source: string } | null>;
+}
+
 /** The callback seam: minting `callback(…)` and reading its call ledger (an
  *  `await cb-[:Called]->` parks through `ParkSink` like any await). Separate from `ParkSink` on purpose:
  *  a park is a leaf the run is waiting on, a callback is not one. */
@@ -251,7 +259,7 @@ export interface CallbackSink {
   mint(input: {
     address: string;
     params: CallbackParamSpec[];
-    state: ParkedScopeState;
+    state: AnyParkedScopeState;
     singleUse: boolean;
     /** When it stops answering, as an ISO 8601 instant. Absent ⇒ never. */
     expiresAt?: string;
@@ -309,6 +317,9 @@ export interface EngineHost {
      *  `await cb-[:Called]->`. Absent ⇒ a callback raises MOVENG_UNSUPPORTED. */
     callbacks?: SegmentScoped<CallbackSink>;
     bindings: SegmentScoped<RecordBindings>;
+    /** Where the library texts a park pins are kept, once each, by their
+     *  hash. Absent ⇒ a park carries each text itself. */
+    sources?: SegmentScoped<ParkSources>;
   };
   control: {
     /** Consulted at each statement and LLM-call boundary; a cancel stops the

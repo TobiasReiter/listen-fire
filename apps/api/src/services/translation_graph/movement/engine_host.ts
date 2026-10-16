@@ -40,6 +40,8 @@ import {
   type ActingUserLookup,
 } from 'movement-engine/services/movement_engine/host_kit';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
+import { postgresRunHostStore } from '../../movement_engine/run_host_store';
+import { parkSources } from 'movement-engine/services/run_host/rules';
 import { notifyWork } from '../../work/drain';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
 import {
@@ -140,6 +142,8 @@ export function productionEngineHost(input: {
         ? {
             sink: makeRecorderParkSink(input.parksInto, input.lease !== undefined ? { lease: input.lease } : {}),
             callbacks: makeRecorderCallbackSink(input.parksInto, input.teamId),
+            // The library texts its parks pin, once each by their hash.
+            sources: parkSources(postgresRunHostStore.sources, input.teamId),
           }
         : {}),
       // A `wake_await` work row, so the wake outlives this process.

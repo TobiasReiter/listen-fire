@@ -17,7 +17,7 @@
 import type { LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
+import type { AnyParkedScopeState } from 'engine-contracts';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
@@ -515,7 +515,7 @@ type ResumeFiringInput = {
   event: TriggerEvent;
   recordingTriggerType: TriggerRunTriggerType;
   /** The parked leaf's serialised scope (`parked_run.state`). */
-  state: ParkedScopeState;
+  state: AnyParkedScopeState;
   /** The validated answer to bind as the ask's result. Absent under `reenter`
    *  (an await / recurring-timer resume re-enters at its statement, binding
    *  nothing). */
@@ -773,7 +773,7 @@ type CallbackFiringInput = {
   recordingTriggerType: TriggerRunTriggerType;
   /** The CALLBACK row's captured continuation (a `ParkedScopeState` whose
    *  `address` is the callback expression). */
-  state: ParkedScopeState;
+  state: AnyParkedScopeState;
   /** The fire-time values, already validated against the stored signature. */
   values: Record<string, unknown>;
   /** This call's index in the ledger — the body's own address frame, so

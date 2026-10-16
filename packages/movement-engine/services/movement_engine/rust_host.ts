@@ -27,7 +27,7 @@ import {
   type Program,
   type ShapeDeclaration,
 } from 'movement-lang';
-import { filesAtType, fileValueOf, isFileValue, type ParkedScopeState } from 'engine-contracts';
+import { filesAtType, fileValueOf, isFileValue, PARK_STATE_VERSION, type CodeByPlace, type ParkedScopeState } from 'engine-contracts';
 import type { Resource } from '../translation_graph/adapter';
 import { withResourceFile } from '../translation_graph/engine/files/resources';
 import { z } from 'zod';
@@ -561,6 +561,19 @@ const ROUTES: Record<string, Route> = {
     if (value === REFUSED) throw new RustShimError('park.callbacks.calls answered calls the eval wire cannot carry as themselves');
     return new Plain(value);
   },
+  /** A library text a park pins, kept once by its content: answered its hash. */
+  async 'park.sources.save'(request, { host }) {
+    const sources = host.park.sources;
+    if (sources === undefined) throw notServed('park.sources.save');
+    return sources.save({ source: string(request.source, 'park.sources.save source'), segmentId: segmentOf(request) });
+  },
+  /** The text a park named by its hash: `{ source }`, or `{}` when the store
+   *  holds none (the engine fails the resume naming the library). */
+  async 'park.sources.load'(request, { host }) {
+    const sources = host.park.sources;
+    if (sources === undefined) throw notServed('park.sources.load');
+    return (await sources.load({ hash: string(request.hash, 'park.sources.load hash'), segmentId: segmentOf(request) })) ?? {};
+  },
   /** The host's instant now, read at the boundary as the TypeScript engine
    *  reads it (run_context.ts): an answer naming no instant fails the run. */
   async 'clock.now'(request, { context }) {
@@ -784,10 +797,10 @@ function notServed(path: string): RustShimError {
 
 /** The parked state's own fields, as the engine writes them; the rest is
  *  the engine's to read back. */
-function isParkedState(value: unknown): value is ParkedScopeState {
+function isParkedState(value: unknown): value is ParkedScopeState<CodeByPlace> {
   if (typeof value !== 'object' || value === null) return false;
   return (
-    Reflect.get(value, 'version') === 1
+    Reflect.get(value, 'version') === PARK_STATE_VERSION
     && typeof Reflect.get(value, 'address') === 'string'
     && Array.isArray(Reflect.get(value, 'scopeChain'))
   );

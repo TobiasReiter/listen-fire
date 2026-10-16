@@ -63,6 +63,12 @@ refusal (`x.k` would read the field). A narrowing a host registers matches a hop
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
+### shrink-park (for the integrator's consolidated version 5 entry)
+
+- **A paused version 5 run resumes on the library text it paused with.** Before, a resumed run read the libraries it imports from the team's saved files as they were at the resume, so an edit while it waited reached the rest of the run (code already parked kept its own copy). Now the pause pins every library the run linked, and the whole resumed run reads those texts. The movement's own text was already pinned to its version. Versions 1–4 are unchanged.
+- **Park state contract version 2** (docs/contracts/park-state.md), written and read only by the Rust engine (language version 5 on). A paused run keeps all of its run state as before; code (a closure, a kept walk, a body-local node declaration, a run-time arm) is named by its place in the pinned program instead of carried as its syntax tree, and a collection op by its span. The TypeScript engine (versions 1–4) writes and reads version 1, and refuses a version 2 state by name. No version 2 state predates this (version 5 is unreleased).
+- **Library texts a pause pins are kept once, by hash.** Self-hosted Postgres gains `automations.park_library_source` (migration `20261016_120000_park_library_source`); `lf` gains a `park_library_source` table in its state file. An embedder may serve the new optional host family `park.sources` (`save`, `load`); without it, a pause carries each library's text itself.
+
 ### Language version 5, Dancing Wren: what breaks
 
 - **A field read off text is refused** (`MOV_TEXT_HAS_NO_FIELDS`, from version 5). `t.Name` where

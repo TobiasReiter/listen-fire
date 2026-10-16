@@ -163,7 +163,7 @@ pub struct Code<T> {
 #[derive(Debug, Clone)]
 pub(crate) enum Boundary {
     Call { site: Rc<Site>, index: usize, next: usize, callee: String },
-    Member { site: Rc<Site>, index: usize, next: usize, member: usize, op: Rc<crate::collection::OpCode> },
+    Member { site: Rc<Site>, index: usize, next: usize, member: usize, op: Rc<movement_parser::ast::CollectionOpExpression> },
     Arm { arm: usize, body: Code<movement_parser::ast::ClosureExpression> },
 }
 

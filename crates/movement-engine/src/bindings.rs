@@ -89,11 +89,13 @@ pub struct ShapeBinding {
     pub declared: crate::program::DeclaredShape,
     pub local: bool,
     pub declared_in: Option<std::rc::Weak<Scope>>,
+    /// A local declaration's place in the program: how a park names it.
+    pub path: Option<String>,
 }
 
 impl ShapeBinding {
     pub fn of(declared: crate::program::DeclaredShape) -> Rc<ShapeBinding> {
-        Rc::new(ShapeBinding { declared, local: false, declared_in: None })
+        Rc::new(ShapeBinding { declared, local: false, declared_in: None, path: None })
     }
 
     /// The body scope a local declaration reads, while it stands.

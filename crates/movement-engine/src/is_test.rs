@@ -190,7 +190,7 @@ impl Run<'_> {
         let schema = serde_json::to_value(schema).map_err(|e| Failure::engine("MOVENG_RUNTIME", e.to_string()))?;
         let file = match &declaration.declared.file {
             crate::program::DeclaringFile::Library(path) => Some(path.as_str()),
-            crate::program::DeclaringFile::Root | crate::program::DeclaringFile::Parked(_) => None,
+            crate::program::DeclaringFile::Root => None,
         };
         let name = declaration.declared.declaration.name.as_str();
         let request = crate::host::check::compatible(&self.input.source, self.version(), file, name, schema, record_type, path);

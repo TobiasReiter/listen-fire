@@ -5,7 +5,7 @@ The movement core speaks six contracts. Each is written down here with an intege
 | contract | document | current | supported | deprecated | on the wire |
 |---|---|---|---|---|---|
 | catalog-snapshot | [catalog-snapshot.md](catalog-snapshot.md) | 1 | 1 | none | `contractVersion` on the snapshot |
-| park-state | [park-state.md](park-state.md) | 1 | 1 | none | `version` on the state |
+| park-state | [park-state.md](park-state.md) | 2 | 1, 2 | none | `version` on the state |
 | host-families | [host-families.md](host-families.md) | 1 | 1 | none | `hostFamiliesVersion` on `segment.open` |
 | adapter-protocol | [adapter-protocol.md](adapter-protocol.md) | 2 | 2 | none | `protocolVersion` on every request and the manifest |
 | language-versions | [language-versions.md](language-versions.md) | 5 | 1, 2, 3, 4, 5 | none | `languageVersion` beside every program |

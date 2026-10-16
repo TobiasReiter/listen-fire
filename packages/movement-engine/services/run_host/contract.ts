@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { RunLeaseLost } from '../movement_engine/errors';
 import { drainRun, wakeAwaits, type StepLeaf, type StepOutcome, type StepRequest } from './drain';
-import { cancelSubtrees, clearIfQuiescent, runCompleteWithout, runParkSink, type RunHost, type RunRecords } from './rules';
+import { cancelSubtrees, clearIfQuiescent, parkSources, runCompleteWithout, runParkSink, type RunHost, type RunRecords } from './rules';
 import type { AwaitKeeper, ClaimedWork, RunHostStore } from './store';
 
 export interface ContractBackend {
@@ -636,6 +636,21 @@ export const runHostContractCases: ContractCase[] = [
       const sink = runParkSink(host, { runId: other, teamId, fence: lapsed.token, records });
       await assert.rejects(sink.commitTimerPark({ address: 's0', state: {}, wakeAt: FUTURE(1) }), RunLeaseLost);
       assert.deepEqual(await store.parks.leaves({ runId: other }), []);
+    },
+  },
+  {
+    name: 'sources: a library text is kept once by its hash, and read back by it; another tenant does not read it',
+    async run({ store, teamId }) {
+      const source = `export function f() {\n  return "${uniqueKey('text')}"\n}`;
+      const sources = parkSources(store.sources, teamId);
+      const first = await sources.save({ source });
+      const again = await sources.save({ source });
+      assert.equal(again.hash, first.hash);
+      assert.match(first.hash, /^sha256:[0-9a-f]{64}$/);
+      assert.deepEqual(await sources.load({ hash: first.hash }), { source });
+      assert.equal(await sources.load({ hash: 'sha256:none' }), null);
+      const elsewhere = parkSources(store.sources, '00000000-0000-0000-0000-00000000beef');
+      assert.equal(await elsewhere.load({ hash: first.hash }), null);
     },
   },
 ];

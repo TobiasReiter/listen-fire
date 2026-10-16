@@ -15,6 +15,7 @@ import type {
   NodeLiteral,
   PathHead,
   ShapeDeclaration,
+  Span,
 } from 'movement-lang';
 
 import type { CallbackParamSpec } from './callback';
@@ -22,7 +23,6 @@ import type { FileRef } from './file_ref';
 import type { SourcePosition } from './position';
 import type { Provenance, ProvenanceOrigin } from './provenance';
 import type { Resource } from './records';
-import type { PARK_STATE_VERSION } from './versions';
 import type { LocalLandingShape, WriteRecord } from './write_record';
 
 // ── Park reasons ────────────────────────────────────────────────────────────
@@ -46,6 +46,62 @@ export function isCorePark(reason: string): reason is CoreParkReason {
 // ── The state ───────────────────────────────────────────────────────────────
 
 /**
+ * How a state carries CODE (a closure's body, a kept walk's head and mapping,
+ * a body-local node declaration, a run-time arm, a collection op), which is
+ * the one thing the two versions write differently. Every other member is the
+ * same in both.
+ */
+export interface ParkedCode {
+  version: number;
+  closure: unknown;
+  shape: unknown;
+  head: unknown;
+  mapping: unknown;
+  op: unknown;
+}
+
+/** Version 1 (the TypeScript engine, language versions 1–4): code rides as
+ *  its syntax tree, which the version pin keeps identical. */
+export interface CodeAsTree extends ParkedCode {
+  version: 1;
+  closure: ClosureExpression;
+  shape: ShapeDeclaration;
+  head: PathHead;
+  mapping: NodeLiteral;
+  op: CollectionOpExpression;
+}
+
+/**
+ * Where a piece of code is in the pinned program: an AST path, a JSON Pointer
+ * through the parser's tree of the file that wrote it — the root program's
+ * (`/statements/2/body/0/value/closure`), or a library's behind its escaped
+ * path (`@lib~1deals/statements/0/body/1`). Through a call nested in an
+ * expression the path reads the call again from its slot's text
+ * (`…/expr/nested/<start>-<end>/value/…`).
+ */
+export type CodePlace = string;
+
+/** Version 2 (the Rust engine, language version 5 on): code is its place in
+ *  the pinned program (a collection op its span among its statement's
+ *  calls), and the libraries ride beside it (`ParkedScopeState.libraries`). */
+export interface CodeByPlace extends ParkedCode {
+  version: 2;
+  closure: CodePlace;
+  shape: CodePlace;
+  head: CodePlace;
+  mapping: CodePlace;
+  op: { span: Span };
+}
+
+/**
+ * A library the run linked, as the park pins it: its text, or the hash the
+ * host's source store (`park.sources`) keeps that text by — once, shared by
+ * every park that names it. A resume reads the run's libraries from these,
+ * never from what the team has saved since.
+ */
+export type ParkedLibrary = { path: string; source: string } | { path: string; hash: string };
+
+/**
  * A serialised instance identity — the construction-free facts the registry
  * re-resolves a live adapter from. The `schema` is deliberately ABSENT: an
  * instance represents a live system, so its schema is RE-FETCHED on rehydrate
@@ -67,23 +123,23 @@ export interface SourceReadDescriptor {
 
 /** A serialised `ExtractEmission` — its `children` Map flattened to a record of
  *  arrays (JSON has no Map). The emission is pure data (the extraction ran). */
-export interface ExtractEmissionDescriptor {
+export interface ExtractEmissionDescriptor<C extends ParkedCode = CodeAsTree> {
   nodeName: string;
   fields: Record<string, unknown>;
   /** `fields`' keys in declaration order — the parked state is jsonb, which
    *  reorders an object's keys. Absent on a park written before it was kept. */
   fieldOrder?: string[];
   /** The fields that hold a file, each as its value descriptor (`FileFields`). */
-  fileFields?: FileFields;
+  fileFields?: FileFields<C>;
   provenance: Record<string, ProvenanceOrigin>;
   origin?: ProvenanceOrigin;
   /** Layer-5 source resources (plain data; a FILE resource's `fileRef` is a
    *  descriptor). */
   resources: ResourceDescriptor[];
-  children: Record<string, ExtractEmissionDescriptor[]>;
+  children: Record<string, ExtractEmissionDescriptor<C>[]>;
 }
 
-export type BindingDescriptor =
+export type BindingDescriptor<C extends ParkedCode = CodeAsTree> =
   | { kind: 'event' }
   | { kind: 'instance'; instance: InstanceIdentityDescriptor }
   | {
@@ -94,7 +150,7 @@ export type BindingDescriptor =
       /** The record before the handle's write (`-[:@old]->`, version 4 on),
        *  itself a handle. A rehearsed write's `old` is the handle itself, which
        *  JSON cannot nest, so it is said instead (`oldIsSelf`). */
-      old?: BindingDescriptor;
+      old?: BindingDescriptor<C>;
       oldIsSelf?: true;
       /** Its number in the park's handle table, written only when the park
        *  reaches the same handle again (a `handleRef` names it): one handle
@@ -110,8 +166,8 @@ export type BindingDescriptor =
    * the other, as it is in a run that never parked.
    */
   | { kind: 'handleRef'; id: number }
-  | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor }
-  | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor }
+  | { kind: 'extractRoot'; emission: ExtractEmissionDescriptor<C> }
+  | { kind: 'extractPosition'; emission: ExtractEmissionDescriptor<C> }
   | {
       kind: 'sourcePosition';
       position: SourcePosition;
@@ -119,10 +175,10 @@ export type BindingDescriptor =
       read?: SourceReadDescriptor;
     }
   | { kind: 'resource'; resource: ResourceDescriptor }
-  | { kind: 'blockMeta'; edges: Record<string, BindingDescriptor[]>; plural?: true }
+  | { kind: 'blockMeta'; edges: Record<string, BindingDescriptor<C>[]>; plural?: true }
   /** Bucket 3 (recursive) — a block's returned landings. */
-  | { kind: 'positions'; landings: BindingDescriptor[] }
-  | { kind: 'tuple'; slots: BindingDescriptor[] }
+  | { kind: 'positions'; landings: BindingDescriptor<C>[] }
+  | { kind: 'tuple'; slots: BindingDescriptor<C>[] }
   /**
    * Bucket 3 (recursive) — a closure. Its BODY rides across as AST, exactly as
    * a deferred walk's head does: the version pin makes it byte-identical on the
@@ -131,17 +187,17 @@ export type BindingDescriptor =
    */
   | {
       kind: 'closure';
-      closure: ClosureExpression;
+      closure: C['closure'];
       /** The flat snapshot a closure written before scopes were numbered
        *  carries. Empty when `scope` is said. */
-      captured: Record<string, BindingDescriptor>;
+      captured: Record<string, BindingDescriptor<C>>;
       /** The name its body calls itself by (`Binding` closure's `self`). */
       self?: string;
       /** The scope it holds by reference — a body closure's: written in
        *  full the first time the park reaches it, named by number after.
        *  Absent = the `captured` snapshot is its scope, as on every park
        *  written before it was said. */
-      scope?: ScopeLink;
+      scope?: ScopeLink<C>;
     }
   | { kind: 'value'; value: unknown; provenance?: Provenance; many?: true }
   /**
@@ -155,7 +211,7 @@ export type BindingDescriptor =
    * Its own descriptor kind rather than a richer `value`: a parked run written
    * before this existed still reads as `value`, and one written after says so.
    */
-  | { kind: 'recordValue'; value: ValueDescriptor; provenance?: Provenance; many?: true }
+  | { kind: 'recordValue'; value: ValueDescriptor<C>; provenance?: Provenance; many?: true }
   /** Bucket 1 — a minted callback is pure data: its id, its link, its fire-time
    *  signature. The CALLS are deliberately NOT here (they arrive after the park
    *  and are read live from the store), and neither is the body (it is code, at
@@ -177,7 +233,7 @@ export type BindingDescriptor =
   /** A node declaration made in a BODY: the re-parsed file scope does not hold
    *  it, so it travels as the declaration — code that is already data, as a
    *  closure's body is. */
-  | { kind: 'localShape'; declaration: ShapeDeclaration }
+  | { kind: 'localShape'; declaration: C['shape'] }
   | { kind: 'movement'; name: string; file?: string }
   /** A closure bound at a file's top level: a declaration of the program,
    *  written by the name it is declared by and found again in the
@@ -191,7 +247,7 @@ export type BindingDescriptor =
       node: string;
       fields: Record<string, unknown>;
       /** The fields that hold a file, each as its value descriptor (`FileFields`). */
-      fileFields?: FileFields;
+      fileFields?: FileFields<C>;
       fieldProvenance: Record<string, Provenance>;
     }
   /** Bucket 3 (recursive) — a synthesised node. Its entry VALUES are already
@@ -208,13 +264,13 @@ export type BindingDescriptor =
        *  map's own keys stand in, in whatever order jsonb returned them. */
       fieldOrder?: string[];
       /** The fields that hold a file, each as its value descriptor (`FileFields`). */
-      fileFields?: FileFields;
+      fileFields?: FileFields<C>;
       fieldProvenance: Record<string, Provenance>;
       /** The edge of a run-built node this node landed on — what lets
        *  `write e { … }` update it in place after the resume. Absent for a
        *  node on no edge, and on a park written before landings kept it. */
       landedOn?: string;
-      edges: Record<string, NodeEdgeDescriptor>;
+      edges: Record<string, NodeEdgeDescriptor<C>>;
     }
   /**
    * A run-built node this park has already written — reached again through a
@@ -225,7 +281,7 @@ export type BindingDescriptor =
    */
   | { kind: 'nodeRef'; id: number }
   /** Bucket 3 (recursive) — a stored, unrun traversal. */
-  | { kind: 'lazyWalk'; walk: DeferredWalkDescriptor }
+  | { kind: 'lazyWalk'; walk: DeferredWalkDescriptor<C> }
   | { kind: 'opaque'; what: string; name: string };
 
 /**
@@ -234,16 +290,16 @@ export type BindingDescriptor =
  * mirrors the value rather than tagging it, so nothing has to recognise a
  * magic key inside somebody's data.
  */
-export type ValueDescriptor =
+export type ValueDescriptor<C extends ParkedCode = CodeAsTree> =
   | { kind: 'data'; value: unknown }
-  | { kind: 'record'; binding: BindingDescriptor }
+  | { kind: 'record'; binding: BindingDescriptor<C> }
   /** A file the engine held: its descriptor, which a resume makes a file
    *  again. A `data` value is data whatever its keys — a park written before
    *  files were said to be holds a file's descriptor as data, and that resumes
    *  as data. */
   | { kind: 'file'; file: FileRef }
-  | { kind: 'list'; of: ValueDescriptor[] }
-  | { kind: 'map'; of: Record<string, ValueDescriptor> };
+  | { kind: 'list'; of: ValueDescriptor<C>[] }
+  | { kind: 'map'; of: Record<string, ValueDescriptor<C>> };
 
 /**
  * A record's fields that hold a file, each as its value descriptor (`file`,
@@ -252,22 +308,22 @@ export type ValueDescriptor =
  * Absent when no field holds a file, and on a park written before files were
  * said to be — whose fields resume as data.
  */
-export type FileFields = Record<string, ValueDescriptor>;
+export type FileFields<C extends ParkedCode = CodeAsTree> = Record<string, ValueDescriptor<C>>;
 
-export type NodeEdgeDescriptor =
+export type NodeEdgeDescriptor<C extends ParkedCode = CodeAsTree> =
   /** `landingShape` rides across because it is what a write AFTER the resume
    *  mints its landing's edges from — dropping it would make the same write
    *  build a landing with no nested edges, which a later `link` could not
    *  append to. */
   | {
       kind: 'landed';
-      landings: BindingDescriptor[];
+      landings: BindingDescriptor<C>[];
       landing?: LocalLandingShape;
       /** The earlier spelling — nested edge names only, `{ founder: {} }` —
        *  which a park written before field order was kept still carries. */
       landingShape?: LegacyLandingShape;
     }
-  | { kind: 'deferred'; walk: DeferredWalkDescriptor };
+  | { kind: 'deferred'; walk: DeferredWalkDescriptor<C> };
 
 export interface LegacyLandingShape {
   [edge: string]: LegacyLandingShape;
@@ -285,10 +341,10 @@ export interface LegacyLandingShape {
  * cache to preserve across a park either). What parks is the RECIPE — the walk
  * and the renaming — never anything either produced.
  */
-export interface DeferredWalkDescriptor {
-  head: PathHead;
-  captured: Record<string, BindingDescriptor>;
-  mapping?: NodeLiteral;
+export interface DeferredWalkDescriptor<C extends ParkedCode = CodeAsTree> {
+  head: C['head'];
+  captured: Record<string, BindingDescriptor<C>>;
+  mapping?: C['mapping'];
 }
 
 /** The `HandleGraph` serialised — its `instance` is an instance identity
@@ -309,8 +365,8 @@ export type ResourceDescriptor = Omit<Resource, 'fileRef'> & {
  * name. A parked leaf's state is one chain of these from the movement body's
  * root scope to the leaf's own — the bindings feeding the parked statement.
  */
-export interface SerializedScope {
-  bindings: Record<string, BindingDescriptor>;
+export interface SerializedScope<C extends ParkedCode = CodeAsTree> {
+  bindings: Record<string, BindingDescriptor<C>>;
   /** Its number, when a closure holds it (`ScopeLink`): every copy of the
    *  scope says it, so the one a resume reads is the one the closure names.
    *  Absent = no closure holds it by number, as on every park written before
@@ -319,7 +375,7 @@ export interface SerializedScope {
   /** With `id`: the scope it is nested in (absent: a file's own scope, or one
    *  nested in none) — what lets a resume rebuild it from this copy when it
    *  reads it nowhere else. */
-  parent?: ScopeLink;
+  parent?: ScopeLink<C>;
 }
 
 /**
@@ -334,20 +390,21 @@ export interface SerializedScope {
  *   - `file`: a file's top-level scope — the root program's, or the library
  *     `file` — found again in the re-parsed program, never written.
  */
-export type ScopeLink =
-  | { kind: 'scope'; id: number; parent?: ScopeLink; bindings: Record<string, BindingDescriptor> }
+export type ScopeLink<C extends ParkedCode = CodeAsTree> =
+  | { kind: 'scope'; id: number; parent?: ScopeLink<C>; bindings: Record<string, BindingDescriptor<C>> }
   | { kind: 'scopeRef'; id: number }
   | { kind: 'file'; file?: string };
 
 /**
- * A parked leaf's whole state, version 1: what a host's park sink stores and
- * hands back. The `scopeChain` is root-first: index 0 is the movement body's
+ * A parked leaf's whole state, in either version (`ParkedCode`): what a
+ * host's park sink stores and hands back. The `scopeChain` is root-first: index 0 is the movement body's
  * own scope, the last entry is the parked statement's immediate scope. Resume
  * rebuilds the scope chain by rehydrating each scope in order.
  */
-export interface ParkedScopeState {
-  /** The park state contract's version (`PARK_STATE_VERSION`). */
-  version: typeof PARK_STATE_VERSION;
+export interface ParkedScopeState<C extends ParkedCode = CodeAsTree> {
+  /** The park state contract's version: 1 for the TypeScript engine's
+   *  states (language versions 1–4), 2 for the Rust engine's (5 on). */
+  version: C['version'];
   /** The parked statement's canonical lexical address — the resume entry
    *  point. */
   address: string;
@@ -374,7 +431,7 @@ export interface ParkedScopeState {
    *  address crosses into a called body or a collection op's member
    *  (`frames`), this is the INNERMOST body's chain — the one the leaf runs in;
    *  each outer body's chain rides on the frame that leaves it. */
-  scopeChain: SerializedScope[];
+  scopeChain: SerializedScope<C>[];
   /**
    * The bodies the address passes into that are not lexically inside the one
    * before — a called movement / function / closure, a collection op's member,
@@ -383,7 +440,7 @@ export interface ParkedScopeState {
    * left the dispatched movement's own body, which is every park written
    * before these steps existed.
    */
-  frames?: SerializedFrame[];
+  frames?: SerializedFrame<C>[];
   /**
    * An engine-initiated suspension (`suspendFlow`): the leaf statement has not
    * finished, and resume RE-RUNS it (`reenter`). Its calls that had already
@@ -391,8 +448,14 @@ export interface ParkedScopeState {
    * making them again.
    */
   suspended?: true;
-  journal?: SerializedCallEvent[];
+  journal?: SerializedCallEvent<C>[];
+  /** Version 2: every library the run linked, so the code the state names is
+   *  read in the text it parked with. Absent: the run linked none. */
+  libraries?: C extends CodeByPlace ? ParkedLibrary[] : never;
 }
+
+/** A state of either version, as a host holds it. */
+export type AnyParkedScopeState = ParkedScopeState<CodeAsTree> | ParkedScopeState<CodeByPlace>;
 
 /**
  * One call a statement made and finished — the k-th, what it handed back, and
@@ -400,10 +463,10 @@ export interface ParkedScopeState {
  * resume replays these instead of making the calls again (their effects, and
  * their spend, already happened).
  */
-export interface SerializedCallEvent {
+export interface SerializedCallEvent<C extends ParkedCode = CodeAsTree> {
   index: number;
   /** Null when the call handed back nothing. */
-  value: BindingDescriptor | null;
+  value: BindingDescriptor<C> | null;
   /** The statement's call count after this call — a replayed call skips the
    *  calls made inside it (its arguments' calls). */
   next: number;
@@ -428,22 +491,22 @@ export interface SerializedCallEvent {
  * are the CALLER's — the chain of the body the call was made in, and the calls
  * its statement had finished.
  */
-export type SerializedFrame =
+export type SerializedFrame<C extends ParkedCode = CodeAsTree> =
   | {
       kind: 'call';
       index: number;
       next: number;
       callee: string;
-      journal: SerializedCallEvent[];
-      scopeChain: SerializedScope[];
+      journal: SerializedCallEvent<C>[];
+      scopeChain: SerializedScope<C>[];
     }
   | {
       kind: 'member';
       index: number;
       next: number;
       member: number;
-      op: CollectionOpExpression;
-      journal: SerializedCallEvent[];
-      scopeChain: SerializedScope[];
+      op: C['op'];
+      journal: SerializedCallEvent<C>[];
+      scopeChain: SerializedScope<C>[];
     }
-  | { kind: 'arm'; arm: number; body: ClosureExpression };
+  | { kind: 'arm'; arm: number; body: C['closure'] };

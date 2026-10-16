@@ -1,8 +1,9 @@
 // The park family of the local host: the run host core's park sink over the
-// SQLite backend (state.ts), the core's await wake, and record bindings.
+// SQLite backend (state.ts), the library texts its parks pin, the core's await
+// wake, and record bindings.
 
 import type { EngineHost } from 'movement-engine/services/movement_engine/host';
-import { queueAwaitWake, runParkSink, type RunHost } from 'movement-engine/services/run_host/rules';
+import { parkSources, queueAwaitWake, runParkSink, type RunHost } from 'movement-engine/services/run_host/rules';
 import type { State } from './state';
 
 export function localParkFamily(input: {
@@ -25,6 +26,8 @@ export function localParkFamily(input: {
         markParked: async () => state.markParked(runId),
       },
     }),
+    // The library texts its parks pin, once each by their hash.
+    sources: parkSources(host.store.sources, teamId),
     wake: ({ adapterType, correlationKey }) => queueAwaitWake(host.store, { adapterType, teamId, correlationKey }),
     bindings: {
       record: async ({ from, to }) => state.recordBinding({ from, to }),

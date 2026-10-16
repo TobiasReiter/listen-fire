@@ -284,6 +284,7 @@ export const HOST_FAMILIES = {
   },
   park: { methods: ['wake'] },
   'park.callbacks': { optional: true, methods: ['mint', 'calls'] },
+  'park.sources': { optional: true, methods: ['save', 'load'] },
   'park.bindings': { methods: ['record', 'findBoundCounterpart', 'delete'] },
   'control.cancel': { methods: ['cancelled', 'cancelledNow'] },
   files: { methods: ['resolveFileText', 'render'] },

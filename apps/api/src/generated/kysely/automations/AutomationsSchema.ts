@@ -25,6 +25,7 @@ import type { default as AuditLogTable } from './AuditLog';
 import type { default as TriggerEventTable } from './TriggerEvent';
 import type { default as RecordBindingTable } from './RecordBinding';
 import type { default as ParkedRunTable } from './ParkedRun';
+import type { default as ParkLibrarySourceTable } from './ParkLibrarySource';
 import type { default as PlatformOwnedTokenTable } from './PlatformOwnedToken';
 import type { default as ConnectTokenTable } from './ConnectToken';
 import type { default as DeployCheckTable } from './DeployCheck';
@@ -81,6 +82,8 @@ export default interface AutomationsSchema {
   record_binding: RecordBindingTable;
 
   parked_run: ParkedRunTable;
+
+  park_library_source: ParkLibrarySourceTable;
 
   platform_owned_token: PlatformOwnedTokenTable;
 

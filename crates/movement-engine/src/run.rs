@@ -488,6 +488,9 @@ pub(crate) struct Run<'a> {
     pub(crate) call_stack: RefCell<Vec<String>>,
     /// The segment's wire with its host: what the host sent, by id.
     pub(crate) wire: env::Wire,
+    /// Each library's text as the host's source store keeps it
+    /// (`park.sources`), by path: the hash a park names it by.
+    pub(crate) stored_sources: RefCell<Vec<(String, String)>>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -510,7 +513,13 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     if let Some(reason) = input.resume.as_ref().and_then(|resume| crate::park::resume_refusal(&resume.state)) {
         return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", format!("this run's parked state does not read ({reason})"))));
     }
-    let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
+    let mut catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
+    // A resumed run reads its libraries as its park pinned them, whatever
+    // the team has saved since: the code it names is in that text.
+    let stored_sources = match &input.resume {
+        Some(resume) => pin_libraries(host, input, &resume.state, &mut catalog).await?,
+        None => Vec::new(),
+    };
     // The event crosses on the segment's wire: its objects are what the
     // host sent first.
     let wire = env::Wire::default();
@@ -589,6 +598,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         deferred_race_frames: RefCell::default(),
         call_stack: RefCell::default(),
         wire,
+        stored_sources: RefCell::new(stored_sources),
     };
     // A deprecated pin runs, and says so on the run's own record (the check
     // answer's version warning; an unsupported pin never got an answer).
@@ -603,6 +613,32 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // the shim logs it.
     let _ = run.hand_over_trace(true).await;
     outcome
+}
+
+/// The libraries a parked state pinned (`libraries`), each its text or the
+/// hash the host's source store keeps it by, set into the catalog in place
+/// of the team's saved files; and the hashes it named, by path.
+async fn pin_libraries(host: &Host, input: &SegmentInput, state: &Json, catalog: &mut CatalogSnapshot) -> Result<Vec<(String, String)>, Stop> {
+    use crate::park::{at, items, text};
+    let unreadable = |what: String| Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("resume: the parked state's libraries do not read ({what})")));
+    let state = env::decode(state).map_err(unreadable)?;
+    let mut stored = Vec::new();
+    for library in items(at(&state, "libraries")) {
+        let path = text(at(&library, "path")).ok_or_else(|| unreadable("a library without its path".into()))?;
+        let source = match (text(at(&library, "source")), text(at(&library, "hash"))) {
+            (Some(source), _) => source.to_string(),
+            (None, Some(hash)) => {
+                let answer = host.request(host::park::load_source(&input.segment_id, hash)).await.map_err(|e| Stop::Thrown(Failure::Host(e)))?;
+                let source = answer.as_ref().and_then(|a| a.get("source")).and_then(Json::as_str);
+                let source = source.ok_or_else(|| unreadable(format!("the source store holds no text for \"{path}\" ({hash})")))?;
+                stored.push((path.to_string(), hash.to_string()));
+                source.to_string()
+            }
+            (None, None) => return Err(unreadable(format!("\"{path}\" has neither its text nor a hash"))),
+        };
+        catalog.files.get_or_insert_with(Default::default).0.insert(path.to_string(), movement_parser::catalog::types::SnapshotFile { source });
+    }
+    Ok(stored)
 }
 
 /// The Rust checker's answer to `check.program` (`SegmentInput::native_check`),
@@ -687,22 +723,45 @@ impl Run<'_> {
         self.input.credential_ids.get(name).cloned()
     }
 
-    /// The program's AST at `path`, as a park writes it (crate::program
-    /// `code_at`).
-    /// A closure's code as a park writes it: the closure's AST; for a
-    /// movement read as a value (language version 5), the closure the
-    /// TypeScript makes of its declaration, `{ params, body, span }`.
-    pub(crate) fn parked_closure_code(&self, path: &str) -> Result<Js, Failure> {
-        let code = self.program_code(path)?;
-        if !matches!(crate::unique::get(&code, "kind"), Js::String(kind) if kind == "movement") {
-            return Ok(code);
+    /// A park's `libraries`, each text the host's source store keeps
+    /// (`park.sources.save`) named by its hash instead; a host without the
+    /// store keeps the text in the state.
+    pub(crate) async fn store_library_sources(&self, state: Js) -> Result<Js, Failure> {
+        let Js::Object(object) = &state else { return Ok(state) };
+        let Some(Js::Array(libraries)) = object.get("libraries") else { return Ok(state) };
+        if !self.serves("park.sources.save") {
+            return Ok(state);
         }
-        Ok(env::object_of(vec![("params", crate::unique::get(&code, "params")), ("body", crate::unique::get(&code, "body")), ("span", crate::unique::get(&code, "span"))]))
+        let mut named = Vec::new();
+        for library in libraries.items().iter() {
+            let (Some(path), Some(source)) = (crate::park::text(crate::park::at(library, "path")), crate::park::text(crate::park::at(library, "source"))) else {
+                return Err(Failure::engine("MOVENG_RUNTIME", "park: a library without its path or text".into()));
+            };
+            let known = self.stored_sources.borrow().iter().find(|(p, _)| p == path).map(|(_, hash)| hash.clone());
+            let hash = match known {
+                Some(hash) => hash,
+                None => {
+                    let answer = self.ask(host::park::save_source(self.segment(), source)).await?;
+                    let hash = answer.as_ref().and_then(|a| a.get("hash")).and_then(Json::as_str).map(String::from).ok_or_else(|| {
+                        Failure::engine("MOVENG_RUNTIME", format!("park.sources.save answered {}, which is not {{ hash: <text> }}", answer.map_or_else(|| "nothing".into(), |a| a.to_string())))
+                    })?;
+                    self.stored_sources.borrow_mut().push((path.to_string(), hash.clone()));
+                    hash
+                }
+            };
+            named.push(env::object_of(vec![("path", Js::str(path)), ("hash", Js::str(hash))]));
+        }
+        let mut stored = JsObject::clone_of(object);
+        stored.set("libraries".to_string(), Js::array(named));
+        Ok(Js::object(stored))
     }
 
-    pub(crate) fn program_code(&self, path: &str) -> Result<Js, Failure> {
-        self.checked.code_at(path)
-            .ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("the program holds no node at {path}, which a park writes")))
+    /// Every library the run linked, by path, with its text as the run
+    /// read it (the catalog's, or the text a resumed park pinned): what a
+    /// park pins beside the code it names.
+    pub(crate) fn library_sources(&self) -> Vec<(String, String)> {
+        let files = self.catalog.files.as_ref();
+        self.checked.files.keys().filter_map(|path| Some((path.clone(), files?.0.get(path)?.source.clone()))).collect()
     }
 
     /// `WriteLedger.append`: a write, link, unlink or delete on the firing
@@ -1017,8 +1076,6 @@ impl Run<'_> {
         match file {
             DeclaringFile::Root => self.file_scope.borrow().clone(),
             DeclaringFile::Library(path) => self.library_scopes.borrow().iter().find(|(p, _)| p == path).map(|(_, scope)| scope.clone()),
-            // Parked code declares no movement.
-            DeclaringFile::Parked(_) => None,
         }
     }
 
@@ -1220,12 +1277,13 @@ impl Run<'_> {
             // as the checker hoists it; a resume, which enters past the
             // statements that already ran, finds it again here, or keeps the
             // one its park rebuilt.
-            for statement in statements {
+            for (index, statement) in statements.iter().enumerate() {
                 if let Statement::Shape(shape) = statement
                     && scope.resolve_own(&shape.name).is_none()
                 {
                     let declared = DeclaredShape { declaration: shape.clone(), file: scope.file_env() };
-                    scope.declare(shape.name.clone(), Binding::Shape(Rc::new(ShapeBinding { declared, local: true, declared_in: Some(Rc::downgrade(scope)) })));
+                    let binding = ShapeBinding { declared, local: true, declared_in: Some(Rc::downgrade(scope)), path: Some(format!("{path}/{index}")) };
+                    scope.declare(shape.name.clone(), Binding::Shape(Rc::new(binding)));
                 }
             }
             let mut replay = Some(replay);
@@ -2096,7 +2154,7 @@ impl Run<'_> {
                 format!("sleep reached at '{address}' with no park sink — the run cannot suspend on a timer without the durable trigger-run substrate"),
             )));
         }
-        let state = crate::park::parked_state(self, &address, presence, scope).map_err(Stop::Thrown)?;
+        let state = crate::park::parked_state(self, &address, presence, scope).await.map_err(Stop::Thrown)?;
         // When to wake: the host's clock plus the sleep, its clock asked
         // before the duration is read, as the TypeScript engine asks it.
         let now = self.clock_now().await.map_err(Stop::Thrown)?;
@@ -3042,9 +3100,11 @@ mod tests {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
         let scope = |binding: Json| json!([{ "bindings": { "x": binding } }]);
         for (state, reason) in [
-            (json!({ "version": 1, "address": "s0", "suspended": false }), "resume_state_suspended"),
-            (json!({ "version": 2, "address": "s0" }), "resume_state_version"),
-            (json!({ "version": 1, "address": "s0", "scopeChain": scope(json!({ "kind": "blockMeta", "edges": [] })) }), "resume_state_kind:blockMeta"),
+            (json!({ "version": 2, "address": "s0", "suspended": false }), "resume_state_suspended"),
+            // Version 1 names its code by its tree: the TypeScript engine's,
+            // for versions 1–4, which this engine never resumes.
+            (json!({ "version": 1, "address": "s0" }), "resume_state_version"),
+            (json!({ "version": 2, "address": "s0", "scopeChain": scope(json!({ "kind": "blockMeta", "edges": [] })) }), "resume_state_kind:blockMeta"),
         ] {
             let input = json!({
                 "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
@@ -3061,7 +3121,7 @@ mod tests {
             }
         }
         let resumable = json!({
-            "version": 1, "address": "s2.b0.s0", "bindingName": null,
+            "version": 2, "address": "s2.b0.s0", "bindingName": null,
             "scopeChain": [{ "bindings": {
                 "none": { "kind": "positions", "landings": [] },
                 "v": { "kind": "value", "value": { "a": 1 }, "provenance": { "origins": [{ "kind": "literal" }] } },
@@ -3080,23 +3140,21 @@ mod tests {
 
     /// A declared shape travels by name and is re-resolved from the program's
     /// file scope wherever the state holds it; one declared in a body travels
-    /// as its declaration's tree (serialize.ts `localShape`), rebuilt from it.
+    /// as its declaration's place in the program.
     #[test]
     fn a_shape_is_resumed_by_name_or_by_its_declaration() {
         let state = |file: Json, body: Json| {
-            json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": file }, { "bindings": body }] })
+            json!({ "version": 2, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": file }, { "bindings": body }] })
         };
         let shape = json!({ "kind": "shape", "name": "Lead" });
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({ "Lead": shape }), json!({})))), None);
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Lead": shape })))), None);
-        // A shape declared in a body rides as its declaration's tree, and one
-        // that does not read as a declaration is refused by name.
-        let declared = crate::program::parse("movement m() {\n  node Tag {\n    label: <text>\n  }\n}", 3).unwrap();
-        let declaration = declared.tree.pointer("/statements/0/body/0").cloned().unwrap();
-        let local = json!({ "kind": "localShape", "declaration": declaration });
+        // A shape declared in a body is named by its place, and one named by
+        // anything else is refused by name.
+        let local = json!({ "kind": "localShape", "declaration": "/statements/0/body/0" });
         assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Tag": local })))), None);
-        let partial = json!({ "kind": "localShape", "declaration": { "kind": "shape", "name": "Tag" } });
-        assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Tag": partial })))), Some("resume_state_code_does_not_read".into()));
+        let tree = json!({ "kind": "localShape", "declaration": { "kind": "shape", "name": "Tag" } });
+        assert_eq!(crate::park::resume_refusal(&wire(state(json!({}), json!({ "Tag": tree })))), Some("resume_state_code_does_not_read".into()));
     }
 
     #[test]
@@ -3105,7 +3163,7 @@ mod tests {
         // handle carries no record, so rehydrating it fails the run rather
         // than resume it wrong.
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
-        let state = json!({ "version": 1, "address": "s0", "bindingName": null, "scopeChain": [
+        let state = json!({ "version": 2, "address": "s0", "bindingName": null, "scopeChain": [
             { "bindings": {} },
             { "bindings": { "co": { "kind": "handle", "targetType": "company" } } },
         ] });

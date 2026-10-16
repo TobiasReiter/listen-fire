@@ -405,7 +405,9 @@ impl Run<'_> {
     ) -> &'m mut SlotPaths {
         by_file.entry(file.clone()).or_insert_with(|| {
             let mut paths = SlotPaths::new();
-            self.checked.with_file(file, |written| register_slots(&written.tree, &crate::program::in_file(file, ""), false, &mut paths));
+            if let Some(written) = self.checked.file(file) {
+                register_slots(&written.tree, &crate::program::in_file(file, ""), false, &mut paths);
+            }
             paths
         })
     }

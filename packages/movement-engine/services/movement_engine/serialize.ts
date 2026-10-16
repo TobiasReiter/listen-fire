@@ -39,6 +39,7 @@
 // / `parkSink` behind seams.
 
 import type {
+  AnyParkedScopeState,
   BindingDescriptor,
   DeferredWalkDescriptor,
   ExtractEmissionDescriptor,
@@ -75,6 +76,7 @@ import { neverAsAny } from '../../lib/utils/types';
 // (`engine-contracts`): `ParkedScopeState`, version 1.
 
 export type {
+  AnyParkedScopeState,
   BindingDescriptor,
   DeferredWalkDescriptor,
   ExtractEmissionDescriptor,
@@ -90,6 +92,17 @@ export type {
   SourceReadDescriptor,
   ValueDescriptor,
 } from 'engine-contracts';
+
+/** The state as this engine reads it: version 1. A version 2 state is the
+ *  Rust engine's (language version 5 on), which names its code by place in a
+ *  way this engine never reads; one reaching here is refused loudly. */
+export function typescriptParkState(state: AnyParkedScopeState): ParkedScopeState {
+  if (state.version === 1) return state;
+  throw new MovementEngineError(
+    'MOVENG_UNSUPPORTED',
+    `the parked state carries park state version ${state.version}, which only the Rust engine reads (the TypeScript engine reads version 1)`,
+  );
+}
 
 function fromLegacyLandingShape(legacy: LegacyLandingShape): LocalLandingShape {
   return {

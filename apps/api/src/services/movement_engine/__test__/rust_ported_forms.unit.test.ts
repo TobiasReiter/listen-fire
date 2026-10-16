@@ -7,14 +7,13 @@
 // parked state resumes.
 
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
-import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
+import { PARK_STATE_VERSION, tenantIdOf, type CodeByPlace, type ParkedScopeState } from 'engine-contracts';
 
 import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
@@ -79,14 +78,14 @@ interface Case {
   judge?: number | null;
   /** The CRM answers no `readRecord`. */
   noReadRecord?: boolean;
-  resume?: ParkedScopeState;
+  resume?: ParkedScopeState<CodeByPlace>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isParkedScopeState(value: unknown): value is ParkedScopeState {
+function isParkedScopeState(value: unknown): value is ParkedScopeState<CodeByPlace> {
   return isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string';
 }
 

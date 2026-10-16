@@ -108,6 +108,19 @@ export interface RunLeaseStore {
   dropRunState(input: { runId: string; fence?: string }): Promise<boolean>;
 }
 
+/**
+ * The library texts parked runs pin (park-state version 2's `libraries`),
+ * each kept once per tenant by its content's hash, however many parks name
+ * it. Never deleted: a row is small, and a park written long ago may still
+ * name it.
+ */
+export interface SourceStore {
+  /** Keep `source` under `hash`; a no-op when it is already kept. */
+  put(input: { teamId: string; hash: string; source: string }): Promise<void>;
+  /** The text kept under `hash`, or null. */
+  get(input: { teamId: string; hash: string }): Promise<string | null>;
+}
+
 /** A claimed work row: what to do, and the claim to finish it under. */
 export interface ClaimedWork {
   id: string;
@@ -138,6 +151,7 @@ export interface RunHostStore {
   correlations: CorrelationStore;
   leases: RunLeaseStore;
   work: WorkQueue;
+  sources: SourceStore;
 }
 
 /**

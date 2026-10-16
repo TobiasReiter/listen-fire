@@ -23,7 +23,7 @@ import {
   type CatalogSnapshot,
   type InstanceSchema,
 } from 'movement-lang';
-import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
+import { SUPPORTED_PARK_STATE_VERSIONS, tenantIdOf, type AnyParkedScopeState } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
@@ -36,7 +36,6 @@ import {
   type ParkSink,
   type RunMovementInput,
 } from 'movement-engine/services/movement_engine/run';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 import {
   resetRustRunStats,
   rustRunStats,
@@ -90,16 +89,19 @@ interface Case {
   files?: Record<string, { source: string }>;
   /** The stored rows a resume reads: parks, joins and branch exports. */
   store?: Store;
-  resume?: { address: string; state: ParkedScopeState };
+  resume?: { address: string; state: AnyParkedScopeState };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isParkedScopeState(value: unknown): value is ParkedScopeState {
+function isParkedScopeState(value: unknown): value is AnyParkedScopeState {
   return (
-    isRecord(value) && value.version === PARK_STATE_VERSION && typeof value.address === 'string'
+    isRecord(value) &&
+    typeof value.version === 'number' &&
+    SUPPORTED_PARK_STATE_VERSIONS.has(value.version) &&
+    typeof value.address === 'string'
   );
 }
 
@@ -108,7 +110,7 @@ function isParkedScopeState(value: unknown): value is ParkedScopeState {
 function makeStore() {
   const parks = new Map<
     string,
-    { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }
+    { kind: 'timer' | 'await' | 'suspension'; state: AnyParkedScopeState }
   >();
   const joins = new Map<
     string,
@@ -116,7 +118,7 @@ function makeStore() {
   >();
   const exports = new Map<string, Map<string, { branchIndex: number; exports: unknown }>>();
   const keep = (kind: 'timer' | 'await' | 'suspension', address: string, state: unknown): void => {
-    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as ParkedScopeState });
+    parks.set(address, { kind, state: JSON.parse(JSON.stringify(state)) as AnyParkedScopeState });
   };
   const sink: ParkSink = {
     async recordJoin(input) {
@@ -182,7 +184,7 @@ function makeStore() {
     });
   const restore = (text: string): void => {
     const saved = JSON.parse(text) as {
-      parks: Array<[string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }]>;
+      parks: Array<[string, { kind: 'timer' | 'await' | 'suspension'; state: AnyParkedScopeState }]>;
       joins: Array<[string, { pending: number; closedBy: string | null; decremented: string[] }]>;
       exports: Array<[string, Array<[string, { branchIndex: number; exports: unknown }]>]>;
     };
@@ -336,7 +338,7 @@ async function parkAndResume(
 const movement = (...body: string[]) =>
   ['movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 
-describe('one write handle two names hold, across a park(B7)', () => {
+describe('one write handle two names hold, across a park (B7)', () => {
   for (const [how, alias] of [
     ['b = a', '  b = a'],
     ['b = write a { … }', '  b = write a { name: "one" }'],
@@ -417,7 +419,7 @@ describe('one write handle two names hold, across a park(B7)', () => {
   });
 });
 
-describe('a library declaration parks with its file and is found there(B11)', () => {
+describe('a library declaration parks with its file and is found there (B11)', () => {
   const files = {
     'lib/leads': {
       source: [
@@ -485,7 +487,7 @@ describe('a library declaration parks with its file and is found there(B11)', ()
   });
 });
 
-describe('a file-level closure holds its file by reference and parks by name(B13)', () => {
+describe('a file-level closure holds its file by reference and parks by name (B13)', () => {
   it('an earlier one calls a later one, parking inside it', async () => {
     const { state, resumed } = await parkAndResume({
       source: [
@@ -539,10 +541,10 @@ describe('a file-level closure holds its file by reference and parks by name(B13
   });
 });
 
-describe('a parked state neither engine can rebuild is refused loudly', () => {
+describe('a parked state the engine cannot rebuild is refused loudly', () => {
   /** Resume `state` at its only park: the run fails with `message`. */
   async function refusedAlike(c: Case, state: string, message: string) {
-    const parsed = JSON.parse(state) as ParkedScopeState;
+    const parsed = JSON.parse(state) as AnyParkedScopeState;
     const rust = await runOn({ ...c, resume: { address: parsed.address, state: parsed } });
     expect(rust.outcome.error).toContain(message);
     expect(rust.stats).toMatchObject({ segments: 1, shimFaults: 0 });
@@ -655,7 +657,7 @@ describe('a reference read before its descriptor, and names like a descriptor me
           `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`,
         ),
       });
-      expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain(
+      expect(JSON.stringify((JSON.parse(state) as AnyParkedScopeState).frames)).toContain(
         '"kind":"handleRef"',
       );
       expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');
@@ -670,7 +672,7 @@ describe('a reference read before its descriptor, and names like a descriptor me
           `  write crm-[:notes]-> { body: CONCAT(y, "/", ${name}.name) }`,
         ),
       });
-      expect(JSON.stringify((JSON.parse(state) as ParkedScopeState).frames)).toContain(
+      expect(JSON.stringify((JSON.parse(state) as AnyParkedScopeState).frames)).toContain(
         '"kind":"nodeRef"',
       );
       expect(JSON.stringify(resumed.calls)).toContain('{"body":"q/one"}');

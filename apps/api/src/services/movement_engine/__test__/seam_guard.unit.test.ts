@@ -58,7 +58,7 @@ import {
   type RunLimitPause,
   type RunMovementInput,
 } from 'movement-engine/services/movement_engine/run';
-import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
+import { makeFakeParkSink, makeMemoryParkSources, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
@@ -1249,7 +1249,7 @@ function roundTripEvent(
 function roundTrip(
   body: string[],
   overrides: TestHostOverrides & { crm?: FakeCrm; inbox?: Adapter } = {},
-  options: { version4?: boolean } = {},
+  options: { version4?: boolean; imports?: string[] } = {},
 ) {
   const crm = overrides.crm ?? fakeCrm();
   const inbox = overrides.inbox ?? pagedInbox().adapter;
@@ -1257,6 +1257,7 @@ function roundTrip(
   const input = () => ({
     source: [
       options.version4 === true ? ROUND_TRIP_PRELUDE_V4 : ROUND_TRIP_PRELUDE,
+      ...(options.imports ?? []),
       `${options.version4 === true ? 'movement' : 'function'} intake(m: <inbox-[:message]->>) {`,
       ...body,
       '}',
@@ -1380,6 +1381,7 @@ describe('the round trip', () => {
       park: {
         sink,
         callbacks: { mint: async () => ({ id: 'cb', url: 'u' }), calls: async () => [] },
+        sources: makeMemoryParkSources().sources,
       },
       trace: [],
     });
@@ -1543,6 +1545,32 @@ describe('every family crosses as JSON', () => {
       'ab first',
     ]);
     expect(parks.cancelled.length).toBeGreaterThan(0);
+  });
+
+  familyRun('park sources: a park pins its library by hash, and its resume reads the text back', async () => {
+    const parks = joiningParkSink();
+    const { sources, texts } = makeMemoryParkSources();
+    const catalog = { ...roundTripCatalog, files: { 'lib/notes': { source: 'export function noted(t: <text>) {\n  return Text.concat(t, "!")\n}' } } };
+    const h = roundTrip(
+      ['  await sleep(1h)', '  write crm-[:notes]-> { title: noted("slept") }'],
+      { park: { sink: parks.sink, sources } },
+      { imports: ['import { noted } from "lib/notes"'] },
+    );
+    // Only the Rust engine pins libraries (park state version 2).
+    const previous = process.env.MOVEMENT_ENGINE;
+    process.env.MOVEMENT_ENGINE = 'rust';
+    try {
+      expect((await h.run({ catalog })).parked).toBe(true);
+      expect([...texts.values()]).toEqual([catalog.files['lib/notes'].source]);
+      for (const [address, park] of [...parks.parks.entries()]) {
+        parks.parks.delete(address);
+        await h.resume(park.state, { catalog });
+      }
+    } finally {
+      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
+      else process.env.MOVEMENT_ENGINE = previous;
+    }
+    expect(h.crm.creates.map((c) => c.fields.title)).toEqual(['slept!']);
   });
 
   familyRun('a limit pause: a priced call refused past the budget suspends the run', async () => {
