@@ -88,3 +88,64 @@ The extraction test now also shows its `lookup(q: "x")` named finding. That is i
 ### Left for Item 2
 
 Package tags. Build them on `bind_args` / `bindPluginArgs`; nothing else is pending from Item 1.
+
+## Item 2 — plugin package tags under language version 5
+
+Commits 31c1cc38..f2b7ea50. Every change is gated on version 5; versions 1–4 are unchanged.
+
+### The mechanism (as briefed)
+
+- A package import binds each member under the dotted local name `web.fetchUrl`.
+- After that, a member call is an ordinary plugin call: Item 1's binding applies unchanged.
+- Rust: `crates/movement-parser/src/catalog/packages.rs` (`package_members`, `member_local`, `expand_package_imports`).
+- TypeScript: `packageMembers`, `memberLocal`, `expandPackageImports` in checker/catalog.ts.
+
+### Per point
+
+1. **Catalog.** Landed.
+   - The plugin spec has an optional `package` field in both languages.
+   - The TS `Catalog` gained an optional `pluginNames()`. The snapshot reader, `mockCatalog` and the harvest recorder provide it.
+   - No real plugin declares a package.
+2. **Exact match.** Landed.
+   - A plugin import whose name equals some spec's `package` is a package import.
+   - Its members are named by `plugin_name(key)`.
+3. **Reach.**
+   - Parser:
+     - a plugin import's local name heads a dotted callee: bound, bare, named and empty calls;
+     - `through [web.member]`;
+     - a nested call read on its own (the fresh parse) reads a dotted head whole.
+   - Checkers: the package import declares the members as Plugin symbols. An expression call `web.x(…)` runs as a call and is hoisted.
+   - Engines:
+     - Rust expands the imports after the check, so the native check sees the source as written;
+     - Rust admission's plugin table is keyed by member, and it stages member calls;
+     - the TS engine binds the members at the import;
+     - both engines run the member call nested in an expression (`runs_as_call`).
+   - All five shapes are verified on both checkers and both engines: bound, bare, nested, in a block closure (also a concise closure), and a through stage.
+4. **Diagnostics.** Landed.
+   - `web.nope(u)` gives `MOV_V5_UNKNOWN_MEMBER`, an existing code: "`web` has no member `nope` (its members: …) — did you mean `…`?".
+   - There is no fix; the did-you-mean is in the message only.
+   - An unknown tag gives `MOV_IMPORT_UNKNOWN` ("Unknown plugin '@lf/nope'").
+   - Under 4 a tag import is an unknown plugin.
+   - A local binding is never a package: `box.fetchUrl()` keeps the "no methods" `FUNCTION_UNKNOWN`.
+5. **Tests.** All pass.
+   - Rust `cargo test -p movement-checker --test v5_packages`: 7/7. With v5_plugins and v5_scope: 8/8 and 10/10.
+   - `cargo test -p movement-parser` and `-p movement-engine`: green.
+   - TS `checker/__test__/v5_packages.unit.test.ts` with v5_plugins and v5_scope: 32/32. This uses the locally rebuilt wasm, which is not committed.
+   - apps/api `v5_plugin_call.unit.test.ts`: 10/10. Its 4 new package cases show the plugin invoked by its catalog key with the named config, on Rust and on TS.
+   - Type-check is clean in movement-lang, movement-engine and apps/api.
+6. **Contract doc.** catalog-snapshot.md documents `package` and the package rule. The positional rule was already added in Item 1.
+
+### Parity
+
+- `crates/movement-checker/parity/run.sh` did not complete in this run.
+- A first attempt without node 22 on PATH skipped every record.
+- The rerun with node 22 was still running at handback.
+- No corpus program uses a package, and both sides read the same snapshot, so 0 extra is expected. **Not verified.** Rerun it, then commit PARITY.md.
+
+### Decisions for Henry
+
+- **The parser knows which names are plugin imports, not which are packages.** It reads `x.m(` as one name only when `x` is a plugin import. A record-scope built-in (`o.UPPER(n)`) is therefore untouched.
+  - Case 1: `x` is a plain plugin import. The call `x.m(…)` then reads as an unknown function `x.m`.
+  - Case 2: a block closure inside a nested call that is parsed later, which has no import list. There a *bare* `web.f(u)` statement does not parse. A bound one (`p = web.f(u)`) works through hoisting.
+- **A package import without an alias** binds `` `@lf/web`.fetchUrl ``, which cannot be written. It is not refused yet.
+- **The Rust engine's expanded program** is used for the run only. Its stored tree JSON keeps the import as written.
