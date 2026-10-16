@@ -272,7 +272,7 @@ describe('a record-shaped signature gets the exact rewrite', () => {
       ]),
       C.LISTEN_PARAM_MISMATCH,
     );
-    expect(msg).toContain('Every listen firing a movement must satisfy its signature');
+    expect(msg).toContain('Every listen firing a function must satisfy its signature');
     expect(msg).not.toContain('the EVENT, not the record it is about');
   });
 });
