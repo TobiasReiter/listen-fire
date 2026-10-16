@@ -11,19 +11,15 @@ const CATALOG: &str = r#"{"adapters":{},"credentials":{},"plugins":{}}"#;
 const BODY: &str = "function m(t: <text>) {\n  u = Text.upper(t)\n  xs = [t, u]\n  y = xs[0]\n  if (y == \"a\" && u != \"b\") {\n    z = sort(xs, (x) => x, { order: \"desc\" })\n  }\n}\n";
 
 #[test]
-fn a_version_5_program_rebuilt_from_its_json_is_read_under_5() {
+fn a_version_5_programs_slots_are_read_under_5() {
     let catalog = CatalogSnapshot::load(CATALOG).unwrap();
-    let parsed = movement_parser::stmt::parse_program(BODY, 5, false).unwrap();
-    // Stored and read back, outside any parse's scope: nothing of the parse
-    // rides along but the text.
-    let rebuilt: Program = serde_json::from_value(serde_json::to_value(&parsed).unwrap()).unwrap();
+    // A slot keeps only its text: the checker reads it again.
+    let parsed: Program = movement_parser::stmt::parse_program(BODY, 5, false).unwrap();
     let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     let errors: Vec<String> =
-        check_program(&rebuilt, &catalog, options).into_iter().filter(|d| d.is_error()).map(|d| format!("{}: {}", d.code, d.message)).collect();
+        check_program(&parsed, &catalog, options).into_iter().filter(|d| d.is_error()).map(|d| format!("{}: {}", d.code, d.message)).collect();
     assert_eq!(errors, Vec::<String>::new());
 }
-
-
 
 /// An index on a call's result (`sort(…)[0]`) is TypeScript's indexing, read
 /// on whatever value the call hands back — also when the call is one the

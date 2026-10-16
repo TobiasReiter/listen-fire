@@ -166,59 +166,33 @@ fn a_rust_error_compares_as_the_movement_parse_error_it_becomes() {
     assert_eq!(as_pinned_error(&rust), pinned);
 }
 
-/// A parked state carries code as its syntax tree (docs/contracts/
-/// park-state.md), and a resume rebuilds the code from that tree: every
-/// corpus program's tree reads back as the AST it was written from, and
-/// writes out as the same tree again — the eager parse's slot trees, which
-/// no park carries, aside.
-#[test]
-fn every_program_tree_reads_back_as_the_ast_it_was_written_from() {
-    let mut read = 0usize;
-    for record in records() {
-        let Ok(program) = movement_parser::stmt::parse_program(&record.source, record.version, false) else { continue };
-        let tree = serde_json::to_value(&program).unwrap();
-        let back: movement_parser::ast::Program =
-            serde_json::from_value(tree.clone()).unwrap_or_else(|e| panic!("v{} {:?}: {e}", record.version, prefix(&record.source, 80)));
-        if back != program {
-            let at = program.statements.iter().zip(&back.statements).find(|(a, b)| a != b);
-            panic!("v{} {:?} reads back as another AST: {at:#?}", record.version, prefix(&record.source, 80));
-        }
-        assert_eq!(serde_json::to_value(&back).unwrap(), tree);
-        read += 1;
-    }
-    assert!(read > 1000, "only {read} programs read back");
-}
-
-/// Every statement kind the corpus holds, at any depth, reads back from its
-/// `kind` tag as the statement it was written from. (`Statement::kind` is
+/// Every statement kind the corpus holds, at any depth, is written with
+/// the `kind` tag `Statement::kind` names it by. (`Statement::kind` is
 /// exhaustive over the variants, so a new one cannot be left unlisted there;
-/// this proves each tag reads back.)
+/// this proves each is written as its tag says.)
 #[test]
-fn a_statement_of_every_kind_reads_back_by_its_tag() {
+fn a_statement_of_every_kind_is_written_with_its_tag() {
     use movement_parser::ast::Statement;
     use std::collections::BTreeSet;
 
-    fn walk(value: &Value, seen: &mut BTreeSet<&'static str>) {
-        match value {
-            Value::Object(map) => {
-                if map.contains_key("kind")
-                    && map.contains_key("span")
-                    && let Ok(statement) = serde_json::from_value::<Statement>(value.clone())
-                {
-                    assert_eq!(serde_json::to_value(&statement).unwrap(), *value);
-                    seen.insert(statement.kind());
-                }
-                map.values().for_each(|v| walk(v, seen));
+    fn statements<'s>(list: &'s [Statement], into: &mut Vec<&'s Statement>) {
+        for statement in list {
+            into.push(statement);
+            if let Statement::Movement(movement) = statement {
+                statements(&movement.body, into);
             }
-            Value::Array(items) => items.iter().for_each(|v| walk(v, seen)),
-            _ => {}
         }
     }
 
     let mut seen = BTreeSet::new();
     for record in records() {
         let Ok(program) = movement_parser::stmt::parse_program(&record.source, record.version, false) else { continue };
-        walk(&serde_json::to_value(&program).unwrap(), &mut seen);
+        let mut typed = Vec::new();
+        statements(&program.statements, &mut typed);
+        for statement in typed {
+            assert_eq!(serde_json::to_value(statement).unwrap()["kind"], json!(statement.kind()));
+            seen.insert(statement.kind());
+        }
     }
     let every = [
         "assign", "await", "block", "call", "collection", "combinator", "delete", "error", "if", "import", "link", "listen",

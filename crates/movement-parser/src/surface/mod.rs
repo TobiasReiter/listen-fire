@@ -20,7 +20,7 @@ mod tests;
 
 use std::cell::RefCell;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::ast::{Loc, Span};
 use crate::tree::At;
@@ -64,7 +64,7 @@ pub struct Edit {
 
 /// A finding placed in the file: what `Program.spelling` carries and both
 /// checkers report as a diagnostic, its fix in `DiagnosticFix`'s shape.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SpellingFinding {
     pub code: String,
     pub message: String,
@@ -84,13 +84,13 @@ pub struct SpellingFinding {
     pub named: Option<NamedCall>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NamedCall {
     pub callee: String,
     pub args: Vec<NamedArg>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NamedArg {
     pub name: String,
     pub text: String,
@@ -98,7 +98,7 @@ pub struct NamedArg {
     pub at: Loc,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Fix {
     pub edits: Vec<SourceEdit>,
     /// Safe to apply without a person reading it: the rewrite provably keeps
@@ -109,7 +109,7 @@ pub struct Fix {
     pub safe: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceEdit {
     pub span: Span,
     pub text: String,
