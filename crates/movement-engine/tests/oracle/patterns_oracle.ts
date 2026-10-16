@@ -31,7 +31,8 @@
 // Written by generate.ts (seed 20261015); deterministic: the scripted host
 // answers from the program alone (a fixed clock, ids in order asked).
 
-import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from '../../../../packages/movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, resolveFileFromSnapshot, type InstanceSchema, type PluginSpec } from '../../../../packages/movement-lang';
+import { spelledFor } from '../../../../packages/movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from '../../../../packages/engine-contracts';
 import type { HostRecording } from '../../../../packages/engine-contracts/conformance';
 import { recordEntry, recordedError } from '../../../../apps/api/src/services/movement_engine/conformance/recorder';
@@ -336,10 +337,39 @@ async function parkedState(program: Program): Promise<unknown> {
   return program.resume(JSON.parse(JSON.stringify(first.state)) as Record<string, unknown>);
 }
 
+/** A program as its version spells it: from version 5 the table's programs
+ *  and their library files, written in the spelling versions 1–4 read,
+ *  respelled by the upgrade tool's own rewrites (the `MOV_V5_*` fixes,
+ *  nothing else). */
+const spelled = new Map<string, string>();
+function respelled(version: number, source: string, catalog: typeof PATTERNS_CATALOG): string {
+  if (version < 5) return source;
+  const key = `${version}\u0000${JSON.stringify(catalog.files ?? null)}\u0000${source}`;
+  let out = spelled.get(key);
+  if (out === undefined) {
+    const resolveFile = resolveFileFromSnapshot(catalog);
+    out = spelledFor(version as 5, source, fromCatalogSnapshot(catalog), resolveFile !== undefined ? { resolveFile } : {});
+    spelled.set(key, out);
+  }
+  return out;
+}
+
+function spelledCatalog(program: Program, catalog: typeof PATTERNS_CATALOG): typeof PATTERNS_CATALOG {
+  const version = program.version ?? 3;
+  if (version < 5 || catalog.files === undefined) return catalog;
+  const files = Object.fromEntries(Object.entries(catalog.files).map(([name, file]) => [name, { ...file, source: respelled(version, file.source, { ...catalog, files: undefined }) }]));
+  return { ...catalog, files };
+}
+
+export function spelledSource(program: Program, catalog: typeof PATTERNS_CATALOG): string {
+  return respelled(program.version ?? 3, sourceOf(program), spelledCatalog(program, catalog));
+}
+
 /** The run's input but its host. */
-function runInput(program: Program, catalog: typeof PATTERNS_CATALOG) {
+function runInput(program: Program, written: typeof PATTERNS_CATALOG) {
+  const catalog = spelledCatalog(program, written);
   return {
-    source: sourceOf(program),
+    source: spelledSource(program, written),
     languageVersion: program.version ?? 3,
     ...(program.movementName !== undefined ? { movementName: program.movementName } : {}),
     event: { pipelineInputId: 'pi-patterns', adapterType: 'email', triggerType: 'webhook' as const, payload: { ...EVENT_PAYLOAD, ...program.payload } },
@@ -615,7 +645,7 @@ export async function probeVersion(version: number, rand: Rand, extra: Array<{ r
     const tsRec = state === undefined ? await recorded('ts', program).catch(() => undefined) : undefined;
     const rec = tsRec === undefined ? 'none' : short(tsRec);
     if (process.env.PROBE_DUMP !== undefined && tsRec !== undefined) for (const q of tsRec.requests) if (new RegExp(process.env.PROBE_DUMP).test(`${q.family}.${q.method}`)) console.log('REQ', reason, `${q.family}.${q.method}`, JSON.stringify(q.args).slice(0, 700));
-    out.push({ reason, src: program.body ?? program.file, routes, reasons, ts: short(ts), rust: short(rust), ...(rec !== short(ts) ? { tsRecorded: rec } : {}) });
+    out.push({ reason, src: program.body ?? program.file, ...(program.version !== undefined && program.version >= 5 ? { v5: spelledSource(program, program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG) } : {}), routes, reasons, ts: short(ts), rust: short(rust), ...(rec !== short(ts) ? { tsRecorded: rec } : {}) });
   }
   return out;
 }
