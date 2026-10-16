@@ -29,10 +29,8 @@ import {
   type WorkNotifier,
 } from '../services/work/drain';
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
-import { flushAdmissionRollupOnPass } from '../services/movement_engine/admission_rollup';
-import { assertEngineChoiceConfigured } from 'movement-engine/services/movement_engine/rust_engine';
+import { assertEngineConfigured } from 'movement-engine/services/movement_engine/rust_engine';
 import { recordRunEnginesOnRows } from '../services/movement_engine/run_engine_record';
-import { setDryRunClock } from 'movement-engine/services/movement_engine/rust_stats';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
@@ -116,13 +114,11 @@ function assertAutomationsDrainConfigured(env: Env = process.env): void {
   workNotifierFor(drainMode(env), env);
 }
 
-/** What one drain pass records, in either mode: the worker pulse, and (at
- *  most once a minute) what the admission dry runs found since the last. */
+/** What one drain pass records, in either mode: the worker pulse. */
 function passRecorder(): (result: DrainResult) => void {
   const recordPass = claimLoopTick();
   return (result) => {
     recordPass?.({ failing: drainPassFailing(result) });
-    flushAdmissionRollupOnPass();
   };
 }
 
@@ -158,9 +154,8 @@ function startDrain(env: Env): StopDrainLoop | undefined {
 async function registerAutomationsWork(): Promise<void> {
   // Every entry that runs movements comes through here (the server's wire,
   // drain:once), so the engine settings are checked here for all of them.
-  assertEngineChoiceConfigured();
+  assertEngineConfigured();
   recordRunEnginesOnRows();
-  setDryRunClock(() => performance.now());
   registerCoreWork();
   registerWorkKinds(adapterWorkKinds());
   registerExposedFileWork();

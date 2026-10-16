@@ -42,7 +42,7 @@ import { assertRunCostCapConfigured } from 'movement-engine/lib/run_spend';
 import { assertExtractionTiersConfigured } from 'movement-engine/services/movement_engine/ai_tiers';
 import { assertMaxCallDepthConfigured } from 'movement-engine/services/movement_engine/call_depth';
 import { assertWriteLockTimeoutConfigured } from 'movement-engine/services/write_locks/write_locks';
-import { assertEngineChoiceConfigured } from 'movement-engine/services/movement_engine/rust_engine';
+import { assertEngineConfigured } from 'movement-engine/services/movement_engine/rust_engine';
 import { assertBrightDataSerpRateConfigured } from './services/web_search';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';
@@ -124,9 +124,9 @@ assertWriteLockTimeoutConfigured();
 // boot and then fail every validate and run at its first parse.
 assertParserReady();
 
-// An engine choice that is neither "rust" nor "ts" would fail every run at its
-// first statement; refuse it here instead. Each run still reads the choice.
-assertEngineChoiceConfigured();
+// A retired engine setting (an engine choice, a fallback, the admission dry
+// run, the version-5 switch) would be silently ignored; refuse it here.
+assertEngineConfigured();
 
 // A drain mode it does not know, or a tick URL without its key (or the
 // reverse), is a deployment that believes its work drains when it does not.

@@ -1,4 +1,4 @@
-// The engine evidence route: what the movement engines did in this process,
+// The engine evidence route: what the Rust engine did in this process,
 // behind the system scope like its sibling admin routes.
 
 import { createServer, type Server } from 'node:http';
@@ -14,7 +14,7 @@ jest.mock('../../../../lib/knowledge/orchestrator', () => ({ runConversationTurn
 jest.mock('../../../../lib/llm_usage', () => ({ LlmUsageContext: jest.fn() }));
 jest.mock('principal', () => ({ currentPrincipal: jest.fn() }));
 
-import { recordDryRunDuration, resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { systemRouter } from '../system';
 
 let server: Server;
@@ -43,7 +43,6 @@ afterAll((done) => {
 beforeEach(() => {
   scopes = ['system'];
   resetRustRunStats();
-  resetRustEvalStats();
 });
 
 describe('GET /system/engine-stats', () => {
@@ -53,55 +52,18 @@ describe('GET /system/engine-stats', () => {
     expect(res.status).toBe(403);
   });
 
-  it("answers this process's counters, the reasons runs were not admitted among them, and its uptime", async () => {
-    rustRunStats.routed = 3;
-    rustRunStats.ranWhole = 2;
-    rustRunStats.notAdmitted = { 'statement:block': 4, limit_paused: 1 };
-    rustRunStats.allReasons = { 'statement:block': 4, block_park: 2, limit_paused: 1 };
-    rustRunStats.declined = { expression_does_not_lower: 1 };
+  it("answers this process's counters, the reasons segments were not run among them, and its uptime", async () => {
+    rustRunStats.segments = 3;
+    rustRunStats.unsupported = { event_does_not_cross: 1 };
+    rustRunStats.endedAtCheck = 2;
     const res = await fetch(`${baseUrl}/system/engine-stats`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      engine: process.env.MOVEMENT_ENGINE === 'rust' ? 'rust' : 'ts',
-      runs: {
-        routed: 3,
-        admitted: 0,
-        ranWhole: 2,
-        shimFaults: 0,
-        notAdmitted: { 'statement:block': 4, limit_paused: 1 },
-        allReasons: { 'statement:block': 4, block_park: 2, limit_paused: 1 },
-        declined: { expression_does_not_lower: 1 },
-        hostCalls: {},
-      },
-      evaluator: { notAdmitted: 0, admitted: 0, answered: 0, fallback: {} },
+    expect(body).toEqual({
+      uptimeSeconds: expect.any(Number),
+      since: expect.any(String),
+      runs: { segments: 3, unsupported: { event_does_not_cross: 1 }, endedAtCheck: 2, failedCheckMidRun: 0, shimFaults: 0, hostCalls: {} },
     });
-    expect(typeof body.uptimeSeconds).toBe('number');
     expect(Number.isNaN(Date.parse(String(body.since)))).toBe(false);
-  });
-
-  it('answers what the admission dry runs found of the runs the TypeScript engine ran, by first and every reason, and by version', async () => {
-    const tally = { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } };
-    const none = { sampled: 0, admitted: 0, first: {}, all: {} };
-    rustRunStats.dryRun = { firings: 4, faults: 0, ...tally, byVersion: { '3': tally }, byRoute: { run: tally, resume: none, settle: none, fire: none } };
-    recordDryRunDuration(1);
-    recordDryRunDuration(4);
-    const res = await fetch(`${baseUrl}/system/engine-stats`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      runs: {
-        dryRun: {
-          firings: 4,
-          sampled: 3,
-          admitted: 1,
-          faults: 0,
-          first: { plugin_call: 2 },
-          all: { plugin_call: 2, 'statement:call': 1 },
-          byVersion: { '3': { sampled: 3, admitted: 1, first: { plugin_call: 2 }, all: { plugin_call: 2, 'statement:call': 1 } } },
-          durationMs: { timed: 2, p50: 4, p95: 4, p99: 4, max: 4 },
-        },
-      },
-    });
   });
 });

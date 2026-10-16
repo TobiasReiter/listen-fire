@@ -14,7 +14,7 @@
 //
 // The second case pauses where the priced call is the identity judge — a
 // `unique by` write whose fuzzy search finds two candidates — with no plugin
-// in the program, so the Rust engine runs it whole (MOVEMENT_ENGINE=rust):
+// in the program, so the Rust engine runs it whole:
 // the same pause row, the same `parked_run` leaf, the same operator resume.
 // The judge's model call is a priced stand-in at the prompt seam.
 
@@ -64,7 +64,6 @@ jest.mock('../../../lib/prompts/execute', () => {
 });
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
-import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import { resumeRun } from '../../interaction/operator';
 import { RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
@@ -435,7 +434,7 @@ describe('a run paused at its cost cap (real DB)', () => {
     await expect(resumeRun({ runId: run.id, teamId })).rejects.toThrow(/not paused at a limit/);
   });
 
-  it('pauses at a judged unique-by write, and the operator resume carries it on — whole in the Rust engine under MOVEMENT_ENGINE=rust', async () => {
+  it('pauses at a judged unique-by write, and the operator resume carries it on', async () => {
     const JUDGED_TWICE = [
       'import { attio, slack } from adapters',
       'import { acme_main, acme_slack } from credentials',
@@ -471,7 +470,6 @@ describe('a run paused at its cost cap (real DB)', () => {
       throw new Error(`test: no fake for '${adapterType}'`);
     });
     mockJudgements = 0;
-    resetRustRunStats();
     const { triggerId } = await seedMovement(teamId, { source: JUDGED_TWICE, firedName: 'judged_twice', name: 'Judged twice' });
 
     await dispatchTriggerByIdEvent({ triggerId, teamId, event: webhookEvent() });
@@ -479,11 +477,6 @@ describe('a run paused at its cost cap (real DB)', () => {
     // refused before it started, and the run paused before that write.
     expect(mockJudgements).toBe(1);
     expect(target.updates).toEqual(['m-1']);
-    if (process.env.MOVEMENT_ENGINE === 'rust') {
-      expect(rustRunStats.ranWhole).toBe(1);
-      expect(rustRunStats.notAdmitted).toEqual({});
-      expect(rustRunStats.declined).toEqual({});
-    }
 
     const run = await getAutomationsQb(['trigger_run'])
       .selectFrom('trigger_run')
@@ -504,13 +497,6 @@ describe('a run paused at its cost cap (real DB)', () => {
     // The second write is judged and lands; the first is not done again.
     expect(mockJudgements).toBe(2);
     expect(target.updates).toEqual(['m-1', 'm-1']);
-    if (process.env.MOVEMENT_ENGINE === 'rust') {
-      // The resume ran whole in the Rust engine too.
-      expect(rustRunStats.ranWhole).toBe(2);
-      expect(rustRunStats.notAdmitted).toEqual({});
-      expect(rustRunStats.declined).toEqual({});
-      expect(rustRunStats.shimFaults).toBe(0);
-    }
     const after = await getAutomationsQb(['trigger_run'])
       .selectFrom('trigger_run')
       .where('id', '=', run.id)

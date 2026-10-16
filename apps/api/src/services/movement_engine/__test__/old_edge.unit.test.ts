@@ -240,38 +240,17 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
 type Crm = ReturnType<typeof makeCrm>;
 
 /**
- * `body` on both engines, each against a fresh CRM: the CRM sees the same
- * calls from both, the runs hand back the same writes (as the contract
- * records them: what `-[:@old]->` lands on is the engine's own), and the
- * Rust engine runs the program whole. Hands back the TypeScript run's CRM.
+ * `body` against a fresh CRM, on the engine its pin runs on (version 4 and
+ * earlier the TypeScript engine, 5 the Rust engine). Hands back the CRM.
  */
 async function run(
   body: string[],
   crmOf: () => Crm,
   options: { languageVersion?: LanguageVersion; head?: string[] } = {},
 ): Promise<Crm> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  const runs: Array<{ crm: Crm; writes: unknown }> = [];
-  try {
-    for (const engine of ['ts', 'rust'] as const) {
-      process.env.MOVEMENT_ENGINE = engine;
-      resetRustRunStats();
-      const crm = crmOf();
-      const result = await runOn(body, crm.adapter, options);
-      runs.push({ crm, writes: JSON.parse(JSON.stringify(result.writes)) });
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, declined: {} });
-    }
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
-  const [ts, rust] = runs as [(typeof runs)[number], (typeof runs)[number]];
-  expect({ creates: rust.crm.creates, updates: rust.crm.updates, writes: rust.writes }).toEqual({
-    creates: ts.crm.creates,
-    updates: ts.crm.updates,
-    writes: ts.writes,
-  });
-  return ts.crm;
+  const crm = crmOf();
+  await runOn(body, crm.adapter, options);
+  return crm;
 }
 
 function runOn(
@@ -339,25 +318,11 @@ const WRITE_ACME = (domain: string) =>
 describe('-[:@old]-> off a write handle', () => {
   it('the result\'s write record has no old member (version 4), though -[:@old]-> read it during the run', async () => {
     const body = [WRITE_ACME('new.example'), note('IF EXISTS(org-[:@old]->) THEN "matched" ELSE "created" END')];
-    // `run` compares both engines' writes; here each engine's result is also
-    // read whole: no `old` on either, and the two serialise byte for byte.
     const crm = await run(body, () => makeCrm([ACME]), { languageVersion: 4 });
     expect(notes(crm)).toEqual(['matched']);
-    const previous = process.env.MOVEMENT_ENGINE;
-    const serialised: string[] = [];
-    try {
-      for (const engine of ['ts', 'rust'] as const) {
-        process.env.MOVEMENT_ENGINE = engine;
-        const result = await runOn(body, makeCrm([ACME]).adapter, { languageVersion: 4 });
-        expect(result.writes.length).toBeGreaterThan(0);
-        for (const w of result.writes) expect(Object.hasOwn(w, 'old')).toBe(false);
-        serialised.push(JSON.stringify(result.writes));
-      }
-    } finally {
-      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-      else process.env.MOVEMENT_ENGINE = previous;
-    }
-    expect(serialised[1]).toBe(serialised[0]);
+    const result = await runOn(body, makeCrm([ACME]).adapter, { languageVersion: 4 });
+    expect(result.writes.length).toBeGreaterThan(0);
+    for (const w of result.writes) expect(Object.hasOwn(w, 'old')).toBe(false);
   });
 
   it('a created record has no @old', async () => {
@@ -576,42 +541,24 @@ describe('a match miss inside a MAP member (version 4)', () => {
 // handle then reads the found record for the fields it did not send. Both
 // engines keep the record the write found, whatever found it, so the Rust
 // engine runs the program whole under either version.
-describe('a handle on a record the adapter matched by its own rule, on both engines', () => {
+describe('a handle on a record the adapter matched by its own rule', () => {
   const BODY = ['  org = write crm-[:companies]-> { name: "Acme Inc." }', note('org.`domain`')];
 
-  async function on(engine: 'ts' | 'rust', languageVersion: LanguageVersion) {
-    const previous = process.env.MOVEMENT_ENGINE;
-    process.env.MOVEMENT_ENGINE = engine;
-    resetRustRunStats();
-    try {
-      const crm = makeCrm([ACME], { findsAlways: true });
-      await runOn(BODY, crm.adapter, { languageVersion });
-      return { notes: notes(crm), stats: JSON.parse(JSON.stringify(rustRunStats)) as typeof rustRunStats };
-    } finally {
-      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-      else process.env.MOVEMENT_ENGINE = previous;
-    }
+  async function on(languageVersion: LanguageVersion) {
+    const crm = makeCrm([ACME], { findsAlways: true });
+    await runOn(BODY, crm.adapter, { languageVersion });
+    return notes(crm);
   }
 
-  it('under version 4 reads the record as found, and runs whole on Rust', async () => {
-    const ts = await on('ts', 4);
-    const rust = await on('rust', 4);
-    expect(ts.notes).toEqual(['old.example']);
-    expect(rust.notes).toEqual(ts.notes);
-    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
-    // The TypeScript engine's admission dry run counts it as one Rust could start.
-    expect(ts.stats.dryRun).toMatchObject({ admitted: 1, first: {} });
+  it('under version 4 reads the record as found', async () => {
+    expect(await on(4)).toEqual(['old.example']);
   });
 
-  it('under version 3 reads only what the write said, and runs whole on Rust', async () => {
-    const ts = await on('ts', 3);
-    const rust = await on('rust', 3);
-    expect(ts.notes).toEqual([null]);
-    expect(rust.notes).toEqual(ts.notes);
-    expect(rust.stats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
+  it('under version 3 reads only what the write said', async () => {
+    expect(await on(3)).toEqual([null]);
   });
 
-  it('parks with the record as found and its @old, one string on both engines, and resumes on either from either', async () => {
+  it('parks with the record as found and its @old, and resumes (version 5, on the Rust engine)', async () => {
     const parkedBody = [
       '  org = write crm-[:companies]-> { name: "Acme Inc." }',
       '  dry = write rehearsed-[:companies]-> { name: "Acme Inc." }',
@@ -622,37 +569,19 @@ describe('a handle on a record the adapter matched by its own rule, on both engi
       note('IF FIRST(dry-[:@old]->) == dry THEN "rehearsed" ELSE "live" END'),
     ];
     const head = ['  rehearsed = attio(credentials: acme_main, dry_run: true)'];
-    const previous = process.env.MOVEMENT_ENGINE;
-    try {
-      const parkedBy = async (engine: 'ts' | 'rust') => {
-        process.env.MOVEMENT_ENGINE = engine;
-        resetRustRunStats();
-        const park = makeFakeParkSink();
-        await runOn(parkedBody, makeCrm([ACME], { findsAlways: true }).adapter, { head, park: park.sink });
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
-        expect(park.timerParks).toHaveLength(1);
-        return JSON.stringify(park.timerParks[0]?.state);
-      };
-      const [fromTs, fromRust] = [await parkedBy('ts'), await parkedBy('rust')];
-      // Key for key, in order: the handle's record as found, and `old` /
-      // `oldIsSelf` as serialize.ts writes them.
-      expect(fromRust).toBe(fromTs);
-      expect(fromTs).toContain('"foundData":{"name":"Acme Incorporated","domain":"old.example"}');
-      expect(fromTs).toContain('"snapshot":true');
-      expect(fromTs).toContain('"oldIsSelf":true');
-      for (const state of [fromTs, fromRust]) {
-        for (const engine of ['ts', 'rust'] as const) {
-          process.env.MOVEMENT_ENGINE = engine;
-          resetRustRunStats();
-          const crm = makeCrm([ACME], { findsAlways: true });
-          await runOn(parkedBody, crm.adapter, { head, resume: JSON.parse(state) as ParkedScopeState });
-          if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {} });
-          expect(notes(crm)).toEqual(['old.example', 'matched', 'old.example', 'rehearsed']);
-        }
-      }
-    } finally {
-      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-      else process.env.MOVEMENT_ENGINE = previous;
-    }
+    resetRustRunStats();
+    const park = makeFakeParkSink();
+    await runOn(parkedBody, makeCrm([ACME], { findsAlways: true }).adapter, { head, park: park.sink });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {} });
+    expect(park.timerParks).toHaveLength(1);
+    const state = JSON.stringify(park.timerParks[0]?.state);
+    // The handle's record as found, and `old` / `oldIsSelf`, key for key.
+    expect(state).toContain('"foundData":{"name":"Acme Incorporated","domain":"old.example"}');
+    expect(state).toContain('"snapshot":true');
+    expect(state).toContain('"oldIsSelf":true');
+    const crm = makeCrm([ACME], { findsAlways: true });
+    await runOn(parkedBody, crm.adapter, { head, resume: JSON.parse(state) as ParkedScopeState });
+    expect(rustRunStats).toMatchObject({ segments: 2, unsupported: {} });
+    expect(notes(crm)).toEqual(['old.example', 'matched', 'old.example', 'rehearsed']);
   });
 });

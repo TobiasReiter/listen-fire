@@ -24,7 +24,7 @@ function segmentStart(source: string, segmentId = 'g1', catalog: object = EMPTY_
   return JSON.stringify({
     entry: 'segment',
     source,
-    languageVersion: 3,
+    languageVersion: 5,
     event: ['o', 0, [['pipelineInputId', 'p'], ['adapterType', 'manual'], ['triggerType', 'webhook'], ['payload', ['o', 1, []]]]],
     segmentId,
     serves: [],
@@ -38,7 +38,7 @@ describe('the Rust engine artifact', () => {
     const segment = openEngineSegment();
     expect(segment.start(segmentStart(SOURCE))).toEqual({
       ok: true,
-      json: { pending: [{ id: 1, family: 'check', method: 'program', args: { source: SOURCE, languageVersion: 3 } }] },
+      json: { pending: [{ id: 1, family: 'check', method: 'program', args: { source: SOURCE, languageVersion: 5 } }] },
     });
     // A host error answers the request; the run ends naming it by its ref.
     expect(segment.answer(1, JSON.stringify({ error: { message: 'no checker', ref: 0 } }))).toEqual({
@@ -91,7 +91,7 @@ describe('the Rust engine artifact', () => {
   it('is driven by the shim against a host: the check is the TypeScript checker, and its failure ends the run', async () => {
     // Parses, and fails the check: no adapter `nope` in the snapshot.
     const host = makeTestHost();
-    const context = await openRunContext({ host, teamId: tenantIdOf('team-1'), languageVersion: 3, spend: {} });
+    const context = await openRunContext({ host, teamId: tenantIdOf('team-1'), languageVersion: 5, spend: {} });
     await expect(
       driveEngine(openWasmEngine(), JSON.parse(segmentStart('import { nope } from adapters', context.segmentId)), {
         host,

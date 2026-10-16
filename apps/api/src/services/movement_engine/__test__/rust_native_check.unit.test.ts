@@ -73,9 +73,7 @@ const email: Adapter = {
 
 const PRELUDE = ['import { email } from adapters', 'import { dealflow_inbox } from credentials', 'inbox = email(credentials: dealflow_inbox)', ''].join('\n');
 
-async function run(setting: 'by-version' | 'rust', languageVersion: LanguageVersion, body: string) {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = setting;
+async function run(languageVersion: LanguageVersion, body: string) {
   asked.length = 0;
   checkers.rust = 0;
   checkers.typescript = 0;
@@ -92,37 +90,27 @@ async function run(setting: 'by-version' | 'rust', languageVersion: LanguageVers
     return { result };
   } catch (error) {
     return { error };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
 }
 
 describe('the check a run is held to', () => {
-  it('is the Rust checker for a version 5 run under by-version: the engine checks natively and never asks its host', async () => {
-    const outcome = await run('by-version', 5, '  x = 1\n  return x');
+  it('is the Rust checker for a version 5 run: the engine checks natively and never asks its host', async () => {
+    const outcome = await run(5, '  x = 1\n  return x');
     expect(outcome).toEqual({ result: expect.objectContaining({ movementName: 'm', writes: [] }) });
     expect(asked).not.toContain('check.program');
     expect(checkers).toEqual({ rust: 1, typescript: 0 });
   });
 
-  it('is the Rust checker for any version forced onto the Rust engine', async () => {
-    const outcome = await run('rust', 3, '  x = 1\n  return x');
-    expect(outcome).toEqual({ result: expect.objectContaining({ movementName: 'm', writes: [] }) });
-    expect(asked).not.toContain('check.program');
-    expect(checkers).toEqual({ rust: 1, typescript: 0 });
-  });
-
-  it('is the TypeScript checker for a version 4 run under by-version, which runs on the TypeScript engine', async () => {
-    const outcome = await run('by-version', 4, '  x = 1\n  return x');
+  it('is the TypeScript checker for a version 4 run, which runs on the TypeScript engine', async () => {
+    const outcome = await run(4, '  x = 1\n  return x');
     expect(outcome).toEqual({ result: expect.objectContaining({ movementName: 'm', writes: [] }) });
     expect(checkers).toEqual({ rust: 0, typescript: 1 });
-    // No Rust segment at all: version 4 has no admission dry run either.
+    // No Rust segment at all.
     expect(asked).toEqual([]);
   });
 
   it('refuses a version 5 program by the Rust checker before the engine starts', async () => {
-    const outcome = await run('by-version', 5, '  return nowhere');
+    const outcome = await run(5, '  return nowhere');
     const cause = runFailureCause(outcome.error);
     expect(cause).toBeInstanceOf(MovementEngineError);
     expect(cause).toMatchObject({ code: 'MOVENG_CHECK', message: expect.stringContaining('MOV_NAME_UNRESOLVED') });

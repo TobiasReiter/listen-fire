@@ -14,8 +14,7 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { engineChoice, engineFallback, v5OnTypeScript } from 'movement-engine/services/movement_engine/rust_engine';
-import { dryRunDurationSummary, rustEvalStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import {
   requireSystemAction,
   requireSystemCaller,
@@ -255,26 +254,17 @@ const drainAutomationsHandler: RequestHandler = async (req, res) => {
   return res.status(200).json(result);
 };
 
-/** What the movement engines did in THIS process since it started: which
- *  engine setting `MOVEMENT_ENGINE` names (and the emergency switch,
- *  `MOVEMENT_ENGINE_V5_ON_TS`), and the Rust engine's counters (why each
- *  run it did not run went to the TypeScript engine, by reason; what it ran,
- *  declined and asked its host; what the evaluator switch answered; and, in
- *  `runs.dryRun`, what its admission would have refused each run the
- *  TypeScript engine ran for, by first and every reason and by version). The
- *  counters are per process and start at zero with it, so each instance
- *  answers for itself, over its uptime. */
+/** What the Rust engine did in THIS process since it started: the segments
+ *  it ran, those it would not run (by reason: each a checker or engine bug),
+ *  those that ended at their check, its shim's faults, and what it asked its
+ *  host. The counters are per process and start at zero with it, so each
+ *  instance answers for itself, over its uptime. */
 const engineStatsHandler: RequestHandler = (_req, res) => {
   const uptimeSeconds = Math.round(process.uptime());
   return res.status(200).json({
-    engine: engineChoice(),
-    fallback: engineFallback(),
-    v5OnTs: v5OnTypeScript(),
     uptimeSeconds,
     since: new Date(Date.now() - uptimeSeconds * 1000).toISOString(),
-    // The recent dry runs' cost rides with their counts.
-    runs: { ...rustRunStats, dryRun: { ...rustRunStats.dryRun, durationMs: dryRunDurationSummary() } },
-    evaluator: rustEvalStats,
+    runs: rustRunStats,
   });
 };
 

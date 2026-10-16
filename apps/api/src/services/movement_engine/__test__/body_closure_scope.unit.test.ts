@@ -1249,15 +1249,28 @@ describe('both engines: a library closure two levels deep is read in the library
       }
     }, 60_000);
   }
+  it('v3: the chain and its one-level twin write the record as the TypeScript engine always wrote it', async () => {
+    for (const [source, files] of [
+      [twoCalls, chain('b')],
+      [oneCall, oneLevel('b')],
+    ] as const) {
+      const result = await runMovement(inputOn(source, makeParkSink(), makeKgFake(), { version: 3, files }));
+      expect(result.writes.map((w) => w.writtenValues)).toEqual([{ payload: { r: { kind: 'event' } } }]);
+    }
+  }, 60_000);
+  // A reachability gap (the Rust engine has no admission since 2026-10-16):
+  // with the event undescribed the checker is silent, and the Rust engine
+  // writes the record's internal form into the json field. The checker
+  // should refuse it at save time, as it does where the event is described.
+  it.failing('v5: the chain and its one-level twin end at the check even with the event undescribed', async () => {
+    for (const [source, files] of [
+      [twoCalls, chain('b')],
+      [oneCall, oneLevel('b')],
+    ] as const) {
+      await expect(runMovement(inputOn(source, makeParkSink(), makeKgFake(), { version: 5, files }))).rejects.toThrow('MOVENG_CHECK');
+    }
+  }, 60_000);
   for (const version of [3, 5]) {
-    it(`v${version}: the chain and its one-level twin are both refused by name when the closure returns the record`, async () => {
-      for (const [source, files] of [
-        [twoCalls, chain('b')],
-        [oneCall, oneLevel('b')],
-      ] as const) {
-        await expect(onEngine('rust', () => runMovement(inputOn(source, makeParkSink(), makeKgFake(), { version, files })))).rejects.toThrow('write_field_record');
-      }
-    }, 60_000);
     it(`v${version}: the chain and its one-level twin are both admitted, and write what the TypeScript does, when the closure returns plain data`, async () => {
       for (const [source, files, payload] of [
         [twoCalls, chain('c + a'), { r: 3 }],

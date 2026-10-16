@@ -19,10 +19,7 @@ import { resetRustRunStats, rustRunStats } from 'movement-engine/services/moveme
 import { WireOut } from 'movement-engine/services/movement_engine/rust_wire';
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import {
-  assertEngineChoiceConfigured,
   driveEngine,
-  endedUnreproduced,
-  engineChoice,
   readRunResult,
   runSegmentInRust,
   EVENT_DOES_NOT_CROSS,
@@ -529,14 +526,10 @@ describe('the Rust engine shim', () => {
     expect(readRunResult(reported, { context: charged, hostErrors: [] })).toMatchObject({ ran: { movementName: 'm' } });
     expect(() => readRunResult(reported, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
-    expect(readRunResult({ refused: 'statement:block', reasons: ['statement:block', 'block_park'] }, { context: context(), hostErrors: [] })).toEqual({
-      refused: 'statement:block',
-      reasons: ['statement:block', 'block_park'],
+    expect(readRunResult({ refused: 'language_version_runs_on_typescript' }, { context: context(), hostErrors: [] })).toEqual({
+      refused: 'language_version_runs_on_typescript',
     });
-    // A refusal names every reason, its own first.
-    for (const refusal of [{ refused: 'statement:block' }, { refused: 'statement:block', reasons: ['block_park', 'statement:block'] }, { refused: 'x', reasons: ['x', 1] }]) {
-      expect(() => readRunResult(refusal, { context: context(), hostErrors: [] })).toThrow(RustShimError);
-    }
+    expect(() => readRunResult({ refused: 1 }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     const original = new TypeError('the adapter broke');
     expect(() => readRunResult({ thrown: { hostError: 0 } }, { context: context(), hostErrors: [original] })).toThrow(original);
     expect(() =>
@@ -579,16 +572,6 @@ describe('the Rust engine shim', () => {
     expect(() => readRunResult({ result: { movementName: 'm', writes: ['l', 0, [1]] } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(() => readRunResult({ parked: true }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
   });
-
-  it("reads a failure's unreproduced marker: this engine's own refusal, apart from a mirrored MOVENG_UNSUPPORTED", () => {
-    const error = { class: 'MovementEngineError', code: 'MOVENG_UNSUPPORTED', message: 'a bound write is not supported by the movement engine yet' };
-    expect(endedUnreproduced({ thrown: error })).toBe(false);
-    expect(endedUnreproduced({ thrown: error, unreproduced: true })).toBe(true);
-    expect(endedUnreproduced({ failed: { error, result: { movementName: 'm' } }, unreproduced: true })).toBe(true);
-    // Only a failure carries it, and only as true.
-    expect(() => endedUnreproduced({ result: { movementName: 'm' }, unreproduced: true })).toThrow(RustShimError);
-    expect(() => endedUnreproduced({ thrown: error, unreproduced: 1 })).toThrow(RustShimError);
-  });
 });
 
 describe('the check host call', () => {
@@ -616,7 +599,7 @@ describe('the check host call', () => {
 });
 
 describe('the segment input', () => {
-  it('is read before the engine starts: an event that cannot cross is not admitted, and starts nothing (a source holding a lone half crosses)', async () => {
+  it('is read before the engine starts: an event that cannot cross fails the run, and starts nothing (a source holding a lone half crosses)', async () => {
     const asked: unknown[] = [];
     const served = await hostWith({ adapters: { resolve: (r) => (asked.push(r), fakeAdapter()) } });
     const crossing = (input: { source: string; event: unknown }) =>
@@ -624,18 +607,21 @@ describe('the segment input', () => {
     resetRustRunStats();
     for (const input of [crossing({ source: '', event: { payload: { occurredAt: new Map([['at', 0]]) } } })]) {
       const { engine, started, finished } = scriptedEngine(() => ({ done: {} }));
-      await expect(runSegmentInRust({ input, context: served.context }, engine)).resolves.toEqual({ declined: EVENT_DOES_NOT_CROSS });
+      await expect(runSegmentInRust({ input, context: served.context }, engine)).rejects.toMatchObject({
+        code: 'MOVENG_UNSUPPORTED',
+        details: { reason: EVENT_DOES_NOT_CROSS },
+      });
       expect(started).toEqual([]);
       expect(finished()).toBe(false);
     }
-    expect(rustRunStats).toMatchObject({ routed: 0, ranWhole: 0, notAdmitted: { [EVENT_DOES_NOT_CROSS]: 1 }, declined: {}, hostCalls: {} });
+    expect(rustRunStats).toMatchObject({ segments: 0, unsupported: { [EVENT_DOES_NOT_CROSS]: 1 }, hostCalls: {} });
     expect(asked).toEqual([]);
     // The source crosses: its lone half is read as the TypeScript's parser is
     // handed it (rust_wire_round_trip.unit.test.ts runs it on both engines).
     const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
     resetRustRunStats();
     await runSegmentInRust({ input: crossing({ source: 'x = "\ud800"', event: { payload: {} } }), context: served.context }, engine).catch(() => undefined);
-    expect(rustRunStats.notAdmitted).toEqual({});
+    expect(rustRunStats.unsupported).toEqual({});
     expect(started).toHaveLength(1);
   });
 
@@ -645,7 +631,7 @@ describe('the segment input', () => {
     const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
     resetRustRunStats();
     await runSegmentInRust({ input, context: served.context }, engine).catch(() => undefined);
-    expect(rustRunStats.notAdmitted).toEqual({});
+    expect(rustRunStats.unsupported).toEqual({});
     // Data, as every dict is: no record tag anywhere in the input.
     expect(JSON.stringify(started)).toContain('["meta",["o",2,[["kind","event"]]]]');
     expect(JSON.stringify(started)).toContain('"kind","toString"');
@@ -653,62 +639,49 @@ describe('the segment input', () => {
   });
 });
 
-describe('a run that ends naming a construct (MOVENG_UNSUPPORTED)', () => {
-  const error = { class: 'MovementEngineError', code: 'MOVENG_UNSUPPORTED', message: 'a bound write is not supported by the movement engine yet' };
-
+describe('a segment the Rust engine will not run', () => {
   it.each([
-    ['mirrored: the TypeScript engine ends it so too', { thrown: error }, { mirroredFailure: 1, unreproduced: 0 }],
-    ["unreproduced: this engine's own refusal, a divergence", { thrown: error, unreproduced: true }, { mirroredFailure: 0, unreproduced: 1 }],
-  ])('is counted %s', async (_how, done, counted) => {
+    ['refuses at its entry', { refused: 'language_version_runs_on_typescript' }],
+    ['declines after its check', { declined: 'test_decline' }],
+  ])('fails the run when the engine %s, counted by its reason, with no other engine to run it', async (_how, done) => {
     const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
     const input = { source: '', event: { payload: {} }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
     const { engine } = scriptedEngine(() => ({ done }));
     resetRustRunStats();
+    const reason = Object.values(done)[0];
+    await expect(runSegmentInRust({ input, context: served.context }, engine)).rejects.toMatchObject({ code: 'MOVENG_UNSUPPORTED', details: { reason } });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: { [reason ?? '']: 1 }, shimFaults: 0 });
+  });
+
+  it('counts a run that ends in its own MOVENG_UNSUPPORTED mid-run as a segment it ran', async () => {
+    const error = { class: 'MovementEngineError', code: 'MOVENG_UNSUPPORTED', message: 'a bound write is not supported by the movement engine yet' };
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const input = { source: '', event: { payload: {} }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
+    const { engine } = scriptedEngine(() => ({ done: { thrown: error } }));
+    resetRustRunStats();
     await expect(runSegmentInRust({ input, context: served.context }, engine)).rejects.toThrow('MOVENG_UNSUPPORTED');
-    expect(rustRunStats).toMatchObject({ routed: 1, admitted: 1, ranWhole: 0, shimFaults: 0, ...counted });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
   });
 });
 
-describe('choosing the engine', () => {
-  it('reads MOVEMENT_ENGINE: unset or by-version follows the pin, ts and rust force one engine, anything else refused', () => {
-    expect(engineChoice({})).toBe('by-version');
-    expect(engineChoice({ MOVEMENT_ENGINE: 'by-version' })).toBe('by-version');
-    expect(engineChoice({ MOVEMENT_ENGINE: 'ts' })).toBe('ts');
-    expect(engineChoice({ MOVEMENT_ENGINE: 'rust' })).toBe('rust');
-    expect(() => engineChoice({ MOVEMENT_ENGINE: 'Rust' })).toThrow('MOVEMENT_ENGINE is "Rust"');
+describe('a host without the clock and ids', () => {
+  it.each([4, 5])('is refused before any segment opens (version %d)', async (languageVersion) => {
+    resetRustRunStats();
+    const { clock: _clock, ids: _ids, ...host } = makeTestHost();
+    const run = runMovement({
+      source: 'function m() {\n  x = 1\n}',
+      languageVersion,
+      event: { pipelineInputId: 'p', adapterType: 'manual', triggerType: 'webhook', payload: {} },
+      teamId: TEAM,
+      catalog: EMPTY_CATALOG_SNAPSHOT,
+      // A host from before the clock and ids, as a remote embedder's may be.
+      host: host as unknown as RunMovementInput['host'],
+    });
+    await expect(run).rejects.toThrow(
+      'the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened',
+    );
+    expect(rustRunStats.segments).toBe(0);
   });
-
-  it('refuses, under rust as under ts, a host without the clock and ids, before any segment opens', async () => {
-    const previous = process.env.MOVEMENT_ENGINE;
-    try {
-      for (const engine of ['ts', 'rust']) {
-        process.env.MOVEMENT_ENGINE = engine;
-        resetRustRunStats();
-        const { clock: _clock, ids: _ids, ...host } = makeTestHost();
-        const run = runMovement({
-          source: 'function m() {\n  x = 1\n}',
-          event: { pipelineInputId: 'p', adapterType: 'manual', triggerType: 'webhook', payload: {} },
-          teamId: TEAM,
-          catalog: EMPTY_CATALOG_SNAPSHOT,
-          // A host from before the clock and ids, as a remote embedder's may be.
-          host: host as unknown as RunMovementInput['host'],
-        });
-        await expect(run).rejects.toThrow(
-          'the host does not serve clock.now, ids.mint, which host families version 1 requires (the clock, ids families); no segment was opened',
-        );
-        expect(rustRunStats.routed).toBe(0);
-      }
-    } finally {
-      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-      else process.env.MOVEMENT_ENGINE = previous;
-    }
-  });
-
-  it('refuses a bad MOVEMENT_ENGINE at boot', () => {
-    expect(() => assertEngineChoiceConfigured({ MOVEMENT_ENGINE: 'wasm' })).toThrow('MOVEMENT_ENGINE is "wasm"');
-    expect(() => assertEngineChoiceConfigured({})).not.toThrow();
-  });
-
 });
 
 describe("a segment's wire", () => {

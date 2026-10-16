@@ -44,36 +44,36 @@ describe('a run row records its engine', () => {
     expect(await engineOf(runId)).toEqual({ engine: null, engine_reason: null });
   });
 
-  it('keeps the engine and the first reason, and the latest segment overwrites an earlier one', async () => {
+  it('keeps the engine, the reason left empty, and the latest segment overwrites an earlier one', async () => {
     const runId = await seedRun();
-    recordRunEngine({ runId, engine: 'ts', reason: 'expression_closure' });
+    recordRunEngine({ runId, engine: 'ts' });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'ts', engine_reason: 'expression_closure' });
-    recordRunEngine({ runId, engine: 'rust', reason: 'admitted' });
+    expect(await engineOf(runId)).toEqual({ engine: 'ts', engine_reason: null });
+    recordRunEngine({ runId, engine: 'rust' });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: 'admitted' });
+    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: null });
   });
 
   it('writes in the order the decisions were made', async () => {
     const runId = await seedRun();
-    for (const reason of ['a', 'b', 'c', 'last']) recordRunEngine({ runId, engine: 'ts', reason });
+    for (const engine of ['ts', 'rust', 'ts', 'rust'] as const) recordRunEngine({ runId, engine });
     await settleRunEngineRecords();
-    expect(await engineOf(runId)).toEqual({ engine: 'ts', engine_reason: 'last' });
+    expect(await engineOf(runId)).toEqual({ engine: 'rust', engine_reason: null });
   });
 
   it('ignores a run id that is not a trigger run, and a run with no row', async () => {
-    recordRunEngine({ runId: 'dev-script-run', engine: 'ts', reason: null });
-    recordRunEngine({ runId: randomUUID(), engine: 'ts', reason: null });
+    recordRunEngine({ runId: 'dev-script-run', engine: 'ts' });
+    recordRunEngine({ runId: randomUUID(), engine: 'ts' });
     await expect(settleRunEngineRecords()).resolves.toBeUndefined();
   });
 
   it('is shown by the operator run views', async () => {
     const runId = await seedRun();
-    recordRunEngine({ runId, engine: 'ts', reason: 'plugin_call' });
+    recordRunEngine({ runId, engine: 'ts' });
     await settleRunEngineRecords();
-    expect(await getTgRun({ teamId: TEAM_ID, runId })).toMatchObject({ engine: 'ts', engineReason: 'plugin_call' });
+    expect(await getTgRun({ teamId: TEAM_ID, runId })).toMatchObject({ engine: 'ts', engineReason: null });
     expect(await listTgRuns({ teamId: TEAM_ID })).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: runId, engine: 'ts', engineReason: 'plugin_call' })]),
+      expect.arrayContaining([expect.objectContaining({ id: runId, engine: 'ts', engineReason: null })]),
     );
   });
 });

@@ -5,7 +5,6 @@ import { TRPCError } from '@trpc/server';
 import type { OpsEventId } from '../../../generated/kysely/public/OpsEvent';
 
 import { currentContext } from '../../../services/context';
-import { notAdmissionRollup } from '../../../services/movement_engine/admission_rollup';
 import { trpc } from '../trpc';
 import { getQb } from '../../../lib/kysely';
 import { anthropicChatStructured } from '../../../lib/anthropic';
@@ -107,7 +106,6 @@ const opsRouter = (procedure: typeof trpc.procedure) => {
           sql<number>`(count(*) filter (where created_at >= ${today}))::int`.as('runsToday'),
         ])
         .where('parent_run_id', 'is', null)
-        .where(notAdmissionRollup)
         .executeTakeFirstOrThrow();
       return row;
     }),
@@ -140,7 +138,6 @@ const opsRouter = (procedure: typeof trpc.procedure) => {
             ...ENRICHED_SELECT,
           ])
           .where('parent_run_id', 'is', null)
-          .where(notAdmissionRollup)
           .orderBy('ops_event.created_at', 'desc')
           .orderBy('ops_event.id', 'desc')
           .limit(input.limit + 1);
@@ -193,7 +190,6 @@ const opsRouter = (procedure: typeof trpc.procedure) => {
           .selectAll('ops_event')
           .select([...ENRICHED_SELECT])
           .where('ops_event.id', '=', input.id as OpsEventId)
-          .where(notAdmissionRollup)
           .executeTakeFirst();
       }),
 

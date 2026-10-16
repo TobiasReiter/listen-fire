@@ -20,12 +20,12 @@ function isTriggerRunId(value: string): value is TriggerRunId {
 
 const pending = new Map<string, Promise<void>>();
 
-async function writeRunEngine({ runId, engine, reason }: RunEngineRecord): Promise<void> {
+async function writeRunEngine({ runId, engine }: RunEngineRecord): Promise<void> {
   if (!isTriggerRunId(runId)) return;
   try {
     await getAutomationsQb(['trigger_run'])
       .updateTable('trigger_run')
-      .set({ engine, engine_reason: reason })
+      .set({ engine, engine_reason: null })
       .where('id', '=', runId)
       .execute();
   } catch (error) {
