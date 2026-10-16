@@ -247,6 +247,10 @@ async function run(
   return calls;
 }
 
+/** The companies the message names (`extract`, its shape written in place), and the model's answer: Acme. */
+const EXTRACT_COMPANIES = ['  found = extract([m.`text`], node Company: "" {', '    name: <text> "the company"', '  })'];
+const COMPANIES_FOUND = { records: [{ name: { value: 'Acme', evidence: { item: 0, quote: 'q' } } }] };
+
 // A plugin's arguments by position from language version 5 (design §2.7):
 // its required inputs in the manifest's order, then one settings record. The
 // wire to the plugin stays named — what it is handed is the config versions
@@ -284,18 +288,12 @@ describe.each(ENGINES)('a plugin called by position on %s', (_name, config, engi
     ]);
   });
 
-  it('binds a through stage by position, with the stage\'s parameters', async () => {
+  it('binds a call on what an extraction found by position, with its settings', async () => {
     const calls = await run(
-      [
-        '  found = extract from [m.`text`] {',
-        '    name: "the company"',
-        '  } through [research(m.`subject`, { questions: "what it does" })] {',
-        '    summary: "what it does"',
-        '  }',
-      ],
+      [...EXTRACT_COMPANIES, '  more = map(found, (c) => {', '    r = research(c.name, { questions: "what it does" })', '    return r', '  })'],
       config,
       { research: { data: { summary: 'Payments.' } } },
-      { replies: [{ 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] }] },
+      { replies: [COMPANIES_FOUND] },
     );
     expect(recorded.map((r) => r.engine)).toEqual([engine]);
     expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
@@ -349,18 +347,12 @@ describe.each(ENGINES)("a package's member called on %s", (_name, config, engine
     ]);
   });
 
-  it('is a through stage', async () => {
+  it('is called on what an extraction found', async () => {
     const calls = await run(
-      [
-        '  found = extract from [m.`text`] {',
-        '    name: "the company"',
-        '  } through [web.research(m.`subject`, { questions: "what it does" })] {',
-        '    summary: "what it does"',
-        '  }',
-      ],
+      [...EXTRACT_COMPANIES, '  more = map(found, (c) => {', '    r = web.research(c.name, { questions: "what it does" })', '    return r', '  })'],
       config,
       { research: { data: { summary: 'Payments.' } } },
-      { replies: [{ 'x:extract_result#1': [{ name: { evidence: 'q', value: 'Acme' } }] }], prelude: PACKAGED, catalog: packaged },
+      { replies: [COMPANIES_FOUND], prelude: PACKAGED, catalog: packaged },
     );
     expect(recorded.map((r) => r.engine)).toEqual([engine]);
     expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
