@@ -23,6 +23,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`. `MOVEMENT_ENGINE=rust` no longer sends single expressions of a
   TypeScript run to Rust.
+- A run's engine is its pinned language version, with no fallback: 5 and later the Rust engine,
+  1–4 the TypeScript engine. The TypeScript engine no longer runs version 5. A version-5 run the
+  Rust engine will not run fails with `MOVENG_UNSUPPORTED`, naming the reason.
+- A version-5 run the TypeScript engine parked (under the old emergency switch) cannot resume and
+  fails saying so; a version-4 run a Rust park left resumes on the TypeScript engine.
+- Self-hosting: `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`, `MOVEMENT_ENGINE_DRY_RUN_EVERY` and
+  `MOVEMENT_ENGINE_V5_ON_TS` are retired, and boot refuses any of them set. The admission dry run,
+  its daily roll-up and `pnpm engine:refusals` are gone. `GET /api/v1/system/engine-stats` answers
+  only the Rust segments' counters. A run row's `engine_reason` is no longer written.
+- `lf` refuses a project, or a parked run, pinned below version 5, saying to run `lf upgrade`.
 
 Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in
 it is a refusal, so an automation that uses a retired form has an error under 5, stays on its
