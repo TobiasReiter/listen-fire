@@ -876,10 +876,21 @@ impl<'c> Checker<'c> {
                 Some(Ty::Record(Some(position))) => Some((**position).clone()),
                 _ => None,
             });
-            let position = typed.clone().or_else(|| match types.may_hold.as_ref().map(crate::families::writes::record_of_may_hold) {
-                Some(crate::families::writes::RecordOf::Record(position)) => Some(position),
+            // A held tuple of records (`both = [lead, co]`) is walked as the
+            // list it widens to, so a write off it is held to every member too.
+            let held = || match types.field.as_ref().map(crate::types::field::strip_absent) {
+                Some(Ty::Tuple { .. }) => crate::types::field::record_head_position(
+                    crate::types::field::widen_tuples_joining(types.field.clone(), self.version, self.record_join()).as_ref(),
+                ),
                 _ => None,
-            })?;
+            };
+            let position = typed
+                .clone()
+                .or_else(|| match types.may_hold.as_ref().map(crate::families::writes::record_of_may_hold) {
+                    Some(crate::families::writes::RecordOf::Record(position)) => Some(position),
+                    _ => None,
+                })
+                .or_else(held)?;
             let may_be_empty = matches!(position, Position::MaybeEmpty(_)) || (typed.is_some() && crate::types::field::is_maybe_absent(types.field.as_ref()));
             let union = match position {
                 Position::MaybeEmpty(of) => *of,

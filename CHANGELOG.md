@@ -112,6 +112,13 @@ guide](docs/language/dancing-wren-migration.md).
   is present only when every arm proved it, and a function is no longer typed by its first return.
   Why: each ran unchecked (a missing field read null, or a missing value was written). Under 3 and 4
   what the rule refuses is an upgrade warning.
+- **The same rule reaches three more places.** Calling one of several closures hands back the union
+  of their records, so a read one record lacks is `MOV_UNKNOWN_PROPERTY`. A walk or a linked write
+  off a held list of records (`both = [lead, co]`, then `both-[:Manager]->`) asks every member, so
+  an edge one lacks is `MOV_TRAVERSE_UNKNOWN_EDGE` or `MOV_LINKED_UNKNOWN_EDGE`. An `IF` of plain
+  values is what either arm may be: `IF c THEN p.Name ELSE p.Email END` may be absent, so a
+  required field refuses it (`MOV_ABSENT_REQUIRED`). Why: each was untyped and ran unchecked. Under
+  3 and 4 what this refuses is an upgrade warning; a closure value is called only from 5.
 
 ### Language version 5, Dancing Wren: new
 

@@ -380,7 +380,13 @@ impl<'a> Typing<'a> {
             return Some(root);
         }
         let scalar = self.scalar_type(name);
-        let position = record_head_position(scalar.as_ref())?;
+        // A tuple of records walks as the list it widens to, its members
+        // joined by the union rule, so a walk off `[lead, co]` asks every member.
+        let walked = match scalar.as_ref().map(strip_absent) {
+            Some(Ty::Tuple { .. }) => widen_tuples_joining(scalar.clone(), self.version, self.record_join()),
+            _ => scalar.clone(),
+        };
+        let position = record_head_position(walked.as_ref())?;
         if !matches!(position, Position::MaybeEmpty(_))
             && is_maybe_absent(scalar.as_ref())
             && scalar.as_ref().is_some_and(|s| matches!(strip_absent(s), Ty::Record(_)))
@@ -827,8 +833,26 @@ impl<'a> Typing<'a> {
                 }
                 let ty = match (&then_ty, &else_ty) {
                     // Before version 5 an IF of one type was its THEN arm's —
-                    // what that arm alone had proved included.
-                    (Some(a), Some(b)) => self.joined_records(&[a.clone(), b.clone()], field_type_equals(a, b).then(|| a.clone())),
+                    // what that arm alone had proved included — and an IF of
+                    // arms of different types, or of one that may be absent
+                    // beside one that may not, untyped.
+                    (Some(a), Some(b)) => {
+                        let arms = [a.clone(), b.clone()];
+                        let old = field_type_equals(a, b).then(|| a.clone());
+                        if one_record_of(&arms).is_some() {
+                            self.joined_records(&arms, old)
+                        } else if is_record(Some(a)) || is_record(Some(b)) {
+                            // `null` beside a record stays a value that may be one (`may_hold`).
+                            old
+                        } else {
+                            // Values are what either arm may be, as TypeScript's
+                            // `c ? a : b` is `A | B`.
+                            match &old {
+                                Some(_) if is_maybe_absent(Some(a)) == is_maybe_absent(Some(b)) => old,
+                                _ => joined_under(Some(self.record_join()), value_union(&arms), old),
+                            }
+                        }
+                    }
                     _ => None,
                 };
                 (ty, vec![condition_ty, then_ty, else_ty])

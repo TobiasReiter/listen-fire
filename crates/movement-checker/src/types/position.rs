@@ -224,12 +224,17 @@ pub fn union_returns(shapes: &[ReturnShape]) -> ReturnShape {
         }
     }
     let one_arm = arms.len() == 1;
+    // Records are what the union rule makes of them, as an IF of them is. One
+    // of several closures is called so only from version 5 (before it, a
+    // call is typed by the first).
+    let records = if arms.len() > 1 { super::unions::one_record_of(&arms) } else { None };
     let union = match arms.len() {
         0 => None,
         1 => arms.pop(),
         _ => Some(Ty::Union(Rc::new(arms))),
     };
     let typed = match &union {
+        Some(_) if !unknown && records.is_some() => records,
         Some(union) if !unknown => {
             if one_arm || super::field::records_alone(Some(union)).is_some() {
                 Some(union.clone())

@@ -867,5 +867,384 @@
   "expected": [
    "MOV_UNKNOWN_PROPERTY 8:36-8:59 error 'nope' can't be read here: this may be a crm.person handle or a crm.company handle, and it reads only what every one of them has — a crm.person handle refuses it (a crm.person handle has no field 'nope' — it carries: externalId, name — did you mean 'name'?). Read it where you know which record you hold"
   ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read every return offers",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Score + 1\n}",
+  "version": 3,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read a return lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Email\n}",
+  "version": 3,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a field of different types",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Age + 1\n}",
+  "version": 3,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge every member has",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Domains + 1 }\n  }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 10:31-10:44 warning+upgrade An arithmetic operation requires numeric operands — the left side of '+' is list of text. Build the string with \"${…}\" interpolation instead: \"${e.Domains}1\". Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: a field off the landing both have",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Score + 1 }\n  }\n}",
+  "version": 3,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: text or text-or-absent",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Email END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_ABSENT_REQUIRED 9:35-9:36 warning+upgrade 'Name' on crm.People needs a value, but 'v' may be absent (text (or absent)) — write 'Name: COALESCE(v, \"unknown\")' to fall back to a value that is always there, or 'Name ?: v' to leave it unset when absent. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused (see handbook: front#maybe-absent)"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: number or text",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Age ELSE p.Name END\n    x = v + 1\n  }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 9:9-9:14 warning+upgrade An arithmetic operation requires numeric operands — the left side of '+' is number | text. Build the string with \"${…}\" interpolation instead: \"${v}1\". Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: same type",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Name END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 3,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[mg:Manager]-> { x = mg.Name }\n  }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 10:5-10:24 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks, the tuple itself",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  both-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:22 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "COALESCE walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  who = COALESCE(lead, co)\n  who-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:21 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple expression walk: bound",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  x = COUNT(both-[:Manager]->)\n}",
+  "version": 3,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:7-9:31 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple write target",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  write both-[:Manager]-> { Name: \"x\" }\n}",
+  "version": 3,
+  "expected": [
+   "MOV_WRITE_READ_ONLY_EDGE 9:9-9:27 warning+upgrade '-[:Manager]->' is read-only on a crm.People handle — 'crm' fills it itself, so a write can't create or attach along it (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them). Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused",
+   "MOV_LINKED_UNKNOWN_EDGE 9:9-9:27 warning+upgrade a crm.Companies handle has no edge 'Manager' — a linked write creates the record AND the edge, so the parent's type must declare it; it declares: Employer (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them). Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read every return offers",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Score + 1\n}",
+  "version": 4,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read a return lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Email\n}",
+  "version": 4,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a field of different types",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Age + 1\n}",
+  "version": 4,
+  "expected": [
+   "MOV_CONSTRUCT_NOT_ADAPTER 20:9-20:12 error 'g' is a binding, not an adapter type — only adapter types are constructed"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge every member has",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Domains + 1 }\n  }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 10:31-10:44 warning+upgrade An arithmetic operation requires numeric operands — the left side of '+' is list of text. Build the string with \"${…}\" interpolation instead: \"${e.Domains}1\". Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: a field off the landing both have",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Score + 1 }\n  }\n}",
+  "version": 4,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: text or text-or-absent",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Email END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_ABSENT_REQUIRED 9:35-9:36 warning+upgrade 'Name' on crm.People needs a value, but 'v' may be absent (text (or absent)) — write 'Name: COALESCE(v, \"unknown\")' to fall back to a value that is always there, or 'Name ?: v' to leave it unset when absent. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused (see handbook: front#maybe-absent)"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: number or text",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Age ELSE p.Name END\n    x = v + 1\n  }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 9:9-9:14 warning+upgrade An arithmetic operation requires numeric operands — the left side of '+' is number | text. Build the string with \"${…}\" interpolation instead: \"${v}1\". Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: same type",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Name END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 4,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[mg:Manager]-> { x = mg.Name }\n  }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 10:5-10:24 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks, the tuple itself",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  both-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:22 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "COALESCE walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  who = COALESCE(lead, co)\n  who-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:21 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple expression walk: bound",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  x = COUNT(both-[:Manager]->)\n}",
+  "version": 4,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:7-9:31 warning+upgrade '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold. Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple write target",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  write both-[:Manager]-> { Name: \"x\" }\n}",
+  "version": 4,
+  "expected": [
+   "MOV_WRITE_READ_ONLY_EDGE 9:9-9:27 warning+upgrade '-[:Manager]->' is read-only on a crm.People handle — 'crm' fills it itself, so a write can't create or attach along it (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them). Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused",
+   "MOV_LINKED_UNKNOWN_EDGE 9:9-9:27 warning+upgrade a crm.Companies handle has no edge 'Manager' — a linked write creates the record AND the edge, so the parent's type must declare it; it declares: Employer (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them). Before \"Dancing Wren\" (5) a value that may be one of several records (an IF, a COALESCE, a function's returns, a list's members) was typed by one of them, or not at all, and what it fed ran so; from it, it reads and writes only what every one of them offers, and this is refused"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read every return offers",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Score + 1\n}",
+  "version": 5,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a read a return lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Email\n}",
+  "version": 5,
+  "expected": [
+   "MOV_UNKNOWN_PROPERTY 21:7-21:16 error 'Email' can't be read here: this may be a crm.People handle or a crm.Companies handle, and it reads only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no field 'Email' — it carries: externalId, Name, Domains, Age, Score). Read it where you know which record you hold"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "closures: a field of different types",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nfunction a() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  return lead\n}\nfunction b() {\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  return co\n}\nfunction chooser(c: <boolean>) {\n  if c {\n    return a\n  }\n  return b\n}\nmovement m() {\n  g = chooser(c: 1 > 0)\n  who = g()\n  x = who.Age + 1\n}",
+  "version": 5,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 21:7-21:18 error An arithmetic operation requires numeric operands — the left side of '+' is number | text. Build the string with \"${…}\" interpolation instead: \"${who.Age}1\"."
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge every member has",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Domains + 1 }\n  }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 10:31-10:44 error An arithmetic operation requires numeric operands — the left side of '+' is list of text. Build the string with \"${…}\" interpolation instead: \"${e.Domains}1\"."
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: a field off the landing both have",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[e:Employer]-> { x = e.Score + 1 }\n  }\n}",
+  "version": 5,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: text or text-or-absent",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Email END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_ABSENT_REQUIRED 9:35-9:36 error 'Name' on crm.People needs a value, but 'v' may be absent (text (or absent)) — write 'Name: COALESCE(v, \"unknown\")' to fall back to a value that is always there, or 'Name ?: v' to leave it unset when absent (see handbook: front#maybe-absent)"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: number or text",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Age ELSE p.Name END\n    x = v + 1\n  }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_ARITH_NON_NUMERIC 9:9-9:14 error An arithmetic operation requires numeric operands — the left side of '+' is number | text. Build the string with \"${…}\" interpolation instead: \"${v}1\"."
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "IF of plain values: same type",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  crm-[p:people]-> {\n    c = 1 > 0\n    v = IF c THEN p.Name ELSE p.Name END\n    write crm-[:people]-> { Name: v }\n  }\n}",
+  "version": 5,
+  "expected": []
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  crm-[p:people]-> {\n    both = [lead, co]\n    both-[mg:Manager]-> { x = mg.Name }\n  }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 10:5-10:24 error '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple walk: an edge one member lacks, the tuple itself",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  both-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:22 error '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "COALESCE walk: an edge one member lacks",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  who = COALESCE(lead, co)\n  who-[mg:Manager]-> { x = mg.Name }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:3-9:21 error '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple expression walk: bound",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  x = COUNT(both-[:Manager]->)\n}",
+  "version": 5,
+  "expected": [
+   "MOV_TRAVERSE_UNKNOWN_EDGE 9:7-9:31 error '-[:Manager]->' can't be walked here: this may be a crm.People handle or a crm.Companies handle, and it walks only what every one of them has — a crm.Companies handle refuses it (a crm.Companies handle has no edge 'Manager' — it has: Employer). Walk it where you know which record you hold"
+  ]
+ },
+ {
+  "file": "residuals",
+  "name": "tuple write target",
+  "catalog": "{\"adapters\":{\"attio\":{\"canFire\":true,\"constructionArgs\":[{\"name\":\"credentials\",\"kind\":\"credential\",\"required\":true}],\"schemas\":{\"crm_cred\":{\"positions\":{\"People\":{\"properties\":{\"Name\":\"text\",\"Email\":{\"kind\":\"maybeAbsent\",\"of\":\"text\"},\"Age\":\"number\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"},\"Manager\":{\"target\":\"People\"}}},\"Companies\":{\"properties\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Age\":\"text\",\"Score\":\"number\"},\"edges\":{\"Employer\":{\"target\":\"Companies\"}}}},\"collections\":{\"people\":{\"target\":\"People\"},\"companies\":{\"target\":\"Companies\"}},\"writableRoots\":{\"People\":{\"fields\":{\"Name\":\"text\",\"Email\":\"text\",\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}},\"Companies\":{\"fields\":{\"Name\":\"text\",\"Domains\":{\"kind\":\"list\",\"of\":\"text\"},\"Score\":\"number\"},\"resultShape\":{\"externalId\":\"text\"}}},\"supportsInPlaceUpdate\":true}}}},\"credentials\":{\"crm_cred\":{\"adapters\":[\"attio\"]}},\"plugins\":{}}",
+  "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\n\nmovement m() {\n  lead = write crm-[:people]-> { Name: \"Ann\" }\n  co = write crm-[:companies]-> { Name: \"Acme\" }\n  both = [lead, co]\n  write both-[:Manager]-> { Name: \"x\" }\n}",
+  "version": 5,
+  "expected": [
+   "MOV_WRITE_READ_ONLY_EDGE 9:9-9:27 error '-[:Manager]->' is read-only on a crm.People handle — 'crm' fills it itself, so a write can't create or attach along it (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them)",
+   "MOV_LINKED_UNKNOWN_EDGE 9:9-9:27 error a crm.Companies handle has no edge 'Manager' — a linked write creates the record AND the edge, so the parent's type must declare it; it declares: Employer (this may be a crm.People handle or a crm.Companies handle, and a write to it is held to every one of them)"
+  ]
  }
 ]

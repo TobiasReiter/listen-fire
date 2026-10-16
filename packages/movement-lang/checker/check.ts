@@ -3827,8 +3827,14 @@ export function unionReturns(shapes: ReadonlyArray<ReturnShape>): ReturnShape {
     else addArm(arm);
   }
   const union: FieldType | undefined = arms.length === 0 ? undefined : arms.length === 1 ? arms[0] : { kind: 'union', of: arms };
+  // Records are what the union rule makes of them (`oneRecordOf`), as an IF
+  // of them is. One of several closures is called so only from version 5
+  // (before it, a call is typed by the first: `oneOfClosures`' 'first').
+  const records = arms.length > 1 ? oneRecordOf(arms) : undefined;
   const typed = unknown || union === undefined
     ? undefined
+    : records !== undefined
+    ? records
     : arms.length === 1 || recordsAlone(union) !== undefined
     ? union
     : returning.every(shape => shape.fieldType !== undefined && fieldTypeEquals(shape.fieldType, first.fieldType!))
@@ -9286,7 +9292,12 @@ class Checker {
       if (resolution.kind !== 'found') return root;
       const symbol = resolution.symbol;
       const typed = this.symbolPositionType(symbol);
-      const position = typed ?? (symbol.mayHold !== undefined ? recordOfMayHoldType(symbol.mayHold) : undefined);
+      // A held tuple of records (`both = [lead, co]`) is walked as the list
+      // it widens to, so a write off it is held to every member too.
+      const held = symbol.bindingPlane === 'scalar' && symbol.fieldType !== undefined && variantOf(stripAbsent(symbol.fieldType)).kind === 'tuple'
+        ? recordHeadPosition(widenTuples(symbol.fieldType, this.languageVersion, this.recordJoin()))
+        : undefined;
+      const position = typed ?? (symbol.mayHold !== undefined ? recordOfMayHoldType(symbol.mayHold) : undefined) ?? held;
       const union = position?.kind === 'maybeEmpty' ? position.of : position;
       if (union?.kind === 'oneOf') {
         found = { name: root.name, symbol, union, mayBeEmpty: position?.kind === 'maybeEmpty' || (typed !== undefined && isMaybeAbsent(symbol.fieldType)) };

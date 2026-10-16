@@ -39,7 +39,7 @@ use movement_parser::lowering::expression::{EdgeStep, Expression, FilterOperator
 use crate::codes;
 use crate::diagnostic::Severity;
 use crate::scope::{Resolution, ScopeId};
-use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, record_head_position, widen_tuples};
+use crate::types::field::{CollectionOrder, Ty, describe_field_type, holds_records, record_head_position};
 use crate::types::scope_env::SymbolTypes;
 use crate::types::infer::Typing;
 use crate::types::position::{EdgeLanding, Position, describe_position, display_name_of, is_artificial_edge, position_schema_of_ref};
@@ -789,7 +789,9 @@ impl crate::checker::Checker<'_> {
                 if types.pos.is_some() {
                     return None;
                 }
-                widen_tuples(types.field.clone(), self.version)
+                // Walking a held tuple reads it as the list of records it
+                // widens to, its members joined by the union rule.
+                crate::types::field::widen_tuples_joining(types.field.clone(), self.version, self.record_join())
             }
             None => None,
         }

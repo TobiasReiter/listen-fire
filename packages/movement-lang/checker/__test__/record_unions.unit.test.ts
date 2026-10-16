@@ -167,3 +167,47 @@ describe.each<LanguageVersion>([3, 4, 5])('an IF prefers no arm (version %i)', v
     expect(codes(version, within('1 > 0', 'v.Email'))).toEqual([['MOV_ABSENT_REQUIRED', 'error']]);
   });
 });
+
+describe.each<LanguageVersion>([3, 4, 5])('what the union rule reaches beyond records bound by name (version %i)', version => {
+  it("a walk off a held tuple of them asks every member, as a walk off one of them does", () => {
+    const managed = { ...crmSchema, positions: { ...crmSchema.positions, People: { ...crmSchema.positions.People!, edges: { ...crmSchema.positions.People!.edges, Manager: { target: 'People' } } } } };
+    const managedCatalog = mockCatalog({
+      adapters: { attio: { constructionArgs: [{ name: 'credentials', kind: 'credential', required: true }], schema: managed } },
+      credentials: { crm_cred: { adapter: 'attio' } },
+      plugins: {},
+    });
+    const refused = (body: string[]): Array<[string, string]> => {
+      const source = `${PRELUDE}\nmovement m() {\n${[LEAD, CO, '  both = [lead, co]', ...body].join('\n')}\n}`;
+      return checkProgram(parseProgram(source, { languageVersion: version }), managedCatalog, { languageVersion: version })
+        .filter(d => d.severity === undefined || d.upgrade === true)
+        .map(d => [d.code, d.severity ?? 'error']);
+    };
+    expect(refused(['  x = COUNT(both-[:Manager]->)'])).toEqual([['MOV_TRAVERSE_UNKNOWN_EDGE', from5(version)]]);
+    expect(refused(['  write both-[:Manager]-> { Name: "x" }']).map(([code]) => code)).toContain('MOV_LINKED_UNKNOWN_EDGE');
+    expect(refused(['  x = COUNT(both-[:Employer]->)'])).toEqual([]);
+  });
+
+  it('an IF of plain values is what either arm may be', () => {
+    const within = (arms: string, use: string): string[] => ['  crm-[p:people]-> {', '    c = 1 > 0', `    v = IF c THEN ${arms} END`, `    ${use}`, '  }'];
+    expect(codes(version, within('p.Name ELSE p.Email', 'write crm-[:people]-> { Name: v }'))).toEqual([['MOV_ABSENT_REQUIRED', from5(version)]]);
+    expect(codes(version, within('p.Age ELSE p.Name', 'x = v + 1'))).toEqual([['MOV_ARITH_NON_NUMERIC', from5(version)]]);
+    expect(codes(version, within('p.Name ELSE p.Name', 'write crm-[:people]-> { Name: v }'))).toEqual([]);
+  });
+});
+
+describe('calling one of several closures (version 5; before it a closure value is not called)', () => {
+  const closures = [
+    'function a() {', '  lead = write crm-[:people]-> { Name: "Ann" }', '  return lead', '}',
+    'function b() {', '  co = write crm-[:companies]-> { Name: "Acme" }', '  return co', '}',
+    'function chooser(c: <boolean>) {', '  if c {', '    return a', '  }', '  return b', '}',
+  ];
+  const call = ['  g = chooser(c: 1 > 0)', '  who = g()'];
+
+  it('hands back the union of their records: a read every one offers is typed, one a record lacks is refused', () => {
+    expect(codes(5, [...call, '  x = who.Score + 1'], closures)).toEqual([]);
+    expect(refusals(5, [...call, '  x = who.Email'], closures)).toEqual([
+      ['MOV_UNKNOWN_PROPERTY', 'error', expect.stringMatching(/^'Email' can't be read here: this may be a crm\.People handle or a crm\.Companies handle, .*a crm\.Companies handle refuses it/)],
+    ]);
+    expect(codes(5, [...call, '  x = who.Age + 1'], closures)).toEqual([['MOV_ARITH_NON_NUMERIC', 'error']]);
+  });
+});

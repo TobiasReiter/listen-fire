@@ -51,7 +51,7 @@ use movement_parser::catalog::types::InstanceSchema;
 use movement_parser::lowering::vocabulary::{OptionType, OptionsContract, vocabulary};
 use movement_parser::tree::{Hop, MExpr};
 use crate::families::names::spell_name;
-use crate::types::field::{record_head_position, widen_tuples};
+use crate::types::field::record_head_position;
 use crate::types::position::describe_position;
 use movement_parser::lowering::expression::{Expression, ObjectMember, StaticValue};
 use crate::types::position::{ExtractField, ExtractNode as ExtractNodeType, LocalEdge, LocalNode, Position};
@@ -958,7 +958,7 @@ impl Checker<'_> {
             Some(PathRoot::Name { name }) => {
                 use crate::types::TypeEnv as _;
                 let env = self.typing_env(scope);
-                env.resolve_root(name).or_else(|| record_head_position(widen_tuples(env.resolve_scalar(name), self.version).as_ref()))
+                env.resolve_root(name).or_else(|| record_head_position(crate::types::field::widen_tuples_joining(env.resolve_scalar(name), self.version, self.record_join()).as_ref()))
             }
             Some(PathRoot::Expression { expr }) => {
                 let held = self.type_of_slot(expr, scope).and_then(|(_, ty, _)| ty);

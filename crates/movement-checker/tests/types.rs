@@ -200,7 +200,8 @@ fn literals_and_operators() {
     assert_eq!(spelled("NULL", &EmptyEnv, 5), "null");
     assert_eq!(spelled("COALESCE(NULL, \"x\")", &EmptyEnv, 5), "text");
     assert_eq!(spelled("IF TRUE THEN 1 ELSE 2 END", &EmptyEnv, 5), "number");
-    assert_eq!(spelled("IF TRUE THEN 1 ELSE \"x\" END", &EmptyEnv, 5), "?");
+    assert_eq!(spelled("IF TRUE THEN 1 ELSE \"x\" END", &EmptyEnv, 5), "number | text");
+    assert_eq!(spelled("IF TRUE THEN 1 ELSE \"x\" END", &EmptyEnv, 4), "?");
     assert_eq!(spelled("[1, \"a\"]", &EmptyEnv, 5), "list of (number | text)");
     assert_eq!(spelled("{ a: 1, b: 2 }", &EmptyEnv, 5), "{ a: number, b: number }");
     assert_eq!(spelled("SPLIT(\"a,b\")", &EmptyEnv, 5), "list of text");

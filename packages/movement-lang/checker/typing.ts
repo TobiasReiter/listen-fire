@@ -4883,7 +4883,9 @@ export class ExpressionTyping {
     const root = this.rootType(name);
     if (root !== undefined) return root;
     const scalar = this.scalarType(name);
-    const position = recordHeadPosition(scalar);
+    // A tuple of records walks as the list it widens to, its members joined
+    // by the union rule, so a walk off `[lead, co]` asks every member.
+    const position = recordHeadPosition(isTupleType(stripAbsent(scalar ?? 'absent')) ? widenTuples(scalar, this.options.languageVersion, this.options.recordJoin) : scalar);
     // A record that may not be there (`ONLY(…)`, `FIRST(…)`, `AT(rows, 0)`) is
     // read as the maybe-empty landing it is, so a field read off it is
     // `T | absent` — TypeScript's `r?.name`. Before version 3 the absence was
@@ -5521,8 +5523,15 @@ export class ExpressionTyping {
         }
         if (thenType === undefined || elseType === undefined) return undefined;
         // Before version 5 an IF of one type was its THEN arm's — what that
-        // arm alone had proved included.
-        return this.joinedRecords([thenType, elseType], fieldTypeEquals(thenType, elseType) ? thenType : undefined);
+        // arm alone had proved included — and an IF of arms of different
+        // types, or of one that may be absent beside one that may not, untyped.
+        const old = fieldTypeEquals(thenType, elseType) ? thenType : undefined;
+        if (oneRecordOf([thenType, elseType]) !== undefined) return this.joinedRecords([thenType, elseType], old);
+        // `null` beside a record stays a value that may be one (`mayHold`).
+        if (isRecordType(thenType) || isRecordType(elseType)) return old;
+        // Values are what either arm may be, as TypeScript's `c ? a : b` is `A | B`.
+        const values = old !== undefined && isMaybeAbsent(thenType) === isMaybeAbsent(elseType) ? old : valueUnion([thenType, elseType]);
+        return joinedUnder(this.options.recordJoin, values, old);
       }
       case 'at': {
         // AT reads a SLOT, so it is the one reader that sees a tuple as one.
