@@ -8,12 +8,12 @@
 //!   where    = or ('WHERE' or)?                — a filter, inside a call's parens
 //!   or       = and ('OR' and)*
 //!   and      = not ('AND' not)*
-//!   not      = ('NOT' | '!') not | compare
+//!   not      = ('NOT' | '!') not | compare     — from version 5 `!` is unary's
 //!   compare  = add (cmp add | 'CONTAINS' add | 'IN' add | 'EXISTS'
 //!                   | 'WITHIN' duration | 'IS' type)?          — never chains
 //!   add      = mul (('+' | '-') mul)*
 //!   mul      = unary (('*' | '/' | '%') unary)*
-//!   unary    = '-' unary | postfix
+//!   unary    = '-' unary | '!' unary (from version 5) | postfix
 //!   postfix  = primary ('.' name | '(' args ')' | hop+ | '[' where ']')*
 //!   primary  = '(' where ')' | closure | IF | literal | string | name | '@…'
 //!            | hop+ | list | map | '<' type '>' | node | graph | declaration
@@ -55,6 +55,11 @@ pub fn parse_expression_raw(text: &str) -> Result<MExpr, SyntaxError> {
         Some(pos) => fail(CHAIN_TOO_LONG, pos),
         None => Ok(tree),
     }
+}
+
+/// `!`, which the lexer reads as the keyword `NOT`.
+fn is_bang(tok: &Token) -> bool {
+    tok.is_keyword("NOT") && tok.end - tok.start == 1
 }
 
 /// Which literal body an entry list belongs to: the value grammar differs.
@@ -351,7 +356,9 @@ impl<'a> ExpressionParser<'a> {
 
     fn parse_not(&mut self) -> PResult<MExpr> {
         let tok = self.peek()?;
-        if tok.is_keyword("NOT") {
+        // From version 5 `!` is TypeScript's unary operator (`parse_unary`):
+        // `!a == b` is `(!a) == b`. `NOT` keeps its reach in every version.
+        if tok.is_keyword("NOT") && !(self.sc.v5 && is_bang(&tok)) {
             self.advance()?;
             let operand = self.nested(Self::parse_not)?;
             return Ok(MExpr::Unary { op: UnaryOp::Not, operand: Box::new(operand), at: self.span(tok.start) });
@@ -486,12 +493,24 @@ impl<'a> ExpressionParser<'a> {
 
     fn parse_unary(&mut self) -> PResult<MExpr> {
         let tok = self.peek()?;
+        if self.sc.v5 && is_bang(&tok) {
+            return self.parse_bang(tok.start);
+        }
         if tok.is_op("-") {
             self.advance()?;
             let operand = self.nested(Self::parse_unary)?;
             return Ok(MExpr::Unary { op: UnaryOp::Neg, operand: Box::new(operand), at: self.span(tok.start) });
         }
         self.parse_postfix()
+    }
+
+    /// Apart from `parse_unary` so its frame, on every level of a deep
+    /// expression, stays as small as before.
+    #[inline(never)]
+    fn parse_bang(&mut self, start: usize) -> PResult<MExpr> {
+        self.advance()?;
+        let operand = self.nested(Self::parse_unary)?;
+        Ok(MExpr::Unary { op: UnaryOp::Not, operand: Box::new(operand), at: self.span(start) })
     }
 
     /// Every cycle in the expression grammar passes through here (a call's

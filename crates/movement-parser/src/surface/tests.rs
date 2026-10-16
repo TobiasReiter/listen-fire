@@ -245,3 +245,26 @@ fn until_takes_its_cadence_as_a_setting() {
     assert_eq!(serde_json::to_value(&program(new, 5).statements).unwrap().pointer("/0/body/0/await/source/every/raw"), Some(&serde_json::json!("1h")));
     assert_eq!(spelling(old)[1].1, "{ every: 1h }");
 }
+
+#[test]
+fn bang_binds_as_typescript_s_unary_operator() {
+    // Under 4 `!` reaches over the comparison; under 5 it takes the operand beside it.
+    assert_eq!(lowered("!a == b", 4), lowered("NOT (a == b)", 4));
+    assert_eq!(lowered("!a == b", 5), lowered("(NOT a) == b", 4));
+    assert_eq!(lowered("!a && b", 5), lowered("NOT a AND b", 4));
+    assert_eq!(lowered("!x.done", 5), lowered("NOT x.done", 4));
+    // The text whose reading changed is refused; the fix writes out the old reading.
+    let f = findings("!a == b");
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].edits.as_ref().unwrap()[0].text, "!(a == b)");
+    assert_eq!(lowered(&upgraded("!a == b"), 5), lowered("!a == b", 4));
+    assert_eq!(upgraded("!a + 1 > b && c"), "!(a + 1 > b) && c");
+    assert_eq!(lowered(&upgraded("!!a == b"), 5), lowered("!!a == b", 4));
+    assert_eq!(lowered(&upgraded("!a IS <crm-[:People]->>"), 5), lowered("NOT a IS <crm-[:People]->>", 4));
+    // Written with the parentheses either way, or with nothing for `!` to reach: clean.
+    for clean in ["(!a) == b", "!(a == b)", "!a && b", "f(!a, b == c)", "Text.includes(x, \"y\") == !b"] {
+        assert!(findings(clean).is_empty(), "{clean}: {:?}", findings(clean));
+    }
+    // `NOT` keeps its reach (it is refused as a spelling, its fix `!(…)`).
+    assert_eq!(upgraded("NOT a == b"), "!(a == b)");
+}

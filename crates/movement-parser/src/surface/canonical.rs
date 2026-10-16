@@ -62,6 +62,31 @@ fn is_ident(text: &str) -> bool {
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The `!` an expression tighter than `&&` begins with, when versions 1–4
+/// would have read that `!` over the whole of it.
+fn bang_on_left(e: &MExpr) -> Option<At> {
+    let left = match e {
+        MExpr::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => return None,
+        MExpr::Binary { left, .. } => left,
+        MExpr::Is { subject, .. } => subject,
+        MExpr::Within { operand, .. } | MExpr::Exists { operand, .. } => operand,
+        _ => return None,
+    };
+    let mut first = left.as_ref();
+    loop {
+        first = match first {
+            MExpr::Unary { op: UnaryOp::Not, at, .. } => {
+                return (at.start == e.at().start && at.end > at.start).then_some(*at);
+            }
+            MExpr::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => return None,
+            MExpr::Binary { left, .. } => left,
+            MExpr::Is { subject, .. } => subject,
+            MExpr::Within { operand, .. } | MExpr::Exists { operand, .. } => operand,
+            _ => return None,
+        };
+    }
+}
+
 fn is_walk(e: &MExpr) -> bool {
     matches!(e, MExpr::Path { .. } | MExpr::Where { .. })
 }
@@ -137,7 +162,34 @@ impl<'s> Canon<'s> {
             }
             _ => tree::exclusive::expr(e, &mut |child| self.visit(child, in_walk)),
         }
+        self.negation_reach(e);
         if in_walk { self.inside_walk(e) } else { self.outside_walk(e) }
+    }
+
+    // ── `!` binds as TypeScript's unary operator ──
+
+    /// `!a == b` is `(!a) == b` from version 5; versions 1–4 read the `!`
+    /// over the whole comparison, `!(a == b)`. The meaning changed, not the
+    /// spelling, so the text is refused and the fix writes the old reading
+    /// out: an upgrade keeps what the movement did, and a new author writes
+    /// the parentheses they mean. The outermost expression the old `!` would
+    /// have reached carries the finding (it is visited after the inner ones).
+    fn negation_reach(&mut self, e: &MExpr) {
+        let Some(bang) = bang_on_left(e) else { return };
+        let at = e.at();
+        let rest = self.text(At { start: bang.start + 1, end: at.end });
+        let message = format!(
+            "from language version 5 `!` applies to the operand beside it: `{}` is `(!{}) …`, where versions 1–4 read `!({})` — write the parentheses",
+            self.text(at),
+            self.text(At { start: bang.start + 1, end: bang.end }).trim_start(),
+            rest.trim_start()
+        );
+        let finding = Finding { code: SPELLING_CODE, message, at, edits: Some(vec![Edit { at, text: format!("!({})", rest.trim_start()) }]) };
+        let same_bang = |f: &Finding| f.code == SPELLING_CODE && f.at.start == bang.start && f.message.starts_with("from language version 5 `!`");
+        match self.findings.iter_mut().find(|f| same_bang(f)) {
+            Some(inner) => *inner = finding,
+            None => self.findings.push(finding),
+        }
     }
 
     // ── Inside walk brackets: CAPS words in any case; the everyday spelling is refused ──
