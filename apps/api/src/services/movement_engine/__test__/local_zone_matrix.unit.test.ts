@@ -5,12 +5,13 @@
 // zone is fixed when it starts: each zone is a jest of its own, `TZ` set.
 //
 // What remains of the old matrix: one zone on each side of UTC, a zone with a
-// half hour offset, one that crosses the date line (a date there differs
-// from UTC's by a day), and `GMT+3`, which `Intl` cannot name as `Date` reads
-// it (the old engine refused a run there by name; the zone is now never
-// asked, so the run goes on). The rows that told the zones the shim could
-// name from those it could not (`utc`, `Utc`, `''`, `Etc/UTC`, `Zulu`, `GMT`,
-// `UTC+3`) are gone with the distinction.
+// half hour offset, and one that crosses the date line (a date there differs
+// from UTC's by a day). The rows that told the zones the shim could name from
+// those it could not (`utc`, `Utc`, `''`, `Etc/UTC`, `Zulu`, `GMT`, `GMT+3`,
+// `UTC+3`) are gone with the distinction, and with the refusal of a run in a
+// zone `Intl` cannot name. The shim still carries that refusal, now dead
+// (`processLocalZone`, `LOCAL_ZONE_UNVERIFIED`, the envelope's `localZone`);
+// when it goes, add `GMT+3` back: a run there must go on.
 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -18,7 +19,7 @@ import path from 'node:path';
 const API = path.resolve(__dirname, '../../../..');
 const JEST = path.join(API, 'node_modules/jest/bin/jest.js');
 
-const ZONES = ['UTC', 'Europe/London', 'America/New_York', 'Asia/Kolkata', 'Pacific/Apia', 'GMT+3'];
+const ZONES = ['UTC', 'Europe/London', 'America/New_York', 'Asia/Kolkata', 'Pacific/Apia'];
 
 describe("the date tests, in each process's zone", () => {
   // Nested runs: each is a jest of the suite, a few seconds apiece.

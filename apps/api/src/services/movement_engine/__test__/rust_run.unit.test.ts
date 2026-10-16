@@ -509,6 +509,7 @@ describe('a whole run in the Rust engine', () => {
     const late = await run({ source: BINDINGS_AND_IF, event: webhook({ subject: 'Acme', text: 'deal' }), host: gate(99, true) });
     expect(late.result?.cancelled).toBe(true);
   });
+});
 
 describe('IS <Decl> of a record a system describes', () => {
   // Chunk 7A Task 6: compared by the record type's schema with the
