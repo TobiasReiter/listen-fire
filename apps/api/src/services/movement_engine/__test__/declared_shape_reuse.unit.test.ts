@@ -903,3 +903,138 @@ describe('`node X extends Y` as an extraction shape', () => {
     expect(system).toContain('a note');
   });
 });
+
+// ── The write spreads, under version 5 ──────────────────────────────────────
+//
+// Everything above extracts with the keyword, so it runs under 4. From 5 the
+// same records come from the call over the same declaration, and a write
+// body spreads them exactly as it did.
+
+const PRELUDE_V5 = [
+  'import { email, attio } from adapters',
+  'import { dealflow_inbox, acme_main } from credentials',
+  '',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
+  'type Thesis = <"Consumer" | "Infra">',
+  'rules = "route infra to Infra"',
+].join('\n');
+
+/** The one record the message describes: its entries, each the tree
+ *  `declarations`' Entry spells out. */
+const pitchOf = (declarations: string): string =>
+  ['node Pitch: "the companies pitched in this message" {', declarations.replace('node Entry:', 'node entry:'), '}'].join('\n');
+
+/** extractOne's envelope: the one record, its entries beneath it. */
+const RECORD_REPLY = {
+  record: {
+    entry: [{ name: wrap('Acme'), stage: wrap('Seed'), thesis: wrap('Infra'), founder: [{ first: wrap('Ada') }] }],
+  },
+};
+
+function movementV5(declarations: string, after: string[]): string {
+  return [
+    PRELUDE_V5,
+    declarations,
+    pitchOf(declarations),
+    'function m(msg: <inbox-[:message]->>) {',
+    '  found = extractOne([msg.`text`], Pitch)',
+    '  if (found == null) { fail("nothing extracted") }',
+    ...after,
+    '}',
+  ].join('\n');
+}
+
+async function runV5(
+  source: string,
+  { attio = makeFakeAdapter('attio'), reply = RECORD_REPLY }: { attio?: ReturnType<typeof makeFakeAdapter>; reply?: unknown } = {},
+) {
+  const writes: CapturedWrite[] = [];
+  await runMovementUnder({
+    source,
+    event: webhookEvent('email', { subject: 'Deals', text: 'Acme (Ada) is raising a Seed.' }),
+    teamId: TEAM_ID,
+    catalog,
+    host: makeTestHost({
+      writeSink: (w) => writes.push(w),
+      adapters: {
+        resolve: makeResolver({ email: makeFakeAdapter('email').adapter, attio: attio.adapter }),
+      },
+      llm: {
+        extractCall: {
+          call: async () => ({ parsedJson: reply, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } }),
+        },
+      },
+    }),
+    dryRun: true,
+  });
+  return { writes };
+}
+
+describe('a spread in a write body, of a record extractOne handed back (version 5)', () => {
+  const spreading = (body: string) =>
+    movementV5(ENTRY, ['  found-[e:entry]-> {', `    write crm-[:companies]-> { ${body} }`, '  }']);
+
+  it('`...e` is refused where a field it writes may be absent, naming `?...e`', async () => {
+    await expect(runV5(spreading('unique by (name), ...e'))).rejects.toThrow(/MOV_ABSENT_REQUIRED.*'thesis'.*\?\.\.\.e/);
+  });
+
+  it('`?...e` writes every FIELD of the record — never its nested nodes', async () => {
+    const { writes } = await runV5(spreading('unique by (name), ?...e'));
+    expect(writes).toEqual([
+      expect.objectContaining({ kind: 'create', fields: { name: 'Acme', stage: 'Seed', thesis: 'Infra' } }),
+    ]);
+  });
+
+  it('an explicit line wins over the spread for its field', async () => {
+    const { writes } = await runV5(spreading('stage: "Series A", ?...e'));
+    expect(writes).toEqual([
+      expect.objectContaining({ fields: { stage: 'Series A', name: 'Acme', thesis: 'Infra' } }),
+    ]);
+  });
+
+  it('`?...e` is set-if-empty: a matched record keeps the values it has', async () => {
+    const attio = makeFakeAdapter('attio', {
+      resolveCandidates: () => [{ adapterType: 'attio', externalId: 'existing-1', data: {} }],
+    });
+    attio.adapter.readRecord = async () => ({ name: 'Acme', stage: 'Series B', thesis: null });
+    const { writes } = await runV5(spreading('unique by (name), ?...e'), { attio });
+    // `stage` is already set, so the fill leaves it; `thesis` is empty and fills.
+    expect(writes).toEqual([
+      expect.objectContaining({ kind: 'update', externalId: 'existing-1', fields: { thesis: 'Infra' } }),
+    ]);
+  });
+
+  it('writes every field of a `node { … }` literal built from it, and none of its edges', async () => {
+    const source = movementV5(ENTRY, [
+      '  found-[e:entry]-> {',
+      '    n = node { name: e.name, stage: "Seed", founder: node { name: "Ada" } }',
+      '    write crm-[:companies]-> { ...n }',
+      '  }',
+    ]);
+    const { writes } = await runV5(source);
+    expect(writes).toEqual([expect.objectContaining({ kind: 'create', fields: { name: 'Acme', stage: 'Seed' } })]);
+  });
+
+  it("a collecting node's entry merged by `?...e` holds an unfound one absent, so `!= null` is a real test", async () => {
+    const nullable = ENTRY.replace('stage: <text> "the funding stage"', 'stage: <text | null> "the funding stage"');
+    const source = movementV5(nullable, [
+      '  deduped = node { entries: <Entry> order by arrival }',
+      '  found-[e:entry]-> { write deduped-[:entries]-> { unique by (name), ?...e } }',
+      '  deduped-[x:entries]-> {',
+      '    if (x.stage != null) {',
+      '      write crm-[:companies]-> { name: x.name, stage: x.stage }',
+      '    } else {',
+      '      write crm-[:companies]-> { name: x.name, thesis: "no stage" }',
+      '    }',
+      '  }',
+    ]);
+    const unfound = { record: { entry: [{ name: wrap('Acme'), stage: null, thesis: wrap('Infra'), founder: [] }] } };
+    expect((await runV5(source, { reply: unfound })).writes).toEqual([
+      expect.objectContaining({ kind: 'create', fields: { name: 'Acme', thesis: 'no stage' } }),
+    ]);
+    expect((await runV5(source)).writes).toEqual([
+      expect.objectContaining({ kind: 'create', fields: { name: 'Acme', stage: 'Seed' } }),
+    ]);
+  });
+});
