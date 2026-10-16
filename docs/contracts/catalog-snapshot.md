@@ -70,7 +70,11 @@ interface PluginSpec {
   output?: PluginOutput;
   earlierOutputs?: Array<{ before: number; output: PluginOutput }>;   // the output under language versions before `before`
 }
+```
 
+**A plugin's arguments by position (language version 5).** A call passes the plugin's required inputs by position, then its other inputs in one settings record (`fetchUrl(u)`, `research(n, { context: s })`). The positions are the spec's required `fedArgs`, then its `requiredArgs` in `args` order; a `through [ … ]` stage, which is never fed by its author, takes only the `requiredArgs`. The spec keeps a plugin's fed inputs apart from its author's, so it does not say how the two interleave in the manifest; every plugin declares its fed input first, so fed-then-author is the manifest's declared order. A settings key is an input's name exactly as `args` (or, on a plain call, `fedArgs`) spells it. The call is bound to the named config before the plugin is invoked, so the wire is unchanged: the plugin is handed `{ url: … }` as under version 4. One binding does this in each language (Rust `PluginSpec::bind_args`, TypeScript `bindPluginArgs`); both checkers and both engines use it.
+
+```ts
 type PluginOutput =
   | { kind: 'value'; type: SchemaFieldType }
   | { kind: 'record'; fields: Record<string, SchemaFieldType> }
