@@ -1,6 +1,6 @@
 //! MOV_EVENT_UNDESCRIBED: a read or a write off a movement's event parameter
 //! whose instance the catalog has no description of. Refused from version 5,
-//! a warning in 3 and 4, unsaid before. The TypeScript twin is
+//! unsaid before. The TypeScript twin is
 //! packages/movement-lang/checker/__test__/event_undescribed.unit.test.ts.
 
 use movement_checker::{CheckOptions, Diagnostic, check_source};
@@ -35,20 +35,8 @@ fn version_5_refuses_a_field_read_and_a_walk_off_an_undescribed_event_each_where
 }
 
 #[test]
-fn versions_3_and_4_warn_where_such_a_program_checked_clean_and_ran() {
-    for version in [3, 4] {
-        let diagnostics = check(BEFORE_5, version, UNDESCRIBED);
-        assert_eq!(
-            found(&diagnostics),
-            [("MOV_EVENT_UNDESCRIBED", "Some(Warning)".to_string(), 4), ("MOV_EVENT_UNDESCRIBED", "Some(Warning)".to_string(), 5)],
-            "version {version}"
-        );
-    }
-}
-
-#[test]
-fn versions_1_and_2_say_nothing_as_before() {
-    for version in [1, 2] {
+fn versions_1_to_4_say_nothing_as_before() {
+    for version in [1, 2, 3, 4] {
         assert!(check(BEFORE_5, version, UNDESCRIBED).is_empty(), "version {version}");
     }
 }

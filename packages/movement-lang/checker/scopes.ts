@@ -104,7 +104,7 @@ export interface ScopeSymbol {
   /** For a movement's `param`: the event its type names (`<runs-[:Invocation]->>`)
    *  on an instance the catalog has no description for, so `posType` is
    *  absent — and a read or a write off the parameter can't be checked
-   *  (MOV_EVENT_UNDESCRIBED, from version 3). */
+   *  (MOV_EVENT_UNDESCRIBED, from version 5). */
   undescribedEvent?: UndescribedEvent;
   /**
    * True for a `binding` on the ARROW plane whose value is a whole traversal

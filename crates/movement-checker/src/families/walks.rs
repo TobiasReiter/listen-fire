@@ -243,10 +243,9 @@ pub struct UndescribedEvent {
 
 /// MOV_EVENT_UNDESCRIBED for a read or write off `param`, at `span`
 /// (`undescribedEventSeverity`, `undescribedEventMessage`): refused from
-/// version 5; a warning in 3 and 4, whose programs checked clean and ran (the
-/// read was null); unsaid before 3.
+/// version 5; unsaid before.
 pub fn undescribed_event_diagnostic(version: u32, param: &str, event: &UndescribedEvent, span: movement_parser::ast::Span) -> Option<crate::diagnostic::Diagnostic> {
-    if version < 3 {
+    if version < 5 {
         return None;
     }
     let message = format!(
@@ -254,11 +253,7 @@ pub fn undescribed_event_diagnostic(version: u32, param: &str, event: &Undescrib
         instance = event.instance,
         ev = event.event,
     );
-    let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::EVENT_UNDESCRIBED, message, span);
-    if version < 5 {
-        diagnostic.severity = Some(Severity::Warning);
-    }
-    Some(diagnostic)
+    Some(crate::diagnostic::Diagnostic::error(codes::EVENT_UNDESCRIBED, message, span))
 }
 
 /// `reportUndescribed`: true when nothing can be checked against `schema`
