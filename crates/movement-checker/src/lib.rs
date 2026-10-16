@@ -58,9 +58,10 @@ fn run_check_here<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: 
     let mut checker = checker::Checker::new(catalog, &options, resolves_files);
     checker.imports = families::imports::ImportState::new(link);
     checker.run(&program.statements);
+    let spelling: Vec<Diagnostic> = program.spelling.iter().filter(|f| checker.spelling_stands(f, None)).map(diagnostic::of_spelling).collect();
     let diagnostics = version::standing_diagnostic(options.language_version)
         .into_iter()
-        .chain(program.spelling.iter().map(diagnostic::of_spelling))
+        .chain(spelling)
         .chain(std::mem::take(&mut checker.imports.spelling))
         .chain(problems)
         .chain(

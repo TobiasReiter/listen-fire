@@ -400,7 +400,7 @@ impl Parser {
         let fix = (!edits.is_empty()).then(|| Fix {
             edits: edits.into_iter().map(|(s, e, text)| SourceEdit { span: self.span_between(s, e), text }).collect(),
         });
-        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix });
+        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix, unless_bound: None });
     }
 
     /// From version 5 an `if` condition is parenthesised, as TypeScript's.

@@ -144,6 +144,28 @@ pub const SPELLINGS: &[Spelling] = &[
     old("AT", "[]", Index),
 ];
 
+/// The core words (§2.1): always there, never qualified. `race`, `all`,
+/// `callback`, `extract` and `extractOne` are read by the grammar, `sleep`
+/// and `until` after `await`; the rest are functions the spelling rewrite
+/// reads.
+pub const CORE_WORDS: &[&str] = &[
+    "map", "filter", "reduce", "count", "first", "only", "exists", "coalesce", "sort", "sleep", "until", "race", "all", "callback", "ai",
+    "extract", "extractOne", "members", "fail",
+];
+
+/// What a name a program binds hides from version 5 (§4.2), exactly as
+/// written: a core word or a standard namespace. Letter case counts:
+/// `upper` hides nothing (`Text.upper` is the function), nor does `Map`.
+pub fn hidden_by(name: &str) -> Option<String> {
+    if CORE_WORDS.contains(&name) {
+        Some(format!("the core word `{name}`"))
+    } else if NAMESPACES.contains(&name) {
+        Some(format!("the namespace `{name}`"))
+    } else {
+        None
+    }
+}
+
 /// The standard namespaces (§2.2): values that hold functions.
 pub const NAMESPACES: &[&str] = &["Text", "Number", "Date", "DateTime", "Currency", "Url", "Json", "List", "File"];
 
@@ -283,6 +305,8 @@ pub fn spell_message(message: &str, version: u32) -> String {
 pub struct Table {
     pub spellings: &'static [Spelling],
     pub namespaces: &'static [&'static str],
+    #[serde(rename = "coreWords")]
+    pub core_words: &'static [&'static str],
     #[serde(rename = "walkCaps")]
     pub walk_caps: &'static [(&'static str, &'static str)],
     pub operators: &'static [(&'static str, &'static str)],
@@ -291,7 +315,7 @@ pub struct Table {
 }
 
 pub const TABLE: Table =
-    Table { spellings: SPELLINGS, namespaces: NAMESPACES, walk_caps: WALK_CAPS, operators: OPERATORS, statement_words: STATEMENT_WORDS };
+    Table { spellings: SPELLINGS, namespaces: NAMESPACES, core_words: CORE_WORDS, walk_caps: WALK_CAPS, operators: OPERATORS, statement_words: STATEMENT_WORDS };
 
 #[cfg(test)]
 mod tests {

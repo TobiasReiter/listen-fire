@@ -87,3 +87,53 @@ fn under_4_a_plugin_is_imported_by_the_catalog_s_key() {
     let found = check_with("import { fetchUrl } from plugins\n", 4, PLUGINS);
     assert!(found.iter().any(|d| d.message == "Unknown plugin 'fetchUrl' in 'plugins'"), "{found:#?}");
 }
+
+const NONE: &str = r#"{"adapters":{},"credentials":{},"plugins":{}}"#;
+
+fn of_code<'d>(found: &'d [Diagnostic], code: &str) -> Vec<&'d str> {
+    found.iter().filter(|d| d.code == code).map(|d| d.message.as_str()).collect()
+}
+
+#[test]
+fn a_call_goes_to_the_name_the_program_binds_under_5() {
+    // `upper` is no built-in's name under 5 (`Text.upper` is): binding it
+    // hides nothing, and a call to it is the program's own.
+    let closure = "function go(t: <text>) {\n  upper = (s: <text>) => s\n  a = upper(t)\n  n = Text.length(upper(t))\n}";
+    let found = check_with(closure, 5, NONE);
+    assert!(of_code(&found, "MOV_V5_SPELLING").is_empty(), "{found:#?}");
+    assert!(of_code(&found, "MOV_FUNCTION_NAME_COLLISION").is_empty(), "{found:#?}");
+    let function = "function upper(s: <text>) {\n  return s\n}\nfunction go(t: <text>) {\n  a = upper(t)\n  upper(t)\n}";
+    let found = check_with(function, 5, NONE);
+    assert!(of_code(&found, "MOV_V5_SPELLING").is_empty() && of_code(&found, "MOV_FUNCTION_NAME_COLLISION").is_empty(), "{found:#?}");
+}
+
+#[test]
+fn an_unbound_old_name_is_still_refused_under_5() {
+    let found = check_with("function go(t: <text>) {\n  a = upper(t)\n}", 5, NONE);
+    assert_eq!(of_code(&found, "MOV_V5_SPELLING"), vec!["`upper` is written `Text.upper` from language version 5"]);
+    // Bound in an inner block only: not where the call is written.
+    let inner = "function go(t: <text>) {\n  if (t == \"a\") {\n    upper = (s: <text>) => s\n  }\n  n = upper(t)\n}";
+    assert_eq!(of_code(&check_with(inner, 5, NONE), "MOV_V5_SPELLING").len(), 1);
+}
+
+#[test]
+fn a_name_that_hides_a_core_word_or_a_namespace_is_refused_under_5_for_now() {
+    let found = check_with("function go(count: <number>) {\n  Text = 3\n  Map = 3\n  upper = 3\n}", 5, NONE);
+    assert_eq!(
+        of_code(&found, "MOV_V5_HIDES_BUILTIN"),
+        vec![
+            "'count' would hide the core word `count` — not yet allowed: inside an expression a call written with 'count' is read as the core word `count` before any name is bound, so it would not reach this binding. Name it something else",
+            "'Text' would hide the namespace `Text` — not yet allowed: inside an expression a call written with 'Text' is read as the namespace `Text` before any name is bound, so it would not reach this binding. Name it something else",
+        ]
+    );
+    // A function by a core word's name: reported once, as hiding it.
+    let found = check_with("function first(s: <text>) {\n  return 1\n}", 5, NONE);
+    assert_eq!(codes_of(&found).iter().filter(|c| c.starts_with("MOV_V5_HIDES") || c.starts_with("MOV_FUNCTION_NAME")).count(), 1, "{found:#?}");
+}
+
+#[test]
+fn under_4_a_built_in_s_name_in_any_case_is_refused_as_before() {
+    let found = check_with("movement go(t: <text>) {\n  upper = (s: <text>) => s\n  map = 3\n}", 4, NONE);
+    assert_eq!(of_code(&found, "MOV_FUNCTION_NAME_COLLISION").len(), 1, "{found:#?}");
+    assert!(of_code(&found, "MOV_V5_HIDES_BUILTIN").is_empty());
+}

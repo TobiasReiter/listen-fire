@@ -13,6 +13,11 @@ export interface SpellingFinding {
   message: string;
   span: Span;
   fix?: DiagnosticFix;
+  /** The bare name a call is written with, when the finding is about that
+   *  name (`upper(x)`): it stands only where the program does not bind the
+   *  name itself, which the checker, holding the scopes, decides. The span
+   *  starts where the call does. */
+  unlessBound?: string;
 }
 
 /** `message` naming every built-in it quotes as `version` spells it
@@ -43,6 +48,7 @@ export interface SpellingRow {
 export interface SurfaceTable {
   spellings: SpellingRow[];
   namespaces: string[];
+  coreWords: string[];
   walkCaps: [string, string][];
   operators: [string, string][];
   statementWords: [string, string][];
@@ -62,4 +68,20 @@ export function surfaceTable(): SurfaceTable {
 
 function isTable(value: unknown): value is SurfaceTable {
   return typeof value === 'object' && value !== null && Array.isArray((value as { spellings?: unknown }).spellings);
+}
+
+/** What a name a program binds hides from version 5, exactly as written: a
+ *  core word or a standard namespace (Rust: `table::hidden_by`). */
+export function hiddenBy(name: string): string | undefined {
+  const { coreWords, namespaces } = surfaceTable();
+  if (coreWords.includes(name)) return `the core word \`${name}\``;
+  if (namespaces.includes(name)) return `the namespace \`${name}\``;
+  return undefined;
+}
+
+/** Whether the spelling table respells the built-in the tree names
+ *  `canonical` (in any letter case, as versions 1–4 read it). */
+export function isRespelled(canonical: string): boolean {
+  const folded = canonical.toUpperCase();
+  return surfaceTable().spellings.some((s) => !s.newOnly && s.canonical.toUpperCase() === folded);
 }

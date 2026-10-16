@@ -39,6 +39,11 @@ pub struct Finding {
     pub message: String,
     pub at: At,
     pub edits: Option<Vec<Edit>>,
+    /// The bare name a call is written with, when the finding is about that
+    /// name (`upper(x)`): it stands only where the program does not bind the
+    /// name itself (§4.2, a call goes to what is in scope), which the
+    /// checker, holding the scopes, decides.
+    pub unless_bound: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +61,9 @@ pub struct SpellingFinding {
     pub span: Span,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fix: Option<Fix>,
+    /// See `Finding::unless_bound`; the span starts where the call does.
+    #[serde(rename = "unlessBound", skip_serializing_if = "Option::is_none", default)]
+    pub unless_bound: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,6 +168,7 @@ pub fn place(f: &Finding, src: &Utf16, start: Loc) -> SpellingFinding {
         message: f.message.clone(),
         span: span(f.at),
         fix: f.edits.as_ref().map(|edits| Fix { edits: edits.iter().map(|e| SourceEdit { span: span(e.at), text: e.text.clone() }).collect() }),
+        unless_bound: f.unless_bound.clone(),
     }
 }
 

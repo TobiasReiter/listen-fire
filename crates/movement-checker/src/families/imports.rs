@@ -308,8 +308,7 @@ impl Checker<'_> {
             return checked.clone();
         }
         let outer_diagnostics = std::mem::take(&mut self.diagnostics);
-        let own_spelling = file.program.spelling.iter().map(crate::diagnostic::of_spelling).collect();
-        let outer_spelling = std::mem::replace(&mut self.imports.spelling, own_spelling);
+        let outer_spelling = std::mem::take(&mut self.imports.spelling);
         let outer_file = self.imports.current_file.replace(file.clone());
         let outer_listens = self.listens.enter_file();
         let scope = self.scopes.open(None);
@@ -317,7 +316,15 @@ impl Checker<'_> {
         self.listens.leave_file(outer_listens);
         self.imports.current_file = outer_file;
         let surfaced = std::mem::replace(&mut self.diagnostics, outer_diagnostics);
-        let surfaced_spelling = std::mem::replace(&mut self.imports.spelling, outer_spelling);
+        let nested_spelling = std::mem::replace(&mut self.imports.spelling, outer_spelling);
+        let own_spelling: Vec<Diagnostic> = file
+            .program
+            .spelling
+            .iter()
+            .filter(|f| self.spelling_stands(f, Some(&file.path)))
+            .map(crate::diagnostic::of_spelling)
+            .collect();
+        let surfaced_spelling = own_spelling.into_iter().chain(nested_spelling);
         let symbols = self.scopes.scope(scope).symbols.clone();
         self.imports.checked.insert(file.path.clone(), symbols.clone());
         for mut diagnostic in surfaced.into_iter().filter(|d| d.severity != Some(Severity::Info)) {

@@ -104,3 +104,43 @@ describe('a plugin', () => {
     );
   });
 });
+
+describe('a name the program binds', () => {
+  const ofCode = (found: Diagnostic[], code: string): string[] => found.filter((d) => d.code === code).map((d) => d.message);
+
+  it('takes the call under 5: `upper` hides nothing (`Text.upper` is the function)', () => {
+    const closure = 'function go(t: <text>) {\n  upper = (s: <text>) => s\n  a = upper(t)\n  n = Text.length(upper(t))\n}';
+    const found = check(closure, 5);
+    expect(ofCode(found, 'MOV_V5_SPELLING')).toEqual([]);
+    expect(ofCode(found, 'MOV_FUNCTION_NAME_COLLISION')).toEqual([]);
+    const fn = 'function upper(s: <text>) {\n  return s\n}\nfunction go(t: <text>) {\n  a = upper(t)\n  upper(t)\n}';
+    expect(ofCode(check(fn, 5), 'MOV_V5_SPELLING')).toEqual([]);
+    expect(ofCode(check(fn, 5), 'MOV_FUNCTION_NAME_COLLISION')).toEqual([]);
+  });
+
+  it('only where it is bound: an unbound old name is still refused under 5', () => {
+    expect(ofCode(check('function go(t: <text>) {\n  a = upper(t)\n}', 5), 'MOV_V5_SPELLING')).toEqual([
+      '`upper` is written `Text.upper` from language version 5',
+    ]);
+    const inner = 'function go(t: <text>) {\n  if (t == "a") {\n    upper = (s: <text>) => s\n  }\n  n = upper(t)\n}';
+    expect(ofCode(check(inner, 5), 'MOV_V5_SPELLING')).toHaveLength(1);
+  });
+
+  it('is refused under 5, for now, when it hides a core word or a namespace (exact case)', () => {
+    const found = check('function go(count: <number>) {\n  Text = 3\n  Map = 3\n  upper = 3\n}', 5);
+    expect(ofCode(found, 'MOV_V5_HIDES_BUILTIN')).toEqual([
+      "'count' would hide the core word `count` — not yet allowed: inside an expression a call written with 'count' is read as the core word `count` before any name is bound, so it would not reach this binding. Name it something else",
+      "'Text' would hide the namespace `Text` — not yet allowed: inside an expression a call written with 'Text' is read as the namespace `Text` before any name is bound, so it would not reach this binding. Name it something else",
+    ]);
+    const fn = check('function first(s: <text>) {\n  return 1\n}', 5).filter(
+      (d) => d.code === 'MOV_V5_HIDES_BUILTIN' || d.code === 'MOV_FUNCTION_NAME_COLLISION',
+    );
+    expect(fn.map((d) => d.code)).toEqual(['MOV_V5_HIDES_BUILTIN']);
+  });
+
+  it("under 4 may not share a built-in's name in any letter case, as before", () => {
+    const found = check('movement go(t: <text>) {\n  upper = (s: <text>) => s\n  map = 3\n}', 4);
+    expect(ofCode(found, 'MOV_FUNCTION_NAME_COLLISION')).toHaveLength(1);
+    expect(ofCode(found, 'MOV_V5_HIDES_BUILTIN')).toEqual([]);
+  });
+});
