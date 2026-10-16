@@ -38,7 +38,7 @@ pub fn compare_order_values(a: &Js, b: &Js) -> f64 {
 /// key names, the one key shape an adapter can be asked to sort by.
 pub fn order_key_property(key: Option<&Expression>) -> Option<&str> {
     match key {
-        Some(Expression::Property { property_type_id }) => Some(property_type_id),
+        Some(Expression::Property { property_type_id, .. }) => Some(property_type_id),
         _ => None,
     }
 }

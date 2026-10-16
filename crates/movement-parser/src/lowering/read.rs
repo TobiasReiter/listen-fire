@@ -119,7 +119,7 @@ pub fn expr(v: &Value) -> Read<MExpr> {
             })?,
             at,
         },
-        "name" => MExpr::Name { name: name(field(o, "name")?)?, at },
+        "name" => MExpr::Name { name: name(field(o, "name")?)?, at, field: optional(o, "field").and_then(Value::as_bool).unwrap_or(false) },
         "special" => MExpr::Special { text: string(o, "text")?, at },
         "paren" => MExpr::Paren { expr: boxed(o, "expr")?, at },
         "list" => MExpr::List { elements: each(o, "elements", list_element)?, at },

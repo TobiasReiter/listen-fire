@@ -140,7 +140,7 @@ fn member_names(steps: &[TraversalStep], expression: &Expression) -> Vec<String>
             _ => None,
         })
         .collect();
-    if let Expression::Property { property_type_id } = expression {
+    if let Expression::Property { property_type_id, .. } = expression {
         members.push(property_type_id.clone());
     }
     members
@@ -214,8 +214,9 @@ fn collect(expr: &Expression, out: &mut CollectedNames, position: Position) {
         Expression::KgExists { params, .. } | Expression::KgValue { params, .. } => {
             params.iter().for_each(|p| collect(p, out, position))
         }
-        Expression::Property { property_type_id } => {
-            if position == Position::Value {
+        // A hop's alias read is a field, never a name to resolve.
+        Expression::Property { property_type_id, field_only } => {
+            if position == Position::Value && !field_only {
                 out.refs.push(property_type_id.clone());
             }
         }

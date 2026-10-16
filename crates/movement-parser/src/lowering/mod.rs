@@ -196,6 +196,14 @@ struct Ctx {
 
 const TOP: Ctx = Ctx { edge_props: false };
 
+/// How a name read alone lowers: where it is, and whether it is a hop's
+/// alias read (`MExpr::Name::field`), which is only ever the field.
+#[derive(Clone, Copy)]
+struct Leaf {
+    ctx: Ctx,
+    field_only: bool,
+}
+
 /// The aggregates by their upper-cased name (`AGG_FNS`).
 fn aggregate_fn(upper: &str) -> Option<AggregationFunction> {
     use AggregationFunction as A;
@@ -426,7 +434,7 @@ impl Lowering {
         Ok(match expr {
             MExpr::Literal { value, .. } => Expression::stat(static_of(value)),
             MExpr::String { parts, .. } => self.string(parts)?,
-            MExpr::Name { name, .. } => self.leaf(name, ctx)?,
+            MExpr::Name { name, field, .. } => self.leaf(name, Leaf { ctx, field_only: *field })?,
             MExpr::Special { text, .. } => {
                 // `text.slice(1)`: the `@` is one unit.
                 let v = text.get(1..).unwrap_or("");
@@ -556,10 +564,14 @@ impl Lowering {
         Ok(Expression::Concat { parts })
     }
 
-    fn leaf(&self, name: &Name, ctx: Ctx) -> Lowered<Expression> {
+    fn leaf(&self, name: &Name, Leaf { ctx, field_only }: Leaf) -> Lowered<Expression> {
         refuse_retired(name)?;
         let property_type_id = name.text.clone();
-        Ok(if ctx.edge_props { Expression::EdgeProperty { property_type_id } } else { Expression::Property { property_type_id } })
+        Ok(if ctx.edge_props {
+            Expression::EdgeProperty { property_type_id, field_only }
+        } else {
+            Expression::Property { property_type_id, field_only }
+        })
     }
 
     // ── Chains: names, members, calls, walks ──
@@ -607,7 +619,7 @@ impl Lowering {
     /// built-ins.
     fn from_name(&self, name: &Name, segments: &[Segment], ctx: Ctx, scoped: bool) -> Lowered<Expression> {
         let Some((first, rest)) = segments.split_first() else {
-            return self.leaf(name, ctx);
+            return self.leaf(name, Leaf { ctx, field_only: false });
         };
         match first {
             Segment::Call(args) => {
@@ -622,7 +634,7 @@ impl Lowering {
                     if !rest.is_empty() {
                         return refuse("edge.<property> reads one property of the walked edge");
                     }
-                    return Ok(Expression::EdgeProperty { property_type_id: property.text.clone() });
+                    return Ok(Expression::EdgeProperty { property_type_id: property.text.clone(), field_only: false });
                 }
                 let expression = self.from_name(property, rest, ctx, true)?;
                 self.fold_namespace(Some(name.text.clone()), Vec::new(), expression)
@@ -683,7 +695,7 @@ impl Lowering {
                 if last.direction != Direction::Out || last.arrow != Arrow::Full {
                     return refuse("a walk written as a value ends in ']->', or reads a '.property' after it");
                 }
-                self.leaf(&Name { text: POSITION_SENTINEL.into(), quoted: true, at: last.at }, ctx)?
+                self.leaf(&Name { text: POSITION_SENTINEL.into(), quoted: true, at: last.at }, Leaf { ctx, field_only: false })?
             }
             Some((Segment::Member(terminal), after)) => self.from_name(terminal, after, ctx, false)?,
             Some(_) => return refuse("Expected '.' after the walk"),

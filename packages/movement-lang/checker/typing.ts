@@ -5410,8 +5410,8 @@ export class ExpressionTyping {
         // Binding first, field second: the engine's order, which is what the
         // filter means on every version (a binding that shadows a declared
         // field of the target is read as the binding). From version 5 a field
-        // is read through the hop's alias, and an alias read whose name the
-        // scope binds is refused (`walkFields`), so there the two never meet.
+        // is read through the hop's alias, which lowers marked `fieldOnly`:
+        // only ever the field, whatever the scope binds.
         //
         // A name that is NEITHER is a mistake, and this is the only place that
         // can say so: the name-resolution pass reads a step filter in `field`
@@ -5426,11 +5426,12 @@ export class ExpressionTyping {
         // third surface and the one nothing enumerates: where an instance
         // declares them (`edgesCarryProperties`), an unrecognised name may be
         // the relationship's own fact and stays silent.
-        const bound = this.scalarType(expr.propertyTypeId);
+        const fieldOnly = expr.fieldOnly === true;
+        const bound = fieldOnly ? undefined : this.scalarType(expr.propertyTypeId);
         if (bound !== undefined) return bound;
         const declared = lookupPropertyType(position, expr.propertyTypeId);
         if (declared !== undefined) return declared;
-        if (this.options.nameInScope?.(expr.propertyTypeId) === true) return undefined;
+        if (!fieldOnly && this.options.nameInScope?.(expr.propertyTypeId) === true) return undefined;
         if (instanceOfRef(position)?.schema.edgesCarryProperties === true) return undefined;
         return this.readProperty(position, expr.propertyTypeId);
       }

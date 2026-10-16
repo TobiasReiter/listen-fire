@@ -26,6 +26,11 @@ import { listElementExpression, mapListElement } from './types';
  *  Returns `undefined` for an unknown name (treated as a null read). */
 export interface FilterScope {
   read(name: string): unknown;
+  /** What answers a hop's alias read (`fieldOnly`), where the names `read`
+   *  answers are a scope's, and so may be variables of the same text
+   *  (`m.email == email`). Absent, `read` answers it: a record's own fields,
+   *  which is all `read` knows. */
+  readField?: (name: string) => unknown;
   /** The instant `WITHIN` measures recency from (epoch milliseconds), read
    *  only when a `WITHIN` is evaluated; absent, the wall clock. The movement
    *  engine answers it from its host's `clock.now`. */
@@ -256,7 +261,7 @@ export function evaluatePredicate(expr: Expression, scope: FilterScope): unknown
     // `alias_ref` all read by name through the one synchronous seam.
     case 'property':
     case 'edge_property':
-      return scope.read(expr.propertyTypeId);
+      return expr.fieldOnly === true ? (scope.readField ?? scope.read)(expr.propertyTypeId) : scope.read(expr.propertyTypeId);
     case 'alias_ref':
       return scope.read(expr.name);
 

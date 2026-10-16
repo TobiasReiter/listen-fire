@@ -343,11 +343,11 @@ fn js_number(n: f64) -> String {
 
 fn operand_source(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Property { property_type_id } => Some(quote_name(property_type_id)),
+        Expression::Property { property_type_id, .. } => Some(quote_name(property_type_id)),
         Expression::Meta { key } => Some(format!("@{key}")),
         Expression::AliasRef { name } => Some(quote_name(name)),
         Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => match &**expression {
-            Expression::Property { property_type_id } => Some(format!("{}.{}", quote_name(root), quote_name(property_type_id))),
+            Expression::Property { property_type_id, .. } => Some(format!("{}.{}", quote_name(root), quote_name(property_type_id))),
             _ => None,
         },
         _ => None,
@@ -920,7 +920,7 @@ pub fn collection_ordering(typing: &Typing, expr: &Expression, position: Option<
         Expression::List { .. } => (CollectionOrder::Ordered, None),
         Expression::Aggregate { fn_: AggregationFunction::Sort, .. } => (CollectionOrder::Ordered, None),
         Expression::Aggregate { fn_: AggregationFunction::Collect, expression, .. } => collection_ordering(typing, expression, position),
-        Expression::Property { property_type_id: name } | Expression::EdgeProperty { property_type_id: name } | Expression::AliasRef { name } => {
+        Expression::Property { property_type_id: name, .. } | Expression::EdgeProperty { property_type_id: name, .. } | Expression::AliasRef { name } => {
             let ty = position.and_then(|p| lookup_property_type(Some(p), name)).or_else(|| typing.scalar_type(name));
             (collection_order_of(ty.as_ref()), Some(name.clone()))
         }
@@ -1049,7 +1049,7 @@ fn sort_element_position(typing: &Typing, argument: &Expression, position: Optio
                 typing.walk_destination_of(argument).cloned()
             }
         }
-        Expression::Property { property_type_id } if position.is_none() => typing.root_type(property_type_id),
+        Expression::Property { property_type_id, .. } if position.is_none() => typing.root_type(property_type_id),
         Expression::AliasRef { name } => typing.root_type(name),
         _ => None,
     }
@@ -1058,7 +1058,7 @@ fn sort_element_position(typing: &Typing, argument: &Expression, position: Optio
 /// `isBareWalk`: a walk read for its landings.
 fn is_bare_walk(expr: &Expression) -> bool {
     matches!(expr, Expression::Traverse { steps, expression, .. }
-        if !steps.is_empty() && matches!(&**expression, Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
+        if !steps.is_empty() && matches!(&**expression, Expression::Property { property_type_id, .. } if property_type_id == POSITION_SENTINEL))
 }
 
 /// `isKeyedValue`: a value read by name — a dict, a record.

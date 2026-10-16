@@ -166,7 +166,7 @@ pub fn is_null_literal(expr: &Expression) -> bool {
 /// engine evaluates through `eval`, whose semantics this mirrors; adapters
 /// filter through this.
 pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js, local: LocalZone<'_>) -> Result<Js, EvalError> {
-    ready(evaluate_predicate_with(expr, read, PredicateOptions { ask: None, local }))
+    ready(evaluate_predicate_with(expr, read, PredicateOptions { ask: None, local, read_field: None }))
 }
 
 /// A comparison `compare_values` handed back, being answered by the host.
@@ -183,6 +183,11 @@ pub type AskCompare<'p> = dyn Fn(FilterOperator, Js, Js) -> Comparing<'p> + 'p;
 pub struct PredicateOptions<'p> {
     pub ask: Option<&'p AskCompare<'p>>,
     pub local: LocalZone<'p>,
+    /// What answers a hop's alias read (`field_only`), where the names `read`
+    /// answers are a scope's, and so may be variables of the same text
+    /// (`m.email == email`). Absent, `read` answers it: a record's own
+    /// fields, which is all `read` knows.
+    pub read_field: Option<&'p dyn Fn(&str) -> Js>,
 }
 
 /// `evaluatePredicate`, its comparisons as `options` say.
@@ -198,7 +203,10 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
     let eval = |e: &'p Expression| evaluate_predicate_with(e, read, options);
     Ok(match expr {
         Expression::Static { value } => static_value(value),
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => read(property_type_id),
+        Expression::Property { property_type_id, field_only: true } | Expression::EdgeProperty { property_type_id, field_only: true } => {
+            options.read_field.unwrap_or(read)(property_type_id)
+        }
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => read(property_type_id),
         Expression::AliasRef { name } => read(name),
         Expression::Meta { key } => read(&format!("@{key}")),
         // A zero-step walk (`t.\`field\``) is a leaf the caller read
@@ -319,11 +327,11 @@ fn leaf_reads<'e>(expr: &'e Expression, into: &mut Vec<&'e Expression>) -> bool 
 pub fn leaf_read_key(leaf: &Expression) -> String {
     match leaf {
         Expression::AliasRef { name } => name.clone(),
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => property_type_id.clone(),
         Expression::Meta { key } => format!("@{key}"),
         Expression::Traverse { alias_root, expression, .. } => {
             let inner = match expression.as_ref() {
-                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => property_type_id.clone(),
                 Expression::AliasRef { name } => name.clone(),
                 Expression::Traverse { .. } => leaf_read_key(expression),
                 _ => String::new(),
@@ -347,7 +355,7 @@ fn leaf_keys(expr: &Expression, into: &mut Vec<String>) -> bool {
     }
     match expr {
         Expression::Static { .. } => true,
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => {
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => {
             into.push(property_type_id.clone());
             true
         }
@@ -361,7 +369,7 @@ fn leaf_keys(expr: &Expression, into: &mut Vec<String>) -> bool {
         }
         Expression::Traverse { alias_root, steps, expression } if steps.is_empty() => {
             let inner = match expression.as_ref() {
-                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => property_type_id.clone(),
                 Expression::AliasRef { name } => name.clone(),
                 _ => return false,
             };
@@ -496,7 +504,7 @@ mod tests {
 
     #[test]
     fn evaluate_predicate_reads_through_the_scope() {
-        let prop = |id: &str| Expression::Property { property_type_id: id.into() };
+        let prop = |id: &str| Expression::Property { property_type_id: id.into(), field_only: false };
         let null = Expression::Static { value: movement_parser::lowering::expression::StaticValue::Null };
         let read = |name: &str| match name {
             "x" => Js::Number(5.0),

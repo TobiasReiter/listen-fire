@@ -33,7 +33,7 @@ fn take(e: &mut MExpr) -> MExpr {
 }
 
 fn name_expr(text: &str, at: At) -> MExpr {
-    MExpr::Name { name: Name { text: text.to_string(), quoted: false, at }, at }
+    MExpr::Name { name: Name { text: text.to_string(), quoted: false, at }, at, field: false }
 }
 
 /// The canonical callee for a row: `UPPER` is a name, `DATE.TODAY` a member.
@@ -65,15 +65,17 @@ fn is_ident(text: &str) -> bool {
 /// From version 5 a hop's WHERE and ORDER BY read its record's fields
 /// through its alias (`c.Name`, design §2.5); the canonical tree reads them
 /// bare, as versions 1–4 wrote them, so the gates and the pushdown see the
-/// field they always saw. The bare name keeps the alias read's extent, which
-/// is how the checker tells it from a name written bare (an outer variable
-/// from 5, refused when it is not one). A walk nested in the WHERE keeps its
-/// own hops' reads: a bare name there is ITS record's field.
+/// field they always saw. The bare name keeps the alias read's extent and is
+/// marked as only ever the field (`MExpr::Name::field`), so neither a checker
+/// nor an engine reads it as a variable of the same name; a name written bare
+/// is an outer variable from 5 (refused when it is not one). A walk nested in
+/// the WHERE keeps its own hops' reads: a bare name there is ITS record's
+/// field.
 fn through_alias(e: &mut MExpr, alias: &str) {
     if let MExpr::Member { object, property, at } = e
         && matches!(object.as_ref(), MExpr::Name { name, .. } if name.text == alias && !name.quoted)
     {
-        *e = MExpr::Name { name: Name { text: property.text.clone(), quoted: property.quoted, at: *at }, at: *at };
+        *e = MExpr::Name { name: Name { text: property.text.clone(), quoted: property.quoted, at: *at }, at: *at, field: true };
         return;
     }
     match e {
@@ -628,7 +630,7 @@ impl<'s> Canon<'s> {
         match key {
             Some(key) => {
                 let key_at = args[1].value.at();
-                args[1].value = MExpr::Name { name: Name { text: key.text, quoted: true, at: key_at }, at: key_at };
+                args[1].value = MExpr::Name { name: Name { text: key.text, quoted: true, at: key_at }, at: key_at, field: false };
             }
             None if keyed => {
                 args.remove(1);

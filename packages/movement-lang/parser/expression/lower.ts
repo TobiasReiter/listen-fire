@@ -75,9 +75,10 @@ export function lowerCondition(tree: MExpr, source: string): MovementCondition {
   return json;
 }
 
-/** Parse and lower one expression text. */
-export function lowerMovementExpression(raw: string): Expression {
-  return lowerExpression(parseExpression(raw), raw);
+/** Parse and lower one expression text, part of a program under
+ *  `languageVersion` where given (`parseExpression`). */
+export function lowerMovementExpression(raw: string, languageVersion?: number): Expression {
+  return lowerExpression(parseExpression(raw, languageVersion), raw);
 }
 
 /** Parse and lower one condition text. */

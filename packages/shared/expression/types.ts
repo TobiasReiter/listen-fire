@@ -441,8 +441,13 @@ export function mapObjectMember(member: ObjectMember, rewrite: (expr: Expression
 
 export type Expression =
   // Leaves
-  | { type: 'property'; propertyTypeId: string }
-  | { type: 'edge_property'; propertyTypeId: string }
+  /** `fieldOnly`: a hop's alias read from language version 5 (`m.email`),
+   *  always the field of the record the hop lands on. Without it a name in a
+   *  hop's WHERE is a variable when one is in scope, else the field (the
+   *  reading versions 1–4 keep). A source given the filter reads both as the
+   *  field, as it always has. */
+  | { type: 'property'; propertyTypeId: string; fieldOnly?: true }
+  | { type: 'edge_property'; propertyTypeId: string; fieldOnly?: true }
   | { type: 'static'; value: string | number | boolean | null }
   /**
    * `AI(prompt[, tier])` — how much thinking the answer is worth, in the

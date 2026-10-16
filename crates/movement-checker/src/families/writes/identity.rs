@@ -102,7 +102,7 @@ impl Checker<'_> {
                     leaves
                         .into_iter()
                         .find(|leaf| match leaf {
-                            Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => {
+                            Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => {
                                 !root.fields.contains_key(property_type_id) && matches!(self.scopes.resolve(scope, property_type_id), Resolution::Found(_))
                             }
                             _ => true,
@@ -335,10 +335,10 @@ fn and_conjuncts(expr: &Expression) -> Vec<&Expression> {
 /// `identityKeyOf`: the name a conjunct keys by — a bare name, or `field == value`.
 fn identity_key_of(conjunct: &Expression) -> Option<&str> {
     match conjunct {
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => Some(property_type_id),
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => Some(property_type_id),
         Expression::AliasRef { name } => Some(name),
         Expression::Compare { op: FilterOperator::Eq, left, .. } => match left.as_ref() {
-            Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => Some(property_type_id),
+            Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => Some(property_type_id),
             _ => None,
         },
         _ => None,
@@ -383,11 +383,11 @@ fn leaf_reads<'e>(expr: &'e Expression, into: &mut Vec<&'e Expression>) -> bool 
 fn leaf_read_key(leaf: &Expression) -> String {
     match leaf {
         Expression::AliasRef { name } => name.clone(),
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => property_type_id.clone(),
         Expression::Meta { key } => format!("@{key}"),
         Expression::Traverse { alias_root, expression, .. } => {
             let inner = match expression.as_ref() {
-                Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => property_type_id.clone(),
+                Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => property_type_id.clone(),
                 Expression::AliasRef { name } => name.clone(),
                 Expression::Traverse { .. } => leaf_read_key(expression),
                 _ => String::new(),

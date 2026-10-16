@@ -573,7 +573,7 @@ fn gate_order(
     target: Option<&PositionSchema>,
     root: bool,
 ) {
-    let Expression::Property { property_type_id: field } = order_by else {
+    let Expression::Property { property_type_id: field, .. } = order_by else {
         if cap.order.is_some() {
             typing.report_with(
                 codes::HOP_ORDER_ENGINE,
@@ -661,7 +661,7 @@ fn collect_filter_predicates(expr: &Expression) -> Vec<(String, (&'static str, &
     fn visit(e: &Expression, out: &mut Vec<(String, (&'static str, &'static str))>) {
         match e {
             Expression::Compare { op, left, right } => {
-                if let Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } = &**left {
+                if let Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } = &**left {
                     out.push((property_type_id.clone(), filter_op(*op)));
                 }
                 visit(left, out);

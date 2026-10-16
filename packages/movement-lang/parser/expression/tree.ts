@@ -139,7 +139,10 @@ export type MExpr =
   /** A quoted string. `parts` alternates text and `${…}` interpolations; a
    *  string without one is a single text part. Escapes are already applied. */
   | { kind: 'string'; quote: '"' | "'"; parts: Array<string | MExpr>; at: At }
-  | { kind: 'name'; name: Name; at: At }
+  /** `field`: from language version 5, a hop's alias read (`m.email` inside
+   *  the hop's WHERE or ORDER BY) — always the field of the record the hop
+   *  lands on, never a variable; a name written bare is only a variable. */
+  | { kind: 'name'; name: Name; at: At; field?: true }
   /** `@meta`, `@parent.created`, `@resource.url` */
   | { kind: 'special'; text: string; at: At }
   | { kind: 'paren'; expr: MExpr; at: At }

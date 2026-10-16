@@ -1615,7 +1615,7 @@ impl Run<'_> {
         }
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
-        if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
+        if let Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name } = &expr
             && let Some(binding) = scope.resolve(name)
             && self.aliases(&binding)
         {
@@ -1821,8 +1821,8 @@ impl Run<'_> {
                 Some(binding) => self.bare(&name, binding, member).map(Ok),
                 None => Err(Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not in scope — the checker should have caught this"))),
             },
-            Ask::ScopedField { field, edge } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
-                Scoped::Landed(landed) => self.scoped_field(landed, &field, edge, scope).await.map(Ok),
+            Ask::ScopedField { field, edge, field_only } => match subject.expect("a scoped read is asked only of a scoped evaluation") {
+                Scoped::Landed(landed) => self.scoped_field(landed, &field, crate::traverse::ScopedRead { edge, field_only }, scope).await.map(Ok),
                 Scoped::Emission(_) if edge => Ok(Err(EvalError::engine(
                     "MOVENG_UNSUPPORTED",
                     "edge-property reads outside a traversal WHERE is not supported by the movement engine yet (edge properties exist only on a walked hop)".into(),
@@ -2365,11 +2365,11 @@ fn renumber_citations(record: &Js, renumbered: &[usize]) -> Js {
 fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
     match expr {
         Expression::Traverse { steps, expression, .. } if !steps.is_empty() => match expression.as_ref() {
-            Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+            Expression::Property { property_type_id, .. } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
             Expression::EdgeProperty { .. } => true,
             _ => false,
         },
-        Expression::Property { property_type_id: name } | Expression::AliasRef { name } => scope.value_of(name).is_some_and(|b| b.many),
+        Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name } => scope.value_of(name).is_some_and(|b| b.many),
         _ => false,
     }
 }

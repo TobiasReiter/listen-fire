@@ -1333,7 +1333,7 @@ impl<'p> Callees<'p> {
                 true
             }
             RValue::Expr { expr } => match lowered(&expr.raw) {
-                Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) => {
+                Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false }) => {
                     self.closure_bodies.get(&name).is_some_and(|closures| {
                         into.extend(closures.iter().copied());
                         true
@@ -1832,7 +1832,7 @@ impl<'c> Bound<'c> {
                         RValue::Extract { .. } => Kind::Extracted,
                         RValue::Lazy { .. } => Kind::Lazy,
                         RValue::Expr { expr } => {
-                            if let Ok(Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = lowered(&expr.raw)
+                            if let Ok(Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name }) = lowered(&expr.raw)
                                 && self.graphs.contains(&name)
                             {
                                 self.graphs.insert(assign.name.clone());
@@ -1876,7 +1876,7 @@ impl<'c> Bound<'c> {
                         _ => None,
                     };
                     let aliases_dirty = matches!(&assign.value, RValue::Expr { expr }
-                        if matches!(lowered(&expr.raw), Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) if self.record_nodes.contains(&name)));
+                        if matches!(lowered(&expr.raw), Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false }) if self.record_nodes.contains(&name)));
                     if node_kind && (call_span.is_some_and(|span| self.call_holder(span) != Holder::Record) || aliases_dirty) {
                         self.record_nodes.insert(assign.name.clone());
                     }
@@ -2153,7 +2153,7 @@ impl<'c> Bound<'c> {
     /// (`selectedPositionBinding`), or a value.
     fn expression_kind(&self, raw: &str) -> Kind {
         match lowered(raw) {
-            Ok(Expression::Property { property_type_id: name } | Expression::AliasRef { name }) => self.kind_of(&name),
+            Ok(Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name }) => self.kind_of(&name),
             Ok(expr) if selection(&expr).is_some() => Kind::Landing,
             _ => Kind::Value,
         }
@@ -2445,7 +2445,7 @@ impl<'c> Bound<'c> {
         for value in returns {
             let one = match value {
                 RValue::Expr { expr } => lowered(&expr.raw).map_or(Holder::Other, |e| match &e {
-                    Expression::AliasRef { name } | Expression::Property { property_type_id: name } if self.holder(name) == Holder::Record => Holder::Record,
+                    Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if self.holder(name) == Holder::Record => Holder::Record,
                     other if !may_hold_record(other, &|name| self.holder(name)) => Holder::Free,
                     _ => Holder::Other,
                 }),
@@ -2469,7 +2469,7 @@ impl<'c> Bound<'c> {
         let arms = match &combinator.arms {
             CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
             CombinatorArms::Dynamic { expr, .. } => {
-                let Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name }) = lowered(&expr.raw) else { return Holder::Other };
+                let Ok(Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false }) = lowered(&expr.raw) else { return Holder::Other };
                 return match self.built_arms.get(&name) {
                     Some(bindings) if let Some(held) = bindings.iter().try_fold(Holder::Free, |held, arms| arms.map(|arms| held.join(arms))) => held,
                     // Arms a value holds otherwise (language version 5): any
@@ -3227,7 +3227,7 @@ impl Names<'_> {
     fn system_record(&self, expr: &Expression) -> bool {
         matches!(
             expr,
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name }
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false }
                 if self.handles.contains(name) || self.instances.contains(name) || self.extracts.contains(name) || self.events.contains(name)
         )
     }
@@ -3247,7 +3247,7 @@ impl Names<'_> {
         match expr {
             Expression::Conditional { then, else_, .. } => operand(then) && operand(else_),
             Expression::Function { fn_, args } if fn_ == "coalesce" => args.iter().all(operand),
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } if self.values.contains(name) => match self.either_values.get(name) {
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if self.values.contains(name) => match self.either_values.get(name) {
                 Some(Some(raws)) if !raws.is_empty() => raws.iter().all(|raw| lowered(raw).is_ok_and(|bound| self.either_clean(&bound, depth + 1))),
                 _ => false,
             },
@@ -3426,7 +3426,7 @@ impl Names<'_> {
             return staged;
         }
         let expr = lowered(&slot.raw)?;
-        if let Expression::Property { property_type_id: name } | Expression::AliasRef { name } = &expr
+        if let Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name } = &expr
             && self.is_record(name)
         {
             return Ok(());
@@ -4586,7 +4586,7 @@ impl Names<'_> {
         }
         let Ok(expr) = lowered(&slot.raw) else { return Ok(()) };
         let one_record = match &expr {
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } if !self.values.contains(name) => !self.lazies.contains(name),
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if !self.values.contains(name) => !self.lazies.contains(name),
             other => selection(other).is_some() || value_holder(other, &|name| self.holder(name)) == Holder::Record,
         };
         if !one_record && may_hold_record(&expr, &|name| self.holder(name)) { refuse("plugin_arg_record") } else { Ok(()) }
@@ -4594,7 +4594,7 @@ impl Names<'_> {
 
     /// A bare name bound to something that is not a value.
     fn bound_non_value(&self, expr: &Expression) -> bool {
-        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = expr else { return false };
+        let (Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name }) = expr else { return false };
         !self.values.contains(name) && (self.is_record(name) || self.instances.contains(name))
     }
 
@@ -4679,12 +4679,12 @@ fn member_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Holder {
         return Holder::Free;
     }
     let one = |e: &Expression| match e {
-        Expression::AliasRef { name } | Expression::Property { property_type_id: name } => holder(name) == Holder::Record,
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } => holder(name) == Holder::Record,
         other => !may_hold_record(other, holder),
     };
     match expr {
-        Expression::AliasRef { name } | Expression::Property { property_type_id: name } if matches!(holder(name), Holder::List | Holder::Map { depth: 1, .. }) => Holder::Record,
-        Expression::AliasRef { name } | Expression::Property { property_type_id: name } if let Holder::Rows { depth, lists } = holder(name) => Holder::Map { depth, lists },
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if matches!(holder(name), Holder::List | Holder::Map { depth: 1, .. }) => Holder::Record,
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if let Holder::Rows { depth, lists } = holder(name) => Holder::Map { depth, lists },
         // A read as deep as a map holds its records: one, or a list of them.
         Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && field_read(expression) => match holder(root) {
             Holder::Map { depth, .. } if read_depth(expression) == usize::from(depth) => Holder::Record,
@@ -4749,7 +4749,7 @@ fn value_holder(expr: &Expression, holder: &dyn Fn(&str) -> Holder) -> Holder {
     {
         return picked;
     }
-    if let Expression::AliasRef { name } | Expression::Property { property_type_id: name } = expr {
+    if let Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } = expr {
         return match holder(name) {
             wide @ (Holder::Map { .. } | Holder::List | Holder::Rows { .. } | Holder::Record) => wide,
             _ => Holder::Other,
@@ -4847,7 +4847,7 @@ fn holds_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder, scoped: bool
     let at = |e: &Expression| holds_record(e, holder, scoped);
     match expr {
         Expression::Property { .. } | Expression::EdgeProperty { .. } if scoped => false,
-        Expression::AliasRef { name } | Expression::Property { property_type_id: name } => holder(name) != Holder::Free,
+        Expression::AliasRef { name } | Expression::Property { property_type_id: name, .. } => holder(name) != Holder::Free,
         Expression::Traverse { expression, .. } if matches!(expression.as_ref(), Expression::Exists { .. }) => false,
         // A field read, or a walk read for a field: the root's fields; a
         // map's member, or a field read off one.
@@ -4874,7 +4874,7 @@ fn holds_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder, scoped: bool
             // `...c` of one record copies its fields (`spreadKeysOf`: its
             // dot plane, an edge is a walk), which hold none.
             ObjectMember::Spread(spread) => match spread.expression.as_ref() {
-                Expression::AliasRef { name } | Expression::Property { property_type_id: name } if !scoped && holder(name) == Holder::Record => false,
+                Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } if !scoped && holder(name) == Holder::Record => false,
                 other => at(other),
             },
         }),
@@ -4888,7 +4888,7 @@ fn holds_record(expr: &Expression, holder: &dyn Fn(&str) -> Holder, scoped: bool
 /// walk read as its records ends in the position sentinel instead.
 fn field_read(terminal: &Expression) -> bool {
     match terminal {
-        Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+        Expression::Property { property_type_id, .. } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
         Expression::EdgeProperty { .. } => true,
         Expression::Traverse { alias_root: Some(_), expression, .. } => field_read(expression),
         _ => false,

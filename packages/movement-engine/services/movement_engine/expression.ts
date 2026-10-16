@@ -125,6 +125,7 @@ import {
   leafReadKey,
   pureLeafReads,
   replacePureLeaves,
+  type FilterScope,
   type LeafRead,
 } from '#shared/expression/filter';
 import type { ActingPrincipal, TenantId } from 'engine-contracts';
@@ -1807,8 +1808,10 @@ export async function evalMovementExpr(
     // into the WHERE — never read as (and drift on) a field the record lacks.
     case 'alias_ref':
       return readBareName(expr.name, ctx);
+    // A hop's alias read (`fieldOnly`) is the landed record's field whatever
+    // the scope binds.
     case 'property': {
-      const bound = scopedBinding(expr.propertyTypeId, ctx);
+      const bound = expr.fieldOnly === true && ctx.scope ? undefined : scopedBinding(expr.propertyTypeId, ctx);
       if (bound) return bound;
       if (ctx.scope) return readScopedProperty(expr.propertyTypeId, ctx.scope, ctx);
       return readBareName(expr.propertyTypeId, ctx);
@@ -1828,7 +1831,7 @@ export async function evalMovementExpr(
         if (inline !== undefined) {
           return { value: inline, provenance: NO_PROVENANCE };
         }
-        const bound = scopedBinding(expr.propertyTypeId, ctx);
+        const bound = expr.fieldOnly === true ? undefined : scopedBinding(expr.propertyTypeId, ctx);
         if (bound) return bound;
         return readSourcePositionField(
           ctx.scope.position,
@@ -3392,13 +3395,13 @@ const NEEDS_THE_CLOCK = Symbol('a WITHIN needs the clock');
  */
 export async function decideWithClock(
   filter: Expression,
-  read: (name: string) => unknown,
+  reads: Pick<FilterScope, 'read' | 'readField'>,
   clock: EngineClock | undefined,
 ): Promise<unknown> {
-  if (clock === undefined) return evaluatePredicate(filter, { read });
+  if (clock === undefined) return evaluatePredicate(filter, reads);
   try {
     return evaluatePredicate(filter, {
-      read,
+      ...reads,
       now: () => {
         throw NEEDS_THE_CLOCK;
       },
@@ -3406,7 +3409,7 @@ export async function decideWithClock(
   } catch (error) {
     if (error !== NEEDS_THE_CLOCK) throw error;
     const now = (await clock.now()).getTime();
-    return evaluatePredicate(filter, { read, now: () => now });
+    return evaluatePredicate(filter, { ...reads, now: () => now });
   }
 }
 
@@ -3438,14 +3441,18 @@ export async function decidePurePredicate(
   readLeaf: (leaf: LeafRead) => Promise<unknown>,
   clock?: EngineClock,
 ): Promise<unknown> {
+  // A hop's alias read (`m.email`) is kept apart from a bare name of the same
+  // text, which may be a variable (`m.email == email`).
   const reads = new Map<string, unknown>();
+  const fields = new Map<string, unknown>();
   let last: unknown = true;
   for (const conjunct of flattenAndConjuncts(filter)) {
     for (const leaf of pureLeafReads(conjunct)) {
+      const into = (leaf.type === 'property' || leaf.type === 'edge_property') && leaf.fieldOnly === true ? fields : reads;
       const name = leafReadKey(leaf);
-      if (!reads.has(name)) reads.set(name, await readLeaf(leaf));
+      if (!into.has(name)) into.set(name, await readLeaf(leaf));
     }
-    last = await decideWithClock(conjunct, (name) => reads.get(name), clock);
+    last = await decideWithClock(conjunct, { read: (name) => reads.get(name), readField: (name) => fields.get(name) }, clock);
     if (!last) return last;
   }
   return last;
@@ -3526,9 +3533,11 @@ async function outerScalar(
     // that — so where an edge carries any, a binding of the same name must not
     // stand in for it.
     case 'edge_property':
+      if (leaf.fieldOnly === true) return undefined;
       return input.edgeProperties ? undefined : boundScalar(leaf.propertyTypeId, input);
+    // A hop's alias read (`fieldOnly`) is the field the source tests.
     case 'property':
-      return boundScalar(leaf.propertyTypeId, input);
+      return leaf.fieldOnly === true ? undefined : boundScalar(leaf.propertyTypeId, input);
     case 'alias_ref':
       return boundScalar(leaf.name, input);
     // `d.\`name\`` — a field of a record bound OUTSIDE this hop; the hop's own

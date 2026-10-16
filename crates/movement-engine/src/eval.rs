@@ -163,8 +163,9 @@ pub enum Ask {
     /// evaluation) that no value binding answers: the landed record's field.
     /// `edge` for the bracket grammar's `edge_property`, which reads the
     /// walked edge's own inline property first, then a value binding of
-    /// that name, then the record's field.
-    ScopedField { field: String, edge: bool },
+    /// that name, then the record's field. `field_only`: a hop's alias read
+    /// (`m.email`), which no value binding answers.
+    ScopedField { field: String, edge: bool, field_only: bool },
     /// A traversal the run reads (crate::traverse `read_from`): off the
     /// event, an instance or a record, read for a field, as the records it
     /// lands on, or as an `EXISTS`.
@@ -333,12 +334,16 @@ impl<'a> Evaluator<'a> {
             // hop's WHERE a rootless `property` read is the same read; inside
             // one it is the landed record's field, unless a value binding of
             // that name stands in for it (`scopedBinding`).
+            // A hop's alias read (`field_only`) is the landed record's field
+            // whatever the scope binds.
             Expression::AliasRef { name } => self.read_name(name).await,
-            Expression::Property { property_type_id: name } if self.scoped && self.env.value(name).is_none() => {
-                self.ask_scoped(name, false).await
+            Expression::Property { property_type_id: name, field_only } if self.scoped && (*field_only || self.env.value(name).is_none()) => {
+                self.ask_scoped(Ask::ScopedField { field: name.clone(), edge: false, field_only: *field_only }).await
             }
-            Expression::Property { property_type_id: name } => self.read_name(name).await,
-            Expression::EdgeProperty { property_type_id: name } if self.scoped => self.ask_scoped(name, true).await,
+            Expression::Property { property_type_id: name, .. } => self.read_name(name).await,
+            Expression::EdgeProperty { property_type_id: name, field_only } if self.scoped => {
+                self.ask_scoped(Ask::ScopedField { field: name.clone(), edge: true, field_only: *field_only }).await
+            }
             Expression::EdgeProperty { .. } => Err(EvalError::unsupported(
                 "edge-property reads outside a traversal WHERE",
                 "edge properties exist only on a walked hop",
@@ -632,7 +637,7 @@ impl<'a> Evaluator<'a> {
     async fn presence(&self, subject: &Expression, op: FilterOperator) -> Eval {
         let name = match subject {
             _ if self.scoped => None,
-            Expression::Property { property_type_id: name } | Expression::AliasRef { name } => Some(name),
+            Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name } => Some(name),
             _ => None,
         };
         if let Some(name) = name
@@ -674,7 +679,7 @@ impl<'a> Evaluator<'a> {
     /// value it evaluates to.
     async fn member(&self, expr: &Expression) -> Eval {
         if !self.scoped
-            && let Expression::AliasRef { name } | Expression::Property { property_type_id: name } = expr
+            && let Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } = expr
             && let Some(binding) = self.env.binding(name)
             && crate::record::is_position(&binding)
             && !matches!(binding, Binding::Positions(_))
@@ -784,16 +789,17 @@ impl<'a> Evaluator<'a> {
     /// (`readBindingField`). Any other key is the run's to read in the map's
     /// scope.
     fn member_key(&self, member: &Js, key: &Expression) -> Option<Js> {
-        let (Expression::Property { property_type_id: name } | Expression::AliasRef { name }) = key else { return None };
+        let (Expression::Property { property_type_id: name, field_only: false } | Expression::AliasRef { name }) = key else { return None };
         if let Some(bound) = self.env.value(name) {
             return Some(bound.value);
         }
         Some(crate::record::project(member, name))
     }
 
-    async fn ask_scoped(&self, field: &str, edge: bool) -> Eval {
+    /// `read`: an `Ask::ScopedField`.
+    async fn ask_scoped(&self, read: Ask) -> Eval {
         match self.reader() {
-            Some(reader) => reader.ask(Ask::ScopedField { field: field.to_string(), edge }).await,
+            Some(reader) => reader.ask(read).await,
             None => Err(EvalError::Fallback("a landed record is the run's".into())),
         }
     }
@@ -813,11 +819,11 @@ impl<'a> Evaluator<'a> {
         match expr {
             // `isWalkProjection`: a walk of at least one hop read for a field.
             Expression::Traverse { steps, expression, .. } if !steps.is_empty() => match expression.as_ref() {
-                Expression::Property { property_type_id } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
+                Expression::Property { property_type_id, .. } => property_type_id != movement_parser::lowering::POSITION_SENTINEL,
                 Expression::EdgeProperty { .. } => true,
                 _ => false,
             },
-            Expression::AliasRef { name } | Expression::Property { property_type_id: name } => {
+            Expression::AliasRef { name } | Expression::Property { property_type_id: name, field_only: false } => {
                 self.env.value(name).is_some_and(|b| b.many)
             }
             _ => false,
@@ -1050,7 +1056,7 @@ impl<'a> Evaluator<'a> {
 /// `<root>-[…]->` with the position terminal: the records a walk lands on.
 pub(crate) fn is_records_walk(expr: &Expression) -> bool {
     matches!(expr, Expression::Traverse { alias_root: Some(_), steps, expression }
-        if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id } if property_type_id == POSITION_SENTINEL))
+        if !steps.is_empty() && matches!(expression.as_ref(), Expression::Property { property_type_id, .. } if property_type_id == POSITION_SENTINEL))
 }
 
 /// A kind the TypeScript's evaluator has no case for (the retired KG_VALUE
@@ -1083,7 +1089,7 @@ fn thrown(error: crate::js::Thrown) -> EvalError {
 /// grammar reads `t.\`f\`` as an edge property; either is the field).
 pub(crate) fn field_terminal(terminal: &Expression) -> Option<&str> {
     match terminal {
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => Some(property_type_id),
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => Some(property_type_id),
         _ => None,
     }
 }

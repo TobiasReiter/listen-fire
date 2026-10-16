@@ -686,7 +686,7 @@ impl<'a> ExpressionParser<'a> {
                     return fail("Unexpected EXISTS", tok.start);
                 }
                 let written = self.src().text(tok.start, tok.end);
-                Ok(MExpr::Name { name: Name { text: written, quoted: false, at }, at })
+                Ok(MExpr::Name { name: Name { text: written, quoted: false, at }, at, field: false })
             }
             "CONTAINS" => fail("CONTAINS is written between its operands — 'a CONTAINS b', not 'CONTAINS(a, b)'", tok.start),
             _ => fail(format!("Unexpected {keyword}"), tok.start),
@@ -708,7 +708,7 @@ impl<'a> ExpressionParser<'a> {
         }
         let name = self.read_name("")?;
         let at = name.at;
-        Ok(MExpr::Name { name, at })
+        Ok(MExpr::Name { name, at, field: false })
     }
 
     fn parse_paren(&mut self) -> PResult<MExpr> {

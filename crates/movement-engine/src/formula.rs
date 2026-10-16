@@ -96,8 +96,8 @@ fn parens(inner: String, parent: u8, prec: u8) -> String {
 fn spell_at(expr: &Expression, parent: u8) -> Option<String> {
     let ser = |e: &Expression| spell_at(e, 0);
     Some(match expr {
-        Expression::Property { property_type_id } => quote_name(property_type_id),
-        Expression::EdgeProperty { property_type_id } => format!("edge.{}", quote_name(property_type_id)),
+        Expression::Property { property_type_id, .. } => quote_name(property_type_id),
+        Expression::EdgeProperty { property_type_id, .. } => format!("edge.{}", quote_name(property_type_id)),
         Expression::Static { value } => match value {
             StaticValue::String(text) => quote_string(text),
             StaticValue::Null => "null".into(),
@@ -243,7 +243,7 @@ fn step(step: &TraversalStep) -> Option<String> {
 /// `serializeEdgeFilter`: an edge property by its bare name.
 fn edge_filter(expr: &Expression) -> Option<String> {
     Some(match expr {
-        Expression::EdgeProperty { property_type_id } => quote_name(property_type_id),
+        Expression::EdgeProperty { property_type_id, .. } => quote_name(property_type_id),
         Expression::Compare { op, left, right } => format!("{} {} {}", edge_filter(left)?, op_text(*op), edge_filter(right)?),
         Expression::Logical { op, operands } => {
             let word = if *op == LogicalOp::And { " AND " } else { " OR " };

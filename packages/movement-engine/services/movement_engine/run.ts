@@ -6972,7 +6972,7 @@ class Interpreter {
       const dot = key.indexOf('.');
       reads.set(key, fields[dot >= 0 ? key.slice(dot + 1) : key]);
     }
-    return Boolean(await decideWithClock(filter, (name) => reads.get(name), this.context.clock));
+    return Boolean(await decideWithClock(filter, { read: (name) => reads.get(name) }, this.context.clock));
   }
 
   /**
@@ -8645,10 +8645,13 @@ class Interpreter {
     return kept;
   }
 
+  // Read under the run's version, as the Rust engine reads it: from 5 a hop's
+  // alias read (`c.email`) is only ever the field.
   private probeHead(head: TraversalBlock['head']): Expression | undefined {
     try {
       return parseMovementExpression(
         `${probePathHead(head)}.\`__movement_engine_probe__\``,
+        this.languageVersion,
       );
     } catch (e) {
       if (e instanceof BridgeError) {
@@ -11672,7 +11675,7 @@ class Interpreter {
         data = { ...data, ...(current ?? {}) };
       }
       const read = data;
-      if (await decideWithClock(predicate, (name) => read[name], this.context.clock)) kept.push(candidate);
+      if (await decideWithClock(predicate, { read: (name) => read[name] }, this.context.clock)) kept.push(candidate);
     }
     return kept;
   }

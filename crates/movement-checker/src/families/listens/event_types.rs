@@ -241,7 +241,7 @@ enum Side {
 fn side(expr: &Expression) -> Option<Side> {
     match expr {
         Expression::Static { value: StaticValue::String(value) } => Some(Side::Literal(value.clone())),
-        Expression::Property { property_type_id } | Expression::EdgeProperty { property_type_id } => Some(Side::Read(property_type_id.clone())),
+        Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => Some(Side::Read(property_type_id.clone())),
         _ => None,
     }
 }
