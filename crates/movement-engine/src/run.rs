@@ -3328,6 +3328,67 @@ mod tests {
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
     }
 
+    /// A run that meets its cost cap pauses before the statement that would
+    /// spend, and its resume, with the usage reset, runs that statement and
+    /// the rest: the call before the pause is not made again.
+    #[test]
+    fn a_run_paused_at_its_cost_cap_resumes_at_the_statement_that_would_spend() {
+        let source = "import { email } from adapters\nimport { fetchUrl } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  page = fetchUrl(\"a\")\n  more = fetchUrl(\"b\")\n}";
+        let input = |spend: Json, resume: Option<Json>| {
+            let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+            catalog["plugins"] = json!({ "fetch_url": {
+                "args": ["url"], "requiredArgs": ["url"], "priced": true, "output": { "kind": "value", "type": "text" },
+            } });
+            let mut input = segment_input(source, json!(["o", 1, []]), &["park.sink.commitSuspension", "park.sink.commitLimitPause"]);
+            input["catalog"] = catalog;
+            input["spend"] = spend;
+            if let Some(state) = resume {
+                // The operator's resume re-enters the suspended statement
+                // (resume_step.ts: anything but a slept timer re-enters).
+                input["resume"] = json!({ "state": state, "reenter": true });
+            }
+            input
+        };
+        let fetched = RefCell::new(Vec::<String>::new());
+        let parked = RefCell::new(None::<Json>);
+        let paused = RefCell::new(None::<Json>);
+        let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+            ("llm.transforms", "invoke") => {
+                let config = env::json_of_js(&env::decode(&request.args["config"]).unwrap());
+                let url = config["url"].as_str().unwrap().to_string();
+                fetched.borrow_mut().push(url.clone());
+                let answer = json!({ "text": format!("got-{url}"), "cost": [{ "source": "service:test.fetch", "microdollars": 1_000_000 }] });
+                json!({ "value": wire(answer) })
+            }
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+            ("park.sink", "commitLimitPause") => {
+                *paused.borrow_mut() = Some(request.args.clone());
+                json!({})
+            }
+            ("park.sink", "commitSuspension") => {
+                *parked.borrow_mut() = Some(json!({ "address": request.args["address"], "state": request.args["state"] }));
+                json!({})
+            }
+            _ => plain_host(json!({}))(request),
+        };
+        let cap = |prior: f64, baseline: f64| json!({ "priorMicrodollars": prior, "capBaselineMicrodollars": baseline, "capMicrodollars": 1_000_000.0 });
+
+        let (done, _) = drive_input(input(cap(0.0, 0.0), None), host);
+        assert_eq!(done["result"]["parked"], json!(true), "{done}");
+        assert_eq!(*fetched.borrow(), ["a"]);
+        let pause = paused.borrow().clone().expect("the pause is committed");
+        assert_eq!((pause["limit"].clone(), pause["spentMicrodollars"].clone()), (json!("cost"), json!(1_000_000.0)));
+        let park = parked.borrow_mut().take().expect("the run parks");
+        assert_eq!(park["address"], json!("s1"));
+
+        // The operator's resume resets the usage: the baseline moves to what
+        // the run had spent.
+        let (done, _) = drive_input(input(cap(1_000_000.0, 1_000_000.0), Some(park["state"].clone())), host);
+        assert!(done.get("failed").is_none() && done.get("thrown").is_none(), "{done}");
+        assert_ne!(done["result"]["parked"], json!(true), "{done}");
+        assert_eq!(*fetched.borrow(), ["a", "b"]);
+    }
+
     /// A segment whose check answers `check`, with a dated event field;
     /// the requests it made, and its `done`.
     fn dated_run(source: &str, check: Json) -> (Json, Vec<String>) {
