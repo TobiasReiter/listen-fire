@@ -680,7 +680,7 @@ function log_round(m: <inbox-[:Email]->>) {
     \`Amount\`: 42
   }
   write fr-[:\`Participants\`]-> {
-    unique by (fr AND \`Investor Name\`)
+    unique by (fr && \`Investor Name\`)
     \`Investor Name\`: m.\`From\`
   }
 }
