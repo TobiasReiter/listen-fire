@@ -527,9 +527,6 @@ async function onRust(c: Case) {
   return { rust };
 }
 
-/** A failure's MOVENG code, when it carries one. */
-const codeOf = (error: unknown) => (error instanceof MovementEngineError ? error.code : undefined);
-
 const written = (o: Outcome) => o.captured.map((w) => w.fields?.text);
 const calls = (o: Outcome, which: 'graph' | 'email' = 'graph') =>
   JSON.parse(o[which]) as Array<[string, Record<string, unknown>]>;

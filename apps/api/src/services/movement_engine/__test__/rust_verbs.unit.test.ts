@@ -30,7 +30,6 @@ import {
   positionRecordId,
 } from 'movement-engine/services/translation_graph/types';
 import {
-  MovementRunFailed,
   runFailureCause,
   runMovement,
   type MovementRunResult,

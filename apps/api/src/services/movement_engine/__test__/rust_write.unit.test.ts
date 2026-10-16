@@ -40,7 +40,6 @@ import {
   type TestHostOverrides,
 } from 'movement-engine/services/movement_engine/test_host';
 import {
-  MovementRunFailed,
   resumeMovement,
   runFailureCause,
   runMovement,
@@ -904,9 +903,9 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       '}',
       intake('  find(name: msg.`subject`)', '  write crm-[:companies]-> { name: "after" }'),
     ].join('\n');
-    // Version 4's checker refuses the unguarded read of a match that may
+    // The checker refuses the unguarded read of a match that may
     // miss (MOV_ABSENT_REQUIRED): the run ends at its check there, and the
-    // guarded form below is what version 4 runs.
+    // guarded form below is what runs.
     await onRust({ source, event, movementName: 'intake', endsAtCheckFrom: 4 });
     await onRust({
       source,
@@ -1067,8 +1066,8 @@ describe('the graphs a run builds, in the Rust engine', () => {
         `  found = match deduped-[:companies]-> { unique by (\`name\`), name: "${wanted}" }`,
         '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
       ]);
-      // Version 4's checker refuses the unguarded read of a match that may
-      // miss (MOV_ABSENT_REQUIRED); the guarded form is what version 4 runs.
+      // The checker refuses the unguarded read of a match that may
+      // miss (MOV_ABSENT_REQUIRED); the guarded form is what runs.
       await onRust({ source, event: webhook({ subject: 'Acme' }), endsAtCheckFrom: 4 });
       const guarded = source.replace(
         '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
