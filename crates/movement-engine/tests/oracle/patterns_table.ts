@@ -21,9 +21,12 @@
  *  of the two contract categories is a port left to make. */
 export type Routes = 'whole' | 'refused' | 'declined' | 'by_contract' | 'unrecordable' | 'unreached';
 
-/** Refusals both engines make by the park-state contract: a parked state
- *  neither reads. The README's port list marks each Closed. */
-export const BY_CONTRACT: readonly string[] = ['resume_state_does_not_read', 'resume_state_code_does_not_read', 'resume_state_suspended'];
+/** Refusals this engine makes by contract, never a port left to make: a
+ *  parked state neither engine reads, and the extraction keyword, retired
+ *  from this engine whole (Henry's ruling, 2026-10-16), whose version 1–4
+ *  programs run on the TypeScript engine by their version. The README's port
+ *  list marks each Closed. */
+export const BY_CONTRACT: readonly string[] = ['resume_state_does_not_read', 'resume_state_code_does_not_read', 'resume_state_suspended', 'legacy_extraction'];
 
 /** Refusals of the shim's, before a segment opens, of an input the eval wire
  *  cannot carry as itself; such a program cannot be recorded either. */
@@ -1340,6 +1343,23 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  await sleep(1h)\n  write crm-[:notes]-> { body: "after" }', resume: (state) => ({ ...state, version: 2 }) }),
       () => ({ body: '  await sleep(1h)\n  x = 1', resume: (state) => ({ ...state, version: 0 }) }),
+    ],
+  },
+  {
+    reason: 'legacy_extraction',
+    routes: 'by_contract',
+    note: "the extraction keyword, retired from this engine whole (Henry's ruling, 2026-10-16): admission refuses it on every version, and a version 1–4 program holding one runs on the TypeScript engine by its version; version 5 refuses it at the check (MOV_EXTRACT_KEYWORD_RETIRED)",
+    programs: [
+      () => ({
+        body: '  d = extract from [msg.`text`] {\n    node co: "each company" {\n      name: "its name"\n    }\n  }\n  d-[c:co]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }',
+        replies: [{ 'x:extract_result#1': [{ co: [{ name: said('Acme') }] }] }],
+      }),
+      (pick) => ({
+        body: `  d = extract from [msg.\`subject\`] {\n    node deal: "each deal ${pick(WORDS)}" {\n      name: <text> "its name"\n    }\n  }\n  d-[x:deal]-> {\n    write crm-[:notes]-> { body: x.\`name\` }\n  }`,
+        version: 4,
+        replies: [{ 'x:extract_result#1': [{ deal: [{ name: said('Acme') }] }] }],
+      }),
+      () => ({ body: '  d = extract from [msg.`text`] {\n    name: "a name"\n  }', version: 5, checks: false, routes: 'unreached' }),
     ],
   },
   {
