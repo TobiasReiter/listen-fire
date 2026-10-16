@@ -117,6 +117,6 @@ mod tests {
         assert_eq!(file_handle(&file).as_deref(), Some("h-9"));
         assert!(matches!(member(&file, "name"), Js::String(name) if name == "a.pdf"));
         assert!(matches!(member(&file, "source"), Js::Undefined));
-        assert_eq!(env::encode(&file), json!(["F", 3]));
+        assert_eq!(env::encode_plain(&file), json!(["F", 3]));
     }
 }

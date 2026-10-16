@@ -75,8 +75,8 @@ pub fn collection_config_problems(record: &Expression, spelling: &str, keys: &[&
     {
         problems.push(format!(
             "'{spelling}' runs its first batch {} at a time and the rest {} at a time — the first batch is the warm-up, so it is never the wider one. Lower initialConcurrency, or raise concurrency.",
-            js_number(initial),
-            js_number(concurrency)
+            movement_parser::util::js::number_to_string(initial),
+            movement_parser::util::js::number_to_string(concurrency)
         ));
     }
     problems
@@ -157,17 +157,13 @@ fn read_width(value: &Expression, key: &str, spelling: &str, problems: &mut Vec<
     if n.fract() != 0.0 || !n.is_finite() || n < 1.0 {
         problems.push(format!(
             "'{spelling}': '{key}' is how many members run at once, so it is a whole number of at least 1 — and this is {}",
-            js_number(n)
+            movement_parser::util::js::number_to_string(n)
         ));
         return None;
     }
     Some(n)
 }
 
-/// A number as JavaScript's `String(n)` spells it.
-fn js_number(n: f64) -> String {
-    serde_json::to_string(&movement_parser::tree::JsNumber(n)).unwrap_or_else(|_| n.to_string())
-}
 
 impl Checker<'_> {
     /// `checkCollectionConfig`: the settings record read, not typed.

@@ -13,9 +13,7 @@ use serde_json::{Value as Json, json};
 /// The `EngineHost` families a request can address (docs/contracts/host-families.md;
 /// host.ts `HOST_FAMILIES`), spelled as the manifest spells them, plus the
 /// ones that are this engine's own and never reach an `EngineHost`: `Check`
-/// (the TypeScript checker, until the checker is Rust), `Builtins` (the
-/// TypeScript standard library, for the readings this engine hands back),
-/// and in test builds only `Echo` (the protocol's own probe, served by no
+/// (the TypeScript checker, until the checker is Rust), and in test builds only `Echo` (the protocol's own probe, served by no
 /// host).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
@@ -34,7 +32,6 @@ pub enum Family {
     Files,
     Ids,
     Check,
-    Builtins,
     Log,
     Lookup,
     #[cfg(test)]
@@ -57,7 +54,6 @@ const FAMILIES: &[Family] = &[
     Family::Files,
     Family::Ids,
     Family::Check,
-    Family::Builtins,
     Family::Log,
     Family::Lookup,
     #[cfg(test)]
@@ -82,7 +78,6 @@ impl Family {
             Family::Files => "files",
             Family::Ids => "ids",
             Family::Check => "check",
-            Family::Builtins => "builtins",
             Family::Log => "log",
             Family::Lookup => "lookup",
             #[cfg(test)]
@@ -108,7 +103,7 @@ impl Request {
     /// a park, the trace, a log line) is an effect.
     pub fn is_read(&self) -> bool {
         match self.family {
-            Family::Check | Family::Builtins | Family::Clock | Family::ControlCancel | Family::Lookup => true,
+            Family::Check | Family::Clock | Family::ControlCancel | Family::Lookup => true,
             Family::ParkCallbacks => self.method == "calls",
             Family::ParkSink => self.method == "collectBranchExports",
             Family::Adapters if self.method == "resolve" => true,
@@ -539,7 +534,7 @@ pub mod clock {
     /// epoch; `None` for an answer that names none.
     pub fn instant_of(answer: Option<&Json>) -> Option<f64> {
         // A `toISOString` text names its offset: no zone reads it.
-        crate::js_date::parse(answer?.get("nowIso")?.as_str()?, crate::js_date::LocalZone::UTC)
+        crate::js_date::parse(answer?.get("nowIso")?.as_str()?)
     }
 }
 
@@ -572,21 +567,6 @@ pub mod ids {
     /// distinct texts: the engine mints none of its own.
     pub fn mint(segment: &str, count: usize) -> Request {
         Request { family: Family::Ids, method: "mint".into(), args: in_segment(segment, json!({ "count": count })) }
-    }
-}
-
-pub mod builtins {
-    use super::*;
-
-    /// A built-in this engine hands back for these arguments, answered by
-    /// the TypeScript member: `{id, args, now, languageVersion}`, values on
-    /// the eval wire, the answer too.
-    pub fn function(id: &str, args: Vec<Json>, now: &str, language_version: u32) -> Request {
-        Request {
-            family: Family::Builtins,
-            method: "function".into(),
-            args: json!({ "id": id, "args": args, "now": now, "languageVersion": language_version }),
-        }
     }
 }
 
@@ -715,7 +695,7 @@ mod tests {
 
     #[test]
     fn every_family_parses_back_from_its_name() {
-        for name in ["adapters", "llm", "llm.client", "llm.transforms", "park.sink", "control.cancel", "locks", "trace", "clock", "files", "ids", "check", "builtins", "log", "echo"] {
+        for name in ["adapters", "llm", "llm.client", "llm.transforms", "park.sink", "control.cancel", "locks", "trace", "clock", "files", "ids", "check", "log", "echo"] {
             assert_eq!(Family::parse(name).map(Family::as_str), Some(name));
         }
         assert_eq!(Family::parse("nope"), None);

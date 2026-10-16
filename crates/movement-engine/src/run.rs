@@ -114,12 +114,6 @@ pub struct SegmentInput {
     pub spend: crate::ledger::Spend,
     /// The run's pinned instant (`firedAt`, else when the run began).
     pub now: String,
-    /// The zone a date-time text with no offset of its own is read in (an
-    /// IANA name), `now` among them: the zone V8's `Date` reads such a text
-    /// in, in the shim's process. The shim reads it, so the engine reads no
-    /// environment. Absent: UTC.
-    #[serde(default)]
-    pub local_zone: Option<String>,
     /// Kept as text: the catalog's maps are ordered.
     pub catalog: Box<RawValue>,
     /// A rehearsal: every write captured by the host, not committed, and a
@@ -521,17 +515,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // host sent first.
     let wire = env::Wire::default();
     let event = wire.decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
-    // A zone the environment does not know reads no date text as the
-    // TypeScript's process does.
-    if let Some(zone) = &input.local_zone
-        && !js_date::LocalZone::is_known(zone, env_services::current())
-    {
-        return Err(Stop::Declined("local_zone_does_not_read".into()));
-    }
-    // The pinned instant is read as `new Date(firedAt)` reads it
-    // (run_context.ts): an offset-less one in the run's zone.
-    let local = js_date::LocalZone::new(input.local_zone.as_deref(), env_services::current());
-    let Some(now_ms) = js_date::parse(&input.now, local) else {
+    let Some(now_ms) = js_date::parse(&input.now) else {
         return Err(Stop::Declined("instant_does_not_read".into()));
     };
     let answer = if input.native_check {
@@ -676,11 +660,6 @@ async fn unparsed(host: &Host, input: &SegmentInput) -> Stop {
 impl Run<'_> {
     pub(crate) fn version(&self) -> u32 {
         self.input.language_version
-    }
-
-    /// The zone a date text with no offset is read in.
-    pub(crate) fn local_zone(&self) -> js_date::LocalZone<'_> {
-        js_date::LocalZone::new(self.input.local_zone.as_deref(), env_services::current())
     }
 
     /// The segment every host request names.
@@ -1737,7 +1716,7 @@ impl Run<'_> {
     /// `evaluateMovementExpression` with `currentResource`: a `_resources`
     /// WHERE over one resource (`filterResources`).
     pub(crate) async fn evaluate_over_resource(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, resource: &Js) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
         let reader = Reading { run: self, scope, span, subject: None, field: None, resource: Some(resource) };
         Evaluator::in_run(scope.as_ref(), around, &reader).eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
@@ -1754,7 +1733,7 @@ impl Run<'_> {
         subject: Option<Scoped>,
         field: Option<&crate::write::FieldFunctions>,
     ) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
         let scoped = subject.is_some();
         let reader = Reading { run: self, scope, span: span.clone(), subject, field, resource: None };
         let evaluator = if scoped {
@@ -1823,14 +1802,9 @@ impl Run<'_> {
                 let found = self.exists(steps, where_.as_deref(), vec![subject], scope, &span).await?;
                 Ok(Ok(Evaluated { value: Js::Bool(found), prov: Prov::Built(Trail::default()) }))
             }
-            Ask::Function { id, args } => {
-                let args = args.iter().map(|arg| self.encode(arg)).collect::<Result<_, _>>()?;
-                let request = host::builtins::function(&id, args, &js_date::to_iso_string(self.now_ms), self.version());
-                self.builtin(request).await
-            }
             Ask::Within { left, right } => {
                 let now = self.clock_now().await?;
-                let value = Js::Bool(crate::filter::within(&left, &right, now, self.local_zone()));
+                let value = Js::Bool(crate::filter::within(&left, &right, now));
                 Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
             }
             Ask::Meta { key } => {
@@ -2007,27 +1981,6 @@ impl Run<'_> {
         Ok(resolved)
     }
 
-    /// `{value: wire}` or `{threw: {class, code?, message}}`: the TypeScript
-    /// member's answer, its value or the error it throws.
-    async fn builtin(&self, request: host::Request) -> Result<Result<Evaluated, EvalError>, Failure> {
-        let answer = self.ask(request).await?.unwrap_or(Json::Null);
-        if let Some(threw) = answer.get("threw") {
-            let message = threw.get("message").and_then(Json::as_str).unwrap_or_default().to_string();
-            let class = match (threw.get("class").and_then(Json::as_str), threw.get("code").and_then(Json::as_str)) {
-                (Some("MovementEngineError"), Some("MOVENG_RUNTIME")) => ErrorClass::Engine("MOVENG_RUNTIME"),
-                (Some("MovementEngineError"), Some("MOVENG_UNSUPPORTED")) => ErrorClass::Engine("MOVENG_UNSUPPORTED"),
-                (Some("RangeError"), _) => ErrorClass::RangeError,
-                (Some("TypeError"), _) => ErrorClass::TypeError,
-                (Some("Error"), _) => ErrorClass::Error,
-                _ => return Err(Failure::engine("MOVENG_RUNTIME", format!("a built-in threw what this engine cannot rethrow: {threw}"))),
-            };
-            return Ok(Err(EvalError::Thrown { class, message }));
-        }
-        let value = answer.get("value").ok_or_else(|| Failure::engine("MOVENG_RUNTIME", format!("a built-in answered {answer}")))?;
-        let value = self.wire.decode(value).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
-        Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
-    }
-
     /// `readSourcePositionField` on the event: the source adapter's
     /// `getFieldValue` through the surface-read wrapper, a `field_miss`
     /// traced for a field a raw payload does not carry, and the read's
@@ -2168,10 +2121,8 @@ impl Run<'_> {
             Js::Array(list) => (0..list.items().len()).map(|i| i.to_string()).collect(),
             _ => return,
         };
-        // `field in data`: own keys, and the prototype's.
-        let carried = keys.iter().any(|k| k == field)
-            || crate::js::is_object_prototype_name(field)
-            || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
+        // `field in data`: its own keys (a list's indices and `length`).
+        let carried = keys.iter().any(|k| k == field) || (matches!(data, Js::Array(_)) && field == "length");
         let seen = self.misses.borrow().iter().any(|(b, f)| b == instance_name && f == field);
         if carried || seen {
             return;
@@ -2329,15 +2280,6 @@ fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
         _ => false,
     }
 }
-
-/// A plugin call's named arguments; admission lets by no other kind.
-/// `Array.prototype`'s own names, which `in` finds on any list.
-const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
-    "at", "concat", "copyWithin", "entries", "every", "fill", "filter", "find", "findIndex", "findLast", "findLastIndex",
-    "flat", "flatMap", "forEach", "includes", "indexOf", "join", "keys", "lastIndexOf", "map", "pop", "push", "reduce",
-    "reduceRight", "reverse", "shift", "slice", "some", "sort", "splice", "toLocaleString", "toReversed", "toSorted",
-    "toSpliced", "unshift", "values", "with", "toString",
-];
 
 /// One evaluation's reads, answered by its run in the scope it reads.
 struct Reading<'r, 'h> {
@@ -2633,7 +2575,7 @@ pub fn event_address_key(address: &EventAddress) -> String {
     if pins.is_empty() {
         return address.event.clone();
     }
-    pins.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
+    pins.sort_by(|(a, _), (b, _)| a.cmp(b));
     crate::js_string::to_json_text(&json!([address.event, pins]))
 }
 
@@ -2721,7 +2663,7 @@ mod tests {
         json!({
             "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": serves,
             "now": "2026-03-12T12:00:00.000Z",
-            "event": env::encode_plain(&env::decode(&json!(["o", 0, [
+            "event": env::encode_plain(&env::decode(&json!(["o", [
                 ["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload],
             ]])).unwrap()),
             "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
@@ -2787,28 +2729,18 @@ mod tests {
         assert_eq!(mirrored.marked(json!({ "thrown": mirrored.to_json() })).get("unreproduced"), None);
     }
 
-    /// The run's zone is checked before anything else of the run, and the
-    /// pinned instant is read in it, as `new Date(firedAt)` reads it in the
-    /// TypeScript's process: 00:30 on 15 July in London is the 14th in UTC,
-    /// so the field is read only when the zone is London's.
+    /// The pinned instant with no offset is UTC, whatever zone the host
+    /// names (a `localZone` is not read from version 5): 00:30 on 15 July is
+    /// the 15th.
     #[test]
-    fn the_local_zone_is_checked_and_the_pinned_instant_read_in_it() {
-        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-14\" {\n    s = msg.`subject`\n  }\n}";
-        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
-        input["localZone"] = json!("Mars/Base");
-        let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
-        assert_eq!(done, json!({ "declined": "local_zone_does_not_read" }));
-        assert!(seen.is_empty(), "{seen:?}");
+    fn the_pinned_instant_with_no_offset_is_utc() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-15\" {\n    s = msg.`subject`\n  }\n}";
+        let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["now"] = json!("2026-07-15T00:30");
-        let reads = |input: Json| {
-            let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
-            assert!(done.get("result").is_some(), "{done}");
-            seen.iter().filter(|r| r.family == "adapters" && r.method == "call").count()
-        };
-        input["localZone"] = json!("Europe/London");
-        assert!(reads(input.clone()) > 0);
-        input.as_object_mut().unwrap().remove("localZone");
-        assert_eq!(reads(input), 0);
+        input["localZone"] = json!("America/Los_Angeles");
+        let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+        assert!(done.get("result").is_some(), "{done}");
+        assert!(seen.iter().any(|r| r.family == "adapters" && r.method == "call"));
     }
 
     /// A segment pinned below version 5 is refused by name before anything
@@ -2817,7 +2749,7 @@ mod tests {
     fn a_run_pinned_below_five_is_refused_by_name_and_asks_nothing() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = 1\n}";
         for version in 1..FIRST_VERSION {
-            let mut input = segment_input(source, json!(["o", 1, []]), &[]);
+            let mut input = segment_input(source, json!(["o", []]), &[]);
             input["languageVersion"] = json!(version);
             let (done, seen) = drive_input(input, plain_host(json!({})));
             assert_eq!(done, json!({ "refused": BELOW_FIRST_VERSION }), "v{version}");
@@ -2831,7 +2763,7 @@ mod tests {
     #[test]
     fn a_native_check_answers_in_place_of_the_host() {
         let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
-        let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
+        let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["nativeCheck"] = json!(true);
         let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
         assert!(done.get("result").is_some(), "{done}");
@@ -2859,7 +2791,7 @@ mod tests {
             let version = 5;
             for test in ["acme == null", "acme != null"] {
                 let source = format!("import {{ email }} from adapters\nimport {{ acme }} from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n  if {test} {{ return 1 }}\n  return 2\n}}");
-                let mut input = segment_input(&source, json!(["o", 1, []]), &[]);
+                let mut input = segment_input(&source, json!(["o", []]), &[]);
                 input["languageVersion"] = json!(version);
                 let (done, _) = drive_input(input, plain_host(json!({})));
                 let error = if done.get("thrown").is_some() { &done["thrown"] } else { &done["failed"]["error"] };
@@ -2867,7 +2799,7 @@ mod tests {
                 assert_eq!(error["message"], json!("reading 'acme' (an import) as a bare value is not supported by the movement engine yet"), "v{version} {test}: {done}");
             }
             let source = "import { email, attio } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  if attio != null {\n    ERROR(\"present\")\n  }\n}";
-            let mut input = segment_input(source, json!(["o", 1, []]), &[]);
+            let mut input = segment_input(source, json!(["o", []]), &[]);
             input["languageVersion"] = json!(version);
             let (done, _) = drive_input(input, plain_host(json!({})));
             let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
@@ -2882,7 +2814,7 @@ mod tests {
     fn a_credential_import_parks_as_any_import_does() {
         let source = "import { email } from adapters\nimport { acme } from credentials\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n}";
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(source, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -2904,7 +2836,7 @@ mod tests {
     #[test]
     fn a_sleep_wakes_at_the_host_clocks_answer_plus_the_sleep() {
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(SLEEPS, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -2924,7 +2856,7 @@ mod tests {
     #[test]
     fn a_clock_answer_naming_no_instant_fails_the_run() {
         let host = plain_host(json!({}));
-        let (done, _) = drive_serving(SLEEPS, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, _) = drive_serving(SLEEPS, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "now": "2026-10-07T12:00:00.000Z" } }),
                 _ => host(request),
@@ -2938,7 +2870,7 @@ mod tests {
     /// park: the sleep fails the run first, as the TypeScript engine's does.
     #[test]
     fn a_sleep_on_a_host_with_no_timer_park_asks_nothing_and_fails() {
-        let (done, seen) = drive(SLEEPS, json!(["o", 1, []]), plain_host(json!({})));
+        let (done, seen) = drive(SLEEPS, json!(["o", []]), plain_host(json!({})));
         assert!(!seen.iter().any(|r| r.family == "clock" || r.family == "park.sink"));
         let message = done["thrown"]["message"].as_str().or_else(|| done["failed"]["error"]["message"].as_str()).unwrap_or_default();
         assert!(message.contains("with no park sink"), "{done}");
@@ -2948,8 +2880,8 @@ mod tests {
     fn a_run_reads_binds_and_branches_through_its_host() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  if s == \"Hi\" {\n    t = \"${s}!\"\n    return t\n  }\n  u = msg.`text`\n}";
         let payload = json!({ "subject": "Hi" });
-        let (done, seen) = drive(source, json!(["o", 1, [["subject", "Hi"]]]), plain_host(payload));
-        assert_eq!(done, json!({ "result": { "movementName": "m", "writes": ["l", 0, []] } }));
+        let (done, seen) = drive(source, json!(["o", [["subject", "Hi"]]]), plain_host(payload));
+        assert_eq!(done, json!({ "result": { "movementName": "m", "writes": ["l", []] } }));
         let calls: Vec<String> = seen.iter().map(|r| format!("{}.{}", r.family, r.method)).collect();
         assert_eq!(
             calls,
@@ -2976,7 +2908,7 @@ mod tests {
     fn a_position_crosses_once_and_is_named_by_handle_after() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = \"${msg.`subject`} ${msg.`text`}\"\n}";
         let payload = json!({ "subject": "Hi", "text": "there" });
-        let (_, seen) = drive(source, json!(["o", 1, [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
+        let (_, seen) = drive(source, json!(["o", [["subject", "Hi"], ["text", "there"]]]), plain_host(payload));
         let reads: Vec<&PendingRequest> = seen.iter().filter(|r| r.args.get("method") == Some(&json!("getFieldValue"))).collect();
         assert_eq!(reads.len(), 2);
         assert_eq!((reads[0].args["positionRef"].clone(), reads[1].args["positionRef"].clone()), (json!(0), json!(0)));
@@ -2992,14 +2924,14 @@ mod tests {
     #[test]
     fn a_streamed_landing_crosses_once_however_many_fields_are_read() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  msg-[a:attachments]-> {\n    s = \"${a.`name`} ${a.`subject`}\"\n  }\n}";
-        let landing = json!(["o", 1, [["adapterType", "email"], ["recordType", null], ["identity", ["o", 2, [["kind", "unstable"], ["data", ["o", 3, [["name", "a"]]]]]]]]]);
-        let (done, seen) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+        let landing = json!(["o", [["adapterType", "email"], ["recordType", null], ["identity", ["o", [["kind", "unstable"], ["data", ["o", [["name", "a"]]]]]]]]]);
+        let (done, seen) = drive(source, json!(["o", []]), move |request| match (request.family, request.method.as_str()) {
             ("check", "program") => json!({ "value": { "diagnostics": [], "stamps": [] } }),
             ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["iterateRelated"] } }),
             ("control.cancel", _) => json!({ "value": false }),
             ("trace", "append") => json!({}),
             ("adapters", "call") if request.args["method"] == json!("iterateRelatedPage") => {
-                json!({ "value": { "result": ["o", 0, [["items", ["l", 4, [["o", 5, [["position", landing.clone()]]]]]]]] } })
+                json!({ "value": { "result": ["o", [["items", ["l", [["o", [["position", landing.clone()]]]]]]]] } })
             }
             ("adapters", "call") => json!({ "value": { "result": "x" } }),
             other => panic!("unexpected {other:?}"),
@@ -3019,11 +2951,11 @@ mod tests {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}";
         let payload = json!({});
         let host = plain_host(payload);
-        let (done, _) = drive(source, json!(["o", 1, []]), move |request| match (request.family, request.method.as_str()) {
+        let (done, _) = drive(source, json!(["o", []]), move |request| match (request.family, request.method.as_str()) {
             ("adapters", "call") => json!({ "value": { "error": { "kind": "adapter_error", "message": "down", "ref": 4 } } }),
             _ => host(request),
         });
-        assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", 0, []] } } }));
+        assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", []] } } }));
     }
 
     /// The file scope as `prepareMovement` builds it: an import of a plugin
@@ -3034,7 +2966,7 @@ mod tests {
     fn file_level_declarations_bind_and_park_as_the_typescript_engine_writes_them() {
         let source = "import { email } from adapters\nimport { fetch_url as fetch } from plugins\ninbox = email()\ntype Stage = <\"a\" | \"b\">\nrules = \"route\"\nnode Lead {\n  name: <text> \"its name ${rules}\"\n}\ntag = \"${UPPER(rules)}!\"\nmovement m(msg: <inbox-[:message]->>) {\n  label = \"${tag} ${rules}\"\n  await sleep(1h)\n}";
         let host = plain_host(json!({}));
-        let (done, seen) = drive_serving(source, json!(["o", 1, []]), &["park.sink.commitTimerPark"], |request| {
+        let (done, seen) = drive_serving(source, json!(["o", []]), &["park.sink.commitTimerPark"], |request| {
             match (request.family, request.method.as_str()) {
                 ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
                 ("park.sink", "commitTimerPark") => json!({}),
@@ -3071,7 +3003,7 @@ mod tests {
     fn an_extraction_call_with_a_model_and_no_model_list_asks_the_host_with_it() {
         let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
-        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
+        let (done, seen) = drive(source, json!(["o", [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
             ("ids", "mint") => json!({ "value": ["id-1"] }),
             ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
             ("llm.extractCall", _) => json!({ "error": { "message": "the host knows no model 'claude-opus-5'" } }),
@@ -3088,7 +3020,7 @@ mod tests {
     fn the_extraction_keyword_fails_by_name() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n  }\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
-        let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), host);
+        let (done, seen) = drive(source, json!(["o", [["text", "Acme raised."]]]), host);
         assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
         assert!(done["failed"]["error"]["message"].as_str().unwrap().contains("legacy_extraction"), "{done}");
         assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
@@ -3216,7 +3148,7 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]],
             "catalog": catalog,
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();
@@ -3236,8 +3168,8 @@ mod tests {
                         ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
                             "getFieldValue" => json!("Acme"),
                             "describe" => json!(null),
-                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, []]]]]),
-                            "createRecord" => json!(["o", 0, [["externalId", "co-1"], ["data", ["o", 1, []]]]]),
+                            "resolveEntity" => json!(["o", [["candidates", ["l", []]]]]),
+                            "createRecord" => json!(["o", [["externalId", "co-1"], ["data", ["o", []]]]]),
                             other => panic!("unexpected call {other}"),
                         } } }),
                         ("locks", "acquire") => json!({ "value": { "token": "k1" } }),
@@ -3289,14 +3221,14 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": ["park.sink.commitLimitPause"],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, [["subject", "Acme"]]]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", [["subject", "Acme"]]]]]],
             "catalog": catalog,
             "spend": { "priorMicrodollars": 1200, "capBaselineMicrodollars": 0, "capMicrodollars": 1000 },
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();
         let mut seen = Vec::new();
         let mut step = segment.start().unwrap();
-        let candidate = |id: &str, name: &str| json!(["o", 0, [["adapterType", "attio"], ["externalId", id], ["data", ["o", 1, [["name", name]]]]]]);
+        let candidate = |id: &str, name: &str| json!(["o", [["adapterType", "attio"], ["externalId", id], ["data", ["o", [["name", name]]]]]]);
         let done = loop {
             match step {
                 Step::Done(done) => break done,
@@ -3311,7 +3243,7 @@ mod tests {
                         ("adapters", "call") => json!({ "value": { "result": match method.as_str() {
                             "getFieldValue" => json!("Acme"),
                             "describe" => json!(null),
-                            "resolveEntity" => json!(["o", 0, [["candidates", ["l", 1, [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
+                            "resolveEntity" => json!(["o", [["candidates", ["l", [candidate("co-1", "Acme Inc"), candidate("co-2", "Acme Labs")]]]]]),
                             other => panic!("unexpected call {other}"),
                         } } }),
                         ("llm", "arbitrateEntities") => json!({ "value": { "error": { "kind": "budget", "message": "spent" }, "cost": [] } }),
@@ -3339,7 +3271,7 @@ mod tests {
             catalog["plugins"] = json!({ "fetch_url": {
                 "args": ["url"], "requiredArgs": ["url"], "priced": true, "output": { "kind": "value", "type": "text" },
             } });
-            let mut input = segment_input(source, json!(["o", 1, []]), &["park.sink.commitSuspension", "park.sink.commitLimitPause"]);
+            let mut input = segment_input(source, json!(["o", []]), &["park.sink.commitSuspension", "park.sink.commitLimitPause"]);
             input["catalog"] = catalog;
             input["spend"] = spend;
             if let Some(state) = resume {
@@ -3408,7 +3340,7 @@ mod tests {
         let input = json!({
             "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
             "now": "2026-03-12T12:00:00.000Z",
-            "event": ["o", 0, [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", 1, []]]]],
+            "event": ["o", [["adapterType", "email"], ["triggerType", "webhook"], ["payload", ["o", []]]]],
             "catalog": catalog,
         });
         let mut segment = crate::begin(&input.to_string()).unwrap();

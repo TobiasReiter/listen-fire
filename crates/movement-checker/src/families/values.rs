@@ -331,15 +331,11 @@ fn literal_text(expr: &Expression) -> Option<String> {
     match value {
         StaticValue::Null => None,
         StaticValue::String(s) => (!(s.contains('"') || s.contains('\\') || s.contains('\n') || s.contains("${"))).then(|| s.clone()),
-        StaticValue::Number(n) => Some(js_number(n.0)),
+        StaticValue::Number(n) => Some(movement_parser::util::js::number_to_string(n.0)),
         StaticValue::Bool(b) => Some(b.to_string()),
     }
 }
 
-/// A number as JavaScript's `String(n)` spells it, for the values a source writes.
-fn js_number(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e21 { format!("{}", n as i64) } else { format!("{n}") }
-}
 
 fn operand_source(expr: &Expression) -> Option<String> {
     match expr {
@@ -514,7 +510,7 @@ fn check_within_duration(typing: &mut Typing, operand: &Expression) {
     }
     let shown = match value {
         StaticValue::String(s) => serde_json::to_string(s).unwrap_or_default(),
-        StaticValue::Number(n) => js_number(n.0),
+        StaticValue::Number(n) => movement_parser::util::js::number_to_string(n.0),
         StaticValue::Bool(b) => b.to_string(),
         StaticValue::Null => "null".to_string(),
     };

@@ -64,13 +64,13 @@ pub fn split_conjuncts(raw: &str) -> Vec<Conjunct> {
 
 /// `/^\s*FUZZY\b\s*/`: the text after the modifier, when it leads.
 fn strip_fuzzy(text: &str) -> Option<&str> {
-    let rest = text.trim_start_matches(js::is_js_space);
+    let rest = text.trim_start_matches(char::is_whitespace);
     let after = rest.strip_prefix("FUZZY")?;
     // `\b`: the next character is not a word character.
     if after.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
-    Some(after.trim_start_matches(js::is_js_space))
+    Some(after.trim_start_matches(char::is_whitespace))
 }
 
 /// A same-length copy with every string and backtick literal blanked
@@ -347,7 +347,7 @@ pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, cons
                     fields_of.push(field);
                 }
             }
-            fields_of.sort_by(|a, b| js::utf16_cmp(a, b));
+            fields_of.sort();
             fields_of
         })
         .collect();
@@ -388,7 +388,7 @@ pub(crate) fn identity_lock_requests(adapter_type: &str, record_type: &str, cons
         return Vec::new();
     }
     let mut groups: Vec<String> = branch_fields.iter().map(|fields_of| fields_of.join(",")).collect();
-    groups.sort_by(|a, b| js::utf16_cmp(a, b));
+    groups.sort();
     groups.dedup();
     let mut requests = vec![LockRequest { name: type_lock, mode: LockMode::Shared(groups.join(" | ")), in_run_only: false }];
     requests.extend(keys);
@@ -428,7 +428,7 @@ fn fold_key_value(value: &Js) -> Option<String> {
 /// then everything but letters and digits gone.
 fn fold_text(text: &str) -> String {
     let decomposed = crate::env_services::current().normalize(text, crate::env_services::NormalForm::Nfkd);
-    let unmarked: String = decomposed.chars().filter(|c| !crate::letter_number::is_mark(*c)).collect();
+    let unmarked: String = decomposed.chars().filter(|c| !crate::marks::is_mark(*c)).collect();
     let mut folded = js::to_lower_case(js::trim(&unmarked));
     let scheme_end = scheme_length(&folded);
     if let Some(end) = scheme_end {
@@ -440,7 +440,7 @@ fn fold_text(text: &str) -> String {
     if let Some(rest) = folded.strip_prefix("www.") {
         folded = rest.to_string();
     }
-    folded.chars().filter(|c| crate::letter_number::is_letter_or_number(*c)).collect()
+    folded.chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
 /// `/^[a-z][a-z0-9+.-]*:\/\//`'s length, when it matches.

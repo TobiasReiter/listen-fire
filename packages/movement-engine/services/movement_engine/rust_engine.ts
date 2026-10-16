@@ -188,7 +188,7 @@ async function segmentInRust(
   // host for anything.
   // The segment's one wire: what it sends the engine (the event, then every
   // answer) keeps the ids the engine names it back by.
-  const wire = new WireOut({ whole: true });
+  const wire = new WireOut();
   const localZone = processLocalZone();
   if (localZone === undefined) throw unsupportedInRust(input, LOCAL_ZONE_UNVERIFIED);
   const start = segmentInput(input, context, { resume, localZone }, wire);
@@ -348,7 +348,7 @@ export async function driveEngine(
     ...input,
     hostErrors: input.hostErrors ?? [],
     positions: new Map(),
-    wire: input.wire ?? new WireOut({ whole: true }),
+    wire: input.wire ?? new WireOut(),
     // The run's own check, made before the segment opened, is the program
     // `check.compatible` asks about too.
     checked: new Map(

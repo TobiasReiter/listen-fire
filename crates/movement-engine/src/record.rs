@@ -169,7 +169,7 @@ pub fn held_records(value: &Js, expr: &Expression) -> Option<Binding> {
 pub fn project(value: &Js, field: &str) -> Js {
     match value {
         Js::Object(object) => nullish_to_null(js::object_property(object, field)),
-        Js::File(file) => nullish_to_null(js::plain_property(&file.display, field)),
+        Js::File(file) => nullish_to_null(js::object_property(&file.display, field)),
         _ => Js::Null,
     }
 }
@@ -324,7 +324,7 @@ pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
         Js::Undefined | Js::Null => Err(type_error(&format!("Cannot read properties of {} (reading '{key}')", value.to_js_string()))),
         Js::Object(object) => Ok(js::object_property(object, key)),
         // A file's members, as a property of the TypeScript's file object.
-        Js::File(file) => Ok(js::plain_property(&file.display, key)),
+        Js::File(file) => Ok(js::object_property(&file.display, key)),
         Js::Record(record) => match own_property(record, key)? {
             Js::Null if !matches!(key, "kind") => Ok(Js::Undefined),
             found => Ok(found),
@@ -397,7 +397,7 @@ pub fn fields_of(binding: &Binding) -> Result<JsObject, EvalError> {
                 spread(&mut data, &record.get(bag));
             }
             for (key, value) in data.entries() {
-                let written_key = matches!(&written, Js::Object(w) if w.get(key).is_some()) || js::is_object_prototype_name(key);
+                let written_key = matches!(&written, Js::Object(w) if w.get(key).is_some());
                 if !written_key {
                     fields.set(key.clone(), value.clone());
                 }
@@ -448,12 +448,12 @@ fn spread(fields: &mut JsObject, value: &Js) {
 }
 
 fn object_field(object: &JsObject, field: &str) -> Js {
-    js::plain_property(object, field)
+    js::object_property(object, field)
 }
 
 /// `object[field] ?? null` on a map the engine holds as an object.
 pub fn project_object(object: &JsObject, field: &str) -> Js {
-    nullish_to_null(js::plain_property(object, field))
+    nullish_to_null(js::object_property(object, field))
 }
 
 /// `plainValueOf`: a value with every record inside it read down to plain
@@ -507,7 +507,7 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
     // `plain[field] = …`: assigned, as `plainRecordOf` does.
     let mut plain = JsObject::new();
     for (field, member) in fields_of(binding)?.entries() {
-        plain.assign(field.clone(), plain_value(member, path)?);
+        plain.set(field.clone(), plain_value(member, path)?);
     }
     let mut edges: Vec<(String, Js)> = Vec::new();
     match binding {
@@ -536,7 +536,7 @@ fn plain_record_within(binding: &Binding, path: &mut Vec<Binding>) -> Result<Js,
         _ => {}
     }
     for (name, landed) in edges {
-        if plain.get(&name).is_some() || js::is_object_prototype_name(&name) {
+        if plain.get(&name).is_some() {
             return Err(unsupported(&format!("writing out a record whose field and edge are both called '{name}'"), None));
         }
         plain.set(name, landed);
@@ -581,28 +581,6 @@ mod tests {
         assert!(binding_of(&held(Binding::Event)).is_some());
     }
 
-    /// ToPrimitive over a dict: its own `toString` that is no function
-    /// cannot make it text; a built-in there is called.
-    #[test]
-    fn a_dict_is_made_text_as_to_primitive_makes_it() {
-        let dict = |entries: Vec<(&str, Js)>| {
-            let mut o = JsObject::new();
-            for (k, v) in entries {
-                o.set(k.into(), v);
-            }
-            Js::object(o)
-        };
-        let f = |name: &'static str| Js::Function(js::NativeFunction(name));
-        assert_eq!(dict(vec![]).to_text().unwrap(), "[object Object]");
-        assert_eq!(dict(vec![("valueOf", Js::Number(1.0))]).to_text().unwrap(), "[object Object]");
-        assert_eq!(dict(vec![("toString", Js::str("t"))]).to_text().unwrap_err().message, "Cannot convert object to primitive value");
-        assert_eq!(dict(vec![("toString", f("hasOwnProperty"))]).to_text().unwrap(), "false");
-        assert_eq!(dict(vec![("toString", f("hasOwnProperty")), ("undefined", Js::Number(1.0))]).to_text().unwrap(), "true");
-        assert_eq!(dict(vec![("toString", f("__lookupGetter__"))]).to_text().unwrap(), "undefined");
-        assert_eq!(dict(vec![("toString", f("__defineGetter__"))]).to_text().unwrap_err().message, "Object.prototype.__defineGetter__: Expecting function");
-        assert_eq!(dict(vec![("toString", f("toLocaleString"))]).to_text().unwrap_err().class, "RangeError");
-        assert_eq!(Js::array(vec![dict(vec![("toString", Js::Null)])]).to_text().unwrap_err().message, "Cannot convert object to primitive value");
-    }
 
     /// `===` of two binding objects is identity: a clone is the same object.
     #[test]

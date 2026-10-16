@@ -251,6 +251,70 @@ for byte; on text already in the version 5 spelling it changes nothing.
   required field refuses it (`MOV_ABSENT_REQUIRED`). Why: each was untyped and ran unchecked. Under
   3 and 4 what this refuses is an upgrade warning; a closure value is called only from 5.
 
+### shrink-parity: version 5 runs as Rust does, not as JavaScript did
+
+Version 5 runs only on the Rust engine, so the machinery that copied JavaScript's quirks is gone.
+Each line is a difference a version 5 run can show; versions 1 to 4 are unchanged.
+
+- **Numbers print with Rust's shortest digits.** On a 17-digit tie the last digit can differ:
+  `TEXT(16086.196899414062)` is `"16086.196899414063"` (JavaScript printed `…062`); both read
+  back as the same number. The layout is unchanged (`1e+21`, `1.5e-7`, `0.000001`).
+- **Letters and numbers are Rust's.** A FUZZY match's words split on what `char::is_alphanumeric`
+  refuses, so a combining vowel sign no longer breaks a word (`हिंदी` is one word; it was `ह` and
+  `द`). The CHUNKS entities estimate reads capitals with `char::is_uppercase`.
+- **A regex group name is ASCII** (`$`, `_`, letters, digits): `(?<𝒜>.)` is a malformed pattern.
+- **ONLY's failure quotes its argument as you wrote it.** `ONLY( [a,  b] )` fails with
+  `ONLY([a,  b]) says there is exactly one, and there are 2.` (before, it re-spelled the
+  expression in the old formula grammar).
+- **LOWER and UPPER use Rust's Unicode tables** (Unicode 17; Node's ICU was 16). Letters Unicode 17
+  gave a case now map: `UPPER("ꟓ")` is `"꟒"` (it stayed `"ꟓ"`). `ʕ` is no longer a cased letter, so a
+  sigma beside it can lower differently: `LOWER("ΑΣʕ")` is `"αςʕ"` (it was `"ασʕ"`).
+- **REGEX_EXTRACT reads whole characters and no Annex B.** `.` matches a whole emoji
+  (`REGEX_EXTRACT("x😀y", ".(.)")` is `"😀"`; it was half of it); `\u{1F600}` names one. An octal
+  escape (`\1` with no group was U+0001), `\c` without a letter and an unknown letter escape
+  (`\p`, `\a`) are malformed patterns, so the call is absent. Escaped punctuation (`\-`, `\@`)
+  is still itself. Groups nested past 1,000 deep are malformed (they were handed to TypeScript).
+- **A date-time text is ISO 8601 / RFC 3339 only, and no offset means UTC.** `DATETIME("2024-03-05T10:00")`
+  is `2024-03-05T10:00:00.000Z` whatever zone the host runs in (it was read in the process's local
+  zone). A day the month lacks or the hour 24 is no date-time (`"2026-02-30T00:00Z"` rolled over
+  to March 2). A comparison reads only ISO texts as dates: `"item 3" < "item 12"` is false, as
+  texts (V8 read both as dates and said true); `true < "9"` no longer orders. Written dates
+  (`DATE.PARSE("12 March 2026")`) are read as before.
+- **Self-hosting: the engine's `builtins.function` request is gone.** A version 5 run never asks
+  the TypeScript standard library for a reading; an unknown function fails the run
+  (`MOVENG_RUNTIME: unknown built-in function`).
+- **ROUND rounds a half away from zero:** `ROUND(-2.5)` is `-3` (it was `-2`); `ROUND(2.5)` is
+  still `3`.
+- **A number read from text is a plain decimal.** `NUMBER("0x10")` is absent (it was 16);
+  `"0b101"` and `"0o17"` likewise. `"Infinity"`, `".5"` and `"5."` still read.
+- **Whitespace is Rust's.** TRIM and a number read from text strip U+0085 and no longer strip
+  U+FEFF (`TRIM("﻿ x")` keeps the mark); a regex's `\s` follows suit.
+- **Fixed decimals round a tie to even.** A figure with a fixed number of decimals (compact
+  numbers, a run's cost in its trace) rounds an exact tie to even: a cost of 0.03125 dollars
+  shows `$0.0312` (it showed `$0.0313`).
+- **Texts order by code point.** An ORDER BY, SORT or `<` over texts puts `"｡"` (U+FF61) before
+  an emoji; JavaScript ordered by UTF-16 unit and put it after.
+- **An empty text is no number.** `NUMBER("")` and `NUMBER("  ")` are absent (JavaScript's
+  `Number("")` made them 0).
+- **Self-hosting: values cross between the engine and its host as plain JSON.** A list is
+  `["l", items]` and a map `["o", entries]`, in its own key order. `NaN`, `±Infinity`, `-0` and
+  JavaScript's `undefined` cross as `null`; a lone surrogate crosses as U+FFFD. Nothing crosses by
+  identity: an adapter that hands back the same object twice hands the engine two equal maps,
+  and an object it changes after answering is not seen to change. A built-in function or
+  `Object.prototype` no longer crosses; an adapter answering one is refused as any other
+  non-JSON value is. A map member holding nothing is left out, as `JSON.stringify` leaves it.
+- **A map is a map.** `__proto__` is an ordinary key and name: `{ __proto__: 1 }` holds it, a
+  spread copies it, GROUPBY and KEYBY file under it, and a binding, a parameter, a field or a node
+  may be called `__proto__` (`MOV_NAME_PROTO` and `MOV_SHAPE_FIELD_PROTO` now apply before
+  version 5 only). Reading a key a map lacks is absent, whatever its name: `m.constructor` and
+  `m.toString` were JavaScript's built-ins. `TEXT(m)` is `"[object Object]"` whatever keys `m`
+  holds (a `toString` key no longer changes it). An extraction reply's field named after a
+  built-in (`constructor`) reads as the reply wrote it.
+- **A map keeps its keys in the order they were first set**, a number-like key included:
+  `{ z: 0, "10": 1, "2": 2 }` lists `z`, `10`, `2` (JavaScript listed `2`, `10`, `z`). TEXT.SERIALISE
+  still sorts keys, as texts: `"10"` before `"2"`.
+<!-- shrink-parity:end -->
+
 ### Language version 5, Dancing Wren: new
 
 - **`fail("…")` inside an expression**: `coalesce(x, fail("no x"))`, `c ? a : fail("…")`. It

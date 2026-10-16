@@ -7,7 +7,7 @@
 //! answers (and a parked TypeScript state's extracted record, resumed).
 //!
 //! The extraction keyword (`x = extract from […] { … }`) is not run here on
-//! any version: admission refuses it (crate::admit::LEGACY_EXTRACTION).
+//! any version: a run that meets it fails by name (`legacy_extraction`).
 
 /// What a deployment buys for one extraction tier (ai_tiers.ts
 /// `ExtractionTierAssignment`): each member over the built-in row's.

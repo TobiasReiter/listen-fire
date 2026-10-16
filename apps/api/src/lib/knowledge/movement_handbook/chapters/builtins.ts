@@ -223,7 +223,7 @@ pieces = Text.chunks(text, { size: 40000, overlap: 2000 })
 
 ### TEXT.REGEX_EXTRACT
 
-\`Text.regexExtract(text, pattern, group?)\` → \`text\`, empty when nothing matches — the first regex match, or the first capture group when the pattern has one.
+\`Text.regexExtract(text, pattern, group?)\` → \`text\`, empty when nothing matches — the first regex match, or the first capture group when the pattern has one. The pattern reads whole characters (\`.\` matches an emoji) and is absent when malformed: escape only punctuation (\`\\\\.\`, \`\\\\-\`) or a known escape (\`\\\\d\`, \`\\\\s\`, \`\\\\x41\`, \`\\\\u{1F600}\`); an octal escape or an unknown letter escape is malformed.
 
 \`\`\`
 ref = Text.regexExtract(m.Subject, "(DEAL-\\\\d+)")
@@ -275,7 +275,7 @@ diff = Number.abs(before - after)
 
 ### ROUND
 
-\`Number.round(number)\` → \`number\`, rounded to the nearest whole number (half rounds up).
+\`Number.round(number)\` → \`number\`, rounded to the nearest whole number (a half rounds away from zero: 2.5 is 3, -2.5 is -3).
 
 \`\`\`
 pct = Number.round(score * 100)
@@ -384,7 +384,7 @@ win_end = DateTime.at(today, "07:00", "Europe/Berlin")
 
 ### DATE.FORMAT_ISO
 
-\`DateTime.toIso(value)\` → any readable date or timestamp normalised to a full ISO 8601 UTC timestamp.
+\`DateTime.toIso(value)\` → any readable date or timestamp normalised to a full ISO 8601 UTC timestamp. A text with a time of day is read as ISO 8601 / RFC 3339 only (\`2026-03-05T10:00\`, \`2026-03-05 10:00:30+01:00\`); with no offset it is UTC.
 
 \`\`\`
 iso = DateTime.toIso(m.Date)

@@ -57,20 +57,19 @@ impl WriteRecord {
             "committed" => return Ok(self.get("committed")),
             _ => {}
         }
-        // `field in writtenValues` finds its prototype's names too.
         if let Js::Object(written) = self.get("writtenValues")
-            && (written.get(field).is_some() || crate::js::is_object_prototype_name(field))
+            && written.get(field).is_some()
         {
             return Ok(nullish_to_null(crate::js::object_property(&written, field)));
         }
         // `field in resultData` the same; past it, `foundData?.[field]`.
         if let Js::Object(data) = self.get("resultData")
-            && (data.get(field).is_some() || crate::js::is_object_prototype_name(field) || matches!(self.get("foundData"), Js::Undefined))
+            && (data.get(field).is_some() || matches!(self.get("foundData"), Js::Undefined))
         {
-            return Ok(nullish_to_null(own_or_inherited(&data, field)));
+            return Ok(nullish_to_null(crate::js::object_property(&data, field)));
         }
         Ok(match self.get("foundData") {
-            Js::Object(found) => nullish_to_null(own_or_inherited(&found, field)),
+            Js::Object(found) => nullish_to_null(crate::js::object_property(&found, field)),
             _ => Js::Null,
         })
     }
@@ -78,15 +77,6 @@ impl WriteRecord {
 
 fn nullish_to_null(value: Js) -> Js {
     if value.is_nullish() { Js::Null } else { value }
-}
-
-/// `data[field]` of a bag of values a handle holds: an own key, else what
-/// its prototype holds under the name.
-fn own_or_inherited(data: &Rc<JsObject>, field: &str) -> Js {
-    match data.get(field) {
-        Some(value) => value.clone(),
-        None => crate::js::object_property(data, field),
-    }
 }
 
 /// A write's firing record, and the record as it stood before the write
@@ -1002,7 +992,7 @@ impl Run<'_> {
                 Js::Object(object) => JsObject::clone_of(&object),
                 _ => JsObject::new(),
             };
-            let lacks = fields.iter().any(|f| data.get(f).is_none() && !crate::js::is_object_prototype_name(f));
+            let lacks = fields.iter().any(|f| data.get(f).is_none());
             if lacks && target.adapter.has("readRecord") {
                 let mut read = JsObject::new();
                 read.set("recordType".into(), Js::str(target.record_type.clone()));
@@ -1029,7 +1019,7 @@ impl Run<'_> {
         let ask = |_: movement_parser::lowering::expression::FilterOperator, l: Js, r: Js| -> crate::filter::Comparing<'_> {
             Box::pin(async move { self.within(l, r, now).await })
         };
-        match crate::filter::evaluate_predicate_with(predicate, &read, crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone(), read_field: None }).await {
+        match crate::filter::evaluate_predicate_with(predicate, &read, crate::filter::PredicateOptions { ask: Some(&ask), read_field: None }).await {
             Ok(value) => Ok(value.truthy()),
             Err(error) => Err(thrown(Failure::of_eval(error, "the Rust engine does not reproduce it"))),
         }

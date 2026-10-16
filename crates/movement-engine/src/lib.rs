@@ -20,7 +20,6 @@ mod awaits;
 pub mod chunks;
 pub mod bindings;
 pub mod call;
-mod case_mapping;
 mod code;
 pub mod collection;
 mod combinator;
@@ -33,13 +32,12 @@ pub mod file;
 pub mod is_test;
 pub mod filter;
 pub mod flow;
-pub mod formula;
 pub mod host;
 pub mod js;
 pub mod js_date;
 pub mod js_string;
 pub mod js_regex;
-pub mod letter_number;
+pub mod marks;
 pub mod ledger;
 pub mod local;
 mod nested;
@@ -165,18 +163,11 @@ mod tests {
     fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
         let expr: Expression = js_string::from_json_text(expr).map_err(|e| format!("the expression does not read: {e}"))?;
         let envelope = env::read_envelope(bindings)?;
-        // A zone the environment does not know would read every date text as
-        // UTC: the TypeScript evaluator answers instead.
-        if let Some(zone) = &envelope.local_zone
-            && !crate::js_date::LocalZone::is_known(zone, env_services::current())
-        {
-            return Ok(json!({ "fallback": "local_zone_does_not_read" }));
-        }
-        let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now, local_zone: envelope.local_zone.as_deref() };
+        let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
         let evaluator = Evaluator::new(&envelope.env, around, envelope.origins);
         Ok(match evaluator.eval_pure(&expr) {
             Ok(result) => json!({
-                "value": env::encode(&result.value),
+                "value": env::encode_plain(&result.value),
                 "provenance": match result.prov {
                     Prov::Binding(name) => json!({ "binding": name }),
                     Prov::Built(trail) => match trail.direct {
@@ -241,45 +232,40 @@ mod tests {
     fn arithmetic_keeps_javascript_semantics() {
         assert_eq!(value("a % b", json!({ "a": -7, "b": 20 })), json!(-7.0));
         assert_eq!(value("a % b", json!({ "a": 7, "b": 0 })), json!(null));
-        assert_eq!(value("a / b", json!({ "a": 7, "b": ["n", "-0"] })), json!(null));
-        assert_eq!(value("-x", json!({ "x": "abc" })), json!(["n", "NaN"]));
-        assert_eq!(value("-x", json!({ "x": 0 })), json!(["n", "-0"]));
+        // NaN and -0 cross the wire as null.
+        assert_eq!(value("-x", json!({ "x": "abc" })), json!(null));
+        assert_eq!(value("-x", json!({ "x": 0 })), json!(null));
         assert_eq!(value("a + b", json!({ "a": "1", "b": 2 })), json!(3.0));
-        assert_eq!(value("a + b", json!({ "a": "", "b": ["u"] })), json!(["n", "NaN"]));
     }
 
     #[test]
     fn absence_reads_as_typescript_reads_it() {
         assert_eq!(value("\"said: ${x}!\"", json!({ "x": null })), json!("said: !"));
-        assert_eq!(value("\"[${AT(d, k)}]\"", json!({ "d": ["o", 0, [["a", "x"]]], "k": "b" })), json!("[]"));
-        assert_eq!(value("x == null", json!({ "x": ["u"] })), json!(true));
+        assert_eq!(value("\"[${AT(d, k)}]\"", json!({ "d": ["o", [["a", "x"]]], "k": "b" })), json!("[]"));
         assert_eq!(value("x == null", json!({ "x": false })), json!(false));
-        assert_eq!(value("x == y", json!({ "x": ["u"], "y": null })), json!(false));
         assert_eq!(value("x == 0", json!({ "x": "0" })), json!(false));
-        assert_eq!(value("IF x THEN \"then\" ELSE \"else\" END", json!({ "x": ["u"] })), json!("else"));
-        assert_eq!(value("AT(l, -1)", json!({ "l": ["l", 0, [1, 2, 3]] })), json!(3.0));
+        assert_eq!(value("IF x THEN \"then\" ELSE \"else\" END", json!({ "x": null })), json!("else"));
+        assert_eq!(value("AT(l, -1)", json!({ "l": ["l", [1, 2, 3]] })), json!(3.0));
         assert_eq!(value("AT(l, 0)", json!({ "l": "solo" })), json!("solo"));
-        assert_eq!(value("AT(l, 1.5)", json!({ "l": ["l", 0, [1, 2]] })), json!(null));
-        // An own key holding undefined is undefined, not null.
-        assert_eq!(value("AT(d, \"a\")", json!({ "d": ["o", 0, [["a", ["u"]]]] })), json!(["u"]));
+        assert_eq!(value("AT(l, 1.5)", json!({ "l": ["l", [1, 2]] })), json!(null));
     }
 
+    /// Nothing crosses by identity: two equal maps from the caller are two
+    /// maps.
     #[test]
-    fn identity_crosses_the_boundary() {
-        let d = json!(["o", 4, [["a", 1]]]);
-        assert_eq!(value("d == e", json!({ "d": d, "e": ["r", 4] })), json!(true));
+    fn the_callers_maps_cross_as_copies() {
+        let d = json!(["o", [["a", 1]]]);
         assert_eq!(value("d == { a: 1 }", json!({ "d": d })), json!(false));
-        // The caller's own object comes back as itself.
-        assert_eq!(value("IF TRUE THEN d ELSE 0 END", json!({ "d": d })), json!(["i", 4]));
-        assert_eq!(value("[d, d]", json!({ "d": d })), json!(["l", 0, [["i", 4], ["i", 4]]]));
+        assert_eq!(value("[d, d]", json!({ "d": d })), json!(["l", [["o", [["a", 1.0]]], ["o", [["a", 1.0]]]]]));
     }
 
     #[test]
-    fn maps_keep_javascript_key_order() {
-        assert_eq!(value("{ b: 1, a: 2, b: 3 }", json!({})), json!(["o", 0, [["b", 3.0], ["a", 2.0]]]));
+    fn maps_keep_their_keys_in_the_order_first_set() {
+        assert_eq!(value("{ b: 1, a: 2, b: 3 }", json!({})), json!(["o", [["b", 3.0], ["a", 2.0]]]));
+        // Keys in the order first set, a number-like key no exception.
         assert_eq!(
-            value("{ z: 0, ...m }", json!({ "m": ["o", 1, [["10", true], ["2", false]]] })),
-            json!(["o", 0, [["2", false], ["10", true], ["z", 0.0]]])
+            value("{ z: 0, ...m }", json!({ "m": ["o", [["10", true], ["2", false]]] })),
+            json!(["o", [["z", 0.0], ["10", true], ["2", false]]])
         );
         let refused = eval("{ ...m }", json!({ "m": 5 }));
         assert_eq!(refused["error"]["code"], "MOVENG_UNSUPPORTED");
@@ -289,9 +275,9 @@ mod tests {
         );
         let refused = eval("[...m]", json!({ "m": "x" }));
         assert_eq!(refused["error"]["message"], "'...' splices a list's members into a list, and this value is not a list (string)");
-        assert_eq!(value("{ ...m }", json!({ "m": ["o", 1, [["kind", "nope"]]] })), json!(["o", 0, [["kind", "nope"]]]));
+        assert_eq!(value("{ ...m }", json!({ "m": ["o", [["kind", "nope"]]] })), json!(["o", [["kind", "nope"]]]));
         // A dict whose `kind` names a binding's is the dict it is.
-        assert_eq!(value("{ ...m }", json!({ "m": ["o", 1, [["kind", "event"]]] })), json!(["o", 0, [["kind", "event"]]]));
+        assert_eq!(value("{ ...m }", json!({ "m": ["o", [["kind", "event"]]] })), json!(["o", [["kind", "event"]]]));
     }
 
     #[test]
@@ -319,22 +305,6 @@ mod tests {
     fn coalesce_short_circuits() {
         let text = "COALESCE(x, DATE.ADD_DAYS(\"2026-01-01\", 1000000000))";
         assert_eq!(eval_with(text, json!({ "bindings": { "x": { "value": 1 } } }))["value"], json!(1.0));
-    }
-
-    /// A date-time with no offset is read in the envelope's zone; a zone the
-    /// environment does not know hands the evaluation back by name.
-    #[test]
-    fn the_envelope_names_the_local_zone() {
-        let at = |zone: Json| {
-            let mut envelope = json!({ "bindings": {} });
-            if !zone.is_null() {
-                envelope["localZone"] = zone;
-            }
-            eval_with("DATETIME(\"2026-03-08T02:30\")", envelope)
-        };
-        assert_eq!(at(json!("America/New_York"))["value"], "2026-03-08T07:30:00.000Z");
-        assert_eq!(at(Json::Null)["value"], "2026-03-08T02:30:00.000Z");
-        assert_eq!(at(json!("Mars/Base")), json!({ "fallback": "local_zone_does_not_read" }));
     }
 
     #[test]

@@ -1,23 +1,19 @@
-//! `new RegExp(pattern).exec(text)` with no flags, as V8 runs it: a
-//! backtracking matcher over UTF-16 code units (no `u` flag, so an astral
-//! character is two units), Annex B's lenient syntax, and the spec's
-//! repetition rules — every iteration of a quantified group starts with that
-//! group's captures cleared, and an iteration that matches nothing ends the
-//! loop. A crate's regex would differ on all three, and on `\s`.
+//! A text's regex: `new RegExp(pattern).exec(text)` with no flags, over
+//! code points (an astral character is one character, so `.` matches all of
+//! it), with JavaScript's repetition rules — every iteration of a quantified
+//! group starts with that group's captures cleared, and an iteration that
+//! matches nothing ends the loop.
 //!
-//! The whole dialect V8 reads without flags: lookahead and lookbehind (a
-//! lookbehind matches right to left, its captures and backreferences
-//! included), named groups and `\k<name>`, Annex B's octal escapes, `\c`,
-//! identity escapes, quantified lookaheads and class escapes at a range's
-//! end. There is no step budget: a pattern V8 runs slowly runs slowly here
-//! too. The pattern is compiled to a flat program and run on an explicit
-//! backtracking stack, so neither a long text nor deep nesting costs native
-//! stack. The one thing handed back (to the TypeScript built-in, so the
-//! answer is TypeScript's) is nesting past `MAX_NESTING`: V8 overflows its
-//! stack on capturing groups nested somewhere between 8,000 and 10,000
-//! deep, at a depth set by the stack it runs on, which this engine cannot
-//! know (non-capturing groups it parses far deeper; they are handed back
-//! past the same depth all the same).
+//! The dialect: lookahead and lookbehind (a lookbehind matches right to
+//! left, its captures and backreferences included), named groups (ASCII
+//! names) and `\k<name>`, backreferences, `\xHH`, `\uHHHH`, `\u{H…}`,
+//! `\cX` with a letter, and an escaped character that is not a letter, a
+//! digit or `_`. Annex B's leniency is not read: an octal escape, a `\N`
+//! past the groups, `\c` without a letter and an unknown letter escape are
+//! malformed patterns. There is no step budget. The pattern is compiled to a
+//! flat program and run on an explicit backtracking stack, so neither a long
+//! text nor deep nesting costs native stack; groups nested past
+//! `MAX_NESTING` are a malformed pattern.
 
 const MAX_NESTING: usize = 1000;
 
@@ -26,10 +22,8 @@ const MAX_CAPTURES: usize = 1 << 16;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RegexError {
-    /// `new RegExp` would throw: the TypeScript returns null.
+    /// A malformed pattern: the function answers null.
     Syntax,
-    /// Not something this matcher reproduces exactly.
-    Unsupported(String),
 }
 
 pub struct Regex {
@@ -71,7 +65,7 @@ enum Inst {
 
 #[derive(Debug, Clone, Copy)]
 enum Unit {
-    Char(u16),
+    Char(u32),
     Any,
     Class(usize),
 }
@@ -84,7 +78,7 @@ struct Class {
 
 #[derive(Debug, Clone, Copy)]
 enum ClassItem {
-    Range(u16, u16),
+    Range(u32, u32),
     Digit { negated: bool },
     Word { negated: bool },
     Space { negated: bool },
@@ -92,22 +86,22 @@ enum ClassItem {
 
 impl Regex {
     pub fn new(pattern: &str) -> Result<Regex, RegexError> {
-        let units = crate::js_string::units_vec(pattern);
-        let scan = scan_groups(&units)?;
-        Parser::new(&units, scan).parse()
+        let chars: Vec<u32> = pattern.chars().map(u32::from).collect();
+        let scan = scan_groups(&chars)?;
+        Parser::new(&chars, scan).parse()
     }
 
     /// `exec`: the match and its groups (`None` for a group that did not
     /// take part), or `None` when nothing matches.
-    pub fn exec(&self, text: &str) -> Option<Vec<Option<Vec<u16>>>> {
-        let t = crate::js_string::units_vec(text);
+    pub fn exec(&self, text: &str) -> Option<Vec<Option<String>>> {
+        let t: Vec<u32> = text.chars().map(u32::from).collect();
         let mut machine = Machine::new(self);
         for start in 0..=t.len() {
             machine.reset();
             if let Some(end) = machine.run(self, &t, start) {
                 let mut caps = machine.caps.clone();
                 caps[0] = Some((start, end));
-                return Some(caps.into_iter().map(|c| c.map(|(a, b)| t[a..b].to_vec())).collect());
+                return Some(caps.into_iter().map(|c| c.map(|(a, b)| t[a..b].iter().filter_map(|&c| char::from_u32(c)).collect())).collect());
             }
         }
         None
@@ -125,7 +119,7 @@ struct Scan {
 }
 
 /// V8's `ScanForCaptures`.
-fn scan_groups(p: &[u16]) -> Result<Scan, RegexError> {
+fn scan_groups(p: &[u32]) -> Result<Scan, RegexError> {
     let (mut groups, mut named) = (0usize, false);
     let (mut i, mut in_class, mut depth) = (0usize, false, 0usize);
     while i < p.len() {
@@ -137,10 +131,10 @@ fn scan_groups(p: &[u16]) -> Result<Scan, RegexError> {
             0x28 if !in_class => {
                 depth += 1;
                 if depth > MAX_NESTING {
-                    return Err(RegexError::Unsupported(format!("groups nested past {MAX_NESTING} levels")));
+                    return Err(RegexError::Syntax);
                 }
-                if p.get(i + 1) == Some(&u16::from(b'?')) {
-                    if p.get(i + 2) == Some(&u16::from(b'<')) && !matches!(p.get(i + 3).map(|&c| c as u8), Some(b'=' | b'!')) {
+                if p.get(i + 1) == Some(&u32::from(b'?')) {
+                    if p.get(i + 2) == Some(&u32::from(b'<')) && !matches!(p.get(i + 3).and_then(|&c| ascii(c)), Some(b'=' | b'!')) {
                         groups += 1;
                         named = true;
                     }
@@ -200,7 +194,7 @@ enum Atom {
 }
 
 struct Parser<'a> {
-    p: &'a [u16],
+    p: &'a [u32],
     at: usize,
     scan: Scan,
     code: Vec<Inst>,
@@ -213,20 +207,21 @@ struct Parser<'a> {
     frames: Vec<Frame>,
 }
 
-fn unit(c: u8) -> u16 {
-    u16::from(c)
+fn unit(c: u8) -> u32 {
+    u32::from(c)
 }
 
-fn is_digit(u: u16) -> bool {
+/// The ASCII byte `c` is, if it is one.
+fn ascii(c: u32) -> Option<u8> {
+    u8::try_from(c).ok().filter(u8::is_ascii)
+}
+
+fn is_digit(u: u32) -> bool {
     (unit(b'0')..=unit(b'9')).contains(&u)
 }
 
-fn is_octal(u: u16) -> bool {
-    (unit(b'0')..=unit(b'7')).contains(&u)
-}
-
 impl<'a> Parser<'a> {
-    fn new(p: &'a [u16], scan: Scan) -> Parser<'a> {
+    fn new(p: &'a [u32], scan: Scan) -> Parser<'a> {
         Parser {
             p,
             at: 0,
@@ -241,11 +236,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek(&self) -> Option<u16> {
+    fn peek(&self) -> Option<u32> {
         self.p.get(self.at).copied()
     }
 
-    fn peek_at(&self, offset: usize) -> Option<u16> {
+    fn peek_at(&self, offset: usize) -> Option<u32> {
         self.p.get(self.at + offset).copied()
     }
 
@@ -434,7 +429,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         let look = |negated: bool| Inst::LookStart { negated, after: 0 };
-        match self.peek().map(|c| c as u8) {
+        match self.peek().and_then(ascii) {
             Some(b':') => {
                 self.at += 1;
                 self.open(FrameKind::NonCapture, dir, open_at, first);
@@ -445,7 +440,7 @@ impl<'a> Parser<'a> {
                 let start = self.emit(look(negated));
                 self.open(FrameKind::Look { behind: false, start }, Dir::Forward, open_at, first);
             }
-            Some(b'<') if matches!(self.peek_at(1).map(|c| c as u8), Some(b'=' | b'!')) => {
+            Some(b'<') if matches!(self.peek_at(1).and_then(ascii), Some(b'=' | b'!')) => {
                 let negated = self.peek_at(1) == Some(unit(b'!'));
                 self.at += 2;
                 let start = self.emit(look(negated));
@@ -489,17 +484,11 @@ impl<'a> Parser<'a> {
                 self.name_escape()?
             } else {
                 self.at += 1;
-                match (c, self.peek()) {
-                    (0xD800..=0xDBFF, Some(low @ 0xDC00..=0xDFFF)) => {
-                        self.at += 1;
-                        0x10000 + ((u32::from(c) - 0xD800) << 10) + (u32::from(low) - 0xDC00)
-                    }
-                    _ => u32::from(c),
-                }
+                c
             };
             let fits = match char::from_u32(code) {
-                Some(ch) if name.is_empty() => ch == '$' || ch == '_' || crate::letter_number::is_id_start(ch),
-                Some(ch) => ch == '$' || ch == '\u{200C}' || ch == '\u{200D}' || crate::letter_number::is_id_continue(ch),
+                Some(ch) if name.is_empty() => ch == '$' || ch == '_' || ch.is_ascii_alphabetic(),
+                Some(ch) => ch == '$' || ch == '_' || ch.is_ascii_alphanumeric(),
                 None => false,
             };
             if !fits {
@@ -517,7 +506,7 @@ impl<'a> Parser<'a> {
             while self.peek().is_some_and(|c| c != unit(b'}')) {
                 self.at += 1;
             }
-            let digits = String::from_utf16_lossy(&self.p[start..self.at]);
+            let digits: String = self.p[start..self.at].iter().filter_map(|&d| char::from_u32(d)).collect();
             if !self.eat(b'}') || digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(RegexError::Syntax);
             }
@@ -531,24 +520,22 @@ impl<'a> Parser<'a> {
             let saved = self.at;
             self.at += 2;
             match self.hex4() {
-                Some(trail @ 0xDC00..=0xDFFF) => return Ok(0x10000 + ((u32::from(lead) - 0xD800) << 10) + (u32::from(trail) - 0xDC00)),
+                Some(trail @ 0xDC00..=0xDFFF) => return Ok(0x10000 + ((lead - 0xD800) << 10) + (trail - 0xDC00)),
                 _ => self.at = saved,
             }
         }
-        Ok(u32::from(lead))
+        Ok(lead)
     }
 
     /// Four hex digits at the cursor, consumed; nothing consumed otherwise.
-    fn hex4(&mut self) -> Option<u16> {
+    fn hex4(&mut self) -> Option<u32> {
         self.hex(4)
     }
 
-    fn hex(&mut self, len: usize) -> Option<u16> {
+    fn hex(&mut self, len: usize) -> Option<u32> {
         let digits = self.p.get(self.at..self.at + len)?;
-        if !digits.iter().all(|&d| d < 0x80 && (d as u8).is_ascii_hexdigit()) {
-            return None;
-        }
-        let value = u16::from_str_radix(&String::from_utf16_lossy(digits), 16).ok()?;
+        let digits: String = digits.iter().map(|&d| ascii(d).filter(u8::is_ascii_hexdigit).map(char::from)).collect::<Option<_>>()?;
+        let value = u32::from_str_radix(&digits, 16).ok()?;
         self.at += len;
         Some(value)
     }
@@ -559,48 +546,27 @@ impl<'a> Parser<'a> {
         let first = self.next_group;
         let back = self.back();
         let Some(c) = self.peek_at(1) else { return Err(RegexError::Syntax) };
-        let one = |p: &mut Parser, unit: Unit| {
-            let back = p.back();
-            p.emit(Inst::Unit { unit, back });
-            Atom::Code { start, first, last: p.next_group }
-        };
-        if c >= 0x80 {
-            self.at += 2;
-            return Ok(one(self, Unit::Char(c)));
-        }
-        match c as u8 {
-            b'b' | b'B' => {
+        match ascii(c) {
+            Some(b'b' | b'B') => {
                 self.at += 2;
                 self.emit(Inst::WordBoundary { negated: c == unit(b'B') });
                 Ok(Atom::None)
             }
-            b'1'..=b'9' => {
-                let digits_at = self.at + 1;
-                let mut end = digits_at;
+            Some(b'1'..=b'9') => {
+                let mut end = self.at + 1;
                 let mut value: usize = 0;
                 while self.p.get(end).copied().is_some_and(is_digit) {
-                    value = value.saturating_mul(10).saturating_add(usize::from(self.p[end] - unit(b'0')));
+                    value = value.saturating_mul(10).saturating_add((self.p[end] - unit(b'0')) as usize);
                     end += 1;
                 }
-                if value <= self.scan.groups {
-                    self.at = end;
-                    self.emit(Inst::Backref { group: value, back });
-                    return Ok(Atom::Code { start, first, last: self.next_group });
+                if value > self.scan.groups {
+                    return Err(RegexError::Syntax);
                 }
-                if c == unit(b'8') || c == unit(b'9') {
-                    self.at += 2;
-                    return Ok(one(self, Unit::Char(c)));
-                }
-                self.at += 1;
-                let octal = self.octal();
-                Ok(one(self, Unit::Char(octal)))
+                self.at = end;
+                self.emit(Inst::Backref { group: value, back });
+                Ok(Atom::Code { start, first, last: self.next_group })
             }
-            b'0' => {
-                self.at += 1;
-                let octal = self.octal();
-                Ok(one(self, Unit::Char(octal)))
-            }
-            b'k' if self.scan.named => {
+            Some(b'k') if self.scan.named => {
                 self.at += 2;
                 if !self.eat(b'<') {
                     return Err(RegexError::Syntax);
@@ -610,48 +576,16 @@ impl<'a> Parser<'a> {
                 self.named_refs.push(name);
                 Ok(Atom::Code { start, first, last: self.next_group })
             }
-            b'c' => {
-                let letter = self.peek_at(2).filter(|&l| l < 0x80 && (l as u8).is_ascii_alphabetic());
-                match letter {
-                    Some(letter) => {
-                        self.at += 3;
-                        Ok(one(self, Unit::Char(letter & 0x1F)))
-                    }
-                    None => {
-                        // Annex B: the backslash is a character, and the `c`
-                        // is read next as itself.
-                        self.at += 1;
-                        Ok(one(self, Unit::Char(unit(b'\\'))))
-                    }
-                }
-            }
             _ => {
                 self.at += 1;
-                match self.character_escape(false)? {
-                    Escaped::Unit(u) => Ok(one(self, Unit::Char(u))),
-                    Escaped::Class(item) => {
-                        let class = self.add_class(Class { negated: false, items: vec![item] });
-                        Ok(one(self, Unit::Class(class)))
-                    }
-                }
+                let unit = match self.character_escape(false)? {
+                    Escaped::Unit(u) => Unit::Char(u),
+                    Escaped::Class(item) => Unit::Class(self.add_class(Class { negated: false, items: vec![item] })),
+                };
+                self.emit(Inst::Unit { unit, back });
+                Ok(Atom::Code { start, first, last: self.next_group })
             }
         }
-    }
-
-    /// V8's `ParseOctalLiteral`: up to three octal digits below 256; the
-    /// cursor is at the first digit.
-    fn octal(&mut self) -> u16 {
-        let mut value = self.p[self.at] - unit(b'0');
-        self.at += 1;
-        if self.peek().is_some_and(is_octal) {
-            value = value * 8 + (self.p[self.at] - unit(b'0'));
-            self.at += 1;
-            if value < 32 && self.peek().is_some_and(is_octal) {
-                value = value * 8 + (self.p[self.at] - unit(b'0'));
-                self.at += 1;
-            }
-        }
-        value
     }
 
     /// The escapes a class and the pattern share; the cursor is at the
@@ -659,32 +593,33 @@ impl<'a> Parser<'a> {
     fn character_escape(&mut self, in_class: bool) -> Result<Escaped, RegexError> {
         let c = self.peek().ok_or(RegexError::Syntax)?;
         self.at += 1;
-        if c >= 0x80 {
-            return Ok(Escaped::Unit(c));
-        }
         let class = |item| Ok(Escaped::Class(item));
-        match c as u8 {
-            b'd' => class(ClassItem::Digit { negated: false }),
-            b'D' => class(ClassItem::Digit { negated: true }),
-            b'w' => class(ClassItem::Word { negated: false }),
-            b'W' => class(ClassItem::Word { negated: true }),
-            b's' => class(ClassItem::Space { negated: false }),
-            b'S' => class(ClassItem::Space { negated: true }),
-            b'f' => Ok(Escaped::Unit(0x0C)),
-            b'n' => Ok(Escaped::Unit(0x0A)),
-            b'r' => Ok(Escaped::Unit(0x0D)),
-            b't' => Ok(Escaped::Unit(0x09)),
-            b'v' => Ok(Escaped::Unit(0x0B)),
-            b'b' if in_class => Ok(Escaped::Unit(0x08)),
-            b'0'..=b'7' if in_class => {
-                self.at -= 1;
-                Ok(Escaped::Unit(self.octal()))
+        match ascii(c) {
+            Some(b'd') => class(ClassItem::Digit { negated: false }),
+            Some(b'D') => class(ClassItem::Digit { negated: true }),
+            Some(b'w') => class(ClassItem::Word { negated: false }),
+            Some(b'W') => class(ClassItem::Word { negated: true }),
+            Some(b's') => class(ClassItem::Space { negated: false }),
+            Some(b'S') => class(ClassItem::Space { negated: true }),
+            Some(b'f') => Ok(Escaped::Unit(0x0C)),
+            Some(b'n') => Ok(Escaped::Unit(0x0A)),
+            Some(b'r') => Ok(Escaped::Unit(0x0D)),
+            Some(b't') => Ok(Escaped::Unit(0x09)),
+            Some(b'v') => Ok(Escaped::Unit(0x0B)),
+            Some(b'b') if in_class => Ok(Escaped::Unit(0x08)),
+            // `\0` is NUL; an octal escape (`\01`, `\7`) is malformed.
+            Some(b'0') if !self.peek().is_some_and(is_digit) => Ok(Escaped::Unit(0)),
+            Some(b'x') => self.hex(2).map(Escaped::Unit).ok_or(RegexError::Syntax),
+            Some(b'u') => self.name_escape().map(Escaped::Unit),
+            Some(b'c') => {
+                let letter = self.peek().and_then(ascii).filter(u8::is_ascii_alphabetic).ok_or(RegexError::Syntax)?;
+                self.at += 1;
+                Ok(Escaped::Unit(u32::from(letter) & 0x1F))
             }
-            b'x' => Ok(Escaped::Unit(self.hex(2).unwrap_or(unit(b'x')))),
-            b'u' => Ok(Escaped::Unit(self.hex4().unwrap_or(unit(b'u')))),
-            // `\k` in a class is an identity escape only where no group is
-            // named.
-            b'k' if in_class && self.scan.named => Err(RegexError::Syntax),
+            Some(b'-') if in_class => Ok(Escaped::Unit(c)),
+            // Any other letter, digit or `_` escaped is malformed; anything
+            // else escaped is itself.
+            Some(other) if other.is_ascii_alphanumeric() || other == b'_' => Err(RegexError::Syntax),
             _ => Ok(Escaped::Unit(c)),
         }
     }
@@ -736,18 +671,6 @@ impl<'a> Parser<'a> {
         if c != unit(b'\\') {
             return Ok(Escaped::Unit(c));
         }
-        let Some(next) = self.peek() else { return Err(RegexError::Syntax) };
-        if next == unit(b'c') {
-            // Annex B's ClassControlLetter: a letter, a digit or `_`; else
-            // the backslash is a member and the `c` is read next.
-            return Ok(match self.peek_at(1).filter(|&l| l < 0x80 && ((l as u8).is_ascii_alphanumeric() || l == unit(b'_'))) {
-                Some(letter) => {
-                    self.at += 2;
-                    Escaped::Unit(letter & 0x1F)
-                }
-                None => Escaped::Unit(unit(b'\\')),
-            });
-        }
         self.character_escape(true)
     }
 
@@ -776,7 +699,7 @@ impl<'a> Parser<'a> {
     }
 
     fn quantifier(&mut self) -> Result<Option<(u32, Option<u32>)>, RegexError> {
-        let quantifier = match self.peek().map(|c| c as u8) {
+        let quantifier = match self.peek().and_then(ascii) {
             Some(b'*') => Some((0, None)),
             Some(b'+') => Some((1, None)),
             Some(b'?') => Some((0, Some(1))),
@@ -826,7 +749,7 @@ impl<'a> Parser<'a> {
 }
 
 enum Escaped {
-    Unit(u16),
+    Unit(u32),
     Class(ClassItem),
 }
 
@@ -839,20 +762,20 @@ impl Escaped {
     }
 }
 
-fn is_word(u: u16) -> bool {
+fn is_word(u: u32) -> bool {
     matches!(u, 0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A | 0x5F)
 }
 
-fn is_space(u: u16) -> bool {
-    char::from_u32(u32::from(u)).is_some_and(crate::js::is_js_space)
+fn is_space(u: u32) -> bool {
+    char::from_u32(u).is_some_and(char::is_whitespace)
 }
 
-fn is_line_terminator(u: u16) -> bool {
+fn is_line_terminator(u: u32) -> bool {
     matches!(u, 0x0A | 0x0D | 0x2028 | 0x2029)
 }
 
 impl ClassItem {
-    fn matches(self, u: u16) -> bool {
+    fn matches(self, u: u32) -> bool {
         match self {
             ClassItem::Range(a, b) => (a..=b).contains(&u),
             ClassItem::Digit { negated } => (0x30..=0x39).contains(&u) != negated,
@@ -932,7 +855,7 @@ impl Machine {
     }
 
     /// The match from `start`: where it ends.
-    fn run(&mut self, regex: &Regex, t: &[u16], start: usize) -> Option<usize> {
+    fn run(&mut self, regex: &Regex, t: &[u32], start: usize) -> Option<usize> {
         let (mut pc, mut pos) = (0usize, start);
         loop {
             let ok = match regex.code[pc] {
@@ -1141,7 +1064,7 @@ impl Machine {
 
 /// One unit matched at `pos` going forward, or before it going back: the
 /// position after it.
-fn step(regex: &Regex, t: &[u16], pos: usize, unit: Unit, back: bool) -> Option<usize> {
+fn step(regex: &Regex, t: &[u32], pos: usize, unit: Unit, back: bool) -> Option<usize> {
     let (at, next) = if back { (pos.checked_sub(1)?, pos - 1) } else { (pos, pos + 1) };
     let u = *t.get(at)?;
     let matched = match unit {
@@ -1166,7 +1089,7 @@ mod tests {
         Ok(found.map(|groups| {
             groups
                 .into_iter()
-                .map(|g| g.map_or_else(|| "undefined".to_string(), |units| String::from_utf16(&units).unwrap()))
+                .map(|g| g.unwrap_or_else(|| "undefined".to_string()))
                 .collect()
         }))
     }
@@ -1176,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_as_javascript_does() {
+    fn matches_as_javascript_does_bar_astral_characters() {
         // Each expectation is node's `new RegExp(pattern).exec(text)`.
         assert_eq!(found(r"(\d+)-(\d+)", "ref 12-345 x"), ["12-345", "12", "345"]);
         assert_eq!(found(r"a|ab", "ab"), ["a"]);
@@ -1188,7 +1111,9 @@ mod tests {
         assert_eq!(found(r"(?=(a+))a*b\1", "baaabac"), ["aba", "a"]);
         assert_eq!(found(r"(.*?)a(?!(a+)b\2c)\2(.*)", "baaabaac"), ["baaabaac", "ba", "undefined", "abaac"]);
         assert_eq!(found(r"\bfoo\b", "a foo."), ["foo"]);
-        assert_eq!(found(r"^\s+x$", "\u{feff}\u{a0} x"), ["\u{feff}\u{a0} x"]);
+        // `\s` is Rust's whitespace: U+0085 in, U+FEFF out.
+        assert_eq!(found(r"^\s+x$", "\u{85}\u{a0} x"), ["\u{85}\u{a0} x"]);
+        assert!(exec(r"^\s+x$", "\u{feff} x").unwrap().is_none());
         assert_eq!(found(r"a.c", "a\u{2028}c abc"), ["abc"]);
         assert_eq!(found(r"[^]", "\n"), ["\n"]);
         assert_eq!(found(r"x{2,3}", "xxxx"), ["xxx"]);
@@ -1199,13 +1124,18 @@ mod tests {
         assert_eq!(found(r"\x41B\.", "AB."), ["AB."]);
         assert_eq!(found(r"(a)|b", "b"), ["b", "undefined"]);
         assert_eq!(found(r"\1(a)", "aa"), ["a", "a"]);
-        // No `u` flag: `.` is one UTF-16 unit, half of an astral character.
-        assert_eq!(found_units(".", "😀"), ["[d83d]"]);
+        // Code points: `.` is a whole astral character (JavaScript without
+        // the `u` flag matched half of it).
+        assert_eq!(found(".", "😀x"), ["😀"]);
+        assert_eq!(found("^.{2}$", "😀x"), ["😀x"]);
+        assert_eq!(found(r"[😀-😂]", "a😁"), ["😁"]);
+        assert_eq!(found(r"\u{1F600}", "😀"), ["😀"]);
+        assert_eq!(found(r"\uD83D\uDE00", "😀"), ["😀"]);
         assert!(exec("zz", "abc").unwrap().is_none());
     }
 
     #[test]
-    fn reads_the_rest_of_the_dialect_as_v8_does() {
+    fn reads_the_rest_of_the_dialect() {
         // Lookbehind, right to left, its captures and backreferences too.
         assert_eq!(found(r"(?<=(a))b", "ab"), ["b", "a"]);
         assert_eq!(found(r"(?<=\1(a))b", "aab"), ["b", "a"]);
@@ -1215,32 +1145,27 @@ mod tests {
         // Named groups.
         assert_eq!(found(r"(?<y>\d{4})-\k<y>", "2026-2026"), ["2026-2026", "2026"]);
         assert_eq!(found(r"(?<A>.)\k<A>", "xx"), ["xx", "x"]);
-        assert_eq!(found(r"(?<𝒜>.)", "x"), ["x", "x"]);
-        assert_eq!(found(r"\k<a>", "k<a>"), ["k<a>"]);
-        // Annex B's escapes.
-        assert_eq!(found(r"\8", "8"), ["8"]);
-        assert_eq!(found(r"\18", "\u{1}8"), ["\u{1}8"]);
-        assert_eq!(found(r"\377", "ÿ"), ["ÿ"]);
-        assert_eq!(found(r"\400", " 0"), [" 0"]);
-        assert_eq!(found(r"[\18]", "8"), ["8"]);
-        assert_eq!(found(r"\c1", "\\c1"), ["\\c1"]);
+        // Version 5 spells a group name in ASCII (`$`, `_`, letters, digits).
+        assert!(matches!(exec(r"(?<𝒜>.)", "x"), Err(RegexError::Syntax)));
+        assert!(matches!(exec(r"(?<é>.)", "x"), Err(RegexError::Syntax)));
+        assert_eq!(found(r"(?<_a1$>.)", "x"), ["x", "x"]);
+        // Annex B is not read: `\0` is NUL, an escaped punctuation mark is
+        // itself, and an octal escape, a `\N` past the groups, `\c`
+        // without a letter or an unknown letter escape is malformed
+        // (JavaScript read `\1` with no group as U+0001).
+        assert_eq!(found(r"\0", "\0"), ["\0"]);
         assert_eq!(found(r"\cJ", "\n"), ["\n"]);
-        assert_eq!(found(r"[\c1]", "\u{11}"), ["\u{11}"]);
-        assert_eq!(found(r"[\c*]", "\\"), ["\\"]);
-        assert_eq!(found(r"[\c]", "c"), ["c"]);
-        assert_eq!(found(r"\x4", "x4"), ["x4"]);
-        assert_eq!(found(r"\u12", "u12"), ["u12"]);
-        assert_eq!(found(r"\p{L}", "p{L}"), ["p{L}"]);
+        assert_eq!(found(r"[\cj]", "\n"), ["\n"]);
+        assert_eq!(found(r"\-\@\'\ ", "-@' "), ["-@' "]);
+        for pattern in [r"\1", r"\8", r"\18", r"\377", r"\01", r"[\18]", r"\c1", r"[\c*]", r"[\c]", r"\x4", r"\u12", r"\p{L}", r"\k<a>", r"\a", r"\_"] {
+            assert_eq!(Regex::new(pattern).err(), Some(RegexError::Syntax), "{pattern}");
+        }
+        // A class escape at a range's end stays a member, the `-` too.
         assert_eq!(found(r"[\d-z]", "-"), ["-"]);
         assert_eq!(found(r"[a-\d]", "-"), ["-"]);
         // Quantified lookaheads.
         assert_eq!(found(r"(?=a)*b", "b"), ["b"]);
         assert_eq!(found(r"(?=a){2}a", "a"), ["a"]);
-    }
-
-    fn found_units(pattern: &str, text: &str) -> Vec<String> {
-        let groups = Regex::new(pattern).unwrap().exec(text).unwrap();
-        groups.into_iter().map(|g| format!("{:x?}", g.unwrap())).collect()
     }
 
     #[test]
@@ -1261,7 +1186,7 @@ mod tests {
         let nested = format!("{}a{}", "(".repeat(MAX_NESTING), ")".repeat(MAX_NESTING));
         assert_eq!(found(&nested, "xa").len(), MAX_NESTING + 1);
         let deeper = format!("{}a{}", "(".repeat(MAX_NESTING + 1), ")".repeat(MAX_NESTING + 1));
-        assert!(matches!(Regex::new(&deeper), Err(RegexError::Unsupported(_))));
+        assert_eq!(Regex::new(&deeper).err(), Some(RegexError::Syntax));
         let line = format!("Subject: {}", "x".repeat(20_000));
         assert_eq!(found(r"Subject: (.*)$", &line)[1].len(), 20_000);
     }

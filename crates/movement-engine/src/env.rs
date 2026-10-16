@@ -1,15 +1,13 @@
 //! The value bindings an expression reads, in scopes with a parent chain,
 //! and the wire they cross the boundary on.
 //!
-//! The wire carries JavaScript values exactly: JSON's own scalars stand for
-//! themselves, and everything JSON cannot say is a tagged array —
-//! `["u"]` undefined, `["n", "NaN" | "Infinity" | "-Infinity" | "-0"]`, a
-//! string holding a lone surrogate `["s16", [units…]]` (its UTF-16 code
-//! units; an object's key too, in the key's place), a list `["l", id, [items…]]`, an object `["o", id, [[key, value]…]]` (its
-//! keys in the object's own order), `["r", id]` the same list or object
-//! again. On the way back `["i", id]` is one of the caller's own objects,
-//! handed back as itself. Identity has to cross because `===` compares
-//! objects by it.
+//! The wire carries plain JSON: null, booleans, finite numbers and texts
+//! stand for themselves, a list is `["l", [items…]]` and an object
+//! `["o", [[key, value]…]]` (its keys in the object's own order). What
+//! JSON cannot say crosses as the nearest thing it can: `undefined`, `NaN`,
+//! `±Infinity` and `-0` are `null` (a member holding `undefined` is left
+//! out, as `JSON.stringify` leaves it), a lone surrogate is U+FFFD. Nothing
+//! crosses by identity: an object reached twice is written twice.
 //!
 //! A value is either data or an engine object (a record), and the two
 //! never share a form: every tag above is data, whatever keys an object
@@ -30,7 +28,7 @@ use std::rc::Rc;
 
 use serde_json::{Map, Value as Json, json};
 
-use crate::js::{Js, JsArray, JsObject};
+use crate::js::{Js, JsObject};
 
 /// A binding's trail: every origin id that fed it, and the one it arrived
 /// from untransformed, when it did.
@@ -85,16 +83,12 @@ pub struct Envelope {
     /// The run's pinned instant, in milliseconds (`now`, a `toISOString`
     /// text on the wire): what `DATE.TODAY` reads.
     pub now: Option<f64>,
-    /// The zone a date-time text with no offset is read in (`localZone`, an
-    /// IANA name): the caller's process's local zone, as V8 reads it there.
-    /// Absent: UTC.
-    pub local_zone: Option<String>,
 }
 
 #[cfg(test)]
 pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     let json: Json = crate::js_string::from_json_text(text).map_err(|e| format!("the bindings are not JSON: {e}"))?;
-    let mut decoder = Decoder::default();
+    let decoder = Decoder::default();
     let mut env = Env::new();
     for (name, binding) in json.get("bindings").and_then(Json::as_object).ok_or("the envelope has no `bindings`")? {
         let value = decoder.value(binding.get("value").ok_or_else(|| format!("binding `{name}` has no value"))?)?;
@@ -105,18 +99,13 @@ pub fn read_envelope(text: &str) -> Result<Envelope, String> {
     let origins = json.get("origins").and_then(Json::as_u64).unwrap_or(0) as u32;
     let now = match json.get("now") {
         None => None,
-        Some(Json::String(iso)) => match crate::js_date::parse(iso, crate::js_date::LocalZone::UTC) {
+        Some(Json::String(iso)) => match crate::js_date::parse(iso) {
             Some(ms) => Some(ms),
             None => return Err(format!("the pinned instant {iso:?} is not a toISOString text")),
         },
         Some(other) => return Err(format!("the pinned instant is a text, not {other}")),
     };
-    let local_zone = match json.get("localZone") {
-        None => None,
-        Some(Json::String(zone)) => Some(zone.clone()),
-        Some(other) => return Err(format!("the local zone is a text, not {other}")),
-    };
-    Ok(Envelope { env, origins, now, local_zone })
+    Ok(Envelope { env, origins, now })
 }
 
 #[cfg(test)]
@@ -129,115 +118,39 @@ fn read_trail(json: &Json) -> Result<Trail, String> {
     })
 }
 
-/// `Object.is`, over what a member decoded to (members the host sent again
-/// already decoded as the objects held).
-fn identical(a: &Js, b: &Js) -> bool {
-    match (a, b) {
-        (Js::Number(x), Js::Number(y)) => x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()),
-        _ => crate::js::strict_equals(a, b),
-    }
-}
-
 #[derive(Default)]
 struct Decoder<'h> {
-    seen: HashMap<u64, Js>,
-    /// What the host sent before, by id: an object it sends again, as it
-    /// was, decodes as the very object held (`===` itself, as the one
-    /// object the host handed the TypeScript engine twice is).
-    held: Option<&'h HashMap<u64, Js>>,
     /// The records this segment handed the host, by the id each crossed
     /// under: `["x", id]` is one of them, handed back as itself.
     records: Option<&'h [Rc<crate::bindings::Binding>]>,
 }
 
 impl Decoder<'_> {
-    /// The object or list the host sent under `id` before, when `fresh` is
-    /// still what it was.
-    fn again(&self, id: u64, fresh: &Js) -> Option<Js> {
-        let held = self.held?.get(&id)?;
-        let same = match (held, fresh) {
-            (Js::Array(was), Js::Array(now)) => {
-                let (was, now) = (was.items(), now.items());
-                was.len() == now.len() && was.iter().zip(now.iter()).all(|(a, b)| identical(a, b))
-            }
-            (Js::Object(was), Js::Object(now)) => {
-                was.proto.is_none()
-                    && was.entries().len() == now.entries().len()
-                    && was.entries().iter().zip(now.entries()).all(|((k, a), (l, b))| k == l && identical(a, b))
-            }
-            _ => false,
-        };
-        same.then(|| held.clone())
-    }
-
-    fn value(&mut self, json: &Json) -> Result<Js, String> {
+    fn value(&self, json: &Json) -> Result<Js, String> {
         Ok(match json {
             Json::Null => Js::Null,
             Json::Bool(b) => Js::Bool(*b),
             Json::Number(n) => Js::Number(n.as_f64().ok_or("a number the wire cannot read")?),
             Json::String(s) => Js::str(s.clone()),
-            Json::Array(tagged) if tagged.first().and_then(Json::as_str) == Some("s16") => Js::String(text_of_wire(json)?),
             Json::Array(tagged) => {
                 let tag = tagged.first().and_then(Json::as_str).ok_or_else(|| format!("an untagged wire array: {json}"))?;
                 let id = || tagged.get(1).and_then(Json::as_u64).ok_or_else(|| format!("a wire `{tag}` without an id"));
                 match tag {
-                    "u" => Js::Undefined,
-                    "n" => Js::Number(match tagged.get(1).and_then(Json::as_str) {
-                        Some("NaN") => f64::NAN,
-                        Some("Infinity") => f64::INFINITY,
-                        Some("-Infinity") => f64::NEG_INFINITY,
-                        Some("-0") => -0.0,
-                        _ => return Err(format!("an unknown special number: {json}")),
-                    }),
                     "l" => {
-                        let id = id()?;
-                        let items = tagged.get(2).and_then(Json::as_array).ok_or("a wire list without items")?;
-                        let items = items.iter().map(|item| self.value(item)).collect::<Result<_, _>>()?;
-                        let mut array = JsArray::new(items);
-                        array.origin = Some(id as u32);
-                        let value = Js::Array(Rc::new(array));
-                        let value = self.again(id, &value).unwrap_or(value);
-                        self.seen.insert(id, value.clone());
-                        value
+                        let items = tagged.get(1).and_then(Json::as_array).ok_or("a wire list is [\"l\", items]")?;
+                        Js::array(items.iter().map(|item| self.value(item)).collect::<Result<_, _>>()?)
                     }
                     "o" => {
-                        let id = id()?;
-                        let entries = tagged.get(2).and_then(Json::as_array).ok_or("a wire object without entries")?;
+                        let entries = tagged.get(1).and_then(Json::as_array).ok_or("a wire object is [\"o\", entries]")?;
                         let mut object = JsObject::new();
                         for entry in entries {
-                            let (Some(key), Some(value)) = (entry.get(0).and_then(|key| text_of_wire(key).ok()), entry.get(1)) else {
+                            let (Some(Json::String(key)), Some(value)) = (entry.get(0), entry.get(1)) else {
                                 return Err(format!("a wire entry is [key, value]: {entry}"));
                             };
-                            object.set(key.into_string(), self.value(value)?);
+                            object.set(key.clone(), self.value(value)?);
                         }
-                        // `["o", id, entries, prototype]`: a prototype the
-                        // host's object was assigned (`null` included).
-                        if let Some(proto) = tagged.get(3) {
-                            object.proto = Some(match self.value(proto)? {
-                                proto @ (Js::Object(_) | Js::Null) => proto,
-                                other => return Err(format!("a wire prototype is an object or null, not {}", other.type_of())),
-                            });
-                        }
-                        object.origin = Some(id as u32);
-                        let value = Js::object(object);
-                        let value = self.again(id, &value).unwrap_or(value);
-                        self.seen.insert(id, value.clone());
-                        value
+                        Js::object(object)
                     }
-                    "r" => self.seen.get(&id()?).cloned().ok_or("a wire reference to nothing seen")?,
-                    "f" => match tagged.get(1).and_then(Json::as_str) {
-                        Some("Object") => Js::Function(crate::js::NativeFunction("Object")),
-                        Some(name) => match crate::js::OBJECT_PROTOTYPE_NAMES
-                            .iter()
-                            .find(|n| **n == name && !matches!(name, "constructor" | "__proto__"))
-                            .or_else(|| crate::js::ARRAY_PROTOTYPE_NAMES.iter().find(|n| **n == name))
-                        {
-                            Some(name) => Js::Function(crate::js::NativeFunction(name)),
-                            None => return Err(format!("the wire names no built-in: {json}")),
-                        },
-                        None => return Err(format!("a built-in without its name: {json}")),
-                    },
-                    "p" => crate::js::object_prototype(),
                     // A file the host hands the engine as one (a render's
                     // answer): its descriptor, made a file by the tag.
                     "F" => {
@@ -245,15 +158,14 @@ impl Decoder<'_> {
                         let Some(Json::Object(shown)) = tagged.get(2) else { return Err(format!("a wire file without its display: {json}")) };
                         let handle = match shown.get("handle") {
                             None | Some(Json::Null) => None,
-                            Some(handle) => Some(text_of_wire(handle).map_err(|_| format!("a wire file's handle is text: {json}"))?.into_string()),
+                            Some(Json::String(handle)) => Some(handle.clone()),
+                            Some(_) => return Err(format!("a wire file's handle is text: {json}")),
                         };
                         let mut display = JsObject::new();
                         for key in ["name", "contentType", "size"] {
                             match shown.get(key) {
                                 None | Some(Json::Null) => {}
-                                Some(text @ (Json::String(_) | Json::Array(_))) if key != "size" => {
-                                    display.set(key.into(), Js::String(text_of_wire(text).map_err(|_| format!("a wire file's {key} is text: {json}"))?));
-                                }
+                                Some(Json::String(text)) if key != "size" => display.set(key.into(), Js::str(text.clone())),
                                 Some(Json::Number(n)) if key == "size" => display.set(key.into(), Js::Number(n.as_f64().unwrap_or(f64::NAN))),
                                 Some(_) => return Err(format!("a wire file's {key} is not one: {json}")),
                             }
@@ -275,31 +187,9 @@ impl Decoder<'_> {
     }
 }
 
-/// A text on the wire: itself, or `["s16", [units…]]` when it holds a lone
-/// surrogate.
-fn text_of_wire(json: &Json) -> Result<crate::js::JsString, String> {
-    match json {
-        Json::String(text) => Ok(crate::js::JsString::from(text.as_str())),
-        Json::Array(tagged) if tagged.first().and_then(Json::as_str) == Some("s16") => {
-            let units = tagged.get(1).and_then(Json::as_array).ok_or_else(|| format!("a wire `s16` without its units: {json}"))?;
-            let units = units
-                .iter()
-                .map(|unit| unit.as_u64().and_then(|u| u16::try_from(u).ok()).ok_or_else(|| format!("a wire `s16` unit is a UTF-16 code unit: {json}")))
-                .collect::<Result<Vec<u16>, _>>()?;
-            Ok(crate::js::JsString::from_units(&units))
-        }
-        _ => Err(format!("a wire text is a string or `[\"s16\", units]`: {json}")),
-    }
-}
-
-/// A text for the wire: itself, or its code units tagged `s16` when it
-/// holds a lone surrogate (JSON text carries one only as an escape a JSON
-/// reader may refuse).
+/// A text for the wire: a lone surrogate is U+FFFD.
 fn wire_text(text: &str) -> Json {
-    if crate::js_string::is_well_formed(text) {
-        return json!(text);
-    }
-    json!(["s16", crate::js_string::units_vec(text)])
+    json!(crate::js_string::well_formed(text))
 }
 
 /// One value off the wire, on its own.
@@ -307,34 +197,17 @@ pub fn decode(json: &Json) -> Result<Js, String> {
     Decoder::default().value(json)
 }
 
-/// A value for the wire back: the caller's own objects by id, the
-/// evaluation's new ones written out once each.
-pub fn encode(value: &Js) -> Json {
-    let mut encoder = Encoder::default();
-    encoder.value(value)
-}
-
-/// A value written out whole, the caller's own objects included (their
-/// order and identity within the value still cross).
+/// A value written out whole.
 pub fn encode_plain(value: &Js) -> Json {
-    let mut encoder = Encoder { plain: true, ..Encoder::default() };
-    encoder.value(value)
+    Encoder::default().value(value)
 }
 
 /// A segment's wire with its host (rust_wire.ts's one `WireOut` per
-/// segment): every object or list the host sent — in the input's event and
-/// in its answers — by the id the wire gave it. Each value arrives whole (a
-/// back-reference only within it), so answers decode in whatever order the
-/// engine reads them and an object re-sent after a mutation reads as it now
-/// is; one re-sent unchanged, under the id it was first sent under, decodes
-/// as the very object held. Answers are data, as the event is, whatever keys
-/// they carry: only `["x", id]` names a record (one this wire handed out). A
-/// request hands a sent one back as itself (`["i", id]`), so an object
-/// an adapter answered reaches the next host call as that very object, as it
-/// does in the TypeScript engine; anything this engine built is written out.
+/// segment): the records it handed the host, so `["x", id]` in an answer
+/// names one of them. Answers are data, as the event is, whatever keys they
+/// carry: only `["x", id]` names a record (one this wire handed out).
 #[derive(Default)]
 pub struct Wire {
-    sent: RefCell<HashMap<u64, Js>>,
     /// The records handed the host, numbered as first handed.
     records: RefCell<Vec<Rc<crate::bindings::Binding>>>,
 }
@@ -349,21 +222,14 @@ pub struct HeldRecord(pub String);
 impl Wire {
     /// A value the host sent.
     pub fn decode(&self, json: &Json) -> Result<Js, String> {
-        let (value, seen) = {
-            let held = self.sent.borrow();
-            let records = self.records.borrow();
-            let mut decoder = Decoder { held: Some(&held), records: Some(&records), ..Decoder::default() };
-            (decoder.value(json)?, decoder.seen)
-        };
-        self.sent.borrow_mut().extend(seen);
-        Ok(value)
+        let records = self.records.borrow();
+        Decoder { records: Some(&records) }.value(json)
     }
 
     /// A value for a host request, or the record it holds.
     pub fn encode(&self, value: &Js) -> Result<Json, HeldRecord> {
-        let sent = self.sent.borrow();
         let mut records = self.records.borrow_mut();
-        let mut encoder = Encoder { plain: true, sent: Some(&sent), records: Some(&mut records), ..Encoder::default() };
+        let mut encoder = Encoder { records: Some(&mut records), ..Encoder::default() };
         let json = encoder.value(value);
         match encoder.record {
             Some(kind) => Err(HeldRecord(kind)),
@@ -375,19 +241,13 @@ impl Wire {
     /// extraction sites); one that did would cross as `["x", kind]`, which
     /// the shim refuses.
     pub fn encode_result(&self, value: &Js) -> Json {
-        let sent = self.sent.borrow();
         let mut records = self.records.borrow_mut();
-        Encoder { plain: true, sent: Some(&sent), records: Some(&mut records), ..Encoder::default() }.value(value)
+        Encoder { records: Some(&mut records), ..Encoder::default() }.value(value)
     }
 }
 
 #[derive(Default)]
 struct Encoder<'w> {
-    written: HashMap<usize, u64>,
-    plain: bool,
-    /// What the host sent this segment: one of those, unchanged, crosses
-    /// back as itself.
-    sent: Option<&'w HashMap<u64, Js>>,
     /// A record met while writing, by its kind.
     record: Option<String>,
     /// The records handed out so far (the segment's, or this value's own).
@@ -396,36 +256,20 @@ struct Encoder<'w> {
 }
 
 impl Encoder<'_> {
-    /// The id the host gave `value`, when it is that very object or list.
-    fn sent_as(&self, value: &Js) -> Option<u32> {
-        let sent = self.sent?;
-        let origin = match value {
-            Js::Object(object) => object.origin?,
-            Js::Array(array) => array.origin?,
-            _ => return None,
-        };
-        let same = match (sent.get(&u64::from(origin))?, value) {
-            (Js::Object(held), Js::Object(object)) => Rc::ptr_eq(held, object),
-            (Js::Array(held), Js::Array(array)) => Rc::ptr_eq(held, array),
-            _ => false,
-        };
-        same.then_some(origin)
+    fn value(&mut self, value: &Js) -> Json {
+        if crate::js::holds_itself(value) {
+            return self.tree(&crate::js::acyclic(value));
+        }
+        self.tree(value)
     }
 
-    fn value(&mut self, value: &Js) -> Json {
+    fn tree(&mut self, value: &Js) -> Json {
         match value {
-            Js::Undefined => json!(["u"]),
-            Js::Null => Json::Null,
+            Js::Undefined | Js::Null => Json::Null,
             Js::Bool(b) => json!(b),
-            Js::Number(n) if n.is_nan() => json!(["n", "NaN"]),
-            Js::Number(n) if n.is_infinite() => json!(["n", if *n > 0.0 { "Infinity" } else { "-Infinity" }]),
-            Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
+            Js::Number(n) if !n.is_finite() || (*n == 0.0 && n.is_sign_negative()) => Json::Null,
             Js::Number(n) => json!(n),
             Js::String(s) => wire_text(s.as_form()),
-            // The built-in itself, which the host names back (`Object`, or
-            // `Object.prototype[name]`).
-            Js::Function(function) => json!(["f", function.0]),
-            Js::Object(object) if crate::js::is_object_prototype(object) => json!(["p"]),
             // The event and a callback, the records the shim rebuilds, cross
             // tagged, by their number, with their data for the host to build
             // them from; any other never crosses: a request holding one is
@@ -444,7 +288,7 @@ impl Encoder<'_> {
                             records.len() - 1
                         }
                     };
-                    json!(["x", id, self.value(&descriptor)])
+                    json!(["x", id, self.tree(&descriptor)])
                 }
                 _ => {
                     let kind = crate::record::kind_of(record);
@@ -455,40 +299,14 @@ impl Encoder<'_> {
             // A file the engine holds crosses tagged: the tag, never its
             // descriptor's keys, is what makes it a file on the host.
             Js::File(file) => json!(["F", file.id]),
-            Js::Array(_) | Js::Object(_) if self.sent_as(value).is_some() => json!(["i", self.sent_as(value)]),
-            Js::Array(array) => match array.origin.filter(|_| !self.plain) {
-                Some(id) => json!(["i", id]),
-                None => self.shared(Rc::as_ptr(array) as usize, |this| {
-                    json!(array.items().iter().map(|item| this.value(item)).collect::<Vec<_>>())
-                }, "l"),
-            },
-            Js::Object(object) => match object.origin.filter(|_| !self.plain) {
-                Some(id) => json!(["i", id]),
-                None => {
-                    let mut written = self.shared(Rc::as_ptr(object) as usize, |this| {
-                        json!(object.entries().iter().map(|(k, v)| json!([wire_text(k), this.value(v)])).collect::<Vec<_>>())
-                    }, "o");
-                    // A prototype a filing gave it, which the host's object
-                    // is given too: `["o", id, entries, prototype]`.
-                    if let (Some(proto), Some(items)) = (&object.proto, written.as_array_mut())
-                        && items.first() == Some(&json!("o"))
-                    {
-                        let proto = self.value(proto);
-                        items.push(proto);
-                    }
-                    written
-                }
-            },
+            Js::Array(array) => json!(["l", array.items().iter().map(|item| self.tree(item)).collect::<Vec<_>>()]),
+            Js::Object(object) => {
+                // A member holding `undefined` is left out, as `JSON.stringify`
+                // leaves it out.
+                let entries = object.entries().iter().filter(|(_, v)| !matches!(v, Js::Undefined));
+                json!(["o", entries.map(|(k, v)| json!([wire_text(k), self.tree(v)])).collect::<Vec<_>>()])
+            }
         }
-    }
-
-    fn shared(&mut self, address: usize, body: impl FnOnce(&mut Encoder) -> Json, tag: &str) -> Json {
-        if let Some(id) = self.written.get(&address) {
-            return json!(["r", id]);
-        }
-        let id = self.written.len() as u64;
-        self.written.insert(address, id);
-        json!([tag, id, body(self)])
     }
 }
 
@@ -513,16 +331,13 @@ pub fn json_round_trip(value: &Js) -> Js {
     match value {
         Js::Number(n) if !n.is_finite() => Js::Null,
         Js::Number(n) if *n == 0.0 => Js::Number(0.0),
-        // `JSON.stringify` writes a function nowhere: null in a list, no key
-        // in an object, and `undefined` alone.
-        Js::Function(_) => Js::Undefined,
         Js::Array(list) => Js::array(
-            list.items().iter().map(|item| if matches!(item, Js::Undefined | Js::Function(_)) { Js::Null } else { json_round_trip(item) }).collect(),
+            list.items().iter().map(|item| if matches!(item, Js::Undefined) { Js::Null } else { json_round_trip(item) }).collect(),
         ),
         Js::Object(object) => {
             let mut copy = JsObject::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined | Js::Function(_)) {
+                if !matches!(v, Js::Undefined) {
                     copy.set(k.clone(), json_round_trip(v));
                 }
             }
@@ -554,7 +369,7 @@ pub fn json_of_js(value: &Js) -> Json {
 
 fn json_of_tree(value: &Js) -> Json {
     match value {
-        Js::Undefined | Js::Null | Js::Function(_) => Json::Null,
+        Js::Undefined | Js::Null => Json::Null,
         // A callback's, a shape position's or a resource's binding object
         // is data, written as it is; any other record is read down to its
         // fields wherever one is written out.
@@ -573,7 +388,7 @@ fn json_of_tree(value: &Js) -> Json {
         Js::Object(object) => {
             let mut map = Map::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined | Js::Function(_)) {
+                if !matches!(v, Js::Undefined) {
                     map.insert(k.clone(), json_of_tree(v));
                 }
             }
@@ -664,18 +479,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_object_the_host_sends_again_unchanged_is_the_one_held() {
-        let wire = Wire::default();
-        let sent = json!(["o", 3, [["kind", "instance"], ["slug", ["l", 4, ["email"]]]]]);
-        let (Js::Object(first), Js::Object(again)) = (wire.decode(&sent).unwrap(), wire.decode(&sent).unwrap()) else { panic!("objects") };
-        assert!(Rc::ptr_eq(&first, &again));
-        let changed = json!(["o", 3, [["kind", "instance"], ["slug", ["l", 4, ["attio"]]]]]);
-        let Js::Object(now) = wire.decode(&changed).unwrap() else { panic!("an object") };
-        assert!(!Rc::ptr_eq(&first, &now), "re-sent after a change, it reads as it now is");
-    }
-    use crate::js::strict_equals;
-
-    #[test]
     fn a_record_fails_only_the_request_it_is_written_for() {
         let wire = Wire::default();
         let record = crate::record::held(crate::bindings::Binding::Positions(Vec::new()));
@@ -708,75 +511,49 @@ mod tests {
         assert!(child.resolve("c").is_none());
     }
 
+    /// What JSON cannot say crosses as `null`; nothing crosses by identity.
     #[test]
-    fn the_wire_keeps_identity_special_numbers_and_key_order() {
+    fn the_wire_is_plain_json_in_key_order() {
         let envelope = read_envelope(
             r#"{"bindings":{
-                "x":{"value":["o",0,[["b",["u"]],["a",["n","NaN"]]]],"provenance":{"origins":[0],"direct":0}},
-                "y":{"value":["l",1,[["r",0],["n","-0"]]],"many":true}
-            },"origins":1,"languageVersion":3}"#,
+                "x":{"value":["o",[["b",null],["a",1]]],"provenance":{"origins":[0],"direct":0}},
+                "y":{"value":["l",[["o",[]],2]],"many":true}
+            },"origins":1,"languageVersion":5}"#,
         )
         .unwrap();
         let x = &envelope.env.resolve("x").unwrap().value;
-        let y = envelope.env.resolve("y").unwrap();
-        let Js::Array(list) = &y.value else { panic!("y is a list") };
-        assert!(strict_equals(&list.items()[0], x));
-        assert!(y.many);
+        assert!(envelope.env.resolve("y").unwrap().many);
         assert_eq!(envelope.env.resolve("x").unwrap().trail, Some(Trail { origins: vec![0], direct: Some(0) }));
-        assert_eq!(encode(x), json!(["i", 0]));
         let Js::Object(object) = x else { panic!("x is an object") };
         assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["b", "a"]);
 
         let fresh = Js::array(vec![]);
-        let pair = Js::array(vec![fresh.clone(), fresh, Js::Number(-0.0), Js::Number(f64::INFINITY)]);
-        assert_eq!(encode(&pair), json!(["l", 0, [["l", 1, []], ["r", 1], ["n", "-0"], ["n", "Infinity"]]]));
+        let special = Js::array(vec![fresh.clone(), fresh, Js::Undefined, Js::Number(-0.0), Js::Number(f64::NAN), Js::Number(f64::INFINITY), Js::Number(0.0)]);
+        assert_eq!(encode_plain(&special), json!(["l", [["l", []], ["l", []], null, null, null, null, 0.0]]));
+        for gone in [json!(["u"]), json!(["n", "NaN"]), json!(["r", 0]), json!(["i", 0]), json!(["s16", [0xD83D]]), json!(["p"]), json!(["f", "toString"])] {
+            assert!(decode(&gone).is_err(), "{gone}");
+        }
     }
 
     /// A host's own `__proto__` key (`JSON.parse` makes one) is an own
-    /// entry: read as the key it is, never the prototype, and written back
-    /// as one.
+    /// entry, read and written back as the key it is.
     #[test]
     fn an_own_proto_key_crosses_as_a_key() {
         let wire = Wire::default();
-        let sent = json!(["o", 0, [["a", 1], ["__proto__", ["o", 1, [["x", 2]]]]]]);
+        let sent = json!(["o", [["a", 1], ["__proto__", ["o", [["x", 2]]]]]]);
         let Js::Object(object) = wire.decode(&sent).unwrap() else { panic!("an object") };
-        assert!(object.proto.is_none());
         assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a", "__proto__"]);
-        assert!(matches!(crate::js::object_property(&object, "__proto__"), Js::Object(own) if own.get("x").is_some()));
-        assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [["a", 1.0], ["__proto__", ["o", 1, [["x", 2.0]]]]]]));
+        assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", [["a", 1.0], ["__proto__", ["o", [["x", 2.0]]]]]]));
         assert_eq!(json_of_js(&Js::Object(object)), json!({ "a": 1, "__proto__": { "x": 2 } }));
     }
 
-    /// A lone surrogate crosses tagged, in a value and in a key, both ways;
-    /// a pair crosses as the text it is.
+    /// A lone surrogate the engine holds crosses as U+FFFD, in a value and
+    /// in a key; a pair crosses as the text it is.
     #[test]
-    fn a_lone_surrogate_crosses_as_its_code_units() {
-        let wire = Wire::default();
-        let sent = json!(["o", 0, [[["s16", [0xD83D]], ["s16", [0x61, 0xDE00]]], ["k", "😀"]]]);
-        let Js::Object(object) = wire.decode(&sent).unwrap() else { panic!("an object") };
-        let (key, value) = &object.entries()[0];
-        assert_eq!(crate::js_string::units_vec(key), [0xD83D]);
-        assert!(matches!(value, Js::String(text) if crate::js_string::units_vec(text.as_form()) == [0x61, 0xDE00]));
-        assert_eq!(encode_plain(&Js::Object(object.clone())), json!(["o", 0, [[["s16", [0xD83D]], ["s16", [0x61, 0xDE00]]], ["k", "😀"]]]));
-        // Two halves on the wire, one after the other, are the pair.
-        assert!(matches!(decode(&json!(["s16", [0xD83D, 0xDE00]])).unwrap(), Js::String(text) if text == "😀"));
-    }
-
-    #[test]
-    fn a_segment_reads_each_answer_whole_in_any_order() {
-        let wire = Wire::default();
-        // The same host object sent twice, mutated between: two ids, each
-        // read as it was when sent; the later one decoded first.
-        let later = wire.decode(&json!(["o", 1, [["n", 2], ["self", ["o", 2, [["k", ["l", 3, []]], ["again", ["r", 3]]]]]]])).unwrap();
-        let earlier = wire.decode(&json!(["o", 0, [["n", 1]]])).unwrap();
-        let n = |value: &Js| match value {
-            Js::Object(object) => object.get("n").cloned(),
-            _ => None,
-        };
-        assert!(matches!(n(&later), Some(Js::Number(2.0))));
-        assert!(matches!(n(&earlier), Some(Js::Number(1.0))));
-        assert_eq!(wire.encode(&later), Ok(json!(["i", 1])));
-        assert_eq!(wire.encode(&earlier), Ok(json!(["i", 0])));
-        assert!(wire.decode(&json!(["r", 0])).is_err());
+    fn a_lone_surrogate_crosses_as_the_replacement_character() {
+        let mut object = JsObject::new();
+        object.set(crate::js_string::text_of_units(&[0xD83D]), Js::String(crate::js::JsString::from_units(&[0x61, 0xDE00])));
+        object.set("k".into(), Js::str("😀"));
+        assert_eq!(encode_plain(&Js::object(object)), json!(["o", [["\u{FFFD}", "a\u{FFFD}"], ["k", "😀"]]]));
     }
 }

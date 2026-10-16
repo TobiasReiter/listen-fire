@@ -1151,7 +1151,7 @@ describe('extract field duplicates', () => {
   // JavaScript reads `__proto__` as an object's prototype: an extracted
   // record would never hold the field, so naming one so is refused where it
   // is written, inline or in a declaration, a field or a node.
-  it('MOV_SHAPE_FIELD_PROTO for a field or a node named __proto__, inline (version 4) or declared', () => {
+  it('MOV_SHAPE_FIELD_PROTO for a field or a node named __proto__ before version 5, inline; none from version 5', () => {
     const inline = checkBefore5(
       inMovementBefore5(
         [
@@ -1172,7 +1172,7 @@ describe('extract field duplicates', () => {
     const declared = check(
       [PRELUDE, 'node Company: "each company" {', '  name: <text> "the name"', '  node __proto__: "each round" { __proto__: <text> "the stage" }', '}'].join('\n'),
     );
-    expect(declared.map(d => d.code)).toEqual([C.SHAPE_FIELD_PROTO, C.SHAPE_FIELD_PROTO]);
+    expect(declared.map(d => d.code)).not.toContain(C.SHAPE_FIELD_PROTO);
   });
 
   // The engine keeps a scope's names as an object's keys: a name spelled
@@ -1187,6 +1187,13 @@ describe('extract field duplicates', () => {
     const param = named('  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })');
     expect(param.map(d => d.code)).toEqual([C.NAME_PROTO]);
     expectClean(inMovement('  proto = 1\n  xs = map([1, 2], (p) => {\n    return p\n  })'));
+  });
+
+  // From version 5 a map is a map: `__proto__` is an ordinary name and key.
+  it('neither MOV_NAME_PROTO nor MOV_SHAPE_FIELD_PROTO from version 5', () => {
+    const codes = (body: string) => checkProgram(parseProgram(inMovement(body), { languageVersion: 5 }), catalog, { languageVersion: 5 }).map(d => d.code);
+    expect(codes('  __proto__ = 1')).not.toContain(C.NAME_PROTO);
+    expect(codes('  xs = map([1, 2], (__proto__) => {\n    return __proto__\n  })')).not.toContain(C.NAME_PROTO);
   });
 
   // Every place an author can spell a name declares it through one door, so

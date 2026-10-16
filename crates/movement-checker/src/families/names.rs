@@ -73,7 +73,8 @@ impl Checker<'_> {
     /// hides a binding of an enclosing scope. The same-scope binding it
     /// replaced comes back, for the caller's own duplicate rule.
     pub fn declare_authored(&mut self, scope: ScopeId, symbol: Symbol, span: Span) -> Option<SymbolId> {
-        if symbol.name == "__proto__" {
+        // From version 5 a map is a map, and `__proto__` an ordinary key.
+        if before(self.version, 5) && symbol.name == "__proto__" {
             self.report(
                 codes::NAME_PROTO,
                 "'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",

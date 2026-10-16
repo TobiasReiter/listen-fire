@@ -195,7 +195,9 @@ mod tests {
     fn dollars_format_as_format_usd_formats_them() {
         assert_eq!(format_usd(100_000.0), "$0.10");
         assert_eq!(format_usd(1_000_000.0), "$1.00");
-        assert_eq!(format_usd(31_250.0), "$0.0313");
+        // A tie rounds half to even (version 5's fixed-point; JavaScript's
+        // toFixed wrote $0.0313).
+        assert_eq!(format_usd(31_250.0), "$0.0312");
         assert_eq!(format_usd(1_234.0), "$0.0012");
         assert_eq!(format_usd(10_000.0), "$0.01");
         assert_eq!(format_usd(0.0), "$0.00");

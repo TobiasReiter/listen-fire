@@ -114,26 +114,8 @@ for (let i = 0; i < 800; i++) {
   ask({ op: 'normalize', text, form: pick(FORMS) });
 }
 
-// ── number_format ─────────────────────────────────────────────────────────────
-
-// Not de-CH: ICU4C 77 groups it with ’ and ICU4X 2.3's data with ' (an
-// accepted divergence, crates/movement-engine/README.md).
-const LOCALES = ['en-US', 'en-GB', 'en-IN', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'nl-NL', 'pt-BR', 'sv-SE', 'pl-PL', 'ru-RU', 'ja-JP', 'hi-IN'];
-// No -0: JSON writes it as 0, so the fixture could not say which it asked.
-const VALUES = [0, 1, -1, 0.5, 1.005, 2.5, -2.5, 1234, 12345.678, 1_000_000, -9876543.21, 0.000123, 1e21, 123456789.125];
-const OPTIONS = [
-  {}, { maximumFractionDigits: 0 }, { maximumFractionDigits: 2 }, { minimumFractionDigits: 2 },
-  { minimumFractionDigits: 1, maximumFractionDigits: 1 }, { useGrouping: false }, { useGrouping: false, maximumFractionDigits: 1 },
-];
-for (const locale of LOCALES) for (const value of VALUES) ask({ op: 'number_format', value, locale, options: pick(OPTIONS) });
-for (let i = 0; i < 400; i++) {
-  const magnitude = 10 ** Math.floor(random() * 12 - 4);
-  const value = Math.round((random() - 0.3) * magnitude * 1000) / 1000 + 0;
-  ask({ op: 'number_format', value, locale: pick(LOCALES), options: pick(OPTIONS) });
-}
-
 const { tz, icu, unicode, cldr } = process.versions;
 writeFileSync(path.join(__dirname, 'versions.json'), `${JSON.stringify({ node: process.version, tz, icu, unicode, cldr }, null, 2)}\n`);
 writeFileSync(path.join(__dirname, 'fixture.json'), `[\n${cases.map((c) => JSON.stringify(c)).join(',\n')}\n]\n`);
 const by = (op: string) => cases.filter((c) => c.request.op === op).length;
-console.log(`fixture.json: ${cases.length} cases (tz_convert ${by('tz_convert')}, url_parse ${by('url_parse')}, normalize ${by('normalize')}, number_format ${by('number_format')})`);
+console.log(`fixture.json: ${cases.length} cases (tz_convert ${by('tz_convert')}, url_parse ${by('url_parse')}, normalize ${by('normalize')})`);

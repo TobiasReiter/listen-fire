@@ -603,8 +603,12 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkNoPrototypeName`.
+    /// `checkNoPrototypeName`: none named `__proto__` before version 5 (from
+    /// version 5 a map is a map).
     pub fn check_no_prototype_name<'n>(&mut self, entries: impl Iterator<Item = (&'n str, Span)>) {
+        if movement_parser::version::since(self.version, 5) {
+            return;
+        }
         for (name, span) in entries {
             if name == "__proto__" {
                 self.report(

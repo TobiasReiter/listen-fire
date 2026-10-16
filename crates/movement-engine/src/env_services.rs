@@ -68,28 +68,12 @@ pub enum NormalForm {
     Nfkd,
 }
 
-/// The `Intl.NumberFormat` options the engine may pass: a decimal style
-/// only, rounded half away from zero (JavaScript's default `halfExpand`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NumberOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub minimum_fraction_digits: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub maximum_fraction_digits: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_grouping: Option<bool>,
-}
-
 pub trait EnvServices {
     /// `instant_iso` (a `toISOString` text) read on the wall clock of
     /// `zone`, or `None` where `zone` is not one `Intl` accepts.
     fn tz_convert(&self, instant_iso: &str, zone: &str) -> Option<ZonedFields>;
     /// `new URL(text)`, or `None` where it throws.
     fn url_parse(&self, text: &str) -> Option<UrlParts>;
-    /// `new Intl.NumberFormat(locale, {...options}).format(value)` of a
-    /// finite value, or `None` for a locale or options it refuses.
-    fn number_format(&self, value: f64, locale: &str, options: &NumberOptions) -> Option<String>;
     /// `text.normalize(form)`.
     fn normalize(&self, text: &str, form: NormalForm) -> String;
 }
@@ -99,9 +83,6 @@ pub fn request_json(op: &Op<'_>) -> Json {
     match op {
         Op::TzConvert { instant_iso, zone } => json!({ "op": "tz_convert", "instantIso": instant_iso, "zone": zone }),
         Op::UrlParse { text } => json!({ "op": "url_parse", "text": text }),
-        Op::NumberFormat { value, locale, options } => {
-            json!({ "op": "number_format", "value": value, "locale": locale, "options": options })
-        }
         Op::Normalize { text, form } => json!({ "op": "normalize", "text": text, "form": form }),
     }
 }
@@ -111,7 +92,6 @@ pub fn request_json(op: &Op<'_>) -> Json {
 pub enum Op<'a> {
     TzConvert { instant_iso: &'a str, zone: &'a str },
     UrlParse { text: &'a str },
-    NumberFormat { value: f64, locale: &'a str, options: NumberOptions },
     Normalize { text: &'a str, form: NormalForm },
 }
 
@@ -122,12 +102,6 @@ impl Op<'_> {
         Ok(match text("op")? {
             "tz_convert" => json!(services.tz_convert(text("instantIso")?, text("zone")?)),
             "url_parse" => json!(services.url_parse(text("text")?)),
-            "number_format" => {
-                let value = request.get("value").and_then(Json::as_f64).ok_or("a number_format has no value")?;
-                let options: NumberOptions =
-                    serde_json::from_value(request.get("options").cloned().unwrap_or(json!({}))).map_err(|e| e.to_string())?;
-                json!(services.number_format(value, text("locale")?, &options))
-            }
             "normalize" => {
                 let form: NormalForm = serde_json::from_value(json!(text("form")?)).map_err(|e| e.to_string())?;
                 json!(services.normalize(text("text")?, form))
@@ -177,9 +151,6 @@ impl EnvServices for Missing {
     fn url_parse(&self, _: &str) -> Option<UrlParts> {
         panic!("this movement engine was built without its environment services (the native-env feature)")
     }
-    fn number_format(&self, _: f64, _: &str, _: &NumberOptions) -> Option<String> {
-        panic!("this movement engine was built without its environment services (the native-env feature)")
-    }
     fn normalize(&self, _: &str, _: NormalForm) -> String {
         panic!("this movement engine was built without its environment services (the native-env feature)")
     }
@@ -223,9 +194,6 @@ impl EnvServices for HostImports {
     fn url_parse(&self, text: &str) -> Option<UrlParts> {
         self.ask(&Op::UrlParse { text })
     }
-    fn number_format(&self, value: f64, locale: &str, options: &NumberOptions) -> Option<String> {
-        self.ask(&Op::NumberFormat { value, locale, options: *options })
-    }
     fn normalize(&self, text: &str, form: NormalForm) -> String {
         self.ask(&Op::Normalize { text, form })
     }
@@ -235,15 +203,11 @@ impl EnvServices for HostImports {
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "native-env"))]
 pub mod native {
-    use fixed_decimal::{Decimal, FloatPrecision, SignedRoundingMode, UnsignedRoundingMode};
-    use icu_decimal::DecimalFormatter;
-    use icu_decimal::options::{DecimalFormatterOptions, GroupingStrategy};
-    use icu_locale_core::Locale;
     use icu_normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
     use jiff::Timestamp;
     use jiff::tz::{Offset, TimeZone};
 
-    use super::{EnvServices, NormalForm, NumberOptions, UrlParts, ZonedFields};
+    use super::{EnvServices, NormalForm, UrlParts, ZonedFields};
     use crate::js_date;
 
     pub struct Native;
@@ -368,27 +332,6 @@ pub mod native {
                 search: prefixed("?", url.query()),
                 hash: prefixed("#", url.fragment()),
             })
-        }
-
-        fn number_format(&self, value: f64, locale: &str, options: &NumberOptions) -> Option<String> {
-            if !value.is_finite() {
-                return None;
-            }
-            let locale: Locale = locale.parse().ok()?;
-            let min = i16::from(options.minimum_fraction_digits.unwrap_or(0));
-            let max = i16::from(options.maximum_fraction_digits.unwrap_or(3.max(min as u8)));
-            if min > max || max > 100 {
-                return None;
-            }
-            let mut decimal_options = DecimalFormatterOptions::default();
-            decimal_options.grouping_strategy =
-                Some(if options.use_grouping == Some(false) { GroupingStrategy::Never } else { GroupingStrategy::Auto });
-            let formatter = DecimalFormatter::try_new(locale.into(), decimal_options).ok()?;
-            let mut decimal = Decimal::try_from_f64(value, FloatPrecision::RoundTrip).ok()?;
-            decimal.round_with_mode(-max, SignedRoundingMode::Unsigned(UnsignedRoundingMode::HalfExpand));
-            decimal.absolute.trim_end();
-            decimal.absolute.pad_end(-min);
-            Some(formatter.format(&decimal).to_string())
         }
 
         fn normalize(&self, text: &str, form: NormalForm) -> String {

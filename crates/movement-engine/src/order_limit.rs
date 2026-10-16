@@ -12,7 +12,7 @@
 use movement_parser::lowering::expression::{Cardinality, EdgeStep, Expression, ListElement, OrderDirection};
 
 use crate::env;
-use crate::js::{self, Js, JsObject};
+use crate::js::{Js, JsObject};
 
 /// `compareOrderValues`: numbers numerically, everything else as text;
 /// empty (null, undefined) last whatever the direction. As the comparator a
@@ -27,7 +27,7 @@ pub fn compare_order_values(a: &Js, b: &Js) -> f64 {
     if let (Js::Number(a), Js::Number(b)) = (a, b) {
         return a - b;
     }
-    match js::utf16_cmp(&a.to_js_string(), &b.to_js_string()) {
+    match a.to_js_string().cmp(&b.to_js_string()) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,

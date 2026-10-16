@@ -1646,20 +1646,13 @@
    ]
   },
   {
-   "name": "__proto__ is no name",
+   "name": "__proto__ is a name from version 5",
    "snapshot": "old_edge",
    "version": 5,
    "source": "import { email } from adapters\nimport { dealflow_inbox } from credentials\n\ninbox = connect email using dealflow_inbox\nnode Company: \"each company\" {\n  name: <text> \"the name\"\n  node __proto__: \"each round\" { __proto__: <text> \"the stage\" }\n}\nfunction main(msg: <inbox-[:message]->>) {\n  __proto__ = 1\n  xs = map([1, 2], (__proto__) => {\n    return __proto__\n  })\n  deals = extract from [msg.`text`] {\n    __proto__: \"the pitch\"\n    node fund: \"each fund\" {\n      __proto__: \"the name\"\n    }\n  }\n}\nfunction f(__proto__: <text>) {\n  return 1\n}\nlisten to inbox fire main\n",
    "expected": [
-    "MOV_SHAPE_FIELD_PROTO 7:3-7:65 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
-    "MOV_SHAPE_FIELD_PROTO 7:34-7:63 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
-    "MOV_NAME_PROTO 10:3-10:16 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
-    "MOV_NAME_PROTO 11:21-11:30 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name",
     "MOV_SHADOWED_NAME 11:21-11:30 '__proto__' is already a binding at line 10 — a name means one thing everywhere it is visible, so this one would hide it. Rename it.",
-    "MOV_EXTRACT_KEYWORD_RETIRED 14:11-19:4 the extraction keyword ('extract from […] { … }') is retired — an extraction is the call over a declared node shape: 'extract(content, Shape)' for each record the content holds, 'extractOne(content, Shape)' for the one it describes. The fix declares this tree as 'node DealsShape' and writes 'deals = extractOne(content, DealsShape)': the one record the keyword's result was, its fields read off it and its nodes walked from it as before. Review it before applying: the record may be absent where the keyword's result never was (a field read off it then needs a fallback), an untyped field becomes <text>, and the model is asked through the call's prompt (see handbook: front#extraction)",
-    "MOV_SHAPE_FIELD_PROTO 15:5-15:27 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
-    "MOV_SHAPE_FIELD_PROTO 17:7-17:28 '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name",
-    "MOV_NAME_PROTO 21:12-21:29 '__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name"
+    "MOV_EXTRACT_KEYWORD_RETIRED 14:11-19:4 the extraction keyword ('extract from […] { … }') is retired — an extraction is the call over a declared node shape: 'extract(content, Shape)' for each record the content holds, 'extractOne(content, Shape)' for the one it describes. The fix declares this tree as 'node DealsShape' and writes 'deals = extractOne(content, DealsShape)': the one record the keyword's result was, its fields read off it and its nodes walked from it as before. Review it before applying: the record may be absent where the keyword's result never was (a field read off it then needs a fallback), an untyped field becomes <text>, and the model is asked through the call's prompt (see handbook: front#extraction)"
    ]
   },
   {

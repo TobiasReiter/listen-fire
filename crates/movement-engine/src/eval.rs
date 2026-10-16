@@ -156,9 +156,6 @@ pub enum Ask {
     /// as a list's or a map's member (`evalValueMember`, which hands a
     /// record over as itself).
     Bare { name: String, member: bool },
-    /// A built-in this engine does not reproduce for these arguments: the
-    /// TypeScript member answers.
-    Function { id: String, args: Vec<Js> },
     /// A `WITHIN`, measured from the host's clock (`compareValues`'
     /// `within`): the only comparison `compare_values` hands back.
     Within { left: Js, right: Js },
@@ -411,11 +408,9 @@ impl<'a> Evaluator<'a> {
                 let mut provs = Vec::new();
                 for member in entries {
                     match member {
-                        // `value[member.key] = result.value`: a `__proto__`
-                        // key is `Object.prototype`'s setter.
                         ObjectMember::Entry { key, value } => {
                             let result = self.member(value).await?;
-                            object.assign(key.clone(), result.value);
+                            object.set(key.clone(), result.value);
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
@@ -459,7 +454,7 @@ impl<'a> Evaluator<'a> {
                     return Ok(Evaluated { value: Js::Bool(same), prov: self.union(&[&l.prov, &r.prov]) });
                 }
                 let value = self
-                    .or_ask(compare_values(&l.value, *op, &r.value, self.around.local()).map(Js::Bool), || Ask::Within {
+                    .or_ask(compare_values(&l.value, *op, &r.value).map(Js::Bool), || Ask::Within {
                         left: l.value.clone(),
                         right: r.value.clone(),
                     })
@@ -544,8 +539,8 @@ impl<'a> Evaluator<'a> {
             Expression::Traverse { alias_root: None, .. } => {
                 Err(EvalError::unsupported("relative traversal (no alias root)", "E1 expressions read from named bindings only"))
             }
-            Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
-                self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
+            Expression::Aggregate { fn_, expression, separator, order_by, order_direction, written, .. } => {
+                self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction, written.as_deref()).await
             }
             // A rootless `EXISTS(-[…]->)`: the landed record a hop's WHERE
             // is scoped at is its subject (the run walks off it); anywhere
@@ -705,6 +700,7 @@ impl<'a> Evaluator<'a> {
         separator: Option<&str>,
         order_by: Option<&Expression>,
         direction: Option<OrderDirection>,
+        written: Option<&str>,
     ) -> Eval {
         let evaluated = self.eval(inner).await?;
         let values: Vec<Js> = match &evaluated.value {
@@ -723,13 +719,11 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Only => {
                 let present: Vec<&Js> = values.iter().filter(|v| !v.is_nullish()).collect();
                 if present.len() > 1 {
-                    let Some(spelled) = crate::formula::spell(inner) else {
-                        return Err(EvalError::Fallback("ONLY's message spells an expression this engine does not".into()));
-                    };
+                    let only = written.map_or_else(|| "ONLY".to_string(), |text| format!("ONLY({text})"));
                     return Err(EvalError::engine(
                         "MOVENG_RUNTIME",
                         format!(
-                            "ONLY({spelled}) says there is exactly one, and there are {}. Narrow it until there is, or fold with something that takes many.",
+                            "{only} says there is exactly one, and there are {}. Narrow it until there is, or fold with something that takes many.",
                             present.len()
                         ),
                     ));
@@ -874,9 +868,7 @@ impl<'a> Evaluator<'a> {
                 };
                 values.push(value);
             }
-            let value = self
-                .or_ask(stdlib::apply_namespaced(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() })
-                .await?;
+            let value = stdlib::apply_namespaced(id, &values, self.around)?;
             return Ok(Evaluated { value, prov: self.union(&provs.iter().collect::<Vec<_>>()) });
         }
         if id == "chunks"
@@ -937,7 +929,7 @@ impl<'a> Evaluator<'a> {
             return Ok(Evaluated { value: Js::Null, prov: self.union(&provs) });
         }
         let values: Vec<Js> = results.iter().map(|r| r.value.clone()).collect();
-        let value = self.or_ask(stdlib::apply_flat(id, &values, self.around), || Ask::Function { id: id.to_string(), args: values.clone() }).await?;
+        let value = stdlib::apply_flat(id, &values)?;
         Ok(Evaluated { value, prov: self.union(&provs) })
     }
 
@@ -1010,7 +1002,7 @@ impl<'a> Evaluator<'a> {
         let options = self.eval(options_arg).await?;
         let prov = self.union(&[&text.prov, &options.prov]);
         let asked = |key: &str| match &options.value {
-            Js::Object(object) => crate::js::plain_property(object, key),
+            Js::Object(object) => crate::js::object_property(object, key),
             _ => Js::Undefined,
         };
         if !matches!(options.value, Js::Object(_) | Js::Record(_)) {
@@ -1163,14 +1155,11 @@ fn members_of(value: &Js) -> Js {
     }
 }
 
-/// `Object.assign(object, spreadKeysOf(value))`: a map's keys, or a
-/// record's fields (`recordFields`), each assigned, so an own `__proto__`
-/// key the source holds sets the object's prototype, as the TypeScript's
-/// `Object.assign` does.
+/// `{...value}`: a map's keys, or a record's fields (`recordFields`).
 fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
     if let Some(record) = crate::record::binding_of(value) {
         for (key, item) in crate::record::fields_of(&record)?.entries() {
-            object.assign(key.clone(), item.clone());
+            object.set(key.clone(), item.clone());
         }
         return Ok(());
     }
@@ -1178,7 +1167,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
         Js::Undefined | Js::Null => Ok(()),
         Js::Object(source) if crate::js::is_dict(value) => {
             for (key, item) in source.entries() {
-                object.assign(key.clone(), item.clone());
+                object.set(key.clone(), item.clone());
             }
             Ok(())
         }
@@ -1279,53 +1268,32 @@ mod tests {
     }
 
     fn in_run<'a>(reader: &'a Counting) -> Evaluator<'a> {
-        Evaluator::in_run(&EventOnly, Surroundings { services: crate::env_services::current(), now: None, local_zone: None }, reader)
+        Evaluator::in_run(&EventOnly, Surroundings { services: crate::env_services::current(), now: None }, reader)
     }
 
-    /// `value[member.key] = …`: an object literal's `__proto__` key is
-    /// `Object.prototype`'s setter — an object or `null` the prototype,
-    /// anything else ignored — and is no key of the object.
+    /// A map is a map: `__proto__` is a key like any other, in a literal
+    /// and through a spread.
     #[test]
-    fn an_object_literal_assigns_its_proto_key() {
+    fn a_proto_key_is_a_key() {
         let reader = Counting::default();
         let (result, _) = drive(&in_run(&reader), &expression("{ a: 1, __proto__: { b: 2 } }"));
         let Js::Object(object) = result.unwrap().value else { panic!("an object") };
-        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
-        assert!(matches!(&object.proto, Some(Js::Object(proto)) if matches!(proto.get("b"), Some(Js::Number(n)) if *n == 2.0)));
-        let (result, _) = drive(&in_run(&reader), &expression("{ __proto__: 1, a: 2 }"));
-        let Js::Object(object) = result.unwrap().value else { panic!("an object") };
-        assert!(object.proto.is_none() && object.get("__proto__").is_none());
-    }
-
-    /// `{...m}` is the TypeScript's `Object.assign`: an own `__proto__` key in
-    /// `m` sets the new object's prototype (an object) or nothing (a
-    /// primitive), and is no key of it.
-    #[test]
-    fn a_spread_assigns_an_own_proto_key_as_object_assign_does() {
-        let source = |proto: Js| {
-            let mut m = JsObject::new();
-            m.set("a".into(), Js::Number(1.0));
-            m.set("__proto__".into(), proto);
-            Js::object(m)
-        };
-        let mut x = JsObject::new();
-        x.set("x".into(), Js::Number(2.0));
+        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a", "__proto__"]);
+        let mut m = JsObject::new();
+        m.set("__proto__".into(), Js::Number(5.0));
         let mut spread = JsObject::new();
-        spread_keys(&source(Js::object(x)), &mut spread).unwrap();
-        assert_eq!(spread.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
-        let spread = std::rc::Rc::new(spread);
-        assert!(matches!(crate::js::object_property(&spread, "x"), Js::Number(n) if n == 2.0));
-        let mut ignored = JsObject::new();
-        spread_keys(&source(Js::Number(5.0)), &mut ignored).unwrap();
-        assert!(ignored.proto.is_none() && ignored.get("__proto__").is_none());
-        // `null`: no prototype at all, and still a dict (`isDictValue`).
-        let mut bare = JsObject::new();
-        spread_keys(&source(Js::Null), &mut bare).unwrap();
-        let bare = Js::object(bare);
-        assert!(crate::js::is_dict(&bare));
-        let mut again = JsObject::new();
-        spread_keys(&bare, &mut again).unwrap();
-        assert!(matches!(again.get("a"), Some(Js::Number(n)) if *n == 1.0));
+        spread_keys(&Js::object(m), &mut spread).unwrap();
+        assert!(matches!(spread.get("__proto__"), Some(Js::Number(n)) if *n == 5.0));
+    }
+    #[test]
+    fn only_quotes_its_argument_as_written() {
+        let text = "ONLY( [msg.a,  msg.b] )";
+        let tree = movement_parser::expr::parse_expression(text).unwrap();
+        let lowered = movement_parser::lowering::lower_expression(&tree, text).unwrap();
+        let reader = Counting::default();
+        let (result, _) = drive(&in_run(&reader), &lowered);
+        let Err(EvalError::Thrown { message, .. }) = result else { panic!("ONLY of two fails") };
+        assert_eq!(message, "ONLY([msg.a,  msg.b]) says there is exactly one, and there are 2. Narrow it until there is, or fold with something that takes many.");
     }
 
     #[test]

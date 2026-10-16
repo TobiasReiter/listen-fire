@@ -343,7 +343,7 @@ struct Tallies {
 fn bump(into: &mut Vec<(String, f64)>, name: &str) {
     match into.iter_mut().find(|(n, _)| n == name) {
         Some((_, n)) => *n += 1.0,
-        None => js::insert_in_object_order(into, name.to_string(), 1.0),
+        None => js::set_entry(into, name.to_string(), 1.0),
     }
 }
 
@@ -828,7 +828,7 @@ impl Run<'_> {
             let mut fields = JsObject::new();
             let mut provenance = Vec::new();
             for field in fields_of {
-                let answer = js::plain_property(entry, &field.name);
+                let answer = js::object_property(entry, &field.name);
                 let given = match &answer {
                     Js::Object(object) => object.get("value").cloned().unwrap_or(Js::Undefined),
                     _ => Js::Undefined,
@@ -863,11 +863,11 @@ impl Run<'_> {
                     origin.push(("item", Js::Number(item)));
                 }
                 let id = self.mint_origin(env::object_of(origin));
-                js::insert_in_object_order(&mut provenance, field.name.clone(), Trail { origins: vec![id], direct: Some(id) });
+                js::set_entry(&mut provenance, field.name.clone(), Trail { origins: vec![id], direct: Some(id) });
             }
             let mut edges = Vec::new();
             for child in children_of {
-                let nested = match js::plain_property(entry, &child.name) {
+                let nested = match js::object_property(entry, &child.name) {
                     Js::Array(list) => list.items().clone(),
                     _ => Vec::new(),
                 };

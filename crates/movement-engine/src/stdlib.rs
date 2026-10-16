@@ -9,7 +9,7 @@
 use crate::env_services::{EnvServices, NormalForm};
 use crate::eval::EvalError;
 use crate::js::{self, Js, JsObject};
-use crate::js_date::{self, LocalZone};
+use crate::js_date;
 use crate::js_regex::{Regex, RegexError};
 
 /// The 17 flat built-ins `applyMovementFunction` runs (`coalesce` is the
@@ -72,13 +72,6 @@ pub fn whole_value_arg(id: &str) -> Option<usize> {
 pub struct Surroundings<'a> {
     pub services: &'a dyn EnvServices,
     pub now: Option<f64>,
-    pub local_zone: Option<&'a str>,
-}
-
-impl<'a> Surroundings<'a> {
-    pub fn local(&self) -> LocalZone<'a> {
-        LocalZone::new(self.local_zone, self.services)
-    }
 }
 
 fn arg(args: &[Js], i: usize) -> Js {
@@ -86,7 +79,7 @@ fn arg(args: &[Js], i: usize) -> Js {
 }
 
 /// `applyMovementFunction`.
-pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js, EvalError> {
+pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
     let a = arg(args, 0);
     let text_or_null = |f: fn(&str) -> String| if a.is_nullish() { Js::Null } else { Js::str(f(&a.to_js_string())) };
     Ok(match id {
@@ -102,16 +95,18 @@ pub fn apply_flat(id: &str, args: &[Js], around: Surroundings<'_>) -> Result<Js,
             other => Js::Number(js::utf16_len(&other.to_js_string()) as f64),
         },
         "abs" => Js::Number(a.to_number().abs()),
-        "round" => Js::Number(js::math_round(a.to_number())),
+        "round" => Js::Number(a.to_number().round()),
         "floor" => Js::Number(a.to_number().floor()),
         "ceil" => Js::Number(a.to_number().ceil()),
         "tostring" => if a.is_nullish() { Js::Null } else { Js::str(a.to_js_string()) },
         "tonumber" => {
             let n = a.to_number();
-            if n.is_nan() { Js::Null } else { Js::Number(n) }
+            // An empty text is no number (JavaScript's `Number("")` is 0).
+            let empty = matches!(&a, Js::String(text) if js::trim(text.as_form()).is_empty());
+            if n.is_nan() || empty { Js::Null } else { Js::Number(n) }
         }
-        "date" => coerce_to_date(&a, around.local()).map_or(Js::Null, Js::str),
-        "datetime" => coerce_to_datetime(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::str(iso)),
+        "date" => coerce_to_date(&a).map_or(Js::Null, Js::str),
+        "datetime" => coerce_to_datetime(&a).map_or(Js::Null, |(iso, _)| Js::str(iso)),
         "number" => coerce_to_number(&a).map_or(Js::Null, Js::Number),
         "multi" => {
             let mut flat = Vec::new();
@@ -154,8 +149,8 @@ pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Resu
         "currency.format_figure" => Ok(format_figure(&a, &b)),
         "date.parse" => Ok(read_date_parts(&a).map_or(Js::Null, |p| Js::str(iso_date(p)))),
         "date.add_days" => date_add_days(&a, &b),
-        "date.format" => Ok(date_format(&a, &b, around.local())),
-        "date.format_iso" => Ok(date_format_iso(&a, around.local()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
+        "date.format" => Ok(date_format(&a, &b)),
+        "date.format_iso" => Ok(date_format_iso(&a).map_or(Js::Null, |(iso, _)| Js::str(iso))),
         "date.today" => date_today(&a, around),
         "datetime.at" => datetime_at(args, around.services),
         "text.regex_extract" => text_regex_extract(args),
@@ -164,7 +159,7 @@ pub fn apply_namespaced(id: &str, args: &[Js], around: Surroundings<'_>) -> Resu
         "text.serialise" => text_serialise(&a, &b),
         "url.host" => url_host(&a, around.services),
         "number.format" => Ok(number_format(&a, &b)),
-        other => Err(EvalError::Fallback(format!("{other} is not a member this engine runs"))),
+        other => Err(EvalError::engine("MOVENG_RUNTIME", format!("unknown built-in function: {other}"))),
     }
 }
 
@@ -207,7 +202,7 @@ fn figure_match(text: &str) -> Option<(String, Option<String>)> {
     }
     let number: String = chars[start..at].iter().collect();
     // `\s` is UTF-16 based, but every JavaScript space is a BMP character.
-    while at < chars.len() && js::is_js_space(chars[at]) {
+    while at < chars.len() && char::is_whitespace(chars[at]) {
         at += 1;
     }
     let word_end = chars[at..].iter().position(|c| !c.is_ascii_alphabetic()).map_or(chars.len(), |n| at + n);
@@ -263,7 +258,7 @@ fn compact_magnitude(abs: f64) -> String {
     let Some((threshold, suffix)) = COMPACT_TIERS.iter().find(|(t, _)| abs >= *t) else {
         return js::number_to_string(abs);
     };
-    let scaled = js::math_round((abs / threshold) * 10.0) / 10.0;
+    let scaled = ((abs / threshold) * 10.0).round() / 10.0;
     let digits = if js::is_integer(scaled) { js::number_to_string(scaled) } else { js::to_fixed(scaled, 1) };
     format!("{digits}{suffix}")
 }
@@ -289,7 +284,7 @@ fn group_thousands(int: &str) -> String {
 }
 
 fn grouped_magnitude(abs: f64) -> String {
-    let rounded = js::math_round(abs * 100.0) / 100.0;
+    let rounded = (abs * 100.0).round() / 100.0;
     let text = js::number_to_string(rounded);
     match text.split_once('.') {
         Some((int, frac)) => format!("{}.{frac}", group_thousands(int)),
@@ -386,7 +381,7 @@ fn digits_at(c: &[char], at: usize) -> (usize, i64) {
 }
 
 fn spaces_at(c: &[char], at: usize) -> usize {
-    at + c[at.min(c.len())..].iter().take_while(|&&ch| js::is_js_space(ch)).count()
+    at + c[at.min(c.len())..].iter().take_while(|&&ch| char::is_whitespace(ch)).count()
 }
 
 fn letters_at(c: &[char], at: usize) -> usize {
@@ -425,7 +420,7 @@ fn read_date_parts(value: &Js) -> Option<DateParts> {
         let rest = &c[end..];
         let tail_ok = rest.is_empty()
             || (separator == '-'
-                && (rest[0] == 'T' || js::is_js_space(rest[0]))
+                && (rest[0] == 'T' || char::is_whitespace(rest[0]))
                 && !rest[1..].iter().any(|&ch| matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}')));
         if tail_ok {
             return valid_parts(y, m, d);
@@ -481,7 +476,7 @@ fn year_tail(c: &[char], at: usize) -> Option<i64> {
 /// `dateFormatIso`: any readable date, timestamp or epoch as an ISO
 /// instant, with its milliseconds. A text that starts as an ISO date-time
 /// is `new Date(text)`, read in the local zone when it names no offset.
-fn date_format_iso(value: &Js, local: LocalZone<'_>) -> Option<(String, f64)> {
+fn date_format_iso(value: &Js) -> Option<(String, f64)> {
     let instant = |ms: f64| (js_date::to_iso_string(ms), ms);
     match value {
         Js::Undefined | Js::Null => None,
@@ -498,19 +493,19 @@ fn date_format_iso(value: &Js, local: LocalZone<'_>) -> Option<(String, f64)> {
                 && b[8..10].iter().all(u8::is_ascii_digit)
                 && b[10] == b'T';
             if looks_iso {
-                return js_date::parse(s, local).map(instant);
+                return js_date::parse(s).map(instant);
             }
             read_date_parts(&Js::str(s)).map(|p| instant(js_date::utc_midnight(p.y, p.m, p.d)))
         }
     }
 }
 
-pub fn coerce_to_datetime(value: &Js, local: LocalZone<'_>) -> Option<(String, f64)> {
-    date_format_iso(value, local)
+pub fn coerce_to_datetime(value: &Js) -> Option<(String, f64)> {
+    date_format_iso(value)
 }
 
-pub fn coerce_to_date(value: &Js, local: LocalZone<'_>) -> Option<String> {
-    coerce_to_datetime(value, local).map(|(iso, _)| iso.chars().take(10).collect())
+pub fn coerce_to_date(value: &Js) -> Option<String> {
+    coerce_to_datetime(value).map(|(iso, _)| iso.chars().take(10).collect())
 }
 
 fn date_add_days(date: &Js, days: &Js) -> Result<Js, EvalError> {
@@ -572,8 +567,8 @@ fn pad(value: i64, width: usize) -> String {
     format!("{}{text}", "0".repeat(width.saturating_sub(text.len())))
 }
 
-fn date_format(value: &Js, pattern: &Js, local: LocalZone<'_>) -> Js {
-    let Some((_, ms)) = coerce_to_datetime(value, local) else { return Js::Null };
+fn date_format(value: &Js, pattern: &Js) -> Js {
+    let Some((_, ms)) = coerce_to_datetime(value) else { return Js::Null };
     if pattern.is_nullish() {
         return Js::Null;
     }
@@ -615,20 +610,20 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     if text.is_nullish() || pattern.is_nullish() {
         return Ok(Js::Null);
     }
-    let regex = match Regex::new(&pattern.to_js_string()) {
+    // The regex reads code points: a lone surrogate is U+FFFD to it.
+    let plain = |value: Js| String::from_utf16_lossy(&crate::js_string::units_vec(&value.to_js_string()));
+    let regex = match Regex::new(&plain(pattern)) {
         Ok(regex) => regex,
         Err(RegexError::Syntax) => return Ok(Js::Null),
-        Err(RegexError::Unsupported(what)) => return Err(EvalError::Fallback(what)),
     };
-    let Some(groups) = regex.exec(&text.to_js_string()) else { return Ok(Js::Null) };
+    let Some(groups) = regex.exec(&plain(text)) else { return Ok(Js::Null) };
     let index = if args.len() > 2 { group.to_number() } else if groups.len() > 1 { 1.0 } else { 0.0 };
     if !js::is_integer(index) || index < 0.0 || index >= groups.len() as f64 {
         return Ok(Js::Null);
     }
     match &groups[index as usize] {
         None => Ok(Js::Null),
-        // A match through a pair holds its half, as JavaScript's does.
-        Some(units) => Ok(Js::String(crate::js::JsString::from_units(units))),
+        Some(found) => Ok(Js::str(found.as_str())),
     }
 }
 
@@ -684,7 +679,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
 /// with a file's keys is a dict).
 fn to_stable_json(value: &Js) -> Js {
     match value {
-        Js::Undefined | Js::Null | Js::Function(_) => Js::Null,
+        Js::Undefined | Js::Null => Js::Null,
         // Read down to its fields first (`plainValueOf`).
         Js::Record(_) => Js::object(JsObject::new()),
         Js::Bool(_) | Js::String(_) => value.clone(),
@@ -701,7 +696,7 @@ fn to_stable_json(value: &Js) -> Js {
         Js::Object(object) => {
             let mut out = JsObject::new();
             let mut entries: Vec<&(String, Js)> = object.entries().iter().collect();
-            entries.sort_by(|(a, _), (b, _)| js::utf16_cmp(a, b));
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
             for (key, item) in entries {
                 out.set(key.clone(), to_stable_json(item));
             }
@@ -866,11 +861,11 @@ mod tests {
     use super::*;
 
     fn around() -> Surroundings<'static> {
-        Surroundings { services: crate::env_services::current(), now: Some(0.0), local_zone: None }
+        Surroundings { services: crate::env_services::current(), now: Some(0.0) }
     }
 
     fn call(id: &str, args: Vec<Js>) -> Js {
-        let result = if FLAT.contains(&id) { apply_flat(id, &args, around()) } else { apply_namespaced(id, &args, around()) };
+        let result = if FLAT.contains(&id) { apply_flat(id, &args) } else { apply_namespaced(id, &args, around()) };
         result.unwrap_or_else(|e| panic!("{id}: {e:?}"))
     }
 
@@ -974,15 +969,10 @@ mod tests {
         assert_eq!(iso(s("12 March 2026")), "2026-03-12T00:00:00.000Z");
         assert_eq!(iso(s("2026-03-12T09:30+01:00")), "2026-03-12T08:30:00.000Z");
         assert_eq!(iso(Js::Number(8.64e15 + 1.0)), "<null>");
-        // A date-time with no offset is the local zone's: UTC when the run names none.
+        // A date-time with no offset is UTC; only ISO / RFC 3339 date-times
+        // are read (a day its month lacks is none).
         assert_eq!(iso(s("2026-03-12T09:30")), "2026-03-12T09:30:00.000Z");
-        let in_new_york = Surroundings { local_zone: Some("America/New_York"), ..around() };
-        let at = |text: &str| apply_namespaced("date.format_iso", &[s(text)], in_new_york).unwrap().to_js_string();
-        assert_eq!(at("2026-03-12T09:30"), "2026-03-12T13:30:00.000Z");
-        // The clock skips 02:30 on 8 March and shows 01:30 twice on 1 November.
-        assert_eq!(at("2026-03-08T02:30"), "2026-03-08T07:30:00.000Z");
-        assert_eq!(at("2026-11-01T01:30"), "2026-11-01T05:30:00.000Z");
-        assert_eq!(at("2026-03-12"), "2026-03-12T00:00:00.000Z");
+        assert_eq!(iso(s("2026-02-30T09:30")), "<null>");
         assert_eq!(text(call("date", vec![s("2026-03-12T23:30-02:00")])), "2026-03-13");
         assert_eq!(text(call("datetime", vec![s("2026-03-12")])), "2026-03-12T00:00:00.000Z");
         assert_eq!(text(call("date", vec![Js::Bool(true)])), "<null>");
@@ -1016,7 +1006,8 @@ mod tests {
         keyed.set("9".into(), Js::array(vec![Js::Undefined]));
         assert_eq!(
             text(call("text.serialise", vec![Js::object(keyed), s("JSON")])),
-            "{\n  \"9\": [\n    null\n  ],\n  \"10\": null,\n  \"b\": 0\n}"
+            // Keys sorted as texts: "10" before "9".
+            "{\n  \"10\": null,\n  \"9\": [\n    null\n  ],\n  \"b\": 0\n}"
         );
         assert_eq!(text(call("text.serialise", vec![Js::Undefined, s("JSON")])), "null");
         assert!(matches!(
@@ -1084,29 +1075,34 @@ mod tests {
         assert_eq!(host("http://a%41.com"), "aa.com");
     }
 
-    /// Node 22's ICU (Unicode 16), not Rust's tables (Unicode 17): U+0295
-    /// is cased for the final-sigma rule in the older one, so the sigma
-    /// before it is not final.
+    /// Rust's own tables (the toolchain's Unicode, 17 today), not Node's
+    /// ICU (Unicode 16): a letter pair Unicode 17 added maps (U+A7D3 upper
+    /// is U+A7D2; Node left it), and the final sigma reads Rust's cased and
+    /// case-ignorable sets.
     #[test]
-    fn case_mapping_follows_nodes_icu() {
-        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "ασʕ");
+    fn case_mapping_follows_rusts_tables() {
+        assert_eq!(text(call("upper", vec![s("ꟓ")])), "\u{A7D2}");
         assert_eq!(text(call("lower", vec![s("ΑΣ ʕ")])), "ας ʕ");
+        assert_eq!(text(call("lower", vec![s("ΑΣʕ")])), "ΑΣʕ".to_lowercase());
         assert_eq!(text(call("lower", vec![s("AΣ\u{345}")])), "aς\u{345}");
     }
 
     #[test]
     fn flat_builtins() {
-        assert_eq!(text(call("trim", vec![s("\u{feff} x\u{a0}")])), "x");
+        assert_eq!(text(call("trim", vec![s("\u{85} x\u{a0}")])), "x");
+        assert_eq!(text(call("trim", vec![s("\u{feff} x")])), "\u{feff} x");
         assert_eq!(text(call("upper", vec![s("straße")])), "STRASSE");
         assert_eq!(text(call("lower", vec![s("ΣΑΣ")])), "σας");
         assert!(matches!(call("length", vec![s("a😀")]), Js::Number(n) if n == 3.0));
         assert!(matches!(call("length", vec![Js::Null]), Js::Number(n) if n == 0.0));
         assert!(matches!(call("length", vec![Js::Number(-1.5)]), Js::Number(n) if n == 4.0));
-        assert!(matches!(call("round", vec![s("-2.5")]), Js::Number(n) if n == -2.0));
+        // Half away from zero (JavaScript went half toward +∞: -2).
+        assert!(matches!(call("round", vec![s("-2.5")]), Js::Number(n) if n == -3.0));
         assert!(matches!(call("tonumber", vec![s("abc")]), Js::Null));
-        assert!(matches!(call("tonumber", vec![s("")]), Js::Number(n) if n == 0.0));
+        assert!(matches!(call("tonumber", vec![s("")]), Js::Null));
+        assert!(matches!(call("number", vec![s("  ")]), Js::Null));
         assert!(matches!(call("number", vec![s("")]), Js::Null));
-        assert!(matches!(call("number", vec![s("0x10")]), Js::Number(n) if n == 16.0));
+        assert!(matches!(call("number", vec![s("0x10")]), Js::Null));
         assert_eq!(text(call("tostring", vec![Js::Number(1e21)])), "1e+21");
         assert_eq!(text(call("tostring", vec![Js::array(vec![Js::Number(1.0), Js::Null])])), "1,");
         let Js::Array(parts) = call("split", vec![s(" a, ,b ,"), Js::Null]) else { panic!("a list") };

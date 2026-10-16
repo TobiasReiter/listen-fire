@@ -139,6 +139,10 @@ pub enum Expression {
         order_by: Option<Box<Expression>>,
         #[serde(rename = "orderDirection", skip_serializing_if = "Option::is_none")]
         order_direction: Option<OrderDirection>,
+        /// `ONLY`'s argument as the author wrote it, which its failure
+        /// quotes. Never on the wire: a tree read back has none.
+        #[serde(skip)]
+        written: Option<String>,
     },
     #[serde(rename = "function")]
     Function {
