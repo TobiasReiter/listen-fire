@@ -22,6 +22,7 @@ const LANGUAGE_VERSION = path.join(PACKAGE, 'language_version.ts');
 const SNAPSHOT = path.join(PACKAGE, 'service/snapshot.ts');
 const CATALOG = path.join(PACKAGE, 'checker/catalog.ts');
 const SCAN = path.join(PACKAGE, 'parser/scan.ts');
+const RUST_CHECK = path.join(PACKAGE, 'checker/rust_checker.ts');
 
 const testFile = path.relative(PACKAGE, expect.getState().testPath || '');
 const REPLAY = path.join('checker', '__test__', 'checks_regression');
@@ -222,6 +223,39 @@ function snapshotOf(catalog, calls, served) {
   if (catalog.credentialNames) differs('credentialNames()', [...catalog.credentialNames()], replay.credentialNames());
   return { snapshot, notes: [...new Set(notes)] };
 }
+
+// A version 5 run is checked by the Rust checker on the run's snapshot
+// (checkSourceInRust), past checkProgram: its program is recorded with the
+// TypeScript's own answer on the same snapshot, so the engine's v5 programs
+// reach the corpus too.
+jest.mock(RUST_CHECK, () => {
+  const actual = jest.requireActual(RUST_CHECK);
+  const checkSourceInRust = (source, snapshot, options) => {
+    const result = actual.checkSourceInRust(source, snapshot, options);
+    try {
+      const { parseProgram } = jest.requireActual(PARSE);
+      const { checkProgram } = jest.requireActual(CHECK);
+      const { fromCatalogSnapshot, resolveFileFromSnapshot } = require(SNAPSHOT);
+      const resolveFile = resolveFileFromSnapshot(snapshot);
+      const diagnostics = checkProgram(parseProgram(source, { languageVersion: options.languageVersion }), fromCatalogSnapshot(snapshot), {
+        languageVersion: options.languageVersion,
+        ...(options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+        ...(resolveFile ? { resolveFile } : {}),
+      });
+      records.push({
+        source,
+        version: options.languageVersion,
+        ...(options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+        snapshot: plain(snapshot),
+        diagnostics: JSON.parse(canonical(diagnostics)),
+      });
+    } catch (e) {
+      // A text the TypeScript parse refuses is not a check record.
+    }
+    return result;
+  };
+  return { ...actual, checkSourceInRust };
+});
 
 jest.mock(CHECK, () => {
   const actual = jest.requireActual(CHECK);
