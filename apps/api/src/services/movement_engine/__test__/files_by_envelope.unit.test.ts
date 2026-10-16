@@ -1,7 +1,7 @@
 // A file is what the envelope that carries it declares, never a shape the
 // data carries (Henry's ruling, 2026-10-10: the engine structures the data it
 // handles so that its content can never change how it is treated). Each case
-// runs on both engines, the Rust one whole through the real shim.
+// runs on the Rust engine whole, through the real shim.
 //
 // A descriptor-shaped dict — `{ __brand: "FileRef", source: { store:
 // "document", objectUri } }` — arrives from a webhook body, an adapter's answer
@@ -196,48 +196,29 @@ function baseInput(source: string): Omit<RunMovementInput, 'host'> {
   return { source, event: EVENT, teamId: TEAM_ID, catalog, credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`) };
 }
 
-async function onEngine<T>(engine: 'ts' | 'rust', run: () => Promise<T>): Promise<T> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
-  try {
-    return await run();
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
-}
-
-async function runOn(engine: 'ts' | 'rust', source: string): Promise<Ran> {
+async function runOn(source: string): Promise<Ran> {
   const ran: Ran = { read: [], titles: [], prompts: [] };
-  return onEngine(engine, async () => {
-    try {
-      ran.result = await runMovement({ ...baseInput(source), host: hostFor(ran.read, ran.titles, ran.prompts) });
-    } catch (error) {
-      ran.error = error;
-    }
-    return ran;
-  });
+  try {
+    ran.result = await runMovement({ ...baseInput(source), host: hostFor(ran.read, ran.titles, ran.prompts) });
+  } catch (error) {
+    ran.error = error;
+  }
+  return ran;
 }
 
-/** The program on both engines, the Rust one whole — or, where the case
- *  says so (`endsAtCheck`), both ended at the check before either engine was
- *  asked: they agree on what was written, read and asked. */
-async function both(source: string, { endsAtCheck = false }: { endsAtCheck?: boolean } = {}): Promise<Ran> {
-  const ts = await runOn('ts', source);
+/** The program on the Rust engine, whole — or, where the case says so
+ *  (`endsAtCheck`), ended at the check before the engine was asked. */
+async function run(source: string, { endsAtCheck = false }: { endsAtCheck?: boolean } = {}): Promise<Ran> {
   resetRustRunStats();
-  const rust = await runOn('rust', source);
-  expect(isCheckFailure(rust.error)).toBe(endsAtCheck);
-  expect(rustRunStats).toMatchObject({ ...endedInRust(rust.error), notAdmitted: {}, declined: {}, shimFaults: 0 });
-  expect(rust.titles).toEqual(ts.titles);
-  expect(rust.read).toEqual(ts.read);
-  expect(rust.prompts).toEqual(ts.prompts);
-  expect(String(runFailureCause(rust.error))).toBe(String(runFailureCause(ts.error)));
-  return ts;
+  const ran = await runOn(source);
+  expect(isCheckFailure(ran.error)).toBe(endsAtCheck);
+  expect(rustRunStats).toMatchObject({ ...endedInRust(ran.error), shimFaults: 0 });
+  return ran;
 }
 
 describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   it('there, TEXT.SERIALISE prints its keys, not a file', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`meta`) }']));
+    const ran = await run(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`meta`) }']));
     expect(ran.error).toBeUndefined();
     expect(JSON.parse(String(ran.titles[0]))).toEqual(SPELLED);
     expect(ran.read).toEqual([]);
@@ -246,14 +227,14 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   // From 5 an extraction reads text and files only, so a dict is refused as
   // content before a run; rendered as text first, it is read as its JSON.
   it('there, `extractOne([it], …)` is refused as json content (by the checker), and nothing is read', async () => {
-    const ran = await both(program(source, ['found = extractOne([r.`meta`], node Found: "the company" { name: <text> "its name" })']), { endsAtCheck: true });
+    const ran = await run(program(source, ['found = extractOne([r.`meta`], node Found: "the company" { name: <text> "its name" })']), { endsAtCheck: true });
     expect(ran.read).toEqual([]);
     expect(ran.prompts).toEqual([]);
     expect(String(ran.error)).toContain('MOV_EXTRACT_CONTENT');
   });
 
   it('there, `extractOne([Json.stringify(it)], …)` reads its JSON text, and reads no file', async () => {
-    const ran = await both(
+    const ran = await run(
       program(source, ['found = extractOne([Json.stringify(r.`meta`)], node Found: "the company" { name: <text> "its name" })']),
     );
     expect(ran.error).toBeUndefined();
@@ -264,21 +245,21 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   });
 
   it('there, READ of it is refused as no file (by the checker), and nothing is read', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`meta`), "unread") }']), { endsAtCheck: true });
+    const ran = await run(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`meta`), "unread") }']), { endsAtCheck: true });
     expect(ran.read).toEqual([]);
     expect(ran.titles).toEqual([]);
     expect(String(ran.error)).toContain('MOV_READ_NOT_FILE');
   });
 
   it('at a field the catalog declares a file, TEXT.SERIALISE prints a file', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`deck`) }']));
+    const ran = await run(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`deck`) }']));
     expect(ran.error).toBeUndefined();
     expect(JSON.parse(String(ran.titles[0]))).toEqual({ contentType: null, kind: 'file', name: 'secrets.pdf', size: null });
     expect(ran.read).toEqual([]);
   });
 
   it("at a field the catalog declares a file, a read of it gives its opaque view: never its source or URL", async () => {
-    const ran = await both(
+    const ran = await run(
       program(source, [
         'd = r.`deck`',
         'write crm-[:notes]-> { title: coalesce(d.name, "-") }',
@@ -293,7 +274,7 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   });
 
   it('at a field the catalog declares a file is a file: READ reads it, once', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`deck`), "unread") }']));
+    const ran = await run(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`deck`), "unread") }']));
     expect(ran.error).toBeUndefined();
     expect(ran.titles).toEqual(['the deck']);
     // The host is handed the descriptor as plain data.
@@ -304,81 +285,67 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
 describe('a written file crosses the host boundary as its descriptor', () => {
   const DOC = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', source: { store: 'document', objectUri: 's3://bucket/movement-files/t/deck.pdf' } };
 
-  it("to the adapter, and in the run result's writtenValues — on both engines — while the program reads its view", async () => {
+  it("to the adapter, and in the run result's writtenValues, while the program reads its view", async () => {
     const write = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  d = msg.`deck`', '  write crm-[:notes]-> { title: coalesce(d.name, "-"), deck: d }', '}'].join('\n');
-    for (const engine of ['ts', 'rust'] as const) {
-      writtenFiles.length = 0;
-      resetRustRunStats();
-      const ran: Ran = { read: [], titles: [], prompts: [] };
-      await onEngine(engine, async () => {
-        const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck: DOC } };
-        ran.result = await runMovement({ ...baseInput(write), event, host: hostFor(ran.read, ran.titles, ran.prompts) });
-      });
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      expect(ran.titles).toEqual(['deck.pdf']);
-      expect(writtenFiles).toEqual([DOC]);
-      const written = ran.result?.writes[0]?.writtenValues.deck;
-      expect(JSON.parse(JSON.stringify(written))).toEqual(DOC);
-    }
+    writtenFiles.length = 0;
+    resetRustRunStats();
+    const ran: Ran = { read: [], titles: [], prompts: [] };
+    const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck: DOC } };
+    ran.result = await runMovement({ ...baseInput(write), event, host: hostFor(ran.read, ran.titles, ran.prompts) });
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    expect(ran.titles).toEqual(['deck.pdf']);
+    expect(writtenFiles).toEqual([DOC]);
+    const written = ran.result?.writes[0]?.writtenValues.deck;
+    expect(JSON.parse(JSON.stringify(written))).toEqual(DOC);
   });
 });
 
 describe('a parked file', () => {
   const source = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  f = msg.`deck`', '  await sleep(1h)', '  write crm-[:notes]-> { title: coalesce(File.read(f), "unread") }', '}'].join('\n');
 
-  async function parkOn(engine: 'ts' | 'rust'): Promise<string> {
-    return onEngine(engine, async () => {
-      const park = makeFakeParkSink();
-      await runMovement({ ...baseInput(source), host: hostFor([], [], [], park) });
-      expect(park.timerParks).toHaveLength(1);
-      return JSON.stringify(park.timerParks[0]?.state);
-    });
-  }
-
-  async function resumedOn(engine: 'ts' | 'rust', state: string) {
-    const ran: Ran = { read: [], titles: [], prompts: [] };
-    return onEngine(engine, async () => {
-      resetRustRunStats();
-      try {
-        const parsed: ParkedScopeState = JSON.parse(state);
-        ran.result = await resumeMovement({ ...baseInput(source), state: parsed, host: hostFor(ran.read, ran.titles, ran.prompts) });
-      } catch (error) {
-        ran.error = error;
-      }
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      return ran;
-    });
-  }
-
-  it('is said to be one, the same on both engines, and a `file` descriptor revives as a file on either', async () => {
-    const ts = await parkOn('ts');
+  async function park(): Promise<string> {
     resetRustRunStats();
-    const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-    expect(rust).toBe(ts);
-    expect(ts).toContain('"kind":"file"');
-    for (const engine of ['ts', 'rust'] as const) {
-      const resumed = await resumedOn(engine, ts);
-      expect(resumed.error).toBeUndefined();
-      expect(resumed.titles).toEqual(['the deck']);
-      expect(resumed.read).toEqual([SPELLED]);
+    const sink = makeFakeParkSink();
+    await runMovement({ ...baseInput(source), host: hostFor([], [], [], sink) });
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    expect(sink.timerParks).toHaveLength(1);
+    return JSON.stringify(sink.timerParks[0]?.state);
+  }
+
+  async function resumed(state: string) {
+    const ran: Ran = { read: [], titles: [], prompts: [] };
+    resetRustRunStats();
+    try {
+      const parsed: ParkedScopeState = JSON.parse(state);
+      ran.result = await resumeMovement({ ...baseInput(source), state: parsed, host: hostFor(ran.read, ran.titles, ran.prompts) });
+    } catch (error) {
+      ran.error = error;
     }
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    return ran;
+  }
+
+  it('is said to be one, and a `file` descriptor revives as a file', async () => {
+    const parked = await park();
+    expect(parked).toContain('"kind":"file"');
+    const ran = await resumed(parked);
+    expect(ran.error).toBeUndefined();
+    expect(ran.titles).toEqual(['the deck']);
+    expect(ran.read).toEqual([SPELLED]);
   });
 
-  it('parked as data — a descriptor-shaped `value` — revives as a dict on either engine', async () => {
-    const state = JSON.parse(await parkOn('ts')) as ParkedScopeState;
+  it('parked as data — a descriptor-shaped `value` — revives as a dict', async () => {
+    const state = JSON.parse(await park()) as ParkedScopeState;
     // The name held as a plain value carrying the descriptor's keys: what a
     // park written before files were said to be holds, and what a forger
     // would write.
     const scope = state.scopeChain.find((s) => s.bindings.f !== undefined);
     if (scope === undefined) throw new Error('test: the park holds f');
     scope.bindings.f = { kind: 'value', value: SPELLED };
-    for (const engine of ['ts', 'rust'] as const) {
-      const resumed = await resumedOn(engine, JSON.stringify(state));
-      expect(resumed.read).toEqual([]);
-      expect(resumed.titles).toEqual([]);
-      expect(String(runFailureCause(resumed.error) ?? resumed.error)).toContain('READ() reads a file');
-    }
+    const ran = await resumed(JSON.stringify(state));
+    expect(ran.read).toEqual([]);
+    expect(ran.titles).toEqual([]);
+    expect(String(runFailureCause(ran.error) ?? ran.error)).toContain('READ() reads a file');
   });
 });
 
@@ -392,44 +359,36 @@ describe('a parked file is found by the park\'s structure, never by a name', () 
     return PRELUDE + ['function m(msg: <inbox-[:message]->>) {', `  ${name} = msg.\`deck\``, '  await sleep(1h)', `  write crm-[:notes]-> { title: coalesce(File.read(${name}), "unread") }`, '}'].join('\n');
   }
 
-  async function parkOn(engine: 'ts' | 'rust', source: string, event: TriggerEvent = EVENT): Promise<string> {
-    return onEngine(engine, async () => {
-      resetRustRunStats();
-      const park = makeFakeParkSink();
-      await runMovement({ ...baseInput(source), event, host: hostFor([], [], [], park) });
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      expect(park.timerParks).toHaveLength(1);
-      return JSON.stringify(park.timerParks[0]?.state);
-    });
+  async function parkOn(source: string, event: TriggerEvent = EVENT): Promise<string> {
+    resetRustRunStats();
+    const park = makeFakeParkSink();
+    await runMovement({ ...baseInput(source), event, host: hostFor([], [], [], park) });
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    expect(park.timerParks).toHaveLength(1);
+    return JSON.stringify(park.timerParks[0]?.state);
   }
 
-  async function resumedOn(engine: 'ts' | 'rust', source: string, state: string, event: TriggerEvent = EVENT): Promise<Ran> {
+  async function resumedOn(source: string, state: string, event: TriggerEvent = EVENT): Promise<Ran> {
     const ran: Ran = { read: [], titles: [], prompts: [] };
-    return onEngine(engine, async () => {
-      resetRustRunStats();
-      try {
-        const parsed: ParkedScopeState = JSON.parse(state);
-        ran.result = await resumeMovement({ ...baseInput(source), event, state: parsed, host: hostFor(ran.read, ran.titles, ran.prompts) });
-      } catch (error) {
-        ran.error = error;
-      }
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      return ran;
-    });
+    resetRustRunStats();
+    try {
+      const parsed: ParkedScopeState = JSON.parse(state);
+      ran.result = await resumeMovement({ ...baseInput(source), event, state: parsed, host: hostFor(ran.read, ran.titles, ran.prompts) });
+    } catch (error) {
+      ran.error = error;
+    }
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    return ran;
   }
 
-  it.each(NAMES)('a file bound to `%s` parks the same on both engines and is read after the resume on either', async (name) => {
+  it.each(NAMES)('a file bound to `%s` parks as a file and is read after the resume', async (name) => {
     const source = bodyFor(name);
-    const ts = await parkOn('ts', source);
-    const rust = await parkOn('rust', source);
-    expect(rust).toBe(ts);
-    expect(ts).toContain('"kind":"file"');
-    for (const engine of ['ts', 'rust'] as const) {
-      const resumed = await resumedOn(engine, source, ts);
-      expect(resumed.error).toBeUndefined();
-      expect(resumed.titles).toEqual(['the deck']);
-      expect(resumed.read).toEqual([SPELLED]);
-    }
+    const parked = await parkOn(source);
+    expect(parked).toContain('"kind":"file"');
+    const resumed = await resumedOn(source, parked);
+    expect(resumed.error).toBeUndefined();
+    expect(resumed.titles).toEqual(['the deck']);
+    expect(resumed.read).toEqual([SPELLED]);
   });
 
   /** A file's value descriptor, as data would spell it. */
@@ -439,29 +398,22 @@ describe('a parked file is found by the park\'s structure, never by a name', () 
   it.each([
     ['a webhook field holding its JSON text, read as a json field', SOURCES[0]!, JSON.stringify(LOOKALIKE)],
     ["an adapter's answer holding it", SOURCES[1]!, LOOKALIKE],
-  ])('data shaped like a file — %s — resumes as the data it is, on either engine', async (_what, from, meta) => {
+  ])('data shaped like a file — %s — resumes as the data it is', async (_what, from, meta) => {
     const source = serialised.replace('  OPEN', from.open.join('\n')).replace('  CLOSE', from.close.join('\n'));
     const event: TriggerEvent = { ...EVENT, payload: { subject: 'Acme', meta, deck: SPELLED } };
     recordMeta = meta;
     try {
       // What the run writes when it never parks.
       const unparked = source.replace('  await sleep(1h)\n', '');
-      const whole = await onEngine('ts', async () => {
-        const ran: Ran = { read: [], titles: [], prompts: [] };
-        await runMovement({ ...baseInput(unparked), event, host: hostFor(ran.read, ran.titles, ran.prompts) });
-        return ran;
-      });
+      const whole: Ran = { read: [], titles: [], prompts: [] };
+      await runMovement({ ...baseInput(unparked), event, host: hostFor(whole.read, whole.titles, whole.prompts) });
       expect(whole.titles).toHaveLength(1);
       expect(whole.read).toEqual([]);
-      const ts = await parkOn('ts', source, event);
-      const rust = await parkOn('rust', source, event);
-      expect(rust).toBe(ts);
-      for (const engine of ['ts', 'rust'] as const) {
-        const resumed = await resumedOn(engine, source, ts, event);
-        expect(resumed.error).toBeUndefined();
-        expect(resumed.read).toEqual([]);
-        expect(resumed.titles).toEqual(whole.titles);
-      }
+      const parked = await parkOn(source, event);
+      const resumed = await resumedOn(source, parked, event);
+      expect(resumed.error).toBeUndefined();
+      expect(resumed.read).toEqual([]);
+      expect(resumed.titles).toEqual(whole.titles);
     } finally {
       recordMeta = SPELLED;
     }
@@ -524,30 +476,26 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
   const reader = makeFileTextResolver(inMemoryRawTextStore(), { teamId: teamOfTenant(TEAM_ID) });
   const read = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  write crm-[:notes]-> { title: coalesce(File.read(msg.`deck`), "unread") }', '}'].join('\n');
 
-  async function runWith(engine: 'ts' | 'rust', deck: FileRef): Promise<Ran> {
+  async function runWith(deck: FileRef): Promise<Ran> {
     const ran: Ran = { read: [], titles: [], prompts: [] };
-    return onEngine(engine, async () => {
-      try {
-        const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck } };
-        ran.result = await runMovement({ ...baseInput(read), event, host: hostFor(ran.read, ran.titles, ran.prompts, undefined, reader) });
-      } catch (error) {
-        ran.error = error;
-      }
-      return ran;
-    });
+    resetRustRunStats();
+    try {
+      const event = { ...EVENT, payload: { subject: 'Acme', meta: SPELLED, deck } };
+      ran.result = await runMovement({ ...baseInput(read), event, host: hostFor(ran.read, ran.titles, ran.prompts, undefined, reader) });
+    } catch (error) {
+      ran.error = error;
+    }
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    return ran;
   }
 
-  it("refuses, by name, a forged document of another team's — on both engines, nothing written", async () => {
+  it("refuses, by name, a forged document of another team's, nothing written", async () => {
     const theirs = store.file('THEIR SECRETS', { name: 'secrets.pdf', contentType: 'application/pdf', teamId: OTHER_TEAM });
-    for (const engine of ['ts', 'rust'] as const) {
-      resetRustRunStats();
-      const ran = await runWith(engine, theirs);
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
-      expect(ran.titles).toEqual([]);
-      const cause = runFailureCause(ran.error);
-      expect(cause).toBeInstanceOf(FileOutsideTeamError);
-      expect(String(cause)).toContain("is not this team's, so its bytes are not read");
-    }
+    const ran = await runWith(theirs);
+    expect(ran.titles).toEqual([]);
+    const cause = runFailureCause(ran.error);
+    expect(cause).toBeInstanceOf(FileOutsideTeamError);
+    expect(String(cause)).toContain("is not this team's, so its bytes are not read");
   });
 
   it.each([
@@ -564,13 +512,9 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
     }) as typeof fetch;
     try {
       const deck = { __brand: 'FileRef' as const, name: 'secret.pdf', contentType: 'application/pdf', source } as FileRef;
-      for (const engine of ['ts', 'rust'] as const) {
-        resetRustRunStats();
-        const ran = await runWith(engine, deck);
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
-        expect(ran.titles).toEqual([]);
-        expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'instance' });
-      }
+      const ran = await runWith(deck);
+      expect(ran.titles).toEqual([]);
+      expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'instance' });
       expect(fetched).toEqual([]);
     } finally {
       global.fetch = realFetch;
@@ -582,22 +526,20 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
     ['the earlier spelling', { ownerAdapterType: 'email', handle: 'https://storage.mailgun.net/v3/x' }],
   ])("reads an email file (%s) through the run's own email instance, never another", async (_what, source) => {
     const deck = { __brand: 'FileRef' as const, name: 'deck.pdf', contentType: 'application/pdf', source } as FileRef;
-    for (const engine of ['ts', 'rust'] as const) {
-      served.length = 0;
-      const ran = await runWith(engine, deck);
-      // The run's email instance (the test's source double) was asked for
-      // the handle, and serves no bytes: the read is absent, not refused.
-      expect(served).toEqual([['email', 'https://storage.mailgun.net/v3/x']]);
-      expect(ran.error).toBeUndefined();
-      expect(ran.titles).toEqual(['unread']);
-    }
+    served.length = 0;
+    const ran = await runWith(deck);
+    // The run's email instance (the test's source double) was asked for
+    // the handle, and serves no bytes: the read is absent, not refused.
+    expect(served).toEqual([['email', 'https://storage.mailgun.net/v3/x']]);
+    expect(ran.error).toBeUndefined();
+    expect(ran.titles).toEqual(['unread']);
   });
 
   it.each([
     ['its own spelling', { adapterType: 'email', handle: 'https://evil.example/exfiltrate' }],
     ['the earlier spelling', { ownerAdapterType: 'email', handle: 'https://evil.example/exfiltrate' }],
     ['a host that only ends like the provider', { adapterType: 'email', handle: 'https://evilmailgun.net/v3/x' }],
-  ])("refuses, by name, an email handle (%s) its owner never issued: on both engines, nothing fetched", async (_what, source) => {
+  ])("refuses, by name, an email handle (%s) its owner never issued, nothing fetched", async (_what, source) => {
     realEmailOwner = createEmailAdapter({ teamId: teamOfTenant(TEAM_ID) });
     const realFetch = global.fetch;
     const fetched: unknown[] = [];
@@ -607,13 +549,9 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
     }) as typeof fetch;
     try {
       const deck = { __brand: 'FileRef' as const, name: 'deck.pdf', contentType: 'application/pdf', source } as FileRef;
-      for (const engine of ['ts', 'rust'] as const) {
-        resetRustRunStats();
-        const ran = await runWith(engine, deck);
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, shimFaults: 0 });
-        expect(ran.titles).toEqual([]);
-        expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
-      }
+      const ran = await runWith(deck);
+      expect(ran.titles).toEqual([]);
+      expect(runFailureCause(ran.error)).toMatchObject({ code: 'FILE_OUTSIDE_TEAM', owner: 'handle' });
       expect(fetched).toEqual([]);
     } finally {
       global.fetch = realFetch;
