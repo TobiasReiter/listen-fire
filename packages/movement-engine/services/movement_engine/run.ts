@@ -135,6 +135,8 @@ import {
   valueChildren,
   withValueChildren,
   bindPluginArgs,
+  memberLocal,
+  packageMembers,
   pluginArgMisfitMessage,
   pluginPositionalParams,
 } from 'movement-lang';
@@ -4160,6 +4162,14 @@ class Interpreter {
           // name means something different from a call on a movement, and the
           // binding is what says so, exactly as the checker's scope does.
           if (statement.source.namespace === 'plugins') {
+            // A package (version 5) binds each member under `web.fetchUrl`.
+            const members = since(this.languageVersion, 5) ? packageMembers(this.catalog, name) : [];
+            if (members.length > 0) {
+              for (const member of members) {
+                env.declare(memberLocal(alias ?? name, member.name), binding({ kind: 'plugin', plugin: member.key }));
+              }
+              continue;
+            }
             env.declare(alias ?? name, binding({ kind: 'plugin', plugin: name }));
             continue;
           }
@@ -5746,6 +5756,12 @@ class Interpreter {
 
   /** Whether a call in an expression is one this engine runs. */
   private runsAsCall(call: CallNode, env: Environment): boolean {
+    // `web.fetchUrl(…)`: a package's member, bound under the one dotted name
+    // (version 5). A local binding is never a package.
+    const { callee } = call;
+    if (callee.kind === 'member' && callee.object.kind === 'name' && env.resolve(callee.object.name.text) === undefined) {
+      return env.resolve(memberLocal(callee.object.name.text, callee.property.text))?.kind === 'plugin';
+    }
     const scope = this.callScope(env);
     return runsAsCall(
       call,

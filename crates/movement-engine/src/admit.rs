@@ -934,7 +934,15 @@ fn plugin_binds_of(program: &ast::Program, catalog: &Plugins<'_>, language_versi
             && matches!(&import.source, ImportSource::Builtin { namespace } if namespace == "plugins")
         {
             for name in &import.names {
-                plugin_binds.insert(name.alias.clone().unwrap_or_else(|| name.name.clone()), catalog.import(&name.name, language_version));
+                let local = name.alias.clone().unwrap_or_else(|| name.name.clone());
+                let members = catalog.0.map(|specs| movement_parser::catalog::packages::package_members(specs, &name.name)).unwrap_or_default();
+                if movement_parser::version::since(language_version, 5) && !members.is_empty() {
+                    for member in members {
+                        plugin_binds.insert(movement_parser::catalog::packages::member_local(&local, &member.name), catalog.import(&member.key, language_version));
+                    }
+                    continue;
+                }
+                plugin_binds.insert(local, catalog.import(&name.name, language_version));
             }
         }
     }
@@ -4250,7 +4258,10 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
+                member => {
+                    package_member_written(member).is_some_and(|written| self.plugin(&written))
+                        || callee_written(member).is_some_and(|written| self.value_callee(&written))
+                }
             },
             _ => false,
         };
@@ -4365,7 +4376,10 @@ impl Names<'_> {
                 movement_parser::tree::MExpr::Name { name, .. } => {
                     self.nested_function(&name.text) || (!self.binds_any_case(&name.text) && crate::nested::is_call_form(&name.text))
                 }
-                member => callee_written(member).is_some_and(|written| self.value_callee(&written)),
+                member => {
+                    package_member_written(member).is_some_and(|written| self.plugin(&written))
+                        || callee_written(member).is_some_and(|written| self.value_callee(&written))
+                }
             },
             _ => false,
         };
@@ -4986,7 +5000,7 @@ fn plan_nested(
     if matches!(tree, movement_parser::tree::MExpr::Call { .. }) && calls.contains(&at) {
         plan.calls.push(at);
         let held = match tree {
-            movement_parser::tree::MExpr::Call { callee, .. } => match callee_written(callee) {
+            movement_parser::tree::MExpr::Call { callee, .. } => match callee_written(callee).or_else(|| package_member_written(callee)) {
                 Some(written) => call_holder(&written, &units.text(at.start, at.end)),
                 None => Holder::Other,
             },
@@ -5041,6 +5055,16 @@ fn callee_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
         MExpr::Name { name, .. } => Some(name.text.clone()),
         _ => None,
     }
+}
+
+/// `web.fetchUrl` where an expression calls it (language version 5): the
+/// one dotted name a package import binds its member to, which only a plugin
+/// bind answers for.
+fn package_member_written(callee: &movement_parser::tree::MExpr) -> Option<String> {
+    use movement_parser::tree::MExpr;
+    let MExpr::Member { object, property, .. } = callee else { return None };
+    let MExpr::Name { name, .. } = object.as_ref() else { return None };
+    (!name.quoted && !property.quoted).then(|| movement_parser::catalog::packages::member_local(&name.text, &property.text))
 }
 
 /// A slot's text with its nested calls (crate::nested) read as the names
@@ -5119,7 +5143,7 @@ fn nested_rewrite(raw: &str, is_function: &dyn Fn(&str) -> bool, call_holder: &d
     let runs = |call: &movement_parser::tree::MExpr| match call {
         movement_parser::tree::MExpr::Call { callee, .. } => match callee.as_ref() {
             movement_parser::tree::MExpr::Name { name, .. } => is_function(&name.text) || crate::nested::is_call_form(&name.text),
-            member => callee_written(member).is_some_and(|written| is_function(&written)),
+            member => callee_written(member).or_else(|| package_member_written(member)).is_some_and(|written| is_function(&written)),
         },
         _ => false,
     };
