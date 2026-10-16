@@ -159,3 +159,13 @@ fn a_member_read_off_an_index_binds_the_index_first_from_5() {
         assert_eq!(errors(&format!("function f() {{\n{body}\n  return n\n}}"), 5), Vec::<String>::new(), "{body}");
     }
 }
+
+#[test]
+fn a_negative_literal_index_reads_the_tuples_slot_as_at_did() {
+    let program = |index: &str| {
+        format!("function g(n: <number>) {{\n  return n\n}}\n\nfunction f() {{\n  t = [\"a\", 2]\n  c = t[{index}]\n  return g(c)\n}}")
+    };
+    assert_eq!(errors(&program("-1"), 5), Vec::<String>::new());
+    let first = errors(&program("0"), 5);
+    assert!(first.iter().any(|e| e.starts_with("MOV_CALL_ARG_TYPE")), "{first:?}");
+}

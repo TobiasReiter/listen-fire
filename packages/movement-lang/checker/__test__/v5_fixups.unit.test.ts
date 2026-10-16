@@ -188,3 +188,13 @@ describe('a member read off an index from 5 binds the index first, as AT(xs, i) 
     expect(errors(`function f() {\n${body}\n  return n\n}`, 5)).toEqual([]);
   });
 });
+
+describe("a negative literal index from 5 reads the tuple's slot, as AT(t, -1) did", () => {
+  const program = (index: string) =>
+    `function g(n: <number>) {\n  return n\n}\n\nfunction f() {\n  t = ["a", 2]\n  c = t[${index}]\n  return g(c)\n}`;
+
+  it('the last slot, not the union of every member', () => {
+    expect(errors(program('-1'), 5)).toEqual([]);
+    expect(errors(program('0'), 5).join('\n')).toMatch(/MOV_CALL_ARG_TYPE/);
+  });
+});

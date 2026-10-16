@@ -546,6 +546,9 @@ impl<'a> ExpressionParser<'a> {
             }
             if tok.is_punct("[") && !tok.space_before {
                 self.advance()?;
+                // An index opens like a call argument, so `t[-1]` reads the
+                // literal -1 that `AT(t, -1)` reads, not a negated 1.
+                self.previous = Previous::Opener;
                 let index = self.with_newlines(false, Self::parse_where)?;
                 self.expect_punct("]", "to close the index")?;
                 expr = MExpr::Index { object: Box::new(expr), index: Box::new(index), at: self.span(start) };
@@ -1576,6 +1579,12 @@ mod tests {
         assert_eq!(t["op"], "or");
         assert_eq!(t["right"]["op"], "and");
         assert_eq!(t["right"]["right"]["kind"], "unary");
+    }
+
+    #[test]
+    fn an_index_reads_a_negative_literal_as_a_call_argument_does() {
+        assert_eq!(tree("t[-1]")["index"], json!({ "kind": "literal", "value": -1, "at": at(2, 4) }));
+        assert_eq!(tree("t[a-1]")["index"]["op"], "-");
     }
 
     #[test]
