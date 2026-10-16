@@ -1952,13 +1952,20 @@ impl<'c> Bound<'c> {
     /// statement's call is. A call whose value is not known to be a value
     /// (a record, a node, or a kind decided at run time) is noted unknown,
     /// so `Names::nested_value` refuses it: a nested call's value is read as
-    /// a value.
+    /// a value. A positional call carries its own reading as an expression
+    /// (`n = make(l)`, `said = summarise(pick("a"))`); where the call runs
+    /// as a call — a function's, a plugin's, a closure's, one through a
+    /// value — and not as the built-in's expression it reads as
+    /// (`builtin_reading`), that slot is the call itself, walked where the
+    /// statement or argument holds it, so it is skipped.
     fn nested_movement_calls(&mut self, statement: &Statement) {
         let Some(callees) = self.callees else { return };
         if callees.language_version < 3 {
             return;
         }
-        for slot in direct_slots(statement) {
+        let runs_as_call = |callee: &str| self.callee(callee).is_some() || self.plugin_kind(callee).is_some() || self.calls_closure(callee) || self.value_callee(callee);
+        let readings: Vec<ast::Span> = call_readings(statement).into_iter().filter(|(callee, _)| runs_as_call(callee)).map(|(_, span)| span).collect();
+        for slot in direct_slots(statement).into_iter().filter(|slot| !readings.contains(&slot.span)) {
             let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { continue };
             let runs = |call: &movement_parser::tree::MExpr| match call {
                 movement_parser::tree::MExpr::Call { callee, .. } => matches!(callee.as_ref(), movement_parser::tree::MExpr::Name { name, .. } if self.callee(&name.text).is_some()),
@@ -5111,6 +5118,36 @@ pub(crate) fn direct_slots(statement: &impl serde::Serialize) -> Vec<ExprSlot> {
     slots
 }
 
+/// The calls a statement holds itself (as `direct_slots` reads it) that
+/// carry their reading as one expression, a positional call's: each by its
+/// callee and the span its call and its expression share.
+fn call_readings(statement: &impl serde::Serialize) -> Vec<(String, ast::Span)> {
+    fn walk(json: &serde_json::Value, into: &mut Vec<(String, ast::Span)>) {
+        match json {
+            serde_json::Value::Object(object) => {
+                if object.get("kind").and_then(|k| k.as_str()) == Some("call")
+                    && let (Some(serde_json::Value::String(callee)), Some(expression)) = (object.get("callee"), object.get("expression"))
+                    && let Ok(slot) = serde_json::from_value::<ExprSlot>(expression.clone())
+                {
+                    into.push((callee.clone(), slot.span));
+                }
+                for (key, value) in object {
+                    if key != "body" && key != "closure" {
+                        walk(value, into);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, into)),
+            _ => {}
+        }
+    }
+    let mut readings = Vec::new();
+    if let Ok(json) = serde_json::to_value(statement) {
+        walk(&json, &mut readings);
+    }
+    readings
+}
+
 /// Whether a built-in's name is a collection op's (or `MEMBERS`): a call
 /// form that is no extraction.
 fn is_collection_form(callee: &str) -> bool {
@@ -6240,5 +6277,35 @@ mod tests {
             }
         }
         assert!(refused.is_empty(), "{}", refused.join("\n"));
+    }
+
+    /// A positional call (version 3 on; the only spelling of a function's
+    /// call from version 5) carries its reading as an expression. Where
+    /// the call runs as a call — a function's, a plugin's — that slot is the
+    /// call itself, not a call nested in one: what it hands back (a node, a
+    /// record) is read off the callee as the named call's is.
+    #[test]
+    fn a_positional_call_is_the_call_it_reads_as() {
+        let v4 = "import { email, attio } from adapters\nimport { dealflow_inbox, acme_main } from credentials\ninbox = email(credentials: dealflow_inbox)\ncrm = attio(credentials: acme_main)\n";
+        let v5 = "inbox = connect email using dealflow_inbox\ncrm = connect attio using acme_main\n";
+        let make = "make(t: <text>) {\n  return node { title: t }\n}\n";
+        let keep = "keep(e: <inbox-[:message]->>) {\n  n = node { files: lazy e-[a:files]-> }\n  await sleep(1h)\n  return n\n}\n";
+        let pick = "pick(n: <text>) {\n  co = write crm-[:companies]-> { name: n }\n  return co\n}\n";
+        let none: Vec<String> = Vec::new();
+        for (version, prelude, word) in [(3, v4, "movement"), (4, v4, "movement"), (5, v5, "function")] {
+            let file = |helper: &str, body: &str| format!("{prelude}{word} {helper}{word} m(msg: <inbox-[:message]->>) {{\n{body}\n}}\n");
+            for (helper, body) in [
+                (make, "  n = make(msg.`subject`)\n  x = n.`title`\n  write n { title: \"b\" }"),
+                (make, "  n = make(t: msg.`subject`)\n  x = n.`title`"),
+                (keep, "  k = keep(msg)\n  keep(msg)"),
+                (pick, "  co = pick(\"Acme\")\n  write co { name: \"b\" }"),
+            ] {
+                assert_eq!(reasons_of(&file(helper, body), "m", version), none, "version {version}: {body}");
+            }
+        }
+        // A function's positional call nested in an expression is still read
+        // as a value there.
+        let nested = format!("{v5}function {make}function m(msg: <inbox-[:message]->>) {{\n  x = Text.upper(make(\"a\"))\n}}\n");
+        assert_eq!(reasons_of(&nested, "m", 5), ["nested_movement_call"]);
     }
 }
