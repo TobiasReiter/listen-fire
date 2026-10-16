@@ -30,11 +30,27 @@ const mockCheckerMisses = new Set<string>();
 
 jest.mock('movement-lang', () => {
   const actual = jest.requireActual('movement-lang');
+  const missing = (diagnostics: Array<{ code: string }>) => diagnostics.filter((d) => !mockCheckerMisses.has(d.code));
   return {
     ...actual,
     checkProgramWithLink: (...args: unknown[]) => {
       const checked = actual.checkProgramWithLink(...args);
-      return { ...checked, diagnostics: checked.diagnostics.filter((d: { code: string }) => !mockCheckerMisses.has(d.code)) };
+      return { ...checked, diagnostics: missing(checked.diagnostics) };
+    },
+    // The Rust route's checks: the run host's, before the segment opens, and
+    // the engine's own, which a missed code turns off, so the engine asks
+    // its host for the check (`check.program`), the TypeScript's above.
+    checkSourceInRust: (...args: unknown[]) => missing(actual.checkSourceInRust(...args)),
+    openEngineSegment: () => {
+      const segment = actual.openEngineSegment();
+      return {
+        ...segment,
+        start: (inputJson: string) => {
+          if (mockCheckerMisses.size === 0) return segment.start(inputJson);
+          const { nativeCheck: _native, snapshotModels: _models, ...input } = JSON.parse(inputJson);
+          return segment.start(JSON.stringify(input));
+        },
+      };
     },
   };
 });

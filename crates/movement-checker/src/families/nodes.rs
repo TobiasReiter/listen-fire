@@ -965,6 +965,24 @@ impl Required {
     }
 }
 
+/// `copyPlanOf`: what a spread copies into the declared node at `position`
+/// — its fields, and each edge's plan, an edge back to a node on the way
+/// followed no further.
+fn copy_plan_of(schema: &InstanceSchema, position: &str, seen: &[&str]) -> serde_json::Value {
+    let declared = schema.positions.get(position);
+    let mut edges = serde_json::Map::new();
+    let mut deeper: Vec<&str> = seen.to_vec();
+    deeper.push(position);
+    for (name, edge) in declared.map(|d| d.edges.iter()).into_iter().flatten() {
+        if seen.contains(&edge.target.as_str()) {
+            continue;
+        }
+        edges.insert(name.clone(), copy_plan_of(schema, &edge.target, &deeper));
+    }
+    let fields: Vec<&String> = declared.map(|d| d.properties.keys().collect()).unwrap_or_default();
+    serde_json::json!({ "fields": fields, "edges": edges })
+}
+
 /// `declaredLocalGraph`: the type of `graph<Shape> { … }`, a run-local node
 /// whose planes are the declaration's; each child edge lands on the nested
 /// node, compared by structure.
@@ -1102,6 +1120,7 @@ impl Checker<'_> {
                         self.graph_reference(value, typed.expr.as_ref(), typed.ty.as_ref(), typed.may_hold.as_ref(), scope)
                     };
                     if let Some(reference) = reference {
+                        self.stamp(*span, crate::answer::StampKind::Reference);
                         if let Some(child) = self.graph_child(name, required, *span)
                             && let Some(records) = &reference.position
                         {
@@ -1701,7 +1720,9 @@ impl Checker<'_> {
         let absent = |ty: Option<Ty>| if may_be_absent { ty.map(crate::types::field::maybe_absent) } else { ty };
         let supplied = position.and_then(record_surface);
         let Some(supplied) = supplied else {
-            if required.is_none() {
+            if let Some(required) = required {
+                self.stamp(spread.span, crate::answer::StampKind::Copy(copy_plan_of(&required.schema, &required.position, &[])));
+            } else {
                 self.report(
                     codes::GRAPH_SPREAD_UNTYPED,
                     format!(
@@ -1714,12 +1735,16 @@ impl Checker<'_> {
             return None;
         };
         let Some(required) = required else {
+            let fields: Vec<&String> = supplied.properties.iter().map(|(k, _)| k).collect();
+            self.stamp(spread.span, crate::answer::StampKind::Copy(serde_json::json!({ "fields": fields, "edges": {} })));
             let reads = supplied.properties.iter().map(|(k, v)| (k.clone(), absent(v.clone()))).collect();
             return Some(SpreadKeys { reads, edges: IndexMap::new(), may_be_absent });
         };
         let declared = required.declared().cloned();
         let mut reads = IndexMap::new();
         let mut edges = IndexMap::new();
+        let mut plan_fields: Vec<String> = Vec::new();
+        let mut plan_edges = serde_json::Map::new();
         for name in declared.iter().flat_map(|d| d.properties.keys()) {
             let Some((_, ty)) = supplied.properties.iter().find(|(k, _)| k == name) else { continue };
             let ty = absent(ty.clone());
@@ -1728,6 +1753,7 @@ impl Checker<'_> {
                 self.check_graph_field(name, held.as_ref(), required, spread.span, Some(&spread.source));
             }
             reads.insert(name.clone(), ty);
+            plan_fields.push(name.clone());
         }
         let follows_edges = !matches!(position, Some(Position::Handle(_)));
         for (name, edge) in declared.iter().flat_map(|d| d.edges.iter()) {
@@ -1747,8 +1773,10 @@ impl Checker<'_> {
                     spread.span,
                 );
             }
+            plan_edges.insert(name.clone(), copy_plan_of(&required.schema, &edge.target, &[]));
             edges.insert(name.clone(), local_edge(name, None));
         }
+        self.stamp(spread.span, crate::answer::StampKind::Copy(serde_json::json!({ "fields": plan_fields, "edges": plan_edges })));
         Some(SpreadKeys { reads, edges, may_be_absent })
     }
 

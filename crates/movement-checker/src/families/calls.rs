@@ -562,7 +562,9 @@ impl Checker<'_> {
             match &parsed {
                 Ok(value) => {
                     self.open_effect_frame();
+                    self.enter_nested_call(slot.span, at);
                     bound = self.check_rvalue(value, scope, None, span);
+                    self.leave_nested_call();
                     let row = self.close_effect_frame();
                     let callee = match value {
                         RValue::Call { call } => Some(&call.callee),
@@ -1714,6 +1716,7 @@ impl Checker<'_> {
     /// A movement declaration, kept so a call above it can walk its body.
     pub fn register_movement(&mut self, id: SymbolId, movement: &MovementDeclaration, scope: ScopeId) {
         self.inference.declarations.entry(id).or_insert_with(|| (Rc::new(movement.clone()), scope));
+        self.note_declared_file(id);
     }
 
     /// An imported movement's symbol is the library's for inference.
@@ -1784,6 +1787,7 @@ impl Checker<'_> {
         self.inference.inferred.insert(id, false);
         let body = self.scopes.open(Some(declared_in));
         self.type_only += 1;
+        self.enter_declared_file(id);
         for param in &movement.params {
             let is_closure = matches!(&param.type_, Some(movement_parser::ast::ParamTypeRef::Value(movement_parser::ast::ValueType::Closure { .. })));
             self.declare_param(body, &param.name, param.span, is_closure);
@@ -1807,6 +1811,7 @@ impl Checker<'_> {
             self.record_movement_row(id, row);
             walked
         };
+        self.leave_declared_file();
         self.type_only -= 1;
         // A node the body builds is labelled by whose value it is, which is
         // the useful text at a call site; nothing else about its type changes.

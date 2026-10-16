@@ -72,13 +72,15 @@ struct Host<'o> {
     errors: Vec<Json>,
     positions: HashMap<u64, Json>,
     related: &'o Json,
-    check: &'o Json,
+    /// The TypeScript's check answer; none when the engine checks natively,
+    /// which then never asks.
+    check: Option<&'o Json>,
 }
 
 impl Host<'_> {
     fn answer(&mut self, request: &PendingRequest) -> Json {
         let answer = match (request.family, request.method.as_str()) {
-            ("check", "program") => return json!({ "value": self.check }),
+            ("check", "program") => return json!({ "value": self.check.expect("a native check asks the host for none") }),
             ("adapters", "resolve") => return self.resolve(request.args.get("adapterType")),
             ("control.cancel", _) => return json!({ "value": false }),
             ("clock", "now") => return json!({ "value": { "nowIso": "2026-01-01T00:00:00.000Z" } }),
@@ -177,6 +179,18 @@ fn ending(done: &Json, errors: &[Json]) -> Json {
 
 #[test]
 fn records_held_as_values_read_as_the_typescript_reads_them() {
+    run_records(false);
+}
+
+/// The same cases with the engine's own check (`nativeCheck`): the Rust
+/// checker's stamps and import link run every case as the TypeScript's
+/// recorded answer does, and the host is never asked for a check.
+#[test]
+fn records_run_the_same_on_the_native_check() {
+    run_records(true);
+}
+
+fn run_records(native: bool) {
     let oracle: Json = serde_json::from_str(include_str!("oracle/records.json")).expect("records.json reads");
     let prelude = oracle["prelude"].as_str().expect("a prelude");
     let cases = oracle["cases"].as_array().expect("cases");
@@ -198,8 +212,10 @@ fn records_held_as_values_read_as_the_typescript_reads_them() {
             "event": event,
             "catalog": oracle["catalog"],
             "credentialIds": { "inbox_cred": "cred-inbox_cred" },
+            "nativeCheck": native,
         });
-        let mut host = Host { sent: Sent::default(), errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check: &case["check"] };
+        let check = (!native).then_some(&case["check"]);
+        let mut host = Host { sent: Sent::default(), errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check };
         host.sent.register(&event);
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");

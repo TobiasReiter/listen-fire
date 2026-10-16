@@ -63,6 +63,16 @@ impl ImportState {
     pub fn new(link: Option<ProgramLink>) -> Self {
         ImportState { link: link.map(Rc::new), ..ImportState::default() }
     }
+
+    /// The link the walk resolved imports through, where files resolve.
+    pub fn link(&self) -> Option<&ProgramLink> {
+        self.link.as_deref()
+    }
+
+    /// The library file being checked; none for the root program.
+    pub fn current_path(&self) -> Option<&str> {
+        self.current_file.as_ref().map(|f| f.path.as_str())
+    }
 }
 
 /// `fileExports`: the movements and nodes marked `export`.

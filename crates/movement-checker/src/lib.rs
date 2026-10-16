@@ -5,6 +5,7 @@
 //! until the parity harness (PARITY.md) finds no difference.
 
 pub mod abi;
+pub mod answer;
 mod binding_types;
 mod checker;
 pub mod codes;
@@ -38,17 +39,31 @@ pub struct CheckOptions<'a> {
 
 /// `checkProgram`: the diagnostics for `program` under `options`.
 pub fn check_program(program: &Program, catalog: &CatalogSnapshot, options: CheckOptions) -> Vec<Diagnostic> {
+    run_check(program, catalog, options).0
+}
+
+/// `check_program`, and the walk it made: what it settled on nodes and the
+/// link it resolved imports through (crate::answer).
+pub(crate) fn run_check<'c>(program: &Program, catalog: &'c CatalogSnapshot, options: CheckOptions<'c>) -> (Vec<Diagnostic>, checker::Checker<'c>) {
     let resolves_files = catalog.files.is_some();
     let mut link = resolves_files.then(|| families::imports::link_imports(program, catalog, options.language_version));
     let problems = link.as_mut().map(|l| std::mem::take(&mut l.problems)).unwrap_or_default();
     let mut checker = checker::Checker::new(catalog, &options, resolves_files);
     checker.imports = families::imports::ImportState::new(link);
     checker.run(&program.statements);
-    version::standing_diagnostic(options.language_version)
+    let diagnostics = version::standing_diagnostic(options.language_version)
         .into_iter()
         .chain(problems)
-        .chain(checker.diagnostics.into_iter().map(version::with_handbook_pointer))
-        .collect()
+        .chain(std::mem::take(&mut checker.diagnostics).into_iter().map(version::with_handbook_pointer))
+        .collect();
+    (diagnostics, checker)
+}
+
+/// `languageVersionDiagnostic`: what a pin to `version` says on its own —
+/// an error for one this release does not support, a warning for a
+/// deprecated one, nothing for a current one.
+pub fn language_version_diagnostic(version: u32) -> Option<Diagnostic> {
+    version::standing_diagnostic(version)
 }
 
 /// A source the parser refuses: its message and where.
