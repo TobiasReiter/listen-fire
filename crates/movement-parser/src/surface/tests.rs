@@ -262,6 +262,12 @@ fn presence_and_walks() {
     let everyday = findings("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->");
     assert_eq!(everyday.len(), 1);
     assert_eq!(everyday[0].edits.as_ref().unwrap()[0].text, "LOWER");
+    // The refused spelling reads as the walk word it means: the one finding,
+    // and no lowering refusal beside it.
+    assert_eq!(
+        lowered("ch-[m:Messages WHERE Text.lower(m.Text) CONTAINS \"urgent\"]->", 5),
+        lowered("ch-[m:Messages WHERE LOWER(m.Text) CONTAINS \"urgent\"]->", 5)
+    );
 }
 
 #[test]

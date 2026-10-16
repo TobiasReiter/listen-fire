@@ -72,7 +72,9 @@ pub fn builtin_form(builtin: &Builtin) -> BuiltinForm {
 pub enum Callee {
     /// The program declares it, under this name.
     Declared(String),
-    Builtin(&'static Builtin),
+    /// A built-in, as `version` reads it (from 5 a collection op's settings
+    /// come last).
+    Builtin { builtin: &'static Builtin, version: u32 },
     Unknown,
 }
 
@@ -525,7 +527,7 @@ impl Checker<'_> {
             return Callee::Declared(self.scopes.symbol(id).name.clone());
         }
         match crate::types::stdlib::builtin_under(written, self.version) {
-            Some(builtin) if !builtin.name.contains('.') => Callee::Builtin(builtin),
+            Some(builtin) if !builtin.name.contains('.') => Callee::Builtin { builtin, version: self.version },
             _ => Callee::Unknown,
         }
     }
@@ -562,7 +564,7 @@ impl Checker<'_> {
                 }
                 _ => false,
             },
-            Callee::Builtin(builtin) => builtin_form(builtin) != BuiltinForm::Value,
+            Callee::Builtin { builtin, .. } => builtin_form(builtin) != BuiltinForm::Value,
             Callee::Unknown => false,
         }
     }
@@ -734,7 +736,7 @@ fn args_refusal(message: String, span: Span) -> CallReading {
 
 /// `readOneCall`.
 fn read_one_call(call: &CallStatement, resolution: &Callee, position: CallPosition) -> CallReading {
-    let Callee::Builtin(builtin) = resolution else { return CallReading::Function };
+    let Callee::Builtin { builtin, version } = *resolution else { return CallReading::Function };
     let callee = &call.callee;
     if call.args.iter().any(|arg| arg.name().is_some()) {
         return args_refusal(format!("'{callee}' is a built-in, and a built-in takes its arguments in order — {}", describe_builtin(builtin)), call.span);
@@ -762,7 +764,7 @@ fn read_one_call(call: &CallStatement, resolution: &Callee, position: CallPositi
                 None => args_refusal(format!("'{callee}' takes {}", describe_builtin(builtin)), call.span),
             }
         }
-        BuiltinForm::Collection => collection_reading(call, builtin),
+        BuiltinForm::Collection => collection_reading(call, builtin, version),
         BuiltinForm::Members => {
             if position == CallPosition::Statement {
                 return CallReading::Refused {
@@ -818,7 +820,7 @@ fn arm_of(arg: &CallArg, spelling: &str) -> Result<ArmExpression, String> {
 
 /// `collectionReading`: `MAP(xs, f)` and its kin, the arguments in the
 /// places the op reads them.
-fn collection_reading(call: &CallStatement, builtin: &Builtin) -> CallReading {
+fn collection_reading(call: &CallStatement, builtin: &Builtin, version: u32) -> CallReading {
     let spelling = &call.callee;
     let op = match builtin.name {
         "MAP" => CollectionOp::Map,
@@ -832,10 +834,20 @@ fn collection_reading(call: &CallStatement, builtin: &Builtin) -> CallReading {
     // tree's `SORTBY` is no spelling (movement_parser::surface::table::SORT_BY).
     let spelling = if op == CollectionOp::Sort { "sort" } else { spelling.as_str() };
     let configurable = matches!(op, CollectionOp::Map | CollectionOp::Filter | CollectionOp::Sort);
+    // From version 5 the function comes second and the rest after it
+    // (`map(xs, f, { … })`, `reduce(xs, f, start)`); the tree read here still
+    // holds them in the order versions 1–4 write.
+    let function_second = since(version, 5);
     let shape = if op == CollectionOp::Reduce {
-        format!("{spelling}(<collection>, <starting value>, <function>)")
+        if function_second {
+            format!("{spelling}(<collection>, <function>, <starting value>)")
+        } else {
+            format!("{spelling}(<collection>, <starting value>, <function>)")
+        }
     } else if op == CollectionOp::Sort {
         "sort(<collection>, <function>) or sort(<collection>, <function>, { order: \"desc\" })".to_string()
+    } else if configurable && function_second {
+        format!("{spelling}(<collection>, <function>) or {spelling}(<collection>, <function>, {{ <settings> }})")
     } else if configurable {
         format!("{spelling}(<collection>, <function>) or {spelling}(<collection>, {{ <settings> }}, <function>)")
     } else {
@@ -862,6 +874,11 @@ fn collection_reading(call: &CallStatement, builtin: &Builtin) -> CallReading {
             Ok(slot) if slot.raw.trim_start().starts_with('{') => config = Some(slot.clone()),
             _ if op == CollectionOp::Sort => {
                 return refused("'sort' takes its settings as a record written in place, after the function — `sort(xs, (x) => x.key, { order: \"desc\" })`".to_string());
+            }
+            _ if function_second => {
+                return refused(format!(
+                    "'{spelling}' takes its settings as a record written in place, after the function — `{spelling}(xs, f, {{ onError: \"warn\", concurrency: 4 }})`"
+                ));
             }
             _ => {
                 return refused(format!(
@@ -1210,7 +1227,7 @@ impl Checker<'_> {
     }
 
     fn is_extract_call(&self, written: &str, scope: ScopeId) -> bool {
-        matches!(self.resolve_callee(written, scope), Callee::Builtin(b) if builtin_form(b) == BuiltinForm::Extract)
+        matches!(self.resolve_callee(written, scope), Callee::Builtin { builtin: b, .. } if builtin_form(b) == BuiltinForm::Extract)
     }
 
     /// `checkDottedCall`: `o.f(…)` where `f` is no built-in, outside a write
@@ -1242,7 +1259,7 @@ impl Checker<'_> {
         let span = at_.span_of(call.at());
         self.note_callee(written, span.start, scope);
         match self.resolve_callee(written, scope) {
-            Callee::Builtin(builtin) => {
+            Callee::Builtin { builtin, .. } => {
                 let form = builtin_form(builtin);
                 if form == BuiltinForm::Extract {
                     return;

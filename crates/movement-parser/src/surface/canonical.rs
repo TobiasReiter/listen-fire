@@ -263,8 +263,13 @@ impl<'s> Canon<'s> {
         let MExpr::Name { name: ns, .. } = object.as_ref() else { return };
         let written = format!("{}.{}", ns.text, property.text);
         if let Some((caps, _)) = table::WALK_CAPS.iter().find(|(_, everyday)| *everyday == written) {
+            let at = *at;
             let message = format!("inside walk brackets `{written}` is written `{caps}`");
-            self.old(*at, message, Some(Edit { at: *at, text: caps.to_string() }));
+            self.old(at, message, Some(Edit { at, text: caps.to_string() }));
+            // Read as the walk word it means, so the refusal is this one
+            // finding, not a second one from a lowering that knows no such
+            // name.
+            **callee = canonical_callee(caps, at);
             return;
         }
         // `Text.includes(t, v)` and `List.includes(xs, v)` read inside the
