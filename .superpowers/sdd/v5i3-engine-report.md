@@ -36,4 +36,8 @@
 ## Checks run
 - cargo test for movement-engine: green. clippy: no warnings on the changed lines.
 - apps/api type-check: green.
-- Scoped jest: nested_calls, resume_inside (both engines), body_closure_scope (the touched describe), v5_memory_where_run, and the rust_* suites. Results are in the final message.
+- Scoped jest over rust_*, nested_calls, body_closure_scope, resume_inside and v5_memory_where_run: 784 passed, 27 failed.
+  - All 27 failures are in four suites: rust_run, rust_extract, rust_wire_round_trip and rust_parked_code.
+  - Every one fails checking or parsing. Their programs are still in the v1–4 spelling under v5 (for example MOV_EXPR_PARSE "Unexpected 'email'", MOV_FUNCTION_UNKNOWN 'fail', MOV_PLUGIN_ARGS_NAMED).
+  - None is an admission refusal. My changes touch no checker or parser code.
+  - I did not rerun them on the base build, so "they failed before my changes too" is inferred from the errors, not proved.
