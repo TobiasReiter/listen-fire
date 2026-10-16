@@ -1981,11 +1981,20 @@ impl<'c> Bound<'c> {
                 if self.callee(&call.callee).is_none() {
                     continue;
                 }
-                if self.known_call_kind(&call) != Some(Kind::Value) && !own_reading {
+                let kind = self.known_call_kind(&call);
+                let held = self.call_holder(call.span);
+                // A field read off one record whose fields are data
+                // (`pick("Beta").name`) is a value: the engine binds the
+                // call's value under its staged name as a statement binds it,
+                // and reads the field off that. The record itself read as a
+                // value (`Text.upper(make("a"))`) is still refused.
+                let one_record = held == Holder::Record
+                    && matches!(kind, Some(Kind::Handle | Kind::Landing | Kind::Node | Kind::Graph | Kind::Event))
+                    && read_only_for_a_field(&tree, at);
+                if kind != Some(Kind::Value) && !one_record && !own_reading {
                     self.unknown_calls.push(call.span);
                 }
                 let text = movement_parser::util::utf16::Utf16::new(&slot.raw).text(at.start, at.end);
-                let held = self.call_holder(call.span);
                 match self.nested_holders.iter_mut().find(|(t, _)| *t == text) {
                     Some((_, seen)) => *seen = returned_join(*seen, held),
                     None => self.nested_holders.push((text, held)),
@@ -5033,6 +5042,25 @@ fn is_collection_form(callee: &str) -> bool {
     crate::nested::is_call_form(callee) && !matches!(crate::js::to_upper_case(callee).as_str(), "EXTRACT" | "EXTRACTONE")
 }
 
+/// Is the call at `at` in `tree` the object of a field read
+/// (`pick("Beta").name`), and nothing else?
+fn read_only_for_a_field(tree: &movement_parser::tree::MExpr, at: movement_parser::tree::At) -> bool {
+    fn walk(e: &movement_parser::tree::MExpr, at: movement_parser::tree::At, fields: &mut usize, wholes: &mut usize) {
+        match e {
+            movement_parser::tree::MExpr::Member { object, .. } if object.at() == at => *fields += 1,
+            _ if e.at() == at => *wholes += 1,
+            _ => {
+                for child in crate::nested::value_children(e) {
+                    walk(child, at, fields, wholes);
+                }
+            }
+        }
+    }
+    let (mut fields, mut wholes) = (0, 0);
+    walk(tree, at, &mut fields, &mut wholes);
+    fields > 0 && wholes == 0
+}
+
 fn staged_as_value(callee: &str) -> bool {
     !matches!(crate::js::to_upper_case(callee).as_str(), "EXTRACT" | "EXTRACTONE") && !crate::nested::is_call_form(callee)
 }
@@ -5856,8 +5884,12 @@ mod tests {
         }
         let helped = |helper: &str, body: &str| file(&format!("{PRELUDE}{helper}\nmovement m(msg: <inbox-[:message]->>) {{\n{body}\n}}"));
         assert_eq!(helped("function trail(n: <number>): <text> {\n  if n <= 0 {\n    return \"end\"\n  }\n  rest = trail(n - 1)\n  return CONCAT(\"${n}\", rest)\n}", "  write crm-[:notes]-> { body: trail(2) }"), None);
-        // A nested call whose value is a record is not read as a value.
-        assert_eq!(helped("function made(t: <text>) {\n  co = write crm-[:companies]-> { name: t }\n  return co\n}", "  write crm-[:notes]-> { body: CONCAT(made(\"a\").name, \"!\") }"), Some("nested_movement_call".into()));
+        // A field read off a nested call's record is a value; the record
+        // itself read as one is not.
+        let made = "function made(t: <text>) {\n  co = write crm-[:companies]-> { name: t }\n  return co\n}";
+        assert_eq!(helped(made, "  write crm-[:notes]-> { body: CONCAT(made(\"a\").name, \"!\") }"), None);
+        assert_eq!(helped(made, "  write crm-[:notes]-> { body: CONCAT(made(\"a\").name, UPPER(made(\"b\"))) }"), Some("nested_movement_call".into()));
+        assert_eq!(helped(made, "  write crm-[:notes]-> { body: UPPER(made(\"a\")) }"), Some("nested_movement_call".into()));
         assert_eq!(helped("function trail(n: <number>): <text> {\n  if n <= 0 {\n    return \"end\"\n  }\n  rest = trail(n - 1)\n  return CONCAT(\"${n}\", rest)\n}", "  x = trail(2)\n  write crm-[:notes]-> { body: x }"), None);
         for (body, reason) in [
             ("  co = write crm-[:companies]-> { name: \"a\" }\n  write crm-[:notes]-> { body: COALESCE(co, \"x\") }", "write_field_record"),
