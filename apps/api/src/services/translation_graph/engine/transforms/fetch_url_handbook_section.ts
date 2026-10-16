@@ -10,15 +10,15 @@ export const FETCH_URL_HANDBOOK_SECTION: HandbookSection = {
   title: 'Fetch a page — the link a record carries',
   content: `## Fetch a page — the link a record carries
 
-\`fetch_url\` loads the one link you give it and returns the page's text — absent when the load failed or the page was empty.
+\`fetchUrl\` loads the one link you give it and returns the page's text — absent when the load failed or the page was empty.
 
 ### the-shape
 
 \`\`\`
-import { fetch_url } from plugins
+import { fetchUrl } from plugins
 
 detailed = map(companies, (c) => {
-  page = fetch_url(url: c.website)
+  page = fetchUrl(url: c.website)
   return extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
 })
 \`\`\`
@@ -43,7 +43,7 @@ node Opportunity: "each opportunity this message is about" {
 }
 
 map(extract([m.Body], Opportunity), (o) => {
-  deck = fetch_url(url: o.deck_url, email: @user_email, password: o.deck_password)
+  deck = fetchUrl(url: o.deck_url, email: @user_email, password: o.deck_password)
   …
 })
 \`\`\`
@@ -54,7 +54,7 @@ Access that arrives INSIDE the content — a passcode someone wrote in a message
 
 ### scan-or-load
 
-\`fetch_url\` loads one link, named. \`vc_url_retrieval\` reads a whole piece of text, works out which of its links are worth loading, and loads all of them. Reach for this one when a record carries the address, called once per record; reach for the other when the message does.
+\`fetchUrl\` loads one link, named. \`vcUrlRetrieval\` reads a whole piece of text, works out which of its links are worth loading, and loads all of them. Reach for this one when a record carries the address, called once per record; reach for the other when the message does.
 
 ### Common mistakes
 
@@ -63,12 +63,12 @@ Access that arrives INSIDE the content — a passcode someone wrote in a message
 `,
   engineClaims: [
     {
-      construct: "fetch_url called per record inside map, its page read by that record's own extraction",
+      construct: "fetchUrl called per record inside map, its page read by that record's own extraction",
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { fetch_url } from plugins
+import { fetchUrl } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -85,7 +85,7 @@ node CompanyDetail: "the company" {
 function \`Intake\`(m: <inbox-[:Email]->>) {
   content = [m.Body]
   map(extract(content, Company), (c) => {
-    page   = fetch_url(url: c.website)
+    page   = fetchUrl(url: c.website)
     detail = extractOne([...content, Json.stringify(c), coalesce(page, "")], CompanyDetail)
     write crm-[:Companies]-> {
       unique by (Name)
@@ -102,7 +102,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { fetch_url } from plugins
+import { fetchUrl } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -119,7 +119,7 @@ node Raise: "the raise the deck describes" {
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   map(extract([m.Body], Opportunity), (o) => {
-    deck  = fetch_url(url: o.deck_url, email: @user_email, password: o.deck_password)
+    deck  = fetchUrl(url: o.deck_url, email: @user_email, password: o.deck_password)
     terms = extractOne([m.Body, coalesce(deck, "")], Raise)
     write crm-[:Companies]-> {
       unique by (Name)

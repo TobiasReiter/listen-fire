@@ -115,7 +115,7 @@ function \`Thesis Recap\`(go: <runs-[:Invocation]->>) {
 Records pulled out of a message and written **with their relationships intact**: the people are declared inside the company, so each one lands attached to the right one.
 
 \`\`\`
-import { vc_url_retrieval } from plugins
+import { vcUrlRetrieval } from plugins
 
 node Company: "each company this message is about" {
   name:    <text> "the company's name"
@@ -126,7 +126,7 @@ node Company: "each company this message is about" {
   }
 }
 
-pages     = vc_url_retrieval(text: msg.Body)
+pages     = vcUrlRetrieval(text: msg.Body)
 content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
 companies = extract(content, Company, { tier: "careful" })
 
@@ -140,7 +140,7 @@ map(companies, (c) => {
 
 Two things here you cannot derive:
 
-- **Linked pages go into the content.** \`vc_url_retrieval\` loads the pages and documents the message links to, so \`website\` comes from the page rather than a guess. Per-record enrichment — a lookup per company found — is a plugin call inside the \`map\` and a second extraction (extraction, *enrichment*).
+- **Linked pages go into the content.** \`vcUrlRetrieval\` loads the pages and documents the message links to, so \`website\` comes from the page rather than a guess. Per-record enrichment — a lookup per company found — is a plugin call inside the \`map\` and a second extraction (extraction, *enrichment*).
 - **Which side declares the edge decides the shape of the write.** Where the parent declares it — as here — a linked write off the parent's handle is the one idiomatic form. Where only the child declares a reference back, write the child at the root and connect it with \`link\`. Read your catalog: that is the system's choice, not yours.
 
 ### declare-once
@@ -313,7 +313,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
-import { vc_url_retrieval } from plugins
+import { vcUrlRetrieval } from plugins
 import { acme } from credentials
 
 inbox = connect email
@@ -329,7 +329,7 @@ node Company: "each company this message is about" {
 }
 
 function \`Extract And Connect\`(msg: <inbox-[:Email]->>) {
-  pages     = vc_url_retrieval(text: msg.Body)
+  pages     = vcUrlRetrieval(text: msg.Body)
   content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
   companies = extract(content, Company, { tier: "careful" })
 

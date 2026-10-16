@@ -107,7 +107,7 @@ These hold everywhere, in every chapter, and are not restated per situation:
   order the callee declares them (\`\`Log Lead\`(msg)\`), as TypeScript calls a
   function, with an optional settings record last
   (\`map(xs, (x) => x.Name, { concurrency: 2 })\`). A plugin's arguments are
-  named (\`fetch_url(url: c.website)\`). A function, a plugin, a built-in and a
+  named (\`fetchUrl(url: c.website)\`). A function, a plugin, a built-in and a
   closure bound to a name are all called the same way. Names are exact in
   case outside walk brackets. Braces are declarative bodies.
 - Fields read with a dot (\`msg.Subject\`); "double quotes" are strings;
