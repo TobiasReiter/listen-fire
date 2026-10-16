@@ -151,8 +151,17 @@ const path = require('node:path');
 // ("parks with the closure in scope — its body as AST, its capture as
 // bindings", BODY_CLOSURE_PARK_FORMAT: it pins the old snapshot park
 // format), each the one run it parked: v1 1033, v2 1270, v3 2239, v4 2272.
+// v5-extract (2026-10-16) refuses the extraction keyword on every version
+// as `legacy_extraction` and deletes the Rust code that ran it, by ruling:
+// those runs go to the TypeScript engine. Measured at e46730ca, v1 107, v2
+// 147, v3 152, v4 157 runs are refused so; each corpus lost exactly that
+// many, ran whole plus mirrored (v1 106 + 1, v2 146 + 1, v3 151 + 1, v4
+// 156 + 1: one keyword run per corpus had ended in the TypeScript's own
+// MOVENG_UNSUPPORTED). The floors fall by the runs that left ran whole: v1
+// 1033 - 106 = 927, v2 1270 - 146 = 1124, v3 2239 - 151 = 2088, v4 2272 -
+// 156 = 2116.
 // A floor is measured, never guessed.
-const RAN_WHOLE_FLOOR = { v1: 1033, v2: 1270, v3: 2239, v4: 2272 };
+const RAN_WHOLE_FLOOR = { v1: 927, v2: 1124, v3: 2088, v4: 2116 };
 
 // Ceilings, beside the floors (PLAN-08A Task 1, 2026-10-12): the most runs
 // each corpus may end in each class that is not a run the Rust engine ran.
@@ -244,50 +253,65 @@ const RAN_WHOLE_FLOOR = { v1: 1033, v2: 1270, v3: 2239, v4: 2272 };
 // TypeScript ran it). The v5 probe's closings (2026-10-15): a WITHIN is
 // compared in the Rust engine, measured from the host clock, so
 // `builtins.compare` is no longer a request and its hand-backs are 0.
+// v5-extract (2026-10-16) refuses the extraction keyword on every version
+// as `legacy_extraction`, by ruling, so these rise by that name and no
+// other, measured at e46730ca. refused: v1 0 to 107, v2 0 to 147, v3 0 to
+// 152, v4 0 to 157, every one under `legacy_extraction` first.
+// write_field_record v1 3, v2 5, v3 5, v4 10 is a reason those same runs
+// hold beside the keyword (no run outside them names it): a reason the
+// keyword hid, at its first measurement. evaluatorNotAdmitted: v1 47 to
+// 425, v2 47 to 577, v3 67 to 605, v4 79 to 660. Counted test by test, the
+// tests whose runs were not refused ask exactly the old 47 / 47 / 67 / 79;
+// the rise, 378 / 530 / 538 / 581, is all inside the refused keyword runs,
+// now run on the TypeScript engine, which asks the evaluator each of their
+// expressions: in v1, 347 of the 378 are traversals (`traverse`), which
+// the evaluator takes on no run. It falls as those runs are rewritten.
+// mirroredFailure falls with the one keyword run per corpus that ended so:
+// v1 7 to 6, v2 7 to 6, v3 5 to 4, v4 7 to 6.
 const CEILINGS = {
   v1: {
-    refused: 0,
-    everyReason: {},
+    refused: 107,
+    everyReason: { legacy_extraction: 107, write_field_record: 3 },
     declined: {},
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 47,
-    mirroredFailure: 7,
+    evaluatorNotAdmitted: 425,
+    mirroredFailure: 6,
   },
   v2: {
-    refused: 0,
-    everyReason: {},
+    refused: 147,
+    everyReason: { legacy_extraction: 147, write_field_record: 5 },
     declined: {},
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 47,
-    mirroredFailure: 7,
+    evaluatorNotAdmitted: 577,
+    mirroredFailure: 6,
   },
   v3: {
-    refused: 0,
-    everyReason: {},
+    refused: 152,
+    everyReason: { legacy_extraction: 152, write_field_record: 5 },
     declined: {},
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 67,
-    mirroredFailure: 5,
+    evaluatorNotAdmitted: 605,
+    mirroredFailure: 4,
   },
   v4: {
-    refused: 0,
-    everyReason: {},
+    refused: 157,
+    everyReason: { legacy_extraction: 157, write_field_record: 10 },
     declined: {},
     unreproduced: 0,
     failedCheckMidRun: 0,
     shimFaults: 0,
     handBacks: { 'builtins.function': 0, 'builtins.compare': 0, fallback: 0 },
-    evaluatorNotAdmitted: 79,
-    mirroredFailure: 7,
+    evaluatorNotAdmitted: 660,
+    mirroredFailure: 6,
   },
 };
 
