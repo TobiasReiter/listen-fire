@@ -82,8 +82,8 @@ export function lowerMovementExpression(raw: string, languageVersion?: number): 
 }
 
 /** Parse and lower one condition text. */
-export function lowerMovementCondition(raw: string): MovementCondition {
-  return lowerCondition(parseExpression(raw), raw);
+export function lowerMovementCondition(raw: string, languageVersion?: number): MovementCondition {
+  return lowerCondition(parseExpression(raw, languageVersion), raw);
 }
 
 /** The refusal in its class: a built-in call's static shape is a
