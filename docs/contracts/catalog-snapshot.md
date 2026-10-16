@@ -69,10 +69,13 @@ interface PluginSpec {
   fedArgs?: Array<{ name: string; required?: true }>;
   output?: PluginOutput;
   earlierOutputs?: Array<{ before: number; output: PluginOutput }>;   // the output under language versions before `before`
+  package?: string;   // the package tag it is a member of (`@lf/web`); absent when it is in none
 }
 ```
 
 **A plugin's arguments by position (language version 5).** A call passes the plugin's required inputs by position, then its other inputs in one settings record (`fetchUrl(u)`, `research(n, { context: s })`). The positions are the spec's required `fedArgs`, then its `requiredArgs` in `args` order; a `through [ … ]` stage, which is never fed by its author, takes only the `requiredArgs`. The spec keeps a plugin's fed inputs apart from its author's, so it does not say how the two interleave in the manifest; every plugin declares its fed input first, so fed-then-author is the manifest's declared order. A settings key is an input's name exactly as `args` (or, on a plain call, `fedArgs`) spells it. The call is bound to the named config before the plugin is invoked, so the wire is unchanged: the plugin is handed `{ url: … }` as under version 4. One binding does this in each language (Rust `PluginSpec::bind_args`, TypeScript `bindPluginArgs`); both checkers and both engines use it.
+
+**A plugin package (language version 5).** A spec's `package` is a tag (`@lf/web`), compared exactly and never parsed. An import from `plugins` whose name equals some spec's `package` imports that package: ``import { `@lf/web` as web } from plugins``. Its members are the specs that declare that tag, each called by its key in camelCase after the package's local name (`fetch_url` → `web.fetchUrl(u)`, `through [web.linkedinEnrichment]`). A member call is an ordinary plugin call: it binds by position as above, and the plugin is invoked by its catalog key with the named config. No plugin declares a package yet. The member is optional and additive, both readers carry it, so the version stays 1.
 
 ```ts
 type PluginOutput =

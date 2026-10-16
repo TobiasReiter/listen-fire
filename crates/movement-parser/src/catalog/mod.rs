@@ -4,6 +4,7 @@
 //! against them by checker/__test__/catalog_differential.unit.test.ts.
 
 pub mod helpers;
+pub mod packages;
 pub mod plugin_args;
 pub mod query;
 pub mod snapshot;

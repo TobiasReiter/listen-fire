@@ -22,9 +22,10 @@ import type {
   FieldCapability,
 } from '@listen-fire/shared/expression/types';
 import { neverAsAny } from '../never';
-import { before, type LanguageVersion } from '../language_version';
+import { before, since, type LanguageVersion } from '../language_version';
 import type { CallArg, ExprSlot, Loc, NamedArg, PluginCall, Program, Span, TypeDeclaration } from '../parser/ast';
 import { parseExpression } from '../parser/expression/parse_expression';
+import { pluginName } from '../parser/surface';
 import { isMapSpread, type At, type MapMember, type MExpr } from '../parser/expression/tree';
 import type { DeclaredEffectRow } from './effects';
 // A record is a value, so `FieldType` names the arrow plane's own type and
@@ -388,6 +389,9 @@ export interface PluginSpec {
    * removing a language version removes its entries.
    */
   earlierOutputs?: ReadonlyArray<{ before: LanguageVersion; output: PluginOutput }>;
+  /** The package tag it is a member of (`@lf/web`), matched exactly
+   *  (`packageMembers`); absent when it is in none. */
+  package?: string;
 }
 
 /** One `fedArgs` entry: the argument's name, and whether a PLAIN call must
@@ -405,6 +409,64 @@ export interface PluginFedArg {
 // plugin read one form. The Rust twin is `PluginSpec::bind_args`
 // (crates/movement-parser/src/catalog/plugin_args.rs); both checkers and both
 // engines bind through these two and nothing else.
+
+// ── A plugin package (language version 5, design §2.10, §4.3) ──
+//
+// A tag a plugin's spec declares as its `package`, matched exactly and never
+// parsed. ``import { `@lf/web` as web } from plugins`` binds each member under
+// the dotted local name `web.fetchUrl`, so a call of it is an ordinary plugin
+// call. The Rust twin is crates/movement-parser/src/catalog/packages.rs.
+
+/** One plugin of a package: the name it is called by after the package's
+ *  local name and a dot, and the catalog's key it invokes. */
+export interface PackageMember {
+  name: string;
+  key: string;
+}
+
+/** The plugins whose spec declares `tag` as its package, in catalog order;
+ *  none when no spec does, which is how a package import is told from an
+ *  import of one plugin. */
+export function packageMembers(catalog: Pick<Catalog, 'plugin' | 'pluginNames'>, tag: string): PackageMember[] {
+  return (catalog.pluginNames?.() ?? [])
+    .filter(key => catalog.plugin(key)?.package === tag)
+    .map(key => ({ name: pluginName(key), key }));
+}
+
+/** The local name a package's member is bound to: `web.fetchUrl`. */
+export function memberLocal(packageLocal: string, member: string): string {
+  return `${packageLocal}.${member}`;
+}
+
+/** The program with each package import read as the imports of its members
+ *  (`` `@lf/web` as web `` → `fetch_url as web.fetchUrl`, …), which is what an
+ *  engine binds. An import that names no package is left as written. The
+ *  checker does not read this: it binds the same names itself, keeping the
+ *  package to name in a diagnostic. */
+export function expandPackageImports(
+  program: Program,
+  catalog: Pick<Catalog, 'plugin' | 'pluginNames'>,
+  languageVersion: LanguageVersion,
+): Program {
+  if (!since(languageVersion, 5)) return program;
+  return {
+    ...program,
+    statements: program.statements.map(statement => {
+      if (statement.kind !== 'import' || statement.source.kind !== 'builtin' || statement.source.namespace !== 'plugins') {
+        return statement;
+      }
+      return {
+        ...statement,
+        names: statement.names.flatMap(imported => {
+          const members = packageMembers(catalog, imported.name);
+          if (members.length === 0) return [imported];
+          const local = imported.alias ?? imported.name;
+          return members.map(m => ({ name: m.key, alias: memberLocal(local, m.name) }));
+        }),
+      };
+    }),
+  };
+}
 
 /** Where a plugin is called: a plain call writes the arguments a stage is
  *  fed, a `through [ … ]` stage never does. */
@@ -1800,6 +1862,12 @@ export interface Catalog {
   credentialNames?(): readonly string[];
   plugin(name: string): PluginSpec | undefined;
   /**
+   * Every plugin's registered name — what a package import's members are
+   * found among (`packageMembers`). Undefined ⇒ the catalog cannot list them,
+   * and no import names a package.
+   */
+  pluginNames?(): readonly string[];
+  /**
    * Resolve a constructed instance's schema. An instance's full type exists
    * only under concrete construction arguments (which objects and fields an
    * Attio offers depends on the credential), which is why this is a call and
@@ -1873,6 +1941,7 @@ export function mockCatalog(spec: {
     },
     credentialNames: () => Object.keys(spec.credentials ?? {}),
     plugin: name => spec.plugins?.[name],
+    pluginNames: () => Object.keys(spec.plugins ?? {}),
     instantiate: spec.instantiate ?? (adapter => spec.adapters?.[adapter]?.schema),
     ...(spec.constructionArgOptions !== undefined
       ? { constructionArgOptions: spec.constructionArgOptions }

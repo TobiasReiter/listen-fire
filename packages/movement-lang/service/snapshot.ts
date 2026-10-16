@@ -248,6 +248,9 @@ export function fromCatalogSnapshot(snapshot: CatalogSnapshot): Catalog {
     plugin(name): PluginSpec | undefined {
       return snapshot.plugins[name];
     },
+    pluginNames(): string[] {
+      return Object.keys(snapshot.plugins);
+    },
     constructionArgOptions({ adapter, credentialName, arg }): string[] | undefined {
       // Mirrors the live catalog: `undefined` when this isn't an enumerable
       // entry-position arg (the checker then leaves it unchecked), so an
