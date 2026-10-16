@@ -520,3 +520,36 @@ fn present(binding: &Binding) -> bool {
         _ => true,
     }
 }
+
+/// The expression slots a statement holds itself, not those of a body it
+/// holds (a block's, an arm's, a closure's: walked where they are entered).
+pub(crate) fn direct_slots(statement: &impl serde::Serialize) -> Vec<ExprSlot> {
+    fn loc(json: &serde_json::Value) -> Option<movement_parser::ast::Loc> {
+        Some(movement_parser::ast::Loc { line: json.get("line")?.as_u64()? as usize, col: json.get("col")?.as_u64()? as usize })
+    }
+    fn walk(json: &serde_json::Value, into: &mut Vec<ExprSlot>) {
+        match json {
+            serde_json::Value::Object(object) => {
+                if let (Some(serde_json::Value::String(raw)), Some(span)) = (object.get("raw"), object.get("span"))
+                    && let (Some(start), Some(end)) = (span.get("start").and_then(loc), span.get("end").and_then(loc))
+                {
+                    into.push(ExprSlot::plain(raw.clone(), movement_parser::ast::Span { start, end }));
+                    return;
+                }
+                for (key, value) in object {
+                    if key != "body" && key != "closure" {
+                        walk(value, into);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, into)),
+            _ => {}
+        }
+    }
+    let mut slots = Vec::new();
+    if let Ok(json) = serde_json::to_value(statement) {
+        walk(&json, &mut slots);
+    }
+    slots
+}
+

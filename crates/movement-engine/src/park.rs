@@ -1393,7 +1393,6 @@ mod tests {
             deferred_race_frames: RefCell::default(),
             call_stack: RefCell::default(),
             wire: crate::env::Wire::default(),
-            effected: std::cell::Cell::new(false),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

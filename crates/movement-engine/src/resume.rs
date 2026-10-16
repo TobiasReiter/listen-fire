@@ -476,7 +476,7 @@ impl Run<'_> {
         if self.version() < 3 || span.is_none() {
             return Ok(None);
         }
-        for slot in crate::admit::direct_slots(statement) {
+        for slot in crate::nested::direct_slots(statement) {
             let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw) else { continue };
             let calls = crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope));
             for at in calls {

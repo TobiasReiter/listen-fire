@@ -16,7 +16,6 @@
 
 pub mod abi;
 pub mod address;
-pub mod admit;
 mod awaits;
 pub mod chunks;
 pub mod bindings;

@@ -213,28 +213,6 @@ pub(crate) fn head_step(head: &PathHead) -> Result<EdgeStep, String> {
     }
 }
 
-/// The head's hops, probe-parsed: every edge hop it walks, in order; an
-/// error where a hop is no edge or the head is no walk.
-pub(crate) fn head_steps(head: &PathHead) -> Result<Vec<EdgeStep>, String> {
-    let root = match &head.root {
-        Some(PathRoot::Name { name }) => spell_name(name),
-        Some(PathRoot::Expression { .. }) => EXPRESSION_ROOT_PROBE.into(),
-        None => String::new(),
-    };
-    let probe = format!("{root}{}.`__movement_engine_probe__`", head.hops_raw);
-    let tree = movement_parser::expr::parse_expression(&probe).map_err(|e| format!("{e:?}"))?;
-    match movement_parser::lowering::lower_expression(&tree, &probe).map_err(|e| format!("{e:?}"))? {
-        Expression::Traverse { steps, .. } => steps
-            .into_iter()
-            .map(|step| match step {
-                TraversalStep::Edge(step) => Ok(step),
-                _ => Err("a hop that is not an edge".to_string()),
-            })
-            .collect(),
-        _ => Err("a head that is not a walk".into()),
-    }
-}
-
 /// `hopAliasNamesOf`: the names a fan-out's iteration binds from its head —
 /// a `_resources` hop's alias and every hop's alias, as the head's text
 /// spells them (no I/O).

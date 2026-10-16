@@ -47,7 +47,6 @@
 //! (crate::park): its `done` is a parked result, as a timer park's is.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use movement_parser::ast::{self, ExprSlot, MovementDeclaration, ParamTypeRef, RValue, Statement};
@@ -71,10 +70,6 @@ use crate::program::{self, Checked, DeclaredShape, DeclaringFile};
 use crate::stdlib::Surroundings;
 use crate::trace::{FlowTrace, TraceEntry};
 use crate::{env_services, js_date};
-
-/// Why a segment this engine refused mid-run, before any effect, is the
-/// TypeScript engine's to run (`declined`).
-pub(crate) const UNREPRODUCED: &str = "unreproduced";
 
 /// The slot a `return` binds its value into (run.ts `RETURN_SLOT`): a name
 /// the grammar cannot spell.
@@ -187,11 +182,6 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
-    /// The admission dry run's start (rust_engine.ts `dryAdmit`): never
-    /// answered past its first step, so a slot this engine's lowering misses,
-    /// which a real run leaves to the check, is named among the refusals.
-    #[serde(default)]
-    pub dry_admission: bool,
 }
 
 /// A field that is there, null included (serde reads a null `Option` as
@@ -225,38 +215,6 @@ fn default_file_chars() -> f64 {
     50_000.0
 }
 
-/// The snapshot's plugins alone, read before the rest of it loads.
-#[derive(Deserialize)]
-struct CatalogPlugins {
-    #[serde(default = "no_plugins")]
-    plugins: movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec>,
-}
-
-/// The movement files a snapshot carries for file imports
-/// (`resolveFileFromSnapshot`), by the path an import names.
-#[derive(serde::Deserialize)]
-struct CatalogFiles {
-    #[serde(default)]
-    files: BTreeMap<String, CatalogFile>,
-}
-
-#[derive(serde::Deserialize)]
-struct CatalogFile {
-    source: String,
-}
-
-/// The snapshot's files parsed under the program's pin, each the program
-/// admission walks an import in; one that does not parse is no library
-/// (the link reports it, and the run ends at its check).
-fn libraries_of(catalog: &str, language_version: u32) -> crate::admit::Libraries {
-    let files = serde_json::from_str::<CatalogFiles>(catalog).map(|c| c.files).unwrap_or_default();
-    crate::admit::Libraries(files.into_iter().filter_map(|(path, file)| Some((path, program::parse(&file.source, language_version).ok()?.program))).collect())
-}
-
-fn no_plugins() -> movement_parser::catalog::types::JsMap<movement_parser::catalog::types::PluginSpec> {
-    movement_parser::catalog::types::JsMap(Default::default())
-}
-
 /// The segment entry: the run, and its `done`.
 pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
     // The source as the TypeScript engine's parser is handed it: its text
@@ -282,8 +240,8 @@ pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
     done
 }
 
-/// The extraction keyword, which admission refuses on every version
-/// (crate::admit::LEGACY_EXTRACTION) before a run starts.
+/// The extraction keyword (versions 1–4), which this engine runs on no
+/// version: version 5's checker refuses it (MOV_EXTRACT_KEYWORD_RETIRED).
 fn legacy_extraction() -> Failure {
     Failure::unsupported(
         "the extraction keyword ('x = extract from […] { … }')",
@@ -528,42 +486,23 @@ pub(crate) struct Run<'a> {
     pub(crate) call_stack: RefCell<Vec<String>>,
     /// The segment's wire with its host: what the host sent, by id.
     pub(crate) wire: env::Wire,
-    /// The run has asked its host for something other than a read: from
-    /// then on, a refusal of this engine's own fails the run rather than
-    /// handing it to the TypeScript engine.
-    pub(crate) effected: std::cell::Cell<bool>,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
     let version = input.language_version;
-    // Admission first, on this engine's own parse: a program (or a parked
-    // state) it does not run costs no catalog load, no check, no request.
-    if let Some(reason) = crate::admit::version_refusal(version) {
-        return Err(Stop::Refused(vec![reason]));
+    if !movement_parser::version::SUPPORTED_LANGUAGE_VERSIONS.contains(&version) {
+        return Err(Stop::Refused(vec!["language_version_unsupported".into()]));
     }
     let root = match program::parse(&input.source, version) {
         Ok(root) => root,
         Err(refusal) if input.native_check => return Err(native_unparsed(&refusal)),
         Err(_) => return Err(unparsed(host, input).await),
     };
-    // What a plugin call binds is the snapshot's to say, read off the input.
-    let plugins = serde_json::from_str::<CatalogPlugins>(input.catalog.get()).ok();
-    let libraries = libraries_of(input.catalog.get(), version);
-    let movements = crate::admit::reachable(&root.program, input.movement_name.as_deref(), version);
-    let declared: Vec<&MovementDeclaration> =
-        root.program.statements.iter().filter_map(|s| if let Statement::Movement(m) = s { Some(m) } else { None }).collect();
-    let entry = crate::admit::entry_of(&declared, input.movement_name.as_deref(), version);
-    let crate::admit::Admission { mut reasons } =
-        crate::admit::refusals(&root.program, &movements, entry, version, &crate::admit::Plugins(plugins.as_ref().map(|c| &c.plugins)), &libraries);
-    if let Some(resume) = &input.resume {
-        reasons.extend(crate::park::resume_refusal(&resume.state));
-    }
-    // A slot this engine's lowering misses is, alone, the checker's to
-    // judge: one the checker refuses ends the run at the check on either
-    // engine; one it passes is declined after the check, before anything.
-    let lowering_misses: Vec<String> = reasons.iter().filter(|r| r.ends_with("_does_not_lower")).cloned().collect();
-    if lowering_misses.len() < reasons.len() || (input.dry_admission && !reasons.is_empty()) {
-        return Err(Stop::Refused(reasons));
+    // A parked state is the host's record of this engine's own park: one
+    // it cannot read is a corrupt or foreign record, and the resume fails
+    // naming why rather than reading it partway.
+    if let Some(reason) = input.resume.as_ref().and_then(|resume| crate::park::resume_refusal(&resume.state)) {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", format!("this run's parked state does not read ({reason})"))));
     }
     let catalog = CatalogSnapshot::load(input.catalog.get()).map_err(|_| Stop::Declined("catalog_does_not_load".into()))?;
     // The event crosses on the segment's wire: its objects are what the
@@ -654,25 +593,13 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         deferred_race_frames: RefCell::default(),
         call_stack: RefCell::default(),
         wire,
-        effected: std::cell::Cell::new(false),
     };
-    if let Some(reason) = lowering_misses.into_iter().next() {
-        return Err(Stop::Declined(reason));
-    }
     // A deprecated pin runs, and says so on the run's own record (the check
     // answer's version warning; an unsupported pin never got an answer).
     if let Some((code, message)) = run.checked.version_warning.clone() {
         run.trace(TraceEntry::Warning { code, message });
     }
     let outcome = run.execute().await;
-    // This engine's own refusal, met before anything the host keeps: the
-    // TypeScript engine runs the segment, as for a refusal at admission.
-    if let Err(Stop::Failed(failure, _) | Stop::Thrown(failure)) = &outcome
-        && failure.is_unreproduced()
-        && !run.effected.get()
-    {
-        return Err(Stop::Declined(UNREPRODUCED.into()));
-    }
     // What the segment traced after its last statement's hand-over (a park,
     // a failure, a body that never ran). The TypeScript hands it over as its
     // segment closes, where a failure to is logged and never the run's
@@ -1107,7 +1034,7 @@ impl Run<'_> {
     }
 
     fn select_movement<'m>(&self, movements: &[&'m MovementDeclaration]) -> Result<&'m MovementDeclaration, Stop> {
-        crate::admit::entry_of(movements, self.input.movement_name.as_deref(), self.version()).ok_or_else(|| {
+        entry_of(movements, self.input.movement_name.as_deref(), self.version()).ok_or_else(|| {
             Stop::Thrown(Failure::engine(
                 "MOVENG_NOT_FOUND",
                 match self.input.movement_name.as_deref() {
@@ -1491,7 +1418,7 @@ impl Run<'_> {
                 let built = self.synthesise_node(node, scope, &format!("{path}/value/node")).await?;
                 scope.declare(name, Binding::Node(built));
             }
-            // Admission refused it (crate::admit::LEGACY_EXTRACTION): no run reaches here.
+            // Version 5's checker refuses it: no checked program reaches here.
             RValue::Extract { .. } => return Err(Stop::Thrown(legacy_extraction())),
             // A call like any other: re-running its statement takes the
             // value it already extracted instead of paying for it again.
@@ -2321,9 +2248,6 @@ impl Run<'_> {
     }
 
     pub(crate) async fn ask(&self, request: host::Request) -> Result<Option<Json>, Failure> {
-        if !request.is_read() {
-            self.effected.set(true);
-        }
         self.host.request(request).await.map_err(Failure::Host)
     }
 
@@ -2486,6 +2410,33 @@ impl Scope {
     fn value_of(&self, name: &str) -> Option<ValueBinding> {
         crate::eval::Names::value(self, name)
     }
+}
+
+/// The movement a segment runs (`selectMovement`): the one named, exactly
+/// or from version 3 in any letter case (the fired name is a function's),
+/// else the file's only movement. `None` when none is picked, and the run
+/// throws MOVENG_NOT_FOUND after the check, on either engine.
+fn entry_of<'m>(movements: &[&'m ast::MovementDeclaration], wanted: Option<&str>, language_version: u32) -> Option<&'m ast::MovementDeclaration> {
+    match wanted.filter(|w| !w.is_empty()) {
+        Some(wanted) => spelled(movements, |m| &m.name, wanted, language_version >= 3),
+        None if movements.len() == 1 => movements.first(),
+        None => None,
+    }
+    .copied()
+}
+
+/// `resolveCallee`'s lookup, the one every name a call resolves goes
+/// through: the item named as written, else, where names read in any letter
+/// case (`any_case`: from version 3, and where the calling scope binds
+/// nothing under the name as written), the first named so in another case.
+fn spelled<'a, T: ?Sized + 'a, I>(items: I, name_of: impl Fn(&T) -> &str, written: &str, any_case: bool) -> Option<&'a T>
+where
+    I: IntoIterator<Item = &'a T> + Clone,
+{
+    items.clone().into_iter().find(|item| name_of(item) == written).or_else(|| {
+        let folded = crate::js::to_lower_case(written);
+        any_case.then(|| items.into_iter().find(|item| crate::js::to_lower_case(name_of(item)) == folded)).flatten()
+    })
 }
 
 /// A slot parsed and lowered (`expressionOfSlot` / `conditionOfSlot`); a
@@ -3069,43 +3020,6 @@ mod tests {
         assert_eq!(done, json!({ "failed": { "error": { "hostError": 4 }, "result": { "movementName": "m", "writes": ["l", 0, []] } } }));
     }
 
-    #[test]
-    fn what_it_does_not_run_is_declined_before_anything_happens() {
-        let source = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}";
-        let (done, seen) = drive(source, json!(["o", 1, []]), plain_host(json!({})));
-        // Refused on this engine's own parse: not even the check is asked.
-        assert_eq!(done, json!({ "refused": "plugin_call", "reasons": ["plugin_call"] }));
-        assert!(seen.is_empty());
-    }
-
-    /// The refused `done` carries every reason, the first as `refused`; a
-    /// movement the entry does not reach refuses nothing, and the run goes on
-    /// to its check.
-    #[test]
-    fn a_refusal_names_every_reason_and_an_unreached_movement_none() {
-        let first_step = |source: &str| {
-            let input = json!({
-                "entry": "segment", "source": source, "languageVersion": 3, "segmentId": "g1", "serves": [], "movementName": "m",
-                "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
-            });
-            crate::begin(&input.to_string()).unwrap().start().unwrap()
-        };
-        let prelude = "import { email } from adapters\nimport { fetch_url } from plugins\ninbox = email()\n";
-        let helper = "movement helper(e: <inbox-[:message]->>) {\n  s = fetch_url(url: \"x\")\n}\n";
-        let refused = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = @trigger\n  helper(e: msg)\n}}\n{helper}");
-        match first_step(&refused) {
-            Step::Done(done) => {
-                assert_eq!(done, json!({ "refused": "meta:trigger", "reasons": ["meta:trigger", "plugin_call"] }))
-            }
-            Step::Pending(pending) => panic!("asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
-        }
-        let unreached = format!("{prelude}movement m(msg: <inbox-[:message]->>) {{\n  x = 1\n}}\n{helper}");
-        match first_step(&unreached) {
-            Step::Pending(pending) => assert_eq!(pending.iter().map(|r| (r.family, r.method.as_str())).collect::<Vec<_>>(), [("check", "program")]),
-            Step::Done(done) => panic!("{done}"),
-        }
-    }
-
     /// The file scope as `prepareMovement` builds it: an import of a plugin
     /// binds the plugin, a declared shape its name, a `type` nothing, and a
     /// value what it evaluates to, in source order, a body reading it; a park
@@ -3145,12 +3059,11 @@ mod tests {
     }
 
     /// An extraction call whose written `model` meets a run input that carries
-    /// no `models` list is declined `unreproduced` (README `extract_call_model`): the
-    /// TypeScript would ask the model registry, which this engine does not
-    /// hold. The call is refused before the model is asked anything, handed
-    /// back as `unreproduced`.
+    /// no `models` list fails (README `extract_call_model`): the model
+    /// registry is the host's, and the shim always sends the run's list. The
+    /// call fails before the model is asked anything.
     #[test]
-    fn an_extraction_call_with_a_model_and_no_model_list_is_declined_unreproduced() {
+    fn an_extraction_call_with_a_model_and_no_model_list_fails_unsupported() {
         let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
         let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
@@ -3159,22 +3072,20 @@ mod tests {
             ("llm.client" | "llm.extractCall", _) => panic!("the model is never asked: {request:?}"),
             _ => host(request),
         });
-        // Nothing the host can see had happened (the call is the first effect),
-        // so the segment is handed back to the TypeScript engine as
-        // `unreproduced`, rather than ending the run in a marked failure.
-        assert_eq!(done, json!({ "declined": "unreproduced" }));
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
         assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
     }
 
-    /// The extraction keyword is refused by name before anything runs, on
-    /// every version: its host is asked nothing.
+    /// The extraction keyword fails by name where it is met: this engine
+    /// runs it on no version.
     #[test]
-    fn the_extraction_keyword_is_refused_by_name_and_asks_nothing() {
+    fn the_extraction_keyword_fails_by_name() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    digest: \"a summary\"\n  }\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
         let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), host);
-        assert_eq!(done["refused"], json!(crate::admit::LEGACY_EXTRACTION), "{done}");
-        assert!(seen.is_empty(), "{seen:?}");
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
+        assert!(done["failed"]["error"]["message"].as_str().unwrap().contains("legacy_extraction"), "{done}");
+        assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
     }
 
     /// What a `trace.append` handed over, its entries off the eval wire.
@@ -3189,7 +3100,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_state_it_does_not_resume_is_refused_before_anything_happens() {
+    fn a_parked_state_it_does_not_read_fails_the_resume_by_name() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
         let scope = |binding: Json| json!([{ "bindings": { "x": binding } }]);
         for (state, reason) in [
@@ -3204,7 +3115,10 @@ mod tests {
             });
             let mut segment = crate::begin(&input.to_string()).unwrap();
             match segment.start().unwrap() {
-                Step::Done(done) => assert_eq!(done, json!({ "refused": reason, "reasons": [reason] })),
+                Step::Done(done) => assert_eq!(
+                    done["thrown"],
+                    json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": format!("this run's parked state does not read ({reason})") })
+                ),
                 Step::Pending(pending) => panic!("{reason}: asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
             }
         }
