@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { parse, stringify } from 'yaml';
-import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, since, type LanguageVersion } from 'movement-lang';
 
 export const PROJECT_FILE = 'lf.yaml';
 
@@ -50,6 +50,20 @@ export function languageVersionOfEngine(engine: string): LanguageVersion {
   return CURRENT_LANGUAGE_VERSION;
 }
 
+/** The first language version lf runs. lf runs on the Rust engine alone,
+ *  which runs version 5 and later; versions 1–4 run only on the hosted
+ *  TypeScript engine. */
+export const FIRST_LF_LANGUAGE_VERSION: LanguageVersion = 5;
+
+/** Refuses a pin lf does not run, before any engine sees it: `pinned` names
+ *  what carries the pin, `remedy` what to do about it. */
+export function refuseBelowLf(languageVersion: LanguageVersion, { pinned, remedy }: { pinned: string; remedy: string }): void {
+  if (since(languageVersion, FIRST_LF_LANGUAGE_VERSION)) return;
+  throw new Error(
+    `${pinned} is pinned to language version ${languageVersion}, which lf does not run (lf runs language version ${FIRST_LF_LANGUAGE_VERSION} and later): ${remedy}`,
+  );
+}
+
 function compareSemver(a: string, b: string): number {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
@@ -72,13 +86,15 @@ export function loadProject(from: string): Project {
   if (!parsed.success) {
     throw new Error(`${join(dir, PROJECT_FILE)}: ${parsed.error.issues.map((i) => i.message).join('; ')}`);
   }
+  const languageVersion = languageVersionOfEngine(parsed.data.engine);
+  refuseBelowLf(languageVersion, { pinned: join(dir, PROJECT_FILE), remedy: 'run `lf upgrade`' });
   const lfDir = join(dir, '.lf');
   mkdirSync(lfDir, { recursive: true });
   return {
     root: dir,
     lfDir,
     engine: parsed.data.engine,
-    languageVersion: languageVersionOfEngine(parsed.data.engine),
+    languageVersion,
     movementsDir: join(dir, parsed.data.movements),
     externalsDir: join(dir, parsed.data.externals),
     user: {

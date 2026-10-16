@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { CatalogSnapshot, InstanceSchema, LanguageVersion } from 'movement-lang';
+import type { CatalogSnapshot, InstanceSchema } from 'movement-lang';
 import { runMovement, resumeMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
 import { runFailureCause, RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
 import { withRunLease, type HeldRunLease } from 'movement-engine/services/run_host/lease';
@@ -36,20 +36,11 @@ import {
 } from './externals';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { LOCAL_TENANT, localHost, tenant } from './host';
-import type { Project } from './project';
+import { refuseBelowLf, type Project } from './project';
 import { remoteAdapterOf } from './remote';
 import { loadSecrets, requireCredentials, type Credential } from './secrets';
 import { catalogOf, collectListens, scanMovements, type Listen, type MovementFile } from './sources';
 import { LEASE_TTL_MS, State, WorkKind } from './state';
-
-/** lf runs every language version on the Rust engine, and only there: a
- *  program the Rust engine refuses fails with its reason, never falling back
- *  to the TypeScript engine. The engine reads its route from the process
- *  environment, so lf sets it before any run. */
-function forceRustEngine(): void {
-  process.env.MOVEMENT_ENGINE = 'rust';
-  process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
-}
 
 export interface Session {
   project: Project;
@@ -86,7 +77,6 @@ export async function openSession(
     hostUrl?: string;
   },
 ): Promise<Session> {
-  forceRustEngine();
   const credentials = loadSecrets(project);
   if (options.start) requireCredentials(project, credentials);
   const externals = scanExternals(project);
@@ -312,12 +302,18 @@ function parkedStepper(session: Session, runId: string, lease: HeldRunLease): { 
   const row = session.state.run(runId);
   if (row === undefined || row.status !== 'parked') return null;
   const facts = RunFacts.parse(JSON.parse(row.input));
+  // An earlier lf ran versions below 5 on the Rust engine; this one hands
+  // them to no engine (the engine would route them to TypeScript).
+  refuseBelowLf(facts.languageVersion, {
+    pinned: `run ${runId}`,
+    remedy: 'it cannot resume; run `lf upgrade` and fire it again',
+  });
   const run = { runId, file: row.file, movement: row.movement };
   const tally = { writes: 0, stepped: 0 };
   const step: StepLeaf = (request, settle) => {
     const resumed = {
       source: facts.source,
-      languageVersion: facts.languageVersion as LanguageVersion,
+      languageVersion: facts.languageVersion,
       movementName: facts.movementName,
       event: facts.event as TriggerEvent,
       teamId: tenant(),
