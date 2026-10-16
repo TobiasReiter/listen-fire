@@ -947,6 +947,7 @@ function chainPositionAt(
     // A completion walks hops only; nothing a version changes is read here.
     const typing = new ExpressionTyping({
       languageVersion: CURRENT_LANGUAGE_VERSION,
+      joinsRecordsOfOneType: true,
       resolveRoot: name => {
         const s = scope.get(name);
         return s ? positionTypeOf(s) : undefined;

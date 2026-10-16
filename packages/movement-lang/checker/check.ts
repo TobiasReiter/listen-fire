@@ -329,6 +329,7 @@ import {
   valuesBesideRecord,
   recordsAlone,
   sameStartingPoint,
+  oneRecordTypeOf,
   positionSchemaOfRef,
   recordHeadPosition,
   recordOf,
@@ -1360,17 +1361,24 @@ export function checkProgramWithLink(
     : undefined;
   const recording: CheckRecording | undefined =
     options?.recordAnalysis === true ? { frames: [], writes: [], nodes: [] } : undefined;
-  const checker = new Checker(catalog, {
-    languageVersion,
-    ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
-    addressTokens: new Map(),
-    ...(link ? { linkContext: { link, checked: new Map() } } : {}),
-    ...(recording ? { recording } : {}),
-  });
-  checker.run(program);
+  const checkOnce = (joinBefore5: boolean, recordingInto?: CheckRecording) => {
+    const recordsOfOneType: RecordsOfOneType = { joinBefore5, withheld: false };
+    const checker = new Checker(catalog, {
+      languageVersion,
+      ...(options?.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
+      addressTokens: new Map(),
+      ...(link ? { linkContext: { link, checked: new Map() } } : {}),
+      ...(recordingInto ? { recording: recordingInto } : {}),
+      recordsOfOneType,
+    });
+    checker.run(program);
+    return { diagnostics: checker.diagnostics, withheld: recordsOfOneType.withheld };
+  };
+  const checked = checkOnce(false, recording);
   const versionDiagnostic = languageVersionDiagnostic(languageVersion);
   const versionDiagnostics = versionDiagnostic ? [versionDiagnostic] : [];
-  const found = checker.diagnostics.map(withHandbookPointer);
+  const joinedRefusals = checked.withheld ? refusedOnceJoined(checked.diagnostics, checkOnce(true).diagnostics) : [];
+  const found = [...checked.diagnostics, ...joinedRefusals].map(withHandbookPointer);
   if (!link) {
     return {
       diagnostics: [...versionDiagnostics, ...found],
@@ -1382,6 +1390,24 @@ export function checkProgramWithLink(
     link,
     ...(recording ? { recording } : {}),
   };
+}
+
+/**
+ * The errors a check joining records of one type reports that the check under
+ * an older pin did not (`RecordsOfOneType`) — each an upgrade warning, since
+ * before version 5 the value was untyped and ran so.
+ */
+function refusedOnceJoined(underPin: Diagnostic[], joined: Diagnostic[]): Diagnostic[] {
+  const keyOf = (d: Diagnostic) => `${d.code}\u0000${d.message}\u0000${JSON.stringify(d.span)}`;
+  const seen = new Set(underPin.map(keyOf));
+  return joined
+    .filter(d => d.severity === undefined && !seen.has(keyOf(d)))
+    .map(d => ({
+      ...d,
+      message: `${d.message.replace(/\.$/, '')}. Before ${describeLanguageVersion(5)} an IF or a COALESCE of records of one type had no type, and what it fed ran unchecked; from it, this is refused`,
+      severity: 'warning' as const,
+      upgrade: true as const,
+    }));
 }
 
 const BARE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -3597,9 +3623,11 @@ function withoutValueType<T extends ValueTypeFacts>(shape: T): T {
 /**
  * The record a value that may be one of several things is, for a rule that
  * needs one record (`recordOfName`): a name bound to an `IF` or a `COALESCE`
- * whose arms have no one type. Records alone are one record, as `A | B` of two
- * `Org`s is an `Org` — its type the members' when they agree, and unnamed (so
- * nothing is refused) when they do not; one that may be absent may be empty.
+ * whose arms have no one type. Records alone are one record, as `A | A` is an
+ * `A` — its type the members' when they are one type (`oneRecordTypeOf`, on
+ * every version: before it this was an internal error, so nothing ran), and
+ * unnamed (so nothing is refused) when they are not; one that may be absent may
+ * be empty.
  * A member that is not a record makes it a value.
  */
 function recordOfMayHold(
@@ -3620,10 +3648,11 @@ function recordOfMayHold(
     return { kind: 'value', what: 'a value that may hold something other than one record' };
   }
   const first = positions[0];
-  if (first === undefined || !positions.every(position => position !== undefined && sameStartingPoint(position, first))) {
-    return { kind: 'undescribed' };
-  }
-  return { kind: 'record', type: mayBeAbsent ? { kind: 'maybeEmpty', of: first } : first };
+  const one = first !== undefined && positions.every(position => position !== undefined && sameStartingPoint(position, first))
+    ? first
+    : recordIn(oneRecordTypeOf(positions.map(recordOf)))?.position;
+  if (one === undefined) return { kind: 'undescribed' };
+  return { kind: 'record', type: mayBeAbsent ? { kind: 'maybeEmpty', of: one } : one };
 }
 
 function typeTooLargeMessage(name: string): string {
@@ -3860,6 +3889,21 @@ interface CheckerOptions {
    *  the compile path, which records nothing. Imported libraries are checked
    *  by their own Checker without one, so a recording stays file-local. */
   recording?: CheckRecording;
+  /** Shared by the root file's checker and every library's in one check. */
+  recordsOfOneType: RecordsOfOneType;
+}
+
+/**
+ * Whether an `IF`'s or a `COALESCE`'s records of one type make that type in
+ * this check (`oneRecordTypeOf`), and whether a check that did not join them
+ * met one. From version 5 they join. Before it they were untyped and ran so:
+ * the check under the pin withholds the type, and where it withheld one,
+ * `checkProgramWithLink` checks again joining them and reports what that
+ * refuses as an upgrade warning.
+ */
+interface RecordsOfOneType {
+  joinBefore5: boolean;
+  withheld: boolean;
 }
 
 class Checker {
@@ -3917,6 +3961,17 @@ class Checker {
     private readonly catalog: Catalog,
     private readonly options: CheckerOptions,
   ) {}
+
+  /** `ExpressionTyping`'s half of `RecordsOfOneType`. */
+  private recordsJoinOptions(): { joinsRecordsOfOneType: boolean; onRecordsJoinWithheld: () => void } {
+    const join = this.options.recordsOfOneType;
+    return {
+      joinsRecordsOfOneType: since(this.languageVersion, 5) || join.joinBefore5,
+      onRecordsJoinWithheld: () => {
+        join.withheld = true;
+      },
+    };
+  }
 
   private get languageVersion(): LanguageVersion {
     return this.options.languageVersion;
@@ -4230,6 +4285,7 @@ class Checker {
   private silentTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...this.recordsJoinOptions(),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
         return resolution.kind === 'found' ? this.symbolPositionType(resolution.symbol) : undefined;
@@ -4325,6 +4381,7 @@ class Checker {
   private reportingTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...this.recordsJoinOptions(),
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
@@ -4348,6 +4405,7 @@ class Checker {
   private slotTyping(scope: Scope, span: Span): ExpressionTyping {
     return new ExpressionTyping({
       languageVersion: this.languageVersion,
+      ...this.recordsJoinOptions(),
       ...(this.options.upgradingFrom !== undefined ? { upgradingFrom: this.options.upgradingFrom } : {}),
       resolveRoot: name => {
         const resolution = scope.resolve(name);
@@ -5505,6 +5563,7 @@ class Checker {
       linkContext: context,
       currentFile: file,
       library: true,
+      recordsOfOneType: this.options.recordsOfOneType,
     });
     const scope = checker.run(file.program);
     const surfaced = checker.diagnostics.filter(d => diagnosticSeverity(d) !== 'info');

@@ -20,7 +20,8 @@ The first four changes share one idea: there is no engine-side store and there a
 - [12. A value that is a closure is called](#12-a-value-that-is-a-closure-is-called)
 - [13. A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return)
 - [14. `parallel` is retired for `all`; combinators take arguments and no `await`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
-- [15. Diagnostic code index](#15-diagnostic-code-index)
+- [15. An `IF` or a `COALESCE` of records of one type is that type](#15-an-if-or-a-coalesce-of-records-of-one-type-is-that-type)
+- [16. Diagnostic code index](#16-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -264,7 +265,13 @@ r = all(a, () => { … })
 - Arms built at run time (`parallel(fs)`) have no fix: name each function as an argument, `all(f, g)`.
 - The refusal of the `parallel { … }` block points at `all` under 5. Under 4 and earlier `await race([…])` and `await parallel([…])` are unchanged, and `all` is still a retired name.
 
-## 15. Diagnostic code index
+## 15. An `IF` or a `COALESCE` of records of one type is that type
+
+- Under Dancing Wren (5) `COALESCE(pick, org)` or `IF c THEN pick ELSE org END`, where `pick` and `org` are two Companies a write returned, is a Company, as TypeScript's `A | A` is `A`. A field read off it is typed, so one the type does not have is `MOV_UNKNOWN_PROPERTY`, and what the read feeds is checked (`.name` into a number field is `MOV_WRITE_FIELD_TYPE`). Why: under 4 and earlier it had no type, so `.nope` read null and `.name + 1` was NaN, and nothing said so. Under 3 and 4 each such refusal is an upgrade warning.
+- The fix is the field the type has, or the conversion the value needs.
+- Records of different types (a Company or a Person) stay a union, and nothing is said of a field off it. Writing in place to one of several records of one type (`write v { … }`) is checked against the type's fields on every version: before it was an internal error, so it never ran.
+
+## 16. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
@@ -288,5 +295,6 @@ r = all(a, () => { … })
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#9-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#7-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#5-_resources-only-on-an-extractions-result) |
+| `MOV_UNKNOWN_PROPERTY` | [An `IF` or a `COALESCE` of records of one type is that type](#15-an-if-or-a-coalesce-of-records-of-one-type-is-that-type) (a field the type does not have, read off one; warning under 3 and 4) |
 | `MOV_TRANSFORM_HOP_RETIRED` | [`#` hops are retired](#3--hops-are-retired-a-plugin-is-a-function) (since 3; under 5 the message shows the function form) |
 | `MOV_WRITE_BIND_RETIRED` | [`write … bind` is retired](#2-write--bind-is-retired) |

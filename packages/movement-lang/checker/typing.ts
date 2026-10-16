@@ -1481,22 +1481,26 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  *
  * KIND: the kind the arguments share (`null` aside), so
  * `COALESCE(e.diverse, FALSE)` is a boolean wherever it goes — a text field
- * declared on a node refuses it, as it refuses `FALSE`. Arguments of different
- * kinds have no one kind (the model has no unions), and the result is then
- * untyped, as it always was.
+ * declared on a node refuses it, as it refuses `FALSE`. Records of one type are
+ * that type (`oneRecordTypeOf`, through `join`). Arguments of different kinds
+ * have no one kind (the model has no unions), and the result is then untyped,
+ * as it always was.
  *
  * An UNTYPED argument leaves the result unknown: nothing here knows whether it
  * answers, or what, so this manufactures neither a presence nor a kind
  * (unknown stays unknown, as in TS).
  */
-function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
+function coalesceType(
+  args: Array<FieldType | undefined>,
+  options: { join: (kinds: FieldType[]) => FieldType | undefined },
+): FieldType | undefined {
   if (args.some(type => type === undefined)) return undefined;
   const typed = args as FieldType[];
   const valued = typed.filter(type => type !== 'absent');
   // Every argument is the `null` literal — the value that is never there.
   if (valued.length === 0) return 'absent';
   const kinds = valued.map(stripAbsent);
-  const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : undefined;
+  const shared = kinds.every(kind => fieldTypeEquals(kind, kinds[0]!)) ? kinds[0] : options.join(kinds);
   if (valued.some(type => !isMaybeAbsent(type))) return shared;
   return shared !== undefined ? maybeAbsent(shared) : valued.find(isMaybeAbsent);
 }
@@ -3642,6 +3646,63 @@ export function sameStartingPoint(a: PositionTypeRef, b: PositionTypeRef): boole
   return positionsMatch(a, b) === true && positionsMatch(b, a) === true;
 }
 
+type HandleRef = Extract<PositionTypeRef, { kind: 'handle' }>;
+
+/**
+ * The one record type records of these types are, as TypeScript's `A | A` IS
+ * `A`: `COALESCE(pick, org)` of two Companies a write returned is a Company.
+ * Write handles are what this joins — two records of one type found by a walk
+ * are already one type (`sameStartingPoint`). Two handles are one type when
+ * they are the same system's same record type and their surfaces agree: what
+ * they read, the edges they walk, where their own literals landed. What each
+ * write vouches for is a fact of its value, so the joined handle keeps what
+ * every member vouches for: an `-[:@old]->` where every member was written, a
+ * field read as set where every write set it. Undefined where they are not all
+ * handles of one type — records of different types stay a union.
+ */
+export function oneRecordTypeOf(types: ReadonlyArray<FieldType>): FieldType | undefined {
+  let mayBeAbsent = false;
+  let joined: HandleRef | undefined;
+  for (const type of types) {
+    if (isMaybeAbsent(type)) mayBeAbsent = true;
+    const variant = variantOf(stripAbsent(type));
+    if (variant.kind !== 'record' || variant.position?.kind !== 'handle') return undefined;
+    joined = joined === undefined ? variant.position : joinHandles(joined, variant.position);
+    if (joined === undefined) return undefined;
+  }
+  if (joined === undefined) return undefined;
+  const record = recordOf(joined);
+  return mayBeAbsent ? maybeAbsent(record) : record;
+}
+
+function joinHandles(a: HandleRef, b: HandleRef): HandleRef | undefined {
+  if (a === b) return a;
+  if (a.instance.token !== b.instance.token || a.position === undefined || a.position !== b.position) return undefined;
+  if (!sameEntries(a.resultShape, b.resultShape, fieldTypeEquals)) return undefined;
+  if (!sameEntries(a.edges ?? {}, b.edges ?? {}, (x, y) => x === y)) return undefined;
+  if (!sameEntries(a.genericLandings ?? {}, b.genericLandings ?? {}, (x, y) => x === y)) return undefined;
+  const written = a.written === true && b.written === true;
+  // No `setFields` on a written handle means its write vouched for nothing.
+  const setFields = written && a.setFields !== undefined && b.setFields !== undefined
+    ? new Set([...a.setFields].filter(field => b.setFields!.has(field)))
+    : undefined;
+  return {
+    kind: 'handle',
+    instance: a.instance,
+    position: a.position,
+    resultShape: a.resultShape,
+    ...(a.edges !== undefined ? { edges: a.edges } : {}),
+    ...(a.genericLandings !== undefined ? { genericLandings: a.genericLandings } : {}),
+    ...(written ? { written: true as const } : {}),
+    ...(setFields !== undefined ? { setFields } : {}),
+  };
+}
+
+function sameEntries<T>(a: Record<string, T>, b: Record<string, T>, same: (x: T, y: T) => boolean): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && same(a[key]!, b[key]!));
+}
+
 // ── Schema lookups ──
 
 /** Resolves a position-type name within a schema: union first, then position. */
@@ -4349,6 +4410,12 @@ export class ExpressionTyping {
        *  hold where its type cannot say — the arms, as a walk input
        *  (`ScopeSymbol.mayHold`). Only the walk for an engine object reads it. */
       resolveMayHold?: (name: string) => FieldType | undefined;
+      /** Do an `IF`'s or a `COALESCE`'s records of one type make that type
+       *  (`oneRecordTypeOf`)? From version 5; before it they were untyped and
+       *  ran so, and the checker withholds the type — telling
+       *  `onRecordsJoinWithheld`, so it can say what 5 would refuse. */
+      joinsRecordsOfOneType: boolean;
+      onRecordsJoinWithheld?: () => void;
       /** Is this name BOUND in statement scope at all — whatever plane it sits
        *  on, and whether or not a type came with it? `resolveScalar` and
        *  `resolveRoot` both answer `undefined` for a name that IS declared but
@@ -5002,6 +5069,15 @@ export class ExpressionTyping {
     }
   }
 
+  /** The one record type these arms are, where this check gives it
+   *  (`joinsRecordsOfOneType`). */
+  private recordsOfOneType(types: FieldType[]): FieldType | undefined {
+    const joined = oneRecordTypeOf(types);
+    if (joined === undefined || this.options.joinsRecordsOfOneType) return joined;
+    this.options.onRecordsJoinWithheld?.();
+    return undefined;
+  }
+
   /** A read picking one member of `operand`: its own type where it has one,
    *  else any member the operand may hold. */
   private mayHoldPicked(expr: Expression, operand: Expression): FieldType | undefined {
@@ -5172,10 +5248,9 @@ export class ExpressionTyping {
         if (this.refuseClosureOperands([[expr.then, thenType], [expr.else, elseType]], expr, 'chosen by IF … THEN … ELSE … END')) {
           return undefined;
         }
-        if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
-          return thenType;
-        }
-        return undefined;
+        if (thenType === undefined || elseType === undefined) return undefined;
+        if (fieldTypeEquals(thenType, elseType)) return thenType;
+        return this.recordsOfOneType([thenType, elseType]);
       }
       case 'at': {
         // AT reads a SLOT, so it is the one reader that sees a tuple as one.
@@ -5365,7 +5440,7 @@ export class ExpressionTyping {
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
         if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
-        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args);
+        if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, { join: kinds => this.recordsOfOneType(kinds) });
         if (expr.fn === MULTI_FUNCTION_ID) return multiType(args);
         const stdlibSpec = stdlibFunctionById(expr.fn);
         if (stdlibSpec === undefined) {
