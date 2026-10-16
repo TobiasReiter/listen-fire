@@ -428,7 +428,7 @@ fn fold_key_value(value: &Js) -> Option<String> {
 /// then everything but letters and digits gone.
 fn fold_text(text: &str) -> String {
     let decomposed = crate::env_services::current().normalize(text, crate::env_services::NormalForm::Nfkd);
-    let unmarked: String = decomposed.chars().filter(|c| !crate::letter_number::is_mark(*c)).collect();
+    let unmarked: String = decomposed.chars().filter(|c| !crate::marks::is_mark(*c)).collect();
     let mut folded = js::to_lower_case(js::trim(&unmarked));
     let scheme_end = scheme_length(&folded);
     if let Some(end) = scheme_end {
@@ -440,7 +440,7 @@ fn fold_text(text: &str) -> String {
     if let Some(rest) = folded.strip_prefix("www.") {
         folded = rest.to_string();
     }
-    folded.chars().filter(|c| crate::letter_number::is_letter_or_number(*c)).collect()
+    folded.chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
 /// `/^[a-z][a-z0-9+.-]*:\/\//`'s length, when it matches.

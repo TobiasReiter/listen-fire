@@ -4,12 +4,11 @@
 //!
 //! The size mode is exact: every count, cut and search is over UTF-16 code
 //! units, as the TypeScript's `length`, `slice` and `indexOf` are. The
-//! entities mode reads `\p{Lu}`, `\p{L}` and `\p{N}` from this engine's own
-//! Unicode tables (Henry's ruling, 2026-10-12: no regex dialect is grown for
-//! it): `\p{L}`/`\p{N}` is the table Node's own answers wrote
-//! (crate::letter_number), `\p{Lu}` is Rust's `Uppercase` narrowed to
-//! letters, so on text with uncommon letters a piece boundary may move by a
-//! line (README, Known divergences). The link and list-item patterns are
+//! entities mode reads letters, numbers and capitals with Rust's own
+//! predicates (`char::is_alphanumeric`, `char::is_uppercase`; Henry's
+//! ruling, 2026-10-12: no regex dialect is grown for it), so on text with
+//! uncommon letters a piece boundary may move by a line from where
+//! JavaScript's `\p{L}\p{N}` put it. The link and list-item patterns are
 //! ASCII and are matched exactly.
 
 use crate::js::Js;
@@ -303,8 +302,8 @@ fn is_digit(u: u16) -> bool {
 /// word; counted distinct by `toLowerCase()`.
 fn distinct_proper_noun_runs(line: &[u16]) -> usize {
     let chars: Vec<(usize, char)> = code_points(line);
-    let word_char = |c: char| crate::letter_number::is_letter_or_number(c) || matches!(c, '\'' | '\u{2019}' | '&' | '.' | '-');
-    let upper = |c: char| c.is_uppercase() && crate::letter_number::is_letter_or_number(c) && !c.is_numeric();
+    let word_char = |c: char| c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}' | '&' | '.' | '-');
+    let upper = |c: char| c.is_uppercase();
     let mut seen: Vec<String> = Vec::new();
     let mut at = 0;
     while at < chars.len() {

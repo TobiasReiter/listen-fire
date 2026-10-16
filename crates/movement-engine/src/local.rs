@@ -710,7 +710,7 @@ pub fn distinctive_tokens(value: &Js) -> Vec<String> {
         None => normalised,
     };
     source
-        .split(|c: char| !crate::letter_number::is_letter_or_number(c))
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty() && !GENERIC_TOKENS.contains(word))
         .map(String::from)
         .collect()
@@ -791,9 +791,10 @@ mod tests {
         // A bare domain tokenises from its registrable labels.
         assert_eq!(distinctive_tokens(&Js::str("https://www.oriqx.com/about")), ["oriqx"]);
         assert!(!shares_distinctive_token(&Js::str("oriqx.com"), &Js::str("pavoai.com")));
-        // Letters of every script are words; a combining vowel sign is not a
-        // letter, so it splits a word as the JavaScript split does.
+        // Letters of every script are words, read by Rust's `is_alphanumeric`:
+        // a combining vowel sign is alphabetic, so the Hindi word stays whole
+        // (JavaScript's `\p{L}\p{N}` split it into "ह" and "द").
         assert_eq!(distinctive_tokens(&Js::str("Café-Zürich")), ["café", "zürich"]);
-        assert_eq!(distinctive_tokens(&Js::str("हिंदी")), ["ह", "द"]);
+        assert_eq!(distinctive_tokens(&Js::str("हिंदी")), ["हिंदी"]);
     }
 }

@@ -498,8 +498,8 @@ impl<'a> Parser<'a> {
                 }
             };
             let fits = match char::from_u32(code) {
-                Some(ch) if name.is_empty() => ch == '$' || ch == '_' || crate::letter_number::is_id_start(ch),
-                Some(ch) => ch == '$' || ch == '\u{200C}' || ch == '\u{200D}' || crate::letter_number::is_id_continue(ch),
+                Some(ch) if name.is_empty() => ch == '$' || ch == '_' || ch.is_ascii_alphabetic(),
+                Some(ch) => ch == '$' || ch == '_' || ch.is_ascii_alphanumeric(),
                 None => false,
             };
             if !fits {
@@ -1215,7 +1215,10 @@ mod tests {
         // Named groups.
         assert_eq!(found(r"(?<y>\d{4})-\k<y>", "2026-2026"), ["2026-2026", "2026"]);
         assert_eq!(found(r"(?<A>.)\k<A>", "xx"), ["xx", "x"]);
-        assert_eq!(found(r"(?<𝒜>.)", "x"), ["x", "x"]);
+        // Version 5 spells a group name in ASCII (`$`, `_`, letters, digits).
+        assert!(matches!(exec(r"(?<𝒜>.)", "x"), Err(RegexError::Syntax)));
+        assert!(matches!(exec(r"(?<é>.)", "x"), Err(RegexError::Syntax)));
+        assert_eq!(found(r"(?<_a1$>.)", "x"), ["x", "x"]);
         assert_eq!(found(r"\k<a>", "k<a>"), ["k<a>"]);
         // Annex B's escapes.
         assert_eq!(found(r"\8", "8"), ["8"]);
