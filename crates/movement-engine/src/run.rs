@@ -2192,10 +2192,8 @@ impl Run<'_> {
             Js::Array(list) => (0..list.items().len()).map(|i| i.to_string()).collect(),
             _ => return,
         };
-        // `field in data`: own keys, and the prototype's.
-        let carried = keys.iter().any(|k| k == field)
-            || crate::js::is_object_prototype_name(field)
-            || (matches!(data, Js::Array(_)) && (field == "length" || ARRAY_PROTOTYPE_NAMES.contains(&field)));
+        // `field in data`: its own keys (a list's indices and `length`).
+        let carried = keys.iter().any(|k| k == field) || (matches!(data, Js::Array(_)) && field == "length");
         let seen = self.misses.borrow().iter().any(|(b, f)| b == instance_name && f == field);
         if carried || seen {
             return;
@@ -2356,15 +2354,6 @@ fn binds_many_values(expr: &Expression, scope: &Scope) -> bool {
         _ => false,
     }
 }
-
-/// A plugin call's named arguments; admission lets by no other kind.
-/// `Array.prototype`'s own names, which `in` finds on any list.
-const ARRAY_PROTOTYPE_NAMES: [&str; 38] = [
-    "at", "concat", "copyWithin", "entries", "every", "fill", "filter", "find", "findIndex", "findLast", "findLastIndex",
-    "flat", "flatMap", "forEach", "includes", "indexOf", "join", "keys", "lastIndexOf", "map", "pop", "push", "reduce",
-    "reduceRight", "reverse", "shift", "slice", "some", "sort", "splice", "toLocaleString", "toReversed", "toSorted",
-    "toSpliced", "unshift", "values", "with", "toString",
-];
 
 /// One evaluation's reads, answered by its run in the scope it reads.
 struct Reading<'r, 'h> {

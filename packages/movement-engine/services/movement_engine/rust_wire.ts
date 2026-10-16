@@ -182,7 +182,8 @@ function bindingFromWire(descriptor: unknown): Binding {
  * The wire to the Rust engine and back (crates/movement-engine/src/env.rs
  * says the format): plain JSON values, and the origins of the trails they
  * carry, numbered. A list is `["l", items]` and an object `["o", entries]`;
- * `undefined`, `NaN`, `±Infinity` and `-0` cross as `null`, a lone surrogate
+ * `undefined`, `NaN`, `±Infinity` and `-0` cross as `null` (a member holding
+ * `undefined` is left out, as `JSON.stringify` leaves it), a lone surrogate
  * as U+FFFD, and nothing crosses by identity (an object reached twice is
  * written twice). A value is data or one of the engine's records, and the
  * two never share a form: every object the host writes is data, whatever
@@ -298,7 +299,10 @@ export class WireOut {
       if (Object.getOwnPropertyNames(value).length !== keys.length) return REFUSED;
       const entries: unknown[] = [];
       for (const key of keys) {
-        const item = this.value(Reflect.get(value, key));
+        const member: unknown = Reflect.get(value, key);
+        // Left out, as `JSON.stringify` leaves it out.
+        if (member === undefined) continue;
+        const item = this.value(member);
         if (item === REFUSED) return REFUSED;
         entries.push([wireText(key), item]);
       }

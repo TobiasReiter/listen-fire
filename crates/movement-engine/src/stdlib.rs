@@ -679,7 +679,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
 /// with a file's keys is a dict).
 fn to_stable_json(value: &Js) -> Js {
     match value {
-        Js::Undefined | Js::Null | Js::Function(_) => Js::Null,
+        Js::Undefined | Js::Null => Js::Null,
         // Read down to its fields first (`plainValueOf`).
         Js::Record(_) => Js::object(JsObject::new()),
         Js::Bool(_) | Js::String(_) => value.clone(),

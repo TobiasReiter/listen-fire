@@ -1374,7 +1374,7 @@ impl Run<'_> {
                     // `out[key] = …`, as `rehydrateValue` assigns.
                     let mut out = JsObject::new();
                     for (key, entry) in pairs(at(descriptor, "of")) {
-                        out.assign(key.clone(), self.rehydrate_value(entry, park).await?);
+                        out.set(key.clone(), self.rehydrate_value(entry, park).await?);
                     }
                     Js::object(out)
                 }
@@ -1515,7 +1515,7 @@ fn revived_file(descriptor: Option<&Js>) -> Result<Js, Stop> {
 fn with_file_fields(mut fields: JsObject, file_fields: Option<&Js>) -> Result<JsObject, Stop> {
     // `out[key] = …`, as `withFileFields` assigns.
     for (key, descriptor) in pairs(file_fields) {
-        fields.assign(key.clone(), revived_field_value(descriptor)?);
+        fields.set(key.clone(), revived_field_value(descriptor)?);
     }
     Ok(fields)
 }

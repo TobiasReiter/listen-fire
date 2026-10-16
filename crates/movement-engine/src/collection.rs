@@ -789,23 +789,6 @@ impl Run<'_> {
                             format!("'{spelling}' files each member under a text key, and this one answered {what} — the checker should have caught this"),
                         )));
                     };
-                    // `filed['__proto__']` is the answer's prototype: reading it
-                    // finds `Object.prototype` (or what a filing put there), and
-                    // assigning it sets the prototype — to a member that is an
-                    // object, and to nothing for one that is not.
-                    if key == "__proto__" {
-                        if op == CollectionOp::Keyby {
-                            if matches!(member, Js::Object(_) | Js::Array(_) | Js::Record(_) | Js::File(_) | Js::Function(_)) {
-                                filed.proto = Some(member.clone());
-                            }
-                            continue;
-                        }
-                        match &filed.proto {
-                            Some(Js::Array(list)) => list.push(member.clone()),
-                            _ => filed.proto = Some(Js::array(vec![member.clone()])),
-                        }
-                        continue;
-                    }
                     if op == CollectionOp::Keyby {
                         if filed.get(key.as_form()).is_some() {
                             return Err(Stop::Thrown(Failure::engine(
@@ -822,16 +805,7 @@ impl Run<'_> {
                             items.push(member.clone());
                             items
                         }
-                        Some(_) => vec![member.clone()],
-                        // A key the answer does not own reads through its
-                        // prototype: a list found there is pushed to in place.
-                        None => match filed.proto.as_ref().map(|proto| crate::js::inherited(proto, key.as_form())) {
-                            Some(Js::Array(list)) => {
-                                list.push(member.clone());
-                                continue;
-                            }
-                            _ => vec![member.clone()],
-                        },
+                        _ => vec![member.clone()],
                     };
                     filed.set(key.to_string(), Js::array(group));
                 }

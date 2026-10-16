@@ -4372,7 +4372,8 @@ class Checker {
     span: Span,
     options: { visibleFrom?: Loc } = {},
   ): ScopeSymbol | undefined {
-    if (symbol.name === '__proto__') {
+    // From version 5 a map is a map, and `__proto__` an ordinary key.
+    if (before(this.languageVersion, 5) && symbol.name === '__proto__') {
       this.report(
         DiagnosticCodes.NAME_PROTO,
         `'__proto__' cannot be a name — JavaScript reads that key as an object's prototype, so the engine would lose what it names; give it another name`,
@@ -15414,8 +15415,10 @@ class Checker {
     }
   }
 
-  /** A shape's fields and child nodes, none named `__proto__`. */
+  /** A shape's fields and child nodes, none named `__proto__` before
+   *  version 5 (from version 5 a map is a map). */
   private checkNoPrototypeName(entries: ReadonlyArray<{ name: string; span: Span }>): void {
+    if (since(this.languageVersion, 5)) return;
     for (const entry of entries) {
       if (entry.name !== '__proto__') continue;
       this.report(

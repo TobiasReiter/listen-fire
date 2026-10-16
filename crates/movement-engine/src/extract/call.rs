@@ -832,7 +832,7 @@ impl Run<'_> {
             let mut fields = JsObject::new();
             let mut provenance = Vec::new();
             for field in fields_of {
-                let answer = js::plain_property(entry, &field.name);
+                let answer = js::object_property(entry, &field.name);
                 let given = match &answer {
                     Js::Object(object) => object.get("value").cloned().unwrap_or(Js::Undefined),
                     _ => Js::Undefined,
@@ -871,7 +871,7 @@ impl Run<'_> {
             }
             let mut edges = Vec::new();
             for child in children_of {
-                let nested = match js::plain_property(entry, &child.name) {
+                let nested = match js::object_property(entry, &child.name) {
                     Js::Array(list) => list.items().clone(),
                     _ => Vec::new(),
                 };

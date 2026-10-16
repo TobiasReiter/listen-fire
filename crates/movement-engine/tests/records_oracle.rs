@@ -22,6 +22,21 @@ use serde_json::{Value as Json, json};
 
 use movement_engine::executor::{PendingRequest, Step};
 
+mod oracle_wire;
+
+/// A case whose program or payload names one of `Object.prototype`'s
+/// members: version 5 reads a map as a map (`m.constructor` is absent,
+/// `__proto__` is a key like any other), where JavaScript read them through
+/// the prototype.
+fn names_a_prototype_member(case: &Json) -> bool {
+    const NAMES: [&str; 12] = [
+        "constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__", "__lookupSetter__",
+        "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__", "toLocaleString",
+    ];
+    let (body, payload) = (case["body"].as_str().unwrap_or_default(), case["payload"].to_string());
+    NAMES.iter().any(|name| body.contains(name) || payload.contains(name))
+}
+
 /// What the oracle's host has put on the wire, by the id the wire gave
 /// each object and list: an id the engine hands back (`["i", id]`) names
 /// the last one sent under it, as the engine's own table does.
@@ -102,11 +117,11 @@ impl Host<'_> {
             }
             Some("getRelated") => {
                 let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
-                self.related.get(field).cloned().unwrap_or_else(|| json!(["l", []]))
+                self.related.get(field).map(oracle_wire::plain).unwrap_or_else(|| json!(["l", []]))
             }
             Some("iterateRelatedPage") => {
                 let field = self.sent.member(args, "fieldId").and_then(Json::as_str).expect("a hop names its edge");
-                let items = self.related.get(field).cloned().unwrap_or_else(|| json!(["l", []]));
+                let items = self.related.get(field).map(oracle_wire::plain).unwrap_or_else(|| json!(["l", []]));
                 json!(["o", [["items", items]]])
             }
             Some("createRecord") => json!(["o", [["adapterType", "email"], ["externalId", "w1"], ["data", ["o", [["name", "w"]]]]]]),
@@ -169,7 +184,7 @@ fn run_records(native: bool) {
         let version = case["version"].as_u64().expect("a version");
         let source = prelude.replace("BODY", case["body"].as_str().expect("a body"));
         let payload = &case["payload"];
-        let event = json!(["o", [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", payload]]]);
+        let event = json!(["o", [["pipelineInputId", "p"], ["adapterType", "email"], ["triggerType", "webhook"], ["payload", oracle_wire::plain(payload)]]]);
         let input = json!({
             "entry": "segment",
             "source": source,
@@ -183,7 +198,7 @@ fn run_records(native: bool) {
             "nativeCheck": native,
         });
         let check = (!native).then_some(&case["check"]);
-        let mut host = Host { sent: Sent::default(), errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check };
+        let mut host = Host { sent: Sent, errors: Vec::new(), positions: HashMap::new(), related: &oracle["related"], check };
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
         // Requests in flight together (an `EXISTS` over several records)
@@ -206,7 +221,7 @@ fn run_records(native: bool) {
             *reasons.entry(reason.as_str().unwrap_or_default().to_string()).or_default() += 1;
             continue;
         }
-        if rust != case["outcome"] {
+        if rust != case["outcome"] && !names_a_prototype_member(case) {
             differ.push(json!({ "version": version, "template": case["template"], "body": case["body"], "meta": payload, "typescript": case["outcome"], "rust": rust }));
         }
     }

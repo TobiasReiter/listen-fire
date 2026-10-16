@@ -34,7 +34,6 @@ impl Sent {
         match items.first().and_then(Json::as_str) {
             Some("o") => Json::Object(items[1].as_array().expect("entries").iter().map(|e| (e[0].as_str().expect("a key").to_string(), self.plain(&e[1]))).collect()),
             Some("l") => Json::Array(items[1].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
-            Some("u") => Json::Null,
             _ => wire.clone(),
         }
     }
@@ -315,7 +314,7 @@ fn run_parallel(native: bool) {
             "credentialIds": { "inbox_cred": "cred-inbox_cred", "kg_cred": "cred-kg_cred" },
             "nativeCheck": native,
         });
-        let mut host = Host { sent: Sent::default(), check: (!native).then_some(&case["check"]), created: 0, tokens: 0, events: Vec::new(), minted: HashMap::new() };
+        let mut host = Host { sent: Sent, check: (!native).then_some(&case["check"]), created: 0, tokens: 0, events: Vec::new(), minted: HashMap::new() };
         let mut segment = movement_engine::begin(&input.to_string()).expect("the segment begins");
         let mut step = segment.start().expect("the segment starts");
         // What is in flight, each with what the oracle records of it.

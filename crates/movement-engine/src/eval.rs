@@ -401,11 +401,9 @@ impl<'a> Evaluator<'a> {
                 let mut provs = Vec::new();
                 for member in entries {
                     match member {
-                        // `value[member.key] = result.value`: a `__proto__`
-                        // key is `Object.prototype`'s setter.
                         ObjectMember::Entry { key, value } => {
                             let result = self.member(value).await?;
-                            object.assign(key.clone(), result.value);
+                            object.set(key.clone(), result.value);
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
@@ -999,7 +997,7 @@ impl<'a> Evaluator<'a> {
         let options = self.eval(options_arg).await?;
         let prov = self.union(&[&text.prov, &options.prov]);
         let asked = |key: &str| match &options.value {
-            Js::Object(object) => crate::js::plain_property(object, key),
+            Js::Object(object) => crate::js::object_property(object, key),
             _ => Js::Undefined,
         };
         if !matches!(options.value, Js::Object(_) | Js::Record(_)) {
@@ -1152,14 +1150,11 @@ fn members_of(value: &Js) -> Js {
     }
 }
 
-/// `Object.assign(object, spreadKeysOf(value))`: a map's keys, or a
-/// record's fields (`recordFields`), each assigned, so an own `__proto__`
-/// key the source holds sets the object's prototype, as the TypeScript's
-/// `Object.assign` does.
+/// `{...value}`: a map's keys, or a record's fields (`recordFields`).
 fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
     if let Some(record) = crate::record::binding_of(value) {
         for (key, item) in crate::record::fields_of(&record)?.entries() {
-            object.assign(key.clone(), item.clone());
+            object.set(key.clone(), item.clone());
         }
         return Ok(());
     }
@@ -1167,7 +1162,7 @@ fn spread_keys(value: &Js, object: &mut JsObject) -> Result<(), EvalError> {
         Js::Undefined | Js::Null => Ok(()),
         Js::Object(source) if crate::js::is_dict(value) => {
             for (key, item) in source.entries() {
-                object.assign(key.clone(), item.clone());
+                object.set(key.clone(), item.clone());
             }
             Ok(())
         }
@@ -1271,54 +1266,20 @@ mod tests {
         Evaluator::in_run(&EventOnly, 3, Surroundings { services: crate::env_services::current(), now: None }, reader)
     }
 
-    /// `value[member.key] = …`: an object literal's `__proto__` key is
-    /// `Object.prototype`'s setter — an object or `null` the prototype,
-    /// anything else ignored — and is no key of the object.
+    /// A map is a map: `__proto__` is a key like any other, in a literal
+    /// and through a spread.
     #[test]
-    fn an_object_literal_assigns_its_proto_key() {
+    fn a_proto_key_is_a_key() {
         let reader = Counting::default();
         let (result, _) = drive(&in_run(&reader), &expression("{ a: 1, __proto__: { b: 2 } }"));
         let Js::Object(object) = result.unwrap().value else { panic!("an object") };
-        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
-        assert!(matches!(&object.proto, Some(Js::Object(proto)) if matches!(proto.get("b"), Some(Js::Number(n)) if *n == 2.0)));
-        let (result, _) = drive(&in_run(&reader), &expression("{ __proto__: 1, a: 2 }"));
-        let Js::Object(object) = result.unwrap().value else { panic!("an object") };
-        assert!(object.proto.is_none() && object.get("__proto__").is_none());
-    }
-
-    /// `{...m}` is the TypeScript's `Object.assign`: an own `__proto__` key in
-    /// `m` sets the new object's prototype (an object) or nothing (a
-    /// primitive), and is no key of it.
-    #[test]
-    fn a_spread_assigns_an_own_proto_key_as_object_assign_does() {
-        let source = |proto: Js| {
-            let mut m = JsObject::new();
-            m.set("a".into(), Js::Number(1.0));
-            m.set("__proto__".into(), proto);
-            Js::object(m)
-        };
-        let mut x = JsObject::new();
-        x.set("x".into(), Js::Number(2.0));
+        assert_eq!(object.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a", "__proto__"]);
+        let mut m = JsObject::new();
+        m.set("__proto__".into(), Js::Number(5.0));
         let mut spread = JsObject::new();
-        spread_keys(&source(Js::object(x)), &mut spread).unwrap();
-        assert_eq!(spread.entries().iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["a"]);
-        let spread = std::rc::Rc::new(spread);
-        assert!(matches!(crate::js::object_property(&spread, "x"), Js::Number(n) if n == 2.0));
-        let mut ignored = JsObject::new();
-        spread_keys(&source(Js::Number(5.0)), &mut ignored).unwrap();
-        assert!(ignored.proto.is_none() && ignored.get("__proto__").is_none());
-        // `null`: no prototype at all, and still a dict (`isDictValue`).
-        let mut bare = JsObject::new();
-        spread_keys(&source(Js::Null), &mut bare).unwrap();
-        let bare = Js::object(bare);
-        assert!(crate::js::is_dict(&bare));
-        let mut again = JsObject::new();
-        spread_keys(&bare, &mut again).unwrap();
-        assert!(matches!(again.get("a"), Some(Js::Number(n)) if *n == 1.0));
+        spread_keys(&Js::object(m), &mut spread).unwrap();
+        assert!(matches!(spread.get("__proto__"), Some(Js::Number(n)) if *n == 5.0));
     }
-
-    /// ONLY's failure quotes its argument as the author wrote it (layout
-    /// and all), not a re-spelling of the lowered expression.
     #[test]
     fn only_quotes_its_argument_as_written() {
         let text = "ONLY( [msg.a,  msg.b] )";

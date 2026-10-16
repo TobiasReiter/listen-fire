@@ -6,16 +6,8 @@
 //! declares refused (`entitySchemaFor`) — with zod's issues, in zod's order
 //! and words, and what the read coerced (`CoercionTracker`).
 //!
-//! Two accidents of JavaScript objects under zod are reproduced (README,
-//! "Transition artefacts to mirror", row 5): zod reads a declared key
-//! through the reply's prototype, so a field named after an
-//! `Object.prototype` member (`constructor`, `toString`, …) that the reply
-//! leaves out is a function, and fails (`expected object, received
-//! function`); and zod writes each key it hands on with `object[key] =
-//! value`, so a `__proto__` the reply writes becomes the record's prototype
-//! (an object or `null`; anything else is dropped). A field DECLARED
-//! `__proto__` is no key of zod's shape at all (`shape.__proto__ = …` set
-//! the shape's prototype), so it is never checked, nor counted as declared.
+//! A reply is a map: every key is its own, `__proto__` and `constructor`
+//! included, and a declared field the reply leaves out is absent.
 
 use crate::extract::spec::NodeSpec;
 use crate::js::{self, Js, JsObject};
@@ -163,7 +155,7 @@ impl Parse {
         }
         for (k, value) in object.entries() {
             if k != key {
-                out.assign(k.clone(), value.clone());
+                out.set(k.clone(), value.clone());
             }
         }
         Js::object(out)
@@ -204,14 +196,14 @@ impl Parse {
         let mut declared: Vec<(String, CallDeclared<'_>)> = Vec::new();
         let fields = stage.into_iter().flat_map(|s| &s.fields).map(|f| (f.name.clone(), CallDeclared::Field(f)));
         let children = stage.into_iter().flat_map(|s| &s.children).map(|c| (c.name.clone(), CallDeclared::Child(c)));
-        for (key, kind) in fields.chain(children).filter(|(key, _)| key != "__proto__") {
+        for (key, kind) in fields.chain(children) {
             js::insert_in_object_order(&mut declared, key, kind);
         }
         let declared_names: Vec<String> = declared.iter().map(|(k, _)| k.clone()).collect();
         let before = self.issues.len();
         let mut out = JsObject::new();
         for (key, kind) in &declared {
-            let raw = object.get(key).cloned().or_else(|| js::is_object_prototype_name(key).then(|| js::plain_property(object, key)));
+            let raw = object.get(key).cloned();
             let given = raw.clone().unwrap_or(Js::Undefined);
             let parsed = self.at(PathKey::Key(key.clone()), |p| match kind {
                 CallDeclared::Field(field) => p.call_field(field.type_.as_ref(), &given, &format!("{}.{}", spec.name, field.name)),
@@ -227,7 +219,7 @@ impl Parse {
         }
         for (key, value) in object.entries() {
             if !declared_names.contains(key) {
-                out.assign(key.clone(), value.clone());
+                out.set(key.clone(), value.clone());
             }
         }
         if self.issues.len() == before && !declared.is_empty() {
@@ -342,7 +334,6 @@ fn received(value: &Js) -> &'static str {
         Js::Array(_) => "array",
         // A reply is JSON: it holds neither.
         Js::Object(_) | Js::Record(_) | Js::File(_) => "object",
-        Js::Function(_) => "function",
     }
 }
 

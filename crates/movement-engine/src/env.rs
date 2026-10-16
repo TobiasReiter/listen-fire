@@ -5,7 +5,8 @@
 //! stand for themselves, a list is `["l", [items…]]` and an object
 //! `["o", [[key, value]…]]` (its keys in the object's own order). What
 //! JSON cannot say crosses as the nearest thing it can: `undefined`, `NaN`,
-//! `±Infinity` and `-0` are `null`, a lone surrogate is U+FFFD. Nothing
+//! `±Infinity` and `-0` are `null` (a member holding `undefined` is left
+//! out, as `JSON.stringify` leaves it), a lone surrogate is U+FFFD. Nothing
 //! crosses by identity: an object reached twice is written twice.
 //!
 //! A value is either data or an engine object (a record), and the two
@@ -267,7 +268,7 @@ impl Encoder<'_> {
 
     fn tree(&mut self, value: &Js) -> Json {
         match value {
-            Js::Undefined | Js::Null | Js::Function(_) => Json::Null,
+            Js::Undefined | Js::Null => Json::Null,
             Js::Bool(b) => json!(b),
             Js::Number(n) if !n.is_finite() || (*n == 0.0 && n.is_sign_negative()) => Json::Null,
             Js::Number(n) => json!(n),
@@ -303,7 +304,10 @@ impl Encoder<'_> {
             Js::File(file) => json!(["F", file.id]),
             Js::Array(array) => json!(["l", array.items().iter().map(|item| self.tree(item)).collect::<Vec<_>>()]),
             Js::Object(object) => {
-                json!(["o", object.entries().iter().map(|(k, v)| json!([wire_text(k), self.tree(v)])).collect::<Vec<_>>()])
+                // A member holding `undefined` is left out, as `JSON.stringify`
+                // leaves it out.
+                let entries = object.entries().iter().filter(|(_, v)| !matches!(v, Js::Undefined));
+                json!(["o", entries.map(|(k, v)| json!([wire_text(k), self.tree(v)])).collect::<Vec<_>>()])
             }
         }
     }
@@ -330,16 +334,13 @@ pub fn json_round_trip(value: &Js) -> Js {
     match value {
         Js::Number(n) if !n.is_finite() => Js::Null,
         Js::Number(n) if *n == 0.0 => Js::Number(0.0),
-        // `JSON.stringify` writes a function nowhere: null in a list, no key
-        // in an object, and `undefined` alone.
-        Js::Function(_) => Js::Undefined,
         Js::Array(list) => Js::array(
-            list.items().iter().map(|item| if matches!(item, Js::Undefined | Js::Function(_)) { Js::Null } else { json_round_trip(item) }).collect(),
+            list.items().iter().map(|item| if matches!(item, Js::Undefined) { Js::Null } else { json_round_trip(item) }).collect(),
         ),
         Js::Object(object) => {
             let mut copy = JsObject::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined | Js::Function(_)) {
+                if !matches!(v, Js::Undefined) {
                     copy.set(k.clone(), json_round_trip(v));
                 }
             }
@@ -371,7 +372,7 @@ pub fn json_of_js(value: &Js) -> Json {
 
 fn json_of_tree(value: &Js) -> Json {
     match value {
-        Js::Undefined | Js::Null | Js::Function(_) => Json::Null,
+        Js::Undefined | Js::Null => Json::Null,
         // A callback's, a shape position's or a resource's binding object
         // is data, written as it is; any other record is read down to its
         // fields wherever one is written out.
@@ -390,7 +391,7 @@ fn json_of_tree(value: &Js) -> Json {
         Js::Object(object) => {
             let mut map = Map::new();
             for (k, v) in object.entries() {
-                if !matches!(v, Js::Undefined | Js::Function(_)) {
+                if !matches!(v, Js::Undefined) {
                     map.insert(k.clone(), json_of_tree(v));
                 }
             }

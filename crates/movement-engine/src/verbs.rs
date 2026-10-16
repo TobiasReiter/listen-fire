@@ -258,7 +258,7 @@ impl Run<'_> {
                 if let Js::Object(written) = record.get("writtenValues") {
                     let mut written = JsObject::clone_of(&written);
                     for key in keys {
-                        if written.get(&key).is_some() || js::is_object_prototype_name(&key) {
+                        if written.get(&key).is_some() {
                             written.set(key.clone(), js::object_property(match &fresh { Js::Object(f) => f, _ => unreachable!("keys come of an object") }, &key));
                         }
                     }

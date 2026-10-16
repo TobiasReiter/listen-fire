@@ -18,6 +18,11 @@ pub fn decode(json: &Json) -> Result<Js, String> {
     Decoder::default().value(json)
 }
 
+/// A recorded value as the engine's wire carries it now.
+pub fn plain(json: &Json) -> Json {
+    movement_engine::env::encode_plain(&decode(json).expect("a recorded value"))
+}
+
 pub fn encode(value: &Js) -> Json {
     Encoder::default().value(value)
 }

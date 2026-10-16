@@ -626,11 +626,9 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
             object_of(vec![("kind", Js::str("list")), ("of", Js::array(of))])
         }
         Js::Object(dict) => {
-            // `of[key] = …`: an own `__proto__` key sets the prototype, which
-            // the park's JSON leaves out.
             let mut of = JsObject::new();
             for (key, item) in dict.entries() {
-                of.assign(key.clone(), serialize_value(run, item, park)?);
+                of.set(key.clone(), serialize_value(run, item, park)?);
             }
             object_of(vec![("kind", Js::str("map")), ("of", Js::object(of))])
         }
@@ -639,29 +637,14 @@ fn serialize_value(run: &Run<'_>, value: &Js, park: &mut ParkWriter) -> Result<J
 }
 
 /// `assertJsonSerializable`: the value as `JSON.parse(JSON.stringify(…))`
-/// hands it back, a function anywhere in it refused by the key it sits
-/// under.
+/// hands it back.
 fn json_serializable(value: &Js, at: &str) -> Result<Js, Failure> {
-    fn function_key(value: &Js, key: &str) -> Option<String> {
-        match value {
-            Js::Function(_) => Some(key.to_string()),
-            Js::Array(list) => list.items().iter().enumerate().find_map(|(i, item)| function_key(item, &i.to_string())),
-            Js::Object(object) => object.entries().iter().find_map(|(k, item)| function_key(item, k)),
-            _ => None,
-        }
-    }
     // A record left in a value no `holdsRecords` walk reaches (under an
     // object a filing gave a prototype): the TypeScript writes its binding
     // object's own keys as data — the event's, a block's returned records',
     // as this does; any other holds what only the TypeScript engine has.
     if let Err(kind) = crate::js::try_json_stringify(value, 0) {
         return Err(Failure::unreproduced(&format!("{at}: parking a record ({}) as the data of its binding object", crate::record::describe_kind(&kind)), "the TypeScript engine writes its read seam and schema"));
-    }
-    if let Some(key) = function_key(value, "") {
-        return Err(Failure::engine(
-            "MOVENG_PARK_NONSERIALIZABLE",
-            format!("{at}: value is not JSON-serialisable ('{key}' is a function) — a parked scope must be durable."),
-        ));
     }
     Ok(json_round_trip(value))
 }
@@ -1411,8 +1394,7 @@ mod tests {
         for state in [parked_state(&run, "s0", None, &scope), suspended_state(&run, "s0", &scope)] {
             let state = crate::env::encode_plain(&state.expect("a picked record parks"));
             let text = state.to_string();
-            assert!(text.contains(r#"[["kind","sourcePosition"],["position",null],["read",["o",[["instanceName","kg"]]]), "{text}");
-            assert!(text.contains(r#"[["instanceName","kg"]]"#), "{text}");
+            assert!(text.contains(r#"[["kind","sourcePosition"],["read",["o",[["instanceName","kg"]]]]"#), "{text}");
         }
     }
 

@@ -40,12 +40,10 @@ impl Sent {
                     .as_array()
                     .expect("entries")
                     .iter()
-                    .filter(|e| &e[1] != &json!(["u"]))
                     .map(|e| (e[0].as_str().expect("a key").to_string(), self.plain(&e[1])))
                     .collect(),
             ),
             Some("l") => Json::Array(items[1].as_array().expect("items").iter().map(|i| self.plain(i)).collect()),
-            Some("u") | Some("n") => Json::Null,
             _ => integral(wire),
         }
     }
@@ -63,13 +61,11 @@ impl Sent {
                     .as_array()
                     .expect("entries")
                     .iter()
-                    .filter(|e| &e[1] != &json!(["u"]))
                     .map(|e| format!("{}:{}", serde_json::to_string(&e[0]).expect("a key"), self.text(&e[1])))
                     .collect();
                 format!("{{{}}}", members.join(","))
             }
             Some("l") => format!("[{}]", items[1].as_array().expect("items").iter().map(|i| self.text(i)).collect::<Vec<_>>().join(",")),
-            Some("u") | Some("n") => "null".into(),
             _ => serde_json::to_string(wire).expect("JSON"),
         }
     }
@@ -198,7 +194,7 @@ impl Host<'_> {
                 let field = args["fieldId"].as_str().expect("a field").to_string();
                 let data = self.sent.member(&position, "identity").and_then(|identity| self.sent.member(identity, "data"));
                 match data.and_then(|data| self.sent.member(data, &field)) {
-                    Some(value) if value != &json!(["u"]) => value.clone(),
+                    Some(value) => value.clone(),
                     _ => Json::Null,
                 }
             }
@@ -346,7 +342,7 @@ fn run_handles(native: bool) {
             })
             .collect();
         let mut host = Host {
-            sent: Sent::default(),
+            sent: Sent,
             world: &case["world"],
             check: (!native).then_some(&case["check"]),
             companies,

@@ -79,7 +79,7 @@ pub fn file_fields_of(fields: &JsObject) -> Option<Js> {
     let mut out: Option<JsObject> = None;
     for (key, value) in fields.entries() {
         if holds_file(value) {
-            out.get_or_insert_with(JsObject::new).assign(key.clone(), file_field_value(value));
+            out.get_or_insert_with(JsObject::new).set(key.clone(), file_field_value(value));
         }
     }
     out.map(Js::object)
@@ -94,7 +94,7 @@ fn file_field_value(value: &Js) -> Js {
         Js::Object(dict) if crate::js::is_dict(value) => {
             let mut members = JsObject::new();
             for (key, item) in dict.entries() {
-                members.assign(key.clone(), file_field_value(item));
+                members.set(key.clone(), file_field_value(item));
             }
             of("map", Js::object(members))
         }

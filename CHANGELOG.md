@@ -273,7 +273,14 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   identity: an adapter that hands back the same object twice hands the engine two equal maps,
   and an object it changes after answering is not seen to change. A built-in function or
   `Object.prototype` no longer crosses; an adapter answering one is refused as any other
-  non-JSON value is.
+  non-JSON value is. A map member holding nothing is left out, as `JSON.stringify` leaves it.
+- **A map is a map.** `__proto__` is an ordinary key and name: `{ __proto__: 1 }` holds it, a
+  spread copies it, GROUPBY and KEYBY file under it, and a binding, a parameter, a field or a node
+  may be called `__proto__` (`MOV_NAME_PROTO` and `MOV_SHAPE_FIELD_PROTO` now apply before
+  version 5 only). Reading a key a map lacks is absent, whatever its name: `m.constructor` and
+  `m.toString` were JavaScript's built-ins. `TEXT(m)` is `"[object Object]"` whatever keys `m`
+  holds (a `toString` key no longer changes it). An extraction reply's field named after a
+  built-in (`constructor`) reads as the reply wrote it.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

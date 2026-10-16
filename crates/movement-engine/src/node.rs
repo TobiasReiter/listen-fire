@@ -453,7 +453,7 @@ impl Run<'_> {
                 Some(Binding::Value(held)) if crate::js::is_dict(&held.value) => {
                     let Js::Object(map) = &held.value else { return Ok(None) };
                     // `held[key] ?? null`.
-                    let value = match crate::js::plain_property(map, key) {
+                    let value = match crate::js::object_property(map, key) {
                         value if value.is_nullish() => Js::Null,
                         value => value,
                     };
