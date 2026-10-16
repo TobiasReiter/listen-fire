@@ -28,6 +28,8 @@ const spec: Parameters<typeof mockCatalog>[0] = {
   credentials: { crm_cred: { adapter: 'attio' } },
   plugins: {
     lookup: { args: ['q', 'limit'], argTypes: { q: 'text', limit: 'number' }, requiredArgs: ['q'], effects: { ai: true }, output: { kind: 'value', type: 'text' } },
+    // A plugin that declares no output: before 5 it ran only as an extraction's stage.
+    enrich: { args: ['q'], argTypes: { q: 'text' }, requiredArgs: ['q'] },
   },
 };
 const catalog = mockCatalog(spec);
@@ -65,6 +67,24 @@ describe('version 5 checker leftovers, in both checkers', () => {
     expect(d?.code).toBe('MOV_TRANSFORM_HOP_RETIRED');
     expect(d?.message).toContain("'out = lookup(q)'");
     expect(d?.message).not.toContain('q:');
+  });
+
+  it('no #transform retirement suggests the retired extraction stage', () => {
+    const messages = [
+      ...check(V5('  e = crm-[k:companies]->-[:#transform { plugin: "lookup" }]->'), 5),
+      ...check(V5('  e = crm-[k:companies]->-[:#transform { plugin: "enrich" }]->'), 5),
+      ...check(V5('  e = crm-[k:companies]->-[:#transform { plugin: "nothing" }]->'), 5),
+      ...check(V5('  e = crm-[k:companies]->-[:#transform]->'), 5),
+      ...check(V5('  e = crm-[k:companies]->-[:#other]->'), 5),
+    ].filter((d) => d.code.endsWith('_RETIRED'));
+    expect(messages.length).toBeGreaterThanOrEqual(5);
+    for (const { message } of messages) {
+      expect(message).not.toContain('through');
+      expect(message).not.toContain('extract from');
+      expect(message).not.toMatch(/\w+: …/);
+    }
+    // A stage-only plugin is called like any other.
+    expect(check(V5('  e = crm-[k:companies]->-[:#transform { plugin: "enrich" }]->'), 5)[0]?.message).toContain("'out = enrich(q)'");
   });
 
   it('Text.lower inside walk brackets is one finding, its fix LOWER', () => {

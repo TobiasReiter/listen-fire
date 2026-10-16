@@ -3521,15 +3521,12 @@ const RESERVED_NAME_PREFIX = '#';
 
 /** The `#transform` hop's plugin as what it is since language version 5: a
  *  function, imported and called, its declared output the call's value. A
- *  call writes what a stage would have been fed (the required `fedArgs`), and
- *  a plugin no call can run — one fed only by an extraction, or one that has
- *  not declared what it does or hands back — is a `through [ … ]` stage. */
+ *  call writes what a stage would have been fed (the required `fedArgs`).
+ *  Every plugin is called so from 5, a stage-only one too: the extraction
+ *  stage (`through [ … ]`) went with the extraction keyword. */
 function transformHopAsFunction(plugin: string, spec: PluginSpec): string {
   const lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
   const name = spellName(plugin);
-  if (spec.effects === undefined || spec.fedByExtraction === true || spec.output === undefined) {
-    return `${lead}, but '${plugin}' runs only as a stage of an extraction: '${importLine(plugin, 'plugins')}', then 'extract from [ … ] through [${name}] { … }'`;
-  }
   // Its arguments by position, each written as the parameter it is.
   const args = pluginPositionalParams(spec, 'plain').join(', ');
   return `${lead}: import it and call it, and bind what it hands back like any function's result — '${importLine(plugin, 'plugins')}', then 'out = ${name}(${args.length > 0 ? args : '…'})'`;
@@ -3608,7 +3605,7 @@ function fileEdgesOf(schema: InstanceSchema, positions: readonly string[]): stri
 function metaHopRetiredMessage(label: string): string {
   const lead = `'-[:${label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares`;
   if (label === '#transform') {
-    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+    return `${lead}. A plugin is a function: import it and call it ('import { fetch_url } from plugins', then 'page = fetch_url(…)')`;
   }
   if (label === '#linked' || label.startsWith('#linked ')) {
     return `${lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> { … }', then 'rec.<field>')`;
@@ -3616,7 +3613,7 @@ function metaHopRetiredMessage(label: string): string {
   if (label.split(/[:\s]/, 1)[0] === '#resources') {
     return `${lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files`;
   }
-  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(url: …)')`;
+  return `${lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import { fetch_url } from plugins', then 'page = fetch_url(…)')`;
 }
 
 /** The hops of a type's address, read by the expression grammar — none when

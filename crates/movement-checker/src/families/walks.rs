@@ -1281,15 +1281,12 @@ impl crate::checker::Checker<'_> {
     }
 }
 
-/// `transformHopAsFunction` (language version 5): a plugin is a function, or
-/// a stage of an extraction when it has no output of its own.
+/// `transformHopAsFunction` (language version 5): a plugin is a function,
+/// a stage-only one too (the extraction stage went with the keyword).
 fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::types::PluginSpec) -> String {
     use crate::families::names::{import_line, spell_name};
     let lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
     let name = spell_name(plugin);
-    if spec.effects.is_none() || spec.fed_by_extraction == Some(true) || spec.output.is_none() {
-        return format!("{lead}, but '{plugin}' runs only as a stage of an extraction: '{}', then 'extract from [ … ] through [{name}] {{ … }}'", import_line(plugin, "plugins"));
-    }
     // Its arguments by position, each written as the parameter it is.
     let args = spec.positional_params(movement_parser::catalog::plugin_args::PluginCallSite::Plain).join(", ");
     format!(
@@ -1303,7 +1300,7 @@ fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::type
 fn meta_hop_retired_message(label: &str) -> String {
     let lead = format!("'-[:{label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares");
     if label == "#transform" {
-        return format!("{lead}. A plugin is a function: import it and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')");
+        return format!("{lead}. A plugin is a function: import it and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(…)')");
     }
     if label == "#linked" || label.starts_with("#linked ") {
         return format!("{lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> {{ … }}', then 'rec.<field>')");
@@ -1311,5 +1308,5 @@ fn meta_hop_retired_message(label: &str) -> String {
     if label.split(|c: char| c == ':' || c.is_whitespace()).next() == Some("#resources") {
         return format!("{lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files");
     }
-    format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')")
+    format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(…)')")
 }
