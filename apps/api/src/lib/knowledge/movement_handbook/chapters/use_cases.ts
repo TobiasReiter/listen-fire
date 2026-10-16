@@ -54,12 +54,12 @@ Read the message's \`From\` for this, not its \`To\` — on a forward, \`To\` is
 The substance of a dealflow message is in the deck, and a deck arrives two ways. Read **both**:
 
 \`\`\`
-decks     = vc_url_retrieval(text: msg.Body, email: @user_email)
+decks     = vcUrlRetrieval(text: msg.Body, email: @user_email)
 content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
 companies = extract(content, Company, { tier: "careful" })
 \`\`\`
 
-The content carries the body *and* the attached files (a PDF, a slide deck, a voice note whose spoken words are transcribed). \`vc_url_retrieval\` covers the other channel — it finds the deck *links* in the body, works out which are decks, and loads them. Extract from the body alone and the deck never reaches the model.
+The content carries the body *and* the attached files (a PDF, a slide deck, a voice note whose spoken words are transcribed). \`vcUrlRetrieval\` covers the other channel — it finds the deck *links* in the body, works out which are decks, and loads them. Extract from the body alone and the deck never reaches the model.
 
 The \`email\` argument gets past an *enter your email to view* gate. \`@user_email\` — the team member responsible for the run, resolved through forwarders — is right almost always; reach for \`@actor_email\`, the raw sender of the triggering message, only when the gated link was shared with that sender rather than with the team.
 
@@ -71,7 +71,7 @@ Everything after the extraction is the ordinary shape: each founder written alon
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
-import { vc_url_retrieval } from plugins
+import { vcUrlRetrieval } from plugins
 import { acme } from credentials
 
 inbox = connect email
@@ -92,7 +92,7 @@ node Introducer: "the person who sent or forwarded this message to us" {
 }
 
 function \`Log Dealflow\`(msg: <inbox-[:Email]->>) {
-  decks     = vc_url_retrieval(text: msg.Body, email: @user_email)
+  decks     = vcUrlRetrieval(text: msg.Body, email: @user_email)
   content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
   companies = extract(content, Company, { tier: "careful" })
   introducer = extractOne(content, Introducer, { tier: "careful" })

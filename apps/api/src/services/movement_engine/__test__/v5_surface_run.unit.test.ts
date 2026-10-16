@@ -211,3 +211,33 @@ describe('a presence test on the Rust engine from version 5', () => {
     expect(await outcome(v5, 5, { MOVEMENT_ENGINE_V5_ON_TS: 'true' })).toBe(old);
   });
 });
+
+// From version 5 `count(xs)` counts every item, an empty one included, as
+// TypeScript's `.length` does; versions 1-4 skip empty items. Both engines.
+describe('count from version 5', () => {
+  const outcome = async (source: string, version: LanguageVersion, config: Config): Promise<string> => {
+    try {
+      await under(config, () => runMovement(inputOf(source, version, `run-count-${version}`)));
+      return 'ran';
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  const v4 = [
+    'import { email } from adapters',
+    'import { dealflow_inbox } from credentials',
+    'inbox = email(credentials: dealflow_inbox)',
+    'movement m(msg: <inbox-[:message]->>) {',
+    '  xs = [msg.`subject`, NULL, "b"]',
+    '  ERROR("counted ${COUNT(xs)}")',
+    '}',
+  ].join('\n');
+  const v5 = V5('  xs = [msg.subject, null, "b"]', '  fail("counted ${count(xs)}")');
+
+  it('counts the empty item under 5 on both engines, and skips it under 4', async () => {
+    expect(await outcome(v4, 4, BY_VERSION)).toContain('counted 2');
+    expect(await outcome(v5, 5, BY_VERSION)).toContain('counted 3');
+    expect(recorded.at(-1)).toMatchObject({ engine: 'rust', reason: 'admitted' });
+    expect(await outcome(v5, 5, { MOVEMENT_ENGINE_V5_ON_TS: 'true' })).toContain('counted 3');
+  });
+});

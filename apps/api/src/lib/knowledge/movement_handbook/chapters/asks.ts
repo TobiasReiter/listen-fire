@@ -191,16 +191,16 @@ r = race(
   },
 )
 
-first = r[0]
-if (first != null) {
+answered = r[0]
+if (answered != null) {
   general = only(chat-[g:Channels WHERE g.Name == "general"]->)
   if (general == null) { fail("no #general channel") }
-  write general-[:Messages]-> { Message: "approved in #\${first.channel} at \${first.at}" }
+  write general-[:Messages]-> { Message: "approved in #\${answered.channel} at \${answered.at}" }
 }
 \`\`\`
 
 - The slot already says which arm settled — \`r[0]\` is the first one written. Handing the identity back is for when it has to travel further: into a message, a write field, a comparison later on.
-- Return a dict to hand back more than one thing at once; its entries read by name afterwards (\`first.channel\`).
+- Return a dict to hand back more than one thing at once; its entries read by name afterwards (\`answered.channel\`).
 
 Wait on **different** things at once by giving each its own function, and take every answer rather than the first with \`all\`, which runs them at once:
 
@@ -427,12 +427,12 @@ function \`Which Place Answered\`(go: <runs-[:Invocation]->>) {
     },
   )
 
-  first = r[0]
-  if (first != null) {
+  answered = r[0]
+  if (answered != null) {
     general = only(team-[g:Channels WHERE g.Name == "general"]->)
     if (general == null) { fail("no #general channel") }
     write general-[:Messages]-> {
-      Message: "approved in #\${first.channel} at \${first.at}"
+      Message: "approved in #\${answered.channel} at \${answered.at}"
     }
   }
 }

@@ -10,12 +10,12 @@ export const WEB_RESEARCH_HANDBOOK_SECTION: HandbookSection = {
   title: 'Find the website — the record that arrived with no link',
   content: `## Find the website — the record that arrived with no link
 
-\`web_research\` works out a company's own website from its name and what the message said about it, checks the site really is that company, and loads it. Reach for it when a message names companies and only some of them come with a link.
+\`webResearch\` works out a company's own website from its name and what the message said about it, checks the site really is that company, and loads it. Reach for it when a message names companies and only some of them come with a link.
 
 ### the-shape
 
 \`\`\`
-import { web_research } from plugins
+import { webResearch } from plugins
 
 node Company: "each company named in this message" {
   name:        <text> "the company's name"
@@ -25,7 +25,7 @@ node Company: "each company named in this message" {
 }
 
 map(extract(content, Company), (c) => {
-  site = web_research(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
+  site = webResearch(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
   write crm-[:Companies]-> {
     unique by (FUZZY Name)
     Name:       c.name
@@ -38,7 +38,7 @@ It returns a record: \`website\`, the address it settled on, and \`text\`, the p
 
 ### passing-the-links
 
-Pass the record's \`website\` and \`linkedin\` and the research stands down for any record that has one — no search, no page, nothing spent. Leave them out and it researches every record, including the ones that already have a link (load those with \`fetch_url\`).
+Pass the record's \`website\` and \`linkedin\` and the research stands down for any record that has one — no search, no page, nothing spent. Leave them out and it researches every record, including the ones that already have a link (load those with \`fetchUrl\`).
 
 ### the-context-is-what-makes-it-work
 
@@ -53,12 +53,12 @@ Give it a real sentence and it resolves; give it a bare name and it declines. Bo
 `,
   engineClaims: [
     {
-      construct: 'web_research called per record beside a targeted fetch, the resolved address written and the page read by a second extraction',
+      construct: 'webResearch called per record beside a targeted fetch, the resolved address written and the page read by a second extraction',
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { fetch_url, web_research } from plugins
+import { fetchUrl, webResearch } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -77,8 +77,8 @@ node Profile: "the company" {
 function \`Intake\`(m: <inbox-[:Email]->>) {
   content = [m.Body]
   map(extract(content, Company), (c) => {
-    page    = fetch_url(url: c.website, email: @user_email)
-    site    = web_research(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
+    page    = fetchUrl(url: c.website, email: @user_email)
+    site    = webResearch(name: c.name, context: c.description, website: c.website, linkedin: c.linkedin)
     profile = extractOne([...content, Json.stringify(c), coalesce(page, site.text, "")], Profile)
     write crm-[:Companies]-> {
       unique by (FUZZY Name)

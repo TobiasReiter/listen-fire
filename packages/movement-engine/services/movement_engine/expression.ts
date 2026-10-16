@@ -1650,6 +1650,9 @@ export async function evalMovementExpr(
           // present landings, and a gathered scalar multiset counts the values
           // actually there. (Edge-position sets never carry nulls, so this is a
           // no-op for the traversal case — `EXISTS ≡ COUNT > 0` holds either way.)
+          // From version 5 a list's count is TypeScript's `.length`: every
+          // item, an empty one included.
+          if (ctx.languageVersion !== undefined && since(ctx.languageVersion, 5)) return { value: values.length, provenance };
           return { value: values.filter((v) => v != null).length, provenance };
         case 'sum':
           return {

@@ -100,7 +100,7 @@ The shape always goes after the content, so a second extraction with a different
 Enrich by composition: extract, map over the results, call plugins, extract again over what they returned, then merge.
 
 \`\`\`
-import { fetch_url, research } from plugins
+import { fetchUrl, research } from plugins
 
 node CompanyDetail: "the company" {
   summary: <text> "one line on what the company does"
@@ -117,7 +117,7 @@ content   = [m.Body]
 companies = extract(content, Company, { tier: "careful" })
 
 detailed = map(companies, (c) => {
-  page    = fetch_url(url: c.website)
+  page    = fetchUrl(url: c.website)
   more    = research(name: c.name, context: m.Subject, questions: "what the company does")
   details = extractOne([...content, Json.stringify(c), coalesce(page, ""), coalesce(more.dossier, "")], CompanyDetail, { tier: "careful" })
   return graph<Detailed> { ...c, ...details }
@@ -129,7 +129,7 @@ map(detailed, (d) => {
 })
 \`\`\`
 
-- A plugin is imported (\`import { fetch_url } from plugins\`) and called with named arguments. It returns a value: \`fetch_url\` the page's text, \`research\` a record read by name (\`more.summary\`, \`more.dossier\`). Anything it found nothing for is absent, so \`coalesce\` it before it goes into content. Each plugin's own chapter (\`plugin:…\`) says what it takes and returns.
+- A plugin is imported (\`import { fetchUrl } from plugins\`) and called with named arguments. It returns a value: \`fetchUrl\` the page's text, \`research\` a record read by name (\`more.summary\`, \`more.dossier\`). Anything it found nothing for is absent, so \`coalesce\` it before it goes into content. Each plugin's own chapter (\`plugin:…\`) says what it takes and returns.
 - \`graph<Detailed> { ...c, ...details }\` copies the record and then its detail as a snapshot you can walk and write from; the declaration decides which fields, and a nested node is followed through the record's edge of the same name. A later field wins.
 - \`details\` may be absent, so a field only it supplies may be too. A required field fed from it is refused when you save: declare it \`<text | null>\`, or write it after the spread with a fallback (\`summary: coalesce(details.summary, "")\`).
 - \`{ ...c, ...details }\` builds a dict instead, read with a dot. Use it when nothing needs to walk the result.
@@ -175,7 +175,7 @@ m-[a:Attachments]-> {
 }
 \`\`\`
 
-A document a plugin downloaded comes back on its result (\`vc_url_retrieval\`'s \`file\`), and is written the same way.
+A document a plugin downloaded comes back on its result (\`vcUrlRetrieval\`'s \`file\`), and is written the same way.
 `,
   engineClaims: [
     {
@@ -345,7 +345,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { fetch_url, research } from plugins
+import { fetchUrl, research } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -374,7 +374,7 @@ function \`Enrich\`(m: <inbox-[:Email]->>) {
   companies = extract(content, Company, { tier: "careful" })
 
   detailed = map(companies, (c) => {
-    page    = fetch_url(url: c.website)
+    page    = fetchUrl(url: c.website)
     more    = research(name: c.name, context: m.Subject, questions: "what the company does")
     details = extractOne([...content, Json.stringify(c), coalesce(page, ""), coalesce(more.dossier, "")], CompanyDetail, { tier: "careful" })
     return graph<Detailed> { ...c, ...details }
@@ -434,15 +434,15 @@ listen to runs {} fire \`Intake Documents\`
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { fetch_url, research, vc_url_retrieval } from plugins
+import { fetchUrl, research, vcUrlRetrieval } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
 
 function \`Enrich\`(m: <inbox-[:Email]->>) {
-  linked = vc_url_retrieval(text: m.Body)
+  linked = vcUrlRetrieval(text: m.Body)
   deck   = first(linked)
-  page   = fetch_url(url: "https://example.com")
+  page   = fetchUrl(url: "https://example.com")
   more   = research(name: m.Subject, questions: "what it does, which sector, where it is based")
   write crm-[:Companies]-> {
     unique by (FUZZY Name)
@@ -463,7 +463,7 @@ import { acme } from credentials
 inbox = connect email
 crm   = connect attio using acme
 
-import { fetch_url } from plugins
+import { fetchUrl } from plugins
 
 node Profile: "more about the company described last" {
   summary: <text> "one line on what the company does"
@@ -478,7 +478,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
   }, { tier: "careful", effort: "medium" })
 
   map(companies, (c) => {
-    page   = fetch_url(url: c.website)
+    page   = fetchUrl(url: c.website)
     detail = extractOne([...content, Json.stringify(c), coalesce(page, "")], Profile, { tier: "careful", effort: "medium" })
     write crm-[:Companies]-> {
       unique by (FUZZY Name)

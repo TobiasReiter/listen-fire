@@ -115,6 +115,17 @@ for byte; on text already in the version 5 spelling it changes nothing.
   the arm returned, as `AT([a, 2], 0).name` on a list does; `AT(r, 0) == null` is false. Under 4
   and earlier that slot read null while the check accepted the read, and a program pinned there
   still reads null. A move up across 5 warns a read of such a receipt (`MOV_RECEIPT_RECORD_SLOT`).
+- **`count(xs)` counts every item of a list, an empty one (null) included**, as TypeScript's
+  `.length` does. Why: `count` is the one way to ask a list's length from 5 (`LENGTH(xs)` is
+  rewritten to it), and `LENGTH` counted every item. Under 4 and earlier `COUNT` skips empty items,
+  and a program pinned there still does. A move up across 5 warns a count of a list that may hold an
+  empty item (`MOV_COUNT_COUNTS_EMPTY`). The rewrites `LENGTH(xs)` → `count(xs)` and `EXISTS(xs)` →
+  `count(xs) > 0` of a list keep the meaning, and are marked safe to apply automatically.
+- **`found != null` on the records a block returned says whether it returned any**, as
+  `EXISTS(found)` does. Why: from 5 `!= null` is how a program asks what `EXISTS` asked of a
+  value. Under 4 and earlier those records always counted as present, so the test was always true,
+  and a program pinned there still reads it so. A move up across 5 warns each such test
+  (`MOV_PRESENCE_OF_RETURNED`).
 - **`parallel` is retired for `all`** (`MOV_PARALLEL_RETIRED`). `all` is the same join with its
   functions passed as arguments, as TypeScript's `Promise.all` takes its promises:
   `r = await parallel([a, b])` is `r = all(a, b)`, which the diagnostic applies for arms written

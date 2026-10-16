@@ -11,14 +11,14 @@ export const VC_URL_RETRIEVAL_HANDBOOK_SECTION: HandbookSection = {
   title: 'URL retrieval — the links a message carries',
   content: `## URL retrieval — the links a message carries
 
-\`vc_url_retrieval\` reads a piece of text, finds every link in it, works out what each one is, and loads the ones worth loading.
+\`vcUrlRetrieval\` reads a piece of text, finds every link in it, works out what each one is, and loads the ones worth loading.
 
 ### where-to-put-it
 
 \`\`\`
-import { vc_url_retrieval } from plugins
+import { vcUrlRetrieval } from plugins
 
-pages     = vc_url_retrieval(text: msg.Body)
+pages     = vcUrlRetrieval(text: msg.Body)
 content   = [msg.Body, ...map(pages, (p) => coalesce(p.text, ""))]
 companies = extract(content, Company)
 \`\`\`
@@ -38,12 +38,12 @@ A slide deck behind a link comes back as a \`file\`, so the same write that atta
 
 ### scan-or-load
 
-\`vc_url_retrieval\` decides for itself which links are worth loading. \`fetch_url\` loads exactly the one link you name. Reach for this one when the links live in the message; reach for \`fetch_url\` when the link is a field a record already carries — a company's web address, a document link extracted alongside it. Calling this one once per record loads every link in the whole message for every record.
+\`vcUrlRetrieval\` decides for itself which links are worth loading. \`fetchUrl\` loads exactly the one link you name. Reach for this one when the links live in the message; reach for \`fetchUrl\` when the link is a field a record already carries — a company's web address, a document link extracted alongside it. Calling this one once per record loads every link in the whole message for every record.
 
 ### gated-links
 
 \`\`\`
-pages = vc_url_retrieval(text: msg.Body, email: @user_email)
+pages = vcUrlRetrieval(text: msg.Body, email: @user_email)
 \`\`\`
 
 \`email\` is typed into a link that demands one before it will show its content. A passcode written next to a link in the text is picked up from the text itself. Without an address, a gated link is skipped rather than guessed at.
@@ -51,7 +51,7 @@ pages = vc_url_retrieval(text: msg.Body, email: @user_email)
 ### Common mistakes
 
 - **Extracting from the body alone when the content is behind a link.** Nothing reads the linked page unless this call loads it into the content.
-- **Calling it per record to get a page per record.** It scans the whole text it is given. Name the link with \`fetch_url\` instead.
+- **Calling it per record to get a page per record.** It scans the whole text it is given. Name the link with \`fetchUrl\` instead.
 `,
   engineClaims: [
     {
@@ -60,7 +60,7 @@ pages = vc_url_retrieval(text: msg.Body, email: @user_email)
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { vc_url_retrieval } from plugins
+import { vcUrlRetrieval } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -71,7 +71,7 @@ node Company: "each company named in this message" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  pages   = vc_url_retrieval(text: m.Body, email: @user_email)
+  pages   = vcUrlRetrieval(text: m.Body, email: @user_email)
   content = [m.Body, ...map(pages, (p) => coalesce(p.text, ""))]
   map(extract(content, Company), (c) => {
     record = write crm-[:Companies]-> { unique by (Name), Name: c.name, Description: c.summary }

@@ -180,6 +180,15 @@ export const TypedDiagnosticCodes = {
    *  the record. The type is the same either way, so nothing else would tell
    *  the author. */
   RECEIPT_RECORD_SLOT: 'MOV_RECEIPT_RECORD_SLOT',
+  /** Warning, upgrade only: `found != null` (or `== null`) on a name bound to
+   *  the records a traversal block returned, in a program moving up across 5.
+   *  Before 5 those records always counted as present, so the test had one
+   *  answer; from 5 it says whether the block returned any, as `EXISTS` did. */
+  PRESENCE_OF_RETURNED: 'MOV_PRESENCE_OF_RETURNED',
+  /** Warning, upgrade only: `COUNT` of a list that may hold an empty item,
+   *  in a program moving up across 5. Before 5 it skipped empty items; from 5
+   *  it counts every item, as TypeScript's `.length` does. */
+  COUNT_COUNTS_EMPTY: 'MOV_COUNT_COUNTS_EMPTY',
   /** A read or traversal through a handle NOTHING HAS DESCRIBED
    *  (`PositionSchema.undescribed`) — an unnarrowed event's `record` edge
    *  landing on the meta type, a type no describe answered for.
@@ -1551,6 +1560,22 @@ function multiType(args: Array<FieldType | undefined>): FieldType | undefined {
   const shared = unifyValueTypes(members);
   if (shared === undefined || handleWithin(shared) === undefined) return undefined;
   return listOf(shared, 'ordered');
+}
+
+/** A list (or tuple) one of whose items may be empty — what `COUNT` skipped
+ *  before version 5 and counts from it. */
+function mayHoldEmptyItem(type: FieldType): boolean {
+  const variant = variantOf(stripAbsent(type));
+  const empty = (item: FieldType | null | undefined): boolean =>
+    item != null && (isMaybeAbsent(item) || variantOf(item).kind === 'absent');
+  switch (variant.kind) {
+    case 'list':
+      return empty(variant.of);
+    case 'tuple':
+      return variant.of.some(empty) || empty(variant.rest?.of);
+    default:
+      return false;
+  }
 }
 
 function unwrapList(type: FieldType): FieldType {
@@ -5344,6 +5369,13 @@ export class ExpressionTyping {
         const element = inner === undefined ? undefined : unwrapList(inner);
         switch (expr.fn) {
           case 'count':
+            if (inner !== undefined && mayHoldEmptyItem(inner) && this.upgradeCrosses(5)) {
+              this.report(
+                TypedDiagnosticCodes.COUNT_COUNTS_EMPTY,
+                `since ${describeLanguageVersion(5)} 'count' counts every item of a list, an empty one (null) included, as TypeScript's '.length' does; before, it skipped empty items, and this list may hold one. If the program relied on the old count, count only the items that are there (\`${this.code('count(filter(xs, (x) => x != null))')}\`), then upgrade.`,
+                'upgrade',
+              );
+            }
             return 'number';
           case 'sum':
           case 'avg':
@@ -6160,6 +6192,7 @@ export class ExpressionTyping {
     ];
     for (const [subject, subjectType] of sides) {
       if (isNullLiteral(subject)) continue;
+      this.reportPresenceOfReturned(subject, op);
       if (this.refuseTextPresenceTest(subject, op === 'eq' ? 'absent' : 'present')) continue;
       const label = subjectLabel(subject);
       if (label === undefined) continue;
@@ -6177,6 +6210,20 @@ export class ExpressionTyping {
         'info',
       );
     }
+  }
+
+  /** The block's returned records, tested against null on a move up across
+   *  5: the answer was fixed before (present) and is the real one from 5. */
+  private reportPresenceOfReturned(subject: Expression, op: 'eq' | 'neq'): void {
+    const name = bareName(subject);
+    if (name === undefined || this.options.pluralOrderOf?.(name) === undefined) return;
+    if (!this.upgradeCrosses(5)) return;
+    const test = `${name} ${op === 'eq' ? '==' : '!='} null`;
+    this.report(
+      TypedDiagnosticCodes.PRESENCE_OF_RETURNED,
+      `since ${describeLanguageVersion(5)} '${test}' says whether the block returned any records into '${name}'; before, a block's returned records always counted as present, so it was ${op === 'eq' ? 'always false' : 'always true'}. If the program relied on the old answer, change it, then upgrade.`,
+      'upgrade',
+    );
   }
 
   /**

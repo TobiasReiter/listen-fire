@@ -2544,12 +2544,16 @@ impl Parser {
 
     /// A v5 built-in whose canonical form the call's structure cannot hold
     /// (`sort`'s key function, `ai`'s settings, `Text.includes` as an
-    /// operator): read as an expression, whose slot is rewritten whole.
+    /// operator): read as an expression, whose slot is rewritten whole. So is
+    /// one whose canonical name is a family member (`Date.today` is
+    /// `DATE.TODAY`), because versions 1–4 read `DATE.TODAY(…)` as an
+    /// expression, never as a call, and only that reading knows the families.
     fn rewritten_whole(&self, callee: &str) -> bool {
         use crate::surface::table::{Shape, by_v5};
         since(self.version, 5)
             && by_v5(callee).is_some_and(|row| {
-                matches!(row.shape, Shape::SortKey | Shape::AiTier | Shape::Contains | Shape::ListIncludes | Shape::JsonStringify)
+                row.canonical.contains('.')
+                    || matches!(row.shape, Shape::SortKey | Shape::AiTier | Shape::Contains | Shape::ListIncludes | Shape::JsonStringify)
             })
     }
 
@@ -3516,11 +3520,24 @@ impl Parser {
             self.skip_all_ws();
             // From version 5 `callback(() => f(x))` is the deferred call
             // `callback(f(x))` versions 1–4 write.
+            // With parameters, the acting side fills them, and the call is the
+            // closure's one statement: `callback((d: <date>) => f(x, d))` is
+            // the closure `callback((d: <date>) => { f(x, d) })` versions 1–4
+            // write, so the call is checked against what `d` is declared as.
             if since(self.version, 5) && !self.is('{') {
-                if !params.is_empty() {
-                    return self.fail("a callback's deferred call takes no parameters: `callback(() => f(x))`");
+                if params.is_empty() {
+                    return self.parse_named_callback(start);
                 }
-                return self.parse_named_callback(start);
+                let call_start = self.pos;
+                let callee = self.read_callee("the function a callback calls")?;
+                self.skip_inline_ws();
+                self.expect("(", &format!("to open the call to '{callee}'"))?;
+                let args = self.parse_call_args(&callee, call_start)?;
+                let call = self.call_node(callee, args, call_start);
+                return Ok(CallbackSubject::Inline {
+                    closure: ClosureExpression { params, return_type: None, body: vec![Statement::Call(call)], span: self.span_from(closure_start) },
+                    span: self.span_from(start),
+                });
             }
             let body = self.parse_block_body("a callback body")?;
             return Ok(CallbackSubject::Inline {

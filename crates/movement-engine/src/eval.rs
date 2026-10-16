@@ -730,6 +730,9 @@ impl<'a> Evaluator<'a> {
                 }
                 present.first().map_or(Js::Null, |v| (*v).clone())
             }
+            // From version 5 a list's count is TypeScript's `.length`: every
+            // item, an empty one included.
+            AggregationFunction::Count if movement_parser::version::since(self.language_version, 5) => Js::Number(values.len() as f64),
             AggregationFunction::Count => Js::Number(values.iter().filter(|v| !v.is_nullish()).count() as f64),
             AggregationFunction::Sum => Js::Number(sum(&values)),
             AggregationFunction::Avg if values.is_empty() => Js::Null,

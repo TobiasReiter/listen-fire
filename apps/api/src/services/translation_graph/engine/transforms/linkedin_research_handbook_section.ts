@@ -10,12 +10,12 @@ export const LINKEDIN_RESEARCH_HANDBOOK_SECTION: HandbookSection = {
   title: 'LinkedIn activity — what a person is up to',
   content: `## LinkedIn activity — what a person is up to
 
-\`linkedin_research\` takes a person's LinkedIn address and works out what they are currently doing — the role and organisation their profile shows, plus recent public activity found on the web — then writes it up in a paragraph you can read.
+\`linkedinResearch\` takes a person's LinkedIn address and works out what they are currently doing — the role and organisation their profile shows, plus recent public activity found on the web — then writes it up in a paragraph you can read.
 
 ### the-shape
 
 \`\`\`
-import { linkedin_research } from plugins
+import { linkedinResearch } from plugins
 
 node Person: "each person named in this message" {
   name:     <text> "the person's name"
@@ -23,7 +23,7 @@ node Person: "each person named in this message" {
 }
 
 map(extract(content, Person), (p) => {
-  activity = linkedin_research(url: p.linkedin)
+  activity = linkedinResearch(url: p.linkedin)
   write crm-[:People]-> {
     unique by (FUZZY Name)
     Name:          p.name
@@ -53,12 +53,12 @@ A result counts as this person's only when it is consistent with their own profi
 `,
   engineClaims: [
     {
-      construct: 'linkedin_research called per person inside map, its write-up filled into a record',
+      construct: 'linkedinResearch called per person inside map, its write-up filled into a record',
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
-import { linkedin_research } from plugins
+import { linkedinResearch } from plugins
 
 inbox = connect email
 crm   = connect attio using acme
@@ -70,7 +70,7 @@ node Person: "each person named in this message" {
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   map(extract([m.Body], Person), (p) => {
-    activity = linkedin_research(url: p.linkedin)
+    activity = linkedinResearch(url: p.linkedin)
     write crm-[:Companies]-> {
       unique by (FUZZY Name)
       Name:          p.name

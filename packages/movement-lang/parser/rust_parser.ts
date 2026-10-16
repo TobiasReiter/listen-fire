@@ -50,7 +50,8 @@ export function rustParseNestedCall(
  *  (those arrive parsed, under their program's version): it reads as versions
  *  1–4 do (version 0), so a probe's text never takes the v5 surface's
  *  meaning — unless the caller reads it as a part of a program, under that
- *  program's `languageVersion` (an engine probing a block head's hops). */
+ *  program's `languageVersion` (an engine probing a block head's hops, a
+ *  checker reading a type's hops), which reads as its slots did. */
 export function rustParseExpression(source: string, languageVersion = 0): MExpr {
   const { ok, json } = callParser('parse_expression', source, [languageVersion]);
   if (!ok) throw expressionError(json, 'parse_expression');

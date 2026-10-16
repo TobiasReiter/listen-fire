@@ -106,6 +106,8 @@ ok = true
 
 - An `if` condition is parenthesised. `rec IS <T>` is `rec is <T>` outside brackets.
 - `exists(…)` takes a walk only. On a value it is refused with the `!= null` rewrite. `x != null` narrows `x` inside the arm, and `if (x == null) { fail(…) }` narrows it after, as before.
+- `count(xs)` counts every item of a list, an empty one (null) included, as TypeScript's `.length` does; under 4 and earlier `COUNT` skipped empty items. A move up across 5 warns a count of a list that may hold an empty item (`MOV_COUNT_COUNTS_EMPTY`). To count only the items that are there: `count(filter(xs, (x) => x != null))`.
+- One answer changes. `found != null` on the records a block returned (`found = c-[m:Messages]-> { return m }`) says whether the block returned any, as `EXISTS(found)` did. Under 4 and earlier those records always counted as present, so `found != NULL` was always true. A move up across 5 warns each such test (`MOV_PRESENCE_OF_RETURNED`): if the program relied on the old answer, change it, then upgrade.
 - Unchanged: `== != < <= > >=`, arithmetic, `"${…}"`, `[a, ...xs]`, `{ k: v }`, durations, `@` fields, and `Owner ?: x` in a write.
 
 ### Walk brackets
@@ -397,6 +399,7 @@ r = all(a, () => { … })
 | `MOV_COMBINATOR_ARMS_ARE_ARGUMENTS` | [`all` and `race`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (arms in a list; the fix drops the brackets; since 5) |
 | `MOV_COMBINATOR_NO_AWAIT` | [`all` and `race`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (`await race(…)`, `await all(…)`; the fix drops the `await`; since 5) |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#5-delete-only-where-the-system-declares-it) |
+| `MOV_COUNT_COUNTS_EMPTY` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a count of a list that may hold an empty item) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#5-delete-only-where-the-system-declares-it) |
 | `MOV_EXPR_CLOSURE_POSITION` | [A closure is not data](#12-a-closure-is-not-data) (under 4 and earlier; under 5 a closure written in a list or map is `MOV_CLOSURE_NOT_DATA`) |
 | `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods) (a dotted call of no built-in, `box.g()` included; version 5) |
@@ -404,6 +407,7 @@ r = all(a, () => { … })
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#11-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) |
 | `MOV_PARALLEL_RETIRED` | [`parallel` is retired for `all`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (with the `all` rewrite for arms written down) |
+| `MOV_PRESENCE_OF_RETURNED` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a null test on a block's returned records) |
 | `MOV_RECEIPT_RECORD_SLOT` | [A record a combinator arm hands back reads as itself](#10-a-record-a-combinator-arm-hands-back-reads-as-itself) (warning, on a move up across 5) |
 | `MOV_RETURN_TYPE` | [A declared return takes what the body may return](#8-a-declared-return-takes-what-the-body-may-return) (a body's returns that may hold a record or file; since 5) |
 | `MOV_RESOURCES_NOT_EXTRACTED` | [`_resources` only on an extraction's result](#6-_resources-only-on-an-extractions-result) |

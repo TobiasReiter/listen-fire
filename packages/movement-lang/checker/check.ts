@@ -3347,11 +3347,11 @@ function nodeMisfitAgainst(
  * is what keeps a missing schema from reading as a broken movement.
  *
  */
-function addressOfTypeRef(hopsRaw: string): EventAddress | undefined {
+function addressOfTypeRef(hopsRaw: string, languageVersion: LanguageVersion): EventAddress | undefined {
   // ONE hop, shared reading (`eventAddressOfHops`). An event edge is not
   // traversable, so there is nothing to walk on from the event node at author
   // time — the address names the edge and pins it.
-  return eventAddressOfHops(hopsRaw);
+  return eventAddressOfHops(hopsRaw, languageVersion);
 }
 
 /**
@@ -3376,9 +3376,10 @@ function addressOfTypeRef(hopsRaw: string): EventAddress | undefined {
 function ruledOutVariant(
   type: Pick<TypeRef, 'position' | 'hopsRaw'>,
   union: Extract<PositionTypeRef, { kind: 'union' }>,
+  languageVersion: LanguageVersion,
 ): string | undefined {
   if (type.hopsRaw === undefined) return type.position;
-  const test = addressOfTypeRef(type.hopsRaw);
+  const test = addressOfTypeRef(type.hopsRaw, languageVersion);
   if (test === undefined) return undefined;
   const subjectAddress: EventAddress = union.address ?? { event: union.union, narrowing: {} };
   if (subjectAddress.event !== test.event) return undefined;
@@ -3391,8 +3392,8 @@ function ruledOutVariant(
   return union.variants.includes(key) ? key : undefined;
 }
 
-function positionFromAddress(instance: InstanceRef, hopsRaw: string): PositionTypeRef | undefined {
-  const address = addressOfTypeRef(hopsRaw);
+function positionFromAddress(instance: InstanceRef, hopsRaw: string, languageVersion: LanguageVersion): PositionTypeRef | undefined {
+  const address = addressOfTypeRef(hopsRaw, languageVersion);
   if (address === undefined) return undefined;
   // The IDENTITY of the position this address names — the same key the host
   // grafted it under. Opaque: compared, never parsed.
@@ -4544,7 +4545,7 @@ class Checker {
     if (symbol.kind === 'shape') {
       return type.hopsRaw === undefined ? declaredRootPosition(symbol) : undefined;
     }
-    if (type.hopsRaw !== undefined) return positionFromAddress(instance, type.hopsRaw);
+    if (type.hopsRaw !== undefined) return positionFromAddress(instance, type.hopsRaw, this.languageVersion);
     if (type.position === undefined) return { kind: 'meta', instance };
     return positionRefIn(instance, type.position);
   }
@@ -4584,7 +4585,7 @@ class Checker {
     if (type.hopsRaw !== undefined) {
       this.reportMetaHopsInTypeRef(type.hopsRaw, span);
       const instance = instanceRefOf(symbol);
-      const address = addressOfTypeRef(type.hopsRaw);
+      const address = addressOfTypeRef(type.hopsRaw, this.languageVersion);
       if (instance && address) this.checkAddressPins(instance, address, span);
       // An UNPINNED address (`position` set) is the bare name it keys as, so a
       // name the schema doesn't have is the same typo the dotted form used to
@@ -6612,7 +6613,7 @@ class Checker {
     };
     for (const found of typedSpellings(tree, slot.raw, kindOf)) {
       const span = spanOfExtent(slot, found.at);
-      const fix: DiagnosticFix = { edits: [{ span, text: found.text }] };
+      const fix: DiagnosticFix = { edits: [{ span, text: found.text }], ...(found.safe === true ? { safe: true as const } : {}) };
       if (found.kind === 'respell') this.respelled.set(spanKey(span), { message: found.message, fix });
       else this.reportWithFix({ code: DiagnosticCodes.BUILTIN_ARG_TYPE, message: found.message, span, fix });
     }
@@ -12961,7 +12962,7 @@ class Checker {
     }
     if (type.hopsRaw !== undefined) this.reportMetaHopsInTypeRef(type.hopsRaw, type.span);
     const start = this.symbolPositionType(symbol);
-    const steps = type.hopsRaw !== undefined ? parseTraversalPath(type.hopsRaw) : undefined;
+    const steps = type.hopsRaw !== undefined ? parseTraversalPath(type.hopsRaw, this.languageVersion) : undefined;
     if (start === undefined || steps === undefined) return undefined;
     return this.reportingTyping(scope, type.span).walkSteps(start, steps);
   }
@@ -13214,7 +13215,7 @@ class Checker {
     // out — two instances can spell the same position name, and identity is the
     // token, never the spelling.
     if (union.instance.token !== instanceRefOf(graph.symbol)?.token) return;
-    const variant = ruledOutVariant(condition.type, union);
+    const variant = ruledOutVariant(condition.type, union, this.languageVersion);
     if (variant === undefined) return;
     eliminated.add(variant);
     ruledOut.set(subject, eliminated);
@@ -15606,7 +15607,7 @@ class Checker {
         // `never` errors at the USE, not at the narrow.
         if (condition.type.hopsRaw !== undefined && graphSymbol) {
           const instance = isGraphSymbol(graphSymbol) ? instanceRefOf(graphSymbol) : undefined;
-          const testAddress = addressOfTypeRef(condition.type.hopsRaw);
+          const testAddress = addressOfTypeRef(condition.type.hopsRaw, this.languageVersion);
           if (instance !== undefined && testAddress !== undefined) {
             this.checkAddressPins(instance, testAddress, slot.span);
             const subject = subjectSymbol !== undefined ? subjectSymbol.posType : undefined;
