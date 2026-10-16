@@ -95,14 +95,22 @@ fn a_chain_of_closures_returning_the_last_twice_checks_in_linear_time() {
     )
     .unwrap();
     let links = 60;
-    let mut source = String::from(
-        "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme\" }\n  f0 = () => COALESCE(org, \"x\")\n",
-    );
-    for i in 1..=links {
-        source += &format!("  f{i} = () => {{\n    if 1 > 0 {{\n      return f{p}()\n    }}\n    return f{p}()\n  }}\n", p = i - 1);
-    }
-    source += &format!("  g = graph {{ n: f{links}() }}\n}}\n");
+    let chain = |version: u32| {
+        let v5 = version >= 5;
+        let mut source = if v5 {
+            String::from("import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred\nfunction m() {\n  org = write crm-[:companies]-> { name: \"Acme\" }\n  f0 = () => coalesce(org, \"x\")\n")
+        } else {
+            String::from("import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme\" }\n  f0 = () => COALESCE(org, \"x\")\n")
+        };
+        let condition = if v5 { "(1 > 0)" } else { "1 > 0" };
+        for i in 1..=links {
+            source += &format!("  f{i} = () => {{\n    if {condition} {{\n      return f{p}()\n    }}\n    return f{p}()\n  }}\n", p = i - 1);
+        }
+        source += &format!("  g = graph {{ n: f{links}() }}\n}}\n");
+        source
+    };
     for version in [4, 5] {
+        let source = chain(version);
         let started = std::time::Instant::now();
         let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
         let found: Vec<String> = check_source(&source, &catalog, options).unwrap().into_iter().map(|d| d.code).collect();
@@ -114,16 +122,17 @@ fn a_chain_of_closures_returning_the_last_twice_checks_in_linear_time() {
 #[test]
 fn a_closure_is_not_held_as_data_under_version_5() {
     let not_data = |line: &str, version: u32| {
-        let source = format!("movement m(c: <boolean>) {{\n  label = (x: <number>) => \"x\"\n  {line}\n}}");
+        let keyword = if version >= 5 { "function" } else { "movement" };
+        let source = format!("{keyword} m(c: <boolean>) {{\n  label = (x: <number>) => \"x\"\n  {line}\n}}");
         codes(&source, version).into_iter().filter(|(c, _)| c == "MOV_CLOSURE_NOT_DATA").map(|(_, m)| m).collect::<Vec<_>>()
     };
     assert_eq!(not_data("fs = [label]", 5).len(), 1);
     assert!(not_data("box = { g: label }", 5)[0].starts_with("'g' holds a closure"));
-    // Refused once, as the IF's operand, not again as the list's element.
-    let chosen = not_data("fs = [IF c THEN label ELSE 1 END]", 5);
+    // Refused once, as the choice's operand, not again as the list's element.
+    let chosen = not_data("fs = [(c ? label : 1)]", 5);
     assert_eq!(chosen.len(), 1, "{chosen:?}");
-    assert!(chosen[0].starts_with("a value chosen by IF"));
-    assert!(not_data("d = MAP([1, 2], (x) => { return label })", 5)[0].starts_with("'MAP' answers a list"));
+    assert!(chosen[0].starts_with("a value chosen by '… ? … : …'"));
+    assert!(not_data("d = map([1, 2], (x) => { return label })", 5)[0].starts_with("'map' answers a list"));
     assert!(not_data("fs = [label]", 4).is_empty());
 }
 
@@ -133,7 +142,7 @@ fn a_closure_is_not_held_as_data_under_version_5() {
 #[test]
 fn a_call_handed_to_a_plugin_that_returns_nothing_is_refused() {
     let catalog = CatalogSnapshot::load(r#"{"adapters":{},"credentials":{},"plugins":{"relay":{"args":["data"],"output":{"kind":"value","type":"text"}}}}"#).unwrap();
-    let source = "import { relay } from plugins\nmovement none(n: <text>) {\n  x = 1\n}\nmovement m(s: <text>) {\n  r = relay(data: none(n: \"x\"))\n}";
+    let source = "import { relay } from plugins\nfunction none(n: <text>) {\n  x = 1\n}\nfunction m(s: <text>) {\n  r = relay({ data: none(n: \"x\") })\n}";
     let options = CheckOptions { language_version: 5, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     let found: Vec<(String, String)> = check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code, d.message)).collect();
     assert!(found.iter().any(|(c, m)| c == "MOV_CALL_RETURNS_NOTHING" && m.starts_with("'none' returns nothing")), "{found:?}");

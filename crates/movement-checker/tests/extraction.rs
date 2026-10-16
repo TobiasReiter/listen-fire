@@ -24,20 +24,20 @@ fn at(d: &Diagnostic) -> (&str, (usize, usize), (usize, usize)) {
 const STAGES: &str = r#"import { registry } from adapters
 import { public_registry as pr } from credentials
 import { lookup } from plugins
-reg = registry(credentials: pr)
+reg = connect registry using pr
 node Company: "each company" {
   name: <text> "its name"
   size: <number> "its headcount"
 }
-movement main(e: <reg-[:entity]->>) {
+function main(e: <reg-[:entity]->>) {
   found = extract from [e.`Name`] {
     name: "the name"
-  } through [lookup(q: detail, extra: 1)] {
+  } through [lookup(detail, { extra: 1 })] {
     detail: <nubmer> "more"
   }
   companies = extract([e.`Name`], Company, { teir: 'careful', model: 'claude-opus-6' })
-  big = ONLY(companies).size > 3
-  lookup(q: "x")
+  big = only(companies).size > 3
+  lookup("x")
 }
 "#;
 
@@ -48,13 +48,13 @@ fn stages_calls_and_annotations_say_what_the_typescript_says() {
     assert_eq!(
         places,
         vec![
-            ("MOV_THROUGH_FORWARD_REF", (12, 24), (12, 30)),
-            ("MOV_THROUGH_BAD_ARG", (12, 39), (12, 40)),
+            ("MOV_THROUGH_FORWARD_REF", (12, 21), (12, 27)),
+            ("MOV_THROUGH_BAD_ARG", (12, 38), (12, 39)),
             ("MOV_UNKNOWN_TYPE_NAME", (13, 5), (13, 28)),
             ("MOV_EXTRACT_CONFIG", (15, 44), (15, 87)),
             ("MOV_EXTRACT_CONFIG", (15, 44), (15, 87)),
             ("MOV_ABSENT_REQUIRED", (16, 9), (16, 33)),
-            ("MOV_PLUGIN_ROW_UNDECLARED", (17, 3), (17, 17)),
+            ("MOV_PLUGIN_ROW_UNDECLARED", (17, 3), (17, 14)),
         ]
     );
     assert_eq!(found[2].message, "'nubmer' is not a type — annotate with a primitive (text, number, boolean, date, datetime, file, json), a type you declare (`type nubmer = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>) — did you mean 'number'?");

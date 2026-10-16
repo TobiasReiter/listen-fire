@@ -14,12 +14,14 @@ use movement_parser::catalog::types::CatalogSnapshot;
 const CATALOG: &str = r#"{"adapters":{"attio":{"canFire":true,"constructionArgs":[{"name":"credentials","kind":"credential","required":true}],"schemas":{"crm_cred":{"positions":{"company":{"properties":{"name":"text"},"edges":{}}},"collections":{"companies":{"target":"company"}},"writableRoots":{"company":{"fields":{"name":"text"},"resultShape":{"externalId":"text","name":"text"}}}}}}},"credentials":{"crm_cred":{"adapters":["attio"]}},"plugins":{}}"#;
 
 const PRELUDE: &str = "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)";
+const PRELUDE_V5: &str = "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = connect attio using crm_cred";
 
 const LINKS: usize = 30;
 
 /// The errors a program reports, and how long the check took.
 fn errors_under(version: u32, outside: &[String], body: &[String]) -> (Vec<Diagnostic>, Duration) {
-    let source = format!("{PRELUDE}\n{}\nmovement m() {{\n{}\n}}", outside.join("\n"), body.join("\n"));
+    let (prelude, keyword) = if version >= 5 { (PRELUDE_V5, "function") } else { (PRELUDE, "movement") };
+    let source = format!("{prelude}\n{}\n{keyword} m() {{\n{}\n}}", outside.join("\n"), body.join("\n"));
     let catalog = CatalogSnapshot::load(CATALOG).unwrap();
     let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
     let started = Instant::now();
@@ -32,15 +34,21 @@ fn codes(found: &[Diagnostic]) -> Vec<&str> {
     found.iter().map(|d| d.code.as_str()).collect()
 }
 
+/// `org` or a text, in the version's spelling.
+fn org_or_text(version: u32) -> &'static str {
+    if version >= 5 { "coalesce(org, \"x\")" } else { "COALESCE(org, \"x\")" }
+}
+
 /// A chain of closures, each returning `returned` (over `a`, the last one's
 /// value) on two branches.
-fn chain_of(returned: &str, start: &str) -> Vec<String> {
+fn chain_of(version: u32, returned: &str, start: &str) -> Vec<String> {
+    let condition = if version >= 5 { "(1 > 0)" } else { "1 > 0" };
     let mut lines = vec!["  org = write crm-[:companies]-> { name: \"Acme\" }".to_string(), format!("  f0 = () => {start}")];
     for i in 1..=LINKS {
         lines.extend([
             format!("  f{i} = () => {{"),
             format!("    a = f{}()", i - 1),
-            "    if 1 > 0 {".to_string(),
+            format!("    if {condition} {{"),
             format!("      return {returned}"),
             "    }".to_string(),
             format!("    return {returned}"),
@@ -65,7 +73,7 @@ fn too_large(name: &str) -> String {
 #[test]
 fn a_chain_of_closures_returning_a_map_of_the_last_value_twice_checks_in_linear_time() {
     for version in 3..=5 {
-        let mut body = chain_of("{ k: a, j: a }", "COALESCE(org, \"x\")");
+        let mut body = chain_of(version, "{ k: a, j: a }", org_or_text(version));
         body.push(format!("  g = graph {{ n: f{LINKS}() }}"));
         let (found, took) = errors_under(version, &[], &body);
         assert_eq!(codes(&found), ["MOV_GRAPH_ENTRY_RECORD"], "v{version}");
@@ -76,7 +84,7 @@ fn a_chain_of_closures_returning_a_map_of_the_last_value_twice_checks_in_linear_
 #[test]
 fn the_same_chain_over_a_plain_value_checks_in_linear_time_and_says_nothing() {
     for version in 3..=5 {
-        let mut body = chain_of("{ k: a, j: a }", "1");
+        let mut body = chain_of(version, "{ k: a, j: a }", "1");
         body.push(format!("  x = f{LINKS}()"));
         let (found, took) = errors_under(version, &[], &body);
         assert!(found.is_empty(), "v{version}: {found:?}");
@@ -87,7 +95,7 @@ fn the_same_chain_over_a_plain_value_checks_in_linear_time_and_says_nothing() {
 #[test]
 fn a_chain_of_closures_returning_a_list_of_the_last_value_twice_checks_in_linear_time() {
     for version in 3..=5 {
-        let mut body = chain_of("[a, a]", "COALESCE(org, \"x\")");
+        let mut body = chain_of(version, "[a, a]", org_or_text(version));
         body.push(format!("  g = graph {{ n: f{LINKS}() }}"));
         let (found, took) = errors_under(version, &[], &body);
         assert_eq!(codes(&found), ["MOV_GRAPH_ENTRY_RECORD"], "v{version}");
@@ -99,7 +107,7 @@ fn a_chain_of_closures_returning_a_list_of_the_last_value_twice_checks_in_linear
 #[test]
 fn a_fan_of_closures_each_a_list_of_three_calls_of_the_last_checks_in_linear_time() {
     for version in 3..=5 {
-        let mut fan = vec!["  org = write crm-[:companies]-> { name: \"Acme\" }".to_string(), "  h0 = () => COALESCE(org, \"x\")".to_string()];
+        let mut fan = vec!["  org = write crm-[:companies]-> { name: \"Acme\" }".to_string(), format!("  h0 = () => {}", org_or_text(version))];
         for i in 1..=LINKS {
             fan.push(format!("  h{i} = () => [h{0}(), h{0}(), h{0}()]", i - 1));
         }
