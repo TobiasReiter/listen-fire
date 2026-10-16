@@ -5,6 +5,9 @@
 //! The TypeScript spells a scalar as a bare string and a composite as a
 //! tagged object; here both are one enum, so every `match` is exhaustive.
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use movement_parser::catalog::types::{Composite, FieldType as SchemaFieldType, JsMap, Scalar};
 
 use super::position::{ClosureType, PlaneType, Position, describe_position, positions_match, record_field_types, same_starting_point};
@@ -21,24 +24,24 @@ pub enum Ty {
     Json,
     /// The type of the `null` literal, and of nothing else.
     Absent,
-    List { of: Box<Ty>, unordered: bool },
+    List { of: Rc<Ty>, unordered: bool },
     /// A slot is `None` where its value could not be typed.
-    Tuple { of: Vec<Option<Ty>>, rest: Option<TupleRest> },
+    Tuple { of: Rc<Vec<Option<Ty>>>, rest: Option<TupleRest> },
     /// `shape` is a literal's keys, in JavaScript's key order.
-    Dict { of: Box<Ty>, shape: Option<JsMap<Option<Ty>>> },
+    Dict { of: Rc<Ty>, shape: Option<Rc<JsMap<Option<Ty>>>> },
     Enum { options: Vec<String>, open: Option<OpenEnum> },
     /// `T | absent`. Build with `maybe_absent`, which never nests.
-    MaybeAbsent(Box<Ty>),
+    MaybeAbsent(Rc<Ty>),
     /// Build only with `value_union`, which keeps the member set canonical.
-    Union(Vec<Ty>),
+    Union(Rc<Vec<Ty>>),
     /// A record held as a value; `None` is a record nobody can name.
-    Record(Option<Box<Position>>),
+    Record(Option<Rc<Position>>),
 }
 
 #[derive(Debug, Clone)]
 pub struct TupleRest {
     pub at: usize,
-    pub of: Option<Box<Ty>>,
+    pub of: Option<Rc<Ty>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -48,11 +51,11 @@ pub struct OpenEnum {
 
 impl Ty {
     pub fn list(of: Ty) -> Ty {
-        Ty::List { of: Box::new(of), unordered: false }
+        Ty::List { of: Rc::new(of), unordered: false }
     }
 
     pub fn record(position: Option<Position>) -> Ty {
-        Ty::Record(position.map(Box::new))
+        Ty::Record(position.map(Rc::new))
     }
 
     pub fn is_absent_literal(&self) -> bool {
@@ -73,14 +76,14 @@ impl Ty {
                 Scalar::Absent => Ty::Absent,
             },
             SchemaFieldType::Composite(composite) => match composite {
-                Composite::List { of, unordered } => Ty::List { of: Box::new(Ty::from_schema(of)), unordered: *unordered == Some(true) },
+                Composite::List { of, unordered } => Ty::List { of: Rc::new(Ty::from_schema(of)), unordered: *unordered == Some(true) },
                 Composite::Tuple { of, rest } => Ty::Tuple {
-                    of: of.iter().map(|slot| slot.as_ref().map(Ty::from_schema)).collect(),
-                    rest: rest.as_ref().map(|r| TupleRest { at: r.at.0 as usize, of: r.of.as_deref().map(|t| Box::new(Ty::from_schema(t))) }),
+                    of: Rc::new(of.iter().map(|slot| slot.as_ref().map(Ty::from_schema)).collect()),
+                    rest: rest.as_ref().map(|r| TupleRest { at: r.at.0 as usize, of: r.of.as_deref().map(|t| Rc::new(Ty::from_schema(t))) }),
                 },
                 Composite::Dict { of, shape } => Ty::Dict {
-                    of: Box::new(Ty::from_schema(of)),
-                    shape: shape.as_ref().map(|s| s.iter().map(|(k, v)| (k.clone(), v.as_ref().map(Ty::from_schema))).collect()),
+                    of: Rc::new(Ty::from_schema(of)),
+                    shape: shape.as_ref().map(|s| Rc::new(s.iter().map(|(k, v)| (k.clone(), v.as_ref().map(Ty::from_schema))).collect())),
                 },
                 Composite::Enum { options, open } => {
                     Ty::Enum { options: options.clone(), open: open.as_ref().map(|o| OpenEnum { allow_pattern: o.allow_pattern.clone() }) }
@@ -144,13 +147,175 @@ impl Ty {
     }
 }
 
+// ── Shared nesting ──
+
+/// The identity of a composite type's own allocation. A nested type is held
+/// once and shared wherever it recurs (a closure chain's `{ k: a(), j: a() }`
+/// holds `a()`'s type twice, not two copies of it), so a walk over a type
+/// remembers the nodes it has been through by this key and visits each
+/// distinct node once. Equal keys mean the same type, as an `Rc` is never
+/// changed while it is shared. `None` for a type with no nesting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeKey(u8, usize, usize, usize);
+
+impl Ty {
+    pub fn node_key(&self) -> Option<NodeKey> {
+        fn at<T: ?Sized>(rc: &Rc<T>) -> usize {
+            Rc::as_ptr(rc) as *const u8 as usize
+        }
+        Some(match self {
+            Ty::List { of, unordered } => NodeKey(1, at(of), usize::from(*unordered), 0),
+            Ty::Tuple { of, rest } => NodeKey(
+                2,
+                at(of),
+                rest.as_ref().and_then(|r| r.of.as_ref()).map_or(0, at),
+                rest.as_ref().map_or(usize::MAX, |r| r.at),
+            ),
+            Ty::Dict { of, shape } => NodeKey(3, at(of), shape.as_ref().map_or(0, at), 0),
+            Ty::MaybeAbsent(of) => NodeKey(4, at(of), 0, 0),
+            Ty::Union(members) => NodeKey(5, at(members), 0, 0),
+            _ => return None,
+        })
+    }
+
+    /// The types nested directly inside this one.
+    pub fn children(&self) -> Vec<&Ty> {
+        match self {
+            Ty::List { of, .. } | Ty::MaybeAbsent(of) => vec![&**of],
+            Ty::Tuple { of, rest } => of.iter().flatten().chain(rest.as_ref().and_then(|r| r.of.as_deref())).collect(),
+            Ty::Dict { of, shape } => shape.iter().flat_map(|s| s.values().flatten()).chain(std::iter::once(&**of)).collect(),
+            Ty::Union(members) => members.iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+// ── The size limit ──
+
+/// How many structurally distinct parts an inferred type may have before the
+/// checker stops growing it (`MOV_TYPE_TOO_LARGE`). A safety limit, not
+/// language semantics: every walk over a type is linear in its distinct
+/// parts, so this bounds the time one program can take to check.
+pub const TYPE_PARTS_LIMIT: usize = 10_000;
+
+/// `typesTooLarge`: do these types, together, have more than
+/// `TYPE_PARTS_LIMIT` structurally distinct parts? A part is a type anywhere
+/// inside them, a bare scalar included; two parts with the same structure are
+/// one part however often, and through however many paths, they occur — so
+/// the answer does not depend on how much of the type is shared in memory.
+/// A dict's keys count in sorted order, a union's members as a set, and a
+/// record by the position it holds.
+pub fn types_too_large(types: &[Option<&Ty>]) -> bool {
+    let mut parts = Parts::default();
+    types.iter().flatten().try_for_each(|ty| parts.part_of(ty).map(|_| ())).is_err()
+}
+
+#[derive(Default)]
+struct Parts {
+    of_node: HashMap<NodeKey, usize>,
+    of_structure: HashMap<String, usize>,
+    of_position: HashMap<usize, usize>,
+}
+
+/// The limit is passed: the count stops there.
+struct TooLarge;
+
+impl Parts {
+    fn part_of(&mut self, ty: &Ty) -> Result<usize, TooLarge> {
+        let node = ty.node_key();
+        if let Some(id) = node.and_then(|k| self.of_node.get(&k)) {
+            return Ok(*id);
+        }
+        let structure = self.structure_of(ty)?;
+        let next = self.of_structure.len();
+        let id = *self.of_structure.entry(structure).or_insert(next);
+        if self.of_structure.len() > TYPE_PARTS_LIMIT {
+            return Err(TooLarge);
+        }
+        if let Some(node) = node {
+            self.of_node.insert(node, id);
+        }
+        Ok(id)
+    }
+
+    fn slot(&mut self, ty: Option<&Ty>) -> Result<String, TooLarge> {
+        Ok(match ty {
+            Some(ty) => self.part_of(ty)?.to_string(),
+            None => "-1".to_string(),
+        })
+    }
+
+    /// One part's structure, its own parts named by their ids.
+    fn structure_of(&mut self, ty: &Ty) -> Result<String, TooLarge> {
+        Ok(match ty {
+            Ty::Text => "text".to_string(),
+            Ty::Number => "number".to_string(),
+            Ty::Boolean => "boolean".to_string(),
+            Ty::Date => "date".to_string(),
+            Ty::Datetime => "datetime".to_string(),
+            Ty::File => "file".to_string(),
+            Ty::Json => "json".to_string(),
+            Ty::Absent => "absent".to_string(),
+            Ty::List { of, unordered } => format!("list{}({})", if *unordered { "~" } else { "" }, self.part_of(of)?),
+            Ty::Tuple { of, rest } => {
+                let slots = of.iter().map(|slot| self.slot(slot.as_ref())).collect::<Result<Vec<_>, _>>()?.join(",");
+                let run = match rest {
+                    Some(rest) => format!(";{}:{}", rest.at, self.slot(rest.of.as_deref())?),
+                    None => String::new(),
+                };
+                format!("tuple({slots}{run})")
+            }
+            Ty::Dict { of, shape } => {
+                let of = self.part_of(of)?;
+                let keys = match shape {
+                    Some(shape) => {
+                        let mut keys: Vec<&String> = shape.keys().collect();
+                        keys.sort();
+                        let keys = keys
+                            .into_iter()
+                            .map(|key| Ok(format!("{}:{}", serde_json::to_string(key).unwrap_or_default(), self.slot(shape[key].as_ref())?)))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        format!("{{{}}}", keys.join(","))
+                    }
+                    None => String::new(),
+                };
+                format!("dict({of}{keys})")
+            }
+            Ty::Union(members) => {
+                let mut ids = members.iter().map(|m| self.part_of(m)).collect::<Result<Vec<_>, _>>()?;
+                ids.sort_unstable();
+                ids.dedup();
+                format!("union({})", ids.iter().map(usize::to_string).collect::<Vec<_>>().join(","))
+            }
+            Ty::MaybeAbsent(of) => format!("maybe({})", self.part_of(of)?),
+            Ty::Enum { options, open } => format!(
+                "enum({}{})",
+                serde_json::to_string(options).unwrap_or_default(),
+                open.as_ref().map_or(String::new(), |o| format!("~{}", serde_json::to_string(&o.allow_pattern).unwrap_or_default()))
+            ),
+            Ty::Record(None) => "record".to_string(),
+            Ty::Record(Some(position)) => {
+                let next = self.of_position.len();
+                format!("record@{}", self.of_position.entry(Rc::as_ptr(position) as usize).or_insert(next))
+            }
+        })
+    }
+}
+
+/// `typeTooLargeMessage`.
+pub fn type_too_large_message(name: &str) -> String {
+    format!(
+        "'{name}' builds a type too large to check (over {TYPE_PARTS_LIMIT} parts) — split the value into named parts or declare its shape (node <Name> {{ … }})"
+    )
+}
+
 // ── Absence ──
 
 /// `maybeAbsent`: `T | absent`, flattened.
 pub fn maybe_absent(ty: Ty) -> Ty {
     match ty {
         Ty::MaybeAbsent(_) => ty,
-        other => Ty::MaybeAbsent(Box::new(other)),
+        other => Ty::MaybeAbsent(Rc::new(other)),
     }
 }
 
@@ -257,7 +422,13 @@ pub fn tuple_members(of: &[Option<Ty>], rest: Option<&TupleRest>) -> Vec<Option<
 
 /// `widenTuple`: the list a tuple reads as; `None` when no element can be named.
 pub fn widen_tuple(of: &[Option<Ty>], rest: Option<&TupleRest>, widening: Widening) -> Option<Ty> {
-    let members: Vec<Option<Ty>> = tuple_members(of, rest).into_iter().map(|m| widen_tuples_by(m, widening)).collect();
+    widen_tuple_in(of, rest, widening, &mut HashMap::new())
+}
+
+/// A tuple nested in itself many times over (`[a(), a(), a()]` a link
+/// further each time) widens each distinct tuple once.
+fn widen_tuple_in(of: &[Option<Ty>], rest: Option<&TupleRest>, widening: Widening, widened: &mut HashMap<NodeKey, Option<Ty>>) -> Option<Ty> {
+    let members: Vec<Option<Ty>> = tuple_members(of, rest).into_iter().map(|m| widen_tuples_in(m, widening, widened)).collect();
     if let Some(shared) = unify_value_types(&members) {
         return Some(Ty::list(shared));
     }
@@ -279,9 +450,24 @@ pub fn widen_tuples(ty: Option<Ty>, version: u32) -> Option<Ty> {
 }
 
 pub fn widen_tuples_by(ty: Option<Ty>, widening: Widening) -> Option<Ty> {
+    widen_tuples_in(ty, widening, &mut HashMap::new())
+}
+
+fn widen_tuples_in(ty: Option<Ty>, widening: Widening, widened: &mut HashMap<NodeKey, Option<Ty>>) -> Option<Ty> {
     let ty = ty?;
-    let Ty::Tuple { of, rest } = strip_absent(&ty) else { return Some(ty) };
-    let list = widen_tuple(of, rest.as_ref(), widening);
+    let tuple = strip_absent(&ty);
+    let Ty::Tuple { of, rest } = tuple else { return Some(ty) };
+    let key = tuple.node_key();
+    let list = match key.and_then(|k| widened.get(&k)) {
+        Some(list) => list.clone(),
+        None => {
+            let list = widen_tuple_in(of, rest.as_ref(), widening, widened);
+            if let Some(key) = key {
+                widened.insert(key, list.clone());
+            }
+            list
+        }
+    };
     if is_maybe_absent(Some(&ty)) { maybe_absent_opt(list) } else { list }
 }
 
@@ -342,7 +528,7 @@ pub fn value_union(types: &[Ty]) -> Option<Ty> {
     }
     let mut keyed: Vec<(String, Ty)> = kept.into_iter().map(|m| (describe_field_type(&m), m)).collect();
     keyed.sort_by(|a, b| a.0.cmp(&b.0));
-    Some(with_absence(Ty::Union(keyed.into_iter().map(|(_, m)| m).collect())))
+    Some(with_absence(Ty::Union(Rc::new(keyed.into_iter().map(|(_, m)| m).collect()))))
 }
 
 fn member_absorbs(wide: &Ty, narrow: &Ty) -> bool {
@@ -359,7 +545,7 @@ fn member_absorbs(wide: &Ty, narrow: &Ty) -> bool {
 /// `unionMembers`: a union's members, or the one type; absence peeled.
 pub fn union_members(ty: &Ty) -> Vec<Ty> {
     match strip_absent(ty) {
-        Ty::Union(members) => members.clone(),
+        Ty::Union(members) => members.to_vec(),
         present => vec![present.clone()],
     }
 }
@@ -371,7 +557,7 @@ pub fn arms_union(arms: &[Option<Ty>]) -> Option<Ty> {
     if known.is_empty() {
         return None;
     }
-    if arms.len() == 1 { known.into_iter().next() } else { Some(Ty::Union(known)) }
+    if arms.len() == 1 { known.into_iter().next() } else { Some(Ty::Union(Rc::new(known))) }
 }
 
 /// `unifyValueTypes`: the one type every member shares.
@@ -423,7 +609,7 @@ pub fn collection_element_of(ty: &Ty) -> Option<Ty> {
     match strip_absent(ty) {
         Ty::List { of, .. } => Some((**of).clone()),
         Ty::Tuple { of, rest } => match widen_tuple(of, rest.as_ref(), Widening::Shared)? {
-            Ty::List { of, .. } => Some(*of),
+            Ty::List { of, .. } => Some(Rc::unwrap_or_clone(of)),
             _ => None,
         },
         Ty::Union(members) => {
@@ -451,14 +637,14 @@ pub fn collection_order_of(ty: Option<&Ty>) -> CollectionOrder {
 
 /// `listOf`.
 pub fn list_of(of: Ty, ordering: CollectionOrder) -> Ty {
-    Ty::List { of: Box::new(of), unordered: ordering == CollectionOrder::Unordered }
+    Ty::List { of: Rc::new(of), unordered: ordering == CollectionOrder::Unordered }
 }
 
 /// `tupleSlotType`: what `AT(t, index)` reads off a tuple.
 pub fn tuple_slot_type(of: &[Option<Ty>], rest: Option<&TupleRest>, index: Option<i64>, version: u32) -> Option<Ty> {
     let any_of = |members: Vec<Option<Ty>>| -> Option<Ty> {
         match tuple_as_list(&members, None, version)? {
-            Ty::List { of, .. } => Some(maybe_absent(*of)),
+            Ty::List { of, .. } => Some(maybe_absent(Rc::unwrap_or_clone(of))),
             _ => None,
         }
     };
@@ -718,16 +904,30 @@ impl HeldWalk {
 }
 
 fn kinds_held_by(ty: &Ty) -> (bool, bool) {
-    let merge = |members: &mut dyn Iterator<Item = &Ty>| members.map(kinds_held_by).fold((false, false), |a, b| (a.0 || b.0, a.1 || b.1));
-    match strip_absent(ty) {
-        Ty::Record(_) => (true, false),
-        Ty::File => (false, true),
-        Ty::List { of, .. } => kinds_held_by(of),
-        Ty::Tuple { of, rest } => merge(&mut of.iter().flatten().chain(rest.iter().filter_map(|r| r.of.as_deref()))),
-        Ty::Dict { of, shape } => merge(&mut shape.iter().flat_map(|s| s.values().flatten()).chain(std::iter::once(&**of))),
-        Ty::Union(members) => merge(&mut members.iter()),
-        _ => (false, false),
+    kinds_held_in(ty, &mut HashMap::new())
+}
+
+fn kinds_held_in(ty: &Ty, seen: &mut HashMap<NodeKey, (bool, bool)>) -> (bool, bool) {
+    fn walk(ty: &Ty, seen: &mut HashMap<NodeKey, (bool, bool)>) -> (bool, bool) {
+        let ty = strip_absent(ty);
+        let key = ty.node_key();
+        if let Some(found) = key.and_then(|k| seen.get(&k)) {
+            return *found;
+        }
+        let found = match ty {
+            Ty::Record(_) => (true, false),
+            Ty::File => (false, true),
+            Ty::List { .. } | Ty::Tuple { .. } | Ty::Dict { .. } | Ty::Union(_) => {
+                ty.children().into_iter().map(|m| walk(m, seen)).fold((false, false), |a, b| (a.0 || b.0, a.1 || b.1))
+            }
+            _ => (false, false),
+        };
+        if let Some(key) = key {
+            seen.insert(key, found);
+        }
+        found
     }
+    walk(ty, seen)
 }
 
 /// `showsMoreHandles`: does `wider` hold a kind of engine object `ty` does not show?
@@ -739,21 +939,64 @@ pub fn shows_more_handles(wider: &Ty, ty: Option<&Ty>) -> bool {
 
 /// `handleWithin`: the first record or file inside `ty` the walk does not accept.
 pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
-    match strip_absent(ty?) {
+    handle_within_in(ty, walk, &mut HeldNothing::default())
+}
+
+/// What one search knows of the parts it has met. A part that holds no
+/// record or file is passed over by any search. What a search finds in a
+/// part does not depend on where the part sits, unless an inspection reads
+/// the steps to it, so the parts it found nothing in are remembered only by
+/// a search without one.
+#[derive(Default)]
+struct HeldNothing {
+    empty: std::collections::HashSet<NodeKey>,
+    kinds: HashMap<NodeKey, (bool, bool)>,
+}
+
+impl HeldNothing {
+    fn knows(&mut self, ty: &Ty, walk: &HeldWalk) -> bool {
+        if walk.inspect.is_none() && ty.node_key().is_some_and(|k| self.empty.contains(&k)) {
+            return true;
+        }
+        ty.node_key().is_some() && kinds_held_in(ty, &mut self.kinds) == (false, false)
+    }
+
+    fn after(&mut self, ty: &Ty, walk: &HeldWalk, found: Option<HeldHandle>) -> Option<HeldHandle> {
+        if found.is_none()
+            && walk.inspect.is_none()
+            && let Some(key) = ty.node_key()
+        {
+            self.empty.insert(key);
+        }
+        found
+    }
+}
+
+fn handle_within_in(ty: Option<&Ty>, walk: &HeldWalk, nothing: &mut HeldNothing) -> Option<HeldHandle> {
+    let ty = strip_absent(ty?);
+    if nothing.knows(ty, walk) {
+        return None;
+    }
+    let found = handle_within_node(ty, walk, nothing);
+    nothing.after(ty, walk, found)
+}
+
+fn handle_within_node(ty: &Ty, walk: &HeldWalk, nothing: &mut HeldNothing) -> Option<HeldHandle> {
+    match ty {
         Ty::Record(position) if walk.accepts_record => walk.accepted(Ty::Record(position.clone())),
         Ty::Record(position) => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false }),
         Ty::File if walk.accepts_file => walk.accepted(Ty::File),
         Ty::File => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
-        list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk, HeldStep::Slot),
+        list @ (Ty::List { .. } | Ty::Tuple { .. }) => among_members_node(list, walk, HeldStep::Slot, nothing),
         Ty::Dict { of, shape } => {
             for (key, value) in shape.iter().flat_map(|s| s.iter()) {
-                if let Some(held) = handle_within(value.as_ref(), &walk.into(HeldStep::Key(key.clone()))) {
+                if let Some(held) = handle_within_in(value.as_ref(), &walk.into(HeldStep::Key(key.clone())), nothing) {
                     return Some(held);
                 }
             }
-            handle_within(Some(of), &walk.into(HeldStep::Member))
+            handle_within_in(Some(of), &walk.into(HeldStep::Member), nothing)
         }
-        Ty::Union(members) => members.iter().find_map(|m| handle_within(Some(m), walk)).map(|held| HeldHandle { may: true, ..held }),
+        Ty::Union(members) => members.iter().find_map(|m| handle_within_in(Some(m), walk, nothing)).map(|held| HeldHandle { may: true, ..held }),
         _ => None,
     }
 }
@@ -762,17 +1005,24 @@ pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
 /// `step_for(slot)` further into the walk (a spread splices members, so it
 /// asks with every slot unnumbered: `|_| HeldStep::Member`).
 pub fn handle_among_members(ty: Option<&Ty>, walk: &HeldWalk, step_for: fn(usize) -> HeldStep) -> Option<HeldHandle> {
-    match strip_absent(ty?) {
-        Ty::List { of, .. } => handle_within(Some(of), &walk.into(HeldStep::Member)),
+    among_members_node(strip_absent(ty?), walk, step_for, &mut HeldNothing::default())
+}
+
+fn among_members_node(ty: &Ty, walk: &HeldWalk, step_for: fn(usize) -> HeldStep, nothing: &mut HeldNothing) -> Option<HeldHandle> {
+    match ty {
+        Ty::List { of, .. } => handle_within_in(Some(of), &walk.into(HeldStep::Member), nothing),
         Ty::Tuple { of, rest } => {
             for (index, slot) in of.iter().enumerate() {
-                if let Some(held) = handle_within(slot.as_ref(), &walk.into(step_for(index))) {
+                if let Some(held) = handle_within_in(slot.as_ref(), &walk.into(step_for(index)), nothing) {
                     return Some(held);
                 }
             }
-            handle_within(rest.as_ref().and_then(|r| r.of.as_deref()), &walk.into(HeldStep::Member))
+            handle_within_in(rest.as_ref().and_then(|r| r.of.as_deref()), &walk.into(HeldStep::Member), nothing)
         }
-        Ty::Union(members) => members.iter().find_map(|m| handle_among_members(Some(m), walk, step_for)).map(|held| HeldHandle { may: true, ..held }),
+        Ty::Union(members) => members
+            .iter()
+            .find_map(|m| among_members_node(strip_absent(m), walk, step_for, nothing))
+            .map(|held| HeldHandle { may: true, ..held }),
         _ => None,
     }
 }
@@ -859,10 +1109,10 @@ pub fn record_value_of(position: Option<&Position>) -> Option<Ty> {
 
 // ── Equality and fit ──
 
-fn slots_agree(left: &[Option<Ty>], right: &[Option<Ty>]) -> bool {
+fn slots_agree(left: &[Option<&Ty>], right: &[Option<&Ty>], known: &mut HashMap<(NodeKey, NodeKey), bool>) -> bool {
     left.len() == right.len()
         && left.iter().zip(right).all(|(l, r)| match (l, r) {
-            (Some(l), Some(r)) => field_type_equals(l, r),
+            (Some(l), Some(r)) => equals_in(l, r, known),
             (None, None) => true,
             _ => false,
         })
@@ -870,7 +1120,30 @@ fn slots_agree(left: &[Option<Ty>], right: &[Option<Ty>]) -> bool {
 
 /// `fieldTypeEquals`: absence aside at the top, structurally.
 pub fn field_type_equals(a: &Ty, b: &Ty) -> bool {
+    equals_in(a, b, &mut HashMap::new())
+}
+
+/// Each pair of distinct nodes is compared once: a shared node is equal to
+/// itself without a look inside, and a pair met again answers as it did.
+fn equals_in(a: &Ty, b: &Ty, known: &mut HashMap<(NodeKey, NodeKey), bool>) -> bool {
     let (left, right) = (strip_absent(a), strip_absent(b));
+    let pair = left.node_key().zip(right.node_key());
+    if let Some((l, r)) = pair {
+        if l == r {
+            return true;
+        }
+        if let Some(answer) = known.get(&(l, r)) {
+            return *answer;
+        }
+    }
+    let answer = equals_node(left, right, known);
+    if let Some(pair) = pair {
+        known.insert(pair, answer);
+    }
+    answer
+}
+
+fn equals_node(left: &Ty, right: &Ty, known: &mut HashMap<(NodeKey, NodeKey), bool>) -> bool {
     match (left, right) {
         (Ty::Text, Ty::Text)
         | (Ty::Number, Ty::Number)
@@ -880,19 +1153,22 @@ pub fn field_type_equals(a: &Ty, b: &Ty) -> bool {
         | (Ty::File, Ty::File)
         | (Ty::Json, Ty::Json)
         | (Ty::Absent, Ty::Absent) => true,
-        (Ty::List { of: l, .. }, Ty::List { of: r, .. }) => field_type_equals(l, r),
+        (Ty::List { of: l, .. }, Ty::List { of: r, .. }) => equals_in(l, r, known),
         (Ty::Tuple { of: l, rest: lr }, Ty::Tuple { of: r, rest: rr }) => {
-            if !slots_agree(l, r) {
+            fn slots(of: &[Option<Ty>]) -> Vec<Option<&Ty>> {
+                of.iter().map(Option::as_ref).collect()
+            }
+            if !slots_agree(&slots(l), &slots(r), known) {
                 return false;
             }
             match (lr, rr) {
                 (None, None) => true,
-                (Some(lr), Some(rr)) => lr.at == rr.at && slots_agree(&[lr.of.as_deref().cloned()], &[rr.of.as_deref().cloned()]),
+                (Some(lr), Some(rr)) => lr.at == rr.at && slots_agree(&[lr.of.as_deref()], &[rr.of.as_deref()], known),
                 _ => false,
             }
         }
         (Ty::Dict { of: lo, shape: ls }, Ty::Dict { of: ro, shape: rs }) => {
-            if !field_type_equals(lo, ro) {
+            if !equals_in(lo, ro, known) {
                 return false;
             }
             match (ls, rs) {
@@ -902,7 +1178,7 @@ pub fn field_type_equals(a: &Ty, b: &Ty) -> bool {
                         && ls.iter().all(|(key, slot)| match rs.get(key) {
                             None => false,
                             Some(other) => match (slot, other) {
-                                (Some(s), Some(o)) => field_type_equals(s, o),
+                                (Some(s), Some(o)) => equals_in(s, o, known),
                                 (None, None) => true,
                                 _ => false,
                             },
@@ -917,8 +1193,8 @@ pub fn field_type_equals(a: &Ty, b: &Ty) -> bool {
             _ => false,
         },
         (Ty::Enum { options: l, .. }, Ty::Enum { options: r, .. }) => l == r,
-        (Ty::MaybeAbsent(l), Ty::MaybeAbsent(r)) => field_type_equals(l, r),
-        (Ty::Union(l), Ty::Union(r)) => l.len() == r.len() && l.iter().all(|m| r.iter().any(|o| field_type_equals(m, o))),
+        (Ty::MaybeAbsent(l), Ty::MaybeAbsent(r)) => equals_in(l, r, known),
+        (Ty::Union(l), Ty::Union(r)) => l.len() == r.len() && l.iter().all(|m| r.iter().any(|o| equals_in(m, o, known))),
         _ => false,
     }
 }

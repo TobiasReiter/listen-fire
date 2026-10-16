@@ -8,6 +8,7 @@
 //! with the operand types in hand, and reports through `Typing::report`.
 //! A family hook never changes the type the core answers.
 
+use std::rc::Rc;
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
@@ -416,7 +417,7 @@ impl<'a> Typing<'a> {
             return None;
         }
         let mut shape = shape.clone();
-        shape.insert(key.to_string(), Some(strip_absent(slot).clone()));
+        Rc::make_mut(&mut shape).insert(key.to_string(), Some(strip_absent(slot).clone()));
         Some(Ty::Dict { of: of.clone(), shape: Some(shape) })
     }
 
@@ -891,7 +892,7 @@ impl<'a> Typing<'a> {
                 .collect()
         };
         let Some(first_run) = parts.iter().position(|p| matches!(p, Part::Run(_))) else {
-            return Ty::Tuple { of: slots_of(&parts), rest: None };
+            return Ty::Tuple { of: Rc::new(slots_of(&parts)), rest: None };
         };
         let prefix = slots_of(&parts[..first_run]);
         let tail = &parts[first_run + 1..];
@@ -902,14 +903,14 @@ impl<'a> Typing<'a> {
             let at = prefix.len();
             let mut of = prefix;
             of.extend(slots_of(tail));
-            return Ty::Tuple { of, rest: Some(TupleRest { at, of: run.map(Box::new) }) };
+            return Ty::Tuple { of: Rc::new(of), rest: Some(TupleRest { at, of: run.map(Rc::new) }) };
         }
         let folded = match tuple_as_list(&slots_of(&parts[first_run..]), None, self.version) {
             Some(Ty::List { of, .. }) => Some(of),
             _ => None,
         };
         let at = prefix.len();
-        Ty::Tuple { of: prefix, rest: Some(TupleRest { at, of: folded }) }
+        Ty::Tuple { of: Rc::new(prefix), rest: Some(TupleRest { at, of: folded }) }
     }
 
     /// `spreadParts`, the typing half: `(is_run, type)` for each part a
@@ -1037,10 +1038,10 @@ impl<'a> Typing<'a> {
             _ => Ty::Json,
         };
         if self.version < 2 {
-            return Some(if agree { Ty::Dict { of: Box::new(of), shape: None } } else { Ty::Json });
+            return Some(if agree { Ty::Dict { of: Rc::new(of), shape: None } } else { Ty::Json });
         }
         let shape: Option<movement_parser::catalog::types::JsMap<Option<Ty>>> = keys_named.then(|| shape.into_iter().collect());
-        Some(Ty::Dict { of: Box::new(of), shape })
+        Some(Ty::Dict { of: Rc::new(of), shape: shape.map(Rc::new) })
     }
 
     // ── What a choice may hold ──
@@ -1069,7 +1070,7 @@ impl<'a> Typing<'a> {
                         ObjectMember::Spread(_) => None,
                     })
                     .collect();
-                Some(Ty::Dict { of: Box::new(Ty::Json), shape: Some(shape) })
+                Some(Ty::Dict { of: Rc::new(Ty::Json), shape: Some(Rc::new(shape)) })
             }
             Expression::List { elements } => {
                 let mut slots = Vec::new();
@@ -1079,7 +1080,7 @@ impl<'a> Typing<'a> {
                         ListElement::Expression(e) => slots.push(self.may_hold_type(e)),
                     }
                 }
-                Some(Ty::Tuple { of: slots, rest: None })
+                Some(Ty::Tuple { of: Rc::new(slots), rest: None })
             }
             _ => {
                 let held = self.bare_names.get(&key(expr)).and_then(|name| self.env.resolve_may_hold(name));
@@ -1212,7 +1213,7 @@ impl<'a> Typing<'a> {
         match strip_absent(&ty) {
             Ty::List { of, .. } => Some((**of).clone()),
             Ty::Tuple { of, rest } => {
-                let mut arms = of.clone();
+                let mut arms = of.to_vec();
                 arms.push(rest.as_ref().and_then(|r| r.of.as_deref().cloned()));
                 arms_union(&arms)
             }

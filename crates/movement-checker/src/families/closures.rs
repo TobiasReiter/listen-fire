@@ -18,6 +18,7 @@
 //! - MOV_PARALLEL_RETIRED
 
 
+use std::rc::Rc;
 use movement_parser::ast::{
     ArmExpression, ClosureExpression, CollectionOp, CollectionOpExpression, CombinatorArms, CombinatorExpression, CombinatorKind, Loc, RValue,
     Span, Statement,
@@ -119,7 +120,8 @@ fn receipt_may_hold(nullable: bool, slots: &[ReturnShape]) -> Ty {
                 })?;
                 Some(if nullable { crate::types::field::maybe_absent(held) } else { held })
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
         rest: None,
     }
 }
@@ -357,7 +359,7 @@ impl Checker<'_> {
                 let may_hold = match types {
                     Some(SymbolTypes { arm_returns: Some(arms), .. }) => Some(receipt_may_hold(nullable, &arms)),
                     Some(SymbolTypes { arms_each_return: Some(each), .. }) => match receipt_may_hold(nullable, std::slice::from_ref(&each)) {
-                        Ty::Tuple { of, .. } => match of.into_iter().next().flatten() {
+                        Ty::Tuple { of, .. } => match of.first().cloned().flatten() {
                             Some(Ty::Absent) | None => None,
                             Some(slot) => Some(list_of(slot, crate::types::field::CollectionOrder::Unknown)),
                         },
@@ -400,7 +402,8 @@ impl Checker<'_> {
                     let field = slot.plane.field.clone()?;
                     Some(if nullable { crate::types::field::maybe_absent(field) } else { field })
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             rest: None,
         };
         Receipt { ty: Some(ty), may_hold: Some(may_hold), holds_record }
@@ -606,8 +609,8 @@ impl Checker<'_> {
             CollectionOp::Map => returned.map(|r| list_of(r, ordering)),
             CollectionOp::Filter => element.map(|e| list_of(e, ordering)),
             CollectionOp::Reduce => returned.or(carried),
-            CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Box::new(list_of(e, ordering)), shape: None }),
-            CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Box::new(e), shape: None }),
+            CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Rc::new(list_of(e, ordering)), shape: None }),
+            CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Rc::new(e), shape: None }),
         };
         // What the function's returns may hold beyond that type travels with
         // the op's value, as a call's does: MAP's as members, REDUCE's as itself.

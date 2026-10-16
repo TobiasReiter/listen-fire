@@ -18,7 +18,7 @@ fn en(options: &[&str]) -> Ty {
 }
 
 fn tuple(of: Vec<Ty>) -> Ty {
-    Ty::Tuple { of: of.into_iter().map(Some).collect(), rest: None }
+    Ty::Tuple { of: Rc::new(of.into_iter().map(Some).collect()), rest: None }
 }
 
 #[test]
@@ -42,11 +42,11 @@ fn a_tuple_widens_by_version() {
 #[test]
 fn spelling() {
     let run = Ty::Tuple {
-        of: vec![Some(Ty::Text), Some(Ty::Number)],
-        rest: Some(TupleRest { at: 1, of: Some(Box::new(Ty::Union(vec![Ty::Date, Ty::Number]))) }),
+        of: Rc::new(vec![Some(Ty::Text), Some(Ty::Number)]),
+        rest: Some(TupleRest { at: 1, of: Some(Rc::new(Ty::Union(Rc::new(vec![Ty::Date, Ty::Number])))) }),
     };
     assert_eq!(describe_field_type(&run), "[text, ...list of (date | number), number]");
-    let dict = Ty::Dict { of: Box::new(Ty::Json), shape: Some([("a".to_string(), Some(Ty::Text)), ("b".to_string(), None)].into_iter().collect()) };
+    let dict = Ty::Dict { of: Rc::new(Ty::Json), shape: Some(Rc::new([("a".to_string(), Some(Ty::Text)), ("b".to_string(), None)].into_iter().collect())) };
     assert_eq!(describe_field_type(&dict), "{ a: text, b: ? }");
     assert_eq!(describe_field_type(&en(&[])), "enum (no available values)");
     assert_eq!(describe_field_type(&maybe_absent(Ty::list(Ty::Text))), "list of text (or absent)");
@@ -60,11 +60,11 @@ fn fit() {
     assert!(!field_assignable(&Ty::File, &Ty::Json), "a file is a handle, not data");
     assert!(field_assignable(&Ty::Date, &Ty::Datetime));
     assert!(field_assignable(&tuple(vec![Ty::Text, Ty::Number]), &Ty::list(Ty::Text)), "a tuple that widens to nothing is not refused");
-    assert!(!field_assignable(&Ty::Union(vec![Ty::Number, Ty::Text]), &Ty::Text));
+    assert!(!field_assignable(&Ty::Union(Rc::new(vec![Ty::Number, Ty::Text])), &Ty::Text));
     assert!(field_type_compatible(&Ty::Number, &Ty::Text));
     assert!(field_type_compatible(&Ty::Text, &Ty::Date));
     assert!(!field_type_compatible(&Ty::Date, &Ty::Number));
-    assert_eq!(comparison_category(&Ty::Union(vec![Ty::Date, Ty::Datetime])), ComparisonCategory::Temporal);
+    assert_eq!(comparison_category(&Ty::Union(Rc::new(vec![Ty::Date, Ty::Datetime]))), ComparisonCategory::Temporal);
 }
 
 #[test]
@@ -172,14 +172,14 @@ fn closures_fit_contravariantly() {
 
 #[test]
 fn handles_inside_values() {
-    let held = handle_within(Some(&Ty::Dict { of: Box::new(Ty::Text), shape: Some([("f".to_string(), Some(Ty::File))].into_iter().collect()) }), &HeldWalk::default())
+    let held = handle_within(Some(&Ty::Dict { of: Rc::new(Ty::Text), shape: Some(Rc::new([("f".to_string(), Some(Ty::File))].into_iter().collect())) }), &HeldWalk::default())
         .unwrap();
     assert_eq!(spell_held_steps(&held.steps), ".f");
     assert!(held.is_file());
     assert!(handle_refused_by(Some(&Ty::list(Ty::File)), Some(&Ty::list(Ty::File))).is_none(), "a file list takes files");
     assert!(handle_refused_by(Some(&Ty::list(Ty::File)), Some(&Ty::Json)).is_some());
-    assert!(mixes_record_with_value(Some(&Ty::Union(vec![Ty::Record(None), Ty::Text]))));
-    assert!(!mixes_record_with_value(Some(&Ty::Union(vec![Ty::Text, Ty::Number]))));
+    assert!(mixes_record_with_value(Some(&Ty::Union(Rc::new(vec![Ty::Record(None), Ty::Text])))));
+    assert!(!mixes_record_with_value(Some(&Ty::Union(Rc::new(vec![Ty::Text, Ty::Number])))));
 }
 
 fn infer<'e>(source: &str, env: &'e dyn TypeEnv, version: u32) -> (Option<Ty>, Typing<'e>, movement_parser::lowering::expression::Expression) {

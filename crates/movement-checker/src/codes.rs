@@ -164,6 +164,9 @@ pub const RETURN_PLANE_MISMATCH: &str = "MOV_RETURN_PLANE_MISMATCH";
 pub const RECURSIVE_RETURN_TYPE: &str = "MOV_RECURSIVE_RETURN_TYPE";
 pub const RETURN_TYPE: &str = "MOV_RETURN_TYPE";
 pub const RETURN_NOT_A_VALUE: &str = "MOV_RETURN_NOT_A_VALUE";
+/// A binding, function or closure whose inferred type has more than
+/// `TYPE_PARTS_LIMIT` distinct parts: a safety limit on every version.
+pub const TYPE_TOO_LARGE: &str = "MOV_TYPE_TOO_LARGE";
 pub const BLOCK_READ_BACK_RETIRED: &str = "MOV_BLOCK_READ_BACK_RETIRED";
 pub const CALL_RETURNS_NOTHING: &str = "MOV_CALL_RETURNS_NOTHING";
 pub const BLOCK_RETURNS_NOTHING: &str = "MOV_BLOCK_RETURNS_NOTHING";

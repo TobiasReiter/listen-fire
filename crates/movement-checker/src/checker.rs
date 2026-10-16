@@ -290,7 +290,8 @@ impl<'c> Checker<'c> {
                 {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
-                if let Some(types) = self.bound_types(Some(&assign.name), &assign.value, &bound, scope) {
+                if let Some(mut types) = self.bound_types(Some(&assign.name), &assign.value, &bound, scope) {
+                    self.within_type_limit(&assign.name, &mut types.field, &mut types.may_hold, Some(assign.span));
                     self.set_types(scope, &assign.name, types);
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
@@ -422,7 +423,11 @@ impl<'c> Checker<'c> {
             RValue::Closure { closure } => {
                 let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
                 let (body, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
-                let returns = self.closure_returns(closure, body.value, scope);
+                let mut returns = self.closure_returns(closure, body.value, scope);
+                // An unbound closure's value is caught where it is bound.
+                if let Some(name) = name {
+                    self.within_type_limit(name, &mut returns.plane.field, &mut returns.may_hold, Some(closure.span));
+                }
                 return Bound { is_closure: true, closure_suspends: suspends, closure_returns: Some(returns), ..Bound::default() };
             }
             RValue::Node { node } => {
@@ -714,8 +719,9 @@ impl<'c> Checker<'c> {
         }
         self.open_effect_frame();
         let what = format!("'{}'", movement.name);
-        let returns = self.check_body(&movement.body, body, what.clone());
+        let mut returns = self.check_body(&movement.body, body, what.clone());
         let row = self.close_effect_frame();
+        self.within_type_limit(&movement.name, &mut returns.value.plane.field, &mut returns.value.may_hold, Some(movement.span));
         if let Some(written) = &movement.return_type {
             self.check_param_type(written, scope);
             self.check_declared_return(written, &what, &returns.returns, scope, movement.span);

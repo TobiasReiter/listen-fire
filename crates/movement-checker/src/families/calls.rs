@@ -26,6 +26,7 @@
 //! - MOV_RETURN_OUTSIDE_BODY
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
+//! - MOV_TYPE_TOO_LARGE (raised by `within_type_limit`, binding_types.rs)
 
 use movement_parser::ast::{RValue, MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
@@ -660,7 +661,7 @@ pub fn closures_of_value(ty: &Ty) -> Option<Vec<ClosureType>> {
         },
         Ty::Union(members) => {
             let mut found: Vec<ClosureType> = Vec::new();
-            for member in members {
+            for member in members.iter() {
                 found.extend(closures_of_value(member)?);
             }
             (!found.is_empty()).then_some(found)
@@ -1822,6 +1823,8 @@ impl Checker<'_> {
         if let Some(Position::Local(local)) = returned.plane.pos.as_deref_mut() {
             local.label = format!("the value of '{}'", movement.name);
         }
+        // Reported where the movement is declared.
+        self.within_type_limit(&movement.name, &mut returned.plane.field, &mut returned.may_hold, None);
         self.inference.returned.insert(id, returned);
         self.inference.inferred.insert(id, true);
     }
