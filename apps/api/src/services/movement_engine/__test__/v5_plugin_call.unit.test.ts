@@ -298,6 +298,22 @@ describe.each(ENGINES)('a plugin called by position on %s', (_name, config, engi
     expect(recorded.map((r) => r.engine)).toEqual([engine]);
     expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
   });
+
+  // The closure's concise body is the plugin call itself, and a block may
+  // return one: both hand back the call's value.
+  it.each([
+    ['a concise closure body', ['  more = map(found, (c) => research(c.name, { questions: "what it does" }))']],
+    ['a returned call', ['  more = map(found, (c) => {', '    return research(c.name, { questions: "what it does" })', '  })']],
+  ])('runs a plugin call that is %s', async (_what, lines) => {
+    const calls = await run(
+      [...EXTRACT_COMPANIES, ...lines, '  t = more[0].summary'],
+      config,
+      { research: { data: { summary: 'Payments.' } } },
+      { replies: [COMPANIES_FOUND] },
+    );
+    expect(recorded.map((r) => r.engine)).toEqual([engine]);
+    expect(calls).toEqual([{ plugin: 'research', config: { name: 'Acme', questions: 'what it does' } }]);
+  });
 });
 
 // A plugin package from language version 5 (design §2.10): a package import

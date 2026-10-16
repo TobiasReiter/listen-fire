@@ -2879,9 +2879,10 @@ impl Names<'_> {
                 RValue::Callback { callback } => self.callback(callback),
                 other => self.rvalue(other),
             },
-            // A returned call's value is the TypeScript's to hand back.
             Statement::Return(ret) => match &ret.value {
-                RValue::Call { call } if self.plugin(&call.callee) => refuse("plugin_call"),
+                // A returned plugin call (a closure's concise body,
+                // `(c) => research(c)`, among them): its value, as one bound.
+                RValue::Call { call } if self.plugin(&call.callee) => self.plugin_call(call),
                 RValue::Collection { collection } => self.collection_op(collection, "rvalue:collection"),
                 RValue::Members { .. } => Ok(()),
                 RValue::Call { call } if let Some(reading) = self.reading(call)? => self.reading_admitted(&reading, "rvalue:collection"),
