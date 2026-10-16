@@ -55,14 +55,21 @@ fn found(callee: &str, fields: &movement_parser::catalog::types::JsMap<SchemaFie
 
 impl Checker<'_> {
     /// The plugin a callable symbol names, by its catalog name.
-    pub fn plugin_spec_of(&self, id: SymbolId, written: &str) -> Option<&PluginSpec> {
+    pub fn plugin_spec_of(&self, id: SymbolId, written: &str) -> Option<PluginSpec> {
         let symbol = self.scopes.symbol(id);
-        self.catalog.plugin(symbol.imported_name.as_deref().unwrap_or(written))
+        self.plain_plugin_spec(symbol.imported_name.as_deref().unwrap_or(written))
+    }
+
+    /// `plainPluginSpec`: a plugin as a plain call of it reads it under this
+    /// program's pin (`PluginSpec::under`); a stage reads the catalog's spec
+    /// as it is.
+    pub fn plain_plugin_spec(&self, name: &str) -> Option<PluginSpec> {
+        self.catalog.plugin(name).map(|spec| spec.under(self.version))
     }
 
     /// `checkPluginApplication`: a plugin's call, and the value it hands back.
     pub fn check_plugin_application(&mut self, call: &CallStatement, id: SymbolId, scope: crate::scope::ScopeId) -> ReturnShape {
-        let spec = self.plugin_spec_of(id, &call.callee).cloned();
+        let spec = self.plugin_spec_of(id, &call.callee);
         if let Some(effects) = spec.as_ref().and_then(|s| s.effects.as_ref()) {
             self.absorb_suspend(effects.suspend == Some(true));
         }
@@ -119,7 +126,7 @@ impl Checker<'_> {
         if self.scopes.symbol(id).kind != crate::scope::SymbolKind::Plugin {
             return None;
         }
-        let spec = self.plugin_spec_of(id, &call.callee)?.clone();
+        let spec = self.plugin_spec_of(id, &call.callee)?;
         let first = call.args.first()?;
         if first.name().is_some() {
             let at = first.span().start;

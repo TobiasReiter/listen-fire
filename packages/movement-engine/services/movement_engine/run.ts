@@ -140,6 +140,8 @@ import {
   packageMembers,
   pluginArgMisfitMessage,
   pluginPositionalParams,
+  pluginSpecUnder,
+  EXTRACTED_RECORD_PARAM,
 } from 'movement-lang';
 import type {
   CallNode,
@@ -6286,8 +6288,17 @@ class Interpreter {
       config[arg.name] = record !== undefined ? recordFields(record) : value;
       trails.push(provenance);
     }
+    // A plugin fed only by an extraction runs on a record's fields, which a
+    // stage handed it as the extracted context; from version 5 a call hands
+    // it the record as its argument, on the same wire.
+    const extractedContext: Record<string, unknown> = {};
+    if (spec?.fedByExtraction === true && since(this.languageVersion, 5)) {
+      const record = config[EXTRACTED_RECORD_PARAM];
+      delete config[EXTRACTED_RECORD_PARAM];
+      if (record !== null && typeof record === 'object' && !Array.isArray(record)) Object.assign(extractedContext, record);
+    }
     const elapsed = await stopwatch(this.context.clock);
-    const result = await invoker.invoke({ plugin, config, extractedContext: {} });
+    const result = await invoker.invoke({ plugin, config, extractedContext });
     const durationMs = await elapsed();
     // What the plugin brought back is no longer justified by the quote that
     // pointed at it, so the origins survive and the direct citation does not.
@@ -6317,10 +6328,11 @@ class Interpreter {
     if (spec === undefined || before(this.languageVersion, 5) || statement.args.every((arg) => arg.name !== undefined)) {
       return statement.args;
     }
-    const bound = bindPluginArgs(spec, 'plain', statement.args);
+    const callable = pluginSpecUnder(spec, this.languageVersion);
+    const bound = bindPluginArgs(callable, 'plain', statement.args);
     const [misfit] = bound.misfits;
     if (misfit !== undefined) {
-      const positional = pluginPositionalParams(spec, 'plain');
+      const positional = pluginPositionalParams(callable, 'plain');
       throw new MovementEngineError(
         'MOVENG_RUNTIME',
         `${pluginArgMisfitMessage(misfit, statement.callee, positional)} — the checker should have caught this`,

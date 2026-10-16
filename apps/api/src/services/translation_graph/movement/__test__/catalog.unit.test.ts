@@ -1417,11 +1417,18 @@ describe('registeredPluginSpecs — declared output', () => {
     }
   });
 
-  it('the one plugin the extraction alone feeds stays a stage', () => {
-    // No parameters and a body that reads the enclosing extract's fields —
-    // there is no call an author could write, so it declares no output either.
+  it('the one plugin the extraction alone feeds hands back the fields it adds', () => {
+    // No parameters and a body that reads the enclosing extract's fields:
+    // before language version 5 it is a stage and nothing else; from 5 a call
+    // hands it that record and gets back what it found.
     expect(specs.linkedin_enrichment?.fedByExtraction).toBe(true);
-    expect(specs.linkedin_enrichment?.output).toBeUndefined();
+    expect(specs.linkedin_enrichment?.output).toEqual({
+      kind: 'record',
+      fields: {
+        linkedin_url: { kind: 'maybeAbsent', of: 'text' },
+        linkedin_profile: { kind: 'maybeAbsent', of: 'text' },
+      },
+    });
   });
 
   it('a plugin with parameters is callable however it is SCHEDULED', () => {

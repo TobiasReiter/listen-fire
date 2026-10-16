@@ -19,7 +19,6 @@ const ROOT_WORDS: &str = "\"the relevant information in the content\"";
 
 const RETIRED: &str = "the extraction keyword ('extract from […] { … }') is retired — an extraction is the call over a declared node shape: 'extract(content, Shape)' for each record the content holds, 'extractOne(content, Shape)' for the one it describes";
 
-const THROUGH: &str = "No rewrite keeps a 'through […]' stage's meaning: it hands each record's plugin answers to a further extraction of that record, merged into it, where a plugin called as a function hands back a value of its own. Rewrite it by hand: declare the shape, extract it, map over the records calling each plugin, extractOne over the content plus what the plugin returned, and merge the two with a spread";
 
 impl Checker<'_> {
     /// `reportExtractKeywordRetired`.
@@ -30,7 +29,9 @@ impl Checker<'_> {
             Resolution::Found(id) => self.declared_extract_shape(id).map(|declared| declared.declaration.root),
             _ => None,
         };
-        let (message, fix) = match blocker_of(&extract.stages, &resolve) {
+        let calls: Vec<String> = stage_plugins(&extract.stages).into_iter().map(|plugin| self.plugin_call_spelling(plugin, scope)).collect();
+        let through = through_blocker(&calls);
+        let (message, fix) = match blocker_of(&extract.stages, &resolve, &through) {
             Some(blocker) => (format!("{RETIRED}. {blocker}"), None),
             None => {
                 let name = shape_name(binding, &self.file_names);
@@ -42,6 +43,20 @@ impl Checker<'_> {
         let mut diagnostic = Diagnostic::error(codes::EXTRACT_KEYWORD_RETIRED, message, extract.span);
         diagnostic.fix = fix;
         self.push(diagnostic);
+    }
+}
+
+impl Checker<'_> {
+    /// `pluginCallSpelling`: a stage's plugin written as the call of it, its
+    /// positional parameters in place (`linkedinEnrichment(record)`); `…`
+    /// where its spec is unknown.
+    fn plugin_call_spelling(&self, plugin: &str, scope: ScopeId) -> String {
+        let spec = match self.scopes.resolve(scope, plugin) {
+            Resolution::Found(id) if self.scopes.symbol(id).kind == crate::scope::SymbolKind::Plugin => self.plugin_spec_of(id, plugin),
+            _ => None,
+        };
+        let params = spec.as_ref().map_or_else(|| vec!["…"], |spec| spec.positional_params(movement_parser::catalog::plugin_args::PluginCallSite::Plain));
+        format!("{plugin}({})", params.join(", "))
     }
 }
 
@@ -86,14 +101,14 @@ fn rewrite(
 }
 
 /// Why no rewrite keeps this tree's meaning, if one is why.
-fn blocker_of(stages: &[ExtractStage], resolve: &dyn Fn(&str) -> Option<ShapeNode>) -> Option<String> {
+fn blocker_of(stages: &[ExtractStage], resolve: &dyn Fn(&str) -> Option<ShapeNode>, through: &str) -> Option<String> {
     if stages.len() != 1 || stages.iter().any(|stage| stage.through.is_some()) {
-        return Some(THROUGH.to_string());
+        return Some(through.to_string());
     }
     stages[0].children.iter().find_map(|child| match child {
         ExtractNode::Declared(node) => {
             if !node.stages.is_empty() {
-                return Some(THROUGH.to_string());
+                return Some(through.to_string());
             }
             let type_ = &node.declared.type_;
             match resolve(type_) {
@@ -105,8 +120,43 @@ fn blocker_of(stages: &[ExtractStage], resolve: &dyn Fn(&str) -> Option<ShapeNod
                 Some(_) => None,
             }
         }
-        ExtractNode::Inline(node) => blocker_of(&node.stages, resolve),
+        ExtractNode::Inline(node) => blocker_of(&node.stages, resolve, through),
     })
+}
+
+/// `stagePlugins`: every `through […]` stage's plugin in the tree, once
+/// each, in the order written.
+fn stage_plugins(stages: &[ExtractStage]) -> Vec<&str> {
+    fn visit<'a>(stage: &'a ExtractStage, plugins: &mut Vec<&'a str>) {
+        for call in stage.through.iter().flatten() {
+            if !plugins.contains(&call.plugin.as_str()) {
+                plugins.push(&call.plugin);
+            }
+        }
+        for child in &stage.children {
+            let stages = match child {
+                ExtractNode::Declared(node) => &node.stages,
+                ExtractNode::Inline(node) => &node.stages,
+            };
+            for stage in stages {
+                visit(stage, plugins);
+            }
+        }
+    }
+    let mut plugins = Vec::new();
+    for stage in stages {
+        visit(stage, &mut plugins);
+    }
+    plugins
+}
+
+/// `throughBlocker`: the hand rewrite of a tree with stages, naming each
+/// stage's plugin as the call that replaces it.
+fn through_blocker(calls: &[String]) -> String {
+    let each = if calls.is_empty() { String::new() } else { format!(" ({})", calls.iter().map(|call| format!("'{call}'")).collect::<Vec<_>>().join(", ")) };
+    format!(
+        "No rewrite keeps a 'through […]' stage's meaning: it hands each record's plugin answers to a further extraction of that record, merged into it, where a plugin called as a function hands back a value of its own. Rewrite it by hand: declare the shape, extract it, map over the records calling each plugin{each}, extractOne over the content plus what the plugin returned, and merge the two with a spread"
+    )
 }
 
 /// `x` → `XShape`, `found_cos` → `FoundCosShape`; a name already taken gets

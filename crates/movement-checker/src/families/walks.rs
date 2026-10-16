@@ -1264,12 +1264,12 @@ impl crate::checker::Checker<'_> {
                 MapKey::String(key) => &key.text,
             }
         }
-        let Some((plugin, spec)) = plugin.and_then(|p| self.catalog.plugin(p).map(|spec| (p, spec))) else {
+        let Some((plugin, spec)) = plugin.and_then(|p| self.plain_plugin_spec(p).map(|spec| (p, spec))) else {
             let arg = if self.version >= 5 { "m.u" } else { "url: m.u" };
             return format!("{lead}, e.g. '{}', then 'page = fetch_url({arg})'", import_line("fetch_url", "plugins"));
         };
         if self.version >= 5 {
-            return transform_hop_as_function(plugin, spec);
+            return transform_hop_as_function(plugin, &spec);
         }
         let args = spec.required_args.iter().flatten().map(|arg| format!("{arg}: …")).collect::<Vec<_>>().join(", ");
         format!(
