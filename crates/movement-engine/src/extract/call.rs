@@ -440,9 +440,9 @@ impl Run<'_> {
     /// snapshot's `models`, the run's one list (ai_tiers.ts `runChatModels`,
     /// which the shim always sends) and the one the checker held it to, so
     /// only an unchecked program fails here, in the TypeScript's words
-    /// (`unreachedModelMessage`). With no list (an embedder that sends none),
-    /// the TypeScript would ask the model registry, which this engine does
-    /// not hold, and the call is refused as its own.
+    /// (`unreachedModelMessage`). With no list (an embedder that sends none)
+    /// the checker accepted any model, so the call is made with the one
+    /// written and the host's model call answers for it.
     fn extract_call_settings(&self, call: &ast::ExtractCallExpression, spec: &NodeSpec) -> Result<CallSettings, Stop> {
         let WrittenSettings { tier, model, effort } = match &call.config {
             None => WrittenSettings::default(),
@@ -450,16 +450,12 @@ impl Run<'_> {
                 thrown(Failure::engine("MOVENG_RUNTIME", format!("invalid 'extract' settings (the checker should have caught this): {}", problems.join("; "))))
             })?,
         };
-        if let Some(model) = &model {
-            let Some(models) = self.catalog.models.as_ref() else {
-                return Err(thrown(Failure::unreproduced(
-                    &format!("'extract''s model '{model}' with no model list holding it"),
-                    "the Rust engine holds a model to the catalog snapshot's `models`",
-                )));
-            };
-            if !models.contains(model) {
-                return Err(thrown(Failure::engine("MOVENG_RUNTIME", unreached_model_message(model, models))));
-            }
+        // With no list the checker held the model to nothing, so it is the
+        // host's to answer: the call is made with it.
+        if let (Some(model), Some(models)) = (&model, self.catalog.models.as_ref())
+            && !models.contains(model)
+        {
+            return Err(thrown(Failure::engine("MOVENG_RUNTIME", unreached_model_message(model, models))));
         }
         let density = if count_shape_nodes(spec) >= ENTITY_DENSITY_OPUS_THRESHOLD { "opus" } else { "sonnet" };
         Ok(crate::extract::run::extraction_call_settings_over(tier.as_deref(), density, &self.input.extraction_tiers, model.as_deref(), effort.as_deref()))

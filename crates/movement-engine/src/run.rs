@@ -3065,21 +3065,21 @@ mod tests {
     }
 
     /// An extraction call whose written `model` meets a run input that carries
-    /// no `models` list fails (README `extract_call_model`): the model
-    /// registry is the host's, and the shim always sends the run's list. The
-    /// call fails before the model is asked anything.
+    /// no `models` list (an embedder that sends none): the checker held the
+    /// model to nothing, so the call is made with it and the host answers.
     #[test]
-    fn an_extraction_call_with_a_model_and_no_model_list_fails_unsupported() {
-        let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n  write crm-[:notes]-> { body: \"${COUNT(found)}\" }\n}";
+    fn an_extraction_call_with_a_model_and_no_model_list_asks_the_host_with_it() {
+        let source = "import { email } from adapters\ninbox = email()\nnode Company: \"each company named in this message\" {\n  name: <text> \"the company's name\"\n}\nmovement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.`text`], Company, { model: 'claude-opus-5' })\n}";
         let host = plain_host(json!({ "text": "Acme raised." }));
         let (done, seen) = drive(source, json!(["o", 1, [["text", "Acme raised."]]]), |request| match (request.family, request.method.as_str()) {
             ("ids", "mint") => json!({ "value": ["id-1"] }),
             ("clock", "now") => json!({ "value": { "nowIso": "2026-10-09T12:00:00.000Z" } }),
-            ("llm.client" | "llm.extractCall", _) => panic!("the model is never asked: {request:?}"),
+            ("llm.extractCall", _) => json!({ "error": { "message": "the host knows no model 'claude-opus-5'" } }),
             _ => host(request),
         });
-        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
-        assert!(seen.iter().all(|r| !r.family.starts_with("llm")), "{seen:?}");
+        let asked = seen.iter().find(|r| r.family == "llm.extractCall").expect("the model is asked");
+        assert_eq!(asked.args["model"], json!("claude-opus-5"));
+        assert_ne!(done["failed"]["error"]["code"], json!("MOVENG_UNSUPPORTED"), "{done}");
     }
 
     /// The extraction keyword fails by name where it is met: this engine
