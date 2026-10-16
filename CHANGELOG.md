@@ -245,6 +245,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   escape (`\1` with no group was U+0001), `\c` without a letter and an unknown letter escape
   (`\p`, `\a`) are malformed patterns, so the call is absent. Escaped punctuation (`\-`, `\@`)
   is still itself. Groups nested past 1,000 deep are malformed (they were handed to TypeScript).
+- **A date-time text is ISO 8601 / RFC 3339 only, and no offset means UTC.** `DATETIME("2024-03-05T10:00")`
+  is `2024-03-05T10:00:00.000Z` whatever zone the host runs in (it was read in the process's local
+  zone). A day the month lacks or the hour 24 is no date-time (`"2026-02-30T00:00Z"` rolled over
+  to March 2). A comparison reads only ISO texts as dates: `"item 3" < "item 12"` is false, as
+  texts (V8 read both as dates and said true); `true < "9"` no longer orders. Written dates
+  (`DATE.PARSE("12 March 2026")`) are read as before.
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

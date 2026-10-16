@@ -1242,7 +1242,7 @@ impl Run<'_> {
             last = crate::filter::evaluate_predicate_with(
                 conjunct,
                 &read,
-                crate::filter::PredicateOptions { ask: Some(&ask), local: self.local_zone(), read_field: Some(&read_field) },
+                crate::filter::PredicateOptions { ask: Some(&ask), read_field: Some(&read_field) },
             )
                 .await
                 .map_err(|e| Failure::of_eval(e, "the Rust engine does not reproduce it"))?;
@@ -1362,7 +1362,7 @@ impl Run<'_> {
             None => self.clock_now().await.map_err(Failure::into_eval)?,
         };
         *now.borrow_mut() = Some(at);
-        Ok(crate::filter::within(&left, &right, at, self.local_zone()))
+        Ok(crate::filter::within(&left, &right, at))
     }
 
     /// A name a position-scoped evaluation reads off its landed record

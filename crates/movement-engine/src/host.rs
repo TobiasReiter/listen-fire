@@ -539,7 +539,7 @@ pub mod clock {
     /// epoch; `None` for an answer that names none.
     pub fn instant_of(answer: Option<&Json>) -> Option<f64> {
         // A `toISOString` text names its offset: no zone reads it.
-        crate::js_date::parse(answer?.get("nowIso")?.as_str()?, crate::js_date::LocalZone::UTC)
+        crate::js_date::parse(answer?.get("nowIso")?.as_str()?)
     }
 }
 

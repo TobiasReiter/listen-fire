@@ -18,9 +18,9 @@ use movement_engine::stdlib::{self, Surroundings};
 use movement_parser::lowering::expression::FilterOperator;
 use serde_json::{Value as Json, json};
 
-/// The generator pins `now` at the epoch and runs in UTC.
+/// The generator pins `now` at the epoch and runs in UTC, as a run does.
 fn around() -> Surroundings<'static> {
-    Surroundings { services: movement_engine::env_services::current(), now: Some(0.0), local_zone: Some("UTC") }
+    Surroundings { services: movement_engine::env_services::current(), now: Some(0.0) }
 }
 
 /// The wire with object ids dropped (the two sides number them apart) and
@@ -56,17 +56,26 @@ fn regex_over_astral(fn_: &str, case: &Json) -> bool {
     fn_ == "text.regex_extract" && { let text = case["args"].to_string(); text.contains("\"s16\"") || text.chars().any(|c| u32::from(c) > 0xFFFF) || text.contains("\\u") || text.contains('\u{FDD0}') }
 }
 
+/// A date reading over a text version 5 reads as no date-time (ISO 8601 /
+/// RFC 3339 only, the hour 0–23, a day its month has) where V8's legacy
+/// parser read one (`"9"`, `"2026-02-30"`, `T24:00`): DATE, DATETIME, the
+/// DATE members and an ordering may answer differently.
+fn date_v8_read(fn_: &str, case: &Json) -> bool {
+    let dated = fn_.starts_with("date") || fn_.starts_with("coerce.") || fn_.starts_with("flat.date") || matches!(fn_, "compare.lt" | "compare.lte" | "compare.gt" | "compare.gte");
+    dated && case["args"].as_array().unwrap().iter().any(|a| a.as_str().is_some_and(|t| movement_engine::js_date::parse(t).is_none()))
+}
+
 fn run(fn_: &str, args: &[Js]) -> Result<Js, EvalError> {
     if let Some(op) = fn_.strip_prefix("compare.") {
         let op: FilterOperator = serde_json::from_value(json!(op)).unwrap();
-        return compare_values(&args[0], op, &args[1], around().local()).map(Js::Bool);
+        return compare_values(&args[0], op, &args[1]).map(Js::Bool);
     }
     let value = || args.first().cloned().unwrap_or(Js::Undefined);
     match fn_ {
-        "coerce.date" => Ok(stdlib::coerce_to_date(&value(), around().local()).map_or(Js::Null, Js::str)),
-        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value(), around().local()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
+        "coerce.date" => Ok(stdlib::coerce_to_date(&value()).map_or(Js::Null, Js::str)),
+        "coerce.datetime" => Ok(stdlib::coerce_to_datetime(&value()).map_or(Js::Null, |(iso, _)| Js::str(iso))),
         "coerce.number" => Ok(stdlib::coerce_to_number(&value()).map_or(Js::Null, Js::Number)),
-        flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args, around()),
+        flat if flat.starts_with("flat.") => stdlib::apply_flat(&flat["flat.".len()..], args),
         id => stdlib::apply_namespaced(id, args, around()),
     }
 }
@@ -98,7 +107,7 @@ fn the_standard_library_answers_as_typescript_does() {
             Json::Object(o) if o.contains_key("value") => json!({ "value": shape(&o["value"]) }),
             other => other.clone(),
         };
-        if got != want && !regex_over_astral(fn_, case) {
+        if got != want && !regex_over_astral(fn_, case) && !date_v8_read(fn_, case) {
             mismatches.push(format!("{fn_}({}) = {got}, TypeScript {want}", case["args"]));
         }
     }
@@ -173,7 +182,7 @@ fn strings_hold_what_javascript_holds() {
             Json::Object(o) if o.contains_key("throws") => json!({ "throws": o["throws"]["message"] }),
             other => other.clone(),
         };
-        if got != want && !regex_over_astral(fn_, case) {
+        if got != want && !regex_over_astral(fn_, case) && !date_v8_read(fn_, case) {
             mismatches.push(format!("{fn_}({}) = {got}, TypeScript {want}", case["args"]));
         }
     }

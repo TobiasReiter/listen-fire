@@ -10,7 +10,7 @@ use movement_parser::lowering::expression::{ArithmeticOp, Expression, FilterOper
 use crate::eval::{EvalError, static_value};
 use crate::executor::ready;
 use crate::js::{self, Js};
-use crate::js_date::{self, LocalZone};
+use crate::js_date;
 
 /// `x == null` / `x != null`: the one loose comparison — absent and null
 /// both answer it. Any other operator against null is false.
@@ -22,11 +22,11 @@ pub fn compare_to_null(op: FilterOperator, value: &Js) -> bool {
     }
 }
 
-/// `compareValues`, a date text read in `local` (the run's zone, as V8 reads
-/// one in its process's). `within` measures from the host's clock, which
+/// `compareValues`, a date text read as UTC when it names no offset.
+/// `within` measures from the host's clock, which
 /// this unit does not have: it is handed back, and answered by `within`
 /// once the caller has asked the clock.
-pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZone<'_>) -> Result<bool, EvalError> {
+pub fn compare_values(left: &Js, op: FilterOperator, right: &Js) -> Result<bool, EvalError> {
     Ok(match op {
         FilterOperator::Eq => match (left, right) {
             (Js::Array(a), Js::Array(b)) => set_equals(&a.items(), &b.items()),
@@ -36,10 +36,10 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZon
             (Js::Array(a), Js::Array(b)) => !set_equals(&a.items(), &b.items()),
             _ => !js::strict_equals(left, right),
         },
-        FilterOperator::Gt => relational_order(left, right, local).is_some_and(|c| c > 0.0),
-        FilterOperator::Gte => relational_order(left, right, local).is_some_and(|c| c >= 0.0),
-        FilterOperator::Lt => relational_order(left, right, local).is_some_and(|c| c < 0.0),
-        FilterOperator::Lte => relational_order(left, right, local).is_some_and(|c| c <= 0.0),
+        FilterOperator::Gt => relational_order(left, right).is_some_and(|c| c > 0.0),
+        FilterOperator::Gte => relational_order(left, right).is_some_and(|c| c >= 0.0),
+        FilterOperator::Lt => relational_order(left, right).is_some_and(|c| c < 0.0),
+        FilterOperator::Lte => relational_order(left, right).is_some_and(|c| c <= 0.0),
         FilterOperator::Exists => !left.is_nullish(),
         FilterOperator::In => match right {
             Js::Array(list) => list.items().iter().any(|item| js::same_value_zero(item, left)),
@@ -57,8 +57,8 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js, local: LocalZon
 /// `compareValues`' `within`: `left`'s instant is at most `right` old as of
 /// `now` (epoch ms, the host clock's answer). A left that reads as no
 /// instant, or a right that reads as no duration, is false, never thrown.
-pub fn within(left: &Js, right: &Js, now: f64, local: LocalZone<'_>) -> bool {
-    match (to_epoch_ms(left, local), duration_to_ms(right)) {
+pub fn within(left: &Js, right: &Js, now: f64) -> bool {
+    match (to_epoch_ms(left), duration_to_ms(right)) {
         (Some(ts), Some(ms)) => now - ts <= ms,
         _ => false,
     }
@@ -125,25 +125,25 @@ fn to_finite_number(value: &Js) -> Option<f64> {
 
 /// `toEpochMs`: `new Date(value).getTime()` for what is not a number, a
 /// finite number as itself; `None` for NaN.
-fn to_epoch_ms(value: &Js, local: LocalZone<'_>) -> Option<f64> {
+fn to_epoch_ms(value: &Js) -> Option<f64> {
     match value {
         Js::Undefined | Js::Null => None,
         Js::Number(n) => n.is_finite().then_some(*n),
         // `new Date(true)` is the instant 1 ms after the epoch.
         Js::Bool(b) => Some(f64::from(u8::from(*b))),
         // An object or a list is read as its `String()`.
-        other => js_date::parse(&other.to_js_string(), local),
+        other => js_date::parse(&other.to_js_string()),
     }
 }
 
 /// `relationalOrder`: numerically when both are numbers (or numeric
 /// texts), else chronologically when both read as dates, else as text when
 /// both are texts; `None` when the two do not order.
-fn relational_order(left: &Js, right: &Js, local: LocalZone<'_>) -> Option<f64> {
+fn relational_order(left: &Js, right: &Js) -> Option<f64> {
     if let (Some(l), Some(r)) = (to_finite_number(left), to_finite_number(right)) {
         return Some(js::math_sign(l - r));
     }
-    if let (Some(l), Some(r)) = (to_epoch_ms(left, local), to_epoch_ms(right, local)) {
+    if let (Some(l), Some(r)) = (to_epoch_ms(left), to_epoch_ms(right)) {
         return Some(js::math_sign(l - r));
     }
     match (left, right) {
@@ -162,11 +162,11 @@ pub fn is_null_literal(expr: &Expression) -> bool {
 }
 
 /// `evaluatePredicate`: a pure predicate over leaf names `read` answers
-/// (absent for a name it does not know), a date text read in `local`. The
+/// (absent for a name it does not know). The
 /// engine evaluates through `eval`, whose semantics this mirrors; adapters
 /// filter through this.
-pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js, local: LocalZone<'_>) -> Result<Js, EvalError> {
-    ready(evaluate_predicate_with(expr, read, PredicateOptions { ask: None, local, read_field: None }))
+pub fn evaluate_predicate(expr: &Expression, read: &dyn Fn(&str) -> Js) -> Result<Js, EvalError> {
+    ready(evaluate_predicate_with(expr, read, PredicateOptions { ask: None, read_field: None }))
 }
 
 /// A comparison `compare_values` handed back, being answered by the host.
@@ -178,11 +178,10 @@ pub type AskCompare<'p> = dyn Fn(FilterOperator, Js, Js) -> Comparing<'p> + 'p;
 /// What a predicate's comparisons read beyond their operands: what answers
 /// one `compare_values` hands back (`WITHIN`, which reads the wall clock),
 /// where given — a run asks the TypeScript member, and the walk resumes
-/// where it asked — and the zone a date text is read in.
+/// where it asked.
 #[derive(Clone, Copy)]
 pub struct PredicateOptions<'p> {
     pub ask: Option<&'p AskCompare<'p>>,
-    pub local: LocalZone<'p>,
     /// What answers a hop's alias read (`field_only`), where the names `read`
     /// answers are a scope's, and so may be variables of the same text
     /// (`m.email == email`). Absent, `read` answers it: a record's own
@@ -250,7 +249,7 @@ async fn predicate_in_place<'p>(expr: &'p Expression, read: &'p dyn Fn(&str) -> 
             } else if is_null_literal(right) {
                 compare_to_null(*op, &l)
             } else {
-                match (compare_values(&l, *op, &r, options.local), options.ask) {
+                match (compare_values(&l, *op, &r), options.ask) {
                     (Err(EvalError::Fallback(_)), Some(ask)) => ask(*op, l, r).await?,
                     (other, _) => other?,
                 }
@@ -432,7 +431,7 @@ mod tests {
 
     #[test]
     fn equality_is_strict_and_lists_compare_as_sets() {
-        let eq = |a: &Js, b: &Js| compare_values(a, FilterOperator::Eq, b, LocalZone::UTC).unwrap();
+        let eq = |a: &Js, b: &Js| compare_values(a, FilterOperator::Eq, b).unwrap();
         assert!(eq(&Js::array(vec![s("a"), s("b"), s("a")]), &Js::array(vec![s("b"), s("a")])));
         assert!(!eq(&Js::array(vec![s("a")]), &Js::array(vec![s("a"), s("b")])));
         assert!(eq(&Js::array(vec![]), &Js::array(vec![])));
@@ -444,7 +443,7 @@ mod tests {
 
     #[test]
     fn ordering_is_numeric_then_by_date_then_textual() {
-        let gt = |a: Js, b: Js| compare_values(&a, FilterOperator::Gt, &b, LocalZone::UTC).unwrap();
+        let gt = |a: Js, b: Js| compare_values(&a, FilterOperator::Gt, &b).unwrap();
         assert!(gt(s("10"), s("9")));
         assert!(gt(s(" 10 "), Js::Number(9.0)));
         assert!(gt(s("2026-03-12T10:00:00Z"), s("2026-03-12")));
@@ -456,13 +455,13 @@ mod tests {
         assert!(!gt(s("a 1"), s("b 2")) && gt(s("b 2"), s("a 1")));
         assert!(gt(s("a 1"), s("Item 5 of 9")));
         // Only one does: as text.
-        assert!(compare_values(&s("a 1"), FilterOperator::Lt, &s("b"), LocalZone::UTC).unwrap());
+        assert!(compare_values(&s("a 1"), FilterOperator::Lt, &s("b")).unwrap());
     }
 
     #[test]
     fn within_measures_an_instant_against_a_duration_from_now() {
         let now = 1_767_225_600_000.0; // 2026-01-01T00:00:00Z
-        let within = |l: Js, r: Js| within(&l, &r, now, LocalZone::UTC);
+        let within = |l: Js, r: Js| within(&l, &r, now);
         assert!(within(s("2025-12-30"), s("7d")));
         assert!(!within(s("2025-12-20"), s("7d")));
         assert!(within(s("2025-12-25T00:00:00Z"), s(" 1 W ")));
@@ -480,16 +479,16 @@ mod tests {
         assert!(!within(Js::Bool(true), s("1d")));
         // A future instant is within any duration.
         assert!(within(s("2027-01-01"), s("1s")));
-        assert!(matches!(compare_values(&s("x"), FilterOperator::Within, &s("1d"), LocalZone::UTC), Err(EvalError::Fallback(_))));
+        assert!(matches!(compare_values(&s("x"), FilterOperator::Within, &s("1d")), Err(EvalError::Fallback(_))));
     }
 
     #[test]
     fn membership_uses_same_value_zero() {
         let nan = Js::Number(f64::NAN);
-        assert!(compare_values(&nan, FilterOperator::In, &Js::array(vec![nan.clone()]), LocalZone::UTC).unwrap());
-        assert!(compare_values(&s("seed round"), FilterOperator::Contains, &s("seed"), LocalZone::UTC).unwrap());
-        assert!(!compare_values(&Js::Number(1.0), FilterOperator::Contains, &s("1"), LocalZone::UTC).unwrap());
-        assert!(!compare_values(&s("x"), FilterOperator::In, &s("xyz"), LocalZone::UTC).unwrap());
+        assert!(compare_values(&nan, FilterOperator::In, &Js::array(vec![nan.clone()])).unwrap());
+        assert!(compare_values(&s("seed round"), FilterOperator::Contains, &s("seed")).unwrap());
+        assert!(!compare_values(&Js::Number(1.0), FilterOperator::Contains, &s("1")).unwrap());
+        assert!(!compare_values(&s("x"), FilterOperator::In, &s("xyz")).unwrap());
     }
 
     #[test]
@@ -512,16 +511,16 @@ mod tests {
             _ => Js::Undefined,
         };
         let is_null = |e: Expression| {
-            evaluate_predicate(&Expression::Compare { op: FilterOperator::Eq, left: Box::new(e), right: Box::new(null.clone()) }, &read, LocalZone::UTC)
+            evaluate_predicate(&Expression::Compare { op: FilterOperator::Eq, left: Box::new(e), right: Box::new(null.clone()) }, &read)
                 .unwrap()
         };
         assert!(matches!(is_null(prop("missing")), Js::Bool(true)));
         assert!(matches!(is_null(prop("empty")), Js::Bool(true)));
         assert!(matches!(is_null(prop("x")), Js::Bool(false)));
         let negate = Expression::Negate { expression: Box::new(prop("x")) };
-        assert!(matches!(evaluate_predicate(&negate, &read, LocalZone::UTC).unwrap(), Js::Number(n) if n == -5.0));
+        assert!(matches!(evaluate_predicate(&negate, &read).unwrap(), Js::Number(n) if n == -5.0));
         let missing_eq_empty = Expression::Compare { op: FilterOperator::Eq, left: Box::new(prop("missing")), right: Box::new(prop("empty")) };
-        assert!(matches!(evaluate_predicate(&missing_eq_empty, &read, LocalZone::UTC).unwrap(), Js::Bool(false)));
+        assert!(matches!(evaluate_predicate(&missing_eq_empty, &read).unwrap(), Js::Bool(false)));
     }
 
     #[test]

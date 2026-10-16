@@ -111,12 +111,6 @@ pub struct SegmentInput {
     pub spend: crate::ledger::Spend,
     /// The run's pinned instant (`firedAt`, else when the run began).
     pub now: String,
-    /// The zone a date-time text with no offset of its own is read in (an
-    /// IANA name), `now` among them: the zone V8's `Date` reads such a text
-    /// in, in the shim's process. The shim reads it, so the engine reads no
-    /// environment. Absent: UTC.
-    #[serde(default)]
-    pub local_zone: Option<String>,
     /// Kept as text: the catalog's maps are ordered.
     pub catalog: Box<RawValue>,
     /// A rehearsal: every write captured by the host, not committed, and a
@@ -570,17 +564,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     // host sent first.
     let wire = env::Wire::default();
     let event = wire.decode(&input.event).map_err(|_| Stop::Declined("event_does_not_read".into()))?;
-    // A zone the environment does not know reads no date text as the
-    // TypeScript's process does.
-    if let Some(zone) = &input.local_zone
-        && !js_date::LocalZone::is_known(zone, env_services::current())
-    {
-        return Err(Stop::Declined("local_zone_does_not_read".into()));
-    }
-    // The pinned instant is read as `new Date(firedAt)` reads it
-    // (run_context.ts): an offset-less one in the run's zone.
-    let local = js_date::LocalZone::new(input.local_zone.as_deref(), env_services::current());
-    let Some(now_ms) = js_date::parse(&input.now, local) else {
+    let Some(now_ms) = js_date::parse(&input.now) else {
         return Err(Stop::Declined("instant_does_not_read".into()));
     };
     let answer = if input.native_check {
@@ -739,11 +723,6 @@ async fn unparsed(host: &Host, input: &SegmentInput) -> Stop {
 impl Run<'_> {
     pub(crate) fn version(&self) -> u32 {
         self.input.language_version
-    }
-
-    /// The zone a date text with no offset is read in.
-    pub(crate) fn local_zone(&self) -> js_date::LocalZone<'_> {
-        js_date::LocalZone::new(self.input.local_zone.as_deref(), env_services::current())
     }
 
     /// The segment every host request names.
@@ -1808,7 +1787,7 @@ impl Run<'_> {
     /// `evaluateMovementExpression` with `currentResource`: a `_resources`
     /// WHERE over one resource (`filterResources`).
     pub(crate) async fn evaluate_over_resource(&self, expr: &Expression, scope: &Rc<Scope>, span: Option<Js>, resource: &Js) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
         let reader = Reading { run: self, scope, span, subject: None, field: None, resource: Some(resource) };
         Evaluator::in_run(scope.as_ref(), self.version(), around, &reader).eval(expr).await.map_err(|error| {
             Stop::Thrown(Failure::of_eval(error, "the Rust engine does not reproduce it; run this movement on the TypeScript engine"))
@@ -1825,7 +1804,7 @@ impl Run<'_> {
         subject: Option<Scoped>,
         field: Option<&crate::write::FieldFunctions>,
     ) -> Result<Evaluated, Stop> {
-        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms), local_zone: self.input.local_zone.as_deref() };
+        let around = Surroundings { services: env_services::current(), now: Some(self.now_ms) };
         let scoped = subject.is_some();
         let reader = Reading { run: self, scope, span: span.clone(), subject, field, resource: None };
         let evaluator = if scoped {
@@ -1901,7 +1880,7 @@ impl Run<'_> {
             }
             Ask::Within { left, right } => {
                 let now = self.clock_now().await?;
-                let value = Js::Bool(crate::filter::within(&left, &right, now, self.local_zone()));
+                let value = Js::Bool(crate::filter::within(&left, &right, now));
                 Ok(Ok(Evaluated { value, prov: Prov::Built(Trail::default()) }))
             }
             Ask::Meta { key } => {
@@ -2845,28 +2824,18 @@ mod tests {
         assert_eq!(mirrored.marked(json!({ "thrown": mirrored.to_json() })).get("unreproduced"), None);
     }
 
-    /// The run's zone is checked before anything else of the run, and the
-    /// pinned instant is read in it, as `new Date(firedAt)` reads it in the
-    /// TypeScript's process: 00:30 on 15 July in London is the 14th in UTC,
-    /// so the field is read only when the zone is London's.
+    /// The pinned instant with no offset is UTC, whatever zone the host
+    /// names (a `localZone` is not read from version 5): 00:30 on 15 July is
+    /// the 15th.
     #[test]
-    fn the_local_zone_is_checked_and_the_pinned_instant_read_in_it() {
-        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-14\" {\n    s = msg.`subject`\n  }\n}";
+    fn the_pinned_instant_with_no_offset_is_utc() {
+        let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-15\" {\n    s = msg.`subject`\n  }\n}";
         let mut input = segment_input(source, json!(["o", 1, [["subject", "Hi"]]]), &[]);
-        input["localZone"] = json!("Mars/Base");
-        let (done, seen) = drive_input(input.clone(), plain_host(json!({ "subject": "Hi" })));
-        assert_eq!(done, json!({ "declined": "local_zone_does_not_read" }));
-        assert!(seen.is_empty(), "{seen:?}");
         input["now"] = json!("2026-07-15T00:30");
-        let reads = |input: Json| {
-            let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
-            assert!(done.get("result").is_some(), "{done}");
-            seen.iter().filter(|r| r.family == "adapters" && r.method == "call").count()
-        };
-        input["localZone"] = json!("Europe/London");
-        assert!(reads(input.clone()) > 0);
-        input.as_object_mut().unwrap().remove("localZone");
-        assert_eq!(reads(input), 0);
+        input["localZone"] = json!("America/Los_Angeles");
+        let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
+        assert!(done.get("result").is_some(), "{done}");
+        assert!(seen.iter().any(|r| r.family == "adapters" && r.method == "call"));
     }
 
     /// With `nativeCheck` the Rust checker answers `check.program`: the host

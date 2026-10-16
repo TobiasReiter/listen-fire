@@ -157,14 +157,7 @@ fn answer_envelope(answer: &Answer) -> Json {
 pub fn evaluate(expr: &str, bindings: &str) -> Result<Json, String> {
     let expr: Expression = js_string::from_json_text(expr).map_err(|e| format!("the expression does not read: {e}"))?;
     let envelope = env::read_envelope(bindings)?;
-    // A zone the environment does not know would read every date text as
-    // UTC: the TypeScript evaluator answers instead.
-    if let Some(zone) = &envelope.local_zone
-        && !crate::js_date::LocalZone::is_known(zone, env_services::current())
-    {
-        return Ok(json!({ "fallback": "local_zone_does_not_read" }));
-    }
-    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now, local_zone: envelope.local_zone.as_deref() };
+    let around = stdlib::Surroundings { services: env_services::current(), now: envelope.now };
     let evaluator = Evaluator::new(&envelope.env, envelope.language_version, around, envelope.origins);
     Ok(match evaluator.eval_pure(&expr) {
         Ok(result) => json!({
@@ -332,22 +325,6 @@ mod tests {
         );
         let malformed = evaluate(&lowered("x"), &json!({ "bindings": {}, "languageVersion": "3" }).to_string());
         assert_eq!(malformed, Err("the language version is a number, not \"3\"".to_string()));
-    }
-
-    /// A date-time with no offset is read in the envelope's zone; a zone the
-    /// environment does not know hands the evaluation back by name.
-    #[test]
-    fn the_envelope_names_the_local_zone() {
-        let at = |zone: Json| {
-            let mut envelope = json!({ "bindings": {}, "languageVersion": 3 });
-            if !zone.is_null() {
-                envelope["localZone"] = zone;
-            }
-            eval_with("DATETIME(\"2026-03-08T02:30\")", envelope)
-        };
-        assert_eq!(at(json!("America/New_York"))["value"], "2026-03-08T07:30:00.000Z");
-        assert_eq!(at(Json::Null)["value"], "2026-03-08T02:30:00.000Z");
-        assert_eq!(at(json!("Mars/Base")), json!({ "fallback": "local_zone_does_not_read" }));
     }
 
     #[test]

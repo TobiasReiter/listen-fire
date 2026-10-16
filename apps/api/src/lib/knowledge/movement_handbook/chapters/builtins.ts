@@ -384,7 +384,7 @@ win_end = DateTime.at(today, "07:00", "Europe/Berlin")
 
 ### DATE.FORMAT_ISO
 
-\`DateTime.toIso(value)\` → any readable date or timestamp normalised to a full ISO 8601 UTC timestamp.
+\`DateTime.toIso(value)\` → any readable date or timestamp normalised to a full ISO 8601 UTC timestamp. A text with a time of day is read as ISO 8601 / RFC 3339 only (\`2026-03-05T10:00\`, \`2026-03-05 10:00:30+01:00\`); with no offset it is UTC.
 
 \`\`\`
 iso = DateTime.toIso(m.Date)
