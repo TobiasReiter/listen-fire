@@ -13,6 +13,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: { company: { properties: { name: 'text', size: 'number' }, edges: {} } },
@@ -42,7 +43,7 @@ const PRELUDE = [
 const CO = '  co = write crm-[:companies]-> { name: "a" }';
 
 const diagnosticsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
-  const source = `${PRELUDE}\nmovement m() {\n${[CO, ...body].join('\n')}\n}`;
+  const source = spelledFor(version, `${PRELUDE}\nmovement m() {\n${[CO, ...body].join('\n')}\n}`, catalog);
   return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version });
 };
 const errors = (version: LanguageVersion, body: string[]): string[] =>
@@ -70,7 +71,7 @@ describe('a value that may be a record, handed to a value parameter', () => {
   it('the message names the record and the parameter', () => {
     const [error] = diagnosticsUnder(5, CALLS[0]![1]);
     expect(error!.message).toContain("'f' expects number for 'n'");
-    expect(error!.message).toContain("'COALESCE(co, 1)' may be a crm.company handle");
+    expect(error!.message).toContain("'coalesce(co, 1)' may be a crm.company handle");
     expect(error!.message).toContain('as in TypeScript');
   });
 

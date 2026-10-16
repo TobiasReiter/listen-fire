@@ -7,6 +7,8 @@
 // Named calls keep their meaning; a call is all positional or all named.
 
 import { parseProgram } from '../../parser/parse';
+import { spelledFor } from './surface_spelling';
+import type { LanguageVersion } from '../../language_version';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 
@@ -58,7 +60,7 @@ type Tone = <"brisk" | "warm">
 movement log_two(m: <inbox-[:message]->>, n: <inbox-[:message]->>) {
 }
 
-movement say(m: <inbox-[:message]->>, text: <text>, count: <number>) {
+movement say(m: <inbox-[:message]->>, text: <text>, copies: <number>) {
   write chat-[:note]-> { Body: text }
 }
 
@@ -79,17 +81,17 @@ movement pick(m: <inbox-[:message]->>) {
 }
 `;
 
-function check(body: string, extra = ''): Diagnostic[] {
+function check(body: string, extra = '', languageVersion: LanguageVersion = 5): Diagnostic[] {
   const source = `${PRELUDE}${extra}
 movement main(e: <inbox-[:message]->>) {
 ${body}
 }`;
-  return checkProgram(parseProgram(source), catalog).filter(
+  return checkProgram(parseProgram(spelledFor(languageVersion, source, catalog), { languageVersion }), catalog, { languageVersion }).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
-const codes = (body: string, extra = ''): string[] => check(body, extra).map(d => d.code);
-const messages = (body: string, extra = ''): string => check(body, extra).map(d => d.message).join('\n');
+const codes = (body: string, extra = '', languageVersion: LanguageVersion = 5): string[] => check(body, extra, languageVersion).map(d => d.code);
+const messages = (body: string, extra = '', languageVersion: LanguageVersion = 5): string => check(body, extra, languageVersion).map(d => d.message).join('\n');
 
 describe('positional binding — arguments bind in declared order', () => {
   it('a positional call checks clean, statement and bound', () => {
@@ -111,7 +113,7 @@ describe('positional binding — arguments bind in declared order', () => {
   it('a type mismatch by position names the parameter it binds', () => {
     const found = check('  say(e, "hi", "three")');
     expect(found.map(d => d.code)).toEqual([C.CALL_ARG_TYPE]);
-    expect(found[0].message).toContain("for 'count' (argument 3)");
+    expect(found[0].message).toContain("for 'copies' (argument 3)");
     expect(found[0].message).toContain('number');
   });
 
@@ -123,8 +125,8 @@ describe('positional binding — arguments bind in declared order', () => {
   });
 
   it('a plugin takes named arguments only', () => {
-    expect(codes('  page = fetch_url("https://x.test")')).toEqual([C.PLUGIN_ARGS_NAMED]);
-    expect(codes('  page = fetch_url(url: "https://x.test")')).not.toContain(C.PLUGIN_ARGS_NAMED);
+    expect(codes('  page = fetch_url("https://x.test")', '', 4)).toEqual([C.PLUGIN_ARGS_NAMED]);
+    expect(codes('  page = fetch_url(url: "https://x.test")', '', 4)).not.toContain(C.PLUGIN_ARGS_NAMED);
   });
 
   it('a built-in function call stays an expression', () => {
@@ -136,7 +138,7 @@ describe('value parameters', () => {
   it('a scalar parameter takes a value of its type, and refuses another', () => {
     expect(codes('  say(e, "hi", 3)')).toEqual([]);
     expect(codes('  say(e, e.`Subject`, e.`Count`)')).toEqual([]);
-    expect(messages('  say(m: e, text: "hi", count: "3")')).toContain("'say' expects number, but this argument is text");
+    expect(messages('  say(m: e, text: "hi", copies: "3")')).toContain("'say' expects number for 'copies' (argument 3), but this argument is text");
   });
 
   it('a value that may be absent does not fill a parameter that requires one', () => {

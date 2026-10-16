@@ -1,9 +1,10 @@
-// `until` takes a boolean condition and a NAMED cadence
-// (`await until(<condition>, every: 5m)`). The positional comparand it once
+// `until` takes a boolean condition and a cadence written as a setting
+// (`await until(<condition>, { every: 5m })`). The positional comparand it once
 // took is retired: a value to wait FOR is an equality inside the condition,
 // where every other comparison already lives. This file pins the surface —
 // the named form parses, and every positional second argument is a parse error
-// carrying the respelling.
+// carrying the respelling. (Before version 5 the cadence was a named argument,
+// `every: 5m`; the parser still reads it and the checker offers the rewrite.)
 
 import { MovementParseError, parseProgram } from '../parse';
 import { AwaitSource, MovementDeclaration, Statement } from '../ast';
@@ -16,7 +17,7 @@ function as<K extends Statement['kind']>(
   return s as Extract<Statement, { kind: K }>;
 }
 
-const M = (body: string) => `movement m(d: <s-[:m]->>) {\n${body}\n}`;
+const M = (body: string) => `function m(d: <s-[:m]->>) {\n${body}\n}`;
 
 function untilSource(body: string): Extract<AwaitSource, { kind: 'until' }> {
   const statements: MovementDeclaration['body'] = as(
@@ -38,21 +39,21 @@ function parseError(body: string): string {
   throw new Error('expected a parse error');
 }
 
-describe('await until — the cadence is named', () => {
-  it('parses `every:` as the cadence', () => {
-    expect(untilSource('  await until(d.state == "done", every: 5m)').every?.raw).toBe('5m');
+describe('await until — the cadence is a setting', () => {
+  it('parses `{ every: … }` as the cadence', () => {
+    expect(untilSource('  await until(d.state == "done", { every: 5m })').every?.raw).toBe('5m');
   });
 
   it('parses a closure condition with a named cadence', () => {
     const source = untilSource(
-      '  await until(() => { refresh d; return d.state == "done" }, every: 1h)',
+      '  await until(() => { refresh d; return d.state == "done" }, { every: 1h })',
     );
     expect(source.condition.kind).toBe('closure');
     expect(source.every?.raw).toBe('1h');
   });
 
   it('refuses the retired block-with-dot condition, naming the closure', () => {
-    const message = parseError('  await until({ refresh d; ok = d.state == "done" }.ok, every: 1h)');
+    const message = parseError('  await until({ refresh d; ok = d.state == "done" }.ok, { every: 1h })');
     expect(message).toContain('is a closure');
     expect(message).toContain('return');
   });
@@ -69,13 +70,13 @@ describe('await until — the cadence is named', () => {
 
   it('refuses a positional cadence', () => {
     expect(parseError('  await until(d.state == "done", 5m)')).toContain(
-      "'until' takes its cadence by name",
+      "'until' takes its cadence as a setting",
     );
   });
 
   it('refuses a misnamed cadence argument', () => {
     expect(parseError('  await until(d.state == "done", cadence: 5m)')).toContain(
-      "'until' takes its cadence by name",
+      "'until' takes its cadence as a setting",
     );
   });
 });

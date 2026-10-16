@@ -11,6 +11,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, DiagnosticCodes as C, type Diagnostic } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import { applyFix } from '../fixes';
+import type { LanguageVersion } from '../../language_version';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -68,26 +69,31 @@ const catalog = mockCatalog({
 const PRELUDE = [
   'import { attio, trello } from adapters',
   'import { `Acme CRM`, boards } from credentials',
-  'crm = attio(credentials: `Acme CRM`)',
-  'board = trello(credentials: boards)',
+  'crm = connect attio using `Acme CRM`',
+  'board = connect trello using boards',
 ].join('\n');
 
-const program = (body: string): string => `${PRELUDE}\nmovement main() {\n${body}\n}\n`;
+const program = (body: string): string => `${PRELUDE}\nfunction main() {\n${body}\n}\n`;
 
-const check = (source: string): Diagnostic[] => checkProgram(parseProgram(source), catalog);
+const check = (source: string, languageVersion: LanguageVersion = 5): Diagnostic[] =>
+  checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion });
 
 /** The one diagnostic of `code`, its fix applied, and the source re-checked. */
-function fixed(source: string, code: string): { diagnostic: Diagnostic; after: Diagnostic[]; repaired: string } {
-  const found = check(source).filter(d => d.code === code);
+function fixed(
+  source: string,
+  code: string,
+  languageVersion: LanguageVersion = 5,
+): { diagnostic: Diagnostic; after: Diagnostic[]; repaired: string } {
+  const found = check(source, languageVersion).filter(d => d.code === code);
   expect(found).toHaveLength(1);
   const [diagnostic] = found;
   expect(diagnostic.fix).toBeDefined();
   const repaired = applyFix(source, diagnostic.fix!);
-  return { diagnostic, after: check(repaired), repaired };
+  return { diagnostic, after: check(repaired, languageVersion), repaired };
 }
 
-const MAYBE_TITLE = '  t = ONLY(board-[l:Lanes]->.`Title`)';
-const MAYBE_SIZE = '  s = ONLY(board-[l:Lanes]->.`Size`)';
+const MAYBE_TITLE = '  t = only(board-[l:Lanes]->.`Title`)';
+const MAYBE_SIZE = '  s = only(board-[l:Lanes]->.`Size`)';
 
 describe('MOV_ABSENT_REQUIRED — a maybe-absent value in a write field', () => {
   it('a required field: the COALESCE line to write, fallback typed by the value', () => {
@@ -96,9 +102,9 @@ describe('MOV_ABSENT_REQUIRED — a maybe-absent value in a write field', () => 
       C.ABSENT_REQUIRED,
     );
     expect(diagnostic.message).toBe(
-      `'Name' on crm.Company needs a value, but 't' may be absent (text (or absent)) — write 'Name: COALESCE(t, "unknown")' to fall back to a value that is always there (see handbook: front#maybe-absent)`,
+      `'Name' on crm.Company needs a value, but 't' may be absent (text (or absent)) — write 'Name: coalesce(t, "unknown")' to fall back to a value that is always there (see handbook: front#maybe-absent)`,
     );
-    expect(repaired).toContain('{ Name: COALESCE(t, "unknown") }');
+    expect(repaired).toContain('{ Name: coalesce(t, "unknown") }');
     expect(after.map(d => d.code)).not.toContain(C.ABSENT_REQUIRED);
   });
 
@@ -108,17 +114,17 @@ describe('MOV_ABSENT_REQUIRED — a maybe-absent value in a write field', () => 
       C.ABSENT_REQUIRED,
     );
     expect(diagnostic.message).toBe(
-      `'Size' on board.Lane needs a value, but 's' may be absent (number (or absent)) — write 'Size: COALESCE(s, 0)' to fall back to a value that is always there, or 'Size ?: s' to leave it unset when absent (see handbook: front#maybe-absent)`,
+      `'Size' on board.Lane needs a value, but 's' may be absent (number (or absent)) — write 'Size: coalesce(s, 0)' to fall back to a value that is always there, or 'Size ?: s' to leave it unset when absent (see handbook: front#maybe-absent)`,
     );
     expect(after.map(d => d.code)).not.toContain(C.ABSENT_REQUIRED);
   });
 
   it('the expression is the author’s own, path and backticks included', () => {
     const { diagnostic } = fixed(
-      program('  l = ONLY(board-[x:Lanes]->)\n  write crm-[:Companies]-> { Name: l.`Title` }'),
+      program('  l = only(board-[x:Lanes]->)\n  write crm-[:Companies]-> { Name: l.`Title` }'),
       C.ABSENT_REQUIRED,
     );
-    expect(diagnostic.message).toContain("write 'Name: COALESCE(l.`Title`, \"unknown\")'");
+    expect(diagnostic.message).toContain("write 'Name: coalesce(l.`Title`, \"unknown\")'");
   });
 
   it('a field that identifies the record gets no fallback — it would merge them — but the gate, which works', () => {
@@ -126,7 +132,7 @@ describe('MOV_ABSENT_REQUIRED — a maybe-absent value in a write field', () => 
     const [diagnostic] = check(source).filter(d => d.code === C.ABSENT_REQUIRED);
     expect(diagnostic.fix).toBeUndefined();
     expect(diagnostic.message).toBe(
-      `'Name' on crm.Company needs a value, but 't' may be absent (text (or absent)), and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if t != null { … }' (see handbook: front#maybe-absent)`,
+      `'Name' on crm.Company needs a value, but 't' may be absent (text (or absent)), and it identifies the record, so a fallback would merge every record written without it into one — write only when it is there: put the write inside 'if (t != null) { … }' (see handbook: front#maybe-absent)`,
     );
     const gated = program(`${MAYBE_TITLE}\n  if t != null {\n    write crm-[:Companies]-> {\n      unique by (Name)\n      Name: t\n    }\n  }`);
     expect(check(gated).map(d => d.code)).not.toContain(C.ABSENT_REQUIRED);
@@ -137,7 +143,7 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
   it('a construction whose adapter is not imported: the import line', () => {
     const source = [
       'import { `Acme CRM` } from credentials',
-      'crm = attio(credentials: `Acme CRM`)',
+      'crm = connect attio using `Acme CRM`',
     ].join('\n');
     const { diagnostic, after, repaired } = fixed(source, C.NAME_UNRESOLVED);
     expect(diagnostic.message).toBe(
@@ -148,7 +154,8 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
   });
 
   it('…and its credential, written as a string and never imported, repaired in the same fix', () => {
-    const { diagnostic, after, repaired } = fixed('board = trello(credentials: "boards")', C.NAME_UNRESOLVED);
+    // A credential written as a string is a version 1–4 construction; from 5 it does not parse.
+    const { diagnostic, after, repaired } = fixed('board = trello(credentials: "boards")', C.NAME_UNRESOLVED, 4);
     expect(diagnostic.message).toBe(
       "'trello' is not in scope — import it: add 'import { trello } from adapters' at the top of the file, and write the credential as a name, not a string: 'credentials: boards', and add 'import { boards } from credentials' at the top of the file",
     );
@@ -157,7 +164,7 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
   });
 
   it('a credential named in backticks but not imported: its import line', () => {
-    const source = ['import { attio } from adapters', 'crm = attio(credentials: `Acme CRM`)'].join('\n');
+    const source = ['import { attio } from adapters', 'crm = connect attio using `Acme CRM`'].join('\n');
     const { diagnostic, after } = fixed(source, C.NAME_UNRESOLVED);
     expect(diagnostic.message).toBe(
       "'Acme CRM' is a credential — import it: add 'import { `Acme CRM` } from credentials' at the top of the file",
@@ -167,7 +174,7 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
 
   it('a credential written as a string, adapter imported: the name form, and its import', () => {
     const source = ['import { attio } from adapters', 'crm = attio(credentials: "Acme CRM")'].join('\n');
-    const { diagnostic, after, repaired } = fixed(source, C.CRED_WRONG_ADAPTER);
+    const { diagnostic, after, repaired } = fixed(source, C.CRED_WRONG_ADAPTER, 4);
     expect(diagnostic.message).toBe(
       "The credential argument must be an imported credential name, not an expression — write the credential as a name, not a string: 'credentials: `Acme CRM`', and add 'import { `Acme CRM` } from credentials' at the top of the file",
     );
@@ -177,17 +184,17 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
 
   it('an adapter read before any construction: both lines, with the one connection that can construct it', () => {
     // Not a fix: what to name the instance, and where, is the author's call.
-    const [diagnostic] = check('movement main() {\n  c = ONLY(trello-[l:Lanes]->)\n}');
+    const [diagnostic] = check('function main() {\n  c = only(trello-[l:Lanes]->)\n}');
     expect(diagnostic.code).toBe(C.NAME_UNRESOLVED);
     expect(diagnostic.message).toBe(
-      "'trello' is not in scope — import it and construct an instance first: import { trello } from adapters, then '<name> = trello(credentials: …)' — with the one trello connection here: 'import { boards } from credentials' and '<name> = trello(credentials: boards)' (see handbook: front#systems)",
+      "'trello' is not in scope — import it and construct an instance first: import { trello } from adapters, then '<name> = connect trello using …' — with the one trello connection here: 'import { boards } from credentials' and '<name> = connect trello using boards' (see handbook: front#systems)",
     );
     expect(diagnostic.fix).toBeUndefined();
   });
 
   it('a string naming no connection the workspace has gets no fix — nothing to name', () => {
     const source = ['import { attio } from adapters', 'crm = attio(credentials: "Nobody")'].join('\n');
-    const [diagnostic] = check(source).filter(d => d.code === C.CRED_WRONG_ADAPTER);
+    const [diagnostic] = check(source, 4).filter(d => d.code === C.CRED_WRONG_ADAPTER);
     expect(diagnostic.message).toBe('The credential argument must be an imported credential name, not an expression');
     expect(diagnostic.fix).toBeUndefined();
   });
@@ -195,11 +202,11 @@ describe('MOV_NAME_UNRESOLVED — a system or connection named but never importe
 
 describe('MOV_FUNCTION_UNKNOWN — the did-you-mean as the whole corrected call', () => {
   it('the call as written, its name swapped', () => {
-    const { diagnostic, after, repaired } = fixed(program('  x = TRIM(UPPR("a b"))'), C.FUNCTION_UNKNOWN);
+    const { diagnostic, after, repaired } = fixed(program('  x = Text.trim(UPPR("a b"))'), C.FUNCTION_UNKNOWN);
     expect(diagnostic.message).toBe(
-      `Unknown function 'UPPR' — did you mean 'UPPER'? Write 'UPPER("a b")' — a call names a movement or function declared or imported here, or a built-in (see handbook: front#functions-not-methods)`,
+      `Unknown function 'UPPR' — did you mean 'Text.upper'? Write 'Text.upper("a b")' — a call names a function declared or imported here, or a built-in (see handbook: front#functions-not-methods)`,
     );
-    expect(repaired).toContain('x = TRIM(UPPER("a b"))');
+    expect(repaired).toContain('x = Text.trim(Text.upper("a b"))');
     expect(after.map(d => d.code)).not.toContain(C.FUNCTION_UNKNOWN);
   });
 });
@@ -207,8 +214,8 @@ describe('MOV_FUNCTION_UNKNOWN — the did-you-mean as the whole corrected call'
 describe('MOV_LISTEN_BAD_CONFIG — the routing key a listener requires', () => {
   const source = [
     'import { mail } from adapters',
-    'inbox = mail()',
-    'movement `Log Sender`(m: <inbox-[:message]->>) {',
+    'inbox = connect mail',
+    'function `Log Sender`(m: <inbox-[:message]->>) {',
     '}',
     'listen to inbox {} fire `Log Sender`',
   ].join('\n');
@@ -227,10 +234,10 @@ describe('MOV_CALL_ARG_TYPE — one value where a list of them is taken', () => 
   const source = (arg: string): string =>
     [
       'import { mail } from adapters',
-      'inbox = mail()',
-      'movement keep(files: <file[]>) {',
+      'inbox = connect mail',
+      'function keep(files: <file[]>) {',
       '}',
-      'movement main(m: <inbox-[:message]->>) {',
+      'function main(m: <inbox-[:message]->>) {',
       `  keep(${arg})`,
       '}',
       'listen to inbox { key: "main" } fire main',

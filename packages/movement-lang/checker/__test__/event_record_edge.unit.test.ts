@@ -140,8 +140,8 @@ describe("`fields:` names the record the event is about", () => {
       errors(
         program([
           `import { ${adapter} } from adapters`,
-          `inst = ${adapter}()`,
-          `movement m(e: <inst-[:\`${event}\` WHERE \`${key}\` == "${record}" AND \`action\` == "record.created"]->>) { }`,
+          `inst = connect ${adapter}`,
+          `function m(e: <inst-[:\`${event}\` WHERE e.\`${key}\` == "${record}" && e.\`action\` == "record.created"]->>) { }`,
           `listen to inst { ${key}: "${record}", events: ["record.created"], fields: [${field}] } fire m`,
         ]),
       ),
@@ -155,8 +155,8 @@ describe("`fields:` names the record the event is about", () => {
     const msg = message(
       program([
         `import { ${adapter} } from adapters`,
-        `inst = ${adapter}()`,
-        `movement m(e: <inst-[:\`${event}\` WHERE \`${key}\` == "${record}" AND \`action\` == "record.created"]->>) { }`,
+        `inst = connect ${adapter}`,
+        `function m(e: <inst-[:\`${event}\` WHERE e.\`${key}\` == "${record}" && e.\`action\` == "record.created"]->>) { }`,
         `listen to inst { ${key}: "${record}", events: ["record.created"], fields: [Nope] } fire m`,
       ]),
       C.LISTEN_BAD_CONFIG,
@@ -175,8 +175,8 @@ describe("`fields:` names the record the event is about", () => {
     const msg = message(
       program([
         `import { ${adapter} } from adapters`,
-        `inst = ${adapter}()`,
-        `movement m(e: <inst-[:\`${event}\` WHERE \`${key}\` == "${record}" AND \`action\` == "record.created"]->>) { }`,
+        `inst = connect ${adapter}`,
+        `function m(e: <inst-[:\`${event}\` WHERE e.\`${key}\` == "${record}" && e.\`action\` == "record.created"]->>) { }`,
         `listen to inst { ${key}: "${record}", events: ["record.created"], fields: [action] } fire m`,
       ]),
       C.LISTEN_BAD_CONFIG,
@@ -189,8 +189,8 @@ describe("`fields:` names the record the event is about", () => {
       errors(
         program([
           'import { notes } from adapters',
-          'inst = notes()',
-          'movement m(n: <inst-[:`Meeting Note`]->>) { }',
+          'inst = connect notes',
+          'function m(n: <inst-[:`Meeting Note`]->>) { }',
           'listen to inst { fields: [Title] } fire m',
         ]),
       ),
@@ -199,8 +199,8 @@ describe("`fields:` names the record the event is about", () => {
       message(
         program([
           'import { notes } from adapters',
-          'inst = notes()',
-          'movement m(n: <inst-[:`Meeting Note`]->>) { }',
+          'inst = connect notes',
+          'function m(n: <inst-[:`Meeting Note`]->>) { }',
           'listen to inst { fields: [Status] } fire m',
         ]),
         C.LISTEN_BAD_CONFIG,
@@ -214,7 +214,7 @@ describe('a record-shaped signature gets the exact rewrite', () => {
     program([
       `import { ${adapter} } from adapters`,
       `graph = ${adapter}()`,
-      `movement m(t: <graph-[:\`${record}\`]->>) { }`,
+      `function m(t: <graph-[:\`${record}\`]->>) { }`,
       `listen to graph { ${key}: "${record}", events: ["record.created"] } fire m`,
     ]);
 
@@ -248,8 +248,8 @@ describe('a record-shaped signature gets the exact rewrite', () => {
     const msg = message(
       program([
         'import { kg } from adapters',
-        'graph = kg()',
-        'movement m(t: <graph-[:`Support Ticket`]->>) { }',
+        'graph = connect kg',
+        'function m(t: <graph-[:`Support Ticket`]->>) { }',
         'listen to graph { type: "Support Ticket", events: ["record.created", "record.updated", "record.deleted"] } fire m',
       ]),
       C.LISTEN_PARAM_MISMATCH,
@@ -266,8 +266,8 @@ describe('a record-shaped signature gets the exact rewrite', () => {
     const msg = message(
       program([
         'import { kg } from adapters',
-        'graph = kg()',
-        'movement m(t: <graph-[:`Node Type`]->>) { }',
+        'graph = connect kg',
+        'function m(t: <graph-[:`Node Type`]->>) { }',
         'listen to graph { type: "Support Ticket", events: ["record.created"] } fire m',
       ]),
       C.LISTEN_PARAM_MISMATCH,
@@ -291,16 +291,16 @@ describe('constructing an adapter shows the construction it really takes', () =>
     credentials: { acme: { adapter: 'crm' } },
   });
   const unresolved = (name: string): string | undefined =>
-    checkProgram(parseProgram(`movement m() { write ${name}-[:X]-> { a: "b" } }`), withCreds)
+    checkProgram(parseProgram(`function m() { write ${name}-[:X]-> { a: "b" } }`), withCreds)
       .find((d) => d.code === C.NAME_UNRESOLVED)?.message;
 
   it('shows no credential for an adapter that takes none', () => {
-    expect(unresolved('kg')).toContain("'<name> = kg()'");
+    expect(unresolved('kg')).toContain("'<name> = connect kg'");
   });
 
   it('shows the required argument for an adapter that needs one', () => {
     const msg = unresolved('crm');
-    expect(msg).toContain("'<name> = crm(credentials: …)'");
+    expect(msg).toContain("'<name> = connect crm using …'");
     // Optional args are not demanded.
     expect(msg).not.toContain('workspace');
   });
@@ -311,21 +311,21 @@ describe('constructing an adapter shows the construction it really takes', () =>
     const diags = errors(
       program([
         'import { kg } from adapters',
-        'movement m() {',
+        'function m() {',
         '  write kg-[:`Support Ticket`]-> { Status: "Open" }',
         '}',
       ]),
     );
     const msg = diags.find((d) => d.code === C.ADAPTER_NOT_CONSTRUCTED)?.message;
     expect(msg).toContain("'kg' is an adapter, not an instance");
-    expect(msg).toContain("'go = kg()'");
+    expect(msg).toContain("'go = connect kg'");
   });
 
   it('a bare adapter as a TRAVERSAL root is loud too', () => {
     const diags = errors(
       program([
         'import { kg } from adapters',
-        'movement m() {',
+        'function m() {',
         '  kg-[t:`Support Ticket`]-> { x = t.Status }',
         '}',
       ]),
@@ -338,8 +338,8 @@ describe('constructing an adapter shows the construction it really takes', () =>
       errors(
         program([
           'import { kg } from adapters',
-          'graph = kg()',
-          'movement m() {',
+          'graph = connect kg',
+          'function m() {',
           '  graph-[t:`Support Ticket`]-> { x = t.Status }',
           '}',
         ]),

@@ -4,7 +4,8 @@
 // the declaration written out inline would, and the three refusals: a base that
 // is not a node declaration, a chain that comes back round, a restated member.
 
-import { parseProgram } from '../../parser/parse';
+import { parseProgram as parseSource } from '../../parser/parse';
+import { spelledFor } from './surface_spelling';
 import {
   checkProgram,
   checkProgramWithLink,
@@ -14,6 +15,9 @@ import {
 } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { ResolveFile } from '../link';
+
+// The programs are written in the old spelling; every parse reads the version 5 surface.
+const parseProgram = (source: string) => parseSource(spelledFor(5, source, catalog));
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -358,7 +362,7 @@ describe('a parameter typed on a declaration takes any record carrying it', () =
     const named = ['node Entry {', '  name: <text>', '}'].join('\n');
     const diagnostics = withCallee(['  takes_entry(d: msg)'], named);
     expect(diagnostics.map((d) => d.code)).toEqual([C.CALL_ARG_TYPE]);
-    expect(diagnostics[0].message).toBe("'takes_entry' expects a <Entry> record, and it has no `name`");
+    expect(diagnostics[0].message).toBe("'takes_entry' expects a <Entry> record for 'd' (argument 1), and it has no `name`");
   });
 
   it('a record with a field of another type is refused, naming it', () => {

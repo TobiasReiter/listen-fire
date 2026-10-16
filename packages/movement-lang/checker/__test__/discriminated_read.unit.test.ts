@@ -1,5 +1,5 @@
 // Discriminated READS (plan layer 1b): a hop whose WHERE names the list —
-// `` -[le:`List Entries` WHERE `listName` == "Deal Pipeline"]-> `` — is
+// `` -[le:`List Entries` WHERE le.`listName` == "Deal Pipeline"]-> `` — is
 // checked against THAT list's type, not against the union of every list. The
 // read-side dual of the discriminated write, and the same mechanism as every
 // other narrowing: the HOST resolves the selection and registers a refined
@@ -26,12 +26,14 @@ const ENTRIES = 'List Entry';
 const MASTER = 'List Entry "Deal Pipeline"';
 const TICKETS = 'Ticket';
 const BILLING = 'Ticket "Billing"';
+const LE = { alias: 'le' };
+const T = { alias: 't' };
 
 /** Key a WHERE the way the host does — parsed IN ITS HOP, since a bare field
  *  read is an `edge_property` inside a bracket WHERE and a `property` standing
  *  alone. Both sides parse the hop, so both agree. */
-const keyFor = (type: string, where: string): string => {
-  const steps = parseTraversalPath(`-[:${type} WHERE ${where}]->`);
+const keyFor = (type: string, where: string, options: { alias: string }): string => {
+  const steps = parseTraversalPath(`-[${options.alias}:${type} WHERE ${where}]->`, 5);
   const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
   if (!filter) throw new Error(`test setup: no filter parsed out of \`${where}\``);
   return refinementKey({ type, filter });
@@ -59,13 +61,14 @@ const crmSchema: InstanceSchema = {
   // with its name, id and `listName`.
   narrowBy: { [ENTRIES]: ['Name', 'Id', 'listName'] },
   refinements: {
-    [keyFor(ENTRIES, '`listName` == "Deal Pipeline"')]: MASTER,
-    [keyFor(ENTRIES, '`listName` == "Deal Pipeline" AND `Deal Created` >= cutoff')]: MASTER,
-    [keyFor(ENTRIES, '`listName` == "Deal Pipeline" AND `Deal Created` >= cutof')]: MASTER,
-    [keyFor(ENTRIES, '`listName` == "Deal Pipeline" AND `Made Up Field` >= cutoff')]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline"', LE)]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutoff', LE)]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof', LE)]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Made Up Field` >= cutoff', LE)]: MASTER,
     [keyFor(
       ENTRIES,
-      '`listName` == "Deal Pipeline" AND `[Deal Pipeline] Deal Created` >= cutoff',
+      'le.`listName` == "Deal Pipeline" && le.`[Deal Pipeline] Deal Created` >= cutoff',
+      LE,
     )]: MASTER,
   },
 };
@@ -81,9 +84,9 @@ const helpdeskSchema: InstanceSchema = {
   writableRoots: {},
   narrowBy: { [TICKETS]: ['queue'] },
   refinements: {
-    [keyFor(TICKETS, '`queue` == "Billing"')]: BILLING,
-    [keyFor(TICKETS, '`queue` == "Billing" AND `refundAmount` > 100')]: BILLING,
-    [keyFor(TICKETS, '`queue` == "Billing" AND `refundAmuont` > 100')]: BILLING,
+    [keyFor(TICKETS, 't.`queue` == "Billing"', T)]: BILLING,
+    [keyFor(TICKETS, 't.`queue` == "Billing" && t.`refundAmount` > 100', T)]: BILLING,
+    [keyFor(TICKETS, 't.`queue` == "Billing" && t.`refundAmuont` > 100', T)]: BILLING,
   },
 };
 
@@ -128,14 +131,14 @@ const catalog = mockCatalog({
 
 const prelude = `import { manual, crm, helpdesk, graph } from adapters
 import { crm_cred, helpdesk_cred, graph_cred } from credentials
-runner = manual()
-sales = crm(credentials: crm_cred)
-desk = helpdesk(credentials: helpdesk_cred)
-kg = graph(credentials: graph_cred)`;
+runner = connect manual
+sales = connect crm using crm_cred
+desk = connect helpdesk using helpdesk_cred
+kg = connect graph using graph_cred`;
 
 const diagnose = (body: string): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${prelude}\nmovement m(x: <runner-[:invocation]->>) {\n${body}\n}`),
+    parseProgram(`${prelude}\nfunction m(x: <runner-[:invocation]->>) {\n${body}\n}`),
     catalog,
   ).filter((d) => (d.severity ?? 'error') === 'error');
 
@@ -143,7 +146,7 @@ const codes = (body: string): string[] => diagnose(body).map((d) => d.code);
 
 /** The acceptance shape: an org, then its entries on one named list. */
 const onMasterDeals = (where: string, inner = '') => `  cutoff = "2026-01-01"
-  sales-[org:Organization WHERE \`Name\` == "Acme"]-> {
+  sales-[org:Organization WHERE org.org.org.org.org.\`Name\` == "Acme"]-> {
     org-[le:\`List Entries\` WHERE ${where}]-> {
 ${inner}
     }
@@ -151,14 +154,14 @@ ${inner}
 
 describe('a hop narrowed by its discriminant is checked against the variant', () => {
   it('a bare field of the named list is fine', () => {
-    expect(codes(onMasterDeals('`listName` == "Deal Pipeline" AND `Deal Created` >= cutoff'))).toEqual(
+    expect(codes(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutoff'))).toEqual(
       [],
     );
   });
 
   it('a made-up field in the same WHERE is an unknown field naming the list', () => {
     const [diagnostic, ...rest] = diagnose(
-      onMasterDeals('`listName` == "Deal Pipeline" AND `Made Up Field` >= cutoff'),
+      onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Made Up Field` >= cutoff'),
     );
     expect(rest).toEqual([]);
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
@@ -176,7 +179,7 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
   it('the list-prefixed spelling is the same error, with the bare name suggested', () => {
     const [diagnostic] = diagnose(
       onMasterDeals(
-        '`listName` == "Deal Pipeline" AND `[Deal Pipeline] Deal Created` >= cutoff',
+        'le.`listName` == "Deal Pipeline" && le.`[Deal Pipeline] Deal Created` >= cutoff',
       ),
     );
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
@@ -185,10 +188,10 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
 
   it('the alias binds to the variant — its own field reads, a made-up one does not', () => {
     expect(
-      codes(onMasterDeals('`listName` == "Deal Pipeline"', '      n = le.`Stage Order`')),
+      codes(onMasterDeals('le.`listName` == "Deal Pipeline"', '      n = le.`Stage Order`')),
     ).toEqual([]);
     const [diagnostic] = diagnose(
-      onMasterDeals('`listName` == "Deal Pipeline"', '      n = le.`Made Up Field`'),
+      onMasterDeals('le.`listName` == "Deal Pipeline"', '      n = le.`Made Up Field`'),
     );
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
     expect(diagnostic.message).toContain(MASTER);
@@ -198,8 +201,8 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
   // collection and the collection's own surface is what gets checked — a
   // list-scoped name is unknown there because it belongs to no particular list.
   it('no literal discriminant ⇒ the collection stands, as before', () => {
-    expect(codes(onMasterDeals('`listName` == cutoff'))).toEqual([]);
-    const [diagnostic] = diagnose(onMasterDeals('`listName` == cutoff AND `Deal Created` >= cutoff'));
+    expect(codes(onMasterDeals('le.`listName` == cutoff'))).toEqual([]);
+    const [diagnostic] = diagnose(onMasterDeals('le.`listName` == cutoff && le.`Deal Created` >= cutoff'));
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
     expect(diagnostic.message).toContain(ENTRIES);
     expect(diagnostic.message).not.toContain('Deal Pipeline');
@@ -213,21 +216,21 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
     // stays silent. Drop a letter and it is neither, which is the whole of what
     // scope presence buys.
     expect(
-      codes(onMasterDeals('`listName` == "Deal Pipeline" AND `Deal Created` >= cutof')),
+      codes(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof')),
     ).toEqual(['MOV_UNKNOWN_PROPERTY']);
   });
 });
 
 describe('the same rule on a second shape', () => {
   it('narrows a root collection by its own discriminant', () => {
-    expect(codes('  desk-[t:Ticket WHERE `queue` == "Billing" AND `refundAmount` > 100]-> { }')).toEqual(
+    expect(codes('  desk-[t:Ticket WHERE t.`queue` == "Billing" && t.`refundAmount` > 100]-> { }')).toEqual(
       [],
     );
   });
 
   it('a typo against the variant is caught and corrected', () => {
     const [diagnostic] = diagnose(
-      '  desk-[t:Ticket WHERE `queue` == "Billing" AND `refundAmuont` > 100]-> { }',
+      '  desk-[t:Ticket WHERE t.`queue` == "Billing" && t.`refundAmuont` > 100]-> { }',
     );
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
     expect(diagnostic.message).toContain(BILLING);
@@ -235,7 +238,7 @@ describe('the same rule on a second shape', () => {
   });
 
   it('the unnarrowed collection does not carry the variant’s field', () => {
-    expect(codes('  desk-[t:Ticket WHERE `refundAmount` > 100]-> { }')).toEqual([
+    expect(codes('  desk-[t:Ticket WHERE t.`refundAmount` > 100]-> { }')).toEqual([
       'MOV_UNKNOWN_PROPERTY',
     ]);
   });
@@ -247,11 +250,11 @@ describe('the same rule on a second shape', () => {
 // keeps such a name silent, exactly as `openProperties` does for a read.
 describe('an edge that can carry inline properties keeps its WHERE names open', () => {
   it('an unrecognised name may be the relationship’s own fact', () => {
-    expect(codes('  kg-[p:Person WHERE `since` > "2020"]-> { }')).toEqual([]);
+    expect(codes('  kg-[p:Person WHERE p.`since` > "2020"]-> { }')).toEqual([]);
   });
 
   it('the same name on a closed instance is still a mistake', () => {
-    expect(codes('  desk-[t:Ticket WHERE `since` > "2020"]-> { }')).toEqual([
+    expect(codes('  desk-[t:Ticket WHERE t.`since` > "2020"]-> { }')).toEqual([
       'MOV_UNKNOWN_PROPERTY',
     ]);
   });
@@ -263,7 +266,7 @@ describe('an edge that can carry inline properties keeps its WHERE names open', 
 describe('a refused field on a narrowable type names the narrowing that admits it', () => {
   it('list entries: names the list-labelling fields', () => {
     const [diagnostic, ...rest] = diagnose(
-      onMasterDeals('`listName` == cutoff AND `Deal Created` >= cutoff'),
+      onMasterDeals('le.`listName` == cutoff && le.`Deal Created` >= cutoff'),
     );
     expect(rest).toEqual([]);
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
@@ -273,7 +276,7 @@ describe('a refused field on a narrowable type names the narrowing that admits i
   });
 
   it('tickets: names the queue', () => {
-    const [diagnostic] = diagnose('  desk-[t:Ticket WHERE `refundAmount` > 100]-> { }');
+    const [diagnostic] = diagnose('  desk-[t:Ticket WHERE t.`refundAmount` > 100]-> { }');
     expect(diagnostic.message).toContain(
       'narrow the hop that lands here to it: test `queue` == "…" in its WHERE',
     );
@@ -281,7 +284,7 @@ describe('a refused field on a narrowable type names the narrowing that admits i
 
   it('an alias read off the unnarrowed hop gets the same fix', () => {
     const [diagnostic] = diagnose(
-      '  desk-[t:Ticket WHERE `queue` == "Support"]-> {\n    n = t.`refundAmount`\n  }',
+      '  desk-[t:Ticket WHERE t.`queue` == "Support"]-> {\n    n = t.`refundAmount`\n  }',
     );
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
     expect(diagnostic.message).toContain('test `queue` == "…" in its WHERE');
@@ -289,10 +292,10 @@ describe('a refused field on a narrowable type names the narrowing that admits i
 
   it('a narrowed hop, or a type with nothing to narrow by, says nothing of the kind', () => {
     const [narrowed] = diagnose(
-      onMasterDeals('`listName` == "Deal Pipeline" AND `Made Up Field` >= cutoff'),
+      onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Made Up Field` >= cutoff'),
     );
     expect(narrowed.message).not.toContain('narrow the hop');
-    const [closed] = diagnose('  sales-[o:Organization WHERE `Made Up` == "x"]-> { }');
+    const [closed] = diagnose('  sales-[o:Organization WHERE o.`Made Up` == "x"]-> { }');
     expect(closed.message).not.toContain('narrow the hop');
   });
 });
@@ -306,7 +309,7 @@ describe('a refused field on a narrowable type names the narrowing that admits i
 // described, and a member's field in the WHERE was refused.
 describe('a path wrapped in a function narrows like a block hop', () => {
   const program = (body: string) =>
-    `${prelude}\nmovement m(x: <runner-[:invocation]->>) {\n  cutoff = "2026-01-01"\n${body}\n}`;
+    `${prelude}\nfunction m(x: <runner-[:invocation]->>) {\n  cutoff = "2026-01-01"\n${body}\n}`;
   /** Each chain the scan yields: its hops, and whether the last one carries its WHERE. */
   const chainsOf = (body: string) =>
     scanInstanceChains(program(body)).map((chain) => ({
@@ -318,28 +321,28 @@ describe('a path wrapped in a function narrows like a block hop', () => {
       })(),
     }));
 
-  const TICKET_PATH = 'desk-[t:Ticket WHERE `queue` == "Billing" AND `refundAmount` > 100]->';
+  const TICKET_PATH = 'desk-[t:Ticket WHERE t.`queue` == "Billing" && t.`refundAmount` > 100]->';
   const ENTRY_PATH =
-    'sales-[o:Organization WHERE `Name` == "Acme"]->-[le:`List Entries` WHERE `listName` == "Deal Pipeline" AND `Deal Created` >= cutoff]->';
+    'sales-[o:Organization WHERE o.`Name` == "Acme"]->-[le:`List Entries` WHERE le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutoff]->';
   const ticketChain = [{ adapter: 'helpdesk', edges: [TICKETS], lastFiltered: true }];
   const entryChain = [
     { adapter: 'crm', edges: ['Organization', 'List Entries'], lastFiltered: true },
   ];
 
   it.each([
-    ['EXISTS', `  hit = EXISTS(${TICKET_PATH})`],
-    ['EXISTS in an IF condition', `  n = IF EXISTS(${TICKET_PATH}) THEN 1 ELSE 0 END`],
-    ['EXISTS as an if statement condition', `  if EXISTS(${TICKET_PATH}) { }`],
-    ['COUNT', `  n = COUNT(${TICKET_PATH})`],
-    ['FIRST', `  n = FIRST(${TICKET_PATH})`],
-    ['ONLY', `  n = ONLY(${TICKET_PATH})`],
+    ['EXISTS', `  hit = exists(${TICKET_PATH})`],
+    ['EXISTS in an IF condition', `  n = exists(${TICKET_PATH}) ? 1 : 0`],
+    ['EXISTS as an if statement condition', `  if (exists(${TICKET_PATH})) { }`],
+    ['COUNT', `  n = count(${TICKET_PATH})`],
+    ['FIRST', `  n = first(${TICKET_PATH})`],
+    ['ONLY', `  n = only(${TICKET_PATH})`],
   ])('the scan yields the path inside %s (a root collection)', (_form, body) => {
     expect(chainsOf(body)).toEqual(ticketChain);
   });
 
   it.each([
-    ['EXISTS', `  hit = EXISTS(${ENTRY_PATH})`],
-    ['COUNT', `  n = COUNT(${ENTRY_PATH})`],
+    ['EXISTS', `  hit = exists(${ENTRY_PATH})`],
+    ['COUNT', `  n = count(${ENTRY_PATH})`],
   ])('the scan yields the whole chained path inside %s (a record edge)', (_form, body) => {
     expect(chainsOf(body)).toEqual(entryChain);
   });
@@ -347,7 +350,7 @@ describe('a path wrapped in a function narrows like a block hop', () => {
   it('an EXISTS rooted at a block alias grounds through the block', () => {
     expect(
       chainsOf(
-        '  sales-[o:Organization WHERE `Name` == "Acme"]-> {\n    hit = EXISTS(o-[le:`List Entries` WHERE `listName` == "Deal Pipeline"]->)\n  }',
+        '  sales-[o:Organization WHERE o.`Name` == "Acme"]-> {\n    hit = exists(o-[le:`List Entries` WHERE le.`listName` == "Deal Pipeline"]->)\n  }',
       ),
     ).toEqual([
       { adapter: 'crm', edges: ['Organization'], lastFiltered: true },
@@ -357,18 +360,18 @@ describe('a path wrapped in a function narrows like a block hop', () => {
 
   it('a relative EXISTS inside a WHERE has no root to ground, and yields nothing new', () => {
     expect(
-      chainsOf('  desk-[t:Ticket WHERE EXISTS(-[:Comments]->)]-> { }'),
+      chainsOf('  desk-[t:Ticket WHERE exists(-[:Comments]->)]-> { }'),
     ).toEqual([{ adapter: 'helpdesk', edges: [TICKETS], lastFiltered: true }]);
   });
 
   it('the checker narrows the path inside EXISTS, on both shapes', () => {
-    expect(codes(`  hit = EXISTS(${TICKET_PATH})`)).toEqual([]);
-    expect(codes(`  cutoff = "2026-01-01"\n  hit = EXISTS(${ENTRY_PATH})`)).toEqual([]);
+    expect(codes(`  hit = exists(${TICKET_PATH})`)).toEqual([]);
+    expect(codes(`  cutoff = "2026-01-01"\n  hit = exists(${ENTRY_PATH})`)).toEqual([]);
   });
 
   it('without the discriminant, the member field inside EXISTS is refused with the narrowing test', () => {
     const [diagnostic, ...rest] = diagnose(
-      '  cutoff = "2026-01-01"\n  hit = EXISTS(sales-[o:Organization WHERE `Name` == "Acme"]->-[le:`List Entries` WHERE `Deal Created` >= cutoff]->)',
+      '  cutoff = "2026-01-01"\n  hit = exists(sales-[o:Organization WHERE o.`Name` == "Acme"]->-[le:`List Entries` WHERE le.`Deal Created` >= cutoff]->)',
     );
     expect(rest).toEqual([]);
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');

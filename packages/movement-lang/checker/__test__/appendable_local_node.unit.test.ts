@@ -58,8 +58,8 @@ const catalog = mockCatalog({
 // Channel carries all of it (Name, and a Messages edge whose landing carries
 // Text); a Person carries none of it.
 const PRELUDE = `import { email, chat } from adapters
-inbox = email()
-sl = chat()
+inbox = connect email
+sl = connect chat
 
 node Feed {
   Name: <text>
@@ -73,7 +73,7 @@ const DECLARED = 'sent = node { messages: <sl-[:Channels]->-[:Messages]->> }';
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -86,7 +86,7 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 
 function rowOf(body: string): EffectRow {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   const { recording } = checkProgramWithLink(parseProgram(source), catalog, {
@@ -129,25 +129,25 @@ describe('a declared entry can say its order', () => {
   const ORDERED = 'sent = node { messages: <sl-[:Channels]->-[:Messages]->> order by arrival }';
 
   it('without the clause the edge is a SET — an order-sensitive fold is refused', () => {
-    expect(codes(`  ${DECLARED}\n  t = JOIN(sent-[x:messages]->.Text, ", ")`)).toContain(
+    expect(codes(`  ${DECLARED}\n  t = Text.join(sent-[x:messages]->.Text, ", ")`)).toContain(
       'MOV_FOLD_NEEDS_ORDER',
     );
-    expect(codes(`  ${DECLARED}\n  f = FIRST(sent-[x:messages]->)`)).toContain(
+    expect(codes(`  ${DECLARED}\n  f = first(sent-[x:messages]->)`)).toContain(
       'MOV_FOLD_NEEDS_ORDER',
     );
   });
 
   it('with it, JOIN and FIRST are clean — no ORDER BY anywhere', () => {
-    expect(codes(`  ${ORDERED}\n  t = JOIN(sent-[x:messages]->.Text, ", ")`)).toEqual([]);
-    expect(codes(`  ${ORDERED}\n  f = FIRST(sent-[x:messages]->)`)).toEqual([]);
-    expect(codes(`  ${ORDERED}\n  l = LAST(sent-[x:messages]->.Text)`)).toEqual([]);
+    expect(codes(`  ${ORDERED}\n  t = Text.join(sent-[x:messages]->.Text, ", ")`)).toEqual([]);
+    expect(codes(`  ${ORDERED}\n  f = first(sent-[x:messages]->)`)).toEqual([]);
+    expect(codes(`  ${ORDERED}\n  l = List.last(sent-[x:messages]->.Text)`)).toEqual([]);
   });
 
   it('LIMIT with no ORDER BY is the same rule, discharged the same way', () => {
-    expect(codes(`  ${DECLARED}\n  n = COUNT(sent-[x:messages LIMIT 3]->)`)).toContain(
+    expect(codes(`  ${DECLARED}\n  n = count(sent-[x:messages LIMIT 3]->)`)).toContain(
       'MOV_LIMIT_NEEDS_ORDER',
     );
-    expect(codes(`  ${ORDERED}\n  n = COUNT(sent-[x:messages LIMIT 3]->)`)).toEqual([]);
+    expect(codes(`  ${ORDERED}\n  n = count(sent-[x:messages LIMIT 3]->)`)).toEqual([]);
   });
 
   it('a bare traversal over it is the ordinary traversal, still', () => {
@@ -156,7 +156,7 @@ describe('a declared entry can say its order', () => {
 
   it('the DECLARED NODE spelling takes the clause too', () => {
     const body = `  feeds = node { channels: <Feed> order by arrival }
-  t = JOIN(feeds-[c:channels]->.Name, ", ")`;
+  t = Text.join(feeds-[c:channels]->.Name, ", ")`;
     expect(codes(body)).toEqual([]);
   });
 

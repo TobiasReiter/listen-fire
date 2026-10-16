@@ -8,6 +8,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: { company: { properties: { name: 'text' }, edges: {} } },
@@ -24,7 +25,7 @@ const catalog = mockCatalog({
 const PRELUDE = ['import { attio } from adapters', 'import { crm_cred } from credentials', 'crm = attio(credentials: crm_cred)'].join('\n');
 
 const errorsUnder = (version: LanguageVersion, outside: string[], body: string[]): Diagnostic[] => {
-  const source = `${PRELUDE}\n${outside.join('\n')}\nmovement m() {\n${body.join('\n')}\n}`;
+  const source = spelledFor(version, `${PRELUDE}\n${outside.join('\n')}\nmovement m() {\n${body.join('\n')}\n}`, catalog);
   return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );

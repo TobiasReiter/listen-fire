@@ -13,6 +13,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, DiagnosticCodes as C } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -49,7 +50,7 @@ ${body}
 }`;
 
 function check(src: string, languageVersion: LanguageVersion) {
-  return checkProgram(parseProgram(src, { languageVersion }), catalog, { languageVersion }).filter(
+  return checkProgram(parseProgram(spelledFor(languageVersion, src, catalog), { languageVersion }), catalog, { languageVersion }).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }

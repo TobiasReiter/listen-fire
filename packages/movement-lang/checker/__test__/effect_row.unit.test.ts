@@ -55,8 +55,8 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { attio, slack } from adapters
-crm = attio()
-chat = slack()
+crm = connect attio
+chat = connect slack
 `;
 
 /** The checker's file scope — where a declaration's symbol, and so its row,
@@ -91,7 +91,7 @@ const errors = (source: string): string[] =>
 
 describe('a row is inferred for every declaration, and refuses nothing', () => {
   it('a function that only computes has an empty row, and an empty row is pure', () => {
-    const source = `movement adds(c: <crm-[:company]->>) {
+    const source = `function adds(c: <crm-[:company]->>) {
   n = 1 + 2
   return n
 }`;
@@ -109,7 +109,7 @@ describe('a row is inferred for every declaration, and refuses nothing', () => {
   });
 
   it('reading a field of the event is not a read — the value is already in hand', () => {
-    const source = `movement names(c: <crm-[:company]->>) {
+    const source = `function names(c: <crm-[:company]->>) {
   n = c.\`Name\`
   return n
 }`;
@@ -120,7 +120,7 @@ describe('a row is inferred for every declaration, and refuses nothing', () => {
 
 describe('reads and writes carry the instance they touch', () => {
   it('a movement that reads one graph and writes another says both, separately', () => {
-    const source = `movement announce(c: <crm-[:company]->>) {
+    const source = `function announce(c: <crm-[:company]->>) {
   crm-[co:companies]-> {
     write chat-[:messages]-> {
       Body: co.\`Name\`
@@ -133,8 +133,8 @@ describe('reads and writes carry the instance they touch', () => {
   });
 
   it('a traversal in an expression reads too — one walk, whichever side it is written on', () => {
-    const source = `movement first_person(c: <crm-[:company]->>) {
-  p = ONLY(c-[:People]->.\`Email\`)
+    const source = `function first_person(c: <crm-[:company]->>) {
+  p = only(c-[:People]->.\`Email\`)
   return p
 }`;
     expect(errors(source)).toEqual([]);
@@ -143,7 +143,7 @@ describe('reads and writes carry the instance they touch', () => {
   });
 
   it('`delete` writes the graph the handle is in', () => {
-    const source = `movement drop(c: <crm-[:company]->>) {
+    const source = `function drop(c: <crm-[:company]->>) {
   delete c
 }`;
     expect(errors(source)).toEqual([]);
@@ -151,7 +151,7 @@ describe('reads and writes carry the instance they touch', () => {
   });
 
   it('`refresh` is a READ — it moves a snapshot to now and changes nothing', () => {
-    const source = `movement recheck(c: <crm-[:company]->>) {
+    const source = `function recheck(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     refresh a
   }
@@ -163,8 +163,8 @@ describe('reads and writes carry the instance they touch', () => {
 
   it('two systems of the SAME adapter are two entries — identity is the system, not the adapter', () => {
     const source = `import { second_crm } from credentials
-other = attio(credentials: second_crm)
-movement both(c: <crm-[:company]->>) {
+other = connect attio using second_crm
+function both(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     write chat-[:messages]-> { Body: a.\`Name\` }
   }
@@ -177,8 +177,8 @@ movement both(c: <crm-[:company]->>) {
   });
 
   it('two names for the SAME system are one entry — a system is its address, not its name (B12)', () => {
-    const source = `same = attio()
-movement both(c: <crm-[:company]->>) {
+    const source = `same = connect attio
+function both(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     write chat-[:messages]-> { Body: a.\`Name\` }
   }
@@ -191,7 +191,7 @@ movement both(c: <crm-[:company]->>) {
   });
 
   it('the entry IS the graph token the type checker compares by, not the spelling', () => {
-    const source = `${PRELUDE}movement one(c: <crm-[:company]->>) {
+    const source = `${PRELUDE}function one(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     n = a.\`Name\`
   }
@@ -206,7 +206,7 @@ movement both(c: <crm-[:company]->>) {
 
 describe('ai, now and suspend are flags', () => {
   it('`extract` is an ai read', () => {
-    const source = `movement pull(c: <crm-[:company]->>) {
+    const source = `function pull(c: <crm-[:company]->>) {
   r = extract from [ c.\`Name\` ] {
     stage: <text> "the funding stage"
   }
@@ -217,8 +217,8 @@ describe('ai, now and suspend are flags', () => {
   });
 
   it('`AI(…)` in an ordinary expression is the same effect', () => {
-    const source = `movement judge(c: <crm-[:company]->>) {
-  verdict = AI("is this interesting?")
+    const source = `function judge(c: <crm-[:company]->>) {
+  verdict = ai("is this interesting?")
   return verdict
 }`;
     expect(errors(source)).toEqual([]);
@@ -228,11 +228,11 @@ describe('ai, now and suspend are flags', () => {
   });
 
   it('`@current_date` reads the clock; `@user_email` does not', () => {
-    const clock = `movement dated(c: <crm-[:company]->>) {
+    const clock = `function dated(c: <crm-[:company]->>) {
   d = @current_date
   return d
 }`;
-    const person = `movement whose(c: <crm-[:company]->>) {
+    const person = `function whose(c: <crm-[:company]->>) {
   who = @user_email
   return who
 }`;
@@ -243,12 +243,12 @@ describe('ai, now and suspend are flags', () => {
   });
 
   it('`DATE.TODAY(zone)` reads the clock too; the other helpers do not', () => {
-    const today = `movement dated(c: <crm-[:company]->>) {
-  d = DATE.TODAY("Europe/Berlin")
+    const today = `function dated(c: <crm-[:company]->>) {
+  d = Date.today("Europe/Berlin")
   return d
 }`;
-    const anchored = `movement anchored(c: <crm-[:company]->>) {
-  t = DATETIME.AT("2026-06-15", "07:00", "Europe/Berlin")
+    const anchored = `function anchored(c: <crm-[:company]->>) {
+  t = DateTime.at("2026-06-15", "07:00", "Europe/Berlin")
   return t
 }`;
     expect(errors(today)).toEqual([]);
@@ -258,7 +258,7 @@ describe('ai, now and suspend are flags', () => {
   });
 
   it('every `await` parks — `sleep` has no instance and no read', () => {
-    const source = `movement waits(c: <crm-[:company]->>) {
+    const source = `function waits(c: <crm-[:company]->>) {
   await sleep(2d)
 }`;
     expect(errors(source)).toEqual([]);
@@ -270,14 +270,14 @@ describe('ai, now and suspend are flags', () => {
 });
 
 describe('the row is bottom-up over the call graph', () => {
-  const chain = `movement leaf(c: <crm-[:company]->>) {
+  const chain = `function leaf(c: <crm-[:company]->>) {
   write chat-[:messages]-> { Body: c.\`Name\` }
 }
-movement middle(c: <crm-[:company]->>) {
-  leaf(c: c)
+function middle(c: <crm-[:company]->>) {
+  leaf(c)
 }
-movement top(c: <crm-[:company]->>) {
-  middle(c: c)
+function top(c: <crm-[:company]->>) {
+  middle(c)
 }`;
 
   it('a callee\'s row reaches its caller, and its caller\'s caller', () => {
@@ -288,17 +288,17 @@ movement top(c: <crm-[:company]->>) {
   });
 
   it('a movement that calls two unions both rows', () => {
-    const source = `movement reader(c: <crm-[:company]->>) {
+    const source = `function reader(c: <crm-[:company]->>) {
   crm-[a:companies]-> {
     n = a.\`Name\`
   }
 }
-movement writer(c: <crm-[:company]->>) {
+function writer(c: <crm-[:company]->>) {
   write chat-[:messages]-> { Body: c.\`Name\` }
 }
-movement both(c: <crm-[:company]->>) {
-  reader(c: c)
-  writer(c: c)
+function both(c: <crm-[:company]->>) {
+  reader(c)
+  writer(c)
 }`;
     expect(errors(source)).toEqual([]);
     expect(reads(source, 'both')).toEqual(['crm']);
@@ -306,10 +306,10 @@ movement both(c: <crm-[:company]->>) {
   });
 
   it('a call site ABOVE the declaration gets the same row — the body is walked on demand', () => {
-    const source = `movement caller(c: <crm-[:company]->>) {
-  callee(c: c)
+    const source = `function caller(c: <crm-[:company]->>) {
+  callee(c)
 }
-movement callee(c: <crm-[:company]->>) {
+function callee(c: <crm-[:company]->>) {
   write chat-[:messages]-> { Body: c.\`Name\` }
 }`;
     expect(errors(source)).toEqual([]);
@@ -317,8 +317,8 @@ movement callee(c: <crm-[:company]->>) {
   });
 
   it('a callee nobody can see leaves the row a LOWER BOUND, not an empty one', () => {
-    const source = `movement calls_nothing(c: <crm-[:company]->>) {
-  no_such_movement(c: c)
+    const source = `function calls_nothing(c: <crm-[:company]->>) {
+  no_such_movement(c)
 }`;
     const row = rowOf(source, 'calls_nothing');
     expect(row.partial).toBe(true);
@@ -327,9 +327,9 @@ movement callee(c: <crm-[:company]->>) {
 });
 
 describe("a closure's row rides in its type", () => {
-  const closureSource = `movement holds(c: <crm-[:company]->>) {
+  const closureSource = `function holds(c: <crm-[:company]->>) {
   look = () => {
-    n = ONLY(crm-[:companies]->.\`Name\`)
+    n = only(crm-[:companies]->.\`Name\`)
     return n != null
   }
   return c
@@ -353,12 +353,12 @@ describe("a closure's row rides in its type", () => {
   });
 
   it('CALLING it is what adds the row — an `until` condition is called every tick', () => {
-    const source = `movement waits(c: <crm-[:company]->>) {
+    const source = `function waits(c: <crm-[:company]->>) {
   look = () => {
-    n = ONLY(crm-[:companies]->.\`Name\`)
+    n = only(crm-[:companies]->.\`Name\`)
     return n != null
   }
-  await until(look, every: 5m)
+  await until(look, { every: 5m })
 }`;
     expect(errors(source)).toEqual([]);
     const row = rowOf(source, 'waits');
@@ -369,9 +369,9 @@ describe("a closure's row rides in its type", () => {
 
 describe('the picture reads the row off the declaration', () => {
   it("a movement step carries its row, with instances named as the author bound them", () => {
-    const source = `${PRELUDE}movement announce(c: <crm-[:company]->>) {
+    const source = `${PRELUDE}function announce(c: <crm-[:company]->>) {
   crm-[co:companies]-> {
-    write chat-[:messages]-> { Body: AI("a one-line summary") }
+    write chat-[:messages]-> { Body: ai("a one-line summary") }
   }
   await sleep(1d)
 }`;

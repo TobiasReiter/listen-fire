@@ -27,7 +27,7 @@ function bodyOf(source: string): MovementDeclaration['body'] {
 
 /** The callback bound by the first statement of a one-statement movement body. */
 function callbackIn(line: string): CallbackExpression {
-  const body = bodyOf(`movement m(d: <s-[:m]->>) {\n${line}\n}`);
+  const body = bodyOf(`function m(d: <s-[:m]->>) {\n${line}\n}`);
   return rv(as(body[0], 'assign').value, 'callback').callback;
 }
 
@@ -93,7 +93,7 @@ describe('callback — the body-less forms are an EMPTY body, not a variant', ()
 
   it('with no subject at all there is nothing to put config after — write the empty body', () => {
     expectParseError(
-      'movement m(d: <s-[:m]->>) {\n  cb = callback(, { ttl: 2d })\n}',
+      'function m(d: <s-[:m]->>) {\n  cb = callback(, { ttl: 2d })\n}',
       /a callback body.*or the name of a movement/s,
     );
     const cb = callbackIn('  cb = callback({}, { ttl: 2d })');
@@ -126,15 +126,15 @@ describe('callback — the named subject (the one place a movement is a value)',
 
 describe('callback — config is always the SECOND argument', () => {
   it('reads `once` and `ttl` as raw named entries (the checker owns the vocabulary)', () => {
-    const cb = callbackIn('  cb = callback({ write d-[:reply]-> { text: "x" } }, { once: FALSE, ttl: 2d })');
+    const cb = callbackIn('  cb = callback({ write d-[:reply]-> { text: "x" } }, { once: false, ttl: 2d })');
     expect(cb.config.map((c) => [c.name, c.value.raw])).toEqual([
-      ['once', 'FALSE'],
+      ['once', 'false'],
       ['ttl', '2d'],
     ]);
   });
 
   it('a multi-line config parses', () => {
-    const cb = callbackIn('  cb = callback(send_reminder, {\n    once: FALSE\n    ttl: 1h30m\n  })');
+    const cb = callbackIn('  cb = callback(send_reminder, {\n    once: false\n    ttl: 1h30m\n  })');
     expect(cb.config.map((c) => c.name)).toEqual(['once', 'ttl']);
   });
 
@@ -145,7 +145,7 @@ describe('callback — config is always the SECOND argument', () => {
 
   it('a missing close is a parse error naming the config', () => {
     expectParseError(
-      'movement m(d: <s-[:m]->>) {\n  cb = callback(send_reminder, { once: FALSE\n}\n',
+      'function m(d: <s-[:m]->>) {\n  cb = callback(send_reminder, { once: false\n}\n',
       /callback/,
     );
   });
@@ -154,21 +154,21 @@ describe('callback — config is always the SECOND argument', () => {
 describe('callback — the surface refuses what it cannot mean', () => {
   it('an unbound `callback(…)` statement points at the binding form', () => {
     expectParseError(
-      'movement m(d: <s-[:m]->>) {\n  callback({ write d-[:reply]-> { text: "x" } })\n}',
+      'function m(d: <s-[:m]->>) {\n  callback({ write d-[:reply]-> { text: "x" } })\n}',
       /must be bound to a name.*cb\.id/s,
     );
   });
 
   it('a parameter list with no arrow and no `)` is a parse error', () => {
     expectParseError(
-      'movement m(d: <s-[:m]->>) {\n  cb = callback((when: <date>) { write d-[:reply]-> { text: "x" } })\n}',
+      'function m(d: <s-[:m]->>) {\n  cb = callback((when: <date>) { write d-[:reply]-> { text: "x" } })\n}',
       /=>/,
     );
   });
 
   it('an unbracketed parameter type gets the angle-bracket fix-it (the movement param grammar)', () => {
     expectParseError(
-      'movement m(d: <s-[:m]->>) {\n  cb = callback((when: date) => { write d-[:reply]-> { text: "x" } })\n}',
+      'function m(d: <s-[:m]->>) {\n  cb = callback((when: date) => { write d-[:reply]-> { text: "x" } })\n}',
       /angle brackets.*<date>/s,
     );
   });
@@ -187,7 +187,10 @@ describe('`function` is a pure parser alias for `movement`', () => {
     const source = (keyword: string) =>
       `${keyword} intake(d: <s-[:m]->>) {\n  write d-[:reply]-> { text: "x" }\n}`;
     const strip = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (k, x) => (k === 'span' ? undefined : x)));
-    expect(strip(parseProgram(source('function')))).toEqual(strip(parseProgram(source('movement'))));
+    // From version 5 the `movement` spelling carries a note that it is retired, so
+    // the alias is compared under 4, where both are plain declarations.
+    const parse = (keyword: string) => parseProgram(source(keyword), { languageVersion: 4 });
+    expect(strip(parse('function'))).toEqual(strip(parse('movement')));
   });
 
   it('`export function` is `export movement`', () => {

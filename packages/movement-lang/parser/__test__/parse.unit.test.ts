@@ -1491,7 +1491,7 @@ describe('parse errors', () => {
 // not fall through to a generic "unexpected '?'" or a bridge parse failure.
 describe("'?:' Elvis misuse outside a write body", () => {
   const NAMES_MARKER = /`\?:` is the set-if-empty write-field marker/;
-  const OFFERS_FIXES = /use `COALESCE\(a, b\)`; to branch, use an `if` block/;
+  const OFFERS_FIXES = /use `coalesce\(a, b\)`; to branch, use an `if` block/;
 
   it('diagnoses `?:` in an assignment RHS (`x = a ?: b`)', () => {
     const err = expectParseError('x = a ?: b', NAMES_MARKER);

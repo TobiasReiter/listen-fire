@@ -15,6 +15,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -47,7 +48,7 @@ const CO = '  co = write crm-[:companies]-> { name: "a" }';
 
 const diagnosticsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\nmovement m() {\n${[CO, ...body].join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version });
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version });
 };
 const errors = (version: LanguageVersion, body: string[]): string[] =>
   diagnosticsUnder(version, body).filter(d => (d.severity ?? 'error') === 'error').map(d => d.code);
@@ -77,7 +78,7 @@ describe('a collection op\'s members against its function\'s parameters', () => 
 
   it('the message names the parameter and what the op hands it', () => {
     const [error] = diagnosticsUnder(5, MISFITS[0]![1]);
-    expect(error!.message).toBe("the function for 'MAP' expects number for 'n' (argument 1), but each member 'MAP' hands it is text");
+    expect(error!.message).toBe("the function for 'map' expects number for 'n' (argument 1), but each member 'map' hands it is text");
     const [named] = diagnosticsUnder(5, MISFITS[1]![1]);
     expect(named!.message).toContain("'inc' expects number for 'n'");
   });

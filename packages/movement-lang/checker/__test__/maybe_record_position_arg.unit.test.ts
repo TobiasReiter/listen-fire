@@ -17,6 +17,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const catalog = mockCatalog({
   adapters: {
@@ -58,7 +59,7 @@ const check = (version: LanguageVersion, top: string[], body: string[]): Diagnos
     ...body,
     '}',
   ].join('\n');
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error' && d.code !== 'MOV_LISTEN_MISSING',
   );
 };
@@ -71,7 +72,7 @@ describe.each([1, 3, 4, 5] as const)('B15: a maybe-record into a position parame
     if (version >= 5) {
       expect(codes(found)).toEqual(['MOV_CALL_ARG_MAYBE_RECORD']);
       expect(found[0]!.message).toContain("'hp' expects crm.company");
-      expect(found[0]!.message).toContain('IS');
+      expect(found[0]!.message).toContain("'is'");
     } else {
       expect(found).toEqual([]);
     }

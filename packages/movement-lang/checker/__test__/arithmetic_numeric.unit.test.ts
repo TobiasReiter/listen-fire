@@ -164,17 +164,17 @@ const PRELUDE = [
   'import { crm, billing } from adapters',
   'import { crm_cred, billing_cred } from credentials',
   '',
-  'c = crm(credentials: crm_cred)',
-  'b = billing(credentials: billing_cred)',
+  'c = connect crm using crm_cred',
+  'b = connect billing using billing_cred',
 ].join('\n');
 
 /** A movement over a deal (`d`) — shape 1. */
 const onDeal = (body: string): string =>
-  `${PRELUDE}\nmovement m(d: <c-[:deal]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(d: <c-[:deal]->>) {\n${body}\n}`;
 
 /** A movement over an invoice line (`l`) — shape 2. */
 const onLine = (body: string): string =>
-  `${PRELUDE}\nmovement m(l: <b-[:line]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(l: <b-[:line]->>) {\n${body}\n}`;
 
 const errors = (source: string): Diagnostic[] =>
   checkProgram(parseProgram(source), catalog).filter(d => (d.severity ?? 'error') === 'error');
@@ -251,7 +251,7 @@ describe('a date operand is loud too — + is not a date shift', () => {
   it('names the shift function', () => {
     const shift = onDeal('  write c-[:deals]-> { Amount: d.`Closed` + 7 }');
     expect(codes(shift)).toContain(CODE);
-    expect(said(shift)).toContain('DATE.ADD_DAYS');
+    expect(said(shift)).toContain('Date.addDays');
   });
 
   it('the same for a datetime, through the second shape', () => {
@@ -271,13 +271,13 @@ describe('what stays silent', () => {
   });
 
   it('an operand this layer cannot see', () => {
-    expectClean(onDeal('  write c-[:deals]-> { Amount: AI("how many") + 1 }'));
-    expectClean(onDeal('  write c-[:deals]-> { Amount: NUMBER(d.`Name`) + 1 }'));
+    expectClean(onDeal('  write c-[:deals]-> { Amount: ai("how many") + 1 }'));
+    expectClean(onDeal('  write c-[:deals]-> { Amount: Number.parse(d.`Name`) + 1 }'));
   });
 
   it('a boolean condition is untouched — this is an arithmetic rule only', () => {
     expectClean(
-      onDeal('  if d.`Won` {\n    write c-[:deals]-> { Amount: d.`Amount` + 1 }\n  }'),
+      onDeal('  if (d.`Won`) {\n    write c-[:deals]-> { Amount: d.`Amount` + 1 }\n  }'),
     );
   });
 });
@@ -318,7 +318,7 @@ describe('unary minus operand typing', () => {
   it('negating a date is refused, pointed at the shift function', () => {
     const source = onDeal('  write c-[:deals]-> { Amount: -d.`Closed` }');
     expect(codes(source)).toContain(CODE);
-    expect(said(source)).toContain('DATE.ADD_DAYS(date, days)');
+    expect(said(source)).toContain('Date.addDays(date, days)');
   });
 
   it('negating a boolean is refused', () => {
@@ -332,7 +332,7 @@ describe('unary minus operand typing', () => {
   });
 
   it('an operand this layer cannot see stays silent', () => {
-    expectClean(onDeal('  write c-[:deals]-> { Amount: -NUMBER(d.`Name`) }'));
+    expectClean(onDeal('  write c-[:deals]-> { Amount: -Number.parse(d.`Name`) }'));
   });
 });
 

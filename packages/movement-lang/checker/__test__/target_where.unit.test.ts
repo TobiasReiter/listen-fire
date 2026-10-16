@@ -10,6 +10,8 @@ import { parseProgram } from '../../parser/parse';
 import { parseMovementExpression } from '../../expression/bridge';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
+import { spelledFor } from './surface_spelling';
+import type { LanguageVersion } from '../../language_version';
 
 const registrySchema: InstanceSchema = {
   positions: {
@@ -53,18 +55,20 @@ const inMovement = (...body: string[]) =>
     '}',
   ].join('\n');
 
-const errors = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error');
-const codes = (source: string): string[] => errors(source).map((d) => d.code);
-const expectClean = (source: string): void =>
-  expect(errors(source).map((d) => `${d.code}: ${d.message}`)).toEqual([]);
+const errors = (source: string, languageVersion: LanguageVersion = 5): Diagnostic[] =>
+  checkProgram(parseProgram(spelledFor(languageVersion, source), { languageVersion }), catalog, { languageVersion }).filter(
+    (d) => (d.severity ?? 'error') === 'error',
+  );
+const codes = (source: string, languageVersion: LanguageVersion = 5): string[] => errors(source, languageVersion).map((d) => d.code);
+const expectClean = (source: string, languageVersion: LanguageVersion = 5): void =>
+  expect(errors(source, languageVersion).map((d) => `${d.code}: ${d.message}`)).toEqual([]);
 
 describe('the final hop of a target takes a WHERE', () => {
   it('parses, and the WHERE lands on the final hop', () => {
     const source = inMovement(
       '  found = match reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]-> { unique by (FUZZY `Name`), Name: wanted }',
     );
-    const program = parseProgram(source);
+    const program = parseProgram(spelledFor(5, source));
     expect(program).toBeDefined();
     const probe = parseMovementExpression('reg-[e:entities WHERE EXISTS(e-[:Holdings]->)]->.`__probe`');
     const step = probe.type === 'traverse' ? probe.steps[0] : undefined;
@@ -85,8 +89,10 @@ describe('the final hop of a target takes a WHERE', () => {
         '  write reg-[e:entities WHERE e.`City` == "Berlin"]-> { unique by (FUZZY `Name`), Name: wanted }',
       ),
     );
+    // A bare name in the brackets is a field only before 5 (from 5 it is a variable from outside the walk).
     expectClean(
       inMovement('  write reg-[:entities WHERE `City` == "Berlin"]-> { unique by (FUZZY `Name`), Name: wanted }'),
+      4,
     );
   });
 
@@ -121,7 +127,7 @@ describe('the WHERE is typed against the type the target lands on', () => {
 
   it('an unknown field, bare, is the same error', () => {
     expect(
-      codes(inMovement('  write reg-[:entities WHERE `Ghost` == "x"]-> { unique by (FUZZY `Name`), Name: wanted }')),
+      codes(inMovement('  write reg-[:entities WHERE `Ghost` == "x"]-> { unique by (FUZZY `Name`), Name: wanted }'), 4),
     ).toEqual([C.UNKNOWN_PROPERTY]);
   });
 
@@ -185,8 +191,8 @@ describe('where a target WHERE is refused', () => {
       '  if co == null { ERROR("no such entity") }',
       '  write reg-[e:entities WHERE e.`City` == "Berlin"]-> bind co { Name: wanted }',
     );
-    const under = (languageVersion: number) =>
-      checkProgram(parseProgram(source), catalog, { languageVersion })
+    const under = (languageVersion: LanguageVersion) =>
+      checkProgram(parseProgram(spelledFor(languageVersion, source, catalog), { languageVersion }), catalog, { languageVersion })
         .filter((d) => (d.severity ?? 'error') === 'error')
         .map((d) => d.code);
     expect(under(4)).toContain(C.TARGET_WHERE_BIND);

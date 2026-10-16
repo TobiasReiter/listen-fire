@@ -63,8 +63,8 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { email, crm } from adapters
 import { crm_creds } from credentials
-inbox = email()
-book = crm(credentials: crm_creds)
+inbox = connect email
+book = connect crm using crm_creds
 
 node Deal {
   title: <text>
@@ -74,10 +74,10 @@ node Deal {
   }
 }
 
-movement takes_deal(d: <Deal>) {
+function takes_deal(d: <Deal>) {
 }
 
-movement takes_company(c: <book-[:company]->>) {
+function takes_company(c: <book-[:company]->>) {
 }
 
 node Doc {
@@ -88,7 +88,7 @@ node Doc {
   }
 }
 
-movement takes_doc(d: <Doc>) {
+function takes_doc(d: <Doc>) {
 }
 
 node Renamed {
@@ -98,7 +98,7 @@ node Renamed {
   }
 }
 
-movement takes_renamed(d: <Renamed>) {
+function takes_renamed(d: <Renamed>) {
 }
 
 node \`Multi Words\` {
@@ -108,13 +108,13 @@ node \`Multi Words\` {
   }
 }
 
-movement takes_multi(d: <\`Multi Words\`>) {
+function takes_multi(d: <\`Multi Words\`>) {
 }
 `;
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -215,7 +215,7 @@ describe('a NODE in a field slot is refused (2026-08-05 ruling)', () => {
   });
 
   it('FIRST over a bare walk picks a node — refused in a field slot', () => {
-    expect(codes('  d = node { f: ONLY(e-[a:Attachments]->) }')).toContain(
+    expect(codes('  d = node { f: only(e-[a:Attachments]->) }')).toContain(
       C.NODE_ENTRY_NODE_VALUE,
     );
   });
@@ -248,13 +248,13 @@ describe('a bare-name binding of a node is an ALIAS (2026-08-05 ruling)', () => 
 
   it('await through the chain reaches a real awaitable edge cleanly', () => {
     expect(
-      codes('  x = e-[a:Attachments]-> {\n    btn = a\n    return btn\n  }\n  w = await FIRST(x-[ans:Answer]->)'),
+      codes('  x = e-[a:Attachments]-> {\n    btn = a\n    return btn\n  }\n  w = await first(x-[ans:Answer]->)'),
     ).toEqual([]);
   });
 
   it('await through the chain onto a non-awaitable edge is now caught', () => {
     expect(
-      codes('  x = e-[a:Attachments]-> {\n    btn = a\n    return btn\n  }\n  w = await FIRST(x-[v:Versions]->)'),
+      codes('  x = e-[a:Attachments]-> {\n    btn = a\n    return btn\n  }\n  w = await first(x-[v:Versions]->)'),
     ).toContain(C.AWAIT_NOT_AWAITABLE);
   });
 
@@ -271,7 +271,7 @@ describe('a node literal is effect-free', () => {
   it('a write inside a literal never parses', () => {
     expect(() =>
       parseProgram(
-        `${PRELUDE}\nmovement m(e: <inbox-[:message]->>) {\n  d = node { r: write book-[:company]-> { name: "x" } }\n}`,
+        `${PRELUDE}\nfunction m(e: <inbox-[:message]->>) {\n  d = node { r: write book-[:company]-> { name: "x" } }\n}`,
       ),
     ).toThrow(/only computes/);
   });
@@ -281,7 +281,7 @@ describe('call-site conformance — structural for a synthesised argument', () =
   it('a literal carrying everything the DECLARATION declares fits', () => {
     expect(
       codes(
-        '  takes_deal(d: node { title: e.`Subject`, amount: e.`Count`, company: node { name: "acme" } })',
+        '  takes_deal(node { title: e.`Subject`, amount: e.`Count`, company: node { name: "acme" } })',
       ),
     ).toEqual([]);
   });
@@ -289,36 +289,36 @@ describe('call-site conformance — structural for a synthesised argument', () =
   it('extra entries are fine — the callee cannot see them', () => {
     expect(
       codes(
-        '  takes_deal(d: node { title: "x", amount: 3, spare: "unused", company: node { name: "acme" } })',
+        '  takes_deal(node { title: "x", amount: 3, spare: "unused", company: node { name: "acme" } })',
       ),
     ).toEqual([]);
   });
 
   it('a missing declared field is refused, and named', () => {
-    expect(codes('  takes_deal(d: node { title: "x", company: node { name: "acme" } })')).toContain(
+    expect(codes('  takes_deal(node { title: "x", company: node { name: "acme" } })')).toContain(
       C.NODE_ARG_SHAPE,
     );
     expect(
-      messages('  takes_deal(d: node { title: "x", company: node { name: "acme" } })'),
+      messages('  takes_deal(node { title: "x", company: node { name: "acme" } })'),
     ).toMatch(/no `amount`/);
   });
 
   it('a declared field of the wrong TYPE is refused, and named', () => {
     expect(
-      codes('  takes_deal(d: node { title: "x", amount: "not a number", company: node { name: "y" } })'),
+      codes('  takes_deal(node { title: "x", amount: "not a number", company: node { name: "y" } })'),
     ).toContain(C.NODE_ARG_SHAPE);
     expect(
-      messages('  takes_deal(d: node { title: "x", amount: "not a number", company: node { name: "y" } })'),
+      messages('  takes_deal(node { title: "x", amount: "not a number", company: node { name: "y" } })'),
     ).toMatch(/`amount` is text, not number/);
   });
 
   it('a missing declared edge conforms — edges are zero-or-more, absence is the empty set', () => {
-    expect(codes('  takes_deal(d: node { title: "x", amount: 3 })')).toEqual([]);
+    expect(codes('  takes_deal(node { title: "x", amount: 3 })')).toEqual([]);
   });
 
   it('a nested landing missing the edge target’s field is refused', () => {
     expect(
-      codes('  takes_deal(d: node { title: "x", amount: 3, company: node { other: "y" } })'),
+      codes('  takes_deal(node { title: "x", amount: 3, company: node { other: "y" } })'),
     ).toContain(C.NODE_ARG_SHAPE);
   });
 
@@ -328,39 +328,39 @@ describe('call-site conformance — structural for a synthesised argument', () =
     // matching backtick names conforms exactly like a bare declaration would.
     expect(
       codes(
-        '  takes_multi(d: node { title: "x", `Nested Edge`: node { label: "y" } })',
+        '  takes_multi(node { title: "x", `Nested Edge`: node { label: "y" } })',
       ),
     ).toEqual([]);
   });
 
   it('a missing field is still refused by name through the backtick-named declaration', () => {
     expect(
-      codes('  takes_multi(d: node { `Nested Edge`: node { label: "y" } })'),
+      codes('  takes_multi(node { `Nested Edge`: node { label: "y" } })'),
     ).toContain(C.NODE_ARG_SHAPE);
     expect(
-      messages('  takes_multi(d: node { `Nested Edge`: node { label: "y" } })'),
+      messages('  takes_multi(node { `Nested Edge`: node { label: "y" } })'),
     ).toMatch(/no `title`/);
   });
 
   it('an INSTANCE-typed parameter is satisfied structurally too', () => {
     expect(
-      codes('  takes_company(c: node { name: "acme", size: 4, owner: node { email: "a@b.c" } })'),
+      codes('  takes_company(node { name: "acme", size: 4, owner: node { email: "a@b.c" } })'),
     ).toEqual([]);
     // The `owner` edge is absent but every declared FIELD is there — an
     // absent edge is the empty set, not a missing member, so this conforms.
-    expect(codes('  takes_company(c: node { name: "acme", size: 4 })')).toEqual([]);
+    expect(codes('  takes_company(node { name: "acme", size: 4 })')).toEqual([]);
     // A missing FIELD still refuses.
-    expect(codes('  takes_company(c: node { name: "acme" })')).toContain(C.NODE_ARG_SHAPE);
+    expect(codes('  takes_company(node { name: "acme" })')).toContain(C.NODE_ARG_SHAPE);
   });
 });
 
 describe('real-instance arguments still check NOMINALLY', () => {
   it('the event position passed to a matching parameter is clean', () => {
     const source = `${PRELUDE}
-movement takes_message(msg: <inbox-[:message]->>) {
+function takes_message(msg: <inbox-[:message]->>) {
 }
-movement m(e: <inbox-[:message]->>) {
-  takes_message(msg: e)
+function m(e: <inbox-[:message]->>) {
+  takes_message(e)
 }`;
     expect(
       checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error'),
@@ -369,8 +369,8 @@ movement m(e: <inbox-[:message]->>) {
 
   it('a position from the WRONG graph is still MOV_CALL_ARG_TYPE, not the structural code', () => {
     const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
-  takes_company(c: e)
+function m(e: <inbox-[:message]->>) {
+  takes_company(e)
 }`;
     const found = checkProgram(parseProgram(source), catalog)
       .filter((d) => (d.severity ?? 'error') === 'error')
@@ -385,9 +385,9 @@ movement m(e: <inbox-[:message]->>) {
   // so the correction is the program the author meant.
   it('the declaration-WRITE construct is refused, and the message writes out the replacement', () => {
     const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
   lead = write Deal-[:item]-> { title: e.\`Subject\`, amount: e.\`Count\` }
-  takes_deal(d: lead)
+  takes_deal(lead)
 }`;
     const found = checkProgram(parseProgram(source), catalog).filter(
       (d) => (d.severity ?? 'error') === 'error',
@@ -399,8 +399,8 @@ movement m(e: <inbox-[:message]->>) {
 
   it('the refusal fires on the inline-argument form too', () => {
     const source = `${PRELUDE}
-movement m(e: <inbox-[:message]->>) {
-  takes_deal(d: write Deal-[:item]-> { title: e.\`Subject\`, amount: e.\`Count\` })
+function m(e: <inbox-[:message]->>) {
+  takes_deal(write Deal-[:item]-> { title: e.\`Subject\`, amount: e.\`Count\` })
 }`;
     expect(
       checkProgram(parseProgram(source), catalog)
@@ -412,7 +412,7 @@ movement m(e: <inbox-[:message]->>) {
   // The annotation survives the construct: `node Deal { … }` is still what a
   // parameter names, and a synthesised argument is still checked against it.
   it('the DECLARATION still types a parameter a node literal satisfies', () => {
-    expect(codes('  takes_deal(d: node { title: "x", amount: 1, company: node { name: "acme" } })'))
+    expect(codes('  takes_deal(node { title: "x", amount: 1, company: node { name: "acme" } })'))
       .toEqual([]);
   });
 });
@@ -432,7 +432,7 @@ describe('absence flows through an entry', () => {
   });
 
   it('discharging the absence at the entry clears the use site', () => {
-    expect(codes('  d = node { when: COALESCE(e.`Snoozed`, 0) }\n  x = d.when > 3')).toEqual([]);
+    expect(codes('  d = node { when: coalesce(e.`Snoozed`, 0) }\n  x = d.when > 3')).toEqual([]);
   });
 
   it('a present entry is not made absent by the synthesis', () => {
@@ -485,21 +485,21 @@ describe('pass-through edges — a traversal-sourced entry (wave 2)', () => {
 
 describe('a pass-through edge at the call site', () => {
   it('fits a parameter whose landing declares the SOURCE names', () => {
-    expect(codes('  takes_doc(d: node { title: "x", files: lazy e-[a:Attachments]-> })')).toEqual([]);
+    expect(codes('  takes_doc(node { title: "x", files: lazy e-[a:Attachments]-> })')).toEqual([]);
   });
 
   it('a parameter expecting RENAMED landings is refused, and names the missing one', () => {
     expect(
-      codes('  takes_renamed(d: node { title: "x", files: lazy e-[a:Attachments]-> })'),
+      codes('  takes_renamed(node { title: "x", files: lazy e-[a:Attachments]-> })'),
     ).toContain(C.NODE_ARG_SHAPE);
     expect(
-      messages('  takes_renamed(d: node { title: "x", files: lazy e-[a:Attachments]-> })'),
+      messages('  takes_renamed(node { title: "x", files: lazy e-[a:Attachments]-> })'),
     ).toMatch(/no files → `blob`/);
   });
 
   it('the eager form is checked the same way', () => {
-    expect(codes('  takes_doc(d: node { title: "x", files: e-[a:Attachments]-> })')).toEqual([]);
-    expect(codes('  takes_renamed(d: node { title: "x", files: e-[a:Attachments]-> })')).toContain(
+    expect(codes('  takes_doc(node { title: "x", files: e-[a:Attachments]-> })')).toEqual([]);
+    expect(codes('  takes_renamed(node { title: "x", files: e-[a:Attachments]-> })')).toContain(
       C.NODE_ARG_SHAPE,
     );
   });
@@ -559,7 +559,7 @@ describe('the per-item tail is typed in the LANDING’s scope', () => {
   it('discharging it at the entry clears the use site', () => {
     expect(
       codes(
-        '  d = node { files: e-[a:Attachments]-> node { pages: COALESCE(a.`Pages`, 0) } }\n' +
+        '  d = node { files: e-[a:Attachments]-> node { pages: coalesce(a.`Pages`, 0) } }\n' +
           '  d-[f:files]-> {\n    y = f.pages > 3\n  }',
       ),
     ).toEqual([]);
@@ -576,7 +576,7 @@ describe('a per-item edge at the call site — the refusal flips', () => {
   it('a parameter declaring RENAMED landings ACCEPTS the mapped edge', () => {
     expect(
       codes(
-        '  takes_renamed(d: node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
+        '  takes_renamed(node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
       ),
     ).toEqual([]);
   });
@@ -584,14 +584,14 @@ describe('a per-item edge at the call site — the refusal flips', () => {
   it('and the eager form fits it identically', () => {
     expect(
       codes(
-        '  takes_renamed(d: node { title: "x", files: e-[a:Attachments]-> node { blob: a.`File` } })',
+        '  takes_renamed(node { title: "x", files: e-[a:Attachments]-> node { blob: a.`File` } })',
       ),
     ).toEqual([]);
   });
 
   it('the PASS-THROUGH refusal is untouched — unmapped landings still miss `blob`', () => {
     expect(
-      codes('  takes_renamed(d: node { title: "x", files: lazy e-[a:Attachments]-> })'),
+      codes('  takes_renamed(node { title: "x", files: lazy e-[a:Attachments]-> })'),
     ).toContain(C.NODE_ARG_SHAPE);
   });
 
@@ -600,12 +600,12 @@ describe('a per-item edge at the call site — the refusal flips', () => {
     // written against them.
     expect(
       codes(
-        '  takes_doc(d: node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
+        '  takes_doc(node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
       ),
     ).toContain(C.NODE_ARG_SHAPE);
     expect(
       messages(
-        '  takes_doc(d: node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
+        '  takes_doc(node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`File` } })',
       ),
     ).toMatch(/no files → `Name`/);
   });
@@ -613,7 +613,7 @@ describe('a per-item edge at the call site — the refusal flips', () => {
   it('a mapped entry of the wrong TYPE is refused where a renaming alone is not', () => {
     expect(
       codes(
-        '  takes_renamed(d: node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`Name` } })',
+        '  takes_renamed(node { title: "x", files: lazy e-[a:Attachments]-> node { blob: a.`Name` } })',
       ),
     ).toContain(C.NODE_ARG_SHAPE);
   });
@@ -641,16 +641,16 @@ describe('`lazy` on an ordinary binding', () => {
   });
 
   it('FIRST over a lazy walk carries the same absence the eager walk carries', () => {
-    const eager = '  v = ONLY(e-[a:Attachments]->-[b:Versions]->)\n  y = v.`Label` == "a"';
+    const eager = '  v = only(e-[a:Attachments]->-[b:Versions]->)\n  y = v.`Label` == "a"';
     const lazy =
-      '  f = lazy e-[a:Attachments]->\n  v = ONLY(f-[b:Versions]->)\n  y = v.`Label` == "a"';
+      '  f = lazy e-[a:Attachments]->\n  v = only(f-[b:Versions]->)\n  y = v.`Label` == "a"';
     expect(codes(lazy)).toEqual(codes(eager));
   });
 
   it('and the absence it carries is REAL — discharging it clears both', () => {
-    const eager = '  v = ONLY(e-[a:Attachments]->-[b:Versions]->)\n  if v == null {\n  } else {\n    y = v.`Label` == "a"\n  }';
+    const eager = '  v = only(e-[a:Attachments]->-[b:Versions]->)\n  if (v == null) {\n  } else {\n    y = v.`Label` == "a"\n  }';
     const lazy =
-      '  f = lazy e-[a:Attachments]->\n  v = ONLY(f-[b:Versions]->)\n  if v == null {\n  } else {\n    y = v.`Label` == "a"\n  }';
+      '  f = lazy e-[a:Attachments]->\n  v = only(f-[b:Versions]->)\n  if (v == null) {\n  } else {\n    y = v.`Label` == "a"\n  }';
     expect(codes(eager)).toEqual([]);
     expect(codes(lazy)).toEqual([]);
   });

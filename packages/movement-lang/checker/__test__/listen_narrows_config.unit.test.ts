@@ -26,6 +26,7 @@ import {
   type InstanceSchema,
   type PositionSchema,
 } from '../catalog';
+import { spelledFor } from './surface_spelling';
 import { eventAddressDisplay, eventAddressKey, narrowingPrefixKey } from '../event_address';
 
 /** The event surface an adapter with ONE address hop publishes: the wide event
@@ -130,7 +131,7 @@ const catalog = mockCatalog({
   },
 });
 
-const checkAll = (source: string): Diagnostic[] => checkProgram(parseProgram(source), catalog);
+const checkAll = (source: string): Diagnostic[] => checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog);
 const check = (source: string): Diagnostic[] =>
   checkAll(source).filter(d => (d.severity ?? 'error') === 'error');
 const codes = (source: string): string[] => check(source).map(d => d.code);
@@ -410,7 +411,7 @@ describe("a 'fields'-format key is bare property names of the landed address", (
       'listen to graph { type: "company", events: ["record.created"], fields: [whatever] } fire m',
     ].join('\n');
     expect(
-      checkProgram(parseProgram(source), blind).filter(d => (d.severity ?? 'error') === 'error'),
+      checkProgram(parseProgram(spelledFor(5, source, blind)), blind).filter(d => (d.severity ?? 'error') === 'error'),
     ).toEqual([]);
   });
 });
@@ -475,7 +476,7 @@ describe('the graph is imported AND constructed, like any adapter (D25)', () => 
     expect(found.map(d => d.code)).toContain(C.NAME_UNRESOLVED);
     const message = found.find(d => d.code === C.NAME_UNRESOLVED)?.message;
     expect(message).toContain('import { kg } from adapters');
-    expect(message).toContain("kg(credentials: …)");
+    expect(message).toContain("connect kg using …");
   });
 
   it('importing and constructing brings the graph into scope — listen included', () => {

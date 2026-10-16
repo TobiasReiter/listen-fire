@@ -134,12 +134,12 @@ describe('statement parser — a write body vs an object literal', () => {
     'import { email, slack } from adapters',
     'import { dealflow_inbox, acme_workspace } from credentials',
     '',
-    'inbox = email(credentials: dealflow_inbox)',
-    'team  = slack(credentials: acme_workspace)',
+    'inbox = connect email using dealflow_inbox',
+    'team  = connect slack using acme_workspace',
   ].join('\n');
 
   const writeFields = (body: string) => {
-    const program = parseProgram(`${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
+    const program = parseProgram(`${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n${body}\n}`);
     const movement = program.statements.find((s) => s.kind === 'movement');
     if (movement?.kind !== 'movement') throw new Error('expected a movement');
     const statement = movement.body[0];
@@ -184,7 +184,7 @@ describe('statement parser — a write body vs an object literal', () => {
   it('an object literal left open to EOF is a loud unbalanced-brace error', () => {
     expect(() =>
       parseProgram(
-        `${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { blocks: { text: "x"`,
+        `${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { blocks: { text: "x"`,
       ),
     ).toThrow(/Unbalanced '\{' — no matching '\}' before end of file/);
   });
@@ -194,9 +194,9 @@ describe('statement parser — a write body vs an object literal', () => {
     // the movement's own closer, and the movement reports the shortfall.
     expect(() =>
       parseProgram(
-        `${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { blocks: { text: "x" }\n}`,
+        `${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { blocks: { text: "x" }\n}`,
       ),
-    ).toThrow(/Expected '\}' to close the movement 'm'/);
+    ).toThrow(/Expected '\}' to close the function 'm'/);
   });
 });
 
@@ -217,10 +217,10 @@ describe('checker — names inside object values', () => {
       'import { email, slack } from adapters',
       'import { dealflow_inbox, acme_workspace } from credentials',
       '',
-      'inbox = email(credentials: dealflow_inbox)',
-      'team  = slack(credentials: acme_workspace)',
+      'inbox = connect email using dealflow_inbox',
+      'team  = connect slack using acme_workspace',
       '',
-      'movement m(msg: <inbox-[:message]->>) {',
+      'function m(msg: <inbox-[:message]->>) {',
       body,
       '}',
     ].join('\n');

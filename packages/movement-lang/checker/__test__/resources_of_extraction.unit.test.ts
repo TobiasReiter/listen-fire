@@ -13,6 +13,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, DiagnosticCodes as C } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const mailSchema: InstanceSchema = {
   positions: {
@@ -67,7 +68,12 @@ const catalog = mockCatalog({
   },
 });
 
-const source = (param: string, body: string) => `import { mail, chat, graph, crm, loose } from adapters
+// Written in the spelling versions 1–4 read; the version 5 run reads what the
+// upgrade tool makes of it.
+const source = (param: string, body: string, languageVersion: LanguageVersion) =>
+  spelledFor(
+    languageVersion,
+    `import { mail, chat, graph, crm, loose } from adapters
 inbox = mail()
 slack = chat()
 kg = graph()
@@ -76,10 +82,11 @@ free = loose()
 
 movement scan(x: ${param}) {
 ${body}
-}`;
+}`,
+  );
 
 function check(param: string, body: string, languageVersion: LanguageVersion) {
-  return checkProgram(parseProgram(source(param, body), { languageVersion }), catalog, { languageVersion }).filter(
+  return checkProgram(parseProgram(source(param, body, languageVersion), { languageVersion }), catalog, { languageVersion }).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
@@ -162,7 +169,7 @@ describe('`_resources` under Dancing Wren (5)', () => {
       '    }',
       '  }',
     ].join('\n');
-    const body = `${extraction('d')}\n${extraction('e')}\n  v = IF x.Subject == "a" THEN d ELSE e END\n${walk('v')}`;
+    const body = `${extraction('d')}\n${extraction('e')}\n  v = x.Subject == "a" ? d : e\n${walk('v')}`;
     expect(codes('<inbox-[:message]->>', body, 5)).toEqual([]);
   });
 
@@ -176,7 +183,7 @@ describe('`_resources` under Dancing Wren (5)', () => {
       writableRoots: {},
     };
     const only = mockCatalog({ adapters: { send: { constructionArgs: [], schema: writeOnly } } });
-    const src = `import { send } from adapters\nout = send()\n\nmovement scan(x: <out-[:post]->>) {\n${walk('x')}\n}`;
+    const src = `import { send } from adapters\nout = connect send\n\nfunction scan(x: <out-[:post]->>) {\n${walk('x')}\n}`;
     const found = checkProgram(parseProgram(src, { languageVersion: 5 }), only, { languageVersion: 5 })
       .filter((d) => (d.severity ?? 'error') === 'error');
     expect(found.map((d) => d.code)).toEqual([C.RESOURCES_NOT_EXTRACTED]);

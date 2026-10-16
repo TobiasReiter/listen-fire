@@ -42,14 +42,14 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { email } from adapters
 import { dealflow_inbox } from credentials
-inbox = email(credentials: dealflow_inbox)
+inbox = connect email using dealflow_inbox
 `;
 
 /** `body` inside the entry movement; `extra` holds any helper declarations. */
 function check(body: string, extra = ''): Diagnostic[] {
   const source = `${PRELUDE}
 ${extra}
-movement m(msg: <inbox-[:message]->>) {
+function m(msg: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -81,7 +81,7 @@ describe('the binding: .id and .url read as text; nothing else does', () => {
   });
 
   it('an edge a callback does not have names the one it does', () => {
-    const body = '  cb = callback({ write inbox-[:note]-> { text: "x" } })\n  await FIRST(cb-[:Answered]->)';
+    const body = '  cb = callback({ write inbox-[:note]-> { text: "x" } })\n  await first(cb-[:Answered]->)';
     expect(codes(body)).toContain('MOV_TRAVERSE_UNKNOWN_EDGE');
     expect(messages(body)).toMatch(/a callback has no edge 'Answered' — it has: Called/);
   });
@@ -91,13 +91,13 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it('a zero-parameter callback lands `At` only', () => {
     expect(codes([
       '  cb = callback({ write inbox-[:note]-> { text: "x" } })',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { at ?: c.`At` }',
     ].join('\n'))).toEqual([]);
 
     const body = [
       '  cb = callback({ write inbox-[:note]-> { text: "x" } })',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { text ?: c.`whatever` }',
     ].join('\n');
     expect(messages(body)).toMatch(/a callback's call has no 'whatever' — it carries: At/);
@@ -106,7 +106,7 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it("shape 1: a (picked: <date>, note: <text>) signature lands At + picked + note", () => {
     expect(codes([
       '  cb = callback((picked: <date>, note: <text>) => { write inbox-[:note]-> { text: note } })',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due ?: c.`picked`, text ?: c.`note` }',
     ].join('\n'))).toEqual([]);
   });
@@ -114,13 +114,13 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it('shape 2: a different signature lands DIFFERENT fields (and shape 1\'s names are unknown here)', () => {
     expect(codes([
       '  cb = callback((amount: <number>) => { write inbox-[:note]-> { text: "x" } })',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { at ?: c.`At` }',
     ].join('\n'))).toEqual([]);
 
     const body = [
       '  cb = callback((amount: <number>) => { write inbox-[:note]-> { text: "x" } })',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due ?: c.`picked` }',
     ].join('\n');
     expect(messages(body)).toMatch(/has no 'picked' — it carries: At, amount/);
@@ -129,7 +129,7 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it('a landing field carries its DECLARED type — same name, two declarations, two answers', () => {
     const withType = (type: string) => [
       `  cb = callback((stamp: ${type}) => { write inbox-[:note]-> { text: "x" } })`,
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due ?: c.`stamp` }',
     ].join('\n');
     expect(codes(withType('<date>'))).toEqual([]);
@@ -139,7 +139,7 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it('`At` is a datetime whatever the signature (a date field rejects it)', () => {
     const body = [
       '  cb = callback()',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due ?: c.`At` }',
     ].join('\n');
     expect(codes(body)).toContain('MOV_WRITE_FIELD_TYPE');
@@ -148,7 +148,7 @@ describe('the Called landing is DERIVED from the callback signature', () => {
   it('a body-less callback is a full participant — signature, landing and all', () => {
     expect(codes([
       '  cb = callback((picked: <date>))',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due ?: c.`picked` }',
     ].join('\n'))).toEqual([]);
   });
@@ -160,7 +160,7 @@ describe('Called is awaitable AND readable — the read that waits, and the read
     // shows up here rather than at the read.
     const body = [
       '  cb = callback((picked: <date>))',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { due: c.`picked` }',
     ].join('\n');
     expect(codes(body)).toContain('MOV_ABSENT_REQUIRED');
@@ -177,7 +177,7 @@ describe('Called is awaitable AND readable — the read that waits, and the read
 
   it('a repeatable callback types identically — traversals are many-valued already', () => {
     expect(codes([
-      '  cb = callback((picked: <date>), { once: FALSE })',
+      '  cb = callback((picked: <date>), { once: false })',
       '  cb-[c:Called]-> {',
       '    write inbox-[:note]-> { due: c.`picked` }',
       '  }',
@@ -246,25 +246,25 @@ describe('the body is checked, in the enclosing scope', () => {
 
 describe('the named form types against the movement signature', () => {
   const HELPER = [
-    'movement send_reminder(subject: <inbox-[:message]->>) {',
+    'function send_reminder(subject: <inbox-[:message]->>) {',
     '  write inbox-[:note]-> { text: subject.`subject` }',
     '}',
   ].join('\n');
 
   it('a movement by name, with its fixed arguments, checks clean', () => {
-    expect(codes('  cb = callback(send_reminder(subject: msg))', HELPER)).toEqual([]);
+    expect(codes('  cb = callback(() => send_reminder(subject: msg))', HELPER)).toEqual([]);
   });
 
   it('every parameter supplied ⇒ the landing carries `At` alone', () => {
     expect(codes([
-      '  cb = callback(send_reminder(subject: msg))',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  cb = callback(() => send_reminder(subject: msg))',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { at ?: c.`At` }',
     ].join('\n'), HELPER)).toEqual([]);
     // …and a SUPPLIED parameter is not on the landing: it was fixed at mint time.
     expect(messages([
-      '  cb = callback(send_reminder(subject: msg))',
-      '  c = await FIRST(cb-[:Called]->)',
+      '  cb = callback(() => send_reminder(subject: msg))',
+      '  c = await first(cb-[:Called]->)',
       '  write inbox-[:note]-> { text ?: c.`subject` }',
     ].join('\n'), HELPER)).toMatch(/has no 'subject' — it carries: At/);
   });
@@ -276,11 +276,11 @@ describe('the named form types against the movement signature', () => {
   });
 
   it('an argument that is not a parameter is the ordinary named-argument error', () => {
-    expect(codes('  cb = callback(send_reminder(subjectt: msg))', HELPER)).toContain('MOV_CALL_ARG_UNKNOWN');
+    expect(codes('  cb = callback(() => send_reminder(subjectt: msg))', HELPER)).toContain('MOV_CALL_ARG_UNKNOWN');
   });
 
   it('a repeated argument is the ordinary duplicate error', () => {
-    expect(codes('  cb = callback(send_reminder(subject: msg, subject: msg))', HELPER)).toContain(
+    expect(codes('  cb = callback(() => send_reminder(subject: msg, subject: msg))', HELPER)).toContain(
       'MOV_CALL_ARG_DUPLICATE',
     );
   });
@@ -303,22 +303,22 @@ describe('the named form types against the movement signature', () => {
   it('a name that is not a movement says what it is instead', () => {
     const body = '  cb = callback(inbox)';
     expect(codes(body)).toContain('MOV_CALLBACK_NOT_MOVEMENT');
-    expect(messages(body)).toMatch(/'inbox' is .*not a movement/);
+    expect(messages(body)).toMatch(/'inbox' is .*not a function/);
   });
 
   it('a `function`-spelled movement is deferrable exactly like a `movement`-spelled one', () => {
     const helper = HELPER.replace('movement ', 'function ');
-    expect(codes('  cb = callback(send_reminder(subject: msg))', helper)).toEqual([]);
+    expect(codes('  cb = callback(() => send_reminder(subject: msg))', helper)).toEqual([]);
   });
 });
 
 describe('config is a closed vocabulary', () => {
   it('`once` and `ttl` check clean', () => {
-    expect(codes('  cb = callback({ write inbox-[:note]-> { text: "x" } }, { once: FALSE, ttl: 2d })')).toEqual([]);
+    expect(codes('  cb = callback({ write inbox-[:note]-> { text: "x" } }, { once: false, ttl: 2d })')).toEqual([]);
   });
 
   it('an unknown key is loud with a did-you-mean', () => {
-    const body = '  cb = callback({ write inbox-[:note]-> { text: "x" } }, { onces: FALSE })';
+    const body = '  cb = callback({ write inbox-[:note]-> { text: "x" } }, { onces: false })';
     expect(codes(body)).toContain('MOV_CALLBACK_BAD_CONFIG');
     expect(messages(body)).toMatch(/'onces' is not a callback setting — did you mean 'once'\?.*once, ttl/s);
   });

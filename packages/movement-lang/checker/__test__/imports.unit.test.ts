@@ -9,15 +9,22 @@
 // importing file. Without a resolver the M2 opaque behavior stands
 // (covered by check.unit.test.ts).
 
-import { parseProgram } from '../../parser/parse';
+import { parseProgram as parseSource } from '../../parser/parse';
+import { spelledFor } from './surface_spelling';
 import {
   checkProgram,
   checkProgramWithLink,
   Diagnostic,
   DiagnosticCodes as C,
 } from '../check';
-import { mockCatalog } from '../catalog';
+import { mockCatalog, type Catalog } from '../catalog';
 import { fileExports, linkImports, type ResolveFile } from '../link';
+
+// The programs are written in the old spelling; every parse reads the version 5 surface.
+const spell = (source: string, resolveFile: ResolveFile | undefined, forCatalog: Catalog = catalog): string =>
+  spelledFor(5, source, forCatalog, { resolveFile });
+const parseProgram = (source: string, options?: Parameters<typeof parseSource>[1]) =>
+  parseSource(spell(source, resolveFile), options);
 
 const catalog = mockCatalog({
   adapters: {
@@ -107,15 +114,30 @@ const FILES_LIB = [
 
 const FILES: Record<string, string> = { 'lib/file-routines': FILES_LIB };
 
-const resolverOver =
-  (files: Record<string, string>): ResolveFile =>
-  path =>
-    files[path] !== undefined ? { source: files[path] } : undefined;
+const resolverOver = (files: Record<string, string>, forCatalog: Catalog = catalog): ResolveFile => {
+  // A library cycle is the checker's to name; spelling must not chase it.
+  const spelling = new Set<string>();
+  const resolver: ResolveFile = path => {
+    const source = files[path];
+    if (source === undefined) return undefined;
+    const spelled = spelling.has(path) ? spell(source, undefined, forCatalog) : spellWithin(path, source);
+    return { source: spelled };
+  };
+  const spellWithin = (path: string, source: string): string => {
+    spelling.add(path);
+    try {
+      return spell(source, resolver, forCatalog);
+    } finally {
+      spelling.delete(path);
+    }
+  };
+  return resolver;
+};
 
 const resolveFile = resolverOver(FILES);
 
 const check = (source: string, resolve: ResolveFile = resolveFile): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog, { resolveFile: resolve }).filter(
+  checkProgram(parseSource(spell(source, resolve)), catalog, { resolveFile: resolve }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 const codes = (source: string, resolve: ResolveFile = resolveFile): string[] =>
@@ -220,11 +242,11 @@ describe('resolved imports', () => {
   });
 
   it('call-fit types against the LIBRARY scope: arity + argument type', () => {
-    // Two arguments to a one-param movement: arity, an unknown second
-    // argument name, plus the first argument (the event) not fitting
-    // Files.file.
-    expect(codes(CONSUMER.replace('files_to_dropbox(f: node', 'files_to_dropbox(f: msg, x: node')))
-      .toEqual([C.CALL_ARITY, C.CALL_ARG_UNKNOWN, C.CALL_ARG_TYPE]);
+    // Two arguments to a one-param movement: arity, plus the first argument
+    // (the event) not fitting Files.file. (Arguments are positional from 5, so
+    // there is no unknown argument name to refuse.)
+    expect(codes(CONSUMER.replace('files_to_dropbox(f: node', 'files_to_dropbox(msg, node')))
+      .toEqual([C.CALL_ARITY, C.CALL_ARG_TYPE]);
     // The event position is not a Files.file — graph identity crosses the
     // file boundary through the import's graphToken.
     expect(
@@ -308,8 +330,7 @@ describe('a record passed to another file\'s function (B12)', () => {
   });
 
   it('the same system under the same name in each file: the record fits', () => {
-    const sameName = (path: string) =>
-      path === 'lib/inbox' ? { source: INBOX_LIB('email(credentials: dealflow_inbox)').replace(/\bmail\b/g, 'inbox') } : undefined;
+    const sameName = resolverOver({ 'lib/inbox': INBOX_LIB('email(credentials: dealflow_inbox)').replace(/\bmail\b/g, 'inbox') });
     expectClean(CALLER, sameName);
   });
 
@@ -372,9 +393,10 @@ describe('a system\'s address is its LITERAL construction arguments (B12)', () =
       '  n = name_of(r: r)',
       '}',
     ].join('\n');
+  const rowsResolver = (libTop: string[]): ResolveFile => resolverOver({ 'lib/rows': lib(libTop) }, sheetCatalog);
   const errors = (libTop: string[], callerTop: string[]): string[] =>
-    checkProgram(parseProgram(caller(callerTop)), sheetCatalog, {
-      resolveFile: resolverOver({ 'lib/rows': lib(libTop) }),
+    checkProgram(parseSource(spell(caller(callerTop), rowsResolver(libTop), sheetCatalog)), sheetCatalog, {
+      resolveFile: rowsResolver(libTop),
     })
       .filter(d => (d.severity ?? 'error') === 'error')
       .map(d => `${d.code}: ${d.message}`);
@@ -385,16 +407,13 @@ describe('a system\'s address is its LITERAL construction arguments (B12)', () =
 
   it('an aliased adapter import is the same system as an unaliased one: the credential and literals are read by the imported name', () => {
     const aliased = (top: string[]): string[] => top;
-    const found = checkProgram(
-      parseProgram(
-        caller(['rows = sheet(credentials: s1, base: "X")']).replace('import { sheet } from adapters', 'import { sheet as sh } from adapters').replace(
-          'rows = sheet(',
-          'rows = sh(',
-        ),
-      ),
-      sheetCatalog,
-      { resolveFile: resolverOver({ 'lib/rows': lib(aliased(['rows = sheet(credentials: s1, base: "X")'])) }) },
-    ).filter(d => (d.severity ?? 'error') === 'error');
+    const resolveRows = rowsResolver(aliased(['rows = sheet(credentials: s1, base: "X")']));
+    const aliasedCaller = caller(['rows = sheet(credentials: s1, base: "X")'])
+      .replace('import { sheet } from adapters', 'import { sheet as sh } from adapters')
+      .replace('rows = sheet(', 'rows = sh(');
+    const found = checkProgram(parseSource(spell(aliasedCaller, resolveRows, sheetCatalog)), sheetCatalog, {
+      resolveFile: resolveRows,
+    }).filter(d => (d.severity ?? 'error') === 'error');
     expect(found).toEqual([]);
   });
 

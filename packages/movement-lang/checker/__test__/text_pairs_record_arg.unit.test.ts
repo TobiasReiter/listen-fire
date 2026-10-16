@@ -13,11 +13,12 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { mockCatalog, InstanceSchema } from '../catalog';
+import { spelledFor } from './surface_spelling';
 
 const CODE = 'MOV_STDLIB_ARG_NOT_RECORD';
 
 const REFUSAL =
-  '`TEXT.PAIRS` takes a record whose fields the program spells out — a dict literal, a '
+  '`Text.pairs` takes a record whose fields the program spells out — a dict literal, a '
   + '`node { … }` literal, an extracted record or a declared one; build a dict of the fields '
   + 'you want from this record';
 
@@ -56,7 +57,7 @@ const onDeal = (body: string): string =>
   `${PRELUDE}\nmovement m(d: <c-[:deal]->>) {\n${body}\n}`;
 
 const errors = (source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source), catalog).filter(d => (d.severity ?? 'error') === 'error');
+  checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(d => (d.severity ?? 'error') === 'error');
 const codes = (source: string): string[] => errors(source).map(d => d.code);
 const messageFor = (source: string): string | undefined =>
   errors(source).find(e => e.code === CODE)?.message;
@@ -107,8 +108,8 @@ describe('TEXT.PAIRS refuses a record with no field list in hand', () => {
     expectClean(onDeal([
       '  deduped = node { entries: <Entry> }',
       '  write deduped-[:entries]-> { unique by (`name`), name: "Acme" }',
-      '  all = deduped-[e:entries]-> { return e }',
-      '  top = FIRST(all)',
+      '  entryRows = deduped-[e:entries]-> { return e }',
+      '  top = FIRST(entryRows)',
       '  write c-[:deals]-> { Name: TEXT.PAIRS(top) }',
     ].join('\n')));
   });

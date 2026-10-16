@@ -13,6 +13,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, type Diagnostic } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
+import { spelledFor } from './surface_spelling';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
 
 const chatSchema: InstanceSchema = {
@@ -44,12 +45,19 @@ const EXTRACT = [
 
 const errorsUnder = (body: string, languageVersion: LanguageVersion): Diagnostic[] =>
   checkProgram(
-    parseProgram(`import { slack } from adapters
+    parseProgram(
+      spelledFor(
+        languageVersion,
+        `import { slack } from adapters
 type Thesis = <"Consumer" | "Infra">
 chat = slack()
 movement m(c: <chat-[:channel]->>) {
 ${EXTRACT}${body}
-}`),
+}`,
+        catalog,
+      ),
+      { languageVersion },
+    ),
     catalog,
     { languageVersion },
   ).filter((d) => (d.severity ?? 'error') === 'error');

@@ -13,6 +13,8 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, checkProgramWithLink, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
+import { spelledFor } from './surface_spelling';
+import type { LanguageVersion } from '../../language_version';
 
 const askSchema: InstanceSchema = {
   positions: {
@@ -37,26 +39,26 @@ const catalog = mockCatalog({
   adapters: { email: { constructionArgs: [], schema: askSchema } },
 });
 
-function source(body: string): string {
-  return `import { email } from adapters
+function source(body: string, languageVersion: LanguageVersion = 5): string {
+  return spelledFor(languageVersion, `import { email } from adapters
 inbox = email()
 
 movement m(e: <inbox-[:message]->>) {
 ${body}
-}`;
+}`, catalog);
 }
 
-function check(body: string, languageVersion?: number): Diagnostic[] {
+function check(body: string, languageVersion?: LanguageVersion): Diagnostic[] {
   const options = languageVersion !== undefined ? { languageVersion } : undefined;
-  return checkProgram(parseProgram(source(body), options), catalog, options).filter(
+  return checkProgram(parseProgram(source(body, languageVersion), options), catalog, options).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
-const codes = (body: string, languageVersion?: number): string[] => check(body, languageVersion).map((d) => d.code);
+const codes = (body: string, languageVersion?: LanguageVersion): string[] => check(body, languageVersion).map((d) => d.code);
 
-function fieldTypeOf(body: string, name: string, languageVersion?: number): unknown {
+function fieldTypeOf(body: string, name: string, languageVersion?: LanguageVersion): unknown {
   const options = languageVersion !== undefined ? { languageVersion } : {};
-  const { recording } = checkProgramWithLink(parseProgram(source(body), options), catalog, {
+  const { recording } = checkProgramWithLink(parseProgram(source(body, languageVersion), options), catalog, {
     recordAnalysis: true,
     ...options,
   });
@@ -116,7 +118,7 @@ function poll() {
 movement m(e: <inbox-[:message]->>) {
   r = race(poll, () => { await sleep(1d) })
 }`;
-    const diagnostics = checkProgram(parseProgram(program), catalog).filter(
+    const diagnostics = checkProgram(parseProgram(spelledFor(5, program, catalog)), catalog).filter(
       (d) => (d.severity ?? 'error') === 'error',
     );
     expect(diagnostics.map((d) => d.code)).toEqual([]);

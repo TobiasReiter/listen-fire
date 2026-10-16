@@ -15,6 +15,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram } from '../check';
 import { mockCatalog, type InstanceSchema } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -46,11 +47,11 @@ const SETUP = [
 ].join('\n');
 
 function codes(body: string, languageVersion?: LanguageVersion): string[] {
-  const source = `import { slack } from adapters
+  const source = spelledFor(languageVersion ?? 5, `import { slack } from adapters
 chat = slack()
 movement m(c: <chat-[:channel]->>) {
 ${SETUP}${body}
-}`;
+}`, catalog);
   const options = languageVersion !== undefined ? { languageVersion } : undefined;
   return checkProgram(parseProgram(source, options), catalog, options)
     .filter(d => (d.severity ?? 'error') === 'error')

@@ -16,6 +16,7 @@ import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import { applyFix } from '../fixes';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -50,14 +51,16 @@ const PRELUDE = [
 
 const sourceOf = (body: string[]): string => `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`;
 
+const spell = (source: string): string => spelledFor(5, source, catalog);
+
 const check = (version: LanguageVersion, source: string): Diagnostic[] =>
-  checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 
 /** The program with every MOV_PARALLEL_RETIRED fix applied, one at a time. */
 function fixed(source: string): string {
-  let current = source;
+  let current = spell(source);
   for (let guard = 0; guard < 10; guard++) {
     const retired = check(5, current).find(d => d.code === 'MOV_PARALLEL_RETIRED');
     if (retired?.fix === undefined) return current;
@@ -120,7 +123,7 @@ describe('parallel under Dancing Wren (5)', () => {
   it.each(PROGRAMS)('%s: refused under 5, with the rewrite', (_label, body, rewritten) => {
     const errors = check(5, sourceOf(body));
     expect(errors.map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    expect(fixed(sourceOf(body))).toBe(sourceOf(rewritten));
+    expect(fixed(sourceOf(body))).toBe(spell(sourceOf(rewritten)));
   });
 
   it.each(PROGRAMS)('%s: the rewritten program checks clean under 5', (_label, _body, rewritten) => {
@@ -136,14 +139,14 @@ describe('parallel under Dancing Wren (5)', () => {
   it('written without await, the retirement is the one refusal, and the fix drops nothing', () => {
     const body = ['  r = parallel([label, label])', '  write crm-[:notes]-> { title: AT(r, 0) }'];
     expect(check(5, sourceOf(body)).map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    expect(fixed(sourceOf(body))).toBe(sourceOf(['  r = all(label, label)', '  write crm-[:notes]-> { title: AT(r, 0) }']));
+    expect(fixed(sourceOf(body))).toBe(spell(sourceOf(['  r = all(label, label)', '  write crm-[:notes]-> { title: AT(r, 0) }'])));
     expect(check(5, fixed(sourceOf(body)))).toEqual([]);
   });
 
   it('written with its arms as arguments, the fix renames it', () => {
     const body = ['  r = parallel(label, made)'];
     expect(check(5, sourceOf(body)).map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
-    expect(fixed(sourceOf(body))).toBe(sourceOf(['  r = all(label, made)']));
+    expect(fixed(sourceOf(body))).toBe(spell(sourceOf(['  r = all(label, made)'])));
   });
 
   it('an arrow body that awaits it gets the fix too', () => {
@@ -152,7 +155,7 @@ describe('parallel under Dancing Wren (5)', () => {
     expect(errors.map(d => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
     expect(errors[0]!.fix).toBeDefined();
     const rewritten = fixed(sourceOf(body));
-    expect(rewritten).toBe(sourceOf(['  g = () => all(label, made)', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }']));
+    expect(rewritten).toBe(spell(sourceOf(['  g = () => all(label, made)', '  v = g()', '  write crm-[:notes]-> { title: AT(v, 0) }'])));
     expect(check(5, rewritten)).toEqual([]);
   });
 

@@ -168,13 +168,13 @@ const PRELUDE = [
   'import { docs, ledger } from adapters',
   'import { docs_cred, ledger_cred } from credentials',
   '',
-  'd = docs(credentials: docs_cred)',
-  'l = ledger(credentials: ledger_cred)',
+  'd = connect docs using docs_cred',
+  'l = connect ledger using ledger_cred',
 ].join('\n');
 
 /** A movement whose parameter is a post, so `p.\`Payload\`` is a json read. */
 const inMovement = (body: string): string =>
-  `${PRELUDE}\nmovement m(p: <d-[:post]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(p: <d-[:post]->>) {\n${body}\n}`;
 
 const errors = (source: string): Diagnostic[] =>
   checkProgram(parseProgram(source), catalog).filter(d => (d.severity ?? 'error') === 'error');
@@ -254,7 +254,7 @@ describe('a json field flows through, and nowhere else', () => {
 describe('operating on a json value is a loud error, not a silent degrade', () => {
   const inWhere = (where: string): string =>
     inMovement(
-      `  d-[x:posts WHERE ${where}]-> {\n` +
+      `  d-[x:posts WHERE x.${where}]-> {\n` +
         '    write d-[:posts]-> { Title: x.`Title` }\n' +
         '  }',
     );
@@ -299,24 +299,24 @@ describe('the folds that READ elements refuse a structured one', () => {
   });
 
   it('SUM over a list of json', () => {
-    expect(codes(inMovement('  write l-[:entries]-> { Amount: SUM(p.`Payload`) }'))).toContain(
+    expect(codes(inMovement('  write l-[:entries]-> { Amount: List.sum(p.`Payload`) }'))).toContain(
       'MOV_JSON_OPAQUE',
     );
   });
 
   it('JOIN into text', () => {
-    expect(codes(inMovement('  write d-[:posts]-> { Title: JOIN(p.`Payload`) }'))).toContain(
+    expect(codes(inMovement('  write d-[:posts]-> { Title: Text.join(p.`Payload`) }'))).toContain(
       'MOV_JSON_OPAQUE',
     );
   });
 
   it('COUNT is fine — it reads the list, not the elements', () => {
-    expectClean(inMovement('  write l-[:entries]-> { Amount: COUNT(p.`Payload`) }'));
+    expectClean(inMovement('  write l-[:entries]-> { Amount: count(p.`Payload`) }'));
   });
 
   it('the same folds over a typed field stay clean', () => {
     expectClean(inMovement('  write l-[:entries]-> { Amount: p.`Views` * 2 }'));
-    expectClean(inMovement('  write l-[:entries]-> { Amount: SUM(p.`Views`) }'));
+    expectClean(inMovement('  write l-[:entries]-> { Amount: List.sum(p.`Views`) }'));
   });
 });
 
@@ -336,7 +336,7 @@ describe('gating on a structured value', () => {
   it('a typed condition is untouched', () => {
     expectClean(
       inMovement(
-        '  if p.`Views` > 3 {\n' +
+        '  if (p.`Views` > 3) {\n' +
           '    write d-[:posts]-> { Title: p.`Title` }\n' +
           '  }',
       ),

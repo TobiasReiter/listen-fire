@@ -53,7 +53,7 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { crm } from adapters
 import { crm_creds } from credentials
-book = crm(credentials: crm_creds)
+book = connect crm using crm_creds
 
 node Contact {
   Name: <text>
@@ -89,7 +89,7 @@ node \`Multi Words\` {
  *  does work, since a single-typed subject is decided outright. */
 function check(body: string, param = '<book-[:entity]->>'): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(x: ${param}) {
+function m(x: ${param}) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -104,51 +104,51 @@ const messages = (body: string, param?: string): string =>
 
 describe('the test itself', () => {
   it('is valid anywhere a boolean is, and reads no data', () => {
-    expect(codes('  if x IS <Contact> { }')).toEqual([]);
+    expect(codes('  if (x is <Contact>) { }')).toEqual([]);
   });
 
   it('reads as a boolean under AND alongside an ordinary condition', () => {
-    expect(codes('  if x IS <Contact> AND x.`Name` != "" { }')).toEqual([]);
+    expect(codes('  if (x is <Contact> && x.`Name` != "") { }')).toEqual([]);
   });
 
   it('a declaration the file never made is an unknown name, not a silent false', () => {
-    expect(codes('  if x IS <Nowhere> { }')).toContain(C.NAME_UNRESOLVED);
+    expect(codes('  if (x is <Nowhere>) { }')).toContain(C.NAME_UNRESOLVED);
   });
 
   it('hopping through a declared node is refused with the corrective', () => {
-    expect(codes('  if x IS <Contact-[:logo]->> { }')).toContain(C.SHAPE_HOP_RETIRED);
-    expect(messages('  if x IS <Contact-[:logo]->> { }')).toContain('x IS <Contact>');
+    expect(codes('  if (x is <Contact-[:logo]->>) { }')).toContain(C.SHAPE_HOP_RETIRED);
+    expect(messages('  if (x is <Contact-[:logo]->>) { }')).toContain('x is <Contact>');
   });
 });
 
 describe('the arm keeps what conforms', () => {
   it('a field only SOME members carry needs narrowing — and the test supplies it', () => {
     expect(codes('  y = x.`Email`')).toEqual([C.NARROWING]);
-    expect(codes('  if x IS <Contact> { y = x.`Email` }')).toEqual([]);
+    expect(codes('  if (x is <Contact>) { y = x.`Email` }')).toEqual([]);
   });
 
   it('EXTRA members are fine — a position that carries more still conforms', () => {
     // Every member has `Name`, so every member is still in the arm…
-    expect(codes('  if x IS <Named> { y = x.`Name` }')).toEqual([]);
+    expect(codes('  if (x is <Named>) { y = x.`Name` }')).toEqual([]);
     // …including the one whose `Email` the arm therefore still can't read.
-    expect(codes('  if x IS <Named> { y = x.`Email` }')).toEqual([C.NARROWING]);
+    expect(codes('  if (x is <Named>) { y = x.`Email` }')).toEqual([C.NARROWING]);
   });
 
   it('the arm is still a union when two members conform — it narrows, it does not collapse', () => {
     // company|person both fit Contact; `Employees` is company-only.
-    expect(codes('  if x IS <Contact> { y = x.`Employees` }')).toEqual([C.NARROWING]);
+    expect(codes('  if (x is <Contact>) { y = x.`Employees` }')).toEqual([C.NARROWING]);
   });
 
   it('a missing declared edge no longer narrows the union — absence is the empty set', () => {
     // `ticket` has no `logo` edge at all, but that no longer excludes it from
     // conforming to Branded — a missing edge is zero of them, not a missing
     // member. So IS <Branded> conforms for every member and narrows nothing.
-    expect(codes('  if x IS <Branded> { y = x.`Name` }')).toEqual([]);
+    expect(codes('  if (x is <Branded>) { y = x.`Name` }')).toEqual([]);
     // Traversing `logo` itself still needs narrowing down to the members that
     // actually carry the edge — IS <Branded> no longer does that for you,
     // same as the unnarrowed traversal below.
     expect(codes('  x-[l:logo]-> { y = l.`url` }')).toEqual([C.NARROWING]);
-    expect(codes('  if x IS <Branded> { x-[l:logo]-> { y = l.`url` } }')).toEqual([
+    expect(codes('  if (x is <Branded>) { x-[l:logo]-> { y = l.`url` } }')).toEqual([
       C.NARROWING,
     ]);
   });
@@ -156,31 +156,31 @@ describe('the arm keeps what conforms', () => {
   it('the TYPE has to be compatible, not just the name', () => {
     // Counted wants `Employees: <text>`; company's is a number, so nothing
     // conforms and the arm is `never`.
-    expect(codes('  if x IS <Counted> { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
+    expect(codes('  if (x is <Counted>) { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
   });
 
   it('a structure nothing conforms to narrows to never — refused at the USE, not the test', () => {
-    expect(codes('  if x IS <Impossible> { }')).toEqual([]);
-    expect(codes('  if x IS <Impossible> { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
+    expect(codes('  if (x is <Impossible>) { }')).toEqual([]);
+    expect(codes('  if (x is <Impossible>) { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
   });
 
   it('a single-typed subject is decided at check time and narrows nothing', () => {
-    expect(codes('  if x IS <Contact> { y = x.`Employees` }', '<book-[:company]->>')).toEqual([]);
+    expect(codes('  if (x is <Contact>) { y = x.`Employees` }', '<book-[:company]->>')).toEqual([]);
   });
 
   it('a backtick-quoted declared node name narrows exactly like a bare one', () => {
     // `Multi Words` declares the same single field as `Named` — same narrowing,
     // just spelled with the backtick a name carrying spaces always wears.
-    expect(codes('  if x IS <`Multi Words`> { y = x.`Name` }')).toEqual([]);
-    expect(codes('  if x IS <`Multi Words`> { y = x.`Email` }')).toEqual([C.NARROWING]);
+    expect(codes('  if (x is <`Multi Words`>) { y = x.`Name` }')).toEqual([]);
+    expect(codes('  if (x is <`Multi Words`>) { y = x.`Email` }')).toEqual([C.NARROWING]);
   });
 });
 
 describe('the else eliminates what conformed', () => {
   it('the else sees the members that did NOT conform', () => {
     // else = ticket alone, so `Name` reads and `Email` is a plain unknown field.
-    expect(codes('  if x IS <Contact> { } else { y = x.`Name` }')).toEqual([]);
-    expect(codes('  if x IS <Contact> { } else { y = x.`Email` }')).toEqual([C.UNKNOWN_PROPERTY]);
+    expect(codes('  if (x is <Contact>) { } else { y = x.`Name` }')).toEqual([]);
+    expect(codes('  if (x is <Contact>) { } else { y = x.`Email` }')).toEqual([C.UNKNOWN_PROPERTY]);
   });
 
   it('an else-if chain keeps eliminating', () => {
@@ -188,23 +188,23 @@ describe('the else eliminates what conformed', () => {
     // (edge-based) no longer would, since ticket now conforms to it too
     // (missing `logo` is the empty set, not a disqualifier).
     expect(
-      codes('  if x IS <Contact> { } else if x IS <Named> { y = x.`Name` } else { }'),
+      codes('  if (x is <Contact>) { } else if (x is <Named>) { y = x.`Name` } else { }'),
     ).toEqual([]);
     expect(
-      codes('  if x IS <Contact> { } else if x IS <Named> { } else { y = x.`Name` }'),
+      codes('  if (x is <Contact>) { } else if (x is <Named>) { } else { y = x.`Name` }'),
     ).toEqual([C.UNREACHABLE_BRANCH]);
   });
 
   it('an exhausted else has nothing left to read', () => {
     // Every member conforms to Named, so the else is `never`.
-    expect(codes('  if x IS <Named> { } else { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
-    expect(messages('  if x IS <Named> { } else { y = x.`Name` }')).toContain(
+    expect(codes('  if (x is <Named>) { } else { y = x.`Name` }')).toEqual([C.UNREACHABLE_BRANCH]);
+    expect(messages('  if (x is <Named>) { } else { y = x.`Name` }')).toContain(
       'already cover every kind',
     );
   });
 
   it('a test NOTHING conforms to eliminates nothing — the else is the whole union', () => {
-    expect(codes('  if x IS <Impossible> { } else { y = x.`Email` }')).toEqual([C.NARROWING]);
+    expect(codes('  if (x is <Impossible>) { } else { y = x.`Email` }')).toEqual([C.NARROWING]);
   });
 
   // "I haven't looked" and "it doesn't fit" are different facts, and only the
@@ -212,7 +212,7 @@ describe('the else eliminates what conformed', () => {
   // compared, so the else still has to reckon with it — the chain is NOT
   // exhausted, and the read is refused for the honest reason.
   it('a member nobody has described is NOT eliminated — unknown is a third answer', () => {
-    const undescribed = codes('  if x IS <Named> { } else { y = x.`Name` }', '<book-[:guarded]->>');
+    const undescribed = codes('  if (x is <Named>) { } else { y = x.`Name` }', '<book-[:guarded]->>');
     expect(undescribed).not.toContain(C.UNREACHABLE_BRANCH);
     expect(undescribed).toEqual([C.UNDESCRIBED_POSITION]);
   });
@@ -221,7 +221,7 @@ describe('the else eliminates what conformed', () => {
     // Only `company` was proved to fit, but the undescribed member could fit
     // as well — so the arm is still both, and a company-only read still needs
     // narrowing rather than reading clean off a union of one.
-    expect(codes('  if x IS <Named> { y = x.`Name` }', '<book-[:guarded]->>')).toEqual([
+    expect(codes('  if (x is <Named>) { y = x.`Name` }', '<book-[:guarded]->>')).toEqual([
       C.NARROWING,
     ]);
   });

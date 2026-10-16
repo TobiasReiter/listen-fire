@@ -9,6 +9,8 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, DiagnosticCodes as C } from '../check';
+import { spelledFor } from './surface_spelling';
+import type { LanguageVersion } from '../../language_version';
 import { InstanceSchema, SchemaFieldType, mockCatalog, unionDisplay, unionKey } from '../catalog';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
@@ -249,14 +251,14 @@ const PRELUDE = [
   'graph = kg(credentials: native_knowledge)',
 ].join('\n');
 
-const inMovement = (body: string) =>
-  `${PRELUDE}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`;
+const inMovement = (body: string, version: LanguageVersion = 5) =>
+  spelledFor(version, `${PRELUDE}\nmovement main(msg: <inbox-[:message]->>) {\n${body}\n}`, catalog);
 
 // Info severity dropped: the fixture movement declares no listen, which
 // legitimately carries MOV_LISTEN_MISSING.
-const under = (version: number, body: string) =>
-  checkProgram(parseProgram(inMovement(body)), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
-const errors = (version: number, body: string) =>
+const under = (version: LanguageVersion, body: string) =>
+  checkProgram(parseProgram(inMovement(body, version), { languageVersion: version }), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
+const errors = (version: LanguageVersion, body: string) =>
   under(version, body).filter((d) => (d.severity ?? 'error') === 'error').map((d) => d.code);
 
 const NAMED = [
@@ -414,11 +416,11 @@ describe('a match under language version 4', () => {
     });
   });
   it('crossing 4 every bound match carries the upgrade warning; validating under 4 without upgradingFrom does not', () => {
-    const crossing = checkProgram(parseProgram(inMovement(NAMED.join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 });
+    const crossing = checkProgram(parseProgram(inMovement(NAMED.join('\n'), 4), { languageVersion: 4 }), catalog, { languageVersion: 4, upgradingFrom: 3 });
     const w = crossing.find((d) => d.code === C.MATCH_MISS_CONTINUES);
     expect(w?.severity).toBe('warning');
     expect(w?.upgrade).toBe(true);
     expect(under(4, NAMED.join('\n')).some((d) => d.code === C.MATCH_MISS_CONTINUES)).toBe(false);
-    expect(checkProgram(parseProgram(inMovement(NAMED.join('\n'))), catalog, { languageVersion: 3, upgradingFrom: 2 }).some((d) => d.code === C.MATCH_MISS_CONTINUES)).toBe(false);
+    expect(checkProgram(parseProgram(inMovement(NAMED.join('\n'), 3), { languageVersion: 3 }), catalog, { languageVersion: 3, upgradingFrom: 2 }).some((d) => d.code === C.MATCH_MISS_CONTINUES)).toBe(false);
   });
 });

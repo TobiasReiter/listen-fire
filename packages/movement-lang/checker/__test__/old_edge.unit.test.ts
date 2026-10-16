@@ -89,7 +89,7 @@ const inMovement = (body: string) =>
 // Info severity dropped: the fixture movement declares no listen, which
 // legitimately carries MOV_LISTEN_MISSING.
 const under = (version: number, body: string) =>
-  checkProgram(parseProgram(inMovement(body)), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
+  checkProgram(parseProgram(inMovement(body), { languageVersion: version }), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
 const errors = (version: number, body: string) =>
   under(version, body).filter((d) => (d.severity ?? 'error') === 'error').map((d) => d.code);
 
@@ -147,18 +147,18 @@ describe('created / committed', () => {
 describe('an in-place write on a write handle', () => {
   it('crossing 4 a write <alias> { … } on a write handle carries MOV_HANDLE_UPDATED_IN_PLACE, named or not — the alias is updated either way', () => {
     const src = inMovement([ORG, '  write org { Name: "Acme Ltd" }'].join('\n'));
-    const d = checkProgram(parseProgram(src), catalog, { languageVersion: 4, upgradingFrom: 3 });
+    const d = checkProgram(parseProgram(src, { languageVersion: 4 }), catalog, { languageVersion: 4, upgradingFrom: 3 });
     const unnamed = d.find((x) => x.code === C.HANDLE_UPDATED_IN_PLACE);
     expect(unnamed?.upgrade).toBe(true);
     expect(unnamed?.message).toContain("'org' reads as the updated record below this line");
-    const named = checkProgram(parseProgram(inMovement([ORG, '  org2 = write org { Name: "Acme Ltd" }'].join('\n'))), catalog, { languageVersion: 4, upgradingFrom: 3 })
+    const named = checkProgram(parseProgram(inMovement([ORG, '  org2 = write org { Name: "Acme Ltd" }'].join('\n')), { languageVersion: 4 }), catalog, { languageVersion: 4, upgradingFrom: 3 })
       .find((x) => x.code === C.HANDLE_UPDATED_IN_PLACE);
     expect(named?.upgrade).toBe(true);
     expect(named?.message).toContain("'org' reads as the updated record below this line");
     expect(named?.message).toContain("'org2' names the same record");
   });
   it('under 4 without an upgrade, the in-place write is clean and carries no warning', () => {
-    const d = checkProgram(parseProgram(inMovement([ORG, '  write org { Name: "Acme Ltd" }'].join('\n'))), catalog, { languageVersion: 4 });
+    const d = checkProgram(parseProgram(inMovement([ORG, '  write org { Name: "Acme Ltd" }'].join('\n')), { languageVersion: 4 }), catalog, { languageVersion: 4 });
     expect(d.filter((x) => x.severity !== 'info').map((x) => x.code)).toEqual([]);
   });
 });
@@ -193,7 +193,7 @@ describe('a write off a found record', () => {
 
 describe('a field the write did not set, read off its handle', () => {
   const crossing = (body: string) =>
-    checkProgram(parseProgram(inMovement(body)), catalog, { languageVersion: 4, upgradingFrom: 3 })
+    checkProgram(parseProgram(inMovement(body), { languageVersion: 4 }), catalog, { languageVersion: 4, upgradingFrom: 3 })
       .filter((d) => d.code === C.HANDLE_READ_FOUND);
   const SET_NAME = '  org = write crm-[:companies]-> { unique by (`Name`), Name: "Acme" }';
   const read = (field: string) => `  seen = org.${field}`;
@@ -220,7 +220,7 @@ describe('a field the write did not set, read off its handle', () => {
   it('a url read is silent under 3, and under 4 without a move up', () => {
     const src = inMovement([SET_NAME, read('url')].join('\n'));
     for (const languageVersion of [3, 4] as const) {
-      expect(checkProgram(parseProgram(src), catalog, { languageVersion }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+      expect(checkProgram(parseProgram(src, { languageVersion }), catalog, { languageVersion }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
     }
   });
   it('crossing 4 a `?:` fill does not count as set', () => {
@@ -229,7 +229,7 @@ describe('a field the write did not set, read off its handle', () => {
   });
   it('no warning under 4 without a move up, nor under 3', () => {
     const src = inMovement([SET_NAME, read('Domains')].join('\n'));
-    expect(checkProgram(parseProgram(src), catalog, { languageVersion: 4 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
-    expect(checkProgram(parseProgram(src), catalog, { languageVersion: 3 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+    expect(checkProgram(parseProgram(src, { languageVersion: 4 }), catalog, { languageVersion: 4 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
+    expect(checkProgram(parseProgram(src, { languageVersion: 3 }), catalog, { languageVersion: 3 }).some((d) => d.code === C.HANDLE_READ_FOUND)).toBe(false);
   });
 });

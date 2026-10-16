@@ -10,6 +10,7 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
+import { spelledFor } from './surface_spelling';
 import { CollectionSchema, InstanceSchema, mockCatalog } from '../catalog';
 import { TypedDiagnosticCodes as T } from '../typing';
 import { storyOf } from '../../story/story';
@@ -47,7 +48,7 @@ function diagnose(source: string, schema: InstanceSchema, plugins = {}): Diagnos
   });
   // These fixtures are about one construct each; none declares a trigger, and
   // "nothing fires this file" is not what any of them is pinning.
-  return checkProgram(parseProgram(source), catalog).filter(
+  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog).filter(
     (d) => d.code !== C.LISTEN_MISSING,
   );
 }
@@ -147,7 +148,10 @@ describe('a plugin is a function whose row is declared', () => {
 
   it('an argument the plugin does not accept reads the same either way', () => {
     const plugins = { scan_web: { ...FOUND_TEXT, effects: { reads: ['the web'] } } };
+    // From version 5 arguments go by position, and an argument the plugin does
+    // not accept has no position to move to: its named spelling stays refused.
     expect(errors(PLUGIN_PROGRAM('  scan_web(depth: 2)'), PUSHED, plugins)).toEqual([
+      C.V5_SPELLING,
       C.THROUGH_BAD_ARG,
     ]);
   });
@@ -230,13 +234,13 @@ describe('a plugin declares what it hands back, so a plain call is typed', () =>
       },
     };
     const good = PLUGIN_PROGRAM(`  pages = scan_web(url: t.\`Title\`)
-  first = FIRST(pages)
-  head = COALESCE(first.text, JOIN(pages.url, ", ")) > "a"`);
+  one = FIRST(pages)
+  head = COALESCE(one.text, JOIN(pages.url, ", ")) > "a"`);
     expect(errors(good, PUSHED, plugins)).toEqual([]);
 
     const unknownField = PLUGIN_PROGRAM(`  pages = scan_web(url: t.\`Title\`)
-  first = FIRST(pages)
-  head = COALESCE(first.headcount, "") > "a"`);
+  one = FIRST(pages)
+  head = COALESCE(one.headcount, "") > "a"`);
     expect(errors(unknownField, PUSHED, plugins).length).toBeGreaterThan(0);
 
     // The list is records, not text: comparing it as one is refused.
@@ -294,7 +298,7 @@ describe('a fed argument is one parameter with two ways of being filled', () => 
     const written = `  m = extract from [t.\`Title\`] through [scan_web(text: t.\`Title\`)] {
     name: "the company"
   }`;
-    expect(errors(PLUGIN_PROGRAM(written), PUSHED, { scan_web: FED })).toEqual([C.THROUGH_BAD_ARG]);
+    expect(errors(PLUGIN_PROGRAM(written), PUSHED, { scan_web: FED })).toEqual([C.V5_SPELLING, C.THROUGH_BAD_ARG]);
   });
 });
 
@@ -353,7 +357,7 @@ describe('await states a cadence exactly where the source states nothing', () =>
     );
     expect(errors(source, PUSHED)).toEqual([]);
     expect(codes(source, PUSHED)).toEqual([C.UNTIL_EDGE_WATCHABLE]);
-    expect(messages(source, PUSHED)).toContain('await FIRST');
+    expect(messages(source, PUSHED)).toContain('await first');
   });
 });
 

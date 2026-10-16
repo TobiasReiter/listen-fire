@@ -12,6 +12,7 @@
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
+import { spelledFor } from './surface_spelling';
 
 const inboxSchema: InstanceSchema = {
   positions: {
@@ -74,7 +75,7 @@ function diagnostics(body: string, param = '<inbox-[:message]->>'): Diagnostic[]
 movement m(e: ${param}) {
 ${body}
 }`;
-  return checkProgram(parseProgram(source), catalog);
+  return checkProgram(parseProgram(spelledFor(5, source, catalog)), catalog);
 }
 const errors = (body: string, param?: string): Diagnostic[] =>
   diagnostics(body, param).filter((d) => (d.severity ?? 'error') === 'error');
@@ -93,7 +94,7 @@ describe('a declared text field refuses a number or a yes/no', () => {
     const body = `  takes_deal(d: ${literal('COALESCE(e.`Flag`, FALSE)')})`;
     expect(codes(body)).toEqual([C.NODE_ARG_SHAPE]);
     expect(messages(body)).toContain(
-      'its `diverse` is boolean, not text — write the text it should be: `IF … THEN "Yes" ELSE "No" END`',
+      'its `diverse` is boolean, not text — write the text it should be: `… ? "Yes" : "No"`',
     );
   });
 
@@ -101,7 +102,7 @@ describe('a declared text field refuses a number or a yes/no', () => {
     const body = `  takes_deal(d: ${literal('e.`Count`')})`;
     expect(codes(body)).toEqual([C.NODE_ARG_SHAPE]);
     expect(messages(body)).toContain(
-      'its `diverse` is number, not text — write the text it should be: `TOSTRING(…)`',
+      'its `diverse` is number, not text — write the text it should be: `Text.from(…)`',
     );
   });
 
@@ -119,9 +120,9 @@ describe('a declared text field refuses a number or a yes/no', () => {
       `  deduped = node { deals: <Deal> }\n  write deduped-[:deals]-> { title: "x", amount: 1, diverse: ${diverse}, via: "v" }`;
     expect(codes(write('TRUE'))).toEqual([C.WRITE_FIELD_TYPE]);
     expect(messages(write('TRUE'))).toContain(
-      "'diverse' on 'deals' on a node this run built is text, and this is boolean — write the text it should be: `IF … THEN \"Yes\" ELSE \"No\" END`",
+      "'diverse' on 'deals' on a node this run built is text, and this is boolean — write the text it should be: `… ? \"Yes\" : \"No\"`",
     );
-    expect(messages(write('e.`Count`'))).toContain('is text, and this is number — write the text it should be: `TOSTRING(…)`');
+    expect(messages(write('e.`Count`'))).toContain('is text, and this is number — write the text it should be: `Text.from(…)`');
     expect(codes(write('"yes"'))).toEqual([]);
   });
 

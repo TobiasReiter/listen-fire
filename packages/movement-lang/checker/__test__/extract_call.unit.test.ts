@@ -10,6 +10,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import { TypedDiagnosticCodes } from '../typing';
+import { spelledFor } from './surface_spelling';
 
 const inboxSchema: InstanceSchema = {
   positions: {
@@ -44,14 +45,14 @@ node CompanyDetail: "more about the company described last" {
 `;
 
 function check(body: string, options: { models?: readonly string[] } = {}): Diagnostic[] {
-  const source = `${PRELUDE}
-movement under_test(e: <inbox-[:message]->>) {
-${body}
-}`;
   const catalog = mockCatalog({
     adapters: { email: { constructionArgs: [], schema: inboxSchema } },
     ...(options.models !== undefined ? { models: options.models } : {}),
   });
+  const source = spelledFor(5, `${PRELUDE}
+movement under_test(e: <inbox-[:message]->>) {
+${body}
+}`, catalog);
   return checkProgram(parseProgram(source), catalog).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
@@ -80,7 +81,7 @@ describe('extract(content, Shape) — the worked example', () => {
   });
 
   it('nests inside another expression as the records it finds', () => {
-    expect(codes("  first = ONLY(extract([e.Body], Company))")).toEqual([]);
+    expect(codes("  one = ONLY(extract([e.Body], Company))")).toEqual([]);
     // Typed by its shape: a Company's headcount is a number, which UPPER refuses.
     expect(codes("  n = UPPER(ONLY(MAP(extract([e.Body], Company), (r) => r.employees)))")).toEqual([
       TypedDiagnosticCodes.BUILTIN_ARG_TYPE,
@@ -135,8 +136,8 @@ describe('the records it hands back', () => {
       codes(
         [
           '  companies = extract([e.Body], Company)',
-          '  first = ONLY(companies)',
-          "  more = extract([e.Body, TEXT.SERIALISE(first, 'JSON')], CompanyDetail)",
+          '  one = ONLY(companies)',
+          "  more = extract([e.Body, TEXT.SERIALISE(one, 'JSON')], CompanyDetail)",
         ].join('\n'),
       ),
     ).toEqual([]);
@@ -220,12 +221,12 @@ describe('the content', () => {
       '  })',
     ].join('\n');
     expect(codes(body)).toEqual([C.EXTRACT_CONTENT]);
-    expect(messages(body)).toContain("TEXT.SERIALISE(record, 'JSON')");
+    expect(messages(body)).toContain("Json.stringify(record, 'JSON')");
   });
 
   it('refuses a record handed over bare, with the fix spelled for it', () => {
     expect(codes('  found = extract(e, Company)')).toEqual([C.EXTRACT_CONTENT]);
-    expect(messages('  found = extract(e, Company)')).toContain("TEXT.SERIALISE(e, 'JSON')");
+    expect(messages('  found = extract(e, Company)')).toContain("Json.stringify(e, 'JSON')");
   });
 
   it('refuses a graph value — it is a record too', () => {
@@ -326,7 +327,7 @@ movement under_test(e: <inbox-[:message]->>) {
         value: { kind: 'extractCall', extractCall: { finds: 'each' } },
       });
       expect(codes(`  found = ${spelled}([e.Body], Company)\n  n = MAP(found, (c) => c.name)`)).toEqual([]);
-      expect(codes(`  first = ONLY(${spelled}([e.Body], Company))`)).toEqual([]);
+      expect(codes(`  one = ONLY(${spelled}([e.Body], Company))`)).toEqual([]);
     }
     expect(messages('  n = COUNT(e-[a:Attachments WHERE COUNT(EXTRACT([a.Name], Company)) > 0]->)')).toContain(
       "'extract(…)' runs a model over its content",

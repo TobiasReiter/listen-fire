@@ -73,13 +73,13 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { slack, drive } from adapters
-chat = slack()
-docs = drive()
+chat = connect slack
+docs = connect drive
 `;
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(c: <chat-[:channel]->>) {
+function m(c: <chat-[:channel]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -91,61 +91,61 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 
 describe('an order-sensitive fold needs a collection with an order', () => {
   it('JOIN over an unordered edge is refused, and the message names the fixes', () => {
-    const body = '  t = JOIN(c-[p:Members]->.`Name`, ", ")';
+    const body = '  t = Text.join(c-[p:Members]->.`Name`, ", ")';
     expect(codes(body)).toContain('MOV_FOLD_NEEDS_ORDER');
     expect(messages(body)).toContain('no particular order');
     expect(messages(body)).toContain('ORDER BY');
   });
 
   it('JOIN over the same edge with an ORDER BY is clean', () => {
-    expect(codes('  t = JOIN(c-[p:Members ORDER BY `Name`]->.`Name`, ", ")')).toEqual([]);
+    expect(codes('  t = Text.join(c-[p:Members ORDER BY p.`Name`]->.`Name`, ", ")')).toEqual([]);
   });
 
   it('JOIN over a SEQUENCED edge is clean with no ORDER BY at all', () => {
-    expect(codes('  t = JOIN(c-[m:Messages]->.`Text`, "\\n")')).toEqual([]);
+    expect(codes('  t = Text.join(c-[m:Messages]->.`Text`, "\\n")')).toEqual([]);
   });
 
   it('…and over the other graph\'s document-ordered edge too', () => {
     expect(
-      codes('  f = ONLY(docs-[x:Files ORDER BY `Title`]->)\n  t = JOIN(f-[s:Sections]->.`Heading`, ", ")'),
+      codes('  f = only(docs-[x:Files ORDER BY x.`Title`]->)\n  t = Text.join(f-[s:Sections]->.`Heading`, ", ")'),
     ).toEqual([]);
   });
 
   it('a root collection is a set until an ORDER BY says otherwise', () => {
-    expect(codes('  t = JOIN(chat-[x:Channels]->.`Name`, ", ")')).toContain(
+    expect(codes('  t = Text.join(chat-[x:Channels]->.`Name`, ", ")')).toContain(
       'MOV_FOLD_NEEDS_ORDER',
     );
-    expect(codes('  t = JOIN(chat-[x:Channels ORDER BY `Name`]->.`Name`, ", ")')).toEqual([]);
+    expect(codes('  t = Text.join(chat-[x:Channels ORDER BY x.`Name`]->.`Name`, ", ")')).toEqual([]);
   });
 
   it('FIRST over an unordered edge is refused, and the message names ONLY', () => {
-    const body = '  n = FIRST(c-[p:Members]->.`Name`)';
+    const body = '  n = first(c-[p:Members]->.`Name`)';
     expect(codes(body)).toContain('MOV_FOLD_NEEDS_ORDER');
-    expect(messages(body)).toContain('ONLY(');
+    expect(messages(body)).toContain('only(');
   });
 
   it('LAST is the same rule, and clean over a sequenced edge', () => {
-    expect(codes('  t = LAST(c-[p:Members]->.`Name`)')).toContain('MOV_FOLD_NEEDS_ORDER');
-    expect(codes('  t = LAST(c-[m:Messages]->.`Text`)')).toEqual([]);
+    expect(codes('  t = List.last(c-[p:Members]->.`Name`)')).toContain('MOV_FOLD_NEEDS_ORDER');
+    expect(codes('  t = List.last(c-[m:Messages]->.`Text`)')).toEqual([]);
   });
 });
 
 describe('a commutative fold takes a set or a list', () => {
   it('COUNT, SUM, MIN, MAX and COLLECT over an unordered edge are clean', () => {
-    expect(codes('  n = COUNT(c-[p:Members]->)')).toEqual([]);
-    expect(codes('  n = MIN(c-[p:Members]->.`Name`)')).toEqual([]);
-    expect(codes('  n = MAX(c-[p:Members]->.`Name`)')).toEqual([]);
-    expect(codes('  n = COLLECT(c-[p:Members]->.`Name`)')).toEqual([]);
+    expect(codes('  n = count(c-[p:Members]->)')).toEqual([]);
+    expect(codes('  n = List.min(c-[p:Members]->.`Name`)')).toEqual([]);
+    expect(codes('  n = List.max(c-[p:Members]->.`Name`)')).toEqual([]);
+    expect(codes('  n = List.from(c-[p:Members]->.`Name`)')).toEqual([]);
   });
 
   it('ONLY over a filtered traversal is clean — it is the lookup spelling', () => {
-    expect(codes('  n = ONLY(c-[p:Members WHERE `Name` == "ada"]->.`Name`)')).toEqual([]);
+    expect(codes('  n = only(c-[p:Members WHERE p.`Name` == "ada"]->.`Name`)')).toEqual([]);
   });
 
   it('ONLY over a bare walk picks a POSITION, exactly as FIRST does', () => {
     const source = `${PRELUDE}
-movement m(c: <chat-[:channel]->>) {
-  p = ONLY(c-[x:Members WHERE \`Name\` == "ada"]->)
+function m(c: <chat-[:channel]->>) {
+  p = only(c-[x:Members WHERE x.\`Name\` == "ada"]->)
   t = p.\`Name\`
 }`;
     const { recording } = checkProgramWithLink(parseProgram(source), catalog, {
@@ -156,36 +156,36 @@ movement m(c: <chat-[:channel]->>) {
   });
 
   it('COLLECT carries the ordering through — folding what it collected is the same rule', () => {
-    expect(codes('  n = JOIN(COLLECT(c-[p:Members]->.`Name`), ", ")')).toContain(
+    expect(codes('  n = Text.join(List.from(c-[p:Members]->.`Name`), ", ")')).toContain(
       'MOV_FOLD_NEEDS_ORDER',
     );
-    expect(codes('  n = JOIN(COLLECT(c-[m:Messages]->.`Text`), ", ")')).toEqual([]);
+    expect(codes('  n = Text.join(List.from(c-[m:Messages]->.`Text`), ", ")')).toEqual([]);
   });
 });
 
 describe('LIMIT without ORDER BY is the same bug', () => {
   it('refused over an unordered edge, naming the fix', () => {
-    const body = '  n = COUNT(c-[p:Members LIMIT 3]->)';
+    const body = '  n = count(c-[p:Members LIMIT 3]->)';
     expect(codes(body)).toContain('MOV_LIMIT_NEEDS_ORDER');
     expect(messages(body)).toContain('ORDER BY');
   });
 
   it('an ORDER BY discharges it', () => {
-    expect(codes('  n = COUNT(c-[p:Members ORDER BY `Name` LIMIT 3]->)')).toEqual([]);
+    expect(codes('  n = count(c-[p:Members ORDER BY p.`Name` LIMIT 3]->)')).toEqual([]);
   });
 
   it('so does a sequenced edge — "the latest three" is a real thing to ask there', () => {
-    expect(codes('  n = COUNT(c-[m:Messages LIMIT 3]->)')).toEqual([]);
+    expect(codes('  n = count(c-[m:Messages LIMIT 3]->)')).toEqual([]);
   });
 });
 
 describe('nobody has said is not the same as no order', () => {
   it('a walk off a position nobody enumerated says nothing', () => {
-    expect(codes('  t = JOIN(c-[b:Raw]->-[x:whatever]->.`Name`, ", ")')).toEqual([]);
+    expect(codes('  t = Text.join(c-[b:Raw]->-[x:whatever]->.`Name`, ", ")')).toEqual([]);
   });
 
   it('a fold over a plain value is not this rule\'s business', () => {
-    expect(codes('  t = JOIN(c.`Name`, ", ")')).toEqual([]);
+    expect(codes('  t = Text.join(c.`Name`, ", ")')).toEqual([]);
   });
 });
 
@@ -199,7 +199,7 @@ describe("an extract result's nested nodes come back in the document's order", (
           '      name: "the name"',
           '    }',
           '  }',
-          '  t = JOIN(found-[e:entry]->.`name`, ", ")',
+          '  t = Text.join(found-[e:entry]->.`name`, ", ")',
         ].join('\n'),
       ),
     ).toEqual([]);
@@ -208,7 +208,7 @@ describe("an extract result's nested nodes come back in the document's order", (
 
 describe('an await landing is arrival-ordered', () => {
   it("a callback's calls fold in the order they landed", () => {
-    expect(codes('  cb = callback({ write chat-[:note]-> { Body: "x" } })\n  t = JOIN(cb-[k:Called]->.`At`, ", ")')).toEqual(
+    expect(codes('  cb = callback({ write chat-[:note]-> { Body: "x" } })\n  t = Text.join(cb-[k:Called]->.`At`, ", ")')).toEqual(
       [],
     );
   });
@@ -218,38 +218,38 @@ describe('an await landing is arrival-ordered', () => {
 // expression a bracket WHERE is, typed the same way, at the same place.
 describe('an ORDER BY key is an expression over the element', () => {
   it('a bare property is still a read of the landed record, typo and all', () => {
-    expect(codes('  t = JOIN(c-[p:Members ORDER BY `Nam`]->.`Name`, ", ")')).toContain(
+    expect(codes('  t = Text.join(c-[p:Members ORDER BY p.`Nam`]->.`Name`, ", ")')).toContain(
       'MOV_UNKNOWN_PROPERTY',
     );
   });
 
   it('a short path off the hop’s own alias is clean, and orders the fold', () => {
     expect(
-      codes('  t = JOIN(c-[p:Members ORDER BY p-[:Employer]->.`Founded`]->.`Name`, ", ")'),
+      codes('  t = Text.join(c-[p:Members ORDER BY p-[:Employer]->.`Founded`]->.`Name`, ", ")'),
     ).toEqual([]);
   });
 
   it('…and a typo one hop along is caught where it is written', () => {
     expect(
-      codes('  t = JOIN(c-[p:Members ORDER BY p-[:Employer]->.`Foundd`]->.`Name`, ", ")'),
+      codes('  t = Text.join(c-[p:Members ORDER BY p-[:Employer]->.`Foundd`]->.`Name`, ", ")'),
     ).toContain('MOV_UNKNOWN_PROPERTY');
   });
 
   it('a key that asks a model is refused — a key is a function of the record', () => {
-    const body = '  t = JOIN(c-[p:Members ORDER BY AI("rank this")]->.`Name`, ", ")';
+    const body = '  t = Text.join(c-[p:Members ORDER BY ai("rank this")]->.`Name`, ", ")';
     expect(codes(body)).toContain('MOV_ORDER_KEY_IMPURE');
-    expect(messages(body)).toContain('AI(…)');
+    expect(messages(body)).toContain('ai(…)');
   });
 
   it('a key that answers with several values is refused, naming the fold that fixes it', () => {
-    const body = '  t = JOIN(c-[p:Members ORDER BY `Aliases`]->.`Name`, ", ")';
+    const body = '  t = Text.join(c-[p:Members ORDER BY p.`Aliases`]->.`Name`, ", ")';
     expect(codes(body)).toContain('MOV_ORDER_KEY_MULTI');
-    expect(messages(body)).toContain('MIN(…)');
+    expect(messages(body)).toContain('List.min(…)');
   });
 
   it('the same walk, the same LIMIT, discharged by a path key', () => {
     expect(
-      codes('  n = COUNT(c-[p:Members ORDER BY p-[:Employer]->.`Founded` LIMIT 3]->)'),
+      codes('  n = count(c-[p:Members ORDER BY p-[:Employer]->.`Founded` LIMIT 3]->)'),
     ).toEqual([]);
   });
 });
@@ -258,47 +258,47 @@ describe('SORT orders a collection already in hand', () => {
   const bound = '  names = c-[p:Members]-> { return p.`Name` }\n';
 
   it('a collection off an unordered walk is a set, and JOIN refuses it', () => {
-    expect(codes(`${bound}  t = JOIN(names, ", ")`)).toContain('MOV_FOLD_NEEDS_ORDER');
+    expect(codes(`${bound}  t = Text.join(names, ", ")`)).toContain('MOV_FOLD_NEEDS_ORDER');
   });
 
   it('…and SORT is what makes it a sequence — JOIN over the answer is clean', () => {
-    expect(codes(`${bound}  t = JOIN(SORT(names), ", ")`)).toEqual([]);
-    expect(codes(`${bound}  t = JOIN(SORT(names, DESC), ", ")`)).toEqual([]);
+    expect(codes(`${bound}  t = Text.join(sort(names), ", ")`)).toEqual([]);
+    expect(codes(`${bound}  t = Text.join(sort(names, { order: "desc" }), ", ")`)).toEqual([]);
   });
 
   it('FIRST, LAST and AT over a SORT are clean too', () => {
-    expect(codes(`${bound}  t = FIRST(SORT(names))`)).toEqual([]);
-    expect(codes(`${bound}  t = LAST(SORT(names, DESC))`)).toEqual([]);
-    expect(codes(`${bound}  t = AT(SORT(names), 0)`)).toEqual([]);
+    expect(codes(`${bound}  t = first(sort(names))`)).toEqual([]);
+    expect(codes(`${bound}  t = List.last(sort(names, { order: "desc" }))`)).toEqual([]);
+    expect(codes(`${bound}  t = sort(names)[0]`)).toEqual([]);
   });
 
   it('a key over plain values is refused — a member IS the key there', () => {
-    const body = `${bound}  t = JOIN(SORT(names, \`Name\`), ", ")`;
+    const body = `${bound}  t = Text.join(sort(names, (r) => r.Name), ", ")`;
     expect(codes(body)).toContain('MOV_SORT_KEY_ON_SCALAR');
     expect(messages(body)).toContain('SORT(…, DESC)');
   });
 
   it('SORT of one value is refused — there is nothing to put in order', () => {
-    expect(codes('  t = SORT(c.`Name`)')).toContain('MOV_SORT_NOT_COLLECTION');
+    expect(codes('  t = sort(c.`Name`)')).toContain('MOV_SORT_NOT_COLLECTION');
   });
 
   it('a walk written inside the call is refused, key or no key, naming the fix', () => {
-    const body = '  t = COUNT(SORT(c-[p:Members]->, `Name`))';
+    const body = '  t = count(sort(c-[p:Members]->, (r) => r.Name))';
     expect(codes(body)).toContain('MOV_SORT_KEY_ON_WALK');
     expect(messages(body)).toContain('Bind the walk first');
-    expect(codes('  t = COUNT(SORT(c-[p:Members]->))')).toContain('MOV_SORT_KEY_ON_WALK');
+    expect(codes('  t = count(sort(c-[p:Members]->))')).toContain('MOV_SORT_KEY_ON_WALK');
   });
 
   it('values with named parts need a key too', () => {
     const rows = '  rows = c-[p:Members]-> { return { who: p.`Name`, tag: p.`Name` } }\n';
-    expect(codes(`${rows}  t = COUNT(SORT(rows))`)).toContain('MOV_SORT_NEEDS_KEY');
-    expect(codes(`${rows}  t = COUNT(SORT(rows, \`who\`))`)).toEqual([]);
+    expect(codes(`${rows}  t = count(sort(rows))`)).toContain('MOV_SORT_NEEDS_KEY');
+    expect(codes(`${rows}  t = count(sort(rows, (r) => r.who))`)).toEqual([]);
   });
 
   it('records with no key are refused — a record has no order of its own', () => {
-    const body = '  people = c-[p:Members]-> { return p }\n  t = COUNT(SORT(people))';
+    const body = '  people = c-[p:Members]-> { return p }\n  t = count(sort(people))';
     expect(codes(body)).toContain('MOV_SORT_NEEDS_KEY');
-    expect(codes('  people = c-[p:Members]-> { return p }\n  t = COUNT(SORT(people, `Name`))')).toEqual(
+    expect(codes('  people = c-[p:Members]-> { return p }\n  t = count(sort(people, (r) => r.Name))')).toEqual(
       [],
     );
   });

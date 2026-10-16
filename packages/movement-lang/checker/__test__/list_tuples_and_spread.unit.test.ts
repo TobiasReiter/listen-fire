@@ -12,6 +12,7 @@ import { parseMovementExpression } from '../../expression/bridge';
 import { checkProgram, checkProgramWithLink, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const mailSchema: InstanceSchema = {
   positions: {
@@ -48,18 +49,18 @@ const catalog = mockCatalog({
   adapters: { email: { constructionArgs: [], schema: mailSchema } },
 });
 
-function source(body: string): string {
-  return `import { email } from adapters
+function source(body: string, languageVersion: LanguageVersion = 5): string {
+  return spelledFor(languageVersion, `import { email } from adapters
 inbox = email()
 
 movement m(e: <inbox-[:message]->>) {
 ${body}
-}`;
+}`, catalog);
 }
 
 function check(body: string, languageVersion?: LanguageVersion): Diagnostic[] {
   const options = languageVersion !== undefined ? { languageVersion } : undefined;
-  return checkProgram(parseProgram(source(body), options), catalog, options).filter(
+  return checkProgram(parseProgram(source(body, languageVersion), options), catalog, options).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
@@ -69,7 +70,7 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 
 function fieldTypeOf(body: string, name: string, languageVersion?: LanguageVersion): unknown {
   const options = languageVersion !== undefined ? { languageVersion } : {};
-  const { recording } = checkProgramWithLink(parseProgram(source(body), options), catalog, {
+  const { recording } = checkProgramWithLink(parseProgram(source(body, languageVersion), options), catalog, {
     ...options,
     recordAnalysis: true,
   });
@@ -231,9 +232,9 @@ describe('a spread of a walk read for a field splices one value per landing', ()
   });
 
   it('the name keeps the field\'s own type everywhere else — a write reads it as one value, as before', () => {
-    const body = "  first = e-[a:Attachments]->.`Type`\n  write inbox-[:log]-> { note: first }";
+    const body = "  head = e-[a:Attachments]->.`Type`\n  write inbox-[:log]-> { note: head }";
     expect(codes(body)).toEqual([]);
-    expect(fieldTypeOf(body, 'first')).toEqual('text');
+    expect(fieldTypeOf(body, 'head')).toEqual('text');
   });
 
   it('under every language version', () => {

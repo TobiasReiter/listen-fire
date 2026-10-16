@@ -85,12 +85,12 @@ const snapshot: CatalogSnapshot = {
 const PRELUDE = `import { polls } from adapters
 import { probe } from credentials
 
-p = polls(credentials: probe)
+p = connect polls using probe
 `;
 
 const diagnosticsFor = (body: string): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   ).filter((d) => (d.severity ?? 'error') === 'error');
 
@@ -100,22 +100,22 @@ const codesFor = (body: string): string[] => diagnosticsFor(body).map((d) => d.c
  *  `resolvesEmpty`, so the answer is `T | absent` — which equality tolerates
  *  (layer 6), leaving the enum diagnostics below as the only thing a comparison
  *  can say. */
-const awaited = (write: string) => `  a = write ${write}\n  r = await FIRST(a-[:Result]->)`;
+const awaited = (write: string) => `  a = write ${write}\n  r = await first(a-[:Result]->)`;
 const LITERAL_POLL = 'p-[:Poll]-> { Question: "Round?", Choices: ["Seed", "Series A"] }';
 
 describe('a landing generic over its construction site (checker)', () => {
   it('a LITERAL parameter retargets the landing to the position the host synthesized', () => {
     // Reading the specialized landing is clean…
-    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if r.Answer { }`)).toEqual([]);
+    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if (r.Answer) { }`)).toEqual([]);
     // …and `Answer` is the enum of the very choices this poll offered, so a
     // member draws no enum complaint.
-    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if r.Answer == "Seed" { }`)).not.toContain(
+    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if (r.Answer == "Seed") { }`)).not.toContain(
       'MOV_ENUM_UNKNOWN_VALUE',
     );
   });
 
   it('…and a NON-member is the ordinary enum error, with a did-you-mean', () => {
-    const errors = diagnosticsFor(`${awaited(LITERAL_POLL)}\n  if r.Answer == "Sead" { }`);
+    const errors = diagnosticsFor(`${awaited(LITERAL_POLL)}\n  if (r.Answer == "Sead") { }`);
     const enumError = errors.find((d) => d.code === 'MOV_ENUM_UNKNOWN_VALUE');
     expect(enumError).toBeDefined();
     expect(enumError?.message).toContain('Did you mean "Seed"?');
@@ -125,7 +125,7 @@ describe('a landing generic over its construction site (checker)', () => {
     // Nothing said about the options, and the answer is honestly plain text —
     // so a value that is in no enum draws no enum complaint either.
     const codes = codesFor(
-      `  choices = "Seed"\n${awaited('p-[:Poll]-> { Question: "Round?", Choices: [choices] }')}\n  if r.Answer == "anything at all" { }`,
+      `  choices = "Seed"\n${awaited('p-[:Poll]-> { Question: "Round?", Choices: [choices] }')}\n  if (r.Answer == "anything at all") { }`,
     );
     expect(codes).not.toContain('MOV_ENUM_UNKNOWN_VALUE');
     expect(codes).not.toContain('MOV_WRITE_GENERIC_NOT_LITERAL');
@@ -147,8 +147,8 @@ describe('a landing generic over its construction site (checker)', () => {
     const RATING = 'p-[:Rating]-> { Question: "How bad?", Scale: "number" }';
     // Reading it is clean; comparing it to TEXT is the category mismatch, which
     // is the proof the landing really is the number one.
-    expect(codesFor(`${awaited(RATING)}\n  if r.Answer { }`)).toEqual([]);
-    expect(codesFor(`${awaited(RATING)}\n  if r.Answer == "high" { }`)).toContain(
+    expect(codesFor(`${awaited(RATING)}\n  if (r.Answer) { }`)).toEqual([]);
+    expect(codesFor(`${awaited(RATING)}\n  if (r.Answer == "high") { }`)).toContain(
       'MOV_COMPARE_TYPE_MISMATCH',
     );
   });
@@ -158,7 +158,7 @@ describe('a landing generic over its construction site (checker)', () => {
     // and the base `text` answer accepts any literal.
     expect(
       codesFor(
-        `${awaited('p-[:Poll]-> { Question: "Round?", Choices: ["Bridge"] }')}\n  if r.Answer == "whatever" { }`,
+        `${awaited('p-[:Poll]-> { Question: "Round?", Choices: ["Bridge"] }')}\n  if (r.Answer == "whatever") { }`,
       ),
     ).not.toContain('MOV_ENUM_UNKNOWN_VALUE');
   });
@@ -168,7 +168,7 @@ describe('a landing generic over its construction site (checker)', () => {
     // present value is required is the same F19 error it is for any landing.
     expect(
       codesFor(
-        `  a = write p-[:Poll]-> { Question: "Round?", Choices: ["Seed", "Series A"] }\n  r = await FIRST(a-[:Result]->)\n  write p-[:Poll]-> { Question: r.Answer }`,
+        `  a = write p-[:Poll]-> { Question: "Round?", Choices: ["Seed", "Series A"] }\n  r = await first(a-[:Result]->)\n  write p-[:Poll]-> { Question: r.Answer }`,
       ),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
@@ -178,14 +178,14 @@ describe('a landing generic over its construction site (checker)', () => {
     // absence, so the very write that errored above is clean inside the arm.
     expect(
       codesFor(
-        `${awaited(LITERAL_POLL)}\n  if r.Answer == "Seed" { write p-[:Poll]-> { Question: r.Answer } }`,
+        `${awaited(LITERAL_POLL)}\n  if (r.Answer == "Seed") { write p-[:Poll]-> { Question: r.Answer } }`,
       ),
     ).toEqual([]);
   });
 
   it('a comparison against a NON-member says only the enum thing — no absence noise', () => {
     // The point of the layer: one diagnostic, about the typo, not two.
-    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if r.Answer == "Sead" { }`)).toEqual([
+    expect(codesFor(`${awaited(LITERAL_POLL)}\n  if (r.Answer == "Sead") { }`)).toEqual([
       'MOV_ENUM_UNKNOWN_VALUE',
     ]);
   });

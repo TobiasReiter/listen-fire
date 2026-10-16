@@ -35,9 +35,9 @@ const catalog = mockCatalog({
 
 function check(body: string): Diagnostic[] {
   const source = `import { email } from adapters
-inbox = email()
+inbox = connect email
 
-movement m(e: <inbox-[:message]->>) {
+function m(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter(
@@ -50,41 +50,41 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 describe('await FIRST — the parked read', () => {
   it('parses and checks clean over an awaitable edge, and the landing reads', () => {
     expect(
-      codes('  c = ONLY(e-[k:Checks]->)\n  w = await FIRST(c-[:Answer]->)\n  t = w.`Text`'),
+      codes('  c = only(e-[k:Checks]->)\n  w = await first(c-[:Answer]->)\n  t = w.`Text`'),
     ).toEqual([]);
   });
 
   it('the unbound statement form is legal too', () => {
-    expect(codes('  c = ONLY(e-[k:Checks]->)\n  await FIRST(c-[:Answer]->)')).toEqual([]);
+    expect(codes('  c = only(e-[k:Checks]->)\n  await first(c-[:Answer]->)')).toEqual([]);
   });
 
   it('a WHERE rides inside the head unchanged', () => {
     expect(
       codes(
-        '  c = ONLY(e-[k:Checks]->)\n  w = await FIRST(c-[ans:Answer WHERE ans.`Text` == "yes"]->)',
+        '  c = only(e-[k:Checks]->)\n  w = await first(c-[ans:Answer WHERE ans.`Text` == "yes"]->)',
       ),
     ).toEqual([]);
   });
 
   it('FIRST over a non-awaitable edge is refused — the wait could never end', () => {
     expect(
-      codes('  c = ONLY(e-[k:Checks]->)\n  w = await FIRST(c-[:Versions]->)'),
+      codes('  c = only(e-[k:Checks]->)\n  w = await first(c-[:Versions]->)'),
     ).toContain(C.AWAIT_NOT_AWAITABLE);
   });
 });
 
 describe('the bare walk under await is retired', () => {
   it('refused, and the message carries the rewrite', () => {
-    const out = messages('  c = ONLY(e-[k:Checks]->)\n  w = await c-[:Answer]->');
-    expect(codes('  c = ONLY(e-[k:Checks]->)\n  w = await c-[:Answer]->')).toContain(
+    const out = messages('  c = only(e-[k:Checks]->)\n  w = await c-[:Answer]->');
+    expect(codes('  c = only(e-[k:Checks]->)\n  w = await c-[:Answer]->')).toContain(
       C.AWAIT_BARE_WALK,
     );
-    expect(out).toContain('await FIRST(');
+    expect(out).toContain('await first(');
   });
 
   it('the refusal does not cascade — the binding still types for recovery', () => {
     const out = codes(
-      '  c = ONLY(e-[k:Checks]->)\n  w = await c-[:Answer]->\n  t = w.`Text`',
+      '  c = only(e-[k:Checks]->)\n  w = await c-[:Answer]->\n  t = w.`Text`',
     );
     expect(out).toContain(C.AWAIT_BARE_WALK);
     expect(out).not.toContain('MOV_UNKNOWN_PROPERTY');

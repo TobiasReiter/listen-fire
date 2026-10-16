@@ -108,8 +108,8 @@ const PRELUDE = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
 ].join('\n');
 
 const program = (movement: string, listen: string): string =>
@@ -122,7 +122,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(co: <crm-[:Companies]->>) {',
+          'function m(co: <crm-[:Companies]->>) {',
           '  write chat-[:message]-> { channel: "#x", text: co.Name }',
           '}',
         ].join('\n'),
@@ -139,7 +139,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
           '  write chat-[:message]-> { channel: "#x", text: "got an event" }',
           '}',
         ].join('\n'),
@@ -153,7 +153,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
           '  write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '}',
         ].join('\n'),
@@ -168,7 +168,7 @@ describe('typed listen events — event-satisfies-param', () => {
       /'Companies' is an edge of .*action=record\.created.* \/ .*action=record\.updated.* only/,
     );
     expect(narrowing?.message).toContain(
-      'x IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>',
+      'x is <crm-[e:`Webhook Event` WHERE e.action == "record.created"]->>',
     );
   });
 
@@ -176,8 +176,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '  }',
           '}',
@@ -199,8 +199,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->> {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->>) {',
           '  } else {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '  }',
@@ -218,10 +218,10 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
-          '  } else if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.updated"]->> {',
-          '  } else if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->> {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
+          '  } else if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.updated"]->>) {',
+          '  } else if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->>) {',
           '  } else {',
           '    write chat-[:message]-> { channel: "#x", text: ev.`action` }',
           '  }',
@@ -239,8 +239,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
           '  } else if 1 == 1 {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '  }',
@@ -259,8 +259,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          `movement m(ev: ${CREATED}) {`,
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->> {',
+          `function m(ev: ${CREATED}) {`,
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->>) {',
           '  } else {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '  }',
@@ -276,8 +276,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->> {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->>) {',
           '  } else {',
           '  }',
           '  write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
@@ -293,7 +293,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
           '  if ev IS <chat-[:`Webhook Event` WHERE `action` == "record.deleted"]->> {',
           '  } else {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
@@ -310,8 +310,8 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          'movement m(ev: <crm-[:`Webhook Event`]->>) {',
-          '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->> AND 1 == 1 {',
+          'function m(ev: <crm-[:`Webhook Event`]->>) {',
+          '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.deleted"]->>) AND 1 == 1 {',
           '  } else {',
           '    write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '  }',
@@ -327,7 +327,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          `movement m(ev: ${CREATED}) {`,
+          `function m(ev: ${CREATED}) {`,
           '  write chat-[:message]-> { channel: "#x", text: ev-[:Companies]->.Name }',
           '}',
         ].join('\n'),
@@ -341,7 +341,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          `movement m(co: ${CREATED}) {`,
+          `function m(co: ${CREATED}) {`,
           '  write chat-[:message]-> { channel: "#x", text: co.action }',
           '}',
         ].join('\n'),
@@ -358,7 +358,7 @@ describe('typed listen events — event-satisfies-param', () => {
     const diags = check(
       program(
         [
-          `movement m(co: ${CREATED}) {`,
+          `function m(co: ${CREATED}) {`,
           '  write chat-[:message]-> { channel: "#x", text: co-[:Companies]->.Name }',
           '}',
         ].join('\n'),
@@ -374,7 +374,7 @@ describe('typed listen events — event-satisfies-param', () => {
 // array. A bare-string `events` is rejected with a wrap-in-brackets fix-it.
 describe('typed listen events — events is always a list', () => {
   const MOVEMENT = [
-    `movement m(co: ${CREATED}) {`,
+    `function m(co: ${CREATED}) {`,
     '  write chat-[:message]-> { channel: "#x", text: co-[:Companies]->.Name }',
     '}',
   ].join('\n');
@@ -422,7 +422,7 @@ describe('typed listen events — events is always a list', () => {
         'import { crm } from adapters',
         'import { creds } from credentials',
         'c = crm(credentials: creds)',
-        'movement m(d: <c-[:Deals]->>) {',
+        'function m(d: <c-[:Deals]->>) {',
         '  y = 1',
         '}',
         'listen to c { events: ["record.created"] } fire m',
@@ -457,7 +457,7 @@ describe('typed listen events — events is always a list', () => {
         'import { crm } from adapters',
         'import { creds } from credentials',
         'c = crm(credentials: creds)',
-        'movement m(co: <c-[:Companies]->>) {',
+        'function m(co: <c-[:Companies]->>) {',
         '  y = 1',
         '}',
         'listen to c { events: ["record.created"] } fire m',

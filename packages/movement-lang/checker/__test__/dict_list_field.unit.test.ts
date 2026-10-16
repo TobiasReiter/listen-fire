@@ -23,7 +23,7 @@ const catalog = mockCatalog({ adapters: { email: { constructionArgs: [], schema:
 
 function source(body: string): string {
   return `import { email } from adapters
-inbox = email()
+inbox = connect email
 
 node Company: "each company named in this message" {
   name: <text> "the company's name"
@@ -32,7 +32,7 @@ node Company: "each company named in this message" {
   }
 }
 
-movement under_test(e: <inbox-[:message]->>) {
+function under_test(e: <inbox-[:message]->>) {
 ${body}
 }`;
 }
@@ -63,7 +63,7 @@ function expectListOfRecords(type: FieldType | null | undefined): void {
 describe('the production shape: each piece kept beside its extraction', () => {
   const PIECES = [
     '  pieces = [e.Subject, e.Body]',
-    '  results = MAP(pieces, (p) => {',
+    '  results = map(pieces, (p) => {',
     "    return { piece: p, entries: extract([p], Company, { tier: 'careful' }) }",
     '  })',
   ];
@@ -73,11 +73,11 @@ describe('the production shape: each piece kept beside its extraction', () => {
       codes(
         [
           ...PIECES,
-          '  MAP(results, (x) => {',
-          '    names = MAP(x.entries, (c) => c.name)',
-          '    kept = FILTER(x.entries, (c) => c.name == "Acme")',
-          '    n = COUNT(x.entries)',
-          '    first = FIRST(x.entries)',
+          '  map(results, (x) => {',
+          '    names = map(x.entries, (c) => c.name)',
+          '    kept = filter(x.entries, (c) => c.name == "Acme")',
+          '    n = count(x.entries)',
+          '    head = first(x.entries)',
           '    x.entries-[r:round]-> {',
           '      return r.stage',
           '    }',
@@ -95,11 +95,11 @@ describe('the production shape: each piece kept beside its extraction', () => {
 describe('records reached another way, held in a map field', () => {
   const ROWS = (lines: string[]) => [
     "  companies = extract([e.Body], Company)",
-    '  rows = MAP(companies, (c) => {',
+    '  rows = map(companies, (c) => {',
     ...lines,
     '  })',
   ];
-  const READ_BACK = ['  MAP(rows, (x) => {', '    stages = MAP(x.rounds, (r) => r.stage)', '  })'];
+  const READ_BACK = ['  map(rows, (x) => {', '    stages = map(x.rounds, (r) => r.stage)', '  })'];
 
   it.each([
     ['a walk read written in the field', ['    return { name: c.name, rounds: c-[:round]-> }']],

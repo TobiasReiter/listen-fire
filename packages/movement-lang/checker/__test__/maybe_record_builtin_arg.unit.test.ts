@@ -12,6 +12,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: { company: { properties: { name: 'text', size: 'number' }, edges: {} } },
@@ -30,7 +31,7 @@ const CO = '  co = write crm-[:companies]-> { name: "a" }';
 
 const diagnosticsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\nmovement m() {\n${[CO, ...body].join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version });
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version });
 };
 const errors = (version: LanguageVersion, body: string[]): string[] =>
   diagnosticsUnder(version, body).filter(d => (d.severity ?? 'error') === 'error').map(d => d.code);
@@ -51,7 +52,7 @@ describe('a value that may be a record, handed to a built-in that takes a value'
 
   it('the message names the built-in, its argument and the record', () => {
     const [error] = diagnosticsUnder(5, CALLS[0]![1]);
-    expect(error!.message).toContain("ROUND's 'number' takes a number, but this may be a crm.company handle");
+    expect(error!.message).toContain("Number.round's 'number' takes a number, but this may be a crm.company handle");
     expect(error!.message).toContain('as in TypeScript');
   });
 
