@@ -1,23 +1,22 @@
-// The wire between the TypeScript host and the Rust engine, held to the
-// TypeScript engine at every boundary a host's value crosses: the event, an
-// adapter's answer, a plugin's answer, a model's reply, a parked state, and a
-// host that is itself a wire (the HTTP host double). Each program runs under
-// MOVEMENT_ENGINE=ts and =rust against the same host, and the two must agree
-// on how the run ended, its trace and what the host was handed.
+// The wire between the TypeScript host and the Rust engine, at every boundary
+// a host's value crosses: the event, an adapter's answer, a plugin's answer, a
+// model's reply, a parked state, and a host that is itself a wire (the HTTP
+// host double). Each program runs on the Rust engine (version 5) against a
+// host of its own, and the assertions say how the run must end and what the
+// host was handed.
 //
 // The values are what `JSON.parse` makes of a host's text: an own
 // `__proto__` key is a key like any other (transition artefacts row 7). It
 // crosses as itself, a read of it reads the own value, `TEXT.SERIALISE`
-// prints it, and wherever the TypeScript engine assigns keys one by one
-// (`Object.assign`, `object[key] = …`) it sets the prototype on both engines.
+// prints it, and wherever JavaScript assigns keys one by one
+// (`Object.assign`, `object[key] = …`) it sets the prototype.
 //
 // A string is any run of UTF-16 code units, a lone surrogate included
 // (`JSON.parse('"\\ud83d"')` makes one; a cut through a pair, a `split("")`
-// or a match through one makes another): it crosses the eval wire as its code
-// units (`["s16", units]`), the host's JSON text as the escape
-// `JSON.stringify` writes (transition artefacts row 9), and every reading of
-// it — its length, a cut, a split, a regex, a print — is JavaScript's on both
-// engines.
+// or a match through one makes another): it crosses as its code units
+// (`["s16", units]`), the host's JSON text as the escape `JSON.stringify`
+// writes (transition artefacts row 9), and every reading of it — its length,
+// a cut, a split, a regex, a print — is JavaScript's.
 
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
@@ -135,17 +134,6 @@ function inputOf(c: Case, park: ReturnType<typeof makeFakeParkSink>, seen: { inv
   };
 }
 
-async function underEngine<T>(engine: 'ts' | 'rust', body: () => Promise<T>): Promise<T> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
-  try {
-    return await body();
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
-}
-
 /** How a run ended, as text (`JSON.stringify` prints an own `__proto__`
  *  key, and leaves a prototype out). */
 async function ending(run: () => Promise<unknown>): Promise<string> {
@@ -157,27 +145,42 @@ async function ending(run: () => Promise<unknown>): Promise<string> {
   }
 }
 
-async function runOn(engine: 'ts' | 'rust', c: Case) {
+async function runOn(c: Case) {
   const park = makeFakeParkSink();
   const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
-  const ended = await underEngine(engine, () => ending(() => runMovement(inputOf(c, park, seen))));
+  const ended = await ending(() => runMovement(inputOf(c, park, seen)));
   return { ended, invoked: JSON.stringify(seen.invoked), asked: seen.asked, parks: JSON.stringify(park.timerParks) };
 }
 
-/** `c` on both engines: the Rust one ran it whole (or ended it by name
- *  where the TypeScript did), and the two agree on everything. */
-async function agree(c: Case) {
-  const ts = await runOn('ts', c);
+/** `c` on the Rust engine: it ran the segment, refusing nothing and
+ *  faulting nowhere. */
+async function run(c: Case) {
   resetRustRunStats();
-  const rust = await runOn('rust', c);
-  expect(rustRunStats).toMatchObject({ routed: 1, notAdmitted: {}, declined: {}, shimFaults: 0, unreproduced: 0, mirroredFailure: 0 });
-  expect(rust).toEqual(ts);
-  return ts;
+  const ran = await runOn(c);
+  expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+  return ran;
 }
 
-describe('own `__proto__` keys on the wire, on both engines', () => {
+/** A run through the HTTP host: its result as the wire carries it, or the
+ *  failure as recorded. */
+async function replayed(input: RunMovementInput) {
+  try {
+    return { result: JSON.parse(JSON.stringify(await runMovement(input))) };
+  } catch (error) {
+    return { failure: recordedError(error) };
+  }
+}
+
+/** A parked state, resumed on the Rust engine: how the resumed run ended. */
+async function resumedFrom(c: Case, parks: string): Promise<string> {
+  const state: ParkedScopeState = JSON.parse(parks)[0].state;
+  const input = { ...inputOf(c, makeFakeParkSink(), { invoked: [], asked: [] }), state: JSON.parse(JSON.stringify(state)) };
+  return ending(() => resumeMovement(input));
+}
+
+describe('own `__proto__` keys on the wire', () => {
   it('reads an event field holding one as the key it is: printed, read, spread and filed as JavaScript does', async () => {
-    const { ended } = await agree({
+    const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
         '  s = { ...v, b: 2 }',
@@ -200,7 +203,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
 
   it("reads a plugin's answer holding one: assigned into a record's fields, kept in a found record's, assigned again where it is written out", async () => {
     const answer = JSON.parse('{"text":"a page","data":{"name":"Acme","__proto__":{"x":"via"}},"records":[{"u":"1","__proto__":{"x":1}}]}');
-    const { ended } = await agree({
+    const { ended } = await run({
       source: program(
         '  page = probe({ q: msg.`subject` })',
         '  found = finds({ q: msg.`subject` })',
@@ -219,12 +222,12 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
   });
 
   it('reads a model reply holding one: an AI() answer, and an extraction read in one call', async () => {
-    const ai = await agree({
+    const ai = await run({
       source: program('  x = ai("why?")', '  fail("${Json.stringify(x)}")'),
       replies: [JSON.parse('{"value":{"__proto__":{"x":1},"a":2}}')],
     });
     expect(ai.asked).toHaveLength(1);
-    const extraction = await agree({
+    const extraction = await run({
       source: program(...ONE_COMPANY, '  fail("${found.name}")'),
       replies: [JSON.parse('{"record":{"name":{"value":"Acme","evidence":{"item":0,"quote":"q"}},"__proto__":{"x":1}}}')],
     });
@@ -232,7 +235,7 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
   });
 
   it('spreads a `__proto__: null` in as no prototype at all: still a dict, read and spread again', async () => {
-    const { ended } = await agree({
+    const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
         '  s = { ...v }',
@@ -244,34 +247,20 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     expect(ended).toContain('MOVENG_ERROR: 1 1 {');
   });
 
-  it('ends at the check, on both engines, a program naming a binding or a parameter `__proto__`', async () => {
+  it('ends at the check a program naming a binding or a parameter `__proto__`', async () => {
     for (const body of [['  __proto__ = 1', '  fail("${__proto__}")'], ['  xs = map([1, 2], (__proto__) => {', '    return __proto__', '  })', '  fail("${count(xs)}")']]) {
-      const ts = await runOn('ts', { source: program(...body) });
       resetRustRunStats();
-      const rust = await runOn('rust', { source: program(...body) });
-      expect(rustRunStats).toMatchObject({ routed: 0, endedAtCheck: 1 });
-      expect(rust).toEqual(ts);
-      expect(ts.ended).toContain('MOV_NAME_PROTO');
+      const ran = await runOn({ source: program(...body) });
+      expect(rustRunStats).toMatchObject({ segments: 0, endedAtCheck: 1 });
+      expect(ran.ended).toContain('MOV_NAME_PROTO');
     }
   });
 
-  it('parks a value holding one as JavaScript writes it, and either park resumes to the same ending', async () => {
+  it('parks a value holding one as JavaScript writes it, and the park resumes to the same ending', async () => {
     const source = program('  v = msg.`meta`', '  s = { ...v }', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(s)} ${Json.stringify(s.`x`)}")');
-    const ts = await runOn('ts', { source });
-      resetRustRunStats();
-    const rust = await runOn('rust', { source });
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-    expect(rust).toEqual(ts);
-    expect(ts.parks).toContain('"__proto__"');
-    const state: ParkedScopeState = JSON.parse(ts.parks)[0].state;
-    const resumed = async (engine: 'ts' | 'rust') => {
-      const seen = { invoked: [], asked: [] };
-      const input = { ...inputOf({ source }, makeFakeParkSink(), seen), state: JSON.parse(JSON.stringify(state)) };
-      return underEngine(engine, () => ending(() => resumeMovement(input)));
-    };
-    const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
-    expect(onRust).toBe(onTs);
-    expect(onTs).toContain('"__proto__": {');
+    const parked = await run({ source });
+    expect(parked.parks).toContain('"__proto__"');
+    expect(await resumedFrom({ source }, parked.parks)).toContain('"__proto__": {');
   });
 
   it('crosses a host that is itself a wire (the HTTP host double) as it crosses in process', async () => {
@@ -279,27 +268,21 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
     const kept: HostRecording[] = [];
     const park = makeFakeParkSink();
     const recorded = { entry: 'run', input: inputOf({ source }, park, { invoked: [], asked: [] }), run: runMovement, keep: (r: HostRecording) => kept.push(r) } as const;
-    await underEngine('ts', () => recordEntry(recorded).catch(() => undefined));
+    // Recorded in process, then replayed through the HTTP double: the wire
+    // must hand the engine what the in-process host did.
+    await recordEntry(recorded).catch(() => undefined);
     const recording = kept[0];
     if (recording === undefined) throw new Error('test: the run was recorded');
     expect(JSON.stringify(recording)).toContain('"__proto__"');
     const double = await startHostDouble();
     try {
-      for (const engine of ['ts', 'rust'] as const) {
-        const conversation = new RecordedConversation(recording.requests);
-        double.serve(conversation);
-        resetRustRunStats();
-        const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
-        const outcome = await underEngine(engine, async () => {
-          try {
-            return { result: JSON.parse(JSON.stringify(await runMovement(input))) };
-          } catch (error) {
-            return { failure: recordedError(error) };
-          }
-        });
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ ...endedInRust(undefined), shimFaults: 0 });
-        expect([engine, verdictOf(recording, conversation, outcome)]).toEqual([engine, { kind: 'same' }]);
-      }
+      const conversation = new RecordedConversation(recording.requests);
+      double.serve(conversation);
+      resetRustRunStats();
+      const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
+      const outcome = await replayed(input);
+      expect(rustRunStats).toMatchObject({ ...endedInRust(undefined), shimFaults: 0 });
+      expect(verdictOf(recording, conversation, outcome)).toEqual({ kind: 'same' });
     } finally {
       await double.close();
     }
@@ -309,9 +292,9 @@ describe('own `__proto__` keys on the wire, on both engines', () => {
 /** A lone high half, a lone low half, and a pair, as `JSON.parse` makes them. */
 const LONE = JSON.parse('{"hi":"a\\ud83d","lo":"\\ude00b","pair":"x😀y","\\udc00key":"\\ud800","astral":"😀𝒜"}');
 
-describe('lone surrogates on the wire, on both engines', () => {
+describe('lone surrogates on the wire', () => {
   it('reads an event field holding them as JavaScript does: counted, cut, split, matched, printed, compared', async () => {
-    const { ended } = await agree({
+    const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
         '  hi = v.`hi`',
@@ -331,7 +314,7 @@ describe('lone surrogates on the wire, on both engines', () => {
 
   it("reads a plugin's answer holding them: a record's data, and a records plugin's text spread into its code units", async () => {
     const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":["a😀"]}');
-    const { ended } = await agree({
+    const { ended } = await run({
       source: program(
         '  page = probe({ q: msg.`subject` })',
         '  found = finds({ q: msg.`subject` })',
@@ -345,7 +328,7 @@ describe('lone surrogates on the wire, on both engines', () => {
   });
 
   it('reads a model reply holding them, and traces an AI() prompt cut through a pair as JavaScript cuts it', async () => {
-    const ai = await agree({
+    const ai = await run({
       source: program('  x = ai("${msg.`subject`}")', '  fail("${Json.stringify(x)} ${Text.length(x.`a`)}")'),
       meta: LONE,
       replies: [JSON.parse('{"value":{"a":"\\ud800","\\udbffk":2}}')],
@@ -354,16 +337,14 @@ describe('lone surrogates on the wire, on both engines', () => {
     expect(ai.ended).toContain('\\\\ud800');
     // The trace keeps the prompt's first 300 code units: the high half.
     const long = { ...event(LONE), payload: { subject: `${'p'.repeat(299)}😀 tail`, meta: LONE } };
-    for (const engine of ['ts', 'rust'] as const) {
-      const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
-      const input = { ...inputOf({ source: program('  x = ai("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
-      resetRustRunStats();
-      const result = await underEngine(engine, () => runMovement(input));
-      if (engine === 'rust') expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-      const traced = result.trace.find((entry) => Reflect.get(entry, 'kind') === 'ai');
-      expect([engine, JSON.stringify(traced)]).toEqual([engine, expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`)]);
-    }
-    const extraction = await agree({
+    const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
+    const input = { ...inputOf({ source: program('  x = ai("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
+    resetRustRunStats();
+    const result = await runMovement(input);
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    const traced = result.trace.find((entry) => Reflect.get(entry, 'kind') === 'ai');
+    expect(JSON.stringify(traced)).toEqual(expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`));
+    const extraction = await run({
       source: program(...ONE_COMPANY, '  fail("${found.name} ${Text.length(found.name)}")'),
       replies: [JSON.parse(`{"record":{"name":{"value":"${'n'.repeat(199)}😀\\udc00","evidence":{"item":0,"quote":"q"}}}}`)],
     });
@@ -372,48 +353,23 @@ describe('lone surrogates on the wire, on both engines', () => {
     expect(extraction.ended).toContain(' 202');
   });
 
-  it('parks a value holding them as JavaScript writes it, and either park resumes to the same ending', async () => {
+  it('parks a value holding them as JavaScript writes it, and the park resumes to the same ending', async () => {
     const source = program('  v = msg.`meta`', '  h = Text.split(v.`pair`, "")', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(h)}")');
-    const ts = await runOn('ts', { source, meta: LONE });
-    resetRustRunStats();
-    const rust = await runOn('rust', { source, meta: LONE });
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, shimFaults: 0 });
-    expect(rust).toEqual(ts);
-    expect(ts.parks).toContain('\\ud83d');
-    const state: ParkedScopeState = JSON.parse(ts.parks)[0].state;
-    const resumed = async (engine: 'ts' | 'rust') => {
-      const seen = { invoked: [], asked: [] };
-      const input = { ...inputOf({ source, meta: LONE }, makeFakeParkSink(), seen), state: JSON.parse(JSON.stringify(state)) };
-      return underEngine(engine, () => ending(() => resumeMovement(input)));
-    };
-    const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
-    expect(onRust).toBe(onTs);
-    expect(onTs).toContain('"\\udc00key": "\\ud800"');
+    const parked = await run({ source, meta: LONE });
+    expect(parked.parks).toContain('\\ud83d');
+    expect(await resumedFrom({ source, meta: LONE }, parked.parks)).toContain('"\\udc00key": "\\ud800"');
   });
 
   it.each([
     ['a U+FDD0', '\uFDD0'],
     ['a lone half', '\uDC00'],
-  ])('parses a source holding %s with the TypeScript spans: either park resumes on either engine', async (_what, odd) => {
+  ])('parses a source holding %s with spans counted in UTF-16 units: the park resumes', async (_what, odd) => {
     // The character sits before a closure on its line, so every span after
-    // it on that line is one the two parsers must count alike.
+    // it on that line must be counted as JavaScript counts it, or the resumed
+    // closure's code is cut in the wrong place.
     const source = program(`  ready = () => { return msg.\`subject\` != "${odd}" }`, '  await sleep(1h)', '  fail("done ${ready()} ${Text.length("' + odd + '")}")');
-    const ts = await runOn('ts', { source });
-    resetRustRunStats();
-    const rust = await runOn('rust', { source });
-    expect(rustRunStats).toMatchObject({ routed: 1, ranWhole: 1, notAdmitted: {}, shimFaults: 0 });
-    // The parked state, closure spans and all, byte for byte.
-    expect(rust.parks).toBe(ts.parks);
-    for (const parkedOn of [ts, rust]) {
-      const state: ParkedScopeState = JSON.parse(parkedOn.parks)[0].state;
-      const resumed = async (engine: 'ts' | 'rust') => {
-        const input = { ...inputOf({ source }, makeFakeParkSink(), { invoked: [], asked: [] }), state: JSON.parse(JSON.stringify(state)) };
-        return underEngine(engine, () => ending(() => resumeMovement(input)));
-      };
-      const [onTs, onRust] = [await resumed('ts'), await resumed('rust')];
-      expect(onRust).toBe(onTs);
-      expect(onTs).toContain('MOVENG_ERROR: done true 1');
-    }
+    const parked = await run({ source });
+    expect(await resumedFrom({ source }, parked.parks)).toContain('MOVENG_ERROR: done true 1');
   });
 
   it('crosses a host that is itself a wire (the HTTP host double), its JSON text holding the escapes', async () => {
@@ -426,27 +382,19 @@ describe('lone surrogates on the wire, on both engines', () => {
       run: runMovement,
       keep: (r: HostRecording) => kept.push(r),
     } as const;
-    await underEngine('ts', () => recordEntry(recorded).catch(() => undefined));
+    await recordEntry(recorded).catch(() => undefined);
     const recording = kept[0];
     if (recording === undefined) throw new Error('test: the run was recorded');
     expect(JSON.stringify(recording)).toContain('\\udbff!');
     const double = await startHostDouble();
     try {
-      for (const engine of ['ts', 'rust'] as const) {
-        const conversation = new RecordedConversation(recording.requests);
-        double.serve(conversation);
-        resetRustRunStats();
-        const input = { ...inputOf({ source, meta: LONE }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
-        const outcome = await underEngine(engine, async () => {
-          try {
-            return { result: JSON.parse(JSON.stringify(await runMovement(input))) };
-          } catch (error) {
-            return { failure: recordedError(error) };
-          }
-        });
-        if (engine === 'rust') expect(rustRunStats).toMatchObject({ ...endedInRust(undefined), shimFaults: 0 });
-        expect([engine, verdictOf(recording, conversation, outcome)]).toEqual([engine, { kind: 'same' }]);
-      }
+      const conversation = new RecordedConversation(recording.requests);
+      double.serve(conversation);
+      resetRustRunStats();
+      const input = { ...inputOf({ source, meta: LONE }, makeFakeParkSink(), { invoked: [], asked: [] }), host: httpHost(double.url, recording.methods) };
+      const outcome = await replayed(input);
+      expect(rustRunStats).toMatchObject({ ...endedInRust(undefined), shimFaults: 0 });
+      expect(verdictOf(recording, conversation, outcome)).toEqual({ kind: 'same' });
     } finally {
       await double.close();
     }
