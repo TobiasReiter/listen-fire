@@ -123,7 +123,7 @@ import {
   type ValueTypeMember,
   type ClosureTypeRef,
 } from '../parser/ast';
-import { argumentBindings, isPositionalCall, isValueTypeRef, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
+import { argumentBindings, isPositionalCall, isValueTypeRef, spellName, spellParamType, spellValueType, typeNameOf } from '../parser/ast';
 import { isValidDuration, durationToMs } from '../parser/duration';
 
 export type { ReturnShape } from './typing';
@@ -8836,11 +8836,13 @@ class Checker {
     if (since(this.languageVersion, 5) && (subject.span.end.line !== subject.nameSpan.end.line || subject.span.end.col !== subject.nameSpan.end.col)) {
       const arity = callee.movement.decl.params.length;
       if (subject.args.length !== arity) {
-        this.report(
-          DiagnosticCodes.CALL_ARITY,
-          `'${subject.movement}' takes ${arity} argument${arity === 1 ? '' : 's'}, got ${subject.args.length} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => ${subject.movement}(…, d))`,
-          subject.span,
-        );
+        const fix = this.callbackClosureFix(subject, callee.movement.decl.params);
+        this.reportWithFix({
+          code: DiagnosticCodes.CALL_ARITY,
+          message: `'${subject.movement}' takes ${arity} argument${arity === 1 ? '' : 's'}, got ${subject.args.length} — a callback's closure is called with nothing, so it passes every argument itself, and what the platform sends when it fires is a parameter the closure declares: callback((d: <date>) => ${subject.movement}(…, d))`,
+          span: subject.span,
+          ...(fix !== undefined ? { fix } : {}),
+        });
       }
       return [];
     }
@@ -8856,6 +8858,40 @@ class Checker {
       });
     }
     return params;
+  }
+
+  /**
+   * The upgrade of `callback(f(x))` (versions 1–4) where `f` has a parameter
+   * left open, read off `f`'s signature: `callback((d: <date>) => f(x, d))`,
+   * each open parameter declared under its own name and type, so the platform
+   * sends what it sent before and `f` is called as before. Only for
+   * positional arguments that leave the trailing parameters open, each a
+   * scalar the platform can send (anything else versions 1–4 refused or bound
+   * by name). Never marked safe: both engines refuse to run a named callback
+   * that leaves a parameter unsupplied ("binds no values at fire time yet"),
+   * so the rewrite turns a run that failed into one that fires — a person
+   * decides that. Where an open parameter's name is already bound here, the
+   * closure's parameter would also hide it from the arguments.
+   */
+  private callbackClosureFix(
+    subject: Extract<CallbackSubject, { kind: 'named' }>,
+    params: MovementParam[],
+  ): DiagnosticFix | undefined {
+    if (subject.args.length >= params.length) return undefined;
+    const args: string[] = [];
+    for (const arg of subject.args) {
+      if (arg.kind !== 'expr' || arg.name !== undefined) return undefined;
+      args.push(arg.expr.raw.trim());
+    }
+    const open: string[] = [];
+    for (const param of params.slice(subject.args.length)) {
+      const type = typeNameOf(param.type);
+      if (type === undefined || type.hopsRaw !== undefined || parseFieldTypeName(type.graph) === undefined) return undefined;
+      open.push(`${spellName(param.name)}: <${type.graph}>`);
+    }
+    const names = params.slice(subject.args.length).map(p => p.name);
+    const text = `(${open.join(', ')}) => ${spellName(subject.movement)}(${[...args, ...names.map(spellName)].join(', ')})`;
+    return { edits: [{ span: subject.span, text }] };
   }
 
   /**

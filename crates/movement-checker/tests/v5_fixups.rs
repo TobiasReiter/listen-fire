@@ -71,6 +71,20 @@ fn a_callback_closure_that_leaves_its_function_a_parameter_open_is_an_arity_erro
     assert_eq!(errors(&program("book(\"Acme\")", "movement"), 4), Vec::<String>::new(), "versions 1–4 unchanged");
 }
 
+#[test]
+fn the_arity_error_carries_the_closure_read_off_the_functions_signature() {
+    let program = |prelude: &str, subject: &str| {
+        format!("function book(name: <text>, day: <date>) {{\n  return \"${{name}} ${{day}}\"\n}}\n\nfunction offer() {{\n{prelude}  pick = callback({subject})\n  return pick.url\n}}")
+    };
+    let fix = |source: &str| {
+        let d = check(source, 5).into_iter().find(|d| d.code == "MOV_CALL_ARITY").expect("an arity error");
+        let fix = d.fix.expect("a fix");
+        (fix["edits"][0]["text"].as_str().unwrap().to_string(), fix.get("safe").is_some())
+    };
+    assert_eq!(fix(&program("", "() => book(\"Acme\")")), ("(day: <date>) => book(\"Acme\", day)".to_string(), false), "never safe: the engines refuse the old form at run time");
+    assert_eq!(fix(&program("  day = \"Acme\"\n", "() => book(day)")), ("(day: <date>) => book(day, day)".to_string(), false));
+}
+
 const CHAT: &str = r#"{"adapters":{"slack":{"constructionArgs":[],"schemas":{"":{"positions":{
   "channel":{"properties":{"Name":"text"},"edges":{"Messages":{"target":"message","readable":true,"sequenced":"chronological"}}},
   "message":{"properties":{"Text":"text"},"edges":{}}},

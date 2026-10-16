@@ -148,7 +148,10 @@ for byte; on text already in the version 5 spelling it changes nothing.
   nothing, so, as in TypeScript, it passes every argument itself; what the platform sends when the
   callback fires is a parameter the closure declares (`callback((d: <date>) => book("Acme", d))`).
   `callback(book)`, a function named bare, still leaves every parameter to the platform. Versions
-  1 to 4 keep `callback(book("Acme"))` filling the last parameter at fire time.
+  1 to 4 keep `callback(book("Acme"))` filling the last parameter at fire time. The diagnostic's
+  fix writes the closure from `book`'s own declaration (each open parameter under its name and
+  type). It is not applied on its own: both engines refuse to run the old form at fire time, so
+  the rewrite turns a run that failed into one that fires.
 - **A package of plugins imported without a name** (`MOV_V5_IMPORT_NEEDS_ALIAS`, the fix adds
   one): ``import { `@lf/web` } from plugins``. Why: its members are called through the name after
   `as` (`web.fetchUrl(u)`), and a tag is no name a program can write, so nothing could call them.

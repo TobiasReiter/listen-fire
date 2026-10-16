@@ -9,6 +9,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram } from '../check';
 import { mockCatalog } from '../catalog';
 import { eventAddressOfHops, eventAddressSource } from '../event_address';
+import { typescriptCheck, upgradeSource } from '../upgrade';
 
 const catalog = mockCatalog({ adapters: {} });
 
@@ -93,6 +94,15 @@ describe('a callback whose closure takes the parameters the acting side fills', 
   it('a function named bare still leaves its parameters to the platform, and 1–4 are unchanged', () => {
     expect(errors(leaving('book', 'function'), 5)).toEqual([]);
     expect(errors(leaving('book("Acme")', 'movement'), 4)).toEqual([]);
+  });
+
+  it("offers the upgrade of `callback(f(x))` off f's signature, the open parameter declared as f declares it, for a person", () => {
+    const held = upgradeSource(leaving('book("Acme")', 'movement'), typescriptCheck({ catalog }));
+    expect(held.source).toContain('pick = callback(() => book("Acme"))');
+    expect(held.held.map(d => d.fix?.edits[0]?.text)).toEqual(['(day: <date>) => book("Acme", day)']);
+    const applied = upgradeSource(leaving('book("Acme")', 'movement'), typescriptCheck({ catalog }), { all: true });
+    expect(applied.remaining).toEqual([]);
+    expect(applied.source).toContain('pick = callback((day: <date>) => book("Acme", day))');
   });
 });
 

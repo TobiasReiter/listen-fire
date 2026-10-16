@@ -844,7 +844,8 @@ impl Checker<'_> {
         if since(self.version, 5) && span.end != name_span.end {
             if args.len() != params.len() {
                 let message = callback_call_arity_message(movement, params.len(), args.len());
-                self.report(codes::CALL_ARITY, message, span);
+                let fix = self.callback_closure_fix(movement, args, &params, span);
+                self.push(Diagnostic { fix, ..Diagnostic::error(codes::CALL_ARITY, message, span) });
             }
             return Vec::new();
         }
@@ -866,6 +867,41 @@ impl Checker<'_> {
             .filter(|p| !supplied.contains(&p.name))
             .map(|param| (param.name.clone(), self.check_callback_param_type(param.type_.as_ref(), &param.name, None, Some(name_span))))
             .collect()
+    }
+
+    /// `callbackClosureFix`: the upgrade of `callback(f(x))` (versions 1–4)
+    /// where `f` has a parameter left open, read off `f`'s signature:
+    /// `callback((d: <date>) => f(x, d))`, each open parameter declared under
+    /// its own name and type, so the platform sends what it sent before and
+    /// `f` is called as before. Only for positional arguments that leave the
+    /// trailing parameters open, each a scalar the platform can send. Never
+    /// marked safe: both engines refuse to run a named callback that leaves a
+    /// parameter unsupplied, so the rewrite turns a run that failed into one
+    /// that fires — a person decides that.
+    fn callback_closure_fix(&self, movement: &str, args: &[CallArg], params: &[MovementParam], span: Span) -> Option<serde_json::Value> {
+        if args.len() >= params.len() {
+            return None;
+        }
+        let mut written = Vec::new();
+        for arg in args {
+            match arg {
+                CallArg::Expr { name: None, expr } => written.push(expr.raw.trim().to_string()),
+                _ => return None,
+            }
+        }
+        let open = &params[args.len()..];
+        let mut declared = Vec::new();
+        for param in open {
+            match &param.type_ {
+                Some(ParamTypeRef::Name(t)) if t.hops_raw.is_none() && parse_field_type_name(Some(&t.graph)).is_some() => {
+                    declared.push(format!("{}: <{}>", spell_name(&param.name), t.graph));
+                }
+                _ => return None,
+            }
+        }
+        written.extend(open.iter().map(|p| spell_name(&p.name)));
+        let text = format!("({}) => {}({})", declared.join(", "), spell_name(movement), written.join(", "));
+        Some(json!({ "edits": [{ "span": span, "text": text }] }))
     }
 
     /// `checkCallbackParamType`: a fire-time parameter is one scalar a
