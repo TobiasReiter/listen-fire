@@ -356,7 +356,8 @@ describe('`_resources` off an adapter record, by language version', () => {
     );
     expect(rust.calls.filter(([method]) => method === 'email.getRelated')).toEqual([]);
     expect(rustRunStats.segments).toBe(1);
-    expect(Object.values(rustRunStats.unsupported)).toEqual([1]);
+    // The engine's own refusal is a failed run, not a shim refusal at the door.
+    expect(rustRunStats.unsupported).toEqual({});
   });
 });
 

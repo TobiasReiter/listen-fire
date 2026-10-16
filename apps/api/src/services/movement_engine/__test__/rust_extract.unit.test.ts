@@ -1,20 +1,21 @@
-// The extraction keyword and plugin calls in the Rust engine (chunk 6A Task
-// 3b), held to the TypeScript engine. Since Henry's ruling of 2026-10-16 the
-// Rust engine refuses the keyword by name on every version
-// (`legacy_extraction`), so a program holding it runs on the TypeScript
-// engine under both settings and the two still agree; the programs here are
-// written for version 4, whose keyword the TypeScript engine keeps. Each
-// program runs under
-// MOVEMENT_ENGINE=ts and =rust against the same fakes, and the two must agree
-// on the result (or the error), the trace, and every request the model client
-// and the plugin invoker received. The corpora (`extraction.unit` and its
-// neighbours) and the recorded runs are the broad oracle; these pin what
-// they cannot: the cost cap on an aliased priced plugin, a model's number
-// past the double range crossing the boundary, a library declaration's
-// words read through the real declaration lookup, and a model's, a plugin's
-// or a file reader's answer the eval wire cannot carry.
+// Extraction calls (`extract`, `extractOne`) and plugin calls in the Rust
+// engine, the version-5 reference. Each program runs against fakes, and what
+// the model client and the plugin invoker were asked, the park writes, and the
+// result (or the error) are held to a snapshot read for correctness when it
+// was recorded. The corpora (`extraction.unit` and its neighbours) and the
+// recorded runs are the broad oracle; these pin what they cannot: the cost
+// cap on an aliased priced plugin, a model's number past the double range
+// crossing the boundary, a library declaration's words read through the real
+// declaration lookup, and a model's, a plugin's or a file reader's answer the
+// eval wire cannot carry.
 
-import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
+import {
+  fromCatalogSnapshot,
+  mockCatalogSnapshot,
+  type InstanceSchema,
+  type PluginSpec,
+} from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { tenantIdOf } from 'engine-contracts';
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -40,7 +41,6 @@ import {
   endedInRust,
 } from 'movement-engine/services/movement_engine/test_host';
 import {
-  MovementRunFailed,
   resumeMovement,
   runFailureCause,
   runMovement,
@@ -173,13 +173,6 @@ interface Case {
   models?: string[];
 }
 
-/** Every program here is written for version 4. */
-const LANGUAGE_VERSION = 4;
-
-/** The extraction keyword, which the Rust engine refuses on every version. */
-const holdsExtractionKeyword = (source: string): boolean =>
-  /\bextract\s+("[^"]*"\s+)?from\s*\[/.test(source);
-
 /** A park sink that suspends, recording each call (its state key for key). */
 function suspendingSink(parked: unknown[]) {
   const base = makeFakeParkSink().sink;
@@ -195,7 +188,18 @@ function suspendingSink(parked: unknown[]) {
   };
 }
 
-/** One run on one engine: what it returned or threw, and what the model
+const spelledFiles = (files: Record<string, { source: string }>) =>
+  Object.fromEntries(
+    Object.entries(files).map(([name, file]) => [name, { source: spelled(file.source) }]),
+  );
+
+const USAGE = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
+
+/** The program as version 5 spells it (the shapes and calls are written so). */
+const spelled = (source: string): string =>
+  spelledFor(5, source, fromCatalogSnapshot(catalog));
+
+/** One run on the Rust engine: what it returned or threw, and what the model
  *  client and the plugin invoker were asked. */
 async function runOn(c: Case) {
   const asked: unknown[] = [];
@@ -204,13 +208,12 @@ async function runOn(c: Case) {
   const replies = [...(c.replies ?? [])];
   const fileText = c.fileText;
   const input: RunMovementInput = {
-    source: PRELUDE + c.source,
-    languageVersion: LANGUAGE_VERSION,
+    source: spelled(PRELUDE + c.source),
     event: c.event ?? EVENT,
     teamId: TEAM_ID,
     catalog: {
       ...catalog,
-      ...(c.files !== undefined ? { files: c.files } : {}),
+      ...(c.files !== undefined ? { files: spelledFiles(c.files) } : {}),
       ...(c.models !== undefined ? { models: c.models } : {}),
     },
     credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
@@ -238,16 +241,9 @@ async function runOn(c: Case) {
               model: request.model,
               effort: request.effort,
               maxTokens: request.maxTokens,
+              blocks: request.blocks.map((b) => b.text),
             });
-            return {
-              parsedJson: replies.shift() ?? {},
-              usage: {
-                inputTokens: 1,
-                outputTokens: 1,
-                cacheReadTokens: 0,
-                cacheCreationTokens: 0,
-              },
-            };
+            return { parsedJson: replies.shift() ?? {}, usage: USAGE };
           },
         },
         transforms: {
@@ -271,7 +267,7 @@ async function runOn(c: Case) {
  *  at its check, and what the model was asked, the plugins invoked, the parks
  *  and the run's result (or failure) held to the recorded snapshot, read for
  *  correctness when it was recorded. */
-async function agree(c: Case, expected: { runsWhole: true } | { endsAtCheck: true }) {
+async function onRust(c: Case, expected: { runsWhole: true } | { endsAtCheck: true }) {
   resetRustRunStats();
   const rust = await runOn(c);
   const rustError = 'error' in rust ? rust.error : undefined;
@@ -279,78 +275,76 @@ async function agree(c: Case, expected: { runsWhole: true } | { endsAtCheck: tru
     'endsAtCheck' in expected ? expect.stringContaining('MOVENG_CHECK') : 'reached the engine',
   );
   expect(rustRunStats).toMatchObject(endedInRust(rustError));
-  expect({
-    asked: rust.asked,
-    invoked: rust.invoked,
-    parked: rust.parked,
-    outcome: 'error' in rust ? String(rust.error) : JSON.stringify(rust.result),
-  }).toMatchSnapshot();
+  // As JSON text: a lone surrogate a case sends through survives the snapshot
+  // file only escaped.
+  expect(
+    JSON.stringify(
+      {
+        asked: rust.asked,
+        invoked: rust.invoked,
+        parked: rust.parked,
+        outcome: 'error' in rust ? String(rust.error) : rust.result,
+      },
+      null,
+      2,
+    ),
+  ).toMatchSnapshot();
   return rust;
 }
 
-const wrap = (value: unknown) => ({ evidence: 'q', value });
+const cite = (value: unknown) => ({ value, evidence: { item: 0, quote: 'q' } });
 
-describe('the extraction keyword and plugin calls on both engines', () => {
+/** The one record `extractOne` answers (its fields, each cited). */
+const one = (record: Record<string, unknown>) => ({ record });
+
+const NAMED = 'node Named: "the company described" {\n  name: <text> "the company"\n}\n';
+const named = one({ name: cite('Acme') });
+
+/** The program calling `extractOne` over `content` for the shape `Named`. */
+const askNamed = (content: string) =>
+  `${NAMED}movement m(msg: <inbox-[:message]->>) {\n  found = extractOne(${content}, Named)\n}`;
+
+describe('extraction calls and plugin calls in the Rust engine', () => {
   it('refuses an ALIASED priced plugin once the run has spent its cap, without asking the host', async () => {
-    const spent = { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 };
-    const through = [
-      'import { fetch_url as fetch } from plugins',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] through [fetch(url: msg.`text`)] {',
-      '    name: "the company"',
-      '  }',
-      '}',
-    ].join('\n');
-    const plain = [
+    const source = [
       'import { fetch_url as fetch } from plugins',
       'movement m(msg: <inbox-[:message]->>) {',
       '  page = fetch(url: msg.`text`)',
       '}',
     ].join('\n');
-    for (const source of [through, plain]) {
-      const ts = await agree({ source, spend: spent }, { runsWhole: true });
-      // The registered name is what is priced: the cap stops it before the
-      // host is asked, however the import named it.
-      expect('error' in ts && runFailureCause(ts.error)).toBeInstanceOf(RunCostCapExceeded);
-      expect(ts.invoked).toEqual([]);
-    }
+    const spent = { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 };
+    const refused = await onRust({ source, spend: spent }, { runsWhole: true });
+    // The registered name is what is priced: the cap stops it before the
+    // host is asked, however the import named it.
+    expect('error' in refused && runFailureCause(refused.error)).toBeInstanceOf(RunCostCapExceeded);
+    expect(refused.invoked).toEqual([]);
     // Under the cap the plugin is invoked by the name it is registered under.
-    const ts = await agree(
-      { source: through, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] },
-      { runsWhole: true },
-    );
-    expect(ts.invoked).toEqual([
+    const under = await onRust({ source }, { runsWhole: true });
+    expect(under.invoked).toEqual([
       { plugin: 'fetch_url', config: { url: 'Acme raised 3 million.' } },
     ]);
   });
 
   it('reads a model number past the double range as JSON.parse left it: refused, and asked again', async () => {
     const source = [
+      'node Raise: "the raise described" {',
+      '  amount: <number> "the amount raised"',
+      '}',
       'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] {',
-      '    amount: <number> "the amount raised"',
-      '  }',
+      '  found = extractOne([msg.`text`], Raise)',
       '}',
     ].join('\n');
-    const ts = await agree(
+    const rust = await onRust(
       {
         source,
-        // `JSON.parse('1e999')` is Infinity, which zod's number check refuses.
-        replies: [
-          { 'x:extract_result#1': [{ amount: wrap(Infinity) }] },
-          { 'x:extract_result#1': [{ amount: wrap(3000000) }] },
-        ],
+        // `JSON.parse('1e999')` is Infinity, which the number check refuses.
+        replies: [one({ amount: cite(Infinity) }), one({ amount: cite(3000000) })],
       },
       { runsWhole: true },
     );
-    expect(ts.asked).toHaveLength(2);
-    const trace = 'result' in ts && ts.result !== undefined ? ts.result.trace : [];
-    expect(trace[0]).toMatchObject({
-      kind: 'extraction',
-      retried: [
-        '  - x:extract_result#1.0.amount.value: Invalid input: expected number, received number',
-      ],
-    });
+    expect(rust.asked).toHaveLength(2);
+    const trace = 'result' in rust && rust.result !== undefined ? rust.result.trace : [];
+    expect(trace[0]).toMatchObject({ kind: 'extraction', retried: [expect.stringContaining('amount')] });
   });
 
   it("reads a library declaration's words, its base's included, in the library's own file", async () => {
@@ -365,22 +359,21 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const source = [
       'import { Deal } from "lib/deals"',
       'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] {',
-      '    node deal: <Deal>',
-      '  }',
+      '  found = extractOne([msg.`text`], Deal)',
       '}',
     ].join('\n');
-    const ts = await agree(
+    const rust = await onRust(
       {
         source,
         files: { 'lib/deals': { source: library } },
-        replies: [
-          { 'x:extract_result#1': [{ deal: [{ name: wrap('Acme'), stage: wrap('Seed') }] }] },
-        ],
+        replies: [one({ name: cite('Acme'), stage: cite('Seed') })],
       },
       { runsWhole: true },
     );
-    expect(ts.asked).toHaveLength(1);
+    expect(rust.asked).toHaveLength(1);
+    const shape = String(Reflect.get(rust.asked[0] as object, 'blocks')).toLowerCase();
+    expect(shape).toContain('its name');
+    expect(shape).toContain('its stage');
   });
 
   // PLAN-08A group F: a library's function runs in its library's own scope
@@ -390,22 +383,22 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   const TRIAGE = [
     'lens = "by the library\'s lens"',
     'type Verdict = <"Keep" | "Drop">',
-    'node Local: "each company, ${lens}" {',
-    '  verdict: <Verdict> "keep or drop"',
+    'node Batch: "the batch" {',
+    '  overall: <Verdict> "the batch"',
+    '  node entry: "each company, ${lens}" {',
+    '    verdict: <Verdict> "keep or drop"',
+    '  }',
     '}',
     'export node Note {',
     '  body: <text>',
     '}',
     'export function triage(n: <Note>) {',
-    '  found = extract from [n.body] {',
-    '    overall: <Verdict> "the batch"',
-    '    node entry: <Local>',
-    '  }',
+    '  found = extractOne([n.body], Batch)',
     '  copy = FIRST(MAP([n], (v) => {',
     '    g = graph { ...v }',
     '    return g',
     '  }))',
-    '  return CONCAT(copy.body, "/", COALESCE(found.overall, "none"))',
+    '  return CONCAT(copy.body, "/", IF found == null THEN "none" ELSE found.overall END)',
     '}',
   ].join('\n');
 
@@ -415,25 +408,27 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       'lens = "the importer\'s lens"',
       'type Verdict = <"Yes" | "No">',
       'movement m(msg: <inbox-[:message]->>) {',
-      '  r = route(n: node { body: msg.`text` })',
+      '  r = route(node { body: msg.`text` })',
       '  return r',
       '}',
     ].join('\n');
-    const ts = await agree(
+    const rust = await onRust(
       {
         source,
         files: { 'lib/triage': { source: TRIAGE } },
-        replies: [
-          { 'x:extract_result#1': [{ overall: wrap('Keep'), entry: [{ verdict: wrap('Drop') }] }] },
-        ],
+        replies: [one({ overall: cite('Keep'), entry: [{ verdict: cite('Drop') }] })],
       },
       { runsWhole: true },
     );
-    expect('error' in ts ? String(ts.error) : 'ran').toBe('ran');
-    expect(ts.asked).toHaveLength(1);
+    expect('error' in rust ? String(rust.error) : 'ran').toBe('ran');
+    expect(rust.asked).toHaveLength(1);
+    // The shape's words are the library's, not the importer's.
+    const blocks = String(Reflect.get(rust.asked[0] as object, 'blocks'));
+    expect(blocks).toContain("by the library's lens");
+    expect(blocks).not.toContain("the importer's lens");
   });
 
-  it("parks inside a library's function, and a shape declared in a body, as the TypeScript does; either engine's park resumes alike", async () => {
+  it("parks inside a library's function, and a shape declared in a body; the park resumes to the same writes", async () => {
     const library = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
@@ -448,22 +443,20 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '  await sleep(1h)',
       '  t = graph<Tag> { label: n.body }',
       '  write crm-[:companies]-> { name: t.label }',
-      '  found = extract from [n.body] {',
-      '    node tag: <Tag>',
-      '  }',
-      '  found-[g:tag]-> {',
-      '    write crm-[:companies]-> { name: g.label }',
+      '  found = extractOne([n.body], Tag)',
+      '  if found != null {',
+      '    write crm-[:companies]-> { name: found.label }',
       '  }',
       '}',
     ].join('\n');
     const source = [
       'import { keep } from "lib/keep"',
       'movement m(msg: <inbox-[:message]->>) {',
-      '  keep(n: node { body: msg.`text` })',
+      '  keep(node { body: msg.`text` })',
       '}',
     ].join('\n');
     const files = { 'lib/keep': { source: library } };
-    const reply = { 'x:extract_result#1': [{ tag: [{ label: wrap('Infra') }] }] };
+    const reply = one({ label: cite('Infra') });
     function hostWith(park: ReturnType<typeof makeFakeParkSink>, creates: unknown[]) {
       const crm: Adapter = {
         ...emailAdapter(),
@@ -475,85 +468,36 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       };
       return makeTestHost({
         adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
-        llm: {
-          client: {
-            call: async (request) => ({
-              parsedJson: request.userMessage === undefined ? {} : reply,
-            }),
-          },
-        },
+        llm: { extractCall: { call: async () => ({ parsedJson: reply, usage: USAGE }) } },
         park: { sink: park.sink },
       });
     }
-    const input = { ...baseInput(source), catalog: { ...catalog, files } };
-    async function on<T>(engine: 'ts' | 'rust', run: () => Promise<T>): Promise<T> {
-      const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = engine;
-      try {
-        return await run();
-      } finally {
-        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-        else process.env.MOVEMENT_ENGINE = previous;
-      }
-    }
-    const parkOn = (engine: 'ts' | 'rust') =>
-      on(engine, async () => {
-        const park = makeFakeParkSink();
-        await runMovement({ ...input, host: hostWith(park, []) });
-        expect(park.timerParks).toHaveLength(1);
-        return JSON.stringify(park.timerParks[0]?.state);
-      });
-    const resumedOn = (engine: 'ts' | 'rust', state: string) =>
-      on(engine, async () => {
-        const creates: unknown[] = [];
-        resetRustRunStats();
-        const result = await resumeMovement({
-          ...input,
-          state: JSON.parse(state) as ParkedScopeState,
-          host: hostWith(makeFakeParkSink(), creates),
-        });
-        // The extraction keyword: refused by name, so the TypeScript engine parks it.
-        if (engine === 'rust')
-          expect(rustRunStats).toMatchObject({
-            routed: 1,
-            ranWhole: 0,
-            notAdmitted: { legacy_extraction: 1 },
-            shimFaults: 0,
-          });
-        return { creates, writes: result.writes, trace: result.trace };
-      });
-    const ts = await parkOn('ts');
+    const input = { ...baseInput(source), catalog: { ...catalog, files: spelledFiles(files) } };
+    const park = makeFakeParkSink();
     resetRustRunStats();
-    const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({
-      routed: 1,
-      ranWhole: 0,
-      notAdmitted: { legacy_extraction: 1 },
-      shimFaults: 0,
+    await runMovement({ ...input, host: hostWith(park, []) });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(park.timerParks).toHaveLength(1);
+    const state = JSON.stringify(park.timerParks[0]?.state);
+    expect(state).toContain('"kind":"localShape"');
+    const creates: unknown[] = [];
+    resetRustRunStats();
+    const resumed = await resumeMovement({
+      ...input,
+      state: JSON.parse(state) as ParkedScopeState,
+      host: hostWith(makeFakeParkSink(), creates),
     });
-    expect(rust).toBe(ts);
-    expect(ts).toContain('"kind":"localShape"');
-    const resumed = await resumedOn('ts', ts);
-    expect(resumed.creates).toEqual([
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(creates).toEqual([
       { fields: { name: 'Acme raised 3 million.' } },
       { fields: { name: 'Infra' } },
     ]);
-    for (const [engine, state] of [
-      ['ts', rust],
-      ['rust', ts],
-      ['rust', rust],
-    ] as const) {
-      const other = await resumedOn(engine, state);
-      expect(JSON.stringify(other.creates)).toBe(JSON.stringify(resumed.creates));
-      expect(other.writes).toEqual(resumed.writes);
-      expect(other.trace).toEqual(resumed.trace);
-    }
+    expect(resumed.writes).toHaveLength(2);
   });
 
   // The tier is a run input on Rust (`extractionTiers`), the deployment's
-  // EXTRACTION_TIERS as the TypeScript engine reads it, and AI()'s tiers a
-  // fixed table: both engines ask the same models at the same depths.
-  it("asks each tier's model and depth, the deployment's assignment over the built-in row, as the TypeScript engine does", async () => {
+  // EXTRACTION_TIERS, and AI()'s tiers a fixed table.
+  it("asks each tier's model and depth, the deployment's assignment over the built-in row", async () => {
     const previous = process.env.EXTRACTION_TIERS;
     try {
       for (const tiers of [
@@ -562,27 +506,22 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       ]) {
         if (tiers === undefined) delete process.env.EXTRACTION_TIERS;
         else process.env.EXTRACTION_TIERS = tiers;
-        for (const tier of ['"quick" ', '"careful" ', '"thorough" ', '"smart" ', '']) {
-          const source = `movement m(msg: <inbox-[:message]->>) {\n  d = extract ${tier}from [msg.\`text\`] {\n    name: "a"\n  }\n  return AI("why ${tier.length}", ${tier === '' ? '"careful"' : tier.trim()})\n}`;
-          const ts = await agree(
-            {
-              source,
-              replies: [
-                { 'x:extract_result#1': [{ name: wrap('Acme') }] },
-                { value: 'because', has_value: true },
-              ],
-            },
+        for (const tier of ['"quick"', '"careful"', '"thorough"', '"smart"', '']) {
+          const config = tier === '' ? '' : `, { tier: ${tier} }`;
+          const source = `${NAMED}movement m(msg: <inbox-[:message]->>) {\n  d = extractOne([msg.\`text\`], Named${config})\n  return AI("why ${tier.length}", ${tier === '' ? '"careful"' : tier})\n}`;
+          const rust = await onRust(
+            { source, replies: [named, { value: 'because', has_value: true }] },
             { runsWhole: true },
           );
-          expect(ts.asked).toHaveLength(2);
-          if (tiers !== undefined && tier === '"careful" ') {
-            expect(ts.asked).toMatchObject([
+          expect(rust.asked).toHaveLength(2);
+          if (tiers !== undefined && tier === '"careful"') {
+            expect(rust.asked).toMatchObject([
               { model: 'claude-opus-5', effort: 'medium', maxTokens: undefined },
               { model: 'sonnet', effort: undefined },
             ]);
           }
-          if (tiers === undefined && tier === '"thorough" ') {
-            expect(ts.asked).toMatchObject([
+          if (tiers === undefined && tier === '"thorough"') {
+            expect(rust.asked).toMatchObject([
               { model: 'sonnet', effort: 'xhigh', maxTokens: 64000 },
               { model: 'opus5', maxTokens: 64000 },
             ]);
@@ -596,7 +535,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   });
 
   // One model list (PLAN-08B Task 1): the snapshot's `models`, which the
-  // checker holds a written model to, is the list both engines hold it to at
+  // checker holds a written model to, is the list the engine holds it to at
   // run time (`runChatModels`); a snapshot without one gets the deployment's
   // (`availableChatModels`), and the model is then unchecked.
   describe("an extraction call's written model, held to the run's one list", () => {
@@ -604,9 +543,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     const calling = (model: string) =>
       `${company}movement m(msg: <inbox-[:message]->>) {\n  found = extract([msg.\`text\`], Company, { model: '${model}' })\n  return COUNT(found)\n}`;
 
-    it('runs a listed model whole, the model asked the one written, on both engines', async () => {
+    it('runs a listed model whole, the model asked the one written', async () => {
       for (const models of [undefined, ['claude-opus-5', 'claude-sonnet-5']]) {
-        const ts = await agree(
+        const rust = await onRust(
           {
             source: calling('claude-opus-5'),
             replies: [{ records: [] }],
@@ -614,27 +553,27 @@ describe('the extraction keyword and plugin calls on both engines', () => {
           },
           { runsWhole: true },
         );
-        expect(ts.asked).toMatchObject([{ model: 'claude-opus-5' }]);
+        expect(rust.asked).toMatchObject([{ model: 'claude-opus-5' }]);
       }
     });
 
-    it('ends a checked program naming a model outside the list at its check, on both engines alike', async () => {
-      const ts = await agree(
+    it('ends a checked program naming a model outside the list at its check', async () => {
+      const rust = await onRust(
         { source: calling('claude-opus-5'), models: ['claude-sonnet-5'] },
         { endsAtCheck: true },
       );
-      expect('error' in ts && runFailureCause(ts.error)).toMatchObject({
+      expect('error' in rust && runFailureCause(rust.error)).toMatchObject({
         code: 'MOVENG_CHECK',
         message: expect.stringContaining('not a model this deployment reaches'),
       });
-      expect(ts.asked).toEqual([]);
+      expect(rust.asked).toEqual([]);
     });
 
-    it('fails an unchecked program naming a model outside the list identically on both engines, the list printed', async () => {
+    it('fails an unchecked program naming a model outside the list, the list printed', async () => {
       // No `models` on the snapshot: the checker leaves the model unchecked,
       // and the run holds it to the deployment's list.
-      const ts = await agree({ source: calling('claude-sonnet-4-6') }, { runsWhole: true });
-      const cause = 'error' in ts ? runFailureCause(ts.error) : undefined;
+      const rust = await onRust({ source: calling('claude-sonnet-4-6') }, { runsWhole: true });
+      const cause = 'error' in rust ? runFailureCause(rust.error) : undefined;
       expect(cause).toBeInstanceOf(MovementEngineError);
       expect(cause).toMatchObject({
         code: 'MOVENG_RUNTIME',
@@ -642,7 +581,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
           .map((m) => `'${m}'`)
           .join(', ')}`,
       });
-      expect(ts.asked).toEqual([]);
+      expect(rust.asked).toEqual([]);
     });
   });
 
@@ -651,10 +590,11 @@ describe('the extraction keyword and plugin calls on both engines', () => {
   // closes it.
   it.failing('runs a file-level value holding a nested call', async () => {
     resetRustRunStats();
-    await runOn({
+    const r = await runOn({
       source: `import { echo } from plugins\nsaid = { page: echo(q: "x") }\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
     });
-    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    // The engine's own refusal fails the run (it is not counted at the door).
+    expect('error' in r ? String(r.error) : 'ran').toBe('ran');
   });
 
   it('runs a plugin argument that calls a closure whole, its value what the closure returns (PLAN-08A Task 2)', async () => {
@@ -664,46 +604,40 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
   });
 
-  // The checker's MOV_SHAPE_FIELD_PROTO: the run ends at the check on both
-  // engines, the Rust one having admitted it and asked for the check.
-  it('ends a run whose extraction declares a field or node named __proto__ at the check, on both engines alike', async () => {
-    const extract = (indent: string) =>
-      [
-        `${indent}d = extract from [msg.\`text\`] {`,
-        `${indent}  __proto__: "p"`,
-        `${indent}  name: "n"`,
-        `${indent}}`,
-      ].join('\n');
+  // The checker's MOV_SHAPE_FIELD_PROTO: the run ends at the check.
+  it('ends a run whose extraction declares a field or node named __proto__ at the check', async () => {
+    const flat = 'node Entry {\n  __proto__: <text> "p"\n  name: <text> "n"\n}\n';
+    const call = (indent: string) => `${indent}d = extractOne([msg.\`text\`], Entry)`;
     const fan = [
       '  ys = MAP([1, 2], { onError: "ignore" }, (x) => {',
-      extract('    '),
+      call('    '),
       '    return d',
       '  })',
       '  return ys',
     ].join('\n');
     const declared =
-      'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  d = extract from [msg.`text`] {\n    node entry: <Entry>\n  }\n}';
-    const reply = { 'x:extract_result#1': [{ __proto__: wrap(3), name: wrap('Acme') }] };
+      'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  d = extractOne([msg.`text`], Entry)\n}';
+    const reply = one({ __proto__: cite(3), name: cite('Acme') });
     const sources = [
-      `${extract('  ')}\n  return d`,
+      `${call('  ')}\n  return d`,
       fan,
       `  if 1 == 1 {\n    g = 1\n  }\n${fan}`,
-    ].map((body) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
+    ].map((body) => `${flat}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
     for (const source of [...sources, declared]) {
-      const ts = await agree({ source, replies: [reply, reply, reply] }, { endsAtCheck: true });
-      expect('error' in ts && runFailureCause(ts.error)).toMatchObject({
+      const rust = await onRust({ source, replies: [reply, reply, reply] }, { endsAtCheck: true });
+      expect('error' in rust && runFailureCause(rust.error)).toMatchObject({
         code: 'MOVENG_CHECK',
         message: expect.stringContaining('MOV_SHAPE_FIELD_PROTO'),
       });
-      expect(ts.asked).toEqual([]);
+      expect(rust.asked).toEqual([]);
     }
   });
 
-  it('suspends before a plugin call a suspendAt names, as the TypeScript engine does: it never invokes the plugin', async () => {
+  it('suspends before a plugin call a suspendAt names: it never invokes the plugin', async () => {
     const source =
       'import { fetch_url } from plugins\nmovement m(msg: <inbox-[:message]->>) {\n  page = fetch_url(url: msg.`text`)\n}';
     // With a sink that can suspend: the run parks before the call.
-    const parked = await agree(
+    const parked = await onRust(
       { source, spend: { suspendAt: ['s0.c0'] }, parks: true },
       { runsWhole: true },
     );
@@ -712,14 +646,14 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       ['commitSuspension', 's0', expect.stringContaining('"suspended":true')],
     ]);
     // Without one, there is nowhere to park.
-    const failed = await agree({ source, spend: { suspendAt: ['s0.c0'] } }, { runsWhole: true });
+    const failed = await onRust({ source, spend: { suspendAt: ['s0.c0'] } }, { runsWhole: true });
     expect(failed.invoked).toEqual([]);
     expect('error' in failed && String(runFailureCause(failed.error))).toContain(
       'nowhere durable to park',
     );
   });
 
-  it('suspends inside a block where the cap is met at an extraction’s priced stage, as the TypeScript engine does', async () => {
+  it('suspends inside a block where the cap is met at a priced plugin call', async () => {
     const source = [
       'import { fetch_url } from plugins',
       'import { attio } from adapters',
@@ -727,9 +661,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       'crm = attio(credentials: acme_main)',
       'movement m(msg: <inbox-[:message]->>) {',
       '  crm-[e:companies]-> {',
-      '    d = extract from [e.`name`] through [fetch_url(url: e.`name`)] {',
-      '      name: "a"',
-      '    }',
+      '    page = fetch_url(url: e.`name`)',
       '  }',
       '}',
     ].join('\n');
@@ -738,10 +670,9 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       spend: { priorSpentMicrodollars: 1000, costCapMicrodollars: 1000 },
       messages: [{ name: 'one' }, { name: 'two' }],
     };
-    const parked = await agree({ ...c, parks: true }, { runsWhole: true });
+    const parked = await onRust({ ...c, parks: true }, { runsWhole: true });
     expect(parked.invoked).toEqual([]);
-    // The pause first, then each member's suspension, in that order (and
-    // the same text on both engines: `agree` compared them).
+    // The pause first, then each member's suspension, in that order.
     expect(parked.parked.map((p) => (p as unknown[])[0])).toEqual([
       'commitLimitPause',
       'commitSuspension',
@@ -750,126 +681,92 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     expect((parked.parked[0] as unknown[])[1]).toMatch(
       /^\{"limit":"cost","capMicrodollars":\d+,"spentMicrodollars":\d+,"segmentId":"[^"]+"\}$/,
     );
-    const failed = await agree(c, { runsWhole: true });
+    const failed = await onRust(c, { runsWhole: true });
     expect('error' in failed && runFailureCause(failed.error)).toBeInstanceOf(RunCostCapExceeded);
   });
 
   describe('records held as values reaching a request', () => {
-    const companies = {
-      'x:extract_result#1': [{ company: [{ name: wrap('Acme') }, { name: wrap('Globex') }] }],
-    };
-    const found = [
-      '  found = extract from [msg.`text`] {',
-      '    node company: "each company named" {',
-      '      name: "the company\'s name"',
-      '    }',
-      '  }',
-    ];
+    const DEALS =
+      'node Deals: "the deals described" {\n  node company: "each company named" {\n    name: <text> "the company\'s name"\n  }\n}\n';
+    const companies = one({ company: [{ name: cite('Acme') }, { name: cite('Globex') }] });
+    const found = ['  found = extractOne([msg.`text`], Deals)'];
 
-    it("keeps the entities a head's WHERE over a held extraction holds for, on both engines", async () => {
+    it("keeps the entities a head's WHERE over a held extraction holds for", async () => {
       const source = [
-        'movement m(msg: <inbox-[:message]->>) {',
+        `${DEALS}movement m(msg: <inbox-[:message]->>) {`,
         ...found,
-        '  held = [found]',
-        '  held-[c:company WHERE c.`name` == "Acme"]-> {',
-        '    x = c.`name`',
+        '  if found != null {',
+        '    held = [found]',
+        '    held-[c:company WHERE c.`name` == "Acme"]-> {',
+        '      x = c.`name`',
+        '    }',
         '  }',
         '}',
       ].join('\n');
-      const ts = await agree({ source, replies: [companies] }, { runsWhole: true });
-      expect('error' in ts && ts.error).toBeFalsy();
+      const rust = await onRust({ source, replies: [companies] }, { runsWhole: true });
+      expect('error' in rust && rust.error).toBeFalsy();
     });
 
     it('ends the event inside an input at the check (its deck is a file), and writes any other record there as its fields', async () => {
       // Main's record walk (group G): every record in an extraction input is
       // checked at any depth, and one whose fields include a file is refused
-      // (MOV_EXTRACT_CONTENT) — the event's `deck` is one — on both engines,
-      // before either is asked.
-      const source = [
-        'movement m(msg: <inbox-[:message]->>) {',
-        '  held = [msg]',
-        '  found = extract from [held, msg.`text`] {',
-        '    name: "the company"',
-        '  }',
-        '}',
-      ].join('\n');
-      const ts = await agree(
-        { source, replies: [{ 'x:extract_result#1': [{ name: wrap('Acme') }] }] },
-        { endsAtCheck: true },
+      // (MOV_EXTRACT_CONTENT) — the event's `deck` is one — before the engine
+      // is asked.
+      const source = askNamed('[...held, msg.`text`]').replace(
+        '  found =',
+        '  held = [msg]\n  found =',
       );
-      expect('error' in ts && String(ts.error)).toContain('MOV_EXTRACT_CONTENT');
-      expect(ts.asked).toEqual([]);
+      const rust = await onRust({ source, replies: [named] }, { endsAtCheck: true });
+      expect('error' in rust && String(rust.error)).toContain('MOV_EXTRACT_CONTENT');
+      expect(rust.asked).toEqual([]);
       const again = [
-        'movement m(msg: <inbox-[:message]->>) {',
+        `${DEALS}${NAMED}movement m(msg: <inbox-[:message]->>) {`,
         ...found,
-        '  more = extract from [found] {',
-        '    name: "the company"',
+        '  if found != null {',
+        '    more = extractOne([TEXT.SERIALISE(found, "JSON")], Named)',
         '  }',
         '}',
       ].join('\n');
-      // An earlier extraction's result runs on Rust too, written into the
-      // prompt as its fields, byte for byte as the TypeScript's: the root's
-      // own fields are none (its companies are an edge, not a field).
-      const whole = await agree(
-        { source: again, replies: [companies, { 'x:extract_result#1': [{ name: wrap('Acme') }] }] },
-        { runsWhole: true },
-      );
-      expect(whole.asked).toEqual([
-        expect.objectContaining({ userMessage: '## TEXT\nAcme raised 3 million.' }),
-        expect.objectContaining({ userMessage: '## FRAGMENT\n{}' }),
-      ]);
+      // An earlier extraction's result goes into the prompt as the text it is
+      // rendered to.
+      const whole = await onRust({ source: again, replies: [companies, named] }, { runsWhole: true });
+      expect(whole.asked).toHaveLength(2);
+      expect(String(Reflect.get(whole.asked[1] as object, 'blocks'))).toContain('Globex');
     });
 
-    it("ends the event, and any other record, inside a plugin's argument at the check, a through stage's included", async () => {
+    it("ends the event, and any other record, inside a plugin's argument at the check", async () => {
       const program = (body: string) =>
         ['import { echo } from plugins', 'movement m(msg: <inbox-[:message]->>) {', body, '}'].join(
           '\n',
         );
-      const through = (arg: string, before: readonly string[] = []) =>
-        program(
-          [
-            ...before,
-            `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`,
-            '    name: "the company"',
-            '  }',
-          ].join('\n'),
-        );
-      const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
-      // A through stage's argument is held to what the plugin takes, as a
-      // plain call's is (main's record walk, group G): the event inside a
-      // value ends at the check on both engines, before either is asked.
-      for (const arg of ['[msg]', '{ k: msg }']) {
-        const ts = await agree({ source: through(arg), replies: [named] }, { endsAtCheck: true });
-        expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
-        expect(ts.invoked).toEqual([]);
-      }
       // A call's argument is typed: the checker refuses a record inside it
-      // (the event's included, MOV_CALL_ARG_TYPE) on both engines, before
-      // either engine is asked.
+      // (the event's included, MOV_CALL_ARG_TYPE), before the engine is asked.
       for (const arg of ['[msg]', '{ k: msg }']) {
-        const ts = await agree({ source: program(`  x = echo(q: ${arg})`) }, { endsAtCheck: true });
-        expect('error' in ts && String(ts.error)).toContain('MOV_CALL_ARG_TYPE');
-        expect(ts.invoked).toEqual([]);
+        const rust = await onRust(
+          { source: program(`  x = echo(q: ${arg})`) },
+          { endsAtCheck: true },
+        );
+        expect('error' in rust && String(rust.error)).toContain('MOV_CALL_ARG_TYPE');
+        expect(rust.invoked).toEqual([]);
       }
-      // The event alone, in a through stage: its argument is now held as a
-      // plain call's is, so it ends at the check as the call below does (the
-      // event's `deck` is a file).
-      const staged = await agree(
-        { source: through('msg'), replies: [named] },
-        { endsAtCheck: true },
-      );
-      expect('error' in staged && String(staged.error)).toContain("'q.deck' is file");
-      // As a call's argument it ends at the check: a record handed whole to
+      // The event alone ends at the check: a record handed whole to
       // structured data carries its fields, and the event's `deck` is a file
       // (main's file rule, MOV_CALL_ARG_TYPE at 'q.deck').
-      const whole = await agree({ source: program('  x = echo(q: msg)') }, { endsAtCheck: true });
+      const whole = await onRust({ source: program('  x = echo(q: msg)') }, { endsAtCheck: true });
       expect('error' in whole && String(whole.error)).toContain("'q.deck' is file");
       expect(whole.invoked).toEqual([]);
-      // Any other record inside a through stage's argument ends at the check
-      // too: before main's record walk it reached the Rust engine, which
-      // refused it by name (plugin_arg_record).
-      const held = await agree(
-        { source: through('[found]', found), replies: [companies, named] },
+      // Any other record inside a call's argument ends at the check too.
+      const held = await onRust(
+        {
+          source: [
+            `${DEALS}import { echo } from plugins`,
+            'movement m(msg: <inbox-[:message]->>) {',
+            ...found,
+            '  x = echo(q: [found])',
+            '}',
+          ].join('\n'),
+          replies: [companies],
+        },
         { endsAtCheck: true },
       );
       expect('error' in held && String(held.error)).toContain('MOV_CALL_ARG_TYPE');
@@ -877,19 +774,17 @@ describe('the extraction keyword and plugin calls on both engines', () => {
     });
   });
 
-  it("hands a through stage's plugin a record named bare as its fields, as a plain call's argument is handed them", async () => {
-    const named = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+  it("hands a plugin a record named bare as its fields", async () => {
     const program = (before: readonly string[], arg: string) =>
       [
+        NAMED,
         'import { echo } from plugins',
         'import { attio } from adapters',
         'import { acme_main } from credentials',
         'crm = attio(credentials: acme_main)',
         'movement m(msg: <inbox-[:message]->>) {',
         ...before,
-        `  d = extract from [msg.\`text\`] through [echo(q: ${arg})] {`,
-        '    name: "the company"',
-        '  }',
+        `  d = echo(q: ${arg})`,
         '}',
       ].join('\n');
     const cases: Array<{
@@ -901,50 +796,46 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       {
         before: ['  co = write crm-[:companies]-> { name: "Acme" }'],
         arg: 'co',
-        replies: [named],
+        replies: [],
         fields: { name: 'Acme' },
       },
       {
-        before: ['  e = extract from [msg.`text`] {', '    name: "the company"', '  }'],
+        before: ['  e = extractOne([msg.`text`], Named)', '  if e != null {'],
         arg: 'e',
-        replies: [named, named],
+        replies: [named],
         fields: { name: 'Acme' },
       },
-      { before: ['  n = node { title: "t" }'], arg: 'n', replies: [named], fields: { title: 't' } },
+      { before: ['  n = node { title: "t" }'], arg: 'n', replies: [], fields: { title: 't' } },
     ];
     for (const c of cases) {
-      const ts = await agree(
-        { source: program(c.before, c.arg), replies: c.replies },
-        { runsWhole: true },
+      const closing = c.before.includes('  if e != null {') ? '  }' : undefined;
+      const source = program(c.before, c.arg).replace(
+        /\n}$/,
+        closing === undefined ? '\n}' : `\n${closing}\n}`,
       );
-      expect(ts.invoked).toEqual([
+      const rust = await onRust({ source, replies: c.replies }, { runsWhole: true });
+      expect(rust.invoked).toEqual([
         { plugin: 'echo', config: { q: expect.objectContaining(c.fields) } },
       ]);
     }
   });
 
-  describe('a model reply holding a lone surrogate (transition artefacts row 9: read on, on both engines)', () => {
-    const source = [
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] {',
-      '    name: "the company"',
-      '  }',
-      '}',
-    ].join('\n');
+  describe('a model reply holding a lone surrogate (transition artefacts row 9: read on)', () => {
     // `JSON.parse`, so the surrogate is the reply's own. (A reply's own
     // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
-    const lone = JSON.parse('{"x:extract_result#1":[{"name":{"evidence":"q","value":"\\ud800"}}]}');
+    const lone = JSON.parse('{"record":{"name":{"evidence":{"item":0,"quote":"q"},"value":"\\ud800"}}}');
 
-    it('reads the reply as it is, in one call, as the TypeScript does', async () => {
-      const ts = await agree({ source, replies: [lone] }, { runsWhole: true });
-      expect(ts.asked.map((a) => Reflect.get(a as object, 'label'))).toEqual([
-        'movement_extraction',
-      ]);
-      expect(JSON.stringify('result' in ts ? ts.result : undefined)).toContain('\\ud800');
+    it('reads the reply as it is, in one call', async () => {
+      const rust = await onRust(
+        { source: askNamed('[msg.`text`]'), replies: [lone] },
+        { runsWhole: true },
+      );
+      expect(rust.asked).toHaveLength(1);
+      expect(JSON.stringify('result' in rust ? rust.result : undefined)).toContain('\\ud800');
     });
   });
 
-  describe("a plugin's or a file reader's answer holding a lone surrogate (transition artefacts row 9: read on, on both engines)", () => {
+  describe("a plugin's or a file reader's answer holding a lone surrogate (transition artefacts row 9: read on)", () => {
     // `JSON.parse`, so the surrogate is the answer's own. (An answer's own
     // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"text":"\\ud800"}');
@@ -962,34 +853,27 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '  ERROR("${TEXT.SERIALISE(page, "JSON")}")',
       '}',
     ].join('\n');
-    const file = [
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`deck`] {',
-      '    name: "the company"',
-      '  }',
-      '}',
-    ].join('\n');
+    const file = askNamed('[msg.`deck`]');
     const withDeck: TriggerEvent = {
       ...EVENT,
       payload: { subject: 'Acme', text: 'Acme raised 3 million.', deck },
     };
-    const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
 
     it.each([
       ["a plugin's answer", { source: plugin, invoked: lone }],
       [
         "a file reader's answer",
-        { source: file, event: withDeck, fileText: lone, replies: [reply] },
+        { source: file, event: withDeck, fileText: lone, replies: [named] },
       ],
-    ] as const)('reads on when %s holds one, as the TypeScript does', async (_whose, c) => {
-      await agree(c, { runsWhole: true });
+    ] as const)('reads on when %s holds one', async (_whose, c) => {
+      await onRust(c, { runsWhole: true });
     });
   });
 
   describe("the file reader's answer when storing its provenance failed (main's PR #25: text, no rawTextId)", () => {
     // The host's reader swaps U+0000 for a space, and when storing the text as
-    // provenance fails it answers the text alone. The run carries on, on both
-    // engines alike: the READ's value, the prompt and the trace.
+    // provenance fails it answers the text alone. The run carries on: the
+    // READ's value, the prompt and the trace.
     const deck = {
       __brand: 'FileRef',
       name: 'deck.pdf',
@@ -1008,20 +892,13 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       '  ERROR("${t}")',
       '}',
     ].join('\n');
-    const file = [
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`deck`] {',
-      '    name: "the company"',
-      '  }',
-      '}',
-    ].join('\n');
-    const reply = { 'x:extract_result#1': [{ name: wrap('Acme') }] };
+    const file = askNamed('[msg.`deck`]');
 
     it.each([
       ['READ', { source: read, event: withDeck, fileText }],
-      ['an extraction', { source: file, event: withDeck, fileText, replies: [reply] }],
-    ] as const)('%s reads on as the TypeScript does', async (_what, c) => {
-      await agree(c, { runsWhole: true });
+      ['an extraction', { source: file, event: withDeck, fileText, replies: [named] }],
+    ] as const)('%s reads on', async (_what, c) => {
+      await onRust(c, { runsWhole: true });
     });
   });
 
@@ -1043,45 +920,48 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       fileText: { unreadable: 'garbled' } as never,
     });
     // A host-contract fault (the host broke its typed contract), which the
-    // engine refuses by name.
+    // engine refuses by name; the engine's own refusal fails the run, so the
+    // door's refusal counter stays empty.
     expect(rustRunStats.segments).toBe(1);
     expect(rustRunStats.shimFaults).toBe(0);
-    expect(Object.values(rustRunStats.unsupported)).toEqual([1]);
+    expect(rustRunStats.unsupported).toEqual({});
     const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
     expect(cause).toContain('MOVENG_UNSUPPORTED');
     expect(cause).toContain('a file the host calls unreadable for "garbled"');
   });
 
-  it("parks what an extraction yielded as the TypeScript does, and either engine's park resumes to the same writes", async () => {
+  it("parks what an extraction yielded, and the park resumes to the same writes", async () => {
     const source = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
       'crm = attio(credentials: acme_main)',
+      'node Firm: "the company described" {',
+      '  name: <text> "the company"',
+      '  node founder: "each founder" {',
+      '    first: <text> "first name"',
+      '  }',
+      '}',
       'movement m(msg: <inbox-[:message]->>) {',
-      '  found = extract from [msg.`text`] {',
-      '    name: "the company"',
-      '    node founder: "each founder" {',
-      '      first: "first name"',
-      '    }',
-      '  }',
+      '  found = extractOne([msg.`text`], Firm)',
+      '  if found != null {',
       // The founders held as the block's returned records.
-      '  kept = found-[k:founder]-> {',
-      '    return k',
-      '  }',
-      '  await sleep(1h)',
-      '  write crm-[:companies]-> { name: found.name }',
-      '  held = COUNT(kept)',
-      '  write crm-[:companies]-> { name: "${held} kept" }',
-      '  found-[f:founder]-> {',
-      '    write crm-[:companies]-> { name: f.first }',
+      '    kept = found-[k:founder]-> {',
+      '      return k',
+      '    }',
+      '    await sleep(1h)',
+      '    write crm-[:companies]-> { name: found.name }',
+      '    held = COUNT(kept)',
+      '    write crm-[:companies]-> { name: "${held} kept" }',
+      '    found-[f:founder]-> {',
+      '      write crm-[:companies]-> { name: f.first }',
+      '    }',
       '  }',
       '}',
     ].join('\n');
-    const reply = {
-      'x:extract_result#1': [
-        { name: wrap('Acme'), founder: [{ first: wrap('Ada') }, { first: wrap('Grace') }] },
-      ],
-    };
+    const reply = one({
+      name: cite('Acme'),
+      founder: [{ first: cite('Ada') }, { first: cite('Grace') }],
+    });
     /** A host whose CRM records what each create was handed. */
     function hostWith(park: ReturnType<typeof makeFakeParkSink>, creates: unknown[]) {
       const crm: Adapter = {
@@ -1098,81 +978,32 @@ describe('the extraction keyword and plugin calls on both engines', () => {
       };
       return makeTestHost({
         adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
-        llm: { client: { call: async () => ({ parsedJson: reply }) } },
+        llm: { extractCall: { call: async () => ({ parsedJson: reply, usage: USAGE }) } },
         park: { sink: park.sink },
       });
     }
-    async function parkOn(engine: 'ts' | 'rust'): Promise<string> {
-      const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = engine;
-      try {
-        const park = makeFakeParkSink();
-        await runMovement({ ...baseInput(source), host: hostWith(park, []) });
-        expect(park.timerParks).toHaveLength(1);
-        return JSON.stringify(park.timerParks[0]?.state);
-      } finally {
-        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-        else process.env.MOVEMENT_ENGINE = previous;
-      }
-    }
-    async function resumedOn(engine: 'ts' | 'rust', state: string) {
-      const previous = process.env.MOVEMENT_ENGINE;
-      process.env.MOVEMENT_ENGINE = engine;
-      try {
-        const creates: unknown[] = [];
-        const parsed: ParkedScopeState = JSON.parse(state);
-        resetRustRunStats();
-        const result = await resumeMovement({
-          ...baseInput(source),
-          state: parsed,
-          host: hostWith(makeFakeParkSink(), creates),
-        });
-        // The extraction keyword: refused by name, so the TypeScript engine parks it.
-        if (engine === 'rust')
-          expect(rustRunStats).toMatchObject({
-            routed: 1,
-            ranWhole: 0,
-            notAdmitted: { legacy_extraction: 1 },
-            shimFaults: 0,
-          });
-        return { creates, writes: result.writes, trace: result.trace };
-      } finally {
-        if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-        else process.env.MOVEMENT_ENGINE = previous;
-      }
-    }
-    const ts = await parkOn('ts');
     resetRustRunStats();
-    const rust = await parkOn('rust');
-    expect(rustRunStats).toMatchObject({
-      routed: 1,
-      ranWhole: 0,
-      notAdmitted: { legacy_extraction: 1 },
-      shimFaults: 0,
+    const park = makeFakeParkSink();
+    await runMovement({ ...baseInput(source), host: hostWith(park, []) });
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(park.timerParks).toHaveLength(1);
+    const state = JSON.stringify(park.timerParks[0]?.state);
+    expect(state).toMatchSnapshot();
+    const creates: unknown[] = [];
+    resetRustRunStats();
+    const result = await resumeMovement({
+      ...baseInput(source),
+      state: JSON.parse(state) as ParkedScopeState,
+      host: hostWith(makeFakeParkSink(), creates),
     });
-    expect(rust).toBe(ts);
-    // What the extraction yielded, its records and the citations to it.
-    for (const kind of ['"kind":"extractRoot"', '"kind":"extractPosition"', '"kind":"extraction"'])
-      expect(ts).toContain(kind);
-    // Each engine's state resumed on each: the same writes, trace and creates.
-    const resumed = await resumedOn('ts', ts);
-    for (const [engine, state] of [
-      ['ts', rust],
-      ['rust', ts],
-      ['rust', rust],
-    ] as const) {
-      const other = await resumedOn(engine, state);
-      expect(JSON.stringify(other.creates)).toBe(JSON.stringify(resumed.creates));
-      expect(other.writes).toEqual(resumed.writes);
-      expect(other.trace).toEqual(resumed.trace);
-    }
-    const fromTs = resumed.creates;
-    // The resumed writes cite what was extracted, and carry its source.
-    expect(fromTs).toEqual([
+    expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+    expect(JSON.stringify({ writes: result.writes, trace: result.trace })).toMatchSnapshot();
+    // The resumed writes cite what was extracted (the call form attaches no
+    // source resources to a write, as the keyword did).
+    expect(creates).toEqual([
       expect.objectContaining({
         fields: { name: 'Acme' },
         evidence: { name: { quote: 'q', type: 'extraction' } },
-        resources: [expect.objectContaining({ type: 'TEXT' })],
       }),
       expect.objectContaining({ fields: { name: '2 kept' } }),
       expect.objectContaining({ fields: { name: 'Ada' } }),
@@ -1184,8 +1015,7 @@ describe('the extraction keyword and plugin calls on both engines', () => {
 /** A run's input on the shared catalog, its host the caller's. */
 function baseInput(source: string): Omit<RunMovementInput, 'host'> {
   return {
-    source: PRELUDE + source,
-    languageVersion: LANGUAGE_VERSION,
+    source: spelled(PRELUDE + source),
     event: EVENT,
     teamId: TEAM_ID,
     catalog,
