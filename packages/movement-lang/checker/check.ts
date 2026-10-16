@@ -6399,6 +6399,13 @@ class Checker {
           // (`functionAsValue`): `g = made` and `return made` carry its type,
           // as TypeScript's `const g = made` does.
           const aliasType = aliased.posType ?? this.functionAsValue(aliased);
+          // An undescribed event is still a record, only not which one: the
+          // name holds a record as a value, and keeps what its reads are
+          // refused for (MOV_EVENT_UNDESCRIBED).
+          if (aliasType === undefined && aliased.undescribedEvent !== undefined && since(this.languageVersion, 5)) {
+            symbol = { ...symbol, bindingPlane: 'scalar', fieldType: recordOf(undefined), undescribedEvent: aliased.undescribedEvent };
+            break;
+          }
           symbol = {
             ...symbol,
             ...(aliasType !== undefined ? { posType: aliasType } : {}),
@@ -7227,7 +7234,7 @@ class Checker {
                 bindingPlane: 'scalar' as const,
                 ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
               }),
-          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
+          ...(undescribedEvent !== undefined ? { undescribedEvent, ...this.undescribedEventPlane() } : {}),
         },
         param.span,
       );
@@ -11820,6 +11827,14 @@ class Checker {
     return event !== undefined ? { instance: typeRef.graph, event } : undefined;
   }
 
+  /** From version 5 an undescribed event is still a record, only not which
+   *  one: the parameter is bound on the record plane, so a value it reaches
+   *  (a json field, a list, a closure's return) is refused as a record is.
+   *  Before 5 it stays untyped, as it always was. */
+  private undescribedEventPlane(): { bindingPlane?: 'node' } {
+    return since(this.languageVersion, 5) ? { bindingPlane: 'node' } : {};
+  }
+
   /** A walk or a write off `name`, a movement parameter whose event the
    *  catalog does not describe (`ScopeSymbol.undescribedEvent`). */
   private reportUndescribedEvent(symbol: ScopeSymbol | undefined, name: string, span: Span): void {
@@ -13832,7 +13847,7 @@ class Checker {
           kind: 'param',
           span: param.span,
           ...(posType ? { posType } : {}),
-          ...(undescribedEvent !== undefined ? { undescribedEvent } : {}),
+          ...(undescribedEvent !== undefined ? { undescribedEvent, ...this.undescribedEventPlane() } : {}),
         },
         param.span,
       );

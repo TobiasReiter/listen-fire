@@ -406,6 +406,7 @@ impl<'c> Checker<'c> {
                     self.set_types(scope, &assign.name, types);
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
+                self.note_undescribed_alias(&assign.name, &assign.value, scope);
                 self.note_closure_returns(&assign.name, &assign.value, scope);
                 self.narrow_after_value(&assign.value, scope);
             }

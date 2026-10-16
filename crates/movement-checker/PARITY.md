@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **255 of 255** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 170069 of 170069; 0 extra in Rust.
+- Diagnostics matched: 170073 of 170073; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 44891 of 44891.
-- Rust side: 57.5s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 40.8s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -42,7 +42,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | values | 22 | 22 | 2520 | 2520 | 0 | 0 | 0 |
 | versions | 2 | 2 | 13 | 13 | 0 | 0 | 0 |
 | walks | 22 | 22 | 1330 | 1330 | 0 | 0 | 0 |
-| writes | 48 | 48 | 2191 | 2191 | 0 | 0 | 0 |
+| writes | 48 | 48 | 2195 | 2195 | 0 | 0 | 0 |
 
 ## By code
 
@@ -285,7 +285,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_BIND_UNIQUE | writes | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_WRITE_DISCRIMINANT_NOT_LITERAL | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_EPHEMERAL_BOUND | writes | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_WRITE_FIELD_TYPE | writes | 719 | 719 | 0 | 0 | 0 | yes |
+| MOV_WRITE_FIELD_TYPE | writes | 723 | 723 | 0 | 0 | 0 | yes |
 | MOV_WRITE_GENERIC_NOT_LITERAL | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_LINK_FIELD_NUDGE | writes | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_WRITE_MAY_BE_EMPTY | writes | 194 | 194 | 0 | 0 | 0 | yes |

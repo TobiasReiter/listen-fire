@@ -1258,11 +1258,10 @@ describe('both engines: a library closure two levels deep is read in the library
       expect(result.writes.map((w) => w.writtenValues)).toEqual([{ payload: { r: { kind: 'event' } } }]);
     }
   }, 60_000);
-  // A reachability gap (the Rust engine has no admission since 2026-10-16):
-  // with the event undescribed the checker is silent, and the Rust engine
-  // writes the record's internal form into the json field. The checker
-  // should refuse it at save time, as it does where the event is described.
-  it.failing('v5: the chain and its one-level twin end at the check even with the event undescribed', async () => {
+  // With the event undescribed it is still a record, only not which one: from
+  // version 5 the checker refuses it in the json field at save time, as it
+  // does where the event is described (the Rust engine has no admission).
+  it('v5: the chain and its one-level twin end at the check even with the event undescribed', async () => {
     for (const [source, files] of [
       [twoCalls, chain('b')],
       [oneCall, oneLevel('b')],
