@@ -176,7 +176,7 @@ impl Checker<'_> {
                 members.iter().for_each(|m| add(m, arms));
                 return;
             }
-            if !arms.iter().any(|seen| field_type_equals(seen, arm)) {
+            if !arms.iter().any(|seen| crate::types::position::same_handle_object(seen, arm) || field_type_equals(seen, arm)) {
                 arms.push(arm.clone());
             }
         }

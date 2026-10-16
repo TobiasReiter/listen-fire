@@ -294,9 +294,11 @@ impl Checker<'_> {
             }
             let path = root_description.contains('.').then(|| format!("{root_description}.{}", field.name));
             let (value_type, held) = self.write_field_value(&field.value, scope, target_type.as_ref(), path);
-            // Only against a target the walk typed: one it could not (a node
-            // this run built) may declare the field maybe-absent itself.
-            if root.is_some()
+            // Against a target the walk typed, or a linked one it refused
+            // (a maybe-empty parent): the TypeScript holds every field to it.
+            // Not against a node this run built that the walk could not
+            // type: it may declare the field maybe-absent itself.
+            if (root.is_some() || (matches!(write.target, WriteTarget::Linked { .. }) && !local))
                 && is_maybe_absent(value_type.as_ref())
                 && field.semantics != Some(FieldWriteMode::Fill)
                 && !is_maybe_absent(target_type.as_ref())
@@ -711,6 +713,7 @@ impl Checker<'_> {
             generic_landings: None,
             written: purpose == Purpose::Write,
             set_fields: None,
+            identity: Default::default(),
         });
         let parent_type = match &parent {
             Position::Position(p) => Some(p.position.clone()),
@@ -1192,6 +1195,7 @@ impl Checker<'_> {
             Some(Position::Handle(mut handle)) => {
                 handle.set_fields = None;
                 handle.written = true;
+                handle.identity = Default::default();
                 Some(Position::Handle(handle))
             }
             Some(Position::Position(p)) => {
@@ -1213,6 +1217,7 @@ impl Checker<'_> {
                     generic_landings: None,
                     written: true,
                     set_fields: None,
+                    identity: Default::default(),
                 }))
             }
             other => other,
@@ -1608,6 +1613,7 @@ fn with_set_fields(handle: Option<Position>, fields: &[Field]) -> Option<Positio
     match handle {
         Some(Position::Handle(mut h)) if h.written => {
             h.set_fields = Some(fields.iter().filter(|f| f.semantics.is_none()).map(|f| f.name.clone()).collect());
+            h.identity = Default::default();
             Some(Position::Handle(h))
         }
         other => other,
@@ -1619,6 +1625,7 @@ fn found_handle(handle: Option<Position>, version: u32) -> Option<Position> {
     match handle {
         Some(Position::Handle(mut h)) => {
             h.written = false;
+            h.identity = Default::default();
             if version < 4 {
                 h.result_shape.shift_remove("created");
                 h.result_shape.shift_remove("committed");

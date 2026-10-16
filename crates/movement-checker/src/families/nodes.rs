@@ -1520,10 +1520,16 @@ impl Checker<'_> {
     fn check_graph_spread(&mut self, spread: &movement_parser::ast::MapSpread, scope: ScopeId, required: Option<&Required>, written: &[&str], earlier: &[&str]) -> Option<SpreadKeys> {
         let root = spread.path.as_ref().map_or(spread.source.as_str(), |p| p.root.as_str());
         let id = self.resolve_name(root, spread.span, scope)?;
-        if spread.path.is_some() {
-            return None;
-        }
-        let symbol = self.scopes.symbol(id).clone();
+        // `...held.k`: the value the path reads, as a binding of it would hold
+        // it (`spreadSourceSymbol`).
+        let symbol = match &spread.path {
+            None => self.scopes.symbol(id).clone(),
+            Some(_) => {
+                let slot = movement_parser::ast::ExprSlot::plain(spread.source.clone(), spread.span);
+                let field = self.type_of_slot(&slot, scope).and_then(|(_, ty, _)| ty);
+                crate::scope::Symbol { kind: crate::scope::SymbolKind::Binding, types: crate::types::scope_env::SymbolTypes { field, ..Default::default() }, ..self.scopes.symbol(id).clone() }
+            }
+        };
         let record = match &symbol.types.pos {
             Some(Position::Meta { .. } | Position::Closure(_)) => None,
             Some(Position::MaybeEmpty(of)) => Some((Some((**of).clone()), true)),

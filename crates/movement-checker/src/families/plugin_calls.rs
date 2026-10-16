@@ -195,8 +195,13 @@ impl Checker<'_> {
                     crate::families::calls::CallReading::Value(_) => {}
                     crate::families::calls::CallReading::Refused { code, message, span } => self.report(code, message, span),
                     _ => {
-                        // A function's call: it runs, and its value is the argument.
+                        // A function's call: it runs, and its value is the
+                        // argument — a value bound, as `boundCallShape` reads it.
                         let shape = self.check_call(call, scope);
+                        self.note_bound_self_call(&call.callee, call.span, scope);
+                        if self.callee_returns(&call.callee, scope) == Some(false) {
+                            self.report_call_returns_nothing(&call.callee, call.span);
+                        }
                         let record = shape.plane.pos.as_deref().cloned().or_else(|| crate::types::field::record_in(shape.plane.field.as_ref()).flatten());
                         let value = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
                         self.check_plugin_arg_value(PluginArg { callee, declared, name, record: record.as_ref(), value: value.as_ref(), held: None, may_hold: None, span: call.span });

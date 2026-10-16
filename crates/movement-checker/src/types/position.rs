@@ -334,6 +334,32 @@ pub struct HandlePosition {
     pub generic_landings: Option<IndexMap<String, String>>,
     pub written: bool,
     pub set_fields: Option<BTreeSet<String>>,
+    /// The TypeScript's object identity: a handle is a fresh object where a
+    /// write or match makes one, and the same object wherever it is passed
+    /// on. A clone keeps it; a copy that changes the handle takes a new one.
+    pub identity: HandleIdentity,
+}
+
+/// See `HandlePosition::identity`.
+#[derive(Debug, Clone, Default)]
+pub struct HandleIdentity(Rc<()>);
+
+impl HandleIdentity {
+    pub fn is(&self, other: &HandleIdentity) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// The TypeScript's `===` on a field type, as far as it differs from
+/// `fieldTypeEquals`: one handle passed on, never re-made, is itself.
+pub fn same_handle_object(a: &Ty, b: &Ty) -> bool {
+    match (a, b) {
+        (Ty::Record(Some(a)), Ty::Record(Some(b))) => match (&**a, &**b) {
+            (Position::Handle(a), Position::Handle(b)) => a.identity.is(&b.identity),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]

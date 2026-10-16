@@ -41,7 +41,7 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
 use crate::slots::SlotError;
-use crate::types::field::{closure_not_data_message, describe_field_type, may_be_closure, strip_absent};
+use crate::types::field::{describe_field_type, strip_absent};
 use crate::types::stdlib::{Builtin, ParamType, STANDARD_LIBRARY, describe_param_type, lookup_builtin, param_accepts, reads_as_value, stdlib_function_by_id};
 
 /// `describeBuiltin`: the built-in's signature as the author reads it.
@@ -88,7 +88,7 @@ pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Positi
             // `extractOne` was a name like any other before version 3.
             let builtin = if fn_ == "extractone" && typing.version < 3 { None } else { lookup_builtin(fn_) };
             if let Some(builtin) = builtin {
-                if refuse_closure_operands(typing, builtin, args, operands) {
+                if refuse_closure_operands(typing, builtin, expr, args, operands) {
                     return;
                 }
                 check_builtin_args(typing, builtin, operands);
@@ -110,18 +110,15 @@ pub fn observe(typing: &mut Typing, expr: &Expression, _position: Option<&Positi
 
 /// `refuseClosureOperands` for a built-in's arguments (language version 5):
 /// a closure handed where a value is read. A `function` parameter takes one.
-fn refuse_closure_operands(typing: &mut Typing, builtin: &Builtin, args: &[Expression], operands: &[Option<Ty>]) -> bool {
-    if typing.version < 5 {
-        return false;
-    }
-    let closure = args.iter().zip(operands).enumerate().any(|(index, (arg, ty))| {
-        builtin.param_at(index).is_none_or(|param| param.ty != ParamType::Function)
-            && (may_be_closure(ty.as_ref()) || may_be_closure(typing.may_hold_type(arg).as_ref()))
-    });
-    if closure {
-        typing.report(codes::CLOSURE_NOT_DATA, closure_not_data_message(&format!("a value handed to {} is", builtin.name)));
-    }
-    closure
+fn refuse_closure_operands(typing: &mut Typing, builtin: &Builtin, whole: &Expression, args: &[Expression], operands: &[Option<Ty>]) -> bool {
+    let read: Vec<(&Expression, Option<&Ty>)> = args
+        .iter()
+        .zip(operands)
+        .enumerate()
+        .filter(|(index, _)| builtin.param_at(*index).is_none_or(|param| param.ty != ParamType::Function))
+        .map(|(_, (arg, ty))| (arg, ty.as_ref()))
+        .collect();
+    typing.refuse_closure_operands(&read, whole, &format!("handed to {}", builtin.name))
 }
 
 /// `checkBuiltinArgs` (language version 3): each argument a value of the

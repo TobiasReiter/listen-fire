@@ -583,9 +583,11 @@ pub struct EarlierOutput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginSpec {
     pub args: Vec<String>,
-    /// Whether invoking it may cost money: the engine refuses to start a
-    /// priced plugin once the run has spent its cost cap.
-    pub priced: bool,
+    /// Whether invoking it may cost money (`priced()`). Absent reads as
+    /// unpriced, as the TypeScript reads it (specs written before plugins
+    /// declared it), and stays absent when the spec is handed back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    priced: Option<bool>,
     /// What each argument takes, by name: the plugin's declared input types.
     /// The checker reads them; nothing here does yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -602,6 +604,14 @@ pub struct PluginSpec {
     pub output: Option<PluginOutput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub earlier_outputs: Option<Vec<EarlierOutput>>,
+}
+
+impl PluginSpec {
+    /// Whether invoking it may cost money: the engine refuses to start a
+    /// priced plugin once the run has spent its cost cap.
+    pub fn priced(&self) -> bool {
+        self.priced.unwrap_or(false)
+    }
 }
 
 // ── The snapshot (service/snapshot.ts) ──

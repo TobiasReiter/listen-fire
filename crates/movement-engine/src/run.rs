@@ -628,13 +628,13 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
 }
 
 /// The Rust checker's answer to `check.program` (`SegmentInput::native_check`),
-/// shaped as the host's: `{diagnostics, stamps}`. A program it refuses ends
+/// on the source as this engine parsed it (in its text form), shaped as the host's: `{diagnostics, stamps}`. A program it refuses ends
 /// as the host ends one, with MOVENG_CHECK listing the blocking diagnostics
 /// (program_check.ts `checkPinned`): errors only, and a retired write form
 /// that still runs does not block.
 fn native_check(source: &str, catalog: &CatalogSnapshot, version: u32) -> Result<Json, Stop> {
     let options = movement_checker::CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &crate::env_services::EnvZones };
-    let diagnostics = movement_checker::check_source(source, catalog, options).map_err(|_| Stop::Declined("source_does_not_parse".into()))?;
+    let diagnostics = movement_checker::check_form(source, catalog, options).map_err(|_| Stop::Declined("source_does_not_parse".into()))?;
     let blocking: Vec<String> = diagnostics
         .iter()
         .filter(|d| d.is_error() && d.code != movement_checker::codes::WRITE_SHAPE_RETIRED)
