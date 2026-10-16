@@ -1214,21 +1214,22 @@ impl Checker<'_> {
         // name holding what the call hands back.
         let hoisted = self.nested_call_rewrite(slot, scope).map(|(_, hoisted)| hoisted);
         let Ok(expr) = crate::slots::expression_of_slot(hoisted.as_ref().unwrap_or(slot)) else { return (None, None) };
-        let (ty, may_hold, refused) = {
+        let (ty, held, refused) = {
             let env = self.typing_env(scope);
             let mut typing = crate::types::Typing::new(&env, self.version, slot.span);
             typing.write_target = target.map(|t| (t.clone(), path));
             let ty = typing.infer(&expr);
-            let may_hold = typing.may_hold_type(&expr);
+            // Read off the parts of a value the expression builds, where the
+            // whole value's type no longer shows them (`handleHeldBy`).
+            let walk = HeldWalk::taken_by(target);
+            let held = typing.handle_held_by(&expr, &walk).or_else(|| handle_within(ty.as_ref(), &walk));
             // The slot's other typing diagnostics are reported where it is checked.
             let refused: Vec<_> = typing.diagnostics.into_iter().filter(|d| crate::families::extraction::reads_write_target(&d.code)).collect();
-            (ty, may_hold, refused)
+            (ty, held, refused)
         };
         for diagnostic in refused {
             self.push(diagnostic);
         }
-        let walk = HeldWalk::taken_by(target);
-        let held = handle_within(ty.as_ref(), &walk).or_else(|| handle_within(may_hold.as_ref(), &walk));
         (ty, held)
     }
 

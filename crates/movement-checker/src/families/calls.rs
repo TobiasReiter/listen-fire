@@ -814,11 +814,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `checkRValue`'s call case: a built-in is the value, collection op or
-    /// type query it computes.
-    /// What a function's call hands back, where it binds (`boundCallShape`'s
-    /// value); `None` for a built-in read as what it computes.
-    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) -> Option<crate::types::position::ReturnShape> {
+    /// `checkRValue`'s call case: what a function's call hands back where it
+    /// binds (`boundCallShape`'s value), or the collection op it computes;
+    /// nothing for a built-in read as a value.
+    pub fn check_call_rvalue(&mut self, call: &CallStatement, scope: ScopeId, span: Span) -> crate::checker::Bound {
         match self.read_call(call, scope, CallPosition::Value) {
             CallReading::Function => {
                 let returned = self.check_call(call, scope);
@@ -826,16 +825,19 @@ impl Checker<'_> {
                 if self.callee_returns(&call.callee, scope) == Some(false) {
                     self.report_call_returns_nothing(&call.callee, span);
                 }
-                return Some(returned);
+                return crate::checker::Bound { returned: Some(returned), ..Default::default() };
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Collection(collection) => return Some(self.check_collection_op(&collection, scope)),
+            CallReading::Collection(collection) => {
+                let (returned, arms_each_return) = self.check_collection_op_arms(&collection, scope);
+                return crate::checker::Bound { returned: Some(returned), arms_each_return, ..Default::default() };
+            }
             CallReading::Members(members) => {
                 self.check_members(&members, scope);
             }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
         }
-        None
+        crate::checker::Bound::default()
     }
 }
 

@@ -29,6 +29,12 @@ pub struct SymbolTypes {
     /// A combinator's answer one of whose arms hands back a record
     /// (`receiptHoldsRecord`): its slot read null before version 5.
     pub receipt_holds_record: bool,
+    /// A name bound to a list of functions written down: what each returns,
+    /// in order (`ScopeSymbol.armReturns`).
+    pub arm_returns: Option<Vec<super::position::ReturnShape>>,
+    /// A name bound to a `MAP` whose function hands back functions: what
+    /// each of those returns (`ScopeSymbol.armsEachReturn`).
+    pub arms_each_return: Option<super::position::ReturnShape>,
 }
 
 pub struct ScopeEnv<'s> {

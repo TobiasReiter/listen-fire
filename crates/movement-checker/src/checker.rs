@@ -143,6 +143,8 @@ pub struct Bound {
     pub record: bool,
     /// For a combinator: its answer, one slot per arm.
     pub receipt: Option<crate::families::closures::Receipt>,
+    /// For a `MAP` whose function hands back functions: what each returns.
+    pub arms_each_return: Option<crate::types::position::ReturnShape>,
 }
 
 impl<'c> Checker<'c> {
@@ -355,8 +357,7 @@ impl<'c> Checker<'c> {
         match value {
             RValue::Construct { construct } => {
                 if let Some(call) = self.call_in_construct_position(construct, scope) {
-                    let returned = self.check_call_rvalue(&call, scope, span);
-                    return Bound { returned, ..Bound::default() };
+                    return self.check_call_rvalue(&call, scope, span);
                 }
                 let constructed = self.check_construction(construct, scope);
                 let adapter = constructed.adapter.clone();
@@ -367,8 +368,7 @@ impl<'c> Checker<'c> {
                 return Bound { is_instance: name.is_some(), adapter, instance, ..Bound::default() };
             }
             RValue::Call { call } => {
-                let returned = self.check_call_rvalue(call, scope, span);
-                return Bound { returned, ..Bound::default() };
+                return self.check_call_rvalue(call, scope, span);
             }
             RValue::Write { write } => {
                 let handle = self.check_write(write, scope, name, name.is_some());
@@ -401,8 +401,8 @@ impl<'c> Checker<'c> {
                 return Bound { receipt: Some(receipt), ..Bound::default() };
             }
             RValue::Collection { collection } => {
-                let returned = self.check_collection_op(collection, scope);
-                return Bound { returned: Some(returned), ..Bound::default() };
+                let (returned, arms_each_return) = self.check_collection_op_arms(collection, scope);
+                return Bound { returned: Some(returned), arms_each_return, ..Bound::default() };
             }
             RValue::Members { members } => {
                 self.check_members(members, scope);

@@ -154,7 +154,39 @@ impl Checker<'_> {
         if let Some((returned, ordering)) = &bound.collected {
             types = Some(collected_types(returned, *ordering));
         }
+        if let (Some(each), Some(types)) = (&bound.arms_each_return, types.as_mut()) {
+            types.arms_each_return = Some(each.clone());
+        }
+        if let (Some(_), RValue::Expr { expr }, Some(types)) = (name, value, types.as_mut())
+            && types.pos.is_none()
+        {
+            types.arm_returns = self.arm_returns_of_list(expr, scope);
+        }
         types
+    }
+
+    /// `armReturnsOfList`: what each element of a list of functions written
+    /// down returns — `None` unless every element is a function bound here.
+    fn arm_returns_of_list(&mut self, slot: &ExprSlot, scope: ScopeId) -> Option<Vec<crate::types::position::ReturnShape>> {
+        let Ok(Expression::List { elements }) = expression_of_slot(slot) else { return None };
+        if elements.is_empty() {
+            return None;
+        }
+        let mut shapes = Vec::new();
+        for element in &elements {
+            let movement_parser::lowering::expression::ListElement::Expression(element) = element else { return None };
+            let name = crate::types::narrowing::bare_name(element)?;
+            let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
+            let symbol = self.scopes.symbol(id);
+            if symbol.kind == SymbolKind::Movement {
+                shapes.push(self.movement_return(id));
+            } else if let Some(Position::Closure(closure)) = &symbol.types.pos {
+                shapes.push(closure.returns.clone());
+            } else {
+                return None;
+            }
+        }
+        Some(shapes)
     }
 
     /// `bound_types`' first step: the value as written. A name holds it

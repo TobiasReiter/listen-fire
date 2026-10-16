@@ -1069,7 +1069,7 @@ impl<'a> Typing<'a> {
                     let held = match element {
                         ListElement::Spread(spread) => {
                             numbered = false;
-                            handle_among_members(exact(&spread.expression).as_ref(), walk)
+                            handle_among_members(exact(&spread.expression).as_ref(), walk, |_| HeldStep::Member)
                         }
                         ListElement::Expression(e) => {
                             self.handle_held_by(e, &walk.into(if numbered { HeldStep::Slot(index) } else { HeldStep::Member }))
@@ -1135,11 +1135,11 @@ impl<'a> Typing<'a> {
         let exact = |e: &Expression| self.exact_types.get(&key(e)).cloned().flatten();
         match arg {
             Expression::List { elements } => elements.iter().find_map(|element| match element {
-                ListElement::Spread(spread) => handle_among_members(exact(&spread.expression).as_ref(), walk),
+                ListElement::Spread(spread) => handle_among_members(exact(&spread.expression).as_ref(), walk, |_| HeldStep::Member),
                 ListElement::Expression(e) => self.handle_held_by(e, &walk.into(HeldStep::Member)),
             }),
             _ if exact(arg).as_ref().is_some_and(|ty| matches!(strip_absent(ty), Ty::List { .. } | Ty::Tuple { .. })) => {
-                handle_among_members(exact(arg).as_ref(), walk)
+                handle_among_members(exact(arg).as_ref(), walk, |_| HeldStep::Member)
             }
             _ => self.handle_held_by(arg, &walk.into(HeldStep::Member)),
         }

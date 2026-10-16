@@ -708,7 +708,7 @@ pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
         Ty::Record(position) => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::Record(position.clone()), may: false }),
         Ty::File if walk.accepts_file => walk.accepted(Ty::File),
         Ty::File => Some(HeldHandle { steps: walk.steps.clone(), handle: Ty::File, may: false }),
-        list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk),
+        list @ (Ty::List { .. } | Ty::Tuple { .. }) => handle_among_members(Some(list), walk, HeldStep::Slot),
         Ty::Dict { of, shape } => {
             for (key, value) in shape.iter().flat_map(|s| s.iter()) {
                 if let Some(held) = handle_within(value.as_ref(), &walk.into(HeldStep::Key(key.clone()))) {
@@ -722,19 +722,21 @@ pub fn handle_within(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
     }
 }
 
-/// `handleAmongMembers`: a handle among a collection's members.
-pub fn handle_among_members(ty: Option<&Ty>, walk: &HeldWalk) -> Option<HeldHandle> {
+/// `handleAmongMembers`: a handle among a collection's members, each one
+/// `step_for(slot)` further into the walk (a spread splices members, so it
+/// asks with every slot unnumbered: `|_| HeldStep::Member`).
+pub fn handle_among_members(ty: Option<&Ty>, walk: &HeldWalk, step_for: fn(usize) -> HeldStep) -> Option<HeldHandle> {
     match strip_absent(ty?) {
         Ty::List { of, .. } => handle_within(Some(of), &walk.into(HeldStep::Member)),
         Ty::Tuple { of, rest } => {
             for (index, slot) in of.iter().enumerate() {
-                if let Some(held) = handle_within(slot.as_ref(), &walk.into(HeldStep::Slot(index))) {
+                if let Some(held) = handle_within(slot.as_ref(), &walk.into(step_for(index))) {
                     return Some(held);
                 }
             }
             handle_within(rest.as_ref().and_then(|r| r.of.as_deref()), &walk.into(HeldStep::Member))
         }
-        Ty::Union(members) => members.iter().find_map(|m| handle_among_members(Some(m), walk)).map(|held| HeldHandle { may: true, ..held }),
+        Ty::Union(members) => members.iter().find_map(|m| handle_among_members(Some(m), walk, step_for)).map(|held| HeldHandle { may: true, ..held }),
         _ => None,
     }
 }
