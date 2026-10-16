@@ -13,6 +13,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: { note: { properties: { title: 'text' }, edges: {} } },
@@ -37,7 +38,7 @@ const PRELUDE = [
 
 const errorsUnder = (version: LanguageVersion, functions: string[], body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\n${functions.join('\n')}\nmovement m() {\n${body.join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 };
@@ -95,8 +96,8 @@ describe('a closure is not data (Dancing Wren, 5)', () => {
     expect(messages).toHaveLength(4);
     expect(messages.every(m => m.startsWith('MOV_CLOSURE_NOT_DATA'))).toBe(true);
     expect(messages.join('\n')).toContain('a spread into a list holds a closure');
-    expect(messages.join('\n')).toContain("'KEYBY' files each member under a key");
-    expect(messages.join('\n')).toContain("'GROUPBY' files each member under a key");
+    expect(messages.join('\n')).toContain("'List.keyBy' files each member under a key");
+    expect(messages.join('\n')).toContain("'List.groupBy' files each member under a key");
   });
 
   it('the message says where a closure lives instead', () => {

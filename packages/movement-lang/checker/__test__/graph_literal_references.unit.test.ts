@@ -52,8 +52,8 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { email, chat } from adapters
-inbox = email()
-sl = chat()
+inbox = connect email
+sl = connect chat
 
 node Filed {
   subject: <text>
@@ -92,7 +92,7 @@ node Thread {
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement under_test(e: <inbox-[:message]->>) {
+function under_test(e: <inbox-[:message]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error');
@@ -101,7 +101,7 @@ const codes = (body: string): string[] => check(body).map((d) => d.code);
 const messages = (body: string): string => check(body).map((d) => d.message).join('\n');
 
 function entries(body: string): NodeLiteral['entries'] {
-  const program = parseProgram(`${PRELUDE}\nmovement under_test(e: <inbox-[:message]->>) {\n${body}\n}`);
+  const program = parseProgram(`${PRELUDE}\nfunction under_test(e: <inbox-[:message]->>) {\n${body}\n}`);
   expect(checkProgram(program, catalog).filter((d) => (d.severity ?? 'error') === 'error')).toEqual([]);
   const movement = program.statements.find(
     (s): s is Extract<Statement, { kind: 'movement' }> => s.kind === 'movement' && s.name === 'under_test',
@@ -147,7 +147,7 @@ describe('a bare walk holds references', () => {
         [
           '  g = graph { files: e-[:Attachments]-> }',
           '  pdfs = g-[f:files WHERE f.Type = "application/pdf"]->.Name',
-          '  names = MAP(g-[f:files]->, (f) => f.Name)',
+          '  names = map(g-[f:files]->, (f) => f.Name)',
         ].join('\n'),
       ),
     ).toEqual([]);
@@ -156,13 +156,13 @@ describe('a bare walk holds references', () => {
 
 describe('a record written as an entry value holds a reference', () => {
   it('a name bound to one record', () => {
-    const [owner] = entries('  first = ONLY(e-[:Attachments]->)\n  g = graph { owner: first }');
+    const [owner] = entries('  head = only(e-[:Attachments]->)\n  g = graph { owner: head }');
     expect(owner.kind === 'value' && owner.reference).toBe(true);
-    expect(codes('  first = ONLY(e-[:Attachments]->)\n  g = graph { owner: first }\n  g-[o:owner]-> {\n    t = o.Type\n  }')).toEqual([]);
+    expect(codes('  head = only(e-[:Attachments]->)\n  g = graph { owner: head }\n  g-[o:owner]-> {\n    t = o.Type\n  }')).toEqual([]);
   });
 
   it('ONLY/FIRST/LAST over a bare walk, written in place', () => {
-    expect(codes('  g = graph { owner: ONLY(e-[:Attachments]->) }\n  g-[o:owner]-> {\n    t = o.Type\n  }')).toEqual([]);
+    expect(codes('  g = graph { owner: only(e-[:Attachments]->) }\n  g-[o:owner]-> {\n    t = o.Type\n  }')).toEqual([]);
   });
 
   it('the trigger record itself', () => {
@@ -208,7 +208,7 @@ describe('a reference nested inside a child body of a shaped graph', () => {
   });
 
   it('makes the graph unserialisable, as a top-level reference does', () => {
-    const body = `  g = graph<Thread> { title: e.Subject, attachment: { label: "x", source: e } }\n  t = TEXT.SERIALISE(g, 'JSON')`;
+    const body = `  g = graph<Thread> { title: e.Subject, attachment: { label: "x", source: e } }\n  t = Json.stringify(g)`;
     expect(codes(body)).toEqual([C.STDLIB_ARG_NOT_RECORD]);
     expect(messages(body)).toMatch(/'source'/);
   });
@@ -233,7 +233,7 @@ describe('the collector: records the run wrote, grouped under a local record', (
       codes(
         [
           '  ch = write sl-[:Channels]-> { Name: "general" }',
-          '  posted = MAP(e-[a:Attachments]->, (a) => {',
+          '  posted = map(e-[a:Attachments]->, (a) => {',
           '    return write ch-[:Messages]-> { Text: a.Name }',
           '  })',
           '  batch = graph<Batch> { posted: posted }',
@@ -262,15 +262,15 @@ describe('the collector: records the run wrote, grouped under a local record', (
 
 describe('TEXT.SERIALISE through a reference', () => {
   it('refuses a graph holding records read live from a system', () => {
-    const body = "  g = graph { files: e-[:Attachments]-> }\n  t = TEXT.SERIALISE(g, 'JSON')";
+    const body = "  g = graph { files: e-[:Attachments]-> }\n  t = Json.stringify(g)";
     expect(codes(body)).toEqual([C.STDLIB_ARG_NOT_RECORD]);
     expect(messages(body)).toMatch(/'files'/);
-    expect(codes("  g = graph { owner: e }\n  t = TEXT.SERIALISE(g, 'JSON')")).toEqual([C.STDLIB_ARG_NOT_RECORD]);
+    expect(codes("  g = graph { owner: e }\n  t = Json.stringify(g)")).toEqual([C.STDLIB_ARG_NOT_RECORD]);
   });
 
   it('accepts the copy the body spells out', () => {
     expect(
-      codes("  g = graph { files: e-[a:Attachments]-> { name: a.Name } }\n  t = TEXT.SERIALISE(g, 'JSON')"),
+      codes("  g = graph { files: e-[a:Attachments]-> { name: a.Name } }\n  t = Json.stringify(g)"),
     ).toEqual([]);
   });
 });

@@ -21,20 +21,27 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { email } from adapters
 import { dealflow_inbox } from credentials
+inbox = connect email using dealflow_inbox
+`;
+
+// Version 4 spells the same program with an `email(credentials: …)` call and
+// `movement`.
+const PRELUDE_BEFORE_5 = `import { email } from adapters
+import { dealflow_inbox } from credentials
 inbox = email(credentials: dealflow_inbox)
 `;
 
-function check(body: string): Diagnostic[] {
-  const source = `${PRELUDE}
-movement m(msg: <inbox-[:message]->>) {
+function check(body: string, version: 4 | 5 = 5): Diagnostic[] {
+  const source = `${version === 4 ? PRELUDE_BEFORE_5 : PRELUDE}
+${version === 4 ? 'movement' : 'function'} m(msg: <inbox-[:message]->>) {
 ${body}
 }`;
-  return checkProgram(parseProgram(source), catalog).filter(
+  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
     (d) => (d.severity ?? 'error') === 'error',
   );
 }
 
-const codes = (body: string): string[] => check(body).map((d) => d.code);
+const codes = (body: string, version: 4 | 5 = 5): string[] => check(body, version).map((d) => d.code);
 
 describe('await sleep(…) — the one wait-on-the-clock form (checker)', () => {
   it('`await sleep(30s)` checks clean with no diagnostics', () => {
@@ -65,7 +72,13 @@ describe('await sleep(…) — the one wait-on-the-clock form (checker)', () => 
 });
 
 describe('the freed `sleep` name flows through the checker with no special handling', () => {
-  it('`sleep` binds as an ordinary scalar and reads back clean', () => {
-    expect(codes('  sleep = "a value"\n  n = sleep')).toEqual([]);
+  // From version 5 `sleep` is a core word again, so a binding named for it is
+  // refused (MOV_V5_HIDES_BUILTIN); before 5 it is an ordinary name.
+  it('`sleep` binds as an ordinary scalar and reads back clean (version 4)', () => {
+    expect(codes('  sleep = "a value"\n  n = sleep', 4)).toEqual([]);
+  });
+
+  it('from version 5 a binding named `sleep` hides the core word, and is refused', () => {
+    expect(codes('  sleep = "a value"\n  n = sleep')).toEqual(['MOV_V5_HIDES_BUILTIN']);
   });
 });

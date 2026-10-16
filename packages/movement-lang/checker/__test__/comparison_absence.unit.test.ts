@@ -100,68 +100,68 @@ const snapshot: CatalogSnapshot = {
 const PRELUDE = `import { polls, meter, logbook } from adapters
 import { probe } from credentials
 
-p = polls(credentials: probe)
-g = meter(credentials: probe)
-log = logbook(credentials: probe)
+p = connect polls using probe
+g = connect meter using probe
+log = connect logbook using probe
 `;
 
 const diagnosticsFor = (body: string): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${PRELUDE}\nmovement m() {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\nfunction m() {\n${body}\n}`),
     fromCatalogSnapshot(snapshot),
   ).filter(d => (d.severity ?? 'error') === 'error');
 
 const codesFor = (body: string): string[] => diagnosticsFor(body).map(d => d.code);
 
 /** An awaited `resolvesEmpty` landing — every field reads `T | absent`. */
-const AWAITED = '  a = write p-[:Poll]-> { Question: "Ship it?" }\n  r = await FIRST(a-[:Result]->)';
-const AWAITED_METER = '  b = write g-[:Gauge]-> { Label: "Heat" }\n  q = await FIRST(b-[:Reading]->)';
+const AWAITED = '  a = write p-[:Poll]-> { Question: "Ship it?" }\n  r = await first(a-[:Result]->)';
+const AWAITED_METER = '  b = write g-[:Gauge]-> { Label: "Heat" }\n  q = await first(b-[:Reading]->)';
 
 describe('comparison legality against `T | absent`', () => {
   it('== is legal — absent is never equal to a present value', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Answer == "Ship" { }`)).toEqual([]);
+    expect(codesFor(`${AWAITED}\n  if (r.Answer == "Ship") { }`)).toEqual([]);
   });
 
   it('!= is legal', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Answer != "Ship" { }`)).toEqual([]);
+    expect(codesFor(`${AWAITED}\n  if (r.Answer != "Ship") { }`)).toEqual([]);
   });
 
   it('IN is legal', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Answer IN ["Ship", "Hold"] { }`)).toEqual([]);
+    expect(codesFor(`${AWAITED}\n  if (List.includes(["Ship", "Hold"], r.Answer)) { }`)).toEqual([]);
   });
 
   it('CONTAINS is legal', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Tags CONTAINS "urgent" { }`)).toEqual([]);
+    expect(codesFor(`${AWAITED}\n  if (List.includes(r.Tags, "urgent")) { }`)).toEqual([]);
   });
 
   it('ORDERED comparison still requires a present value (TS errors on `x < 3`)', () => {
     for (const op of ['>', '>=', '<', '<=']) {
-      expect(codesFor(`${AWAITED}\n  if r.Score ${op} 3 { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
+      expect(codesFor(`${AWAITED}\n  if (r.Score ${op} 3) { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
     }
   });
 
   it('the ordered-comparison message says equality is fine, and names the discharges', () => {
-    const message = diagnosticsFor(`${AWAITED}\n  if r.Score > 3 { }`)[0]?.message ?? '';
+    const message = diagnosticsFor(`${AWAITED}\n  if (r.Score > 3) { }`)[0]?.message ?? '';
     expect(message).toContain('ordered comparison');
     // The fallback, not the `?:` fill: `?:` is a write-FIELD marker, and there
     // is no write field here — COALESCE is the discharge a comparison can use.
-    expect(message).toContain('COALESCE');
+    expect(message).toContain('coalesce');
     expect(message).toContain('never equal');
   });
 
   it('WITHIN orders a timestamp against the clock, so it requires present too', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Seen WITHIN 30d { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
+    expect(codesFor(`${AWAITED}\n  if (r.Seen WITHIN 30d) { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('a json comparison is still MOV_JSON_OPAQUE — absence changes nothing there', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Payload == "x" { }`)).toContain('MOV_JSON_OPAQUE');
+    expect(codesFor(`${AWAITED}\n  if (r.Payload == "x") { }`)).toContain('MOV_JSON_OPAQUE');
   });
 
   it('an expression with no name to narrow just compares — nothing to discharge', () => {
     // `DATE.PARSE` types `date | absent`; comparing it is legal, and there is no
     // reference to narrow, exactly as in TS.
     expect(
-      codesFor(`  x = "12 March 2026"\n  if DATE.PARSE(x) == DATE("2026-03-12") { }`),
+      codesFor(`  x = "12 March 2026"\n  if (Date.parse(x) == Date.from("2026-03-12")) { }`),
     ).toEqual([]);
   });
 });
@@ -169,7 +169,7 @@ describe('comparison legality against `T | absent`', () => {
 describe('equality narrows — the comparison IS the guard', () => {
   it('the true branch reads the value as PRESENT', () => {
     expect(
-      codesFor(`${AWAITED}\n  if r.Answer == "Ship" { write log-[:Entry]-> { label: r.Answer } }`),
+      codesFor(`${AWAITED}\n  if (r.Answer == "Ship") { write log-[:Entry]-> { label: r.Answer } }`),
     ).toEqual([]);
   });
 
@@ -177,38 +177,38 @@ describe('equality narrows — the comparison IS the guard', () => {
     // Emptiness is a fact about the resolution, not about one field: if the
     // answer is there, the landing is there.
     expect(
-      codesFor(`${AWAITED}\n  if r.Answer == "Ship" { write log-[:Entry]-> { score: r.Score } }`),
+      codesFor(`${AWAITED}\n  if (r.Answer == "Ship") { write log-[:Entry]-> { score: r.Score } }`),
     ).toEqual([]);
   });
 
   it('…so an ORDERED comparison inside the arm is discharged as well', () => {
-    expect(codesFor(`${AWAITED}\n  if r.Answer == "Ship" { if r.Score > 3 { } }`)).toEqual([]);
+    expect(codesFor(`${AWAITED}\n  if (r.Answer == "Ship") { if (r.Score > 3) { } }`)).toEqual([]);
   });
 
   it('the FALSE branch learns nothing (absent, or another value)', () => {
     expect(
       codesFor(
-        `${AWAITED}\n  if r.Answer == "Ship" { } else { write log-[:Entry]-> { label: r.Answer } }`,
+        `${AWAITED}\n  if (r.Answer == "Ship") { } else { write log-[:Entry]-> { label: r.Answer } }`,
       ),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
 
   it('!= narrows NOTHING in its true branch — a != match may be absent', () => {
     expect(
-      codesFor(`${AWAITED}\n  if r.Answer != "Ship" { write log-[:Entry]-> { label: r.Answer } }`),
+      codesFor(`${AWAITED}\n  if (r.Answer != "Ship") { write log-[:Entry]-> { label: r.Answer } }`),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
 
   it('narrowing does not leak past the arm', () => {
     expect(
-      codesFor(`${AWAITED}\n  if r.Answer == "Ship" { }\n  write log-[:Entry]-> { label: r.Answer }`),
+      codesFor(`${AWAITED}\n  if (r.Answer == "Ship") { }\n  write log-[:Entry]-> { label: r.Answer }`),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
 
   it('an AND conjunct narrows for the conjuncts after it AND the body', () => {
     expect(
       codesFor(
-        `${AWAITED}\n  if r.Answer == "Ship" AND r.Score > 3 { write log-[:Entry]-> { label: r.Answer } }`,
+        `${AWAITED}\n  if (r.Answer == "Ship" && r.Score > 3) { write log-[:Entry]-> { label: r.Answer } }`,
       ),
     ).toEqual([]);
   });
@@ -216,7 +216,7 @@ describe('equality narrows — the comparison IS the guard', () => {
   it('under OR it proves nothing — a true condition need not be this operand', () => {
     expect(
       codesFor(
-        `${AWAITED}\n  if r.Answer == "Ship" OR 1 == 1 { write log-[:Entry]-> { label: r.Answer } }`,
+        `${AWAITED}\n  if (r.Answer == "Ship" || 1 == 1) { write log-[:Entry]-> { label: r.Answer } }`,
       ),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
@@ -224,7 +224,7 @@ describe('equality narrows — the comparison IS the guard', () => {
   it('comparing two maybe-absent reads proves nothing — absent == absent is TRUE', () => {
     expect(
       codesFor(
-        `${AWAITED}\n${AWAITED_METER}\n  if r.Score == q.Level { write log-[:Entry]-> { score: r.Score } }`,
+        `${AWAITED}\n${AWAITED_METER}\n  if (r.Score == q.Level) { write log-[:Entry]-> { score: r.Score } }`,
       ),
     ).toContain('MOV_ABSENT_REQUIRED');
   });
@@ -245,16 +245,16 @@ describe('equality narrows — the comparison IS the guard', () => {
 describe('the second shape — derived, not hardcoded', () => {
   it('equality is legal and narrows on a differently-named landing', () => {
     expect(
-      codesFor(`${AWAITED_METER}\n  if q.Grade == "A" { write log-[:Entry]-> { score: q.Level } }`),
+      codesFor(`${AWAITED_METER}\n  if (q.Grade == "A") { write log-[:Entry]-> { score: q.Level } }`),
     ).toEqual([]);
   });
 
   it('ordering it still requires present', () => {
-    expect(codesFor(`${AWAITED_METER}\n  if q.Level >= 3 { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
+    expect(codesFor(`${AWAITED_METER}\n  if (q.Level >= 3) { }`)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('the enum did-you-mean is the ONLY thing a typo’d comparison says', () => {
-    const errors = diagnosticsFor(`${AWAITED_METER}\n  if q.Grade == "Ay" { }`);
+    const errors = diagnosticsFor(`${AWAITED_METER}\n  if (q.Grade == "Ay") { }`);
     expect(errors.map(d => d.code)).toEqual(['MOV_ENUM_UNKNOWN_VALUE']);
     expect(errors[0].message).toContain('Did you mean "A"?');
   });

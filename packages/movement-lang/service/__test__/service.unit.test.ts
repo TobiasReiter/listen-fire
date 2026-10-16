@@ -105,6 +105,15 @@ inbox = email(credentials: dealflow_inbox)
 crm = attio(credentials: acme_main)
 `;
 
+// The same header as version 5 spells it, for the tests that check under the
+// current version.
+const HEADER_5 = `import { email, attio } from adapters
+import { dealflow_inbox, acme_main } from credentials
+
+inbox = connect email using dealflow_inbox
+crm = connect attio using acme_main
+`;
+
 /** This file pins the editor's view of the surface up to version 4; the
  *  v5 surface's is surface_v5.unit.test.ts. */
 const VERSION_4 = { languageVersion: 4 } as const;
@@ -183,11 +192,11 @@ listen to inbox fire intake
 
 describe('getMovementDiagnostics', () => {
   it('returns no diagnostics for a valid program', () => {
-    const source = `${HEADER}
-movement intake(msg: <inbox-[:message]->>) {
+    const source = `${HEADER_5}
+function intake(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> {
     unique by (\`domains\`)
-    name: AI("the company name")
+    name: ai("the company name")
     domains: [msg-[:sender]->.\`domain\`]
   }
 }
@@ -198,8 +207,8 @@ listen to inbox fire intake
   });
 
   it('surfaces MOV_LISTEN_MISSING as an info-severity diagnostic', () => {
-    const source = `${HEADER}
-movement intake(msg: <inbox-[:message]->>) {
+    const source = `${HEADER_5}
+function intake(msg: <inbox-[:message]->>) {
   write crm-[:companies]-> {
     name: msg.\`subject\`
   }

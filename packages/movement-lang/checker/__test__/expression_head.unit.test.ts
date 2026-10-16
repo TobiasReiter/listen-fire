@@ -2,7 +2,7 @@
 //
 // A record IS a value type, so one rule decides both roots: the head starts at
 // whatever record the root holds, whether a name holds it or an expression
-// does. `AT(rows, 0)-[f:Founders]-> { … }` types exactly as binding the call to
+// does. `rows[0]-[f:Founders]-> { … }` types exactly as binding the call to
 // a name and hopping off the name types, because that is the same fact read the
 // same way.
 //
@@ -47,13 +47,13 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { attio, email } from adapters
-crm = attio()
-inbox = email()
+crm = connect attio
+inbox = connect email
 `;
 
 function source(body: string): string {
   return `${PRELUDE}
-movement m(msg: <inbox-[:message]->>) {
+function m(msg: <inbox-[:message]->>) {
 ${body}
 }`;
 }
@@ -68,16 +68,16 @@ const messages = (body: string): string => check(body).map((d) => d.message).joi
 
 /** `rows` is a list literal of records — ordered, so `AT` can index it. */
 const ROWS =
-  '  rows = [ONLY(crm-[c:Companies WHERE c.`Name` == "Acme"]->)]\n';
+  '  rows = [only(crm-[c:Companies WHERE c.`Name` == "Acme"]->)]\n';
 
 describe('an expression head types as the record it holds', () => {
   it('a call picking one record out of a list', () => {
-    expect(codes(`${ROWS}  AT(rows, 0)-[f:Founders]-> {\n    x = f.\`Name\`\n  }`)).toEqual([]);
+    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`)).toEqual([]);
   });
 
   it('exactly as binding it first does — the two forms are one walk', () => {
-    const bound = codes(`${ROWS}  first = AT(rows, 0)\n  first-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
-    const inline = codes(`${ROWS}  AT(rows, 0)-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
+    const bound = codes(`${ROWS}  head = rows[0]\n  head-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
+    const inline = codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`);
     expect(inline).toEqual(bound);
     expect(inline).toEqual([]);
   });
@@ -85,25 +85,25 @@ describe('an expression head types as the record it holds', () => {
   it('a singleton fold over a narrowed walk', () => {
     expect(
       codes(
-        '  ONLY(crm-[c:Companies WHERE c.`Name` == "Acme"]->)-[f:Founders]-> {\n    x = f.`Name`\n  }',
+        '  only(crm-[c:Companies WHERE c.`Name` == "Acme"]->)-[f:Founders]-> {\n    x = f.`Name`\n  }',
       ),
     ).toEqual([]);
   });
 
   it('a record held in a map, read by its key', () => {
     expect(
-      codes(`${ROWS}  held = { a: AT(rows, 0) }\n  AT(held, "a")-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
+      codes(`${ROWS}  held = { a: rows[0] }\n  held.a-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
     ).toEqual([]);
   });
 
   it('the hop is typed off the expression, so an edge the record has not got is named', () => {
-    expect(codes(`${ROWS}  AT(rows, 0)-[f:Investors]-> {\n    x = f.\`Name\`\n  }`)).toEqual([
+    expect(codes(`${ROWS}  rows[0]-[f:Investors]-> {\n    x = f.\`Name\`\n  }`)).toEqual([
       'MOV_TRAVERSE_UNKNOWN_EDGE',
     ]);
   });
 
   it('the landing is typed, so a property the landing has not got is named', () => {
-    expect(codes(`${ROWS}  AT(rows, 0)-[f:Founders]-> {\n    x = f.\`Nope\`\n  }`)).toEqual([
+    expect(codes(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Nope\`\n  }`)).toEqual([
       'MOV_UNKNOWN_PROPERTY',
     ]);
   });
@@ -134,10 +134,10 @@ describe('an expression that is not a record', () => {
 
 describe("await parks on a record it can name again", () => {
   it('refuses an expression root, with the binding to make', () => {
-    const body = `${ROWS}  answer = await FIRST(AT(rows, 0)-[r:Founders]->)`;
+    const body = `${ROWS}  answer = await first(rows[0]-[r:Founders]->)`;
     expect(codes(body)).toContain('MOV_HEAD_NEEDS_A_NAME');
     expect(messages(body)).toMatch(
-      /'await' parks on the record it waits at, and a parked run finds that record again by NAME — so this one is bound first: 'waiting = AT\(rows, 0\)', then 'await FIRST\(waiting-\[r:Founders\]->\)'/,
+      /'await' parks on the record it waits at, and a parked run finds that record again by NAME — so this one is bound first: 'waiting = rows\[0\]', then 'await first\(waiting-\[r:Founders\]->\)'/,
     );
   });
 
@@ -151,12 +151,12 @@ describe("await parks on a record it can name again", () => {
 describe('the story shows the expression the author wrote', () => {
   it('carries the head as source, and the root as its own chip', () => {
     const result = storyOf({
-      source: source(`${ROWS}  AT(rows, 0)-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
+      source: source(`${ROWS}  rows[0]-[f:Founders]-> {\n    x = f.\`Name\`\n  }`),
       catalog,
     });
     if (!result.ok) throw new Error(`expected a story, got ${result.reason}`);
     const json = JSON.stringify(result.story);
-    expect(json).toContain('AT(rows, 0)-[f:Founders]->');
+    expect(json).toContain('rows[0]-[f:Founders]->');
     expect(json).toContain('"rootExpression"');
   });
 });

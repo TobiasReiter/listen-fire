@@ -103,6 +103,50 @@ const catalog = mockCatalog({
 const SOURCE = `import { mail, crm_sys, asksys } from adapters
 import { inbox_creds, crm_creds, ask_creds } from credentials
 
+inbox = connect mail using inbox_creds
+book = connect crm_sys using crm_creds
+questions = connect asksys using ask_creds
+
+function note_owner(co: <book-[:Companies]->>) {
+  seen = co.\`Name\`
+}
+
+function intake(m: <inbox-[:message]->>) {
+  facts = extract from [m.\`body\`] {
+    name: <text> "the person's name"
+    amount: <number> "the deal size"
+    node company: "the company they are from" {
+      domain: <text> "the web domain"
+      node colleague: "everyone else named at that company" {
+        name: <text> "their full name"
+      }
+    }
+  }
+  c = write book-[:Companies]-> { unique by (\`Name\`) Name ?: facts.name }
+  d = write c-[:Deals]-> { Title: "Deal — \${facts.name}", Summary: ai("summarise the thread") }
+  lead = match c-[:Owner]-> { unique by (\`Name\`) Name: "sam" }
+  if (lead != null) {
+    link c -[:Owner]-> lead
+  }
+  a = write questions-[:Check]-> { prompt: "approve this deal?" }
+  answer = await first(a-[:Response]->)
+  amount = coalesce(facts.amount, 0)
+  timing = race(() => { await sleep(2d) }, () => { return true })
+  if (amount > 1000) {
+    write d { Stage: "big" }
+  } else {
+    write d { Stage: "small" }
+  }
+  note_owner(c)
+}
+
+listen to inbox { key: "dealflow", events: ["message.received"] } fire intake
+`;
+
+// The same program as version 3 spells it, for the test that pins that version.
+const SOURCE_V3 = `import { mail, crm_sys, asksys } from adapters
+import { inbox_creds, crm_creds, ask_creds } from credentials
+
 inbox = mail(credentials: inbox_creds)
 book = crm_sys(credentials: crm_creds)
 questions = asksys(credentials: ask_creds)
@@ -330,10 +374,11 @@ describe('edges — the record graph', () => {
   });
 
   it('a link body projects as its two statements: the find, then the link onto what it found', () => {
-    const GUARDED = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  if lead != null {\n    link c -[:Owner]-> lead\n  }';
+    const GUARDED = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  if (lead != null) {\n    link c -[:Owner]-> lead\n  }';
+    const GUARDED_V3 = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  if lead != null {\n    link c -[:Owner]-> lead\n  }';
     const TWO = 'lead = match c-[:Owner]-> { unique by (`Name`) Name: "sam" }\n  link c -[:Owner]-> lead';
     expect(SOURCE).toContain(GUARDED);
-    const PINNED = SOURCE.replace(GUARDED, TWO);
+    const PINNED = SOURCE_V3.replace(GUARDED_V3, TWO);
     // The body form is retired since language version 4, so its projection is
     // the story of a program pinned before it.
     const project = (source: string, languageVersion?: number) => {
@@ -732,8 +777,8 @@ movement build() {
   // `facts-[c:company]->` — the one form the renderer could not put in words.
   it('a pass-through traversal entry composes a referent, not the path as text', () => {
     const source = `${SOURCE.replace(
-      'note_owner(co: c)',
-      'file(shape: node { Label: "x", company: facts-[c:company]-> })',
+      'note_owner(c)',
+      'file(node { Label: "x", company: facts-[c:company]-> })',
     )}
 node Filing {
   Label: <text>
@@ -742,7 +787,7 @@ node Filing {
   }
 }
 
-movement file(shape: <Filing>) {
+function file(shape: <Filing>) {
   seen = shape.Label
 }
 `;
@@ -771,22 +816,22 @@ movement file(shape: <Filing>) {
 const TRAVERSALS = `import { mail, crm_sys, asksys } from adapters
 import { inbox_creds, crm_creds, ask_creds } from credentials
 
-inbox = mail(credentials: inbox_creds)
-book = crm_sys(credentials: crm_creds)
-questions = asksys(credentials: ask_creds)
+inbox = connect mail using inbox_creds
+book = connect crm_sys using crm_creds
+questions = connect asksys using ask_creds
 
-movement flows(m: <inbox-[:message]->>) {
+function flows(m: <inbox-[:message]->>) {
   a = write questions-[:Check]-> { prompt: "approve this deal?" }
 
-  book-[one:Companies WHERE \`Name\` == "acme"]-> {
+  book-[one:Companies WHERE one.\`Name\` == "acme"]-> {
     write one { Name: "acme" }
   }
 
-  book-[two:Companies WHERE \`Name\` == "acme" AND \`Name\` != "other"]-> {
+  book-[two:Companies WHERE two.\`Name\` == "acme" AND two.\`Name\` != "other"]-> {
     seen_two = two.\`Name\`
   }
 
-  book-[three:Companies WHERE \`Name\` == "acme" OR \`Name\` == "other"]-> {
+  book-[three:Companies WHERE three.\`Name\` == "acme" OR three.\`Name\` == "other"]-> {
     seen_three = three.\`Name\`
   }
 
@@ -798,7 +843,7 @@ movement flows(m: <inbox-[:message]->>) {
     seen_reply = reply.answer
   }
 
-  outcome = race(() => { return await FIRST(a-[:Response]->) }, () => { await sleep(1d) })
+  outcome = race(() => { return await first(a-[:Response]->) }, () => { await sleep(1d) })
 }
 
 listen to inbox { key: "flows" } fire flows
@@ -968,19 +1013,19 @@ describe('serializability — the projection is the point at which identity sett
 const CALLBACK_SOURCE = `import { crm_sys } from adapters
 import { crm_creds } from credentials
 
-book = crm_sys(credentials: crm_creds)
+book = connect crm_sys using crm_creds
 
-movement approve() {
-  co = ONLY(book-[c:Companies WHERE \`Name\` == "Acme"]->)
+function approve() {
+  co = only(book-[c:Companies WHERE c.\`Name\` == "Acme"]->)
   yes = callback({ write book-[:Companies]-> { Name: "approved" } })
   no = callback({ write book-[:Companies]-> { Name: "declined" } })
   write book-[:Companies]-> { Name: "asked \${yes.id} \${no.id}" }
   r = race(
-    () => { await FIRST(yes-[:Called]->) },
-    () => { await FIRST(no-[:Called]->) },
+    () => { await first(yes-[:Called]->) },
+    () => { await first(no-[:Called]->) },
     () => { await sleep(1d) },
   )
-  if AT(r, 2) == null {
+  if (r[2] == null) {
     write book-[:Companies]-> { Name: "nobody answered" }
   }
 }
@@ -1104,15 +1149,15 @@ describe('a fold over a walk — the call composes over the walk’s structure',
 
   it('a fold over something with no recorded walk stays exactly as written', () => {
     const source = CALLBACK_SOURCE.replace(
-      'ONLY(book-[c:Companies WHERE \`Name\` == "Acme"]->)',
-      'ONLY([1, 2])',
+      'only(book-[c:Companies WHERE c.\`Name\` == "Acme"]->)',
+      'only([1, 2])',
     );
     const result = storyOf({ source, catalog });
     if (!result.ok) throw new Error('expected a story');
     const movement = result.story.flow.find((s) => s.kind === 'movement');
     if (movement?.kind !== 'movement') throw new Error('no movement');
     const [value] = stepsOfKind(movement.steps, 'value');
-    expect(value!.value.parts).toEqual([{ kind: 'text', text: 'ONLY([1, 2])' }]);
+    expect(value!.value.parts).toEqual([{ kind: 'text', text: 'only([1, 2])' }]);
   });
 });
 
@@ -1150,7 +1195,7 @@ describe('a node declaration that extends another', () => {
 describe('the receipt is read by SLOT — the timeout branch is one null check', () => {
   it('the branch condition names the race binding and the slot it reads', () => {
     const [branch] = stepsOfKind(approveSteps(), 'branch');
-    expect(branch!.arms[0]!.condition.source).toBe('AT(r, 2) == null');
+    expect(branch!.arms[0]!.condition.source).toBe('r[2] == null');
     expect(branch!.arms[0]!.condition.refs.map((ref) => ref.name)).toEqual(['r']);
   });
 });

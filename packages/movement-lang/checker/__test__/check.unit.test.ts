@@ -2,6 +2,7 @@
 // programs) check clean against a mock catalog, and every diagnostic code
 // has a focused negative fixture.
 
+import { spelledFor } from './surface_spelling';
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic, DiagnosticCodes as C } from '../check';
 import { mockCatalog } from '../catalog';
@@ -99,6 +100,21 @@ function expectClean(source: string): void {
 const PRELUDE = [
   'import { email, attio, slack, kg } from adapters',
   'import { dealflow_inbox, acme_main, acme_workspace, native_knowledge } from credentials',
+  'import { scrubSensitive as scrub_sensitive, vcUrlRetrieval as vc_url_retrieval, fetchUrl as fetch_url } from plugins',
+  '',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
+  'team  = connect slack using acme_workspace',
+  'graph = connect kg using native_knowledge',
+].join('\n');
+
+const inMovement = (body: string) =>
+  `${PRELUDE}\nfunction m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+
+// The same program as versions 1–4 spell it, for a test that pins one of them.
+const PRELUDE_BEFORE_5 = [
+  'import { email, attio, slack, kg } from adapters',
+  'import { dealflow_inbox, acme_main, acme_workspace, native_knowledge } from credentials',
   'import { scrub_sensitive, vc_url_retrieval, fetch_url } from plugins',
   '',
   'inbox = email(credentials: dealflow_inbox)',
@@ -107,8 +123,8 @@ const PRELUDE = [
   'graph = kg(credentials: native_knowledge)',
 ].join('\n');
 
-const inMovement = (body: string) =>
-  `${PRELUDE}\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+const inMovementBefore5 = (body: string) =>
+  `${PRELUDE_BEFORE_5}\nmovement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
 
 // ── Positive: the worked examples check clean ──
 
@@ -119,20 +135,20 @@ describe('worked examples (zero diagnostics)', () => {
         'import { email, attio, slack, affinity } from adapters',
         'import { dealflow_inbox, acme_main, acme_workspace, acme_affinity } from credentials',
         '',
-        'inbox = email(credentials: dealflow_inbox)',
-        'crm   = attio(credentials: acme_main)',
-        'team  = slack(credentials: acme_workspace)',
-        'aff   = affinity(credentials: acme_affinity)',
+        'inbox = connect email using dealflow_inbox',
+        'crm   = connect attio using acme_main',
+        'team  = connect slack using acme_workspace',
+        'aff   = connect affinity using acme_affinity',
         '',
         'company_prompt = "the company name this email is about.',
         '  Prefer the legal entity name over the brand name;',
         "  ignore the sender's own firm.\"",
         '',
-        'movement dealflow_intake(msg: <inbox-[:message]->>) {',
+        'function dealflow_intake(msg: <inbox-[:message]->>) {',
         '',
         '  company = write crm-[:company]-> {',
         '    unique by (`domains`)',
-        '    name:    AI(company_prompt)',
+        '    name:    ai(company_prompt)',
         '    domains: [msg-[:sender]->.`domain`]',
         '  }',
         '',
@@ -161,18 +177,18 @@ describe('worked examples (zero diagnostics)', () => {
       [
         'import { email, kg } from adapters',
         'import { dealflow_inbox, native_knowledge } from credentials',
-        'import { vc_url_retrieval } from plugins',
+        'import { vcUrlRetrieval as vc_url_retrieval } from plugins',
         '',
-        'inbox = email(credentials: dealflow_inbox)',
-        'graph = kg(credentials: native_knowledge)',
+        'inbox = connect email using dealflow_inbox',
+        'graph = connect kg using native_knowledge',
         '',
-        'movement log_dealflow(msg: <inbox-[:message]->>) {',
+        'function log_dealflow(msg: <inbox-[:message]->>) {',
         '',
         '  deals = extract from [msg.`text`, msg-[:files]->.`data`] {',
         '    node company: "each company seeking investment in this message" {',
         '      name: "the company\'s name"',
         '      urls: "URLs in the message associated with this company"',
-        '    } through [vc_url_retrieval(urls: urls)] {',
+        '    } through [vc_url_retrieval({ urls: urls })] {',
         '      name: "the company\'s name"',
         '',
         '      node round: "the funding round this company is raising" {',
@@ -217,10 +233,10 @@ describe('worked examples (zero diagnostics)', () => {
         'import { attio, kg } from adapters',
         'import { acme_main, native_knowledge } from credentials',
         '',
-        'crm = attio(credentials: acme_main)',
-        'graph = kg(credentials: native_knowledge)',
+        'crm = connect attio using acme_main',
+        'graph = connect kg using native_knowledge',
         '',
-        'movement nightly_mirror(root: <crm>) {',
+        'function nightly_mirror(root: <crm>) {',
         '',
         '  root-[c:companies]-> {',
         '    write graph-[:company]-> { unique by (`domains`), name: c.`Name`, domains: c.`Domains` }',
@@ -230,7 +246,7 @@ describe('worked examples (zero diagnostics)', () => {
         '    write graph-[:deal]-> {',
         '      unique by (`name`)',
         '      name:    d.`Name`',
-        '      company: FIRST(d-[:Company]->.`Domains`)',
+        '      company: first(d-[:Company]->.`Domains`)',
         '    }',
         '  }',
         '}',
@@ -244,13 +260,13 @@ describe('worked examples (zero diagnostics)', () => {
         'import { attio, kg } from adapters',
         'import { acme_main, native_knowledge } from credentials',
         '',
-        'crm = attio(credentials: acme_main)',
-        'graph = kg(credentials: native_knowledge)',
+        'crm = connect attio using acme_main',
+        'graph = connect kg using native_knowledge',
         '',
-        'movement attio_to_kg(rec: <crm-[:record]->>) {',
-        '  if rec IS <crm-[:company]->> {',
+        'function attio_to_kg(rec: <crm-[:record]->>) {',
+        '  if (rec is <crm-[:company]->>) {',
         '    write graph-[:company]-> { unique by (`domains`), name: rec.`Name`, domains: rec.`Domains` }',
-        '  } else if rec IS <crm-[:person]->> AND EXISTS(rec-[:Company]->) {',
+        '  } else if (rec is <crm-[:person]->> && exists(rec-[:Company]->)) {',
         '    write graph-[:person]-> { name: rec.`Name`, company: rec-[:Company]->.`Name` }',
         '  }',
         '}',
@@ -290,7 +306,7 @@ describe('worked examples (zero diagnostics)', () => {
       ].join('\n')
     );
     const under = (languageVersion: number) =>
-      checkProgram(parseProgram(program, { languageVersion }), catalog, { languageVersion })
+      checkProgram(parseProgram(spelledFor(languageVersion, program, catalog), { languageVersion }), catalog, { languageVersion })
         .filter(d => (d.severity ?? 'error') === 'error')
         .map(d => d.code);
     expect(under(4)).toEqual([]);
@@ -328,10 +344,10 @@ describe('worked examples (zero diagnostics)', () => {
       [
         PRELUDE,
         'node Lead { name: <text> }',
-        'movement a(msg: <inbox-[:message]->>) {',
-        '  b(l: node { name: msg.`subject` })',
+        'function a(msg: <inbox-[:message]->>) {',
+        '  b(node { name: msg.`subject` })',
         '}',
-        'movement b(l: <Lead>) {',
+        'function b(l: <Lead>) {',
         '  write crm-[:company]-> { name: l.`name` }',
         '}',
       ].join('\n'),
@@ -361,10 +377,10 @@ describe('imports', () => {
         'import { email as mail, kg as knowledge } from adapters',
         'import { dealflow_inbox as inbox_creds, native_knowledge } from credentials',
         '',
-        'inbox = mail(credentials: inbox_creds)',
-        'graph = knowledge(credentials: native_knowledge)',
+        'inbox = connect mail using inbox_creds',
+        'graph = connect knowledge using native_knowledge',
         '',
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  write graph-[:note]-> { text: msg.`text` }',
         '}',
       ].join('\n'),
@@ -376,7 +392,7 @@ describe('imports', () => {
       [
         'import { email } from adapters',
         'import { dealflow_inbox as inbox_creds } from credentials',
-        'inbox = email(credentials: dealflow_inbox)',
+        'inbox = connect email using dealflow_inbox',
       ].join('\n'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.NAME_UNRESOLVED]);
@@ -390,8 +406,8 @@ describe('imports', () => {
         'import { attio } from adapters',
         'import { acme_main, acme_main as backup_creds } from credentials',
         '',
-        'crm  = attio(credentials: acme_main)',
-        'crm2 = attio(credentials: backup_creds)',
+        'crm  = connect attio using acme_main',
+        'crm2 = connect attio using backup_creds',
       ].join('\n'),
     );
   });
@@ -408,8 +424,8 @@ describe('imports', () => {
         'import { kg } from adapters',
         'import { native_knowledge } from credentials',
         'import { Files } from "lib/file-routines"',
-        'graph = kg(credentials: native_knowledge)',
-        'movement m(f: <Files>) {',
+        'graph = connect kg using native_knowledge',
+        'function m(f: <Files>) {',
         '  write graph-[:file]-> { name: f.`name` }',
         '}',
       ].join('\n'),
@@ -421,7 +437,7 @@ describe('imports', () => {
     const diagnostics = check(
       [
         'import { email } from adapters',
-        'inbox = email(credentials: dealflow_inbox)',
+        'inbox = connect email using dealflow_inbox',
         'import { dealflow_inbox } from credentials',
       ].join('\n'),
     );
@@ -454,16 +470,16 @@ describe('name resolution', () => {
 
   it('MOV_NAME_UNRESOLVED for an interpolation reading a name out of scope (movement-local at file scope)', () => {
     expect(
-      codes(`${PRELUDE}\na = "${'${ghost}'}"\nmovement m(msg: <inbox-[:message]->>) {\n  ghost = "x"\n}`),
+      codes(`${PRELUDE}\na = "${'${ghost}'}"\nfunction m(msg: <inbox-[:message]->>) {\n  ghost = "x"\n}`),
     ).toEqual([C.NAME_UNRESOLVED]);
   });
 
   it('MOV_NAME_UNRESOLVED for an unknown name inside an AI() prompt', () => {
-    expect(codes(inMovement('  write team-[:message]-> { text: AI(ghost) }'))).toEqual([C.NAME_UNRESOLVED]);
+    expect(codes(inMovement('  write team-[:message]-> { text: ai(ghost) }'))).toEqual([C.NAME_UNRESOLVED]);
   });
 
   it('MOV_NAME_UNRESOLVED for an unknown name nested in a function argument', () => {
-    expect(codes(inMovement('  write team-[:message]-> { text: COALESCE(ghost, "x") }'))).toEqual([C.NAME_UNRESOLVED]);
+    expect(codes(inMovement('  write team-[:message]-> { text: coalesce(ghost, "x") }'))).toEqual([C.NAME_UNRESOLVED]);
   });
 
   it('a rooted field access and a valid interpolation are NOT mistaken for unknown names', () => {
@@ -477,7 +493,7 @@ describe('name resolution', () => {
   });
 
   it('MOV_NAME_UNRESOLVED for an unknown movement parameter graph', () => {
-    expect(codes(`${PRELUDE}\nmovement m(msg: <ghost-[:message]->>) {\n  …\n}`)).toEqual([
+    expect(codes(`${PRELUDE}\nfunction m(msg: <ghost-[:message]->>) {\n  …\n}`)).toEqual([
       C.NAME_UNRESOLVED,
     ]);
   });
@@ -568,7 +584,7 @@ describe('name resolution', () => {
     const diagnostics = check(
       inMovement(
         [
-          '  details = FIRST(MAP([msg], (x) => {',
+          '  details = first(map([msg], (x) => {',
           "    # research isn't cheap, so it runs only for `x` with no \"website\"",
           '    return x.`subject`',
           '  }))',
@@ -580,7 +596,7 @@ describe('name resolution', () => {
 
   it('aliases bound inside an expression do not leak false positives', () => {
     expectClean(
-      inMovement('  write team-[:message]-> { text: FIRST(msg-[s:sender]->.`name`) }'),
+      inMovement('  write team-[:message]-> { text: first(msg-[s:sender]->.`name`) }'),
     );
   });
 });
@@ -612,7 +628,7 @@ describe('constructions', () => {
         [
           'import { attio } from adapters',
           'import { acme_main } from credentials',
-          'crm = attio(credentials: acme_main, nonsense: "x")',
+          'crm = connect attio using acme_main { nonsense: "x" }',
         ].join('\n'),
       ),
     ).toEqual([C.CONSTRUCT_BAD_ARG]);
@@ -623,7 +639,7 @@ describe('constructions', () => {
       [
         'import { attio } from adapters',
         'import { acme_main } from credentials',
-        'crm = attio(credentials: acme_main, list: "Dealflow")',
+        'crm = connect attio using acme_main { list: "Dealflow" }',
       ].join('\n'),
     );
   });
@@ -659,7 +675,7 @@ describe('constructions', () => {
   });
 
   it('MOV_CONSTRUCT_MISSING_CRED when the credential argument is absent', () => {
-    expect(codes('import { attio } from adapters\ncrm = attio()')).toEqual([
+    expect(codes('import { attio } from adapters\ncrm = connect attio')).toEqual([
       C.CONSTRUCT_MISSING_CRED,
     ]);
   });
@@ -669,7 +685,7 @@ describe('constructions', () => {
       [
         'import { slack } from adapters',
         'import { acme_main } from credentials',
-        'team = slack(credentials: acme_main)',
+        'team = connect slack using acme_main',
       ].join('\n'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.CRED_WRONG_ADAPTER]);
@@ -682,8 +698,8 @@ describe('constructions', () => {
         [
           'import { email, attio } from adapters',
           'import { dealflow_inbox } from credentials',
-          'inbox = email(credentials: dealflow_inbox)',
-          'crm = attio(credentials: inbox)',
+          'inbox = connect email using dealflow_inbox',
+          'crm = connect attio using inbox',
         ].join('\n'),
       ),
     ).toEqual([C.CRED_WRONG_ADAPTER]);
@@ -776,7 +792,7 @@ describe('block scoping', () => {
       codes(
         inMovement(
           [
-            '  if msg.`subject` CONTAINS "deal" {',
+            '  if (Text.includes(msg.`subject`, "deal")) {',
             '    co = write crm-[:company]-> { name: msg.`subject` }',
             '  }',
             '  write team-[:message]-> { text: co.`url` }',
@@ -792,18 +808,18 @@ describe('block scoping', () => {
 describe('movements, shapes, calls', () => {
   it('MOV_DUPLICATE_DECL for two movements of the same name', () => {
     expect(
-      codes(`${PRELUDE}\nmovement m(a: <crm-[:record]->>) {\n  …\n}\nmovement m(b: <crm-[:record]->>) {\n  …\n}`),
+      codes(`${PRELUDE}\nfunction m(a: <crm-[:record]->>) {\n  …\n}\nfunction m(b: <crm-[:record]->>) {\n  …\n}`),
     ).toEqual([C.DUPLICATE_DECL]);
   });
 
   it('MOV_DUPLICATE_DECL for a node declaration colliding with a movement', () => {
     expect(
-      codes(`${PRELUDE}\nmovement thing(a: <crm-[:record]->>) {\n  …\n}\nnode thing { x: <text> }`),
+      codes(`${PRELUDE}\nfunction thing(a: <crm-[:record]->>) {\n  …\n}\nnode thing { x: <text> }`),
     ).toEqual([C.DUPLICATE_DECL]);
   });
 
   it('MOV_CALL_NOT_MOVEMENT when calling a non-movement', () => {
-    expect(codes(`${PRELUDE}\nmovement m(a: <crm-[:record]->>) {\n  crm(x: "x")\n}`)).toEqual([
+    expect(codes(`${PRELUDE}\nfunction m(a: <crm-[:record]->>) {\n  crm(x: "x")\n}`)).toEqual([
       C.CALL_NOT_MOVEMENT,
     ]);
   });
@@ -813,10 +829,10 @@ describe('movements, shapes, calls', () => {
       codes(
         [
           PRELUDE,
-          'movement callee(a: <crm-[:record]->>) {',
+          'function callee(a: <crm-[:record]->>) {',
           '  …',
           '}',
-          'movement caller(b: <crm-[:record]->>) {',
+          'function caller(b: <crm-[:record]->>) {',
           '  callee()',
           '}',
         ].join('\n'),
@@ -824,10 +840,11 @@ describe('movements, shapes, calls', () => {
     ).toEqual([C.CALL_ARITY, C.CALL_ARG_MISSING]);
   });
 
-  it('named-argument matching: unknown, missing, and duplicate names', () => {
+  // Naming a call's arguments is the spelling of versions 1–4; from 5 they go by position.
+  it('named-argument matching: unknown, missing, and duplicate names (version 4)', () => {
     const withCall = (call: string) =>
       [
-        PRELUDE,
+        PRELUDE_BEFORE_5,
         'movement callee(a: <crm-[:record]->>, b: <crm-[:record]->>) {',
         '  …',
         '}',
@@ -835,6 +852,9 @@ describe('movements, shapes, calls', () => {
         `  ${call}`,
         '}',
       ].join('\n');
+    const check = (source: string) =>
+      checkProgram(parseProgram(source, { languageVersion: 4 }), catalog, { languageVersion: 4 }).filter(d => (d.severity ?? 'error') === 'error');
+    const codes = (source: string) => check(source).map(d => d.code);
     // Order carries no meaning — names match.
     expect(codes(withCall('callee(b: rec, a: rec)'))).toEqual([]);
     const unknown = check(withCall('callee(a: rec, c: rec)'));
@@ -849,10 +869,10 @@ describe('movements, shapes, calls', () => {
     const withCall = (call: string) =>
       [
         PRELUDE,
-        'movement callee(a: <crm-[:record]->>, b: <crm-[:record]->>) {',
+        'function callee(a: <crm-[:record]->>, b: <crm-[:record]->>) {',
         '  …',
         '}',
-        'movement caller(rec: <crm-[:record]->>) {',
+        'function caller(rec: <crm-[:record]->>) {',
         `  ${call}`,
         '}',
       ].join('\n');
@@ -943,22 +963,22 @@ describe('through args', () => {
   });
 
   it('MOV_THROUGH_BAD_ARG for an argument the plugin does not declare', () => {
-    expect(codes(extractWith('vc_url_retrieval(bogus: urls)', 'website: "the website"'))).toEqual([
+    expect(codes(extractWith('vc_url_retrieval({ bogus: urls })', 'website: "the website"'))).toEqual([
       C.THROUGH_BAD_ARG,
     ]);
   });
 
   it("MOV_THROUGH_FORWARD_REF when a through reads its own stage's field", () => {
     const diagnostics = check(
-      extractWith('vc_url_retrieval(urls: website)', 'website: "the website"'),
+      extractWith('vc_url_retrieval({ urls: website })', 'website: "the website"'),
     );
     expect(diagnostics.map(d => d.code)).toEqual([C.THROUGH_FORWARD_REF]);
     expect(diagnostics[0].message).toContain("'website'");
   });
 
   it('prior-stage fields and inherited scope resolve in through args', () => {
-    expectClean(extractWith('vc_url_retrieval(urls: urls)', 'website: "the website"'));
-    expectClean(extractWith('vc_url_retrieval(urls: msg.`text`)', 'website: "the website"'));
+    expectClean(extractWith('vc_url_retrieval({ urls: urls })', 'website: "the website"'));
+    expectClean(extractWith('vc_url_retrieval({ urls: msg.`text` })', 'website: "the website"'));
   });
 
   it('MOV_THROUGH_ARG_MISSING for a required argument the call omits, naming the param and the plugin', () => {
@@ -968,18 +988,30 @@ describe('through args', () => {
     expect(diagnostics[0].message).toContain("'url'");
   });
 
-  it('MOV_THROUGH_ARG_MISSING still fires when other (non-required) arguments are supplied', () => {
-    expect(codes(extractWith('fetch_url(email: msg.`subject`)', 'website: "the website"'))).toEqual([
-      C.THROUGH_ARG_MISSING,
-    ]);
+  // From version 5 the required argument is the first by position, so a call
+  // cannot supply the others without it; the case is a version 1–4 call.
+  it('MOV_THROUGH_ARG_MISSING still fires when other (non-required) arguments are supplied (version 4)', () => {
+    const source = inMovementBefore5(
+      [
+        '  deals = extract from [msg.`text`] {',
+        '    node company: "each company" {',
+        '      name: "the name"',
+        '    } through [fetch_url(email: msg.`subject`)] {',
+        '      website: "the website"',
+        '    }',
+        '  }',
+      ].join('\n'),
+    );
+    const found = checkProgram(parseProgram(source, { languageVersion: 4 }), catalog, { languageVersion: 4 });
+    expect(found.filter(d => (d.severity ?? 'error') === 'error').map(d => d.code)).toEqual([C.THROUGH_ARG_MISSING]);
   });
 
   it('supplying the required argument clears MOV_THROUGH_ARG_MISSING', () => {
-    expectClean(extractWith('fetch_url(url: urls)', 'website: "the website"'));
+    expectClean(extractWith('fetch_url(urls)', 'website: "the website"'));
   });
 
   it('an optional argument left out stays clean — only requiredArgs are demanded', () => {
-    expectClean(extractWith('fetch_url(url: urls, email: msg.`subject`)', 'website: "the website"'));
+    expectClean(extractWith('fetch_url(urls, { email: msg.`subject` })', 'website: "the website"'));
   });
 
   it("a child node's through may read the parent's earlier fields", () => {
@@ -991,7 +1023,7 @@ describe('through args', () => {
           '      urls: "associated URLs"',
           '      node round: "the round" {',
           '        stage: "the stage"',
-          '      } through [vc_url_retrieval(urls: urls)] {',
+          '      } through [vc_url_retrieval({ urls: urls })] {',
           '        amount: "the amount"',
           '      }',
           '    }',
@@ -1084,13 +1116,13 @@ describe('extract field duplicates', () => {
   // as `{}`, a parked binding is dropped). Refused on every version.
   it.each([1, 3, 4] as const)('MOV_NAME_PROTO for a binding or a parameter named __proto__ (version %d)', (languageVersion) => {
     const named = (body: string) =>
-      checkProgram(parseProgram(inMovement(body), { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
+      checkProgram(parseProgram(inMovementBefore5(body), { languageVersion }), catalog, { languageVersion }).filter(d => (d.severity ?? 'error') === 'error');
     const binding = named('  __proto__ = 1');
     expect(binding.map(d => d.code)).toEqual([C.NAME_PROTO]);
     expect(binding[0].message).toContain("'__proto__'");
     const param = named('  xs = MAP([1, 2], (__proto__) => {\n    return __proto__\n  })');
     expect(param.map(d => d.code)).toEqual([C.NAME_PROTO]);
-    expectClean(inMovement('  proto = 1\n  xs = MAP([1, 2], (p) => {\n    return p\n  })'));
+    expectClean(inMovement('  proto = 1\n  xs = map([1, 2], (p) => {\n    return p\n  })'));
   });
 
   // Every place an author can spell a name declares it through one door, so
@@ -1102,8 +1134,8 @@ describe('extract field duplicates', () => {
     const protoCount = (src: string) =>
       checkProgram(parseProgram(src, { languageVersion }), catalog, { languageVersion }).filter(d => d.code === C.NAME_PROTO).length;
     const sites: Record<string, string> = {
-      'movement parameter (graph)': `${PRELUDE}\nmovement m(__proto__: <inbox-[:message]->>) {\n  x = 1\n}`,
-      'movement parameter (value)': `${PRELUDE}\nmovement m(__proto__: <text>) {\n  x = __proto__\n}`,
+      'movement parameter (graph)': `${PRELUDE}\nfunction m(__proto__: <inbox-[:message]->>) {\n  x = 1\n}`,
+      'movement parameter (value)': `${PRELUDE}\nfunction m(__proto__: <text>) {\n  x = __proto__\n}`,
       'movement name': `${PRELUDE}\nmovement __proto__(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
       'type name': `${PRELUDE}\ntype __proto__ = <"a" | "b">`,
       'node name': `${PRELUDE}\nnode __proto__: "each x" { name: <text> "n" }`,
@@ -1126,7 +1158,7 @@ describe('extract field duplicates', () => {
           '  deals = extract from [msg.`text`] {',
           '    node company: "each company" {',
           '      name: "the raw name"',
-          '    } through [vc_url_retrieval(urls: name)] {',
+          '    } through [vc_url_retrieval({ urls: name })] {',
           '      name: "the cleaned name"',
           '    }',
           '  }',
@@ -1156,7 +1188,7 @@ describe('diagnostic spans', () => {
 
 describe('listen statements', () => {
   const INTAKE = [
-    'movement intake(msg: <inbox-[:message]->>) {',
+    'function intake(msg: <inbox-[:message]->>) {',
     '  write team-[:message]-> { text: msg.`subject` }',
     '}',
   ].join('\n');
@@ -1200,7 +1232,7 @@ describe('listen statements', () => {
   it("a parameter typed against another instance is MOV_LISTEN_PARAM_MISMATCH, naming both types", () => {
     const source = [
       PRELUDE,
-      'movement sync(rec: <crm-[:company]->>) {',
+      'function sync(rec: <crm-[:company]->>) {',
       '  write team-[:message]-> { text: rec.`name` }',
       '}',
       'listen to inbox fire sync',
@@ -1214,7 +1246,7 @@ describe('listen statements', () => {
   it('a movement with the wrong arity is MOV_LISTEN_PARAM_MISMATCH', () => {
     const source = [
       PRELUDE,
-      'movement pair(a: <inbox-[:message]->>, b: <inbox-[:message]->>) {',
+      'function pair(a: <inbox-[:message]->>, b: <inbox-[:message]->>) {',
       '  write team-[:message]-> { text: a.`subject` }',
       '}',
       'listen to inbox fire pair',
@@ -1258,7 +1290,7 @@ describe('listen statements', () => {
   it('an adapter with no trigger-config vocabulary rejects any config key', () => {
     const source = [
       PRELUDE,
-      'movement sync(rec: <crm-[:company]->>) {',
+      'function sync(rec: <crm-[:company]->>) {',
       '  write team-[:message]-> { text: rec.`name` }',
       '}',
       'listen to crm { anything_goes: "x" } fire sync',
@@ -1284,7 +1316,7 @@ describe('listen statements', () => {
 describe('MOV_LISTEN_MISSING', () => {
   it('a dispatchable movement with no listen gets an info diagnostic with a suggested line', () => {
     const diagnostics = checkAll(
-      `${PRELUDE}\nmovement dealflow_intake(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { text: msg.\`subject\` }\n}`,
+      `${PRELUDE}\nfunction dealflow_intake(msg: <inbox-[:message]->>) {\n  write team-[:message]-> { text: msg.\`subject\` }\n}`,
     );
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0].code).toBe(C.LISTEN_MISSING);
@@ -1299,7 +1331,7 @@ describe('MOV_LISTEN_MISSING', () => {
   it('any listen in the file suppresses it', () => {
     const source = [
       PRELUDE,
-      'movement intake(msg: <inbox-[:message]->>) {',
+      'function intake(msg: <inbox-[:message]->>) {',
       '  write team-[:message]-> { text: msg.`subject` }',
       '}',
       'listen to inbox { key: "dealflow" } fire intake',
@@ -1312,12 +1344,12 @@ describe('MOV_LISTEN_MISSING', () => {
       'import { kg } from adapters',
       'import { native_knowledge } from credentials',
       '',
-      'graph = kg(credentials: native_knowledge)',
+      'graph = connect kg using native_knowledge',
       '',
       'node Files {',
       '  name: <text>',
       '}',
-      'movement log_file(f: <Files>) {',
+      'function log_file(f: <Files>) {',
       '  write graph-[:note]-> { text: f.`name` }',
       '}',
     ].join('\n');
@@ -1327,7 +1359,7 @@ describe('MOV_LISTEN_MISSING', () => {
   it('the suggestion omits the config block when the adapter declares no vocabulary', () => {
     const source = [
       PRELUDE,
-      'movement sync(rec: <crm-[:company]->>) {',
+      'function sync(rec: <crm-[:company]->>) {',
       '  write team-[:message]-> { text: rec.`name` }',
       '}',
     ].join('\n');
@@ -1345,9 +1377,9 @@ describe('cron and manual listeners', () => {
       [
         'import { cron, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team  = slack(credentials: acme_workspace)',
-        'timer = cron()',
-        'movement digest(t: <timer-[:tick]->>) {',
+        'team  = connect slack using acme_workspace',
+        'timer = connect cron',
+        'function digest(t: <timer-[:tick]->>) {',
         '  write team-[:message]-> { text: t.`firedAt` }',
         '}',
         'listen to timer { schedule: "0 9 * * 1" } fire digest',
@@ -1360,9 +1392,9 @@ describe('cron and manual listeners', () => {
       [
         'import { manual, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'runs = manual()',
-        'team = slack(credentials: acme_workspace)',
-        'movement backfill(go: <runs-[:invocation]->>) {',
+        'runs = connect manual',
+        'team = connect slack using acme_workspace',
+        'function backfill(go: <runs-[:invocation]->>) {',
         '  write team-[:message]-> { text: go.`actorEmail` }',
         '}',
         'listen to runs {} fire backfill',
@@ -1375,8 +1407,8 @@ describe('cron and manual listeners', () => {
       [
         'import { manual, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team = slack(credentials: acme_workspace)',
-        'movement backfill(go: <manual-[:invocation]->>) {',
+        'team = connect slack using acme_workspace',
+        'function backfill(go: <manual-[:invocation]->>) {',
         '  write team-[:message]-> { text: go.`actorEmail` }',
         '}',
         'listen to runs {} fire backfill',
@@ -1385,7 +1417,7 @@ describe('cron and manual listeners', () => {
     const adapterErr = diagnostics.find(d => d.code === C.ADAPTER_NOT_CONSTRUCTED);
     expect(adapterErr).toBeDefined();
     expect(adapterErr?.message).toContain('construct an instance and name it first');
-    expect(adapterErr?.message).toContain('go = manual()');
+    expect(adapterErr?.message).toContain('go = connect manual');
   });
 
   it('an inline manual listen is MOV_ADAPTER_NOT_CONSTRUCTED', () => {
@@ -1393,9 +1425,9 @@ describe('cron and manual listeners', () => {
       [
         'import { manual, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'runs = manual()',
-        'team = slack(credentials: acme_workspace)',
-        'movement backfill(go: <runs-[:invocation]->>) {',
+        'runs = connect manual',
+        'team = connect slack using acme_workspace',
+        'function backfill(go: <runs-[:invocation]->>) {',
         '  write team-[:message]-> { text: go.`actorEmail` }',
         '}',
         'listen to manual() {} fire backfill',
@@ -1411,9 +1443,9 @@ describe('cron and manual listeners', () => {
       [
         'import { manual, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'runs = manual()',
-        'team = slack(credentials: acme_workspace)',
-        'movement backfill(go: <runs-[:Invocation]->>) {',
+        'runs = connect manual',
+        'team = connect slack using acme_workspace',
+        'function backfill(go: <runs-[:Invocation]->>) {',
         '  write team-[:message]-> { text: go.`actorEmail` }',
         '}',
         'listen to runs {} fire backfill',
@@ -1429,9 +1461,9 @@ describe('cron and manual listeners', () => {
       [
         'import { cron, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team  = slack(credentials: acme_workspace)',
-        'timer = cron()',
-        'movement digest(t: <timer-[:tick]->>) {',
+        'team  = connect slack using acme_workspace',
+        'timer = connect cron',
+        'function digest(t: <timer-[:tick]->>) {',
         '  write team-[:message]-> { text: t.`firedAt` }',
         '}',
         'listen to timer {} fire digest',
@@ -1449,9 +1481,9 @@ describe('cron and manual listeners', () => {
       [
         'import { pantry, slack } from adapters',
         'import { pantry_main, acme_workspace } from credentials',
-        'team = slack(credentials: acme_workspace)',
-        'p = pantry(credentials: pantry_main, shelf: "North Wall")',
-        'movement intake(e: <p-[:thing]->>) {',
+        'team = connect slack using acme_workspace',
+        'p = connect pantry using pantry_main { shelf: "North Wall" }',
+        'function intake(e: <p-[:thing]->>) {',
         '  write team-[:message]-> { text: "stocked" }',
         '}',
         'listen to p { crate: "crt_apples" } fire intake',
@@ -1464,9 +1496,9 @@ describe('cron and manual listeners', () => {
       [
         'import { pantry, slack } from adapters',
         'import { pantry_main, acme_workspace } from credentials',
-        'team = slack(credentials: acme_workspace)',
-        'p = pantry(credentials: pantry_main)',
-        'movement intake(e: <p-[:thing]->>) {',
+        'team = connect slack using acme_workspace',
+        'p = connect pantry using pantry_main',
+        'function intake(e: <p-[:thing]->>) {',
         '  write team-[:message]-> { text: "stocked" }',
         '}',
         'listen to p { crate: "crt_apples" } fire intake',
@@ -1481,9 +1513,9 @@ describe('cron and manual listeners', () => {
       [
         'import { pantry, slack } from adapters',
         'import { pantry_main, acme_workspace } from credentials',
-        'team = slack(credentials: acme_workspace)',
-        'p = pantry(credentials: pantry_main, shelf: "North Wall")',
-        'movement intake(e: <p-[:thing]->>) {',
+        'team = connect slack using acme_workspace',
+        'p = connect pantry using pantry_main { shelf: "North Wall" }',
+        'function intake(e: <p-[:thing]->>) {',
         '  write team-[:message]-> { text: "stocked" }',
         '}',
         'listen to p {} fire intake',
@@ -1498,9 +1530,9 @@ describe('cron and manual listeners', () => {
       [
         'import { cron, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team  = slack(credentials: acme_workspace)',
-        'timer = cron()',
-        'movement digest(t: <timer-[:tick]->>) {',
+        'team  = connect slack using acme_workspace',
+        'timer = connect cron',
+        'function digest(t: <timer-[:tick]->>) {',
         '  write team-[:message]-> { text: t.`firedAt` }',
         '}',
         'listen to timer { schedule: "0 9 * * 1", timezone: "Europe/London" } fire digest',
@@ -1513,9 +1545,9 @@ describe('cron and manual listeners', () => {
       [
         'import { postbox, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team = slack(credentials: acme_workspace)',
-        'box  = postbox()',
-        'movement sort_mail(l: <box-[:letter]->>) {',
+        'team = connect slack using acme_workspace',
+        'box  = connect postbox',
+        'function sort_mail(l: <box-[:letter]->>) {',
         '  write team-[:message]-> { text: l.`sender` }',
         '}',
         `listen to box { slots: ${slots} } fire sort_mail`,
@@ -1533,9 +1565,9 @@ describe('cron and manual listeners', () => {
       [
         'import { cron, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team  = slack(credentials: acme_workspace)',
-        'timer = cron()',
-        'movement digest(t: <timer-[:tick]->>) {',
+        'team  = connect slack using acme_workspace',
+        'timer = connect cron',
+        'function digest(t: <timer-[:tick]->>) {',
         '  write team-[:message]-> { text: t.`firedAt` }',
         '}',
         'listen to timer { schedule: "0 9 * * 1", timezone: "Narnia/Cair" } fire digest',
@@ -1551,9 +1583,9 @@ describe('cron and manual listeners', () => {
       [
         'import { cron, slack } from adapters',
         'import { acme_workspace } from credentials',
-        'team  = slack(credentials: acme_workspace)',
-        'timer = cron()',
-        'movement digest(t: <timer-[:tick]->>) {',
+        'team  = connect slack using acme_workspace',
+        'timer = connect cron',
+        'function digest(t: <timer-[:tick]->>) {',
         '  write team-[:message]-> { text: t.`firedAt` }',
         '}',
         'listen to timer { schedule: "99 9 * * 1" } fire digest',
@@ -1568,7 +1600,7 @@ describe('cron and manual listeners', () => {
     const diagnostics = check(
       [
         PRELUDE,
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  write team-[:message]-> { text: msg.`subject` }',
         '}',
         'listen to crm() {} fire m',
@@ -1582,7 +1614,7 @@ describe('cron and manual listeners', () => {
       [
         PRELUDE,
         'import { manual } from adapters',
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  write team-[:message]-> { text: msg.`subject` }',
         '}',
         'listen to manual {} fire m',
@@ -1601,9 +1633,9 @@ describe('cron and manual listeners', () => {
     const source = [
       'import { manual, slack } from adapters',
       'import { acme_workspace } from credentials',
-      'runs = manual()',
-      'team = slack(credentials: acme_workspace)',
-      'movement backfill(go: <runs-[:invocation]->>) {',
+      'runs = connect manual',
+      'team = connect slack using acme_workspace',
+      'function backfill(go: <runs-[:invocation]->>) {',
       '  write team-[:message]-> { text: go.`actorEmail` }',
       '}',
     ].join('\n');
@@ -1621,8 +1653,8 @@ describe('dry_run construction parameter', () => {
     expectClean(
       [
         PRELUDE,
-        'inbox2 = email(credentials: dealflow_inbox, dry_run: true)',
-        'crm2   = attio(credentials: acme_main, dry_run: false)',
+        'inbox2 = connect email using dealflow_inbox { dryRun: true }',
+        'crm2   = connect attio using acme_main { dryRun: false }',
       ].join('\n'),
     );
   });
@@ -1631,7 +1663,7 @@ describe('dry_run construction parameter', () => {
     const source = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
-      'crm = attio(credentials: acme_main, dry_run: "yes")',
+      'crm = connect attio using acme_main { dryRun: "yes" }',
     ].join('\n');
     const diagnostics = check(source);
     expect(diagnostics.map(d => d.code)).toEqual([C.CONSTRUCT_BAD_ARG]);
@@ -1642,7 +1674,7 @@ describe('dry_run construction parameter', () => {
     const source = [
       'import { attio } from adapters',
       'import { acme_main } from credentials',
-      'crm = attio(credentials: acme_main, dry_run: true, mystery: 1)',
+      'crm = connect attio using acme_main { dryRun: true, mystery: 1 }',
     ].join('\n');
     expect(codes(source)).toEqual([C.CONSTRUCT_BAD_ARG]);
   });
@@ -1663,7 +1695,7 @@ describe('dry_run construction parameter', () => {
       [
         'import { attio } from adapters',
         'import { acme_main } from credentials',
-        'crm = attio(credentials: acme_main, dry_run: true)',
+        'crm = connect attio using acme_main { dryRun: true }',
       ].join('\n'),
     );
     expect(checkProgram(program, spyCatalog)).toEqual([]);

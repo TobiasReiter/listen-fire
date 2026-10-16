@@ -39,7 +39,7 @@ const PRELUDE = [
   'import { crm } from adapters',
   'import { lookup } from plugins',
   'import { probe } from credentials',
-  'graph = crm(credentials: probe)',
+  'graph = connect crm using probe',
   'type Thesis = <"Consumer" | "Infra" | "Health">',
   'rules = "route by sector"',
 ].join('\n');
@@ -59,7 +59,7 @@ const errors = (source: string, resolveFile?: ResolveFile): Diagnostic[] =>
   );
 
 const program = (body: string[], declarations = ENTRY): string =>
-  [PRELUDE, declarations, 'movement main(msg: <graph-[:message]->>) {', ...body, '}'].join('\n');
+  [PRELUDE, declarations, 'function main(msg: <graph-[:message]->>) {', ...body, '}'].join('\n');
 
 const codes = (body: string[], declarations = ENTRY): string[] =>
   errors(program(body, declarations)).map((d) => d.code);
@@ -115,7 +115,7 @@ describe('an extraction node that takes a declaration as its shape', () => {
       codes([
         '  found = extract from [msg.`Body`] {',
         '    node entry: <Entry> "each deal"',
-        `      through [lookup(q: ${arg})] { round: "the round, from the lookup" }`,
+        `      through [lookup({ q: ${arg} })] { round: "the round, from the lookup" }`,
         '  }',
       ]).filter((code) => code !== C.PLUGIN_OUTPUT_UNDECLARED);
     expect(through('name')).toEqual([]);
@@ -142,7 +142,7 @@ describe('an extraction node that takes a declaration as its shape', () => {
     const source = [
       PRELUDE,
       'import { Entry } from "lib/entries"',
-      'movement main(msg: <graph-[:message]->>) {',
+      'function main(msg: <graph-[:message]->>) {',
       ...extractEntries,
       '  found-[e:entry]-> { n = e.name }',
       '}',
@@ -163,7 +163,7 @@ describe('an extraction node that takes a declaration as its shape', () => {
     const source = [
       PRELUDE,
       'import { Entry } from "lib/entries"',
-      'movement main(msg: <graph-[:message]->>) {',
+      'function main(msg: <graph-[:message]->>) {',
       ...extractEntries,
       '}',
     ].join('\n');
@@ -209,7 +209,7 @@ describe('presence on a declared shape — exactly as on the inline block', () =
     const [declared, inline] = both(['    write graph-[:company]-> { thesis: e.thesis }']);
     expect(declared).toEqual([C.ABSENT_REQUIRED]);
     expect(declared).toEqual(inline);
-    for (const read of ['    big = e.employees > 3', '    both = e.public AND e.public']) {
+    for (const read of ['    big = e.employees > 3', '    both = e.public && e.public']) {
       const [typed, typedInline] = both([read]);
       expect(typed).toEqual(typedInline);
     }
@@ -218,8 +218,8 @@ describe('presence on a declared shape — exactly as on the inline block', () =
   });
 
   it('a null test on its text is refused, naming the emptiness test', () => {
-    for (const test of ['e.name == null', 'e.name != null', 'EXISTS(e.name)', 'ISNULL(e.name)']) {
-      const [declared, inline] = both([`    if ${test} { write graph-[:company]-> { name: "y" } }`]);
+    for (const test of ['e.name == null', 'e.name != null']) {
+      const [declared, inline] = both([`    if (${test}) { write graph-[:company]-> { name: "y" } }`]);
       expect(declared).toEqual([C.PRESENCE_TEST_ON_TEXT]);
       expect(declared).toEqual(inline);
     }
@@ -227,7 +227,7 @@ describe('presence on a declared shape — exactly as on the inline block', () =
 
   it('a guard on a typed field narrows it present inside the arm', () => {
     const [declared, inline] = both([
-      '    if EXISTS(e.thesis) { write graph-[:company]-> { thesis: e.thesis } }',
+      '    if (e.thesis != null) { write graph-[:company]-> { thesis: e.thesis } }',
     ]);
     expect(declared).toEqual([]);
     expect(declared).toEqual(inline);

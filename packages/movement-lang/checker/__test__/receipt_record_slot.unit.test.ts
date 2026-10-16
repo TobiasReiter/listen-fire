@@ -9,6 +9,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram } from '../check';
 import { TypedDiagnosticCodes } from '../typing';
 import { InstanceSchema, SchemaFieldType, mockCatalog } from '../catalog';
+import { spelledFor } from './surface_spelling';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
 
@@ -87,7 +88,7 @@ const inMovement = (body: string) =>
 // Info severity dropped: the fixture movement declares no listen, which
 // legitimately carries MOV_LISTEN_MISSING.
 const under = (version: number, body: string) =>
-  checkProgram(parseProgram(inMovement(body)), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
+  checkProgram(parseProgram(inMovement(body), { languageVersion: version }), catalog, { languageVersion: version }).filter((d) => d.severity !== 'info');
 
 const RECEIPT = [
   '  r = await parallel([',
@@ -150,7 +151,10 @@ describe("a combinator receipt's record slot", () => {
     expect(under(4, [RECEIPT, '  n = AT(r, 0).Name'].join('\n')).filter((d) => (d.severity ?? 'error') === 'error')).toEqual([]);
   });
   it('under 5 parallel itself is retired, and its rewrite reads the slot as the record, clean', () => {
-    const errors = (body: string) => under(5, body).filter((d) => (d.severity ?? 'error') === 'error');
+    const errors = (body: string) =>
+      checkProgram(parseProgram(spelledFor(5, inMovement(body), catalog)), catalog, { languageVersion: 5 }).filter(
+        (d) => (d.severity ?? 'error') === 'error',
+      );
     expect(errors([RECEIPT, '  n = AT(r, 0).Name'].join('\n')).map((d) => d.code)).toEqual(['MOV_PARALLEL_RETIRED']);
     const joined = RECEIPT.replace('r = await parallel([', 'r = all(').replace('  ])', '  )');
     expect(errors([joined, '  n = AT(r, 0).Name'].join('\n'))).toEqual([]);

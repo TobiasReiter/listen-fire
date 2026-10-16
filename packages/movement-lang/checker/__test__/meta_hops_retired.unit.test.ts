@@ -41,10 +41,21 @@ const catalog = mockCatalog({
   },
 });
 
-const source = (body: string, param = '<chat-[:channel]->>') => `import { slack, loose } from adapters
+// The program as `version` spells it: versions 1–4 construct with
+// `credentials:` arguments and say `movement`.
+const source = (body: string, param = '<chat-[:channel]->>', version: LanguageVersion = 5) =>
+  version < 5
+    ? `import { slack, loose } from adapters
 chat = slack()
 free = loose()
 movement scan(c: ${param}) {
+${body}
+}
+listen to chat fire scan`
+    : `import { slack, loose } from adapters
+chat = connect slack
+free = connect loose
+function scan(c: ${param}) {
 ${body}
 }
 listen to chat fire scan`;
@@ -58,14 +69,14 @@ const codes = (src: string, v: LanguageVersion) => check(src, v).map((d) => d.co
 
 describe('a `#` hop under Dancing Wren (5)', () => {
   const WALKS: Array<[string, string]> = [
-    ['a value', '  x = FIRST(c-[:#foo]->)'],
+    ['a value', '  x = first(c-[:#foo]->)'],
     ['a field read', '  x = c-[:#foo]->.Name'],
     ['a block head', '  c-[:#foo]-> {\n    y = 1\n  }'],
     ['a block head without the colon', '  c-[#foo]-> {\n    y = 1\n  }'],
     ['a backticked name', '  x = c-[:`#foo`]->.Name'],
     ['a write target', '  write c-[:#foo]-> { Body: "a" }'],
-    ['a collection', '  x = COUNT(chat-[:#Channels]->)'],
-    ['a walk of a system nothing describes', '  x = FIRST(free-[:#foo]->)'],
+    ['a collection', '  x = count(chat-[:#Channels]->)'],
+    ['a walk of a system nothing describes', '  x = first(free-[:#foo]->)'],
   ];
 
   it.each(WALKS)('is MOV_META_HOP_RETIRED in %s', (_where, body) => {
@@ -79,14 +90,14 @@ describe('a `#` hop under Dancing Wren (5)', () => {
   });
 
   it('on a system nothing describes it is the only refusal (under 4 that walk was silent)', () => {
-    expect(codes(source('  x = FIRST(free-[:#foo]->)'), 5)).toEqual([C.META_HOP_RETIRED]);
-    expect(codes(source('  x = FIRST(free-[:#foo]->)'), 4)).toEqual([]);
+    expect(codes(source('  x = first(free-[:#foo]->)'), 5)).toEqual([C.META_HOP_RETIRED]);
+    expect(codes(source('  x = FIRST(free-[:#foo]->)', undefined, 4), 4)).toEqual([]);
   });
 
   it("is refused in a parameter's type address", () => {
     expect(codes(source('  y = 1', '<chat-[:#channel]->>'), 5)).toEqual([C.META_HOP_RETIRED]);
     expect(codes(source('  y = 1', '<chat-[:channel]->-[:#members]->>'), 5)).toEqual([C.META_HOP_RETIRED]);
-    expect(codes(source('  y = 1', '<chat-[:#channel]->>'), 4)).toEqual([]);
+    expect(codes(source('  y = 1', '<chat-[:#channel]->>', 4), 4)).toEqual([]);
   });
 
   it('#resources is refused, the message naming the resource edge to write', () => {
@@ -94,24 +105,24 @@ describe('a `#` hop under Dancing Wren (5)', () => {
     const found = check(source(body), 5);
     expect(found.map((d) => d.code)).toEqual([C.META_HOP_RETIRED]);
     expect(found[0].message).toContain("write '-[f:_resources]->'");
-    expect(codes(source(body), 4)).toEqual([]);
+    expect(codes(source(body, undefined, 4), 4)).toEqual([]);
   });
 
   it('#transform and #linked keep their own codes; #extract its parse refusal', () => {
     expect(codes(source('  x = c-[t:#transform { plugin: "vc_url_retrieval" }]->.out'), 5)).toEqual([C.TRANSFORM_HOP_RETIRED]);
-    expect(codes(source('  x = c-[#linked WHERE type = "ATTIO"]->.external_id'), 5)).toEqual([C.LINKED_HOP_RETIRED]);
-    expect(codes(source('  x = COUNT(c-[:#extract]->)'), 5)).toEqual([C.EXPR_PARSE]);
-    expect(codes(source('  x = COUNT(c-[:#extract]->)'), 4)).toEqual([C.EXPR_PARSE]);
+    expect(codes(source('  x = c-[l:#linked WHERE l.type = "ATTIO"]->.external_id'), 5)).toEqual([C.LINKED_HOP_RETIRED]);
+    expect(codes(source('  x = count(c-[:#extract]->)'), 5)).toEqual([C.EXPR_PARSE]);
+    expect(codes(source('  x = COUNT(c-[:#extract]->)', undefined, 4), 4)).toEqual([C.EXPR_PARSE]);
   });
 
   it('under Luminous Owl (4) a `#` hop on a described system is the unknown edge it always was', () => {
-    expect(codes(source('  x = FIRST(c-[:#foo]->)'), 4)).toEqual([C.TRAVERSE_UNKNOWN_EDGE]);
+    expect(codes(source('  x = FIRST(c-[:#foo]->)', undefined, 4), 4)).toEqual([C.TRAVERSE_UNKNOWN_EDGE]);
   });
 });
 
 describe('the #transform hop shows the plugin as a function under Dancing Wren (5)', () => {
   const said = (plugin: string, v: LanguageVersion) =>
-    check(source(`  x = c-[t:#transform { plugin: "${plugin}" }]->.out`), v)
+    check(source(`  x = c-[t:#transform { plugin: "${plugin}" }]->.out`, undefined, v), v)
       .filter((d) => d.code === C.TRANSFORM_HOP_RETIRED)
       .map((d) => d.message)
       .join('\n');
@@ -135,15 +146,25 @@ describe('the #transform hop shows the plugin as a function under Dancing Wren (
 describe("a plugin's function form reaches its declared output", () => {
   it('the call is typed by the output: its records read by field', () => {
     const body = [
+      '  urls = vc_url_retrieval("see https://example.com")',
+      '  head = first(urls)',
+      '  if (head != null) {',
+      '    write chat-[:note]-> { Body: head.url }',
+      '  }',
+    ].join('\n');
+    const src = source(body).replace('import { slack, loose } from adapters', 'import { slack, loose } from adapters\nimport { vcUrlRetrieval as vc_url_retrieval } from plugins');
+    // Version 4 spells the same program with a named argument and upper-case built-ins.
+    const bodyBefore5 = [
       '  urls = vc_url_retrieval(text: "see https://example.com")',
       '  first = FIRST(urls)',
       '  if first != null {',
       '    write chat-[:note]-> { Body: first.url }',
       '  }',
     ].join('\n');
-    const src = source(body).replace('import { slack, loose } from adapters', 'import { slack, loose } from adapters\nimport { vc_url_retrieval } from plugins');
-    for (const v of [4, 5] as const) expect(codes(src, v)).toEqual([]);
+    const srcBefore5 = source(bodyBefore5, undefined, 4).replace('import { slack, loose } from adapters', 'import { slack, loose } from adapters\nimport { vc_url_retrieval } from plugins');
+    expect(codes(srcBefore5, 4)).toEqual([]);
+    expect(codes(src, 5)).toEqual([]);
     // …and a field it does not hand back is refused, so the type is the output's.
-    expect(codes(src.replace('first.url', 'first.nope'), 5)).not.toEqual([]);
+    expect(codes(src.replace('head.url', 'head.nope'), 5)).not.toEqual([]);
   });
 });

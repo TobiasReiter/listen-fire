@@ -9,6 +9,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const driveSchema: InstanceSchema = {
   positions: {
@@ -47,7 +48,7 @@ const program = (body: string[]): string =>
   ].join('\n');
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] =>
-  checkProgram(parseProgram(program(body), { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  checkProgram(parseProgram(spelledFor(version, program(body), catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 

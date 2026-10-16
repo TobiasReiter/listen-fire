@@ -8,8 +8,9 @@
 
 import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
-import { SUPPORTED_LANGUAGE_VERSIONS } from '../../language_version';
+import { CURRENT_LANGUAGE_VERSION, SUPPORTED_LANGUAGE_VERSIONS } from '../../language_version';
 import { mockCatalog, type InstanceSchema } from '../catalog';
+import { spelledFor } from './surface_spelling';
 
 const chatSchema: InstanceSchema = {
   positions: {
@@ -58,7 +59,8 @@ docs = drive()
 movement m(${shape.param}) {
 ${body}
 }`;
-  return checkProgram(parseProgram(source, languageVersion !== undefined ? { languageVersion } : {}), catalog).filter(
+  const spelled = spelledFor(languageVersion ?? CURRENT_LANGUAGE_VERSION, source, catalog);
+  return checkProgram(parseProgram(spelled, languageVersion !== undefined ? { languageVersion } : {}), catalog).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 }

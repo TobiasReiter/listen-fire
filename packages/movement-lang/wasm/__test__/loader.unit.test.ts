@@ -201,6 +201,11 @@ function trappingModule(): Uint8Array {
     [...name('parse_program_eager'), ...fn(2)],
     [...name('parse_expression'), ...fn(2)],
     [...name('parse_nested_call'), ...fn(2)],
+    // The loader requires these four of every parser module; none is called here.
+    [...name('spell_message'), ...fn(2)],
+    [...name('plugin_name'), ...fn(2)],
+    [...name('spell_code'), ...fn(2)],
+    [...name('surface_table'), ...fn(2)],
     [...name('last_panic'), ...fn(3)],
     [...name('lower_expression'), ...fn(4)],
     [...name('lower_condition'), ...fn(4)],

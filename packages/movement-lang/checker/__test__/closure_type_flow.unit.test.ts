@@ -9,6 +9,7 @@ import { parseProgram } from '../../parser/parse';
 import { checkProgram, Diagnostic } from '../check';
 import { InstanceSchema, mockCatalog } from '../catalog';
 import type { LanguageVersion } from '../../language_version';
+import { spelledFor } from './surface_spelling';
 
 const crmSchema: InstanceSchema = {
   positions: {
@@ -49,7 +50,7 @@ const PRELUDE = [
 
 const errorsUnder = (version: LanguageVersion, body: string[]): Diagnostic[] => {
   const source = `${PRELUDE}\nmovement m() {\n${body.join('\n')}\n}`;
-  return checkProgram(parseProgram(source, { languageVersion: version }), catalog, { languageVersion: version }).filter(
+  return checkProgram(parseProgram(spelledFor(version, source, catalog), { languageVersion: version }), catalog, { languageVersion: version }).filter(
     d => (d.severity ?? 'error') === 'error',
   );
 };

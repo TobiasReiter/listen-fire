@@ -18,12 +18,12 @@ import { parseTraversalPath, scanInstanceChains } from '../../service/selectors'
 
 const REFINED = 'Spreadsheet "Pipeline Sheet"';
 
-/** Key a WHERE the way the host does — parsed IN ITS HOP, since a bare field
- *  read is an `edge_property` inside a bracket WHERE and a `property` standing
- *  alone. Both sides parse the hop, so both agree; a test that hand-wrote the
+/** Key a WHERE the way the host does — parsed IN ITS HOP, under the version the
+ *  programs are checked under, since a field read through the hop's alias is an
+ *  `edge_property` inside a bracket WHERE and a `property` standing alone. Both sides parse the hop, so both agree; a test that hand-wrote the
  *  key would be asserting its own arithmetic instead. */
 const keyFor = (where: string): string => {
-  const steps = parseTraversalPath(`-[:Spreadsheet WHERE ${where}]->`);
+  const steps = parseTraversalPath(`-[s:Spreadsheet WHERE ${where}]->`, 5);
   const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
   if (!filter) throw new Error(`test setup: no filter parsed out of \`${where}\``);
   return refinementKey({ type: 'Spreadsheet', filter });
@@ -58,10 +58,10 @@ const sheetsSchema: InstanceSchema = {
     },
   },
   refinements: {
-    [keyFor('`Title` == "Pipeline Sheet"')]: REFINED,
+    [keyFor('s.`Title` == "Pipeline Sheet"')]: REFINED,
     // A key is the WHERE AS WRITTEN, so the flipped spelling is its own key.
     // The host grafts one position per member and points both keys at it.
-    [keyFor('"Pipeline Sheet" == `Title`')]: REFINED,
+    [keyFor('"Pipeline Sheet" == s.`Title`')]: REFINED,
   },
 };
 
@@ -84,26 +84,26 @@ const catalog = mockCatalog({
 
 const prelude = `import { manual, google_sheets } from adapters
 import { sheets_cred } from credentials
-runner = manual()
-sheets = google_sheets(credentials: sheets_cred)`;
+runner = connect manual
+sheets = connect google_sheets using sheets_cred`;
 
 const check = (body: string): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${prelude}\nmovement m(x: <runner-[:invocation]->>) {\n${body}\n}`),
+    parseProgram(`${prelude}\nfunction m(x: <runner-[:invocation]->>) {\n${body}\n}`),
     catalog,
   ).filter(d => (d.severity ?? 'error') === 'error');
 
 describe('position-aware narrowing', () => {
   it('a resolved WHERE narrows the alias to the refined position (its own edge passes)', () => {
     expect(
-      check(`sheets-[s:Spreadsheet WHERE \`Title\` == "Pipeline Sheet"]-> {
+      check(`sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]-> {
         write s-[:\`Companies (table)\`]-> { Name: "X" }
       }`),
     ).toEqual([]);
   });
 
   it("another spreadsheet's table through the narrowed alias fails at check time", () => {
-    const diagnostics = check(`sheets-[s:Spreadsheet WHERE \`Title\` == "Pipeline Sheet"]-> {
+    const diagnostics = check(`sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]-> {
       write s-[:\`Deals (table)\`]-> { Name: "X" }
     }`);
     expect(diagnostics).toHaveLength(1);
@@ -114,7 +114,7 @@ describe('position-aware narrowing', () => {
   });
 
   it('the flipped equality ("literal" == field) narrows the same way', () => {
-    const diagnostics = check(`sheets-[s:Spreadsheet WHERE "Pipeline Sheet" == \`Title\`]-> {
+    const diagnostics = check(`sheets-[s:Spreadsheet WHERE "Pipeline Sheet" == s.\`Title\`]-> {
       write s-[:\`Deals (table)\`]-> { Name: "X" }
     }`);
     expect(diagnostics.map(d => d.code)).toEqual(['MOV_LINKED_UNKNOWN_EDGE']);
@@ -122,7 +122,7 @@ describe('position-aware narrowing', () => {
 
   it('an unrefined selection keeps the whole-collection surface', () => {
     expect(
-      check(`sheets-[s:Spreadsheet WHERE \`Title\` == "Some Other Sheet"]-> {
+      check(`sheets-[s:Spreadsheet WHERE s.\`Title\` == "Some Other Sheet"]-> {
         write s-[:\`Deals (table)\`]-> { Name: "X" }
       }`),
     ).toEqual([]);
@@ -130,7 +130,7 @@ describe('position-aware narrowing', () => {
 
   it('a WHERE the host registered no refinement for keeps the whole-collection surface', () => {
     expect(
-      check(`sheets-[s:Spreadsheet WHERE \`Title\` != "Pipeline Sheet"]-> {
+      check(`sheets-[s:Spreadsheet WHERE s.\`Title\` != "Pipeline Sheet"]-> {
         write s-[:\`Deals (table)\`]-> { Name: "X" }
       }`),
     ).toEqual([]);
@@ -138,14 +138,14 @@ describe('position-aware narrowing', () => {
 
   it('an inline expression traversal narrows the same way (walkSteps is the one choke point)', () => {
     const diagnostics = check(
-      'y = sheets-[:Spreadsheet WHERE `Title` == "Pipeline Sheet"]->-[:`Deals (table)`]->.`Name`',
+      'y = sheets-[s:Spreadsheet WHERE s.`Title` == "Pipeline Sheet"]->-[:`Deals (table)`]->.`Name`',
     );
     expect(diagnostics.map(d => d.code)).toEqual(['MOV_TRAVERSE_UNKNOWN_EDGE']);
     expect(diagnostics[0].message).toContain(REFINED);
   });
 
   it('reads through the narrowed alias see the refined edge set too', () => {
-    const diagnostics = check(`sheets-[s:Spreadsheet WHERE \`Title\` == "Pipeline Sheet"]-> {
+    const diagnostics = check(`sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]-> {
       s-[t:\`Deals (table)\`]-> { }
     }`);
     expect(diagnostics.map(d => d.code)).toEqual(['MOV_TRAVERSE_UNKNOWN_EDGE']);
@@ -158,8 +158,8 @@ describe('scanInstanceChains', () => {
     const chains = scanInstanceChains(`import { google_sheets as gs } from adapters
 import { sheets_cred as cred } from credentials
 sheets = gs(credentials: cred)
-movement m(x: <sheets-[:Spreadsheet]->>) {
-  sheets-[s:Spreadsheet WHERE \`Title\` == "Pipeline Sheet"]-> {
+function m(x: <sheets-[:Spreadsheet]->>) {
+  sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]-> {
     write s-[:\`Companies (table)\`]-> { Name: "X" }
   }
 }`);
@@ -182,8 +182,8 @@ movement m(x: <sheets-[:Spreadsheet]->>) {
 
   it('finds selectors inside expression slots — write fields, if conditions, assignments', () => {
     const chains = scanInstanceChains(`${prelude}
-movement m(x: <runner-[:invocation]->>) {
-  if (sheets-[:Spreadsheet WHERE \`Title\` == "Pipeline Sheet"]->.\`Title\` == "x") {
+function m(x: <runner-[:invocation]->>) {
+  if (sheets-[s:Spreadsheet WHERE s.\`Title\` == "Pipeline Sheet"]->.\`Title\` == "x") {
     y = sheets-[:Spreadsheet WHERE \`Title\` == "Board Pack"]->.\`Title\`
   }
 }`);
@@ -196,8 +196,8 @@ movement m(x: <runner-[:invocation]->>) {
   });
 
   it('yields nothing for unparseable programs or ungrounded roots', () => {
-    expect(scanInstanceChains('movement m(')).toEqual([]);
-    expect(scanInstanceChains('movement m(x: <a-[:b]->>) {\n  ghost-[c:Things]-> { }\n}')).toEqual([]);
+    expect(scanInstanceChains('function m(')).toEqual([]);
+    expect(scanInstanceChains('function m(x: <a-[:b]->>) {\n  ghost-[c:Things]-> { }\n}')).toEqual([]);
   });
 
   it('never throws on a malformed expression slot (prod 500: formula ParseError escaped)', () => {
@@ -206,7 +206,7 @@ movement m(x: <runner-[:invocation]->>) {
     // The scan must swallow it (the checker owns the diagnostic) — this
     // exact shape 500'd a prod saveMovement.
     const source = `${prelude}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   write sheets-[:Spreadsheet]-> {
     Title: Series A
   }
@@ -237,7 +237,7 @@ movement m(x: <runner-[:invocation]->>) {
 // which the demand set's substring seed matched by coincidence.
 describe('scanInstanceChains over await / race', () => {
   const asks = `import { manual, ask } from adapters
-runner = manual()
+runner = connect manual
 qa = ask()`;
   const edges = (source: string): string[][] =>
     scanInstanceChains(source).map(c =>
@@ -247,7 +247,7 @@ qa = ask()`;
   it('an awaited traversal yields the chain its bare traversal would', () => {
     expect(
       edges(`${asks}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   a = write qa-[:Check]-> { Prompt: "Ship it?" }
   cr = await FIRST(a-[:Response]->)
   if cr.Answer { }
@@ -258,7 +258,7 @@ movement m(x: <runner-[:invocation]->>) {
   it('the UNBOUND form yields it too — nothing about the landing depends on the binding', () => {
     expect(
       edges(`${asks}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   a = write qa-[:Check]-> { Prompt: "Ship it?" }
   await FIRST(a-[:Response]->)
 }`),
@@ -268,7 +268,7 @@ movement m(x: <runner-[:invocation]->>) {
   it('the bound name grounds later chains, exactly as a write handle does', () => {
     expect(
       edges(`${asks}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   a = write qa-[:Correct]-> { Prompt: "Fix these" }
   cr = await FIRST(a-[:Response]->)
   cr-[row:Rows]-> { }
@@ -279,7 +279,7 @@ movement m(x: <runner-[:invocation]->>) {
   it('a race walks its arms — a chain inside one is a chain the program walks', () => {
     expect(
       edges(`${asks}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   r = await race([
     () => {
       a = write qa-[:Check]-> { Prompt: "Ship it?" }
@@ -293,7 +293,7 @@ movement m(x: <runner-[:invocation]->>) {
 
   it('a clock wait lands nowhere, so it yields nothing (and never throws)', () => {
     const source = `${asks}
-movement m(x: <runner-[:invocation]->>) {
+function m(x: <runner-[:invocation]->>) {
   await sleep(2d)
 }`;
     expect(() => scanInstanceChains(source)).not.toThrow();

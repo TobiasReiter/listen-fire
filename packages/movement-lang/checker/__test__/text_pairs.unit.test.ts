@@ -51,11 +51,11 @@ const PRELUDE = [
   'import { crm } from adapters',
   'import { crm_cred } from credentials',
   '',
-  'c = crm(credentials: crm_cred)',
+  'c = connect crm using crm_cred',
 ].join('\n');
 
 const onDeal = (body: string): string =>
-  `${PRELUDE}\nmovement m(d: <c-[:deal]->>) {\n${body}\n}`;
+  `${PRELUDE}\nfunction m(d: <c-[:deal]->>) {\n${body}\n}`;
 
 const errors = (source: string): Diagnostic[] =>
   checkProgram(parseProgram(source), catalog).filter(d => (d.severity ?? 'error') === 'error');
@@ -67,32 +67,32 @@ function expectClean(source: string): void {
 
 describe('TEXT.PAIRS argument typing', () => {
   it('a dict literal is accepted', () => {
-    expectClean(onDeal('  write c-[:deals]-> { Name: TEXT.PAIRS({ a: "1", b: "2" }) }'));
+    expectClean(onDeal('  write c-[:deals]-> { Name: Text.pairs({ a: "1", b: "2" }) }'));
   });
 
   it("the movement's own record parameter is refused: it is a live system read, not a spelled record", () => {
-    const source = onDeal('  write c-[:deals]-> { Name: TEXT.PAIRS(d) }');
+    const source = onDeal('  write c-[:deals]-> { Name: Text.pairs(d) }');
     expect(codes(source)).toContain(CODE);
     expect(errors(source).find(e => e.code === CODE)?.message).toBe(
-      '`TEXT.PAIRS` takes a record whose fields the program spells out — a dict literal, a '
+      '`Text.pairs` takes a record whose fields the program spells out — a dict literal, a '
         + '`node { … }` literal, an extracted record or a declared one; build a dict of the '
         + 'fields you want from this record',
     );
   });
 
   it('<json> is refused, naming what it takes', () => {
-    const source = onDeal('  write c-[:deals]-> { Name: TEXT.PAIRS(d.`Payload`) }');
+    const source = onDeal('  write c-[:deals]-> { Name: Text.pairs(d.`Payload`) }');
     expect(codes(source)).toContain(CODE);
     expect(errors(source).find(e => e.code === CODE)?.message).toContain(
-      'TEXT.PAIRS(record, separator?) takes a record or a dict',
+      'Text.pairs(record, separator?) takes a record or a dict',
     );
   });
 
   it('an ordinary scalar is refused too', () => {
-    expect(codes(onDeal('  write c-[:deals]-> { Name: TEXT.PAIRS(d.`Name`) }'))).toContain(CODE);
+    expect(codes(onDeal('  write c-[:deals]-> { Name: Text.pairs(d.`Name`) }'))).toContain(CODE);
   });
 
   it('an operand this layer cannot see stays silent', () => {
-    expectClean(onDeal('  write c-[:deals]-> { Name: TEXT.PAIRS(AI("a record")) }'));
+    expectClean(onDeal('  write c-[:deals]-> { Name: Text.pairs(ai("a record")) }'));
   });
 });

@@ -37,8 +37,8 @@ const catalog = mockCatalog({
 });
 
 const PRELUDE = `import { email, crm } from adapters
-inbox = email()
-sys = crm()
+inbox = connect email
+sys = connect crm
 
 node Company {
   name: <text>
@@ -54,7 +54,7 @@ const SEED = `  deduped = node { companies: <Company> order by arrival }
 
 function check(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(msg: <inbox-[:message]->>) {
+function m(msg: <inbox-[:message]->>) {
 ${SEED}
 ${body}
 }`;
@@ -78,7 +78,7 @@ describe('an in-place write to a record the run built is accepted', () => {
 
   it("MAP's parameter, over the hop", () => {
     expect(
-      codes(['  MAP(deduped-[:companies]->, (e) => {', '    write e { thesis: "x" }', '  })'].join('\n')),
+      codes(['  map(deduped-[:companies]->, (e) => {', '    write e { thesis: "x" }', '  })'].join('\n')),
     ).toEqual([]);
   });
 
@@ -86,8 +86,8 @@ describe('an in-place write to a record the run built is accepted', () => {
     expect(
       codes(
         [
-          '  all = deduped-[:companies]->',
-          '  MAP(all, (e) => {',
+          '  every = deduped-[:companies]->',
+          '  map(every, (e) => {',
           '    write e { thesis: "x" }',
           '  })',
         ].join('\n'),
@@ -99,7 +99,7 @@ describe('an in-place write to a record the run built is accepted', () => {
     expect(
       codes(
         [
-          '  MAP(FILTER(deduped-[:companies]->, (e) => e.name == "Acme"), (e) => {',
+          '  map(filter(deduped-[:companies]->, (e) => e.name == "Acme"), (e) => {',
           '    write e { thesis: "x" }',
           '  })',
         ].join('\n'),
@@ -115,14 +115,14 @@ describe('an in-place write to a record the run built is accepted', () => {
     expect(
       codes(
         [
-          '  MAP(deduped-[:companies]->, { concurrency: 6, onError: "warn" }, (e) => {',
+          '  map(deduped-[:companies]->, (e) => {',
           '    write e {',
-          '      name: COALESCE(e.thesis, e.name)',
-          '      thesis: COALESCE(e.website, "none")',
+          '      name: coalesce(e.thesis, e.name)',
+          '      thesis: coalesce(e.website, "none")',
           '    }',
           '    new_website = e.website',
-          '    if new_website != null { write e { website: new_website } }',
-          '  })',
+          '    if (new_website != null) { write e { website: new_website } }',
+          '  }, { concurrency: 6, onError: "warn" })',
         ].join('\n'),
       ),
     ).toEqual([]);
@@ -137,7 +137,7 @@ describe('an in-place write to a record the run built is accepted', () => {
 }
 `;
     const source = `${PRELUDE}${nested}
-movement m(msg: <inbox-[:message]->>) {
+function m(msg: <inbox-[:message]->>) {
   found = node { startups: <Startup> order by arrival }
   s = write found-[:startups]-> { name: "Acme" }
   f = write s-[:founders]-> { name: "Jane" }
@@ -155,7 +155,7 @@ describe('an in-place write to a record the run built is checked against its lan
   const forms: Array<[string, (line: string) => string]> = [
     ['the saved write result', (line) => `  write h ${line}`],
     ['the alias of a block head', (line) => ['  deduped-[e:companies]-> {', `    write e ${line}`, '  }'].join('\n')],
-    ["MAP's parameter", (line) => ['  MAP(deduped-[:companies]->, (e) => {', `    write e ${line}`, '  })'].join('\n')],
+    ["MAP's parameter", (line) => ['  map(deduped-[:companies]->, (e) => {', `    write e ${line}`, '  })'].join('\n')],
   ];
 
   it.each(forms)('%s: a field the landing type does not have is refused', (_form, write) => {
@@ -200,7 +200,7 @@ describe("a collection op's parameter is typed as the record it is", () => {
     expect(
       codes(
         [
-          '  MAP(deduped-[:companies]->, (e) => {',
+          '  map(deduped-[:companies]->, (e) => {',
           '    return e.nope',
           '  })',
         ].join('\n'),
@@ -211,7 +211,7 @@ describe("a collection op's parameter is typed as the record it is", () => {
 
 describe("a collection op's parameter over a system's records writes like the hop's alias", () => {
   const over = (field: string) =>
-    ['  MAP(sys-[:companies]->, (c) => {', `    write c { ${field}: "x" }`, '  })'].join('\n');
+    ['  map(sys-[:companies]->, (c) => {', `    write c { ${field}: "x" }`, '  })'].join('\n');
 
   it('a field the record has is accepted', () => {
     expect(codes(over('name'))).toEqual([]);
@@ -235,7 +235,7 @@ describe("a graph<Shape>'s nested records are records the run built", () => {
   const shaped = (body: string): string[] =>
     checkProgram(
       parseProgram(`${PRELUDE}${SHAPED}
-movement m(msg: <inbox-[:message]->>) {
+function m(msg: <inbox-[:message]->>) {
   found = graph<Found> { companies: [{ name: "Acme" }] }
 ${body}
 }`),

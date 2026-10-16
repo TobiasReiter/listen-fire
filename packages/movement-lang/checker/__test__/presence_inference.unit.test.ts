@@ -40,12 +40,12 @@ const catalog = mockCatalog({
 
 const PRELUDE = `import { slack } from adapters
 type Verdict = <"yes" | "no">
-chat = slack()
+chat = connect slack
 `;
 
 function all(body: string): Diagnostic[] {
   const source = `${PRELUDE}
-movement m(c: <chat-[:channel]->>) {
+function m(c: <chat-[:channel]->>) {
 ${body}
 }`;
   return checkProgram(parseProgram(source), catalog);
@@ -55,7 +55,7 @@ const errors = (body: string): Diagnostic[] => all(body).filter((d) => (d.severi
 const codes = (body: string): string[] => errors(body).map((d) => d.code);
 const messages = (body: string): string => errors(body).map((d) => d.message).join('\n');
 
-const MAYBE = '  x = FIRST(COLLECT(c-[m:Messages]->.`Text`))\n';
+const MAYBE = '  x = first(List.from(c-[m:Messages]->.`Text`))\n';
 
 describe('interpolating a value that may be absent', () => {
   it('is accepted in a template, which is present text', () => {
@@ -67,7 +67,7 @@ describe('interpolating a value that may be absent', () => {
   });
 
   it('is accepted in an AI prompt, which is a string', () => {
-    expect(codes(`${MAYBE}  y = AI("summarise \${x}")\n  write chat-[:note]-> { Body ?: y }`)).toEqual([]);
+    expect(codes(`${MAYBE}  y = ai("summarise \${x}")\n  write chat-[:note]-> { Body ?: y }`)).toEqual([]);
   });
 
   it('the bare value still needs discharging where one is required', () => {
@@ -75,7 +75,7 @@ describe('interpolating a value that may be absent', () => {
   });
 
   it('an ordered comparison still refuses it', () => {
-    const body = '  n = FIRST(COLLECT(c-[p:Members]->.`Age`))\n  big = n > 3';
+    const body = '  n = first(List.from(c-[p:Members]->.`Age`))\n  big = n > 3';
     expect(codes(body)).toContain('MOV_ABSENT_REQUIRED');
   });
 });
@@ -99,66 +99,65 @@ describe('an extracted text field is present', () => {
   });
 
   it('so testing it for null is refused, naming the emptiness test', () => {
-    const body = `${EXTRACT}  if EXISTS(r.title) { write chat-[:note]-> { Body: "y" } }`;
+    const body = `${EXTRACT}  if (r.title != null) { write chat-[:note]-> { Body: "y" } }`;
     expect(codes(body)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
     expect(messages(body)).toContain('r.title != ""');
   });
 
   it('every spelling of the test is refused, the shortcut included', () => {
-    for (const test of ['r.note == null', 'r.note != null', 'ISNULL(r.note)', 'EXISTS(r.note)', 'ISNULL(r.title)']) {
-      expect(codes(`${EXTRACT}  if ${test} { write chat-[:note]-> { Body: "y" } }`)).toEqual([
+    for (const test of ['r.note == null', 'r.note != null', 'r.title == null']) {
+      expect(codes(`${EXTRACT}  if (${test}) { write chat-[:note]-> { Body: "y" } }`)).toEqual([
         'MOV_PRESENCE_TEST_ON_TEXT',
       ]);
     }
-    expect(messages(`${EXTRACT}  if ISNULL(r.note) { write chat-[:note]-> { Body: "y" } }`)).toContain(
+    expect(messages(`${EXTRACT}  if (r.note == null) { write chat-[:note]-> { Body: "y" } }`)).toContain(
       'r.note == ""',
     );
   });
 
   it('inside a nested node too', () => {
     expect(
-      codes(`${EXTRACT}  r-[i:item]-> { if EXISTS(i.label) { write chat-[:note]-> { Body: i.label } } }`),
+      codes(`${EXTRACT}  r-[i:item]-> { if (i.label != null) { write chat-[:note]-> { Body: i.label } } }`),
     ).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
   });
 
   it('a typed field may still be tested — it can be absent', () => {
-    expect(codes(`${EXTRACT}  if EXISTS(r.size) { write chat-[:note]-> { Body: "sized" } }`)).toEqual([]);
-    expect(codes(`${EXTRACT}  if ISNULL(r.verdict) { write chat-[:note]-> { Body: "none" } }`)).toEqual([]);
+    expect(codes(`${EXTRACT}  if (r.size != null) { write chat-[:note]-> { Body: "sized" } }`)).toEqual([]);
+    expect(codes(`${EXTRACT}  if (r.verdict == null) { write chat-[:note]-> { Body: "none" } }`)).toEqual([]);
   });
 
   it('a typed field proven by a guard is present inside the arm, and only there', () => {
     const write = 'write chat-[:note]-> { Count: r.size }';
-    expect(codes(`${EXTRACT}  if EXISTS(r.size) { ${write} }`)).toEqual([]);
-    expect(codes(`${EXTRACT}  if r.size != null { ${write} }`)).toEqual([]);
-    expect(codes(`${EXTRACT}  if NOT ISNULL(r.size) { ${write} }`)).toEqual([]);
+    expect(codes(`${EXTRACT}  if (r.size != null) { ${write} }`)).toEqual([]);
+    expect(codes(`${EXTRACT}  if (!(r.size == null)) { ${write} }`)).toEqual([]);
     // The control: unguarded, and after the arm, the read may still be absent.
     expect(codes(`${EXTRACT}  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
-    expect(codes(`${EXTRACT}  if EXISTS(r.size) { }\n  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
+    expect(codes(`${EXTRACT}  if (r.size != null) { }\n  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
     // A proof about one field says nothing about another.
-    expect(codes(`${EXTRACT}  if EXISTS(r.verdict) { ${write} }`)).toEqual(['MOV_ABSENT_REQUIRED']);
+    expect(codes(`${EXTRACT}  if (r.verdict != null) { ${write} }`)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('a guard clause proves a typed field for everything after it', () => {
-    const body = `${EXTRACT}  if r.size == null { ERROR("no size") }\n  write chat-[:note]-> { Count: r.size }`;
+    const body = `${EXTRACT}  if (r.size == null) { fail("no size") }\n  write chat-[:note]-> { Count: r.size }`;
     expect(codes(body)).toEqual([]);
   });
 
   it('a typed field of a nested node narrows the same way', () => {
     const nested = EXTRACT.replace('label: <text> "its label"', 'label: <text> "its label"\n      rank: <number> "its rank"');
     expect(
-      codes(`${nested}  r-[i:item]-> { if EXISTS(i.rank) { write chat-[:note]-> { Count: i.rank } } }`),
+      codes(`${nested}  r-[i:item]-> { if (i.rank != null) { write chat-[:note]-> { Count: i.rank } } }`),
     ).toEqual([]);
   });
 
   it('a record the program built narrows the same way', () => {
-    const built = '  n = node { said: FIRST(COLLECT(c-[m:Messages]->.`Text`)) }\n';
+    const built = '  n = node { said: first(List.from(c-[m:Messages]->.`Text`)) }\n';
     const write = 'write chat-[:note]-> { Body: n.said }';
     expect(codes(`${built}  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
-    expect(codes(`${built}  if EXISTS(n.said) { ${write} }`)).toEqual([]);
+    expect(codes(`${built}  if (n.said != null) { ${write} }`)).toEqual([]);
   });
 
   it('a system text field may still be tested — a source can hand back nothing', () => {
-    expect(codes('  if EXISTS(c.`Name`) { write chat-[:note]-> { Body: "y" } }')).toEqual([]);
+    expect(codes('  if (c.`Name` != null) { write chat-[:note]-> { Body: "y" } }')).toEqual([]);
   });
 
   it('the shortcut written into a number field is refused, naming the annotation', () => {
@@ -216,28 +215,28 @@ describe('an extracted field annotated `<text | null>`', () => {
   });
 
   it('may be tested for null, in every spelling — no MOV_PRESENCE_TEST_ON_TEXT', () => {
-    for (const test of ['r.title == null', 'r.title != null', 'ISNULL(r.title)', 'EXISTS(r.title)']) {
-      expect(codes(`${NULLABLE}  if ${test} { write chat-[:note]-> { Body: "y" } }`)).toEqual([]);
+    for (const test of ['r.title == null', 'r.title != null']) {
+      expect(codes(`${NULLABLE}  if (${test}) { write chat-[:note]-> { Body: "y" } }`)).toEqual([]);
     }
   });
 
   it('a guard narrows it inside the arm, and a guard clause for everything after', () => {
     const write = 'write chat-[:note]-> { Body: r.title }';
-    expect(codes(`${NULLABLE}  if EXISTS(r.title) { ${write} }`)).toEqual([]);
-    expect(codes(`${NULLABLE}  if r.title != null { ${write} }`)).toEqual([]);
-    expect(codes(`${NULLABLE}  if r.title == null { ERROR("no title") }\n  ${write}`)).toEqual([]);
-    expect(codes(`${NULLABLE}  if EXISTS(r.title) { }\n  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
+    expect(codes(`${NULLABLE}  if (r.title != null) { ${write} }`)).toEqual([]);
+    expect(codes(`${NULLABLE}  if (r.title != null) { ${write} }`)).toEqual([]);
+    expect(codes(`${NULLABLE}  if (r.title == null) { fail("no title") }\n  ${write}`)).toEqual([]);
+    expect(codes(`${NULLABLE}  if (r.title != null) { }\n  ${write}`)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('leaves its neighbours as they were: `<text>` and the shortcut stay present', () => {
     expect(codes(`${NULLABLE}  write chat-[:note]-> { Body: r.plain }`)).toEqual([]);
     expect(codes(`${NULLABLE}  write chat-[:note]-> { Body: r.note }`)).toEqual([]);
-    expect(codes(`${NULLABLE}  if EXISTS(r.plain) { }`)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
+    expect(codes(`${NULLABLE}  if (r.plain != null) { }`)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
   });
 
   it('on a typed field means what the type already did', () => {
     expect(codes(`${NULLABLE}  write chat-[:note]-> { Count: r.size }`)).toEqual(['MOV_ABSENT_REQUIRED']);
-    expect(codes(`${NULLABLE}  if EXISTS(r.size) { write chat-[:note]-> { Count: r.size } }`)).toEqual([]);
+    expect(codes(`${NULLABLE}  if (r.size != null) { write chat-[:note]-> { Count: r.size } }`)).toEqual([]);
     expect(codes(`${NULLABLE}  write chat-[:note]-> { Body ?: r.verdict }`)).toEqual([]);
   });
 
@@ -247,14 +246,14 @@ node Entry: "each item" {
   name: <text | null> "its name"
   label: <text> "its label"
 }
-movement m(c: <chat-[:channel]->>) {
+function m(c: <chat-[:channel]->>) {
   r = extract from [c.\`Name\`] {
     node entry: <Entry>
   }
   r-[e:entry]-> {
     write chat-[:note]-> { Body: e.label }
     write chat-[:note]-> { Body: e.name }
-    if EXISTS(e.name) { write chat-[:note]-> { Body: e.name } }
+    if (e.name != null) { write chat-[:note]-> { Body: e.name } }
   }
 }`;
     const found = checkProgram(parseProgram(source), catalog).filter((d) => (d.severity ?? 'error') === 'error');
@@ -262,7 +261,7 @@ movement m(c: <chat-[:channel]->>) {
   });
 
   it('is what the refusal on a plain text field names first', () => {
-    const body = `${EXTRACT}  if EXISTS(r.note) { }`;
+    const body = `${EXTRACT}  if (r.note != null) { }`;
     expect(codes(body)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
     const message = messages(body);
     expect(message).toContain('Annotate it `<text | null>` to keep the null test');
@@ -272,41 +271,41 @@ movement m(c: <chat-[:channel]->>) {
 
 describe('a dict literal is typed by its keys', () => {
   it('a written key that exists reads its own type, present', () => {
-    expect(codes('  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Body: AT(d, "bucket") }')).toEqual([]);
-    expect(codes('  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Count: AT(d, "packed") }')).toEqual([]);
+    expect(codes('  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Body: d.bucket }')).toEqual([]);
+    expect(codes('  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Count: d.packed }')).toEqual([]);
   });
 
   it('the key keeps its type — a number into a text field is still a number', () => {
-    expect(codes('  d = { bucket: "a", packed: 3 }\n  n = AT(d, "packed") + 1\n  t = AT(d, "bucket") + 1')).toEqual([
+    expect(codes('  d = { bucket: "a", packed: 3 }\n  n = d.packed + 1\n  t = d.bucket + 1')).toEqual([
       'MOV_ARITH_NON_NUMERIC',
     ]);
   });
 
   it('a value read out of a mixed literal compares — it is no longer opaque json', () => {
-    const body = '  d = { bucket: "a", packed: 3 }\n  same = AT(d, "bucket") == "a"\n  big = AT(d, "packed") > 2';
+    const body = '  d = { bucket: "a", packed: 3 }\n  same = d.bucket == "a"\n  big = d.packed > 2';
     expect(codes(body)).toEqual([]);
     expect(messages(body)).not.toContain('nothing describes');
   });
 
   it('a written key that does not exist is refused with a did-you-mean', () => {
-    const body = '  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Body ?: AT(d, "buckt") }';
+    const body = '  d = { bucket: "a", packed: 3 }\n  write chat-[:note]-> { Body ?: d.buckt }';
     expect(codes(body)).toEqual(['MOV_DICT_UNKNOWN_KEY']);
     expect(messages(body)).toContain('Did you mean "bucket"?');
   });
 
   it('a key only known at run time may miss', () => {
-    const body = '  d = { one: "a", two: "b" }\n  k = c.`Name`\n  write chat-[:note]-> { Body: AT(d, k) }';
+    const body = '  d = { one: "a", two: "b" }\n  k = c.`Name`\n  write chat-[:note]-> { Body: d[k] }';
     expect(codes(body)).toContain('MOV_ABSENT_REQUIRED');
   });
 
   it('a key that may itself be absent in the literal stays possibly absent', () => {
-    expect(codes(`${MAYBE}  d = { one: x }\n  write chat-[:note]-> { Body: AT(d, "one") }`)).toContain(
+    expect(codes(`${MAYBE}  d = { one: x }\n  write chat-[:note]-> { Body: d.one }`)).toContain(
       'MOV_ABSENT_REQUIRED',
     );
   });
 
   it('the whole literal is still structured — folding it into text is refused', () => {
-    expect(codes('  d = { a: "x", b: 3 }\n  t = CONCAT(d, "!")')).toContain('MOV_JSON_OPAQUE');
+    expect(codes('  d = { a: "x", b: 3 }\n  t = Text.concat(d, "!")')).toContain('MOV_JSON_OPAQUE');
   });
 
   it('a mixed literal still passes through into a json field', () => {
@@ -320,29 +319,29 @@ describe('a dict literal is typed by its keys', () => {
 });
 
 describe('the collection ops carry the shape', () => {
-  const ROWS = '  rows = MAP(c-[m:Messages]->, (t) => { return { line: t.`Text`, at: t.`At` } })\n';
+  const ROWS = '  rows = map(c-[m:Messages]->, (t) => { return { line: t.`Text`, at: t.`At` } })\n';
 
   it('MAP answers a list of the shape, so a member reads its keys', () => {
-    const body = `${ROWS}  lines = MAP(rows, (r) => { return AT(r, "line") })\n  write chat-[:note]-> { Body: JOIN(lines, ", ") }`;
+    const body = `${ROWS}  lines = map(rows, (r) => { return r.line })\n  write chat-[:note]-> { Body: Text.join(lines, ", ") }`;
     expect(codes(body)).toEqual([]);
   });
 
   it('a typo inside the function is caught against the shape', () => {
-    const body = `${ROWS}  lines = MAP(rows, (r) => { return AT(r, "lines") })`;
+    const body = `${ROWS}  lines = map(rows, (r) => { return r.lines })`;
     expect(codes(body)).toEqual(['MOV_DICT_UNKNOWN_KEY']);
   });
 
   it('FILTER hands the shaped members back', () => {
-    const body = `${ROWS}  kept = FILTER(rows, (r) => { return AT(r, "line") != "" })\n  bad = MAP(kept, (r) => { return AT(r, "nope") })`;
+    const body = `${ROWS}  kept = filter(rows, (r) => { return r.line != "" })\n  bad = map(kept, (r) => { return r.nope })`;
     expect(codes(body)).toEqual(['MOV_DICT_UNKNOWN_KEY']);
   });
 
   it('GROUPBY keys on a shaped value, and files lists of the shape', () => {
     const body = [
       ROWS.trimEnd(),
-      '  by = GROUPBY(rows, (r) => { return AT(r, "line") })',
-      '  group = AT(by, "x")',
-      '  bad = MAP(group, (r) => { return AT(r, "nope") })',
+      '  by = List.groupBy(rows, (r) => { return r.line })',
+      '  group = by.x',
+      '  bad = map(group, (r) => { return r.nope })',
     ].join('\n');
     expect(codes(body)).toEqual(['MOV_DICT_UNKNOWN_KEY']);
   });
@@ -350,21 +349,21 @@ describe('the collection ops carry the shape', () => {
   it('KEYBY files one of the shape under each key', () => {
     const body = [
       ROWS.trimEnd(),
-      '  by = KEYBY(rows, (r) => { return AT(r, "line") })',
-      '  one = AT(by, "x")',
-      '  when = AT(one, "at")',
+      '  by = List.keyBy(rows, (r) => { return r.line })',
+      '  one = by.x',
+      '  when = one.at',
     ].join('\n');
     // A lookup into a dict whose keys are DATA may miss, so the member itself
     // may be absent, and its key read with it.
-    expect(codes(`${body}\n  late = when > DATETIME("2026-01-01")`)).toContain('MOV_ABSENT_REQUIRED');
-    expect(codes(`${body}\n  bad = AT(one, "nope")`)).toContain('MOV_DICT_UNKNOWN_KEY');
+    expect(codes(`${body}\n  late = when > DateTime.from("2026-01-01")`)).toContain('MOV_ABSENT_REQUIRED');
+    expect(codes(`${body}\n  bad = one.nope`)).toContain('MOV_DICT_UNKNOWN_KEY');
   });
 
   it('a block that returns a literal is a list of the shape', () => {
     const body = [
       '  rows = c-[msg:Messages]-> { return { line: msg.`Text` } }',
-      '  lines = MAP(rows, (r) => { return AT(r, "line") })',
-      '  bad = MAP(rows, (r) => { return AT(r, "nope") })',
+      '  lines = map(rows, (r) => { return r.line })',
+      '  bad = map(rows, (r) => { return r.nope })',
     ].join('\n');
     expect(codes(body)).toEqual(['MOV_DICT_UNKNOWN_KEY']);
   });
@@ -372,7 +371,7 @@ describe('the collection ops carry the shape', () => {
   it('literals with different keys are still a dict of what they hold — lookups may then miss', () => {
     const body = [
       '  pick = c.`Name` == "a"',
-      '  rows = MAP(c-[m:Messages]->, (t) => { if pick { return { a: "x" } }\n    return { b: "y" } })',
+      '  rows = map(c-[m:Messages]->, (t) => { if (pick) { return { a: "x" } }\n    return { b: "y" } })',
     ].join('\n');
     expect(codes(body)).toEqual([]);
   });
@@ -380,18 +379,18 @@ describe('the collection ops carry the shape', () => {
 
 describe('AT(list, n) needs an order and may miss', () => {
   it('over an ordered list it answers the element, possibly absent', () => {
-    const body = '  lines = COLLECT(c-[m:Messages]->.`Text`)\n  write chat-[:note]-> { Body: AT(lines, 0) }';
+    const body = '  lines = List.from(c-[m:Messages]->.`Text`)\n  write chat-[:note]-> { Body: lines[0] }';
     expect(codes(body)).toEqual(['MOV_ABSENT_REQUIRED']);
   });
 
   it('discharged, it is clean', () => {
-    const body = '  lines = COLLECT(c-[m:Messages]->.`Text`)\n  write chat-[:note]-> { Body ?: AT(lines, 0) }';
+    const body = '  lines = List.from(c-[m:Messages]->.`Text`)\n  write chat-[:note]-> { Body ?: lines[0] }';
     expect(codes(body)).toEqual([]);
   });
 
   it('over an unordered one it is refused, exactly as FIRST is', () => {
-    const at = '  names = COLLECT(c-[p:Members]->.`Name`)\n  write chat-[:note]-> { Body ?: AT(names, 0) }';
-    const first = '  names = COLLECT(c-[p:Members]->.`Name`)\n  write chat-[:note]-> { Body ?: FIRST(names) }';
+    const at = '  names = List.from(c-[p:Members]->.`Name`)\n  write chat-[:note]-> { Body ?: names[0] }';
+    const first = '  names = List.from(c-[p:Members]->.`Name`)\n  write chat-[:note]-> { Body ?: first(names) }';
     expect(codes(at)).toEqual(['MOV_FOLD_NEEDS_ORDER']);
     expect(codes(first)).toEqual(['MOV_FOLD_NEEDS_ORDER']);
   });
