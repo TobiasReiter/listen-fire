@@ -104,11 +104,14 @@ guide](docs/language/dancing-wren-migration.md).
   parks (a sleep, an until, an answer read with `await FIRST(…)`), and a combinator does not park
   by itself; its arms may, and the run parks where they do. Versions 1 to 4 keep `await race([…])`
   and `await parallel([…])` exactly.
-- **An `IF` or a `COALESCE` of records of one type is that type** (as TypeScript's `A | A` is `A`):
-  `COALESCE(pick, org)` of two Companies a write returned is a Company, so a field read off it is
-  typed and one it does not have is `MOV_UNKNOWN_PROPERTY`. Why: it had no type, so `.nope` read
-  null and `.name + 1` was NaN, unchecked. Under 3 and 4 what it refuses is an upgrade warning.
-  Records of different types stay a union, and nothing is said of a field off it.
+- **A value that may be one of several records reads only what every one offers**, as a
+  TypeScript union. One rule types an `IF`, a `COALESCE`, a function's returns, a list literal's
+  members and `MULTI`. Records of one type are that type (`A | A` is `A`). Records of different
+  types (People or Companies) read a field every member has as the union of its types, and a field
+  one lacks is `MOV_UNKNOWN_PROPERTY`, naming it. No arm is preferred: a field one arm proved present
+  is present only when every arm proved it, and a function is no longer typed by its first return.
+  Why: each ran unchecked (a missing field read null, or a missing value was written). Under 3 and 4
+  what the rule refuses is an upgrade warning.
 
 ### Language version 5, Dancing Wren: new
 
@@ -300,8 +303,9 @@ guide](docs/language/dancing-wren-migration.md).
   reports the checker's own internal error (`MOV_INTERNAL_UNTYPED_BINDING`) on any language version.
   `v` is read as what it may hold, as `delete` and a graph entry read it: records alone are one
   record; one that may be absent, or a value among them, is `MOV_WRITE_POSITION_NOT_RECORD`.
-  Records of one type (two Companies a write returned) are that type on every version, so a field
-  the type does not have is `MOV_WRITE_UNKNOWN_FIELD` and its write checks apply.
+  A write in place to one of several records (`write who { … }`) is held to every member on every
+  version, so a field one member lacks is `MOV_WRITE_UNKNOWN_FIELD` and every write check applies to
+  each.
 - A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
   the credential the adapter was installed with, saying the remote install serves only its own. It
   used to be ignored: two accounts on one remote adapter silently reached the install's account, so

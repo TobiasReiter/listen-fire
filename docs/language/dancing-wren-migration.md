@@ -20,7 +20,7 @@ The first four changes share one idea: there is no engine-side store and there a
 - [12. A value that is a closure is called](#12-a-value-that-is-a-closure-is-called)
 - [13. A closure's type is written `<(params) => <return>>`](#13-a-closures-type-is-written-params--return)
 - [14. `parallel` is retired for `all`; combinators take arguments and no `await`](#14-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
-- [15. An `IF` or a `COALESCE` of records of one type is that type](#15-an-if-or-a-coalesce-of-records-of-one-type-is-that-type)
+- [15. A value that may be one of several records reads only what every one offers](#15-a-value-that-may-be-one-of-several-records-reads-only-what-every-one-offers)
 - [16. Diagnostic code index](#16-diagnostic-code-index)
 
 ## 1. How the pin moves
@@ -265,11 +265,28 @@ r = all(a, () => { … })
 - Arms built at run time (`parallel(fs)`) have no fix: name each function as an argument, `all(f, g)`.
 - The refusal of the `parallel { … }` block points at `all` under 5. Under 4 and earlier `await race([…])` and `await parallel([…])` are unchanged, and `all` is still a retired name.
 
-## 15. An `IF` or a `COALESCE` of records of one type is that type
+## 15. A value that may be one of several records reads only what every one offers
 
-- Under Dancing Wren (5) `COALESCE(pick, org)` or `IF c THEN pick ELSE org END`, where `pick` and `org` are two Companies a write returned, is a Company, as TypeScript's `A | A` is `A`. A field read off it is typed, so one the type does not have is `MOV_UNKNOWN_PROPERTY`, and what the read feeds is checked (`.name` into a number field is `MOV_WRITE_FIELD_TYPE`). Why: under 4 and earlier it had no type, so `.nope` read null and `.name + 1` was NaN, and nothing said so. Under 3 and 4 each such refusal is an upgrade warning.
-- The fix is the field the type has, or the conversion the value needs.
-- Records of different types (a Company or a Person) stay a union, and nothing is said of a field off it. Writing in place to one of several records of one type (`write v { … }`) is checked against the type's fields on every version: before it was an internal error, so it never ran.
+One rule, TypeScript's union, for every place a value can be one of several records: an `IF`, a `COALESCE`, a function's returns, a list literal's members, `MULTI`.
+
+```
+who = COALESCE(lead, co)          # People | Companies
+who.Name                          # both have Name → typed (union of the field types)
+who.Domains                       # only Companies → refused, naming the member that lacks it
+write who { Name: "Acme" }        # allowed, value checked against Name in every member
+write who { Domains: ["a.com"] }  # refused: People has no Domains
+```
+
+- Records of one type are that type, as `A | A` is `A`: `COALESCE(pick, org)` of two Companies a write returned is a Company.
+- Records of different types are a union. This includes one type read two ways, such as a Company found by a walk and one a write returned.
+- A field read off a union is typed when every member has it, as the union of its types (`number | text`). A field one member lacks is `MOV_UNKNOWN_PROPERTY`, naming that member. A walk off it takes only an edge every member has.
+- No arm is preferred. Only what every arm proved counts: a field a guard proved present (`if a.Email == "x"`), a field a write set. Before, an `IF` of two records of one type took its `THEN` arm's proof.
+- A function returning a Person on one path and a Company on another is their union. Before, it was its first return's type, so a field only People have checked clean and read null when the call returned the Company.
+- A list `[lead, co]` holds the union. Before, a member was a record nobody could name, and nothing was checked.
+- Why: each of these ran unchecked under 4 and earlier. `.nope` read null; `.name + 1` was NaN; an `IF` whose `ELSE` arm had no Email wrote a missing value into a required field.
+- Under 3 and 4 each refusal the rule adds is an upgrade warning; the program runs as before.
+- The fix: read the field where you know which record you hold (inside the arm, or after an `IS` test), or read a field every member has.
+- Writing in place to a union (`write who { … }`) is held to every member on every version: a field one member lacks is `MOV_WRITE_UNKNOWN_FIELD`, said of that member. Before, it was an internal error, so it never ran.
 
 ## 16. Diagnostic code index
 
