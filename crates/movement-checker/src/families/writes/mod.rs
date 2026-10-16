@@ -711,6 +711,7 @@ impl Checker<'_> {
             generic_landings: None,
             written: purpose == Purpose::Write,
             set_fields: None,
+            identity: Default::default(),
         });
         let parent_type = match &parent {
             Position::Position(p) => Some(p.position.clone()),
@@ -1178,6 +1179,7 @@ impl Checker<'_> {
             Some(Position::Handle(mut handle)) => {
                 handle.set_fields = None;
                 handle.written = true;
+                handle.identity = Default::default();
                 Some(Position::Handle(handle))
             }
             Some(Position::Position(p)) => {
@@ -1199,6 +1201,7 @@ impl Checker<'_> {
                     generic_landings: None,
                     written: true,
                     set_fields: None,
+                    identity: Default::default(),
                 }))
             }
             other => other,
@@ -1570,6 +1573,7 @@ fn with_set_fields(handle: Option<Position>, fields: &[Field]) -> Option<Positio
     match handle {
         Some(Position::Handle(mut h)) if h.written => {
             h.set_fields = Some(fields.iter().filter(|f| f.semantics.is_none()).map(|f| f.name.clone()).collect());
+            h.identity = Default::default();
             Some(Position::Handle(h))
         }
         other => other,
@@ -1581,6 +1585,7 @@ fn found_handle(handle: Option<Position>, version: u32) -> Option<Position> {
     match handle {
         Some(Position::Handle(mut h)) => {
             h.written = false;
+            h.identity = Default::default();
             if version < 4 {
                 h.result_shape.shift_remove("created");
                 h.result_shape.shift_remove("committed");

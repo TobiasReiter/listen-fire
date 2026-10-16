@@ -83,3 +83,30 @@ fn a_collection_ops_function_takes_its_members_type() {
     assert!(found.iter().any(|(c, m)| c == "MOV_BUILTIN_ARG_TYPE" && m.starts_with("UPPER's 'text' takes text, and this is number")), "{found:?}");
     assert!(found.iter().any(|(c, m)| c == "MOV_COLLECTION_OP_NOT_A_COLLECTION" && m.starts_with("'MAP' reads a collection, and this is number")), "{found:?}");
 }
+
+/// A chain of closures, each returning the last on two branches: the
+/// returns' union is one arm per distinct handle (the same handle passed on
+/// is itself), so the check is linear in the chain — before, a union that
+/// doubled per level made it exponential, and 20 links never finished.
+#[test]
+fn a_chain_of_closures_returning_the_last_twice_checks_in_linear_time() {
+    let catalog = CatalogSnapshot::load(
+        r#"{"adapters":{"attio":{"canFire":true,"constructionArgs":[{"name":"credentials","kind":"credential","required":true}],"schemas":{"crm_cred":{"positions":{"company":{"properties":{"name":"text"},"edges":{}}},"collections":{"companies":{"target":"company"}},"writableRoots":{"company":{"fields":{"name":"text"},"resultShape":{"externalId":"text","name":"text"}}}}}}},"credentials":{"crm_cred":{"adapters":["attio"]}},"plugins":{}}"#,
+    )
+    .unwrap();
+    let links = 60;
+    let mut source = String::from(
+        "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"Acme\" }\n  f0 = () => COALESCE(org, \"x\")\n",
+    );
+    for i in 1..=links {
+        source += &format!("  f{i} = () => {{\n    if 1 > 0 {{\n      return f{p}()\n    }}\n    return f{p}()\n  }}\n", p = i - 1);
+    }
+    source += &format!("  g = graph {{ n: f{links}() }}\n}}\n");
+    for version in [4, 5] {
+        let started = std::time::Instant::now();
+        let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+        let found: Vec<String> = check_source(&source, &catalog, options).unwrap().into_iter().map(|d| d.code).collect();
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+        assert_eq!(found, ["MOV_GRAPH_ENTRY_RECORD"]);
+    }
+}
