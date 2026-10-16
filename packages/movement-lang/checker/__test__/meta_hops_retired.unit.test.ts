@@ -136,7 +136,7 @@ describe('the #transform hop shows the plugin as a function under Dancing Wren (
 
   it('a plugin only an extraction fed is called too: the extraction stage is retired with the keyword', () => {
     const message = said('linkedin_enrichment', 5);
-    expect(message).toContain("'out = linkedin_enrichment(…)'");
+    expect(message).toContain("'out = linkedin_enrichment(record)'");
     expect(message).not.toContain('through');
   });
 
