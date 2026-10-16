@@ -26,6 +26,16 @@ const RUST_CHECK = path.join(PACKAGE, 'checker/rust_checker.ts');
 
 const testFile = path.relative(PACKAGE, expect.getState().testPath || '');
 const REPLAY = path.join('checker', '__test__', 'checks_regression');
+const SPELLED_FOR = /[\\/]checker[\\/]__test__[\\/]surface_spelling\.ts/;
+function insideSpelledFor() {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = Infinity;
+  try {
+    return SPELLED_FOR.test(new Error().stack || '');
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+}
 const records = [];
 
 // Must stay identical to `canonical` in parser/expression/__test__/lowering_fixture.ts.
@@ -260,6 +270,10 @@ jest.mock(RUST_CHECK, () => {
 jest.mock(CHECK, () => {
   const actual = jest.requireActual(CHECK);
   const checkProgramWithLink = (program, catalog, options) => {
+    // A test's text respelled for version 5 (`spelledFor`) is checked again
+    // and again by the upgrade loop; those passes are the loop's, not the
+    // test's, and pinning them would triple the corpus for nothing it checks.
+    if (insideSpelledFor()) return actual.checkProgramWithLink(program, catalog, options);
     const parsed = parsedFrom.get(program);
     if (!parsed) {
       records.push({ skipped: 'a program parseProgram did not produce', file: testFile });
