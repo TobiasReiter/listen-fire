@@ -8,11 +8,15 @@
 //! extra in Rust. Order is not compared here: the corpus pins it, and the
 //! "exact" count says how many records also agree on it.
 //!
+//! Refused records (the Rust parser or catalog would not take them) are
+//! listed by reason in `<work-dir>/refused.txt`.
+//!
 //! Usage: cargo run --release -p movement-checker --example parity -- <work-dir> <PARITY.md>
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
-use std::time::Instant;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use movement_checker::{CheckOptions, check_source};
 use movement_parser::catalog::types::CatalogSnapshot;
@@ -52,36 +56,64 @@ fn main() {
         let row: Row = serde_json::from_str(line).expect("a snapshot row");
         catalogs.insert(row.key, CatalogSnapshot::load(row.snapshot.get()));
     }
+    let catalogs = Arc::new(catalogs);
+    let mut worker = Worker::start(Arc::clone(&catalogs));
+    let limit = Duration::from_secs(std::env::var("PARITY_TIMEOUT").ok().and_then(|n| n.parse().ok()).unwrap_or(20));
+    let mut timed_out = 0;
     let mut codes: BTreeMap<String, Tally> = BTreeMap::new();
     let mut corpora: BTreeMap<String, Corpus> = BTreeMap::new();
     let mut samples: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let (mut refused, mut panicked) = (0, 0);
+    // Why each refused record was refused (its TypeScript diagnostics are not
+    // counted anywhere else), by reason, with the count and the first version and source seen.
+    let mut refusals: BTreeMap<String, (usize, String)> = BTreeMap::new();
     let started = Instant::now();
     let reference = std::fs::read_to_string(format!("{work}/reference.jsonl")).expect("reference.jsonl");
-    for line in reference.lines() {
+    // PARITY_TRACE=1 names each record on stderr before checking it, so a hang names its record.
+    let trace = std::env::var("PARITY_TRACE").is_ok();
+    for (index, line) in reference.lines().enumerate() {
+        if trace {
+            eprintln!("record {index}");
+        }
         let record: Value = serde_json::from_str(line).expect("a reference row");
         let source = record["source"].as_str().expect("a source");
         let version = record["version"].as_u64().expect("a version") as u32;
-        let options = CheckOptions {
-            language_version: version,
-            upgrading_from: record["upgradingFrom"].as_u64().map(|v| v as u32),
-            parse_version: record["parseVersion"].as_u64().map(|v| v as u32), zones: &movement_checker::host::native::NativeZones,
-        };
+        let upgrading_from = record["upgradingFrom"].as_u64().map(|v| v as u32);
+        let parse_version = record["parseVersion"].as_u64().map(|v| v as u32);
         let ts: Vec<Value> = record["ts"].as_array().expect("ts diagnostics").clone();
         let corpus = corpora.entry(record["corpus"].as_str().unwrap_or("?").to_string()).or_default();
         corpus.records += 1;
-        let Ok(catalog) = catalogs[record["snapshot"].as_str().expect("a snapshot key")].as_ref() else {
+        let snapshot = record["snapshot"].as_str().expect("a snapshot key").to_string();
+        if let Err(e) = &catalogs[&snapshot] {
             refused += 1;
+            let reason = e.split(" at line ").next().unwrap_or("").to_string();
+            let entry = refusals.entry(format!("catalog: {reason}")).or_insert_with(|| (0, format!("v{version}: {source}")));
+            entry.0 += 1;
             continue;
-        };
-        let rust = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_source(source, catalog, options))) {
-            Ok(Ok(diagnostics)) => diagnostics.iter().map(|d| serde_json::to_value(d).expect("a diagnostic")).collect::<Vec<_>>(),
-            Ok(Err(_)) => {
+        }
+        let job = Job { source: source.to_string(), snapshot, version, upgrading_from, parse_version };
+        let rust = match worker.check(job, limit) {
+            Some(Outcome::Checked(diagnostics)) => diagnostics,
+            Some(Outcome::Refused(message)) => {
                 refused += 1;
+                let reason = message.split(" at line ").next().unwrap_or("").to_string();
+                let entry = refusals.entry(format!("parse: {reason}")).or_insert_with(|| (0, format!("v{version}: {source}")));
+                entry.0 += 1;
                 continue;
             }
-            Err(_) => {
+            Some(Outcome::Panicked) => {
                 panicked += 1;
+                continue;
+            }
+            None => {
+                // The check is still running past the limit: it is left behind
+                // (the process exits at the end) and a fresh worker takes over.
+                timed_out += 1;
+                let entry = refusals
+                    .entry(format!("timed out after {}s", limit.as_secs()))
+                    .or_insert_with(|| (0, format!("record {index}, v{version}: {source}")));
+                entry.0 += 1;
+                worker = Worker::start(Arc::clone(&catalogs));
                 continue;
             }
         };
@@ -133,9 +165,74 @@ fn main() {
     let elapsed = started.elapsed().as_secs_f64();
     std::fs::write(format!("{work}/samples.txt"), samples.iter().map(|(c, s)| format!("## {c}\n{}\n", s.join("\n"))).collect::<String>())
         .expect("samples.txt");
-    let report = render(&codes, &corpora, &families, refused, panicked, elapsed);
+    let mut by_count: Vec<_> = refusals.iter().collect();
+    by_count.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(a.0.cmp(b.0)));
+    std::fs::write(
+        format!("{work}/refused.txt"),
+        by_count.iter().map(|(reason, (n, example))| format!("## {n} × {reason}\n{example}\n\n")).collect::<String>(),
+    )
+    .expect("refused.txt");
+    let report = render(&codes, &corpora, &families, refused, panicked, timed_out, elapsed);
     std::fs::write(out, &report).expect("PARITY.md");
     print!("{}", report.split("\n## By family").next().unwrap_or(""));
+    // A timed-out check may still be spinning on an abandoned worker.
+    std::process::exit(0);
+}
+
+struct Job {
+    source: String,
+    snapshot: String,
+    version: u32,
+    upgrading_from: Option<u32>,
+    parse_version: Option<u32>,
+}
+
+enum Outcome {
+    Checked(Vec<Value>),
+    Refused(String),
+    Panicked,
+}
+
+/// Checks on a thread of its own, so a check that never ends (an exponential
+/// case the TypeScript finishes) costs the harness one record, not the run.
+struct Worker {
+    jobs: mpsc::Sender<Job>,
+    outcomes: mpsc::Receiver<Outcome>,
+}
+
+impl Worker {
+    fn start(catalogs: Arc<HashMap<String, Result<CatalogSnapshot, String>>>) -> Worker {
+        let (jobs, inbox) = mpsc::channel::<Job>();
+        let (outbox, outcomes) = mpsc::channel();
+        std::thread::spawn(move || {
+            for job in inbox {
+                let Ok(catalog) = catalogs[&job.snapshot].as_ref() else { unreachable!("refused before the job was sent") };
+                let options = CheckOptions {
+                    language_version: job.version,
+                    upgrading_from: job.upgrading_from,
+                    parse_version: job.parse_version,
+                    zones: &movement_checker::host::native::NativeZones,
+                };
+                let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_source(&job.source, catalog, options))) {
+                    Ok(Ok(diagnostics)) => {
+                        Outcome::Checked(diagnostics.iter().map(|d| serde_json::to_value(d).expect("a diagnostic")).collect())
+                    }
+                    Ok(Err(e)) => Outcome::Refused(e.message),
+                    Err(_) => Outcome::Panicked,
+                };
+                if outbox.send(outcome).is_err() {
+                    return;
+                }
+            }
+        });
+        Worker { jobs, outcomes }
+    }
+
+    /// `None` when the check outlives `limit`.
+    fn check(&self, job: Job, limit: Duration) -> Option<Outcome> {
+        self.jobs.send(job).expect("the worker is alive");
+        self.outcomes.recv_timeout(limit).ok()
+    }
 }
 
 fn code(d: &Value) -> String {
@@ -176,6 +273,7 @@ fn render(
     families: &HashMap<String, String>,
     refused: usize,
     panicked: usize,
+    timed_out: usize,
     elapsed: f64,
 ) -> String {
     let at_parity = |t: &Tally| t.ts > 0 && t.missing == 0 && t.extra == 0 && t.mismatched == 0;
@@ -191,7 +289,7 @@ fn render(
     writeln!(s, "- Codes at parity: **{parity} of {}** codes the TypeScript checker reports on this corpus.", seen.len()).unwrap();
     writeln!(s, "- Diagnostics matched: {matched} of {ts}; {extra} extra in Rust.").unwrap();
     writeln!(s, "- Records with exactly the TypeScript's diagnostics, in its order: {exact} of {records}.").unwrap();
-    writeln!(s, "- Rust side: {elapsed:.1}s; {refused} records the Rust parser or catalog refused; {panicked} panics.\n").unwrap();
+    writeln!(s, "- Rust side: {elapsed:.1}s; {refused} records the Rust parser or catalog refused; {panicked} panics; {timed_out} checks that did not finish (refused.txt names them).\n").unwrap();
     writeln!(s, "A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.\n").unwrap();
     writeln!(s, "| corpus | records | exact | same diagnostics, any order |\n|---|---|---|---|").unwrap();
     for (name, c) in corpora {

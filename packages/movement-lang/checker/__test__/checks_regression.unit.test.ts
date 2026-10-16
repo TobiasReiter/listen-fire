@@ -31,7 +31,7 @@ declare const process: { env: Record<string, string | undefined> };
 declare function require(id: string): unknown;
 declare const console: { warn(...args: unknown[]): void };
 
-const KNOWN_VERSIONS = [1, 2, 3, 4];
+const KNOWN_VERSIONS = [1, 2, 3, 4, 5];
 
 describe('checks regression', () => {
   if (process.env.UPDATE_CHECKS_FIXTURE) {
@@ -47,10 +47,17 @@ describe('checks regression', () => {
 
   it('keys every snapshot by the sha256 of its canonical form, as the harvest does', () => {
     // A hand edit to a snapshot that keeps its old key would leave two
-    // catalogs able to share one key; the harvest never writes one.
+    // catalogs able to share one key; the harvest never writes one. A second
+    // key order of one catalog is keyed by the hash of its recorded form, and
+    // only beside the first order under the canonical key.
     const crypto = require('crypto') as { createHash(algorithm: 'sha256'): { update(text: string): { digest(encoding: 'hex'): string } } };
+    const sha = (text: string) => crypto.createHash('sha256').update(text).digest('hex');
     const drifted = [...SNAPSHOT_TABLE.entries()]
-      .filter(([key, snapshot]) => crypto.createHash('sha256').update(canonical(snapshot)).digest('hex') !== key)
+      .filter(([key, snapshot]) => {
+        const byCanonical = sha(canonical(snapshot));
+        if (byCanonical === key) return false;
+        return !(sha(JSON.stringify(snapshot)) === key && SNAPSHOT_TABLE.has(byCanonical));
+      })
       .map(([key]) => key);
     expect(drifted).toEqual([]);
   });

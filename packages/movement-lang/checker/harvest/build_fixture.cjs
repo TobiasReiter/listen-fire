@@ -2,7 +2,8 @@
 // fixture: one record per distinct (source, snapshot, version, upgradingFrom),
 // sorted by (version, source). A few hundred catalogs serve thousands of
 // checks, so each snapshot is written once to checks.snapshots.json (one
-// `{key, snapshot}` per line, keyed by the sha256 of its canonical form) and a
+// `{key, snapshot}` per line, keyed by the sha256 of its canonical form, or of
+// its recorded form when a second key order of one catalog turns up) and a
 // record names its snapshot by that key.
 //
 // Schema field order is observable in diagnostic messages ("it has: Title,
@@ -73,11 +74,16 @@ const records = [...byKey.entries()]
 
 const snapshots = new Map();
 const rows = records.map(({ snapshot, ...rest }) => {
-  const key = crypto.createHash('sha256').update(canonical(snapshot)).digest('hex');
+  let key = crypto.createHash('sha256').update(canonical(snapshot)).digest('hex');
   const seen = snapshots.get(key);
   if (seen !== undefined && JSON.stringify(seen) !== JSON.stringify(snapshot)) {
-    // Same catalog, another key order: one stored order would misreport the other's messages.
-    throw new Error(`snapshot ${key} was recorded in two key orders`);
+    // Same catalog, another key order (two tests that build one adapter spec
+    // in different field orders): one stored order would misreport the
+    // other's messages, so the later order (records are sorted) is stored
+    // under the hash of its recorded form.
+    key = crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const twin = snapshots.get(key);
+    if (twin !== undefined && JSON.stringify(twin) !== JSON.stringify(snapshot)) throw new Error(`snapshot ${key} collides`);
   }
   snapshots.set(key, snapshot);
   const { source, version, parseVersion, upgradingFrom, note, file, diagnostics } = rest;

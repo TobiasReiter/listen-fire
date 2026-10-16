@@ -91,7 +91,9 @@ is all that parity needs.
 
 251 codes. "Raise sites" counts the places in the TypeScript code that
 report a code. "Corpus" counts how often the code appears in the harvested
-checks corpus (`checks.json`, 5,899 programs under versions 1 to 3).
+checks corpus as it stood when the port was planned (`checks.json`, 5,899
+programs under versions 1 to 3; re-harvested since to 19,375 programs under
+versions 1 to 5, which PARITY.md measures).
 
 The family is also the Rust module (`src/families/<family>.rs`).
 
