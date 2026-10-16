@@ -112,7 +112,8 @@ jest.mock('../../../lib/anthropic', () => ({
 
 import { writeFileSync } from 'node:fs';
 
-import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from 'movement-lang';
+import { CURRENT_LANGUAGE_VERSION, fromCatalogSnapshot, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 import type { MovementTransformInvoker } from 'movement-engine/services/movement_engine/extraction';
@@ -284,7 +285,7 @@ async function runCell(cell: Cell): Promise<Outcome> {
   const sink: CapturedWrite[] = [];
   try {
     const result = await runMovement({
-      source: programFor(cell, VERSION),
+      source: spelledFor(VERSION, programFor(cell, VERSION), fromCatalogSnapshot(catalog)),
       movementName: 'run_cell',
       event: event(),
       teamId: TEAM_ID,

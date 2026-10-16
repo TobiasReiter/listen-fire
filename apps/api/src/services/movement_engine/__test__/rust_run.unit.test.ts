@@ -27,6 +27,15 @@ import { ENDED_AT_CHECK, LOCAL_ZONE_UNVERIFIED, processLocalZone, runSegmentInRu
 import { checkPinned } from 'movement-engine/services/movement_engine/program_check';
 import { resetRustEvalStats, resetRustRunStats, rustEvalStats, rustRunStats, setRunEngineRecorder, type RunEngineRecord } from 'movement-engine/services/movement_engine/rust_stats';
 
+// The spelling versions 1–4 read, for the cases pinned to one of them.
+const PRELUDE_OLD = [
+  'import { email, attio } from adapters',
+  'import { dealflow_inbox, acme_main } from credentials',
+  'inbox = email(credentials: dealflow_inbox)',
+  'crm   = attio(credentials: acme_main)',
+  '',
+].join('\n');
+
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000a1');
 
 const emailSchema: InstanceSchema = {
@@ -68,8 +77,8 @@ const catalog = mockCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -150,7 +159,7 @@ async function runOn(engine: 'ts' | 'rust', c: Case) {
   const trace: unknown[] = [];
   const appends: MovementTraceEntry[][] = [];
   const input: RunMovementInput = {
-    source: PRELUDE + c.source,
+    source: (c.languageVersion !== undefined && c.languageVersion < 5 ? PRELUDE_OLD : PRELUDE) + c.source,
     event: c.event,
     teamId: TEAM_ID,
     catalog,
@@ -215,6 +224,26 @@ async function agree(c: Case) {
 }
 
 const BINDINGS_AND_IF = [
+  'function m(msg: <inbox-[:message]->>) {',
+  '  subject = msg.`subject`',
+  '  greeting = "Re: ${subject} (${Text.upper(Text.trim(msg.`text`))})"',
+  '  if (Text.includes(msg.`text`, "deal")) {',
+  '    kind = "deal"',
+  '  } else if (coalesce(msg.`missing`, "x") == "x" && Text.length(greeting) > 3) {',
+  '    kind = "other"',
+  '  } else {',
+  '    kind = "none"',
+  '  }',
+  '  tail = Text.concat(greeting, "!", Number.format(1200000, "compact"))',
+  '  if (tail == "never") {',
+  '    return tail',
+  '  }',
+  '  return subject',
+  '}',
+].join('\n');
+
+// The same program as versions 1–4 spell it, for the admission walk pinned to one.
+const BINDINGS_AND_IF_OLD = [
   'movement m(msg: <inbox-[:message]->>) {',
   '  subject = msg.`subject`',
   '  greeting = "Re: ${subject} (${UPPER(TRIM(msg.`text`))})"',
@@ -236,7 +265,7 @@ const BINDINGS_AND_IF = [
 describe('a whole run in the Rust engine', () => {
   it('is admitted for reads, bindings, if and return, and refused for anything more', async () => {
     const program = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
-    expect(await admission(BINDINGS_AND_IF)).toBe('admitted');
+    expect(await admission(BINDINGS_AND_IF_OLD)).toBe('admitted');
     expect(await admission(program('  write crm-[:companies]-> { name: msg.`subject` }'))).toBe('admitted');
     expect(await admission(program('  write crm-[c:companies WHERE `name` == "x"]-> { name: "y" }'))).toBe('admitted');
     expect(await admission(program('  write crm-[c:companies WHERE EXISTS(c-[:deals]->)]-> { name: "y" }'))).toBe('admitted');
@@ -271,9 +300,9 @@ describe('a whole run in the Rust engine', () => {
   it('traces a field the payload does not carry, once per field', async () => {
     const { result } = await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  a = msg.`missing`',
-        '  b = COALESCE(msg.`missing`, msg.`text`)',
+        '  b = coalesce(msg.`missing`, msg.`text`)',
         '  c = msg.`subject`',
         '}',
       ].join('\n'),
@@ -288,12 +317,12 @@ describe('a whole run in the Rust engine', () => {
   it('reads a field of an object held in a value binding, null for an absent one', async () => {
     await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
+        'function m(msg: <inbox-[:message]->>) {',
         '  sa = msg.`meta`',
         '  label = sa.`label`',
         '  gone = sa.`missing`',
-        '  if label == "Follow up" AND gone == null {',
-        '    ok = TEXT.SLUG(label)',
+        '  if (label == "Follow up" && gone == null) {',
+        '    ok = Text.slug(label)',
         '  }',
         '}',
       ].join('\n'),
@@ -307,7 +336,7 @@ describe('a whole run in the Rust engine', () => {
     // callback's fire values whose dicts carry a binding's `kind` are dicts.
     // Both engines know an engine object by how it was made, never by its
     // keys, so each assertion holds of each engine, and the two agree.
-    const body = (...lines: string[]) => ['movement m(msg: <inbox-[:message]->>) {', '  v = msg.`meta`', ...lines, '}'].join('\n');
+    const body = (...lines: string[]) => ['function m(msg: <inbox-[:message]->>) {', '  v = msg.`meta`', ...lines, '}'].join('\n');
     /** The exploit: a webhook field shaped like a kept walk, whose mapping
      *  holds program text and whose head walks the source. */
     const keptWalk = (raw: string) => ({
@@ -353,7 +382,7 @@ describe('a whole run in the Rust engine', () => {
 
     it('reads a field shaped like a kept walk as data: one field read, no walk, no program text run', async () => {
       for (const raw of ['COUNT(e-[:items]->)', 'NOSUCHFN(1)']) {
-        await onBoth({ source: body('  n = COUNT(v-[:subs]->)', '  ERROR("${n}")'), event: webhook({ meta: keptWalk(raw) }) }, (run) => {
+        await onBoth({ source: body('  n = count(v-[:subs]->)', '  fail("${n}")'), event: webhook({ meta: keptWalk(raw) }) }, (run) => {
           expect(run.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
           expect(run.called).not.toContain('getRelated');
           expect(run.called).not.toContain('iterateRelated');
@@ -365,7 +394,7 @@ describe('a whole run in the Rust engine', () => {
 
     it('reads its kind as the text it is, and prints it as a dict', async () => {
       for (const meta of [keptWalk('1'), { kind: 'closure' }, { kind: 'positions', landings: [{ kind: 'event' }] }, { kind: 'constructor' }, { kind: 'event' }]) {
-        await onBoth({ source: body('  ERROR("${v.`kind`} ${TEXT.SERIALISE(v, "JSON")}")'), event: webhook({ meta }) }, (run) => {
+        await onBoth({ source: body('  fail("${v.`kind`} ${Json.stringify(v)}")'), event: webhook({ meta }) }, (run) => {
           expect(run.ended).toMatch(new RegExp(`^MovementEngineError: MOVENG_ERROR: ${meta.kind} \\{[\\s\\S]*"kind": ?"${meta.kind}"`));
           expect(run.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
         });
@@ -375,7 +404,7 @@ describe('a whole run in the Rust engine', () => {
 
   it('names a discriminated root by the adapter entry points, and reads it stamped', async () => {
     const { rust } = await agree({
-      source: ['movement m(msg: <inbox-[:message]->>) {', '  s = msg.`subject`', '}'].join('\n'),
+      source: ['function m(msg: <inbox-[:message]->>) {', '  s = msg.`subject`', '}'].join('\n'),
       event: webhook({ subject: 'Hi' }, { rootRecordType: 'email:msg', externalRecordRef: { adapterType: 'email', externalId: 'm-1' } }),
       email: { entryPoints: [{ typeId: 'email:msg', displayName: 'message' }] },
     });
@@ -385,11 +414,11 @@ describe('a whole run in the Rust engine', () => {
   it('reads the clock it was pinned to, in the zone it names', async () => {
     await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
-        '  today = DATE.TODAY("Europe/Berlin")',
-        '  start = DATETIME.AT(DATE.ADD_DAYS(today, -1), "07:00", "Europe/Berlin")',
-        '  end = DATETIME.AT(today, "07:00", "Europe/Berlin")',
-        '  host = URL.HOST(msg.`text`)',
+        'function m(msg: <inbox-[:message]->>) {',
+        '  today = Date.today("Europe/Berlin")',
+        '  start = DateTime.at(Date.addDays(today, -1), "07:00", "Europe/Berlin")',
+        '  end = DateTime.at(today, "07:00", "Europe/Berlin")',
+        '  host = Url.host(msg.`text`)',
         '}',
       ].join('\n'),
       event: webhook({ text: 'https://BÜCHER.de/x' }),
@@ -401,7 +430,7 @@ describe('a whole run in the Rust engine', () => {
     // A pattern nested past 1,000 groups, which V8's stack decides.
     const pattern = `${'(?:'.repeat(1001)}a${')'.repeat(1001)}`;
     const { rust } = await agree({
-      source: ['movement m(msg: <inbox-[:message]->>) {', `  found = TEXT.REGEX_EXTRACT(msg.\`text\`, "${pattern}")`, '}'].join('\n'),
+      source: ['function m(msg: <inbox-[:message]->>) {', `  found = Text.regexExtract(msg.\`text\`, "${pattern}")`, '}'].join('\n'),
       event: webhook({ text: 'xay' }),
     });
     expect(rust.result).toBeDefined();
@@ -417,11 +446,11 @@ describe('a whole run in the Rust engine', () => {
     resetRustRunStats();
     const { rust } = await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
-        '  iso = DATE.FORMAT_ISO(msg.`text`)',
+        'function m(msg: <inbox-[:message]->>) {',
+        '  iso = DateTime.toIso(msg.`text`)',
         '  later = msg.`text` > "March 8, 2026 1:45 AM"',
-        '  if later {',
-        '    day = DATE(msg.`text`)',
+        '  if (later) {',
+        '    day = Date.from(msg.`text`)',
         '  }',
         '}',
       ].join('\n'),
@@ -440,7 +469,7 @@ describe('a whole run in the Rust engine', () => {
     const pinned = new Date('2026-07-15T12:00').toISOString();
     const run = (firedAt: string) =>
       agree({
-        source: ['movement m(msg: <inbox-[:message]->>) {', '  pin = @current_timestamp', `  if pin != DATETIME("${pinned}") {`, '    bad = DATE.ADD_DAYS("2026-01-01", 1000000000)', '  }', '}'].join('\n'),
+        source: ['function m(msg: <inbox-[:message]->>) {', '  pin = @current_timestamp', `  if (pin != DateTime.from("${pinned}")) {`, '    bad = Date.addDays("2026-01-01", 1000000000)', '  }', '}'].join('\n'),
         event: webhook({}),
         firedAt,
       });
@@ -453,7 +482,7 @@ describe('a whole run in the Rust engine', () => {
     expectZoneStanding(processLocalZone());
     if (processLocalZone() !== undefined) return;
     resetRustRunStats();
-    const { outcome, resolved } = await segmentOf('movement m(msg: <inbox-[:message]->>) {\n  x = 1\n}');
+    const { outcome, resolved } = await segmentOf('function m(msg: <inbox-[:message]->>) {\n  x = 1\n}');
     expect(outcome).toEqual({ declined: LOCAL_ZONE_UNVERIFIED });
     expect(resolved).toEqual([]);
     expect(rustRunStats.notAdmitted).toEqual({ [LOCAL_ZONE_UNVERIFIED]: 1 });
@@ -466,9 +495,9 @@ describe('a whole run in the Rust engine', () => {
     const payload = Object.fromEntries(fields.filter((f) => f !== 'f7').map((f) => [f, f.toUpperCase()]));
     const { rust } = await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
-        `  all = CONCAT("<", ${fields.map((f) => `msg.\`${f}\``).join(', ')}, ">")`,
-        '  return all',
+        'function m(msg: <inbox-[:message]->>) {',
+        `  joined = Text.concat("<", ${fields.map((f) => `msg.\`${f}\``).join(', ')}, ">")`,
+        '  return joined',
         '}',
       ].join('\n'),
       event: webhook(payload),
@@ -481,11 +510,11 @@ describe('a whole run in the Rust engine', () => {
 
   it('reads only the arm a conditional takes, at any depth', async () => {
     const source = [
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  pick = IF msg.`a` == "A" THEN IF msg.`b` == "B" THEN msg.`c` ELSE msg.`d` END ELSE msg.`e` END',
-      '  if msg.`a` == "A" AND msg.`b` == "B" {',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  pick = msg.`a` == "A" ? (msg.`b` == "B" ? msg.`c` : msg.`d`) : msg.`e`',
+      '  if (msg.`a` == "A" && msg.`b` == "B") {',
       '    left = msg.`c`',
-      '  } else if msg.`e` == "E" {',
+      '  } else if (msg.`e` == "E") {',
       '    right = msg.`d`',
       '  }',
       '  return pick',
@@ -504,9 +533,9 @@ describe('a whole run in the Rust engine', () => {
   it('awaits a read inside a function argument before the function', async () => {
     await agree({
       source: [
-        'movement m(msg: <inbox-[:message]->>) {',
-        '  slug = LOWER(CONCAT(TRIM(msg.`subject`), "-", COALESCE(msg.`missing`, UPPER(msg.`text`))))',
-        '  n = LENGTH(TEXT.SLUG(msg.`subject`)) + LENGTH(msg.`text`)',
+        'function m(msg: <inbox-[:message]->>) {',
+        '  slug = Text.lower(Text.concat(Text.trim(msg.`subject`), "-", coalesce(msg.`missing`, Text.upper(msg.`text`))))',
+        '  n = Text.length(Text.slug(msg.`subject`)) + Text.length(msg.`text`)',
         '}',
       ].join('\n'),
       event: webhook({ subject: '  Big Deal ', text: 'hi' }),
@@ -524,7 +553,7 @@ describe('a whole run in the Rust engine', () => {
     await agree({ source: BINDINGS_AND_IF.replace('msg.`subject`', 'msg.`nope`'), event: webhook({}), endsAtCheck: true });
     // A source neither parser reads: the check's own parse error, before a
     // segment opens on either engine, never refused.
-    const { rust: unparsed } = await agree({ source: 'movement m(msg: <inbox-[:message]->>) {\n  g = graph { ?...msg }\n}', event: webhook({}), endsAtCheck: true });
+    const { rust: unparsed } = await agree({ source: 'function m(msg: <inbox-[:message]->>) {\n  g = graph { ?...msg }\n}', event: webhook({}), endsAtCheck: true });
     expect(String('error' in unparsed ? unparsed.error : '')).toContain('MOVENG_PARSE');
   });
 
@@ -543,7 +572,7 @@ describe('a whole run in the Rust engine', () => {
       // The gate is traced, then the arm fails: the gate is handed over only
       // as the segment ends, and that hand-over fails.
       const error = await runMovement({
-        source: PRELUDE + 'movement m(msg: <inbox-[:message]->>) {\n  if msg.`subject` == "Acme" {\n    t = msg.`text`\n  }\n}',
+        source: PRELUDE + 'function m(msg: <inbox-[:message]->>) {\n  if (msg.`subject` == "Acme") {\n    t = msg.`text`\n  }\n}',
         event: webhook({ subject: 'Acme', text: 'x' }),
         teamId: TEAM_ID,
         catalog,
@@ -640,12 +669,12 @@ describe('IS <Decl> of a record a system describes', () => {
   // Chunk 7A Task 6: compared by the record type's schema with the
   // checker's own assignability (`check.compatible`), as run.ts
   // `evaluateDeclaredNodeTest` compares it.
-  const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  const movement = (body: string) => `function m(msg: <inbox-[:message]->>) {\n${body}\n}`;
   it('takes the arm the TypeScript engine takes, the event, a second name of it, and a landed record, whole on Rust', async () => {
     for (const [declaration, body] of [
-      ['node Fits { subject: <text> }', '  if msg IS <Fits> {\n    return "fits"\n  }\n  return "does not"'],
-      ['node Lacks { nowhere: <text> }', '  m2 = msg\n  m3 = m2\n  if m3 IS <Lacks> {\n    return "fits"\n  }\n  return "does not"'],
-      ['node Typed { subject: <number> }', '  if msg IS <Typed> {\n    return "fits"\n  }\n  return "does not"'],
+      ['node Fits { subject: <text> }', '  if (msg is <Fits>) {\n    return "fits"\n  }\n  return "does not"'],
+      ['node Lacks { nowhere: <text> }', '  m2 = msg\n  m3 = m2\n  if (m3 is <Lacks>) {\n    return "fits"\n  }\n  return "does not"'],
+      ['node Typed { subject: <number> }', '  if (msg is <Typed>) {\n    return "fits"\n  }\n  return "does not"'],
     ] as const) {
       // An undiscriminated webhook: both engines stop, naming why (the
       // corpora's `IS` cases take each arm on a typed event).
@@ -693,7 +722,7 @@ describe('the file scope, as interpretFileStatement reads it', () => {
   // Chunk 7A Task 6: a file-level extraction, block, write or call fails the
   // run with the TypeScript's own error before any body; any other
   // right-hand side binds nothing; a file-level statement runs nothing.
-  const movement = (body: string) => `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`;
+  const movement = (body: string) => `function m(msg: <inbox-[:message]->>) {\n${body}\n}`;
   it('fails, binds nothing or runs nothing on both engines alike, whole on Rust', async () => {
     // Where the run ends: in the engine (`segment`), or at the check, before
     // a segment opens, on either engine (`check`: the snapshot describes no
@@ -717,7 +746,7 @@ describe('the file scope, as interpretFileStatement reads it', () => {
 
 describe('a program that fails its check', () => {
   // Fails its check: the snapshot describes no `fetch_url`.
-  const failing = `import { fetch_url } from plugins\npage = fetch_url(url: "x")\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`;
+  const failing = `import { fetch_url } from plugins\npage = fetch_url(url: "x")\nfunction m(msg: <inbox-[:message]->>) {\n  x = 1\n}`;
   /** A host that notes every segment it opens and every adapter resolved. */
   const noting = (seen: string[]) =>
     makeTestHost({
@@ -778,12 +807,12 @@ describe('the run counts', () => {
   it('count a refusal only for a run the Rust engine did not run, and a whole run under no reason', async () => {
     resetRustRunStats();
     const runs = [
-      'movement m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: "a" }\n  f = () => COALESCE(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  co = write crm-[:companies]-> { name: "b" }\n  f = () => COALESCE(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
+      'function m(msg: <inbox-[:message]->>) {\n  co = write crm-[:companies]-> { name: "a" }\n  f = () => coalesce(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
+      'function m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n}',
+      'function m(msg: <inbox-[:message]->>) {\n  y = msg.`subject` WITHIN "7d"\n  co = write crm-[:companies]-> { name: "b" }\n  f = () => coalesce(co, "x")\n  write crm-[:companies]-> { name: f() }\n}',
       // Fails its check (`crm` has no `#foo`), so never reaches the engine.
-      'movement m(msg: <inbox-[:message]->>) {\n  y = FIRST(crm-[:#foo]->)\n}',
-      'movement m(msg: <inbox-[:message]->>) {\n  return UPPER(msg.`subject`)\n}',
+      'function m(msg: <inbox-[:message]->>) {\n  y = first(crm-[:#foo]->)\n}',
+      'function m(msg: <inbox-[:message]->>) {\n  return Text.upper(msg.`subject`)\n}',
     ];
     for (const source of runs) await runOn('rust', { source, event: webhook({ subject: 'Acme' }) });
     // `routed` counts every segment the engine started, its admission's
@@ -823,14 +852,14 @@ describe('admission walks what the entry reaches', () => {
     resetRustRunStats();
     // The call itself is admitted (chunk 7A Task 2): the callee's own
     // reason refuses, and the walk goes on past it.
-    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = FIRST(crm-[:#foo]->)')}${helper('  write crm-[:companies]-> bind e { name: "a" }')}`, 'm');
+    const { outcome } = await segmentOfMovement(`${entry('  helper(e: msg)\n  y = first(crm-[:#foo]->)')}${helper('  write crm-[:companies]-> bind e { name: "a" }')}`, 'm');
     expect(outcome).toEqual({ declined: 'traversal_meta_edge' });
     expect(rustRunStats).toMatchObject({ notAdmitted: { traversal_meta_edge: 1 }, allReasons: { traversal_meta_edge: 1, write_bind: 1 }, hostCalls: {} });
   });
 
   it('runs a reached helper the entry calls, as the TypeScript engine does', async () => {
     const { result } = await agree({
-      source: `${entry('  s = shout(e: msg)\n  return s')}movement shout(e: <inbox-[:message]->>) {\n  return UPPER(e.\`subject\`)\n}\n`,
+      source: `${entry('  s = shout(msg)\n  return s').replace('movement m', 'function m')}function shout(e: <inbox-[:message]->>) {\n  return Text.upper(e.\`subject\`)\n}\n`,
       event: webhook({ subject: 'Acme' }),
       movementName: 'm',
     });
@@ -848,7 +877,7 @@ async function segmentOf(source: string) {
   const resolved: unknown[] = [];
   const host = makeTestHost({ adapters: { resolve: (r) => (resolved.push(r), fakeEmail().adapter) } });
   const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
-  const input = { source: PRELUDE + source, event: webhook({}), teamId: TEAM_ID, catalog, host };
+  const input = { source: PRELUDE_OLD + source, event: webhook({}), teamId: TEAM_ID, catalog, host, languageVersion: 4 as const };
   try {
     return { outcome: await runSegmentInRust({ input, context }), resolved };
   } catch (error) {
@@ -860,7 +889,7 @@ async function segmentOf(source: string) {
 async function segmentOfMovement(source: string, movementName: string) {
   const host = makeTestHost({ adapters: { resolve: () => fakeEmail().adapter } });
   const context = await openRunContext({ host, teamId: TEAM_ID, languageVersion: 3, spend: {} });
-  const input = { source: PRELUDE + source, event: webhook({}), teamId: TEAM_ID, catalog, host, movementName };
+  const input = { source: PRELUDE_OLD + source, event: webhook({}), teamId: TEAM_ID, catalog, host, movementName, languageVersion: 4 as const };
   try {
     return { outcome: await runSegmentInRust({ input, context }) };
   } catch (error) {
@@ -874,7 +903,7 @@ async function segmentOfMovement(source: string, movementName: string) {
 async function admission(source: string): Promise<string> {
   resetRustRunStats();
   try {
-    checkPinned({ source: PRELUDE + source, catalog, languageVersion: 3 });
+    checkPinned({ source: PRELUDE_OLD + source, catalog, languageVersion: 3 });
   } catch (error) {
     if (!isCheckFailure(error)) throw error;
     return ENDED_AT_CHECK;

@@ -50,8 +50,8 @@ const catalog: CatalogSnapshot = mockCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -210,22 +210,22 @@ describe('parked code is rebuilt from its tree on both engines', () => {
   const closureLibrary = (suffix: string) =>
     library([
       'export function keep(n: <text>) {',
-      `  f = (x: <text>) => CONCAT(x, "-${suffix}")`,
+      `  f = (x: <text>) => Text.concat(x, "-${suffix}")`,
       '  await sleep(1h)',
-      '  return FIRST(MAP([n], f))',
+      '  return first(map([n], f))',
       '}',
     ]);
 
   it('runs a library closure as it was parked, though the root writes another at its span (R1)', async () => {
     const source = [
       'export function zork(n: <text>) {',
-      '  f = (x: <text>) => CONCAT(x, "-R")',
-      '  return FIRST(MAP([n], f))',
+      '  f = (x: <text>) => Text.concat(x, "-R")',
+      '  return first(map([n], f))',
       '}',
       'import { keep } from "lib/keep"',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  r = keep(n: msg.subject)',
-      '  write crm-[:companies]-> { name: COALESCE(r, "none") }',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  r = keep(msg.subject)',
+      '  write crm-[:companies]-> { name: coalesce(r, "none") }',
       '}',
     ].join('\n');
     const resumed = await parkAndResume({ source, files: closureLibrary('L') });
@@ -236,9 +236,9 @@ describe('parked code is rebuilt from its tree on both engines', () => {
   it('runs a library closure as it was parked, though the library was edited while the run slept (R1)', async () => {
     const source = [
       'import { keep } from "lib/keep"',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  r = keep(n: msg.subject)',
-      '  write crm-[:notes]-> { body: COALESCE(r, "none") }',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  r = keep(msg.subject)',
+      '  write crm-[:notes]-> { body: coalesce(r, "none") }',
       '}',
     ].join('\n');
     const resumed = await parkAndResume({ source, files: closureLibrary('L') }, closureLibrary('X'));
@@ -250,15 +250,15 @@ describe('parked code is rebuilt from its tree on both engines', () => {
     const files = library([
       'export function keep(n: <text>) {',
       '  f = (x: <text>) => {',
-      '    d = node { body: CONCAT(x, "-L") }',
+      '    d = node { body: Text.concat(x, "-L") }',
       '    write crm-[:notes]-> { ...d }',
       '    return x',
       '  }',
       '  await sleep(1h)',
-      '  return FIRST(MAP([n], f))',
+      '  return first(map([n], f))',
       '}',
     ]);
-    const source = ['import { keep } from "lib/keep"', 'movement m(msg: <inbox-[:message]->>) {', '  keep(n: msg.subject)', '}'].join('\n');
+    const source = ['import { keep } from "lib/keep"', 'function m(msg: <inbox-[:message]->>) {', '  keep(msg.subject)', '}'].join('\n');
     const resumed = await parkAndResume({ source, files });
     expect(resumed).toContain('"body":"Acme-L"');
   });
@@ -286,8 +286,8 @@ describe('parked code is rebuilt from its tree on both engines', () => {
       '  return n',
       '}',
       'import { keep } from "lib/keep"',
-      'movement m(msg: <inbox-[:message]->>) {',
-      '  keep(n: msg.subject)',
+      'function m(msg: <inbox-[:message]->>) {',
+      '  keep(msg.subject)',
       '}',
     ].join('\n');
     const replies = [{ 'x:extract_result#1': [{ tag: [{ label: { evidence: 'q', value: 'Infra' } }] }] }];
@@ -299,15 +299,15 @@ describe('parked code is rebuilt from its tree on both engines', () => {
 
   const walkLibrary = library([
     'export function keep(n: <text>) {',
-    '  d = node { cos: lazy crm-[a:companies]-> node { name: CONCAT(a.name, "-L") } }',
+    '  d = node { cos: lazy crm-[a:companies]-> node { name: Text.concat(a.name, "-L") } }',
     '  await sleep(1h)',
     '  return d',
     '}',
   ]);
   const walkRoot = [
     'import { keep } from "lib/keep"',
-    'movement m(msg: <inbox-[:message]->>) {',
-    '  d = keep(n: msg.subject)',
+    'function m(msg: <inbox-[:message]->>) {',
+    '  d = keep(msg.subject)',
     '  d-[c:cos]-> {',
     '    write crm-[:notes]-> { body: c.name }',
     '  }',
@@ -323,7 +323,7 @@ describe('parked code is rebuilt from its tree on both engines', () => {
   it('walks a library’s kept walk as it was parked, though the root writes another at its head’s span (R2)', async () => {
     const source = [
       'export function zork(n: <text>) {',
-      '  d = node { cos: lazy crm-[a:companies]-> node { name: CONCAT(a.name, "-RR") } }',
+      '  d = node { cos: lazy crm-[a:companies]-> node { name: Text.concat(a.name, "-RR") } }',
       '  return d',
       '}',
       walkRoot,

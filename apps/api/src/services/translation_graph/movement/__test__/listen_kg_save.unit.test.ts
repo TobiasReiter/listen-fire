@@ -361,9 +361,9 @@ const TEAM = 'team-1';
 
 const KG_SOURCE = `import { kg } from adapters
 
-graph = kg()
+graph = connect kg
 
-movement on_company_change(rec: <graph-[:company]->>) {
+function on_company_change(rec: <graph-[:company]->>) {
   x = rec.\`name\`
 }
 
@@ -373,9 +373,9 @@ listen to graph { type: "company", events: ["record.created", "record.updated"],
 const KG_SOURCE_V2 = KG_SOURCE.replace('x = rec.`name`', 'y = rec.`name`');
 const KG_LIBRARY = `import { kg } from adapters
 
-graph = kg()
+graph = connect kg
 
-movement on_company_change(rec: <graph-[:company]->>) {
+function on_company_change(rec: <graph-[:company]->>) {
   x = rec.\`name\`
 }
 `;
@@ -383,9 +383,9 @@ movement on_company_change(rec: <graph-[:company]->>) {
 const ATTIO_SOURCE = (events: string) => `import { attio } from adapters
 import { acme } from credentials
 
-crm = attio(credentials: acme)
+crm = connect attio using acme
 
-movement on_new_record(rec: <crm-[:record]->>) {
+function on_new_record(rec: <crm-[:record]->>) {
   x = "noted"
 }
 
@@ -434,9 +434,9 @@ describe('a graph listen — trigger derivation', () => {
   it('carries suppress_self into the persisted trigger', async () => {
     const source = `import { kg } from adapters
 
-graph = kg()
+graph = connect kg
 
-movement mirror(rec: <graph-[:company]->>) {
+function mirror(rec: <graph-[:company]->>) {
   x = rec.\`name\`
 }
 
@@ -558,9 +558,9 @@ describe('listen events → external subscription diff-sync', () => {
     const library = `import { attio } from adapters
 import { acme } from credentials
 
-crm = attio(credentials: acme)
+crm = connect attio using acme
 
-movement on_new_record(rec: <crm-[:record]->>) {
+function on_new_record(rec: <crm-[:record]->>) {
   x = "noted"
 }
 `;
@@ -577,9 +577,9 @@ movement on_new_record(rec: <crm-[:record]->>) {
     const source = `import { attio } from adapters
 import { acme } from credentials
 
-crm = attio(credentials: acme)
+crm = connect attio using acme
 
-movement on_new_record(rec: <crm-[:record]->>) {
+function on_new_record(rec: <crm-[:record]->>) {
   x = "noted"
 }
 
@@ -601,8 +601,8 @@ describe('a system with no inbound surface cannot be listened to', () => {
   const SHEETS_SOURCE = `import { sheets } from adapters
 import { sheet_cred } from credentials
 
-sh = sheets(credentials: \`sheet_cred\`)
-movement on_row(rec: <sh-[:record]->>) {
+sh = connect sheets using \`sheet_cred\`
+function on_row(rec: <sh-[:record]->>) {
   x = 1
 }
 

@@ -2728,13 +2728,13 @@ describe('write org-[:List Entries]-> reaches the checker', () => {
   const PRELUDE = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
   async function errorsFor(body: string): Promise<Array<{ code: string; message: string }>> {
     const source = `${PRELUDE}
-movement sync() {
-  crm-[org:\`Organization\` WHERE \`Domain\` == "acme.com"]-> {
+function sync() {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "acme.com"]-> {
 ${body}
   }
 }`;
@@ -2873,7 +2873,7 @@ describe('an org\'s list entries narrowed by list inside EXISTS reach the checke
     const source = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 
 export node Deal {
   name: <text>
@@ -2890,20 +2890,20 @@ ${line}
   }
 
   const HOP =
-    'crm-[o:`Organization` WHERE `Name` == d.name]->-[le:`List Entries` WHERE `listName` == "Hot Leads" AND `List Score` >= floor]->';
+    'crm-[o:`Organization` WHERE o.`Name` == d.name]->-[le:`List Entries` WHERE le.`listName` == "Hot Leads" AND le.`List Score` >= floor]->';
 
   it('a list\'s own field validates beside the list name, inside EXISTS', async () => {
-    expect(await errorsFor(`  hit = EXISTS(${HOP})`)).toEqual([]);
-    expect(await errorsFor(`  if EXISTS(${HOP}) {\n    return 0\n  }`)).toEqual([]);
+    expect(await errorsFor(`  hit = exists(${HOP})`)).toEqual([]);
+    expect(await errorsFor(`  if (exists(${HOP})) {\n    return 0\n  }`)).toEqual([]);
   });
 
   it('and inside COUNT, which already carried its hops', async () => {
-    expect(await errorsFor(`  n = COUNT(${HOP})`)).toEqual([]);
+    expect(await errorsFor(`  n = count(${HOP})`)).toEqual([]);
   });
 
   it('a field no list declares is refused against THAT list, not the collection', async () => {
     const [diagnostic, ...rest] = await errorsFor(
-      '  hit = EXISTS(crm-[o:`Organization` WHERE `Name` == d.name]->-[le:`List Entries` WHERE `listName` == "Hot Leads" AND `Made Up` >= floor]->)',
+      '  hit = exists(crm-[o:`Organization` WHERE o.`Name` == d.name]->-[le:`List Entries` WHERE le.`listName` == "Hot Leads" AND le.`Made Up` >= floor]->)',
     );
     expect(rest).toEqual([]);
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');
@@ -2913,7 +2913,7 @@ ${line}
 
   it('without the list name, a list\'s field is refused with the narrowing test to add', async () => {
     const [diagnostic, ...rest] = await errorsFor(
-      '  hit = EXISTS(crm-[o:`Organization` WHERE `Name` == d.name]->-[le:`List Entries` WHERE `List Score` >= floor]->)',
+      '  hit = exists(crm-[o:`Organization` WHERE o.`Name` == d.name]->-[le:`List Entries` WHERE le.`List Score` >= floor]->)',
     );
     expect(rest).toEqual([]);
     expect(diagnostic.code).toBe('MOV_UNKNOWN_PROPERTY');

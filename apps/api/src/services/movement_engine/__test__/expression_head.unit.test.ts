@@ -85,7 +85,8 @@ jest.mock('../../../lib/anthropic', () => ({
   MAX_CHAT_CONTINUATIONS: 5,
 }));
 
-import { mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
 import type {
   LlmCallInput,
@@ -265,7 +266,7 @@ function run(
 ): Promise<Awaited<ReturnType<typeof runMovement>>> {
   return runMovement({
     ...(opts.languageVersion !== undefined ? { languageVersion: opts.languageVersion } : {}),
-    source: PRELUDE + source,
+    source: spelledFor(opts.languageVersion ?? 5, PRELUDE + source, fromCatalogSnapshot(catalog)),
     movementName: 'intake',
     event: webhookEvent({ subject: 'Deals', text: opts.text ?? '' }),
     teamId: TEAM_ID,
@@ -320,7 +321,7 @@ describe('a block head rooted at an expression', () => {
       attio: inline.adapter,
     });
     await run(
-      TWO_NODES + ['  first = AT(both, 1)', '  first-[t:tag]-> {', WRITE_TAG].join('\n'),
+      TWO_NODES + ['  picked = AT(both, 1)', '  picked-[t:tag]-> {', WRITE_TAG].join('\n'),
       { attio: bound.adapter },
     );
 

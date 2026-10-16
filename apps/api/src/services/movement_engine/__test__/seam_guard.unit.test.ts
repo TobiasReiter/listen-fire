@@ -60,6 +60,7 @@ import {
 } from 'movement-engine/services/movement_engine/run';
 import { makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { methodPaths, notJsonAt, roundTripHost } from './round_trip_host';
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
@@ -643,7 +644,7 @@ describe('the engine/host seam carries data', () => {
 
     await runAwaiting({
       teamId: tenantIdOf('00000000-0000-0000-0000-000000000042'),
-      source: awaitingSource(),
+      source: spelledFor(5, awaitingSource()),
       adapter: awaiting.adapter,
       parkSink: recording,
       wake: async (request: Scoped<AwaitWakeRequest>) => {
@@ -697,11 +698,11 @@ describe('the engine/host seam carries data', () => {
     const result = await runMovement({
       source: [
         'import { manual } from adapters',
-        'runs = manual()',
+        'runs = connect manual',
         '',
-        'movement m(go: <runs-[:Invocation]->>) {',
-        '  f = FILE("the digest", "text")',
-        '  t = READ(f)',
+        'function m(go: <runs-[:Invocation]->>) {',
+        '  f = File.from("the digest", "text")',
+        '  t = File.read(f)',
         '}',
         'listen to runs {} fire m',
       ].join('\n'),
@@ -805,10 +806,10 @@ describe('the engine/host seam carries data', () => {
       source: [
         'import { manual, kg } from adapters',
         'import { kg_cred } from credentials',
-        'runs = manual()',
-        'graph = kg(credentials: kg_cred)',
+        'runs = connect manual',
+        'graph = connect kg using kg_cred',
         '',
-        'movement m(go: <runs-[:Invocation]->>) {',
+        'function m(go: <runs-[:Invocation]->>) {',
         '  write graph-[:note]-> { unique by (`body`) body: "hello" }',
         '}',
         'listen to runs {} fire m',
@@ -932,10 +933,10 @@ describe('the engine/host seam carries data', () => {
       source: [
         'import { manual, kg } from adapters',
         'import { kg_cred } from credentials',
-        'runs = manual()',
-        'graph = kg(credentials: kg_cred)',
+        'runs = connect manual',
+        'graph = connect kg using kg_cred',
         '',
-        'movement m(go: <runs-[:Invocation]->>) {',
+        'function m(go: <runs-[:Invocation]->>) {',
         '  write graph-[:note]-> { unique by (`body`) body: "by ${@user_email}" }',
         '  cb = callback({ write graph-[:note]-> { body: "called" } }, { ttl: 2d })',
         '  await sleep(1d)',
@@ -1045,16 +1046,21 @@ const roundTripCatalog = staticCatalogSnapshot({
 const ROUND_TRIP_PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
   'node Detail: "more about the company" {',
   '  summary: <text> "one line on what it does"',
   '}',
   '',
 ].join('\n');
+
+/** The same prelude as versions 1–4 read it, for a run pinned to one of them. */
+const ROUND_TRIP_PRELUDE_V4 = ROUND_TRIP_PRELUDE.replace('fetchUrl as fetch_url', 'fetch_url')
+  .replace('inbox = connect email', 'inbox = email()')
+  .replace('crm = connect attio using acme_main', 'crm = attio(credentials: acme_main)');
 
 interface FakeCrm {
   adapter: Adapter;
@@ -1244,14 +1250,18 @@ function roundTripEvent(
 function roundTrip(
   body: string[],
   overrides: TestHostOverrides & { crm?: FakeCrm; inbox?: Adapter } = {},
+  options: { version4?: boolean } = {},
 ) {
   const crm = overrides.crm ?? fakeCrm();
   const inbox = overrides.inbox ?? pagedInbox().adapter;
   const { crm: _crm, inbox: _inbox, ...hostOverrides } = overrides;
   const input = () => ({
-    source: [ROUND_TRIP_PRELUDE, 'movement intake(m: <inbox-[:message]->>) {', ...body, '}'].join(
-      '\n',
-    ),
+    source: [
+      options.version4 === true ? ROUND_TRIP_PRELUDE_V4 : ROUND_TRIP_PRELUDE,
+      `${options.version4 === true ? 'movement' : 'function'} intake(m: <inbox-[:message]->>) {`,
+      ...body,
+      '}',
+    ].join('\n'),
     movementName: 'intake',
     event: roundTripEvent(),
     teamId: tenantOfTeam(ROUND_TRIP_TEAM),
@@ -1402,12 +1412,12 @@ describe('every family crosses as JSON', () => {
   familyRun('models and plugins: AI(), extract(…), a plugin, and the judge', async () => {
     const h = roundTrip(
       [
-        '  page = fetch_url(url: m.`text`)',
+        '  page = fetch_url(m.`text`)',
         '  found = extract([m.`subject`], Detail)',
         '  co = match crm-[:companies]-> { unique by (FUZZY `name`)',
         '    name: "Acme"',
         '  }',
-        '  write crm-[:notes]-> { title: "${AI(m.`subject`)} ${COALESCE(page, "")} ${COALESCE(FIRST(found).summary, "")}" }',
+        '  write crm-[:notes]-> { title: "${ai(m.`subject`)} ${coalesce(page, "")} ${coalesce(first(found).summary, "")}" }',
       ],
       {
         crm: fakeCrm({
@@ -1480,6 +1490,7 @@ describe('every family crosses as JSON', () => {
           },
         },
       },
+      { version4: true },
     );
     // `write … bind` is a version 1–4 construct (retired under 5 by the
     // checker, MOV_WRITE_BIND_RETIRED).
@@ -1505,7 +1516,7 @@ describe('every family crosses as JSON', () => {
         '      return "first" },',
         '    () => { await sleep(30d) },',
         '  )',
-        '  write crm-[:notes]-> { title: "${AT(r, 0)}${AT(r, 1)} ${AT(w, 0)}" }',
+        '  write crm-[:notes]-> { title: "${r[0]}${r[1]} ${w[0]}" }',
       ],
       {
         park: {
@@ -1540,8 +1551,8 @@ describe('every family crosses as JSON', () => {
     let invocations = 0;
     const h = roundTrip(
       [
-        '  a = fetch_url(url: "a")',
-        '  b = fetch_url(url: "b")',
+        '  a = fetch_url("a")',
+        '  b = fetch_url("b")',
         '  write crm-[:notes]-> { title: "${a}${b}" }',
       ],
       {
@@ -1572,7 +1583,7 @@ describe('every family crosses as JSON', () => {
     const wakes: QueuedWake[] = [];
     const result = await runAwaiting({
       teamId: tenantOfTeam(ROUND_TRIP_TEAM),
-      source: awaitingSource(),
+      source: spelledFor(5, awaitingSource()),
       adapter: makeAwaitingAdapter([
         { status: 'pending', correlationKey: 'req-1' },
         {
@@ -1660,8 +1671,8 @@ describe('every family crosses as JSON', () => {
   familyRun('files: a FILE() rendered and READ', async () => {
     const h = roundTrip(
       [
-        '  f = FILE("the digest", "text")',
-        '  write crm-[:notes]-> { title: COALESCE(READ(f), "unread") }',
+        '  f = File.from("the digest", "text")',
+        '  write crm-[:notes]-> { title: coalesce(File.read(f), "unread") }',
       ],
       {
         files: { resolveFileText: async () => ({ text: 'the digest', rawTextId: 'rt-1' }) },
@@ -1748,10 +1759,10 @@ describe('the production host crosses as JSON', () => {
       source: [
         'import { email, attio } from adapters',
         'import { acme_main } from credentials',
-        'inbox = email()',
-        'crm = attio(credentials: acme_main)',
+        'inbox = connect email',
+        'crm = connect attio using acme_main',
         '',
-        'movement intake(m: <inbox-[:Email]->>) {',
+        'function intake(m: <inbox-[:Email]->>) {',
         '  m-[a:Attachments]-> {',
         '    write crm-[:notes]-> { title: "${m.`Subject`} from ${m.`From`}: ${a.`Name`}" }',
         '  }',

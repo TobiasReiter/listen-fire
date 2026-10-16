@@ -252,8 +252,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm   = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm   = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -286,9 +286,9 @@ function run(
 // ═════════════════════════════════════════════════════════════════════════════
 
 const PER_PIECE_EXTRACT = [
-  'movement intake(msg: <inbox-[:message]->>) {',
-  '  pieces = CHUNKS(msg.`text`, { size: 20 })',
-  '  found = MAP(pieces, (p) => {',
+  'function intake(msg: <inbox-[:message]->>) {',
+  '  pieces = Text.chunks(msg.`text`, { size: 20 })',
+  '  found = map(pieces, (p) => {',
   '    return extract from [p] {',
   '      node company: "each company named" {',
   '        name: "the company\'s name"',
@@ -336,7 +336,7 @@ describe('a block head rooted at a value holding extraction roots', () => {
     await run(
       PER_PIECE_EXTRACT +
         [
-          '  one = AT(found, 1)',
+          '  one = found[1]',
           '  one-[c:company]-> {',
           '    write crm-[:companies]-> {',
           '      unique by (`name`)',
@@ -380,7 +380,7 @@ describe('a block head rooted at a value holding synthesised nodes', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  one = node { label: "A", tag: node { name: "A" } }',
         '  two = node { label: "B", tag: node { name: "B" } }',
         '  both = [one, two]',
@@ -403,8 +403,8 @@ describe('a block head rooted at a value holding synthesised nodes', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  both = MAP(["A", "B"], (n) => {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  both = map(["A", "B"], (n) => {',
         '    return node { label: n, tag: node { name: n } }',
         '  })',
         '  both-[t:tag]-> {',
@@ -427,7 +427,7 @@ describe('a block head rooted at a value holding synthesised nodes', () => {
     await expect(
       run(
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  one = node { label: "A", tag: node { name: "A" } }',
           '  both = [one, msg.`subject`]',
           '  both-[t:tag]-> {',
@@ -449,7 +449,7 @@ describe('a block head rooted at a value holding synthesised nodes', () => {
     await expect(
       run(
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  one = node { label: "A" }',
           '  t = "${one}"',
           '  write crm-[:companies]-> {',
@@ -471,8 +471,8 @@ describe('a list literal of extraction roots', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  first = extract from [msg.`text`] {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  chosen = extract from [msg.`text`] {',
         '    node company: "each company named" {',
         '      name: "the company\'s name"',
         '    }',
@@ -482,7 +482,7 @@ describe('a list literal of extraction roots', () => {
         '      name: "the company\'s name"',
         '    }',
         '  }',
-        '  both = [first, second]',
+        '  both = [chosen, second]',
         '  both-[c:company]-> {',
         '    write crm-[:companies]-> {',
         '      unique by (`name`)',

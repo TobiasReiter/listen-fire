@@ -56,6 +56,15 @@ const catalog: CatalogSnapshot = mockCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
+  '',
+].join('\n');
+
+// The spelling versions 1–4 read, for the cases pinned to one of them.
+const PRELUDE_V4 = [
+  'import { email, attio } from adapters',
+  'import { dealflow_inbox, acme_main } from credentials',
   'inbox = email(credentials: dealflow_inbox)',
   'crm = attio(credentials: acme_main)',
   '',
@@ -191,9 +200,10 @@ async function runOn(engine: Engine, c: Case) {
     asked.push({ asserted: input.asserted, candidates: input.candidates, recordType: input.recordType });
     return { index: c.judge ?? null, cost: [{ source: 'model:judge', microdollars: 3 }] };
   };
-  const source = c.source ?? `movement m(msg: <inbox-[:message]->>) {\n${c.body ?? ''}\n}`;
+  const v4 = c.languageVersion !== undefined && c.languageVersion < 5;
+  const source = c.source ?? `${v4 ? 'movement' : 'function'} m(msg: <inbox-[:message]->>) {\n${c.body ?? ''}\n}`;
   const input: RunMovementInput = {
-    source: PRELUDE + source,
+    source: (v4 ? PRELUDE_V4 : PRELUDE) + source,
     event: { pipelineInputId: 'pi-ported-forms', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'EU' } },
     teamId: TEAM_ID,
     catalog: snapshot,
@@ -268,7 +278,7 @@ async function parkAndResume(c: Case): Promise<string> {
 }
 
 const library = (body: string[]) => ({ 'lib/forms': { source: PRELUDE + body.join('\n') } });
-const movement = (body: string[]) => ['movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
+const movement = (body: string[]) => ['function m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n');
 
 // ── match over a tuple of paths ────────────────────────────────────────────
 
@@ -300,7 +310,7 @@ describe('a match over a tuple of paths', () => {
   it('asks the judge with every candidate, and binds the one it picks', async () => {
     const other: ExternalRecordRef = { adapterType: 'attio', externalId: 'note-2', data: { body: 'Acme Ltd' } };
     const { rust } = await both({
-      body: [...PARENTS, '  found = match (co-[:notes]->, pe-[:notes]->) { unique by (FUZZY `body`), body: "Acm" }', '  write crm-[:notes]-> { body: COALESCE(found.`body`, "none") }'].join('\n'),
+      body: [...PARENTS, '  found = match (co-[:notes]->, pe-[:notes]->) { unique by (FUZZY `body`), body: "Acm" }', '  write crm-[:notes]-> { body: coalesce(found.`body`, "none") }'].join('\n'),
       candidates: { note: [NOTE, other] },
       judge: 1,
     });
@@ -321,10 +331,10 @@ describe('a match over a tuple of paths', () => {
       'export function find(n: <text>) {',
       ...PARENTS,
       '  found = match (co-[:notes]->, pe-[:notes]->) { unique by (`body`), body: n }',
-      '  return COALESCE(found.`body`, "none")',
+      '  return coalesce(found.`body`, "none")',
       '}',
     ]);
-    const source = ['import { find } from "lib/forms"', movement(['  b = find(n: msg.`subject`)', '  write crm-[:notes]-> { body: b }'])].join('\n');
+    const source = ['import { find } from "lib/forms"', movement(['  b = find(msg.`subject`)', '  write crm-[:notes]-> { body: b }'])].join('\n');
     const { rust } = await both({ source, files, candidates: { note: [NOTE] } });
     expect(rust.observed).toContain('"body":"Acme"');
   });
@@ -333,7 +343,7 @@ describe('a match over a tuple of paths', () => {
     // Parked before the parents are written: a handle rehydrated from a
     // park lands in a graph of its own on both engines, so two of them fail
     // a tuple's one-graph rule (reported, not this port's to change).
-    const body = ['  await sleep(1h)', ...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: COALESCE(found.`body`, "none") }'].join('\n');
+    const body = ['  await sleep(1h)', ...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: coalesce(found.`body`, "none") }'].join('\n');
     const resumed = await parkAndResume({ body, candidates: { note: [NOTE] } });
     expect(resumed).toContain('"body":"Acme"');
   });
@@ -343,7 +353,7 @@ describe('a match over a tuple of paths', () => {
 
 const LEAD = ['node Lead {', '  name: <text>', '  node owner {', '    name: <text>', '  }', '}'].join('\n');
 const TYPED_LEAD = ['node Lead {', '  name: <text>', '  node owner {', '    region: <number>', '  }', '}'].join('\n');
-const VERDICT = ['  if g IS <Lead> {', '    write crm-[:notes]-> { body: "fits" }', '  } else {', '    write crm-[:notes]-> { body: "does not" }', '  }'];
+const VERDICT = ['  if (g is <Lead>) {', '    write crm-[:notes]-> { body: "fits" }', '  } else {', '    write crm-[:notes]-> { body: "does not" }', '  }'];
 
 describe('IS <Decl> of a graph literal', () => {
   it('compares a written handle its edge holds by the handle’s record type', async () => {
@@ -384,13 +394,13 @@ describe('IS <Decl> of a graph literal', () => {
       'export function judge(n: <text>) {',
       '  co = write crm-[:companies]-> { name: n }',
       '  g = graph { name: n, owner: co }',
-      '  if g IS <Lead> {',
+      '  if (g is <Lead>) {',
       '    return "fits"',
       '  }',
       '  return "does not"',
       '}',
     ]);
-    const source = ['import { judge } from "lib/forms"', movement(['  v = judge(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(v, "none") }'])].join('\n');
+    const source = ['import { judge } from "lib/forms"', movement(['  v = judge(msg.`subject`)', '  write crm-[:notes]-> { body: coalesce(v, "none") }'])].join('\n');
     const { rust } = await both({ source, files });
     expect(rust.observed).toContain('"body":"does not"');
   });
@@ -415,7 +425,7 @@ describe('a graph spread of a record', () => {
 
   it('copies a map a record’s field holds, and nothing where the field is absent', async () => {
     const { rust } = await both({
-      source: [S, movement(['  crm-[c:companies]-> {', '    g = graph<S> { ...c.`meta` }', '    write crm-[:notes]-> { body: COALESCE(g.`a`, "none") }', '  }'])].join('\n'),
+      source: [S, movement(['  crm-[c:companies]-> {', '    g = graph<S> { ...c.`meta` }', '    write crm-[:notes]-> { body: coalesce(g.`a`, "none") }', '  }'])].join('\n'),
       related: META,
     });
     expect(rust.observed).toContain('"body":"x"');
@@ -424,7 +434,7 @@ describe('a graph spread of a record', () => {
 
   it('copies a map a written handle’s field holds', async () => {
     const { rust } = await both({
-      source: [S, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph<S> { ...co.`meta` }', '  write crm-[:notes]-> { body: COALESCE(g.`a`, "none") }'])].join('\n'),
+      source: [S, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph<S> { ...co.`meta` }', '  write crm-[:notes]-> { body: coalesce(g.`a`, "none") }'])].join('\n'),
     });
     expect(rust.observed).toContain('"body":"none"');
   });
@@ -435,12 +445,12 @@ describe('a graph spread of a record', () => {
       'export function first_a(n: <text>) {',
       '  crm-[c:companies]-> {',
       '    g = graph<S> { ...c.`meta` }',
-      '    write crm-[:notes]-> { body: COALESCE(g.`a`, n) }',
+      '    write crm-[:notes]-> { body: coalesce(g.`a`, n) }',
       '  }',
       '  return n',
       '}',
     ]);
-    const source = ['import { first_a } from "lib/forms"', movement(['  first_a(n: msg.`subject`)'])].join('\n');
+    const source = ['import { first_a } from "lib/forms"', movement(['  first_a(msg.`subject`)'])].join('\n');
     const { rust } = await both({ source, files, related: META });
     expect(rust.observed).toContain('"body":"x"');
     expect(rust.observed).toContain('"body":"Acme"');
@@ -513,7 +523,7 @@ describe('refresh', () => {
       '  return co.`name`',
       '}',
     ]);
-    const source = ['import { fresh_name } from "lib/forms"', movement(['  b = fresh_name(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(b, "none") }'])].join('\n');
+    const source = ['import { fresh_name } from "lib/forms"', movement(['  b = fresh_name(msg.`subject`)', '  write crm-[:notes]-> { body: coalesce(b, "none") }'])].join('\n');
     const { rust } = await both({ source, files, read: FRESH });
     expect(rust.observed).toContain('"body":"Acme Inc"');
   });
@@ -536,13 +546,13 @@ describe('refresh', () => {
 
 describe('a closure called by name inside a library function', () => {
   const closures = (call: string) =>
-    library(['export function tag(n: <text>) {', '  f = (x: <text>) => CONCAT(x, "-L")', `  return ${call}`, '}']);
-  const root = ['import { tag } from "lib/forms"', movement(['  r = tag(n: msg.`subject`)', '  write crm-[:notes]-> { body: COALESCE(r, "none") }'])].join('\n');
+    library(['export function tag(n: <text>) {', '  f = (x: <text>) => Text.concat(x, "-L")', `  return ${call}`, '}']);
+  const root = ['import { tag } from "lib/forms"', movement(['  r = tag(msg.`subject`)', '  write crm-[:notes]-> { body: coalesce(r, "none") }'])].join('\n');
 
   it('runs as the same body runs in the root, by order and by name', async () => {
-    for (const call of ['f(n)', 'f(x: n)', 'UPPER(f(n))']) {
+    for (const call of ['f(n)', 'Text.upper(f(n))']) {
       const { rust } = await both({ source: root, files: closures(call) });
-      expect(rust.observed).toContain(call.startsWith('UPPER') ? '"body":"ACME-L"' : '"body":"Acme-L"');
+      expect(rust.observed).toContain(call.startsWith('Text.upper') ? '"body":"ACME-L"' : '"body":"Acme-L"');
     }
   });
 
@@ -550,21 +560,21 @@ describe('a closure called by name inside a library function', () => {
     const source = [
       'function tag(n: <text>) {',
       '  f = (x: <text>) => {',
-      '    if x == "" {',
+      '    if (x == "") {',
       '      return null',
       '    }',
-      '    return CONCAT(x, "-R")',
+      '    return Text.concat(x, "-R")',
       '  }',
       '  return f(n)',
       '}',
-      movement(['  r = tag(n: msg.`subject`)', '  e = tag(n: "")', '  write crm-[:notes]-> { body: "${COALESCE(r, "none")}/${COALESCE(e, "none")}" }']),
+      movement(['  r = tag(msg.`subject`)', '  e = tag("")', '  write crm-[:notes]-> { body: "${coalesce(r, "none")}/${coalesce(e, "none")}" }']),
     ].join('\n');
     const { rust } = await both({ source });
     expect(rust.observed).toContain('"body":"Acme-R/none"');
   });
 
   it('resumes a park inside the library’s closure, on whichever engine resumes it', async () => {
-    const files = library(['export function tag(n: <text>) {', '  f = (x: <text>) => {', '    await sleep(1h)', '    return CONCAT(x, "-L")', '  }', '  return f(n)', '}']);
+    const files = library(['export function tag(n: <text>) {', '  f = (x: <text>) => {', '    await sleep(1h)', '    return Text.concat(x, "-L")', '  }', '  return f(n)', '}']);
     const resumed = await parkAndResume({ source: root, files });
     expect(resumed).toContain('"body":"Acme-L"');
   });

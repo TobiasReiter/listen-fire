@@ -86,13 +86,19 @@ function manualEvent(): TriggerEvent {
 
 const PRELUDE = `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
+runs = connect manual
+graph = connect kg using kg_cred
 `;
 
 /** A function with an effect anyone can see: it writes a note, then hands
  *  back what it wrote. */
-const MARK = `movement mark(t: <text>) {
+const PRELUDE_V4 = `import { manual, kg } from adapters
+import { kg_cred } from credentials
+runs = manual()
+graph = kg(credentials: kg_cred)
+`;
+
+const MARK_V4 = `movement mark(t: <text>) {
   write graph-[:note]-> { body: t }
   return t
 }
@@ -101,9 +107,19 @@ movement double(n: <number>) {
 }
 `;
 
+const MARK = `function mark(t: <text>) {
+  write graph-[:note]-> { body: t }
+  return t
+}
+function double(n: <number>) {
+  return n * 2
+}
+`;
+
 async function runBody(body: string, options: { languageVersion?: LanguageVersion; fileLevel?: string } = {}) {
   const kg = makeKgFake();
-  const source = `${PRELUDE}${options.fileLevel ?? MARK}movement recap(go: <runs-[:Invocation]->>) {
+  const v4 = options.languageVersion !== undefined && options.languageVersion < 5;
+  const source = `${v4 ? PRELUDE_V4 : PRELUDE}${options.fileLevel ?? (v4 ? MARK_V4 : MARK)}${v4 ? 'movement' : 'function'} recap(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire recap
@@ -146,9 +162,9 @@ describe('a nested call is the value it returns', () => {
   it('a collection op inside an expression, and one inside another', async () => {
     const creates = await runBody(
       [
-        '  n = COUNT(MAP([1, 2, 3], (v) => v * 2)) + 1',
-        '  twice = MAP(MAP([1, 2], (v) => v + 1), (v) => v * 10)',
-        '  shout = JOIN(MAP(["a", "b"], (t) => UPPER(t)), ",")',
+        '  n = count(map([1, 2, 3], (v) => v * 2)) + 1',
+        '  twice = map(map([1, 2], (v) => v + 1), (v) => v * 10)',
+        '  shout = Text.join(map(["a", "b"], (t) => Text.upper(t)), ",")',
         '  write graph-[:note]-> { payload: { n: n, twice: twice, shout: shout } }',
       ].join('\n'),
     );
@@ -159,7 +175,7 @@ describe('a nested call is the value it returns', () => {
     const creates = await runBody(
       [
         '  inc = (v: <number>) => v + 1',
-        '  write graph-[:note]-> { payload: { v: MAP([1, 2], inc) } }',
+        '  write graph-[:note]-> { payload: { v: map([1, 2], inc) } }',
       ].join('\n'),
     );
     expect(payload(creates)).toEqual({ v: [2, 3] });
@@ -168,7 +184,7 @@ describe('a nested call is the value it returns', () => {
   it('a nested call in a condition', async () => {
     const creates = await runBody(
       [
-        '  if double(2) == 4 AND COUNT(MAP([1], (v) => v)) == 1 {',
+        '  if (double(2) == 4 && count(map([1], (v) => v)) == 1) {',
         '    write graph-[:note]-> { body: "taken" }',
         '  }',
       ].join('\n'),
@@ -179,23 +195,23 @@ describe('a nested call is the value it returns', () => {
 
 describe('effects run in the order the text states them', () => {
   it('left to right across operands', async () => {
-    const creates = await runBody('  x = CONCAT(mark("a"), mark("b"), mark("c"))\n  write graph-[:note]-> { body: x }');
+    const creates = await runBody('  x = Text.concat(mark("a"), mark("b"), mark("c"))\n  write graph-[:note]-> { body: x }');
     expect(bodies(creates)).toEqual(['a', 'b', 'c', 'abc']);
   });
 
   it("a call's arguments before its body", async () => {
-    const creates = await runBody('  x = UPPER(mark(mark("inner")))');
+    const creates = await runBody('  x = Text.upper(mark(mark("inner")))');
     expect(bodies(creates)).toEqual(['inner', 'inner']);
   });
 
   it('a nested call in a write field runs before the write it feeds', async () => {
-    const creates = await runBody('  write graph-[:note]-> { body: CONCAT(mark("first"), "!") }');
+    const creates = await runBody('  write graph-[:note]-> { body: Text.concat(mark("first"), "!") }');
     expect(bodies(creates)).toEqual(['first', 'first!']);
   });
 
   it('writes inside a nested MAP land member by member', async () => {
     const creates = await runBody(
-      '  n = COUNT(MAP(["x", "y"], (t) => mark(t))) + 0\n  write graph-[:note]-> { payload: { n: n } }',
+      '  n = count(map(["x", "y"], (t) => mark(t))) + 0\n  write graph-[:note]-> { payload: { n: n } }',
     );
     expect(bodies(creates).slice(0, 2)).toEqual(['x', 'y']);
     expect(payload(creates)).toEqual({ n: 2 });
@@ -206,10 +222,10 @@ describe('IF, AND, OR and COALESCE never reach an operand they do not need', () 
   it('an arm not taken never runs, so its write never happens', async () => {
     const creates = await runBody(
       [
-        '  a = IF 1 > 2 THEN mark("then") ELSE "else" END',
-        '  b = 1 > 2 AND mark("and") == "and"',
-        '  c = 1 < 2 OR mark("or") == "or"',
-        '  d = COALESCE("here", mark("coalesce"))',
+        '  a = 1 > 2 ? mark("then") : "else"',
+        '  b = 1 > 2 && mark("and") == "and"',
+        '  c = 1 < 2 || mark("or") == "or"',
+        '  d = coalesce("here", mark("coalesce"))',
         '  write graph-[:note]-> { payload: { a: a, b: b, c: c, d: d } }',
       ].join('\n'),
     );
@@ -220,22 +236,22 @@ describe('IF, AND, OR and COALESCE never reach an operand they do not need', () 
   it('an arm that is taken runs, once', async () => {
     const creates = await runBody(
       [
-        '  a = IF 1 < 2 THEN mark("then") ELSE mark("else") END',
-        '  b = 1 < 2 AND mark("and") == "and"',
-        '  c = 1 > 2 OR mark("or") == "or"',
-        '  d = COALESCE(null, mark("coalesce"))',
+        '  a = 1 < 2 ? mark("then") : mark("else")',
+        '  b = 1 < 2 && mark("and") == "and"',
+        '  c = 1 > 2 || mark("or") == "or"',
+        '  d = coalesce(null, mark("coalesce"))',
       ].join('\n'),
     );
     expect(bodies(creates)).toEqual(['then', 'and', 'or', 'coalesce']);
   });
 
   it('COALESCE stops at the first present value, so a later failure is never raised', async () => {
-    const creates = await runBody('  x = COALESCE("a", ONLY([1, 2]))\n  write graph-[:note]-> { body: x }');
+    const creates = await runBody('  x = coalesce("a", only([1, 2]))\n  write graph-[:note]-> { body: x }');
     expect(bodies(creates)).toEqual(['a']);
   });
 
   it('before version 3 COALESCE evaluated every argument first — unchanged', async () => {
-    const v2 = `${PRELUDE}movement recap(go: <runs-[:Invocation]->>) {
+    const v2 = `${PRELUDE_V4}movement recap(go: <runs-[:Invocation]->>) {
   x = COALESCE("a", ONLY([1, 2]))
   write graph-[:note]-> { body: x }
 }
@@ -266,7 +282,7 @@ describe('a function name is the same name in any letter case', () => {
   it('a listener firing the movement in another case runs it', async () => {
     const kg = makeKgFake();
     await runMovement({
-      source: `${PRELUDE}movement recap(go: <runs-[:Invocation]->>) {
+      source: `${PRELUDE_V4}movement recap(go: <runs-[:Invocation]->>) {
   write graph-[:note]-> { body: "ran" }
 }
 listen to runs {} fire RECAP
@@ -282,6 +298,8 @@ listen to runs {} fire RECAP
         },
       }),
       dryRun: false,
+      // Version 5 reads names exactly; letter-case folding is a version 1–4 rule.
+      languageVersion: 4,
     });
     expect(bodies(kg.creates)).toEqual(['ran']);
   });
@@ -292,11 +310,13 @@ describe('a closure bound to a name is called like any function', () => {
     const creates = await runBody(
       [
         '  inc = (v: <number>) => v + 1',
-        '  a = inc(v: 2)',
+        '  a = inc(2)',
         '  b = inc(2) * 10',
         '  c = double(INC(inc(1)))',
         '  write graph-[:note]-> { payload: { a: a, b: b, c: c } }',
       ].join('\n'),
+      // Version 5 reads names exactly; letter-case folding is a version 1–4 rule.
+      { languageVersion: 4 },
     );
     expect(payload(creates)).toEqual({ a: 3, b: 30, c: 6 });
   });
@@ -314,7 +334,7 @@ describe('a closure bound to a name is called like any function', () => {
     const creates = await runBody(
       [
         '  note = (a: <text>, b: <text>) => {',
-        '    write graph-[:note]-> { body: CONCAT(a, b) }',
+        '    write graph-[:note]-> { body: Text.concat(a, b) }',
         '  }',
         '  note(mark("a"), mark("b"))',
       ].join('\n'),
@@ -326,7 +346,7 @@ describe('a closure bound to a name is called like any function', () => {
     const creates = await runBody(
       [
         '  loud = (t: <text>) => mark(t)',
-        '  x = IF 1 > 2 THEN loud("then") ELSE "else" END',
+        '  x = 1 > 2 ? loud("then") : "else"',
         '  write graph-[:note]-> { body: x }',
       ].join('\n'),
     );
@@ -334,7 +354,7 @@ describe('a closure bound to a name is called like any function', () => {
   });
 
   it('before version 3 a closure is not called — the run is refused', async () => {
-    const v2 = `${PRELUDE}movement recap(go: <runs-[:Invocation]->>) {
+    const v2 = `${PRELUDE_V4}movement recap(go: <runs-[:Invocation]->>) {
   one = () => {
     return 1
   }

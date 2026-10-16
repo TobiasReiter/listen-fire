@@ -1,6 +1,6 @@
 // TEXT.PAIRS over a RECORD the run holds — the Morning Recap shape, where the
 // argument is a collecting node's entry, an extracted node, a synthesised
-// node or a FIRST(…) answer rather than a dict literal. Each arrives as its
+// node or a first(…) answer rather than a dict literal. Each arrives as its
 // fields in declaration order, never as the engine's own binding object.
 //
 // Mirrors the harness of local_write.unit.test.ts.
@@ -145,7 +145,7 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
   'node Entry {',
   '  name: <text>',
@@ -184,8 +184,8 @@ async function run(body: string[]): Promise<unknown[]> {
   const source =
     PRELUDE +
     [
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
       ...body,
       '}',
     ].join('\n');
@@ -232,7 +232,7 @@ describe('TEXT.PAIRS over a record the run holds', () => {
       run([
         ...COLLECTED,
         '  deduped-[e:entries]-> {',
-        '    write crm-[:companies]-> { name: TEXT.PAIRS(e) }',
+        '    write crm-[:companies]-> { name: Text.pairs(e) }',
         '  }',
       ]),
     ).resolves.toEqual(['name=Acme | stage= | raised=5 | hot=false']);
@@ -248,7 +248,7 @@ describe('TEXT.PAIRS over a record the run holds', () => {
         '    }',
         '  }',
         '  x-[c:company]-> {',
-        '    write crm-[:companies]-> { name: TEXT.PAIRS(c) }',
+        '    write crm-[:companies]-> { name: Text.pairs(c) }',
         '  }',
       ]),
     ).resolves.toEqual(['name=Acme | stage=Seed']);
@@ -258,21 +258,21 @@ describe('TEXT.PAIRS over a record the run holds', () => {
     await expect(
       run([
         '  d = node { b: 2, a: "x", flag: true, sub: node { z: 1 } }',
-        '  write crm-[:companies]-> { name: TEXT.PAIRS(d) }',
+        '  write crm-[:companies]-> { name: Text.pairs(d) }',
       ]),
     ).resolves.toEqual(['b=2 | a=x | flag=true']);
   });
 
-  it('a FIRST(…) answer over the collected entries', async () => {
+  it('a first(…) answer over the collected entries', async () => {
     await expect(
       run([
         ...COLLECTED,
         '  write deduped-[:entries]-> { unique by (`name`)',
         '    name: "Beta"',
         '  }',
-        '  all = deduped-[e:entries]-> { return e }',
-        '  top = FIRST(all)',
-        '  write crm-[:companies]-> { name: TEXT.PAIRS(top, "; ") }',
+        '  entries = deduped-[e:entries]-> { return e }',
+        '  top = first(entries)',
+        '  write crm-[:companies]-> { name: Text.pairs(top, "; ") }',
       ]),
     ).resolves.toEqual(['name=Acme; stage=; raised=5; hot=false']);
   });
@@ -282,7 +282,7 @@ describe('TEXT.PAIRS over a record the run holds', () => {
       run([
         ...COLLECTED,
         '  deduped-[e:entries]-> {',
-        '    write crm-[:companies]-> { name: "entry: ${TEXT.PAIRS(e)}" }',
+        '    write crm-[:companies]-> { name: "entry: ${Text.pairs(e)}" }',
         '  }',
       ]),
     ).resolves.toEqual(['entry: name=Acme | stage= | raised=5 | hot=false']);
