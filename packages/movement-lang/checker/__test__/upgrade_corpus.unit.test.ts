@@ -36,8 +36,12 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  person decides): 4,903 of 5,667, with 104 programs left holding it.
  *  Lowered again by MOV_EVENT_UNDESCRIBED (a read or write off an event the
  *  catalog does not describe is refused from 5, and only a person can describe
- *  it): 4,890 of 5,673, with 27 programs left holding it. */
-const FLOOR = 0.86;
+ *  it): 4,890 of 5,673, with 27 programs left holding it.
+ *  Re-harvested at the v5 surface's last round: 4,981 of 5,881 (84.7%). The
+ *  208 programs the harvest added are mostly the extraction keyword's suites,
+ *  now pinned to 4 (295 programs left holding MOV_EXTRACT_KEYWORD_RETIRED,
+ *  which only a person rewrites). */
+const FLOOR = 0.846;
 
 interface Program {
   source: string;
