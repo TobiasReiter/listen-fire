@@ -1431,7 +1431,7 @@ listen to inbox { key: "deals" } fire intake
   /** A movement as a version 4 save left it: the row, and its snapshot. */
   async function savedUnderFour(): Promise<string> {
     const first = await saveMovement({ teamId: TEAM, source: NEW });
-    if (!first.ok) throw new Error(`first save failed: ${first.errors.join('; ')}`);
+    if (!first.ok) throw new Error(`first save failed: ${(first.errors ?? []).join('; ')}`);
     const [row] = db.__tables.movement;
     Object.assign(row, { source: OLD, language_version: 4 });
     Object.assign(db.__tables.movement_version[0], { source: OLD, language_version: 4 });
