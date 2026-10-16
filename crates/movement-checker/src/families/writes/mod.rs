@@ -433,7 +433,9 @@ impl Checker<'_> {
         };
         let position = match &types.pos {
             Some(pos) => Some(pos.clone()),
-            None => match types.field.as_ref().map(strip_absent) {
+            // A record that may be absent is no record whose fields this
+            // spells out (`positionTypeOf` reads the field's type as it is).
+            None => match types.field.as_ref() {
                 Some(Ty::Record(Some(position))) => Some((**position).clone()),
                 _ => None,
             },
